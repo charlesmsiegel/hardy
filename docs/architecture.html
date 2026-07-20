@@ -848,8 +848,10 @@ sequenceDiagram
     L-->>T: axiom manifest — standard axioms only
   else budget exhausted
     M->>M: keep usable checked skeleton, or discard the failed attempt
-    T->>L: print axioms audit on any retained skeleton
-    L-->>T: manifest for the partial artifact
+    opt usable skeleton retained
+      T->>L: print axioms audit on the retained skeleton
+      L-->>T: manifest for the partial artifact
+    end
   end
   loop bounded retries until clean build
     M->>T: write_latex + cite, embedding grade + manifest
@@ -893,7 +895,7 @@ sequenceDiagram
       <div class="inner-card"><div class="title">Structured feedback</div><div class="desc">Goal states (hypotheses + targets), errors with positions, warnings, elaboration info — parsed into typed objects, never raw text.</div></div>
       <div class="inner-card"><div class="title">Two checking granularities</div><div class="desc"><em>Tactic-level</em>: one tactic against a proof state, enabling tree search. <em>Declaration-level</em>: the whole proof — the final source of truth.</div></div>
       <div class="inner-card"><div class="title">Incremental via <code>sorry</code></div><div class="desc">Sketch a skeleton with <code>have</code>/<code>sorry</code> placeholders, discharge each subgoal independently — parallelizes naturally.</div></div>
-      <div class="inner-card"><div class="title">State pickling</div><div class="desc">Snapshot and restore proof states so search can branch without replaying tactic prefixes.</div></div>
+      <div class="inner-card"><div class="title">State pickling</div><div class="desc">Snapshot and restore proof states so search can branch without replaying tactic prefixes. Pickling restores proof states, <em>not</em> declarations — so independent runs fork from the pristine pinned environment (warm process, clean declarations) to prevent cross-run contamination.</div></div>
       <div class="inner-card"><div class="title">Resource limits</div><div class="desc">Per-tactic and per-proof timeouts (<code>maxHeartbeats</code>, wall clock, memory) — a runaway <code>decide</code> or <code>simp</code> must never stall the loop.</div></div>
     </div>
   </div>
@@ -982,7 +984,7 @@ sequenceDiagram
       <h2 class="card-label lbl-slate"><span class="num">C7</span> Environment management</h2>
       <ul class="plain">
         <li><strong>Pinned toolchain</strong> — <code>lean-toolchain</code> + pinned Mathlib revision; <code>lake exe cache get</code> for prebuilt oleans. Reproducibility is non-negotiable for benchmarking.</li>
-        <li><strong>Warm session pool</strong> — REPL workers cost 30–60 s to start (Mathlib import); keep a warm pool, recycle on memory bloat or crash.</li>
+        <li><strong>Warm session pool</strong> — REPL workers cost 30–60 s to start (Mathlib import); keep a warm pool, recycle on memory bloat or crash. Between independent runs, workers reset to the pristine base environment — one run's declarations and axioms must never leak into the next.</li>
         <li><strong>Sandboxing</strong> — model-generated Lean can execute arbitrary IO at elaboration time (<code>#eval</code>, <code>native_decide</code>): workers run in containers with no network and a read-only filesystem plus an ephemeral scratch dir (per-invocation tmpfs with size/inode quotas, wiped on recycle — untrusted code can't fill host storage). The LaTeX compiler runs under the same regime — generated TeX is equally untrusted.</li>
         <li><strong>Docker image</strong> — toolchain + Mathlib cache baked in, for CI and reproduction.</li>
       </ul>
@@ -1110,6 +1112,7 @@ flowchart LR
       <p style="font-family:var(--font-mono); font-size:10.5px; letter-spacing:1.2px; text-transform:uppercase; color:var(--text-dim); margin-top:6px">Informal completeness</p>
       <div class="verdict-row"><span class="pip pip--full"></span><span><span class="what">Complete</span> <span class="how">— the writeup's argument has no unresolved holes</span></span></div>
       <div class="verdict-row"><span class="pip pip--danger"></span><span><span class="what">Known gaps</span> <span class="how">— critique–repair budget expired with holes abandoned; they're listed in the writeup, never hidden behind a clean grade</span></span></div>
+      <div class="verdict-row"><span class="pip" style="background:var(--slate)"></span><span><span class="what">Not assessed</span> <span class="how">— pre-M6 runs, before the hole ledger and critique loop exist; never defaulted to complete</span></span></div>
     </div>
     <p class="prose dim" style="font-size:12.5px; margin-top:12px">The dimensions are independent, so every
     result has a deterministic verdict — a kernel-verified theorem with a gappy writeup is
@@ -1197,7 +1200,7 @@ flowchart LR
       </div>
       <div class="tl-item">
         <span class="tl-m">M1</span><span class="tl-t">Minimal agent (Claude Agent SDK)</span>
-        <p class="tl-d">First <code>AgentRuntime</code> adapter; core tools (<code>check_proof</code>, <code>get_goal_state</code>, <code>search_lemmas</code>, <code>write_latex</code>); iterative-repair loop; dual-output workflow.</p>
+        <p class="tl-d">First <code>AgentRuntime</code> adapter; core tools (<code>check_proof</code>, <code>get_goal_state</code>, <code>search_lemmas</code>, <code>write_latex</code>); iterative-repair loop; dual-output workflow. Citations (<code>cite</code> + <code>references.bib</code>) are explicitly deferred to M3 — M1 writeups carry none.</p>
         <div class="tl-exit"><strong>EXIT</strong> — &ldquo;prove that the square root of 2 is irrational&rdquo; produces a compile-checked .tex writeup <em>and</em> a kernel-checked .lean proof, end to end.</div>
       </div>
       <div class="tl-item">

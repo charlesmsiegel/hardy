@@ -32,7 +32,8 @@ every result has a deterministic verdict:
   Component 6) / partially formalized with `sorry`s remaining / not formalized.
 - *Informal completeness*: complete / known gaps — the critique–repair budget
   expired with holes abandoned; those holes are listed in the document, never
-  hidden behind a reassuring grade.
+  hidden behind a reassuring grade — or *not assessed*, for runs made before the
+  critique–repair loop exists (pre-M6), which never default to *complete*.
 
 A kernel-verified theorem whose writeup still has gaps, or a gap-free writeup with
 only a partial skeleton, each map to exactly one pair. When a Lean proof exists,
@@ -93,6 +94,13 @@ an inner loop.
   work, and it parallelizes naturally.
 - **State pickling**: snapshot and restore proof states so search can branch without
   replaying tactic prefixes.
+- **Environment isolation between runs**: proof-state pickling restores a proof
+  state, *not* the declaration environment — declarations, axioms, helper lemmas,
+  and instances added by one run's generated source would otherwise persist in a
+  reused worker and contaminate later elaboration, search, and benchmark results.
+  Every independent run forks from (or resets to) the pristine pinned environment —
+  base Mathlib imports only — while keeping the warm imported process; a worker
+  whose environment cleanliness is in doubt is recycled, not reused.
 - **Timeouts and resource limits** per tactic and per proof (`maxHeartbeats`, wall
   clock, memory) — runaway `decide`/`simp` calls must not stall the loop.
 
@@ -373,7 +381,9 @@ same way. In order of preference:
   `lake exe cache get` for prebuilt oleans. Reproducibility is non-negotiable for
   benchmarking.
 - **Session pool**: REPL workers are expensive to start (Mathlib import ~30–60s), so
-  maintain a warm pool; recycle workers on memory bloat or crash.
+  maintain a warm pool; recycle workers on memory bloat or crash. Between
+  independent runs a worker resets to the pristine base environment (see
+  Component 1) — warm process, clean declarations.
 - **Sandboxing**: model-generated Lean code can execute arbitrary IO at elaboration
   time (`#eval`, `native_decide`). Run workers in containers with no network and a
   read-only filesystem. The LaTeX compiler runs under the same regime (see
@@ -450,7 +460,9 @@ You can't improve what you don't measure. This is as important as the agent itse
    against warm sessions; compile-check a sample writeup.
 2. **M1 — Minimal agent (Claude Agent SDK)**: first `AgentRuntime` adapter on the
    Claude Agent SDK; core tools (`check_proof`, `get_goal_state`, `search_lemmas`,
-   `write_latex`); iterative-repair loop; dual-output workflow. Exit criterion:
+   `write_latex`); iterative-repair loop; dual-output workflow. The citation half
+   of the output contract (`cite` + `references.bib`) is explicitly deferred to
+   M3 — M1 writeups carry no citations. Exit criterion:
    "prove that the square root of 2 is irrational" produces a compile-checked
    `.tex` writeup *and* a kernel-checked `.lean` proof, end to end.
 3. **M2 — Evaluation harness**: miniF2F runner, anti-cheat validation, metrics +
