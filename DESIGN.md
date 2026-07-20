@@ -25,9 +25,10 @@ get back:
    formal statement, whenever formalization is within reach (Mathlib coverage,
    tractable statement).
 
-The LaTeX document records formalization status (verified / partially formalized with
-`sorry`s remaining / not yet formalized) and, when a Lean proof exists, the two are
-cross-linked so the informal writeup and formal proof state the same theorem. This
+The LaTeX document records formalization status (verified / verified modulo assumed
+paper results (see Component 6) / partially formalized with `sorry`s remaining / not
+yet formalized) and, when a Lean proof exists, the two are cross-linked so the
+informal writeup and formal proof state the same theorem. This
 mirrors how the strongest draft-sketch-prove systems work (informal reasoning first,
 formal second) and means the project always yields a usable artifact even when full
 formalization fails — a LaTeX proof marked "not yet formalized" is a result; a failed
@@ -100,6 +101,8 @@ theorem-proving equivalents:
 | `arxiv_search` | Query the arXiv API (title/abstract/author/category); returns metadata + abstracts |
 | `fetch_paper` | Download a paper (PDF, and LaTeX source when available) into the project paper store; auto-adds a BibTeX entry |
 | `read_paper` | Extract text/sections from a stored paper for the agent to read |
+| `assume_paper` | Turn a stored paper's results into an axiomatized Lean library (see Component 6) that later proofs can import |
+| `list_assumptions` | Show the assumed-paper libraries in scope and, for any proved theorem, its axiom manifest (which paper results it actually used) |
 | `cite` | Look up or add an entry in `references.bib`; returns the cite key to use in LaTeX output |
 | `write_latex` | Write/update a LaTeX document (writeup of a result, proof notes); harness compile-checks it |
 
@@ -206,7 +209,69 @@ LaTeX side of the output contract.
 - Writeups live alongside their Lean counterparts (e.g. `results/sqrt2_irrational/`
   containing `.tex`, `.lean`, and a small manifest recording status and provenance).
 
-## Component 6: Lean Environment Management
+## Component 6: Assumed-Paper Libraries (frontier mathematics)
+
+Mathlib covers a lot, but real research builds on results that will never be
+formalized bottom-up in time to be useful. The escape hatch: **"assume this paper"**
+— formalize a paper's *statements* (not its proofs) as Lean `axiom` declarations, and
+prove new results in the context of those assumptions.
+
+**The mechanism.** Lean's `axiom` is exactly the right primitive, because axiom
+dependencies are tracked by the kernel and surfaced by `#print axioms`:
+
+```lean
+namespace Papers.Smith2023  -- arXiv 2301.12345
+
+/-- Theorem 3.2 of [smith2023modular]: … -/
+axiom modular_lifting (p : ℕ) (hp : p.Prime) (hp5 : 5 ≤ p) : …
+
+end Papers.Smith2023
+```
+
+A downstream theorem proved using this shows `Papers.Smith2023.modular_lifting` in
+its axiom manifest. The anti-cheat check (Component 8) stops being just a cheat
+detector and becomes a **dependency ledger**: every result is reported either as
+*fully verified* (standard axioms only) or *verified modulo* an explicit list of
+assumed paper results — which is precisely how working mathematicians treat the
+literature anyway.
+
+**The `assume_paper` workflow:**
+1. `fetch_paper` pulls the paper (LaTeX source preferred) into the store.
+2. An extraction pass identifies the paper's definitions, theorems, lemmas, and
+   propositions, with their statement text and numbering.
+3. A formalization pass turns each *result* into an `axiom` in a per-paper namespace
+   (`Papers.<CiteKey>`), with a docstring linking back to the paper's numbering and
+   BibTeX key. Results the agent cannot faithfully formalize are skipped and listed
+   in the library's manifest — an honest partial library beats a wrong complete one.
+4. A **faithfulness review** pass (independent skeptic agent, different prompt or
+   model) compares each axiom against the paper's stated theorem: quantifiers,
+   hypotheses, edge conditions. Axioms it flags are quarantined pending human review.
+5. The library lands under `papers_lean/` as a buildable Lean package the main
+   project imports; a manifest records paper ↔ axiom ↔ status mappings.
+
+**The hard part — definitions.** A theorem statement can be axiomatized, but it
+usually refers to objects the paper defines, and *definitions cannot be assumed* the
+same way. In order of preference:
+1. Map onto existing Mathlib definitions when they exist (best, and makes the
+   axioms interoperate with all of Mathlib).
+2. Write a real Lean definition when it's cheap.
+3. Declare an `opaque` constant plus characterizing axioms for its properties
+   (viable, but each characterizing axiom widens the trust surface).
+
+**Soundness risks, managed rather than ignored:**
+- A mis-formalized axiom can be *inconsistent* (in the worst case `False` becomes
+  derivable, and the agent can then "prove" anything). Mitigations: the
+  faithfulness-review pass; keeping each library minimal (only assume what gets
+  used); a lint that tries cheap refutations of each axiom (e.g. `decide`/`simp`
+  finding a counterexample on small instances when the statement is decidable); and
+  the axiom manifest on every result so a bad assumption's blast radius is knowable
+  after the fact.
+- Definitional drift: the Lean rendering of a paper's definition may subtly differ
+  from the author's intent. Every writeup that uses assumed results must state its
+  assumptions in prose ("assuming Theorems 3.2 and 4.1 of [smith2023modular]") so a
+  human reader can audit the trust chain without reading Lean.
+
+## Component 7: Lean Environment Management
 
 - **Pinned toolchain**: `lean-toolchain` + `lakefile` with a pinned Mathlib revision;
   `lake exe cache get` for prebuilt oleans. Reproducibility is non-negotiable for
@@ -219,7 +284,7 @@ LaTeX side of the output contract.
 - **Docker image** with toolchain + Mathlib cache baked in, for CI and for anyone
   reproducing results.
 
-## Component 7: Evaluation Harness
+## Component 8: Evaluation Harness
 
 You can't improve what you don't measure. This is as important as the agent itself.
 
@@ -232,7 +297,10 @@ You can't improve what you don't measure. This is as important as the agent itse
 - **Anti-cheating validation** on every "solved" theorem:
   - proof is `sorry`-free and compiles against the *original* statement (agent must
     not modify it);
-  - `#print axioms` shows only expected axioms (no `sorryAx`, no smuggled axioms);
+  - `#print axioms` shows only expected axioms: the standard three (`propext`,
+    `Classical.choice`, `Quot.sound`) plus explicitly declared assumed-paper axioms
+    (Component 6) — no `sorryAx`, no smuggled axioms. Benchmark runs allow *no*
+    paper axioms; frontier runs report the axiom manifest with the result;
   - flag suspicious closers (`native_decide`, `decide` on huge goals) for review.
 - **Output-contract check**: outside pure benchmark mode, a run isn't complete
   without its compile-checked LaTeX writeup; the Lean artifact is graded as
@@ -240,7 +308,7 @@ You can't improve what you don't measure. This is as important as the agent itse
 - **Regression tracking**: every change to prompts/tools/strategy runs against a fixed
   eval set; results logged with config hashes so runs are comparable.
 
-## Component 8: Telemetry & Trajectories
+## Component 9: Telemetry & Trajectories
 
 - Log every run as a structured trajectory: messages, tool calls, Lean feedback,
   timings, token counts.
@@ -288,12 +356,17 @@ You can't improve what you don't measure. This is as important as the agent itse
 4. **M3 — Literature layer**: arXiv search/fetch/read tools, paper store,
    machine-maintained `references.bib`, citations wired into writeups. Exit
    criterion: a writeup that cites fetched papers with a valid bibliography.
-5. **M4 — Runtime abstraction proven**: Strands adapter + built-in minimal loop
+5. **M4 — Assumed-paper libraries**: `assume_paper` pipeline (extract → formalize
+   statements as axioms → faithfulness review → buildable `Papers.*` package), axiom
+   manifests wired into results and writeups. Exit criterion: assume a real arXiv
+   paper and prove a small corollary of its main theorem, with the writeup stating
+   the assumptions.
+6. **M5 — Runtime abstraction proven**: Strands adapter + built-in minimal loop
    (Ollama / OpenAI-compatible endpoints) with prompted tool-calling fallback.
    Exit criterion: the same eval runs across all three runtimes from config alone.
-6. **M5 — Search strategies**: sketch-and-discharge, parallel attempts, cheap-closer
+7. **M6 — Search strategies**: sketch-and-discharge, parallel attempts, cheap-closer
    pre-pass; strategy comparison on the eval set.
-7. **M6 — Retrieval & memory**: semantic premise search, cross-theorem memory,
+8. **M7 — Retrieval & memory**: semantic premise search, cross-theorem memory,
    context summarization improvements.
 
 ## Open Questions
@@ -304,3 +377,10 @@ You can't improve what you don't measure. This is as important as the agent itse
   who formalizes? (Deferred with autoformalization.)
 - How much Lean-specific prompting is too much? A harness goal is that *tool design*
   carries the Lean expertise, so weaker/general models still function.
+- Assumed-paper granularity: assume a whole paper eagerly, or lazily formalize only
+  the results a proof attempt actually wants to invoke? Lazy keeps the trust surface
+  minimal; eager gives the agent a browsable library. Likely answer: extract the
+  full statement inventory eagerly, formalize axioms lazily on first use.
+- Transitive assumptions: paper A's theorem depends on paper B's — do we chase the
+  citation graph, or axiomatize A's results at face value? (Face value first; the
+  manifest records exactly what was taken on faith either way.)

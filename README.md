@@ -15,6 +15,11 @@ SDK, behind an abstraction layer that also admits Strands, Ollama, and other
 runtimes; with arXiv search/download and a machine-maintained BibTeX bibliography as
 first-class tools.
 
+Beyond Mathlib's frontier, "assume this paper" turns a paper's results into an
+axiomatized Lean library (`Papers.*` namespaces of `axiom` declarations), so new
+theorems can be proved *modulo* the literature — with every result carrying an
+explicit axiom manifest of exactly which paper results it relied on.
+
 See [DESIGN.md](DESIGN.md) for the full project outline: architecture, components,
 milestones, and open questions.
 
