@@ -154,9 +154,12 @@ with the **Claude Agent SDK** as the first implementation.
 
 ## Component 4: Workflows, Orchestration & Search
 
-### The three core workflows
+### The core workflows
 
-Every user request is one of three composable workflows, or a chain of them:
+Every proof-oriented request is one of three composable workflows, or a chain of
+them. (A fourth workflow, **Assume** — *"assume this paper"*, detailed in
+Component 6 — prepares axiomatized paper libraries; it runs standalone or as a
+preparatory step the other three call on.)
 
 1. **Prove** — *"find a proof of X."* The flow described throughout: formalize the
    statement, search for a proof, produce the LaTeX + Lean artifact pair.
@@ -363,7 +366,9 @@ You can't improve what you don't measure. This is as important as the agent itse
     `Classical.choice`, `Quot.sound`) plus explicitly declared assumed-paper axioms
     (Component 6) — no `sorryAx`, no smuggled axioms. Benchmark runs allow *no*
     paper axioms; frontier runs report the axiom manifest with the result;
-  - flag suspicious closers (`native_decide`, `decide` on huge goals) for review.
+  - flag suspicious closers (`native_decide`, `decide` on huge goals) for review —
+    detected by scanning the submitted source and recorded tactic trajectory, since
+    `#print axioms` alone cannot reveal which tactic produced a term.
 - **Output-contract check**: outside pure benchmark mode, a run isn't complete
   without its compile-checked LaTeX writeup; the Lean artifact is graded as
   verified / partial / absent.

@@ -702,10 +702,12 @@ flowchart TD
 <section class="view" id="view-workflows">
 
   <p class="view-intro" style="--i:0">
-    Every user request is one of <strong>three composable workflows</strong>, or a chain of them.
-    They hand a single problem back and forth — Prove drafts, Critique finds the gaps, Repair closes
-    them one at a time, Critique re-checks — around the loop until the ledger is empty or the
-    remaining holes are honestly reported.
+    Every proof-oriented request is one of <strong>three composable workflows</strong>, or a chain of
+    them. They hand a single problem back and forth — Prove drafts, Critique finds the gaps, Repair
+    closes them one at a time, Critique re-checks — around the loop until the ledger is empty or the
+    remaining holes are honestly reported. (A fourth workflow, <strong>Assume</strong> — &ldquo;assume
+    this paper&rdquo; — prepares axiomatized paper libraries, standalone or as a preparatory step;
+    see Frontier Math.)
   </p>
 
   <div class="grid3">
@@ -748,7 +750,7 @@ flowchart LR
   P --> C["<b>Critique</b><br/>kernel · formalization probing ·<br/>adversarial skeptics"]
   C --> L[("hole ledger")]
   L --> D{"open<br/>holes?"}
-  D -->|"none"| SHIP["<b>Ship</b><br/>artifact pair, graded<br/>by the trust ledger"]
+  D -->|"none"| SHIP["<b>Ship the workflow's output</b><br/>Prove: artifact pair + grade ·<br/>Critique: hole-ledger report ·<br/>Repair: verified patch"]
   D -->|"yes"| R["<b>Repair</b><br/>fix one hole, verify patch"]
   R -->|"re-critique the<br/>patch's blast radius"| C
   R -->|"same hole reopened<br/>N times"| ESC["escalate strategy —<br/>new decomposition,<br/>more budget"]
@@ -820,18 +822,19 @@ sequenceDiagram
   O->>M: task + tools + budgets
   M->>T: formalize statement, sketch plan
   T->>L: elaborate statement
-  L-->>T: goals + faithfulness check
+  L-->>T: elaborated goals, no errors
+  M->>M: faithfulness check — formal statement matches the informal claim
   loop until kernel accepts or budget out
     M->>T: run_tactic / check_proof
     T->>L: execute against warm session
     L-->>T: new goals or structured errors
     T-->>M: compact, actionable feedback
   end
-  M->>T: write_latex + cite
+  T->>L: print axioms audit
+  L-->>T: axiom manifest — standard axioms only
+  M->>T: write_latex + cite, embedding grade + manifest
   T->>X: compile check
   X-->>T: clean build
-  T->>L: print axioms audit
-  L-->>T: standard axioms only
   O-->>U: .lean + .tex + trust grade + manifest
       </pre>
     </div>
@@ -1114,13 +1117,16 @@ flowchart LR
 flowchart LR
   S["claimed solve"] --> A{"statement<br/>unmodified?"}
   A -->|"no"| REJ["rejected"]
-  A -->|"yes"| B{"sorry-free +<br/>kernel accepts?"}
-  B -->|"no"| PART["graded partial —<br/>holes listed"]
+  A -->|"yes"| SCAN["source + trajectory scan<br/><i>the audit that print axioms<br/>cannot do</i>"]
+  SCAN -->|"suspicious closers:<br/>native_decide, decide<br/>on huge goals"| REVIEW["flagged for<br/>human review"]
+  SCAN -->|"clean"| B{"sorry-free +<br/>kernel accepts?"}
+  B -->|"no"| P2{"usable checked<br/>skeleton?"}
+  P2 -->|"yes"| PART["<b>partially formalized</b><br/>skeleton kept, holes listed"]
+  P2 -->|"no"| LTX["<b>LaTeX only</b><br/>failed attempt discarded —<br/>not itself a result"]
   B -->|"yes"| C{"axiom audit:<br/>print axioms"}
   C -->|"standard three only"| FULL["<b>fully verified</b>"]
   C -->|"+ declared paper axioms"| MOD["<b>verified modulo</b><br/>manifest attached"]
   C -->|"sorryAx or smuggled"| REJ
-  C -->|"native_decide / huge decide"| REVIEW["flagged for<br/>human review"]
   classDef good stroke:#10a06a,stroke-width:1.6px;
   class FULL,MOD good;
   classDef bad stroke:#d05353,stroke-width:1.6px;
@@ -1230,50 +1236,10 @@ flowchart LR
 
 <footer>Hardy · design map · rendered from DESIGN.md + project decisions · LaTeX always, Lean where possible</footer>
 
-<script type="module">
-  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-
-  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const css = getComputedStyle(document.documentElement);
-  const v = name => css.getPropertyValue(name).trim();
-
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: 'base',
-    look: 'classic',
-    themeVariables: {
-      primaryColor: isDark ? '#232d3c' : '#fdfbf5',
-      primaryBorderColor: isDark ? '#8fb4e3' : '#1e3a5f',
-      primaryTextColor: isDark ? '#e8e6df' : '#1c2432',
-      secondaryColor: isDark ? '#2a2415' : '#faf3e3',
-      secondaryBorderColor: isDark ? '#d4a73a' : '#a16207',
-      secondaryTextColor: isDark ? '#e8e6df' : '#1c2432',
-      tertiaryColor: isDark ? '#222a36' : '#f4f0e7',
-      tertiaryBorderColor: isDark ? '#a8b6c8' : '#475569',
-      tertiaryTextColor: isDark ? '#e8e6df' : '#1c2432',
-      lineColor: isDark ? '#97a0ad' : '#6b7280',
-      fontSize: '14px',
-      fontFamily: "'Source Serif 4', Georgia, serif",
-      clusterBkg: isDark ? 'rgba(143,180,227,0.06)' : 'rgba(30,58,95,0.04)',
-      clusterBorder: isDark ? 'rgba(220,228,240,0.18)' : 'rgba(30,42,60,0.22)',
-      actorBkg: isDark ? '#232d3c' : '#fdfbf5',
-      actorBorder: isDark ? '#8fb4e3' : '#1e3a5f',
-      actorTextColor: isDark ? '#e8e6df' : '#1c2432',
-      signalColor: isDark ? '#97a0ad' : '#4b5563',
-      signalTextColor: isDark ? '#97a0ad' : '#4b5563',
-      loopTextColor: isDark ? '#d4a73a' : '#a16207',
-      noteBkgColor: isDark ? '#2a2415' : '#faf3e3',
-      noteBorderColor: isDark ? '#d4a73a' : '#a16207',
-      noteTextColor: isDark ? '#e8e6df' : '#1c2432',
-    }
-  });
-
-  async function renderMermaidIn(view) {
-    const nodes = view.querySelectorAll('.mermaid:not([data-processed])');
-    if (nodes.length) {
-      try { await mermaid.run({ nodes }); } catch (e) { /* leave source text visible */ }
-    }
-  }
+<script>
+  // Navigation, keyboard shortcuts, and zoom controls are deliberately independent
+  // of the Mermaid CDN module below: if it fails to load, diagrams degrade to their
+  // source text but every view stays reachable.
 
   // ---- Tab switching ----
   const tabs = document.querySelectorAll('.tab');
@@ -1286,7 +1252,7 @@ flowchart LR
     views.forEach(sec => sec.classList.toggle('active', sec === target));
     if (pushHash) history.replaceState(null, '', '#' + name);
     window.scrollTo({ top: 0 });
-    renderMermaidIn(target);
+    if (window.renderMermaidIn) window.renderMermaidIn(target);
   }
 
   tabs.forEach(t => t.addEventListener('click', () => switchView(t.dataset.view)));
@@ -1346,6 +1312,60 @@ flowchart LR
     });
     window.addEventListener('mouseup', () => wrap.classList.remove('is-panning'));
   });
+</script>
+
+<script type="module">
+  // Mermaid loads separately and optionally; a CDN failure leaves diagram source
+  // text visible (styled readable) without affecting navigation above.
+  let mermaid;
+  try {
+    ({ default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'));
+  } catch (e) {
+    console.warn('Mermaid CDN unavailable; diagrams shown as source text.', e);
+  }
+  if (mermaid) {
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    look: 'classic',
+    themeVariables: {
+      primaryColor: isDark ? '#232d3c' : '#fdfbf5',
+      primaryBorderColor: isDark ? '#8fb4e3' : '#1e3a5f',
+      primaryTextColor: isDark ? '#e8e6df' : '#1c2432',
+      secondaryColor: isDark ? '#2a2415' : '#faf3e3',
+      secondaryBorderColor: isDark ? '#d4a73a' : '#a16207',
+      secondaryTextColor: isDark ? '#e8e6df' : '#1c2432',
+      tertiaryColor: isDark ? '#222a36' : '#f4f0e7',
+      tertiaryBorderColor: isDark ? '#a8b6c8' : '#475569',
+      tertiaryTextColor: isDark ? '#e8e6df' : '#1c2432',
+      lineColor: isDark ? '#97a0ad' : '#6b7280',
+      fontSize: '14px',
+      fontFamily: "'Source Serif 4', Georgia, serif",
+      clusterBkg: isDark ? 'rgba(143,180,227,0.06)' : 'rgba(30,58,95,0.04)',
+      clusterBorder: isDark ? 'rgba(220,228,240,0.18)' : 'rgba(30,42,60,0.22)',
+      actorBkg: isDark ? '#232d3c' : '#fdfbf5',
+      actorBorder: isDark ? '#8fb4e3' : '#1e3a5f',
+      actorTextColor: isDark ? '#e8e6df' : '#1c2432',
+      signalColor: isDark ? '#97a0ad' : '#4b5563',
+      signalTextColor: isDark ? '#97a0ad' : '#4b5563',
+      loopTextColor: isDark ? '#d4a73a' : '#a16207',
+      noteBkgColor: isDark ? '#2a2415' : '#faf3e3',
+      noteBorderColor: isDark ? '#d4a73a' : '#a16207',
+      noteTextColor: isDark ? '#e8e6df' : '#1c2432',
+    }
+  });
+
+  window.renderMermaidIn = async view => {
+    const nodes = view.querySelectorAll('.mermaid:not([data-processed])');
+    if (nodes.length) {
+      try { await mermaid.run({ nodes }); } catch (e) { /* leave source text visible */ }
+    }
+  };
+  const active = document.querySelector('.view.active');
+  if (active) window.renderMermaidIn(active);
+  }
 </script>
 
 </body>
