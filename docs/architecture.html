@@ -659,7 +659,7 @@ flowchart TD
   ENV --> LEAN["Lean 4 kernel + Mathlib<br/><i>ground truth</i>"]
   ENV --> TEX["tectonic / latexmk<br/><i>compile check</i>"]
   ENV --> AX["arXiv + references.bib<br/><i>the literature</i>"]
-  LEAN --> OUT(["Artifact pair + trust-ledger grade + axiom manifest"])
+  LEAN --> OUT(["Workflow output, graded + manifested<br/><i>Prove: artifact pair · Critique: hole-ledger report ·<br/>Repair: verified patch · Assume: Papers.* library</i>"])
   TEX --> OUT
   EV["<b>Evaluation harness</b><br/>miniF2F · PutnamBench · anti-cheat"] -.-> O
   classDef entry stroke:#c08a24,stroke-width:1.6px;
@@ -794,6 +794,7 @@ flowchart LR
   PA -->|"re-critique<br/>passes"| VC((verified-closed))
   PA -->|"re-critique<br/>fails"| O
   O -->|"suspected hole disproven —<br/>step justified as written,<br/>justification recorded"| DI((dismissed))
+  VC -->|"overlapping repair invalidates —<br/>regression re-critique reopens,<br/>same id, reopen counter +1"| O
   O -->|"N reopens or<br/>budget out"| AB((abandoned))
   classDef s stroke:#14919b,stroke-width:1.6px;
   class O,PA s;
@@ -963,7 +964,7 @@ sequenceDiagram
       <ul class="plain">
         <li><strong>arXiv integration</strong> — search with category/author/date filters; downloads prefer <em>LaTeX source</em> over PDF text (far more useful to a model); content-addressed store at <code>papers/&lt;arxiv-id&gt;/</code>; rate-limited, cached, never re-fetches.</li>
         <li><strong>Bibliography</strong> — one canonical machine-maintained <code>references.bib</code>: entries auto-generated from arXiv metadata, deduped by arXiv id/DOI, stable cite keys (<code>author2023short</code>), validated in CI. The <code>cite</code> tool is the only write path.</li>
-        <li><strong>LaTeX pipeline</strong> — standard template with theorem/proof environments and a formalization-status block linking the <code>.lean</code> file; every document compile-checked (<code>tectonic</code>/<code>latexmk</code>) with errors fed back — the same loop shape as the kernel, weaker guarantee.</li>
+        <li><strong>LaTeX pipeline</strong> — standard template with theorem/proof environments and a formalization-status block linking the <code>.lean</code> file; every document compile-checked (<code>tectonic</code>/<code>latexmk</code>) with errors fed back — the same loop shape as the kernel, weaker guarantee. Compilation is sandboxed like Lean elaboration: TeX is code (<code>\input</code>, <code>\openout</code>, shell-escape), so generated documents build with shell-escape off, no network, read-only mounts, and an ephemeral output dir.</li>
         <li><strong>Results layout</strong> — <code>results/sqrt2_irrational/</code> holds <code>.tex</code>, <code>.lean</code>, and a manifest recording status and provenance.</li>
       </ul>
     </div>
@@ -972,7 +973,7 @@ sequenceDiagram
       <ul class="plain">
         <li><strong>Pinned toolchain</strong> — <code>lean-toolchain</code> + pinned Mathlib revision; <code>lake exe cache get</code> for prebuilt oleans. Reproducibility is non-negotiable for benchmarking.</li>
         <li><strong>Warm session pool</strong> — REPL workers cost 30–60 s to start (Mathlib import); keep a warm pool, recycle on memory bloat or crash.</li>
-        <li><strong>Sandboxing</strong> — model-generated Lean can execute arbitrary IO at elaboration time (<code>#eval</code>, <code>native_decide</code>): workers run in containers with no network and a read-only filesystem plus an ephemeral scratch dir.</li>
+        <li><strong>Sandboxing</strong> — model-generated Lean can execute arbitrary IO at elaboration time (<code>#eval</code>, <code>native_decide</code>): workers run in containers with no network and a read-only filesystem plus an ephemeral scratch dir. The LaTeX compiler runs under the same regime — generated TeX is equally untrusted.</li>
         <li><strong>Docker image</strong> — toolchain + Mathlib cache baked in, for CI and reproduction.</li>
       </ul>
       <h2 class="card-label lbl-slate" style="margin-top:18px"><span class="num">C9</span> Telemetry &amp; trajectories</h2>
@@ -1087,14 +1088,21 @@ flowchart LR
   </p>
 
   <div class="card card--hero" style="--i:1">
-    <h2 class="card-label lbl-green"><span class="num">GRADE</span> The trust ledger <span class="hint">every result gets exactly one of these</span></h2>
+    <h2 class="card-label lbl-green"><span class="num">GRADE</span> The trust ledger <span class="hint">two orthogonal dimensions — every result carries one grade from each</span></h2>
     <div class="verdict">
+      <p style="font-family:var(--font-mono); font-size:10.5px; letter-spacing:1.2px; text-transform:uppercase; color:var(--text-dim)">Formalization status</p>
       <div class="verdict-row"><span class="pip pip--full"></span><span><span class="what">Fully verified</span> <span class="how">— kernel-checked with standard axioms only (<code>propext</code>, <code>Classical.choice</code>, <code>Quot.sound</code>)</span></span></div>
       <div class="verdict-row"><span class="pip pip--modulo"></span><span><span class="what">Verified modulo</span> <span class="how">— kernel-checked, plus an explicit list of assumed paper results from <code>#print axioms</code></span></span></div>
       <div class="verdict-row"><span class="pip pip--sketch"></span><span><span class="what">Partially formalized</span> <span class="how">— Lean skeleton with <code>sorry</code>s remaining; the partial artifact is kept and its holes listed</span></span></div>
-      <div class="verdict-row"><span class="pip pip--partial"></span><span><span class="what">LaTeX only</span> <span class="how">— <em>complete</em> informal proof, no unresolved holes; formalization not yet attempted or out of reach</span></span></div>
-      <div class="verdict-row"><span class="pip pip--danger"></span><span><span class="what">Incomplete — known gaps</span> <span class="how">— critique–repair budget expired with holes abandoned; they're listed in the writeup, never hidden behind a clean grade</span></span></div>
+      <div class="verdict-row"><span class="pip pip--partial"></span><span><span class="what">Not formalized</span> <span class="how">— no usable Lean artifact; formalization not yet attempted or out of reach</span></span></div>
+      <p style="font-family:var(--font-mono); font-size:10.5px; letter-spacing:1.2px; text-transform:uppercase; color:var(--text-dim); margin-top:6px">Informal completeness</p>
+      <div class="verdict-row"><span class="pip pip--full"></span><span><span class="what">Complete</span> <span class="how">— the writeup's argument has no unresolved holes</span></span></div>
+      <div class="verdict-row"><span class="pip pip--danger"></span><span><span class="what">Known gaps</span> <span class="how">— critique–repair budget expired with holes abandoned; they're listed in the writeup, never hidden behind a clean grade</span></span></div>
     </div>
+    <p class="prose dim" style="font-size:12.5px; margin-top:12px">The dimensions are independent, so every
+    result has a deterministic verdict — a kernel-verified theorem with a gappy writeup is
+    <em>fully&nbsp;verified&nbsp;×&nbsp;known&nbsp;gaps</em>; a clean informal proof with a
+    <code>sorry</code>-laden skeleton is <em>partially&nbsp;formalized&nbsp;×&nbsp;complete</em>.</p>
   </div>
 
   <div class="grid2">
@@ -1144,6 +1152,8 @@ flowchart LR
   C -->|"standard three only"| FULL["<b>fully verified</b>"]
   C -->|"+ declared paper axioms"| MOD["<b>verified modulo</b><br/>manifest attached"]
   C -->|"sorryAx or smuggled"| REJ
+  NOTE["this flow grades the formal dimension —<br/>informal completeness (complete vs. known gaps)<br/>comes from the hole ledger at loop exit"]:::note
+  classDef note stroke:#c08a24,stroke-width:1.2px,stroke-dasharray:4 3;
   classDef good stroke:#10a06a,stroke-width:1.6px;
   class FULL,MOD good;
   classDef bad stroke:#d05353,stroke-width:1.6px;

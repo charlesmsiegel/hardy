@@ -25,12 +25,18 @@ get back:
    formal statement, whenever formalization is within reach (Mathlib coverage,
    tractable statement).
 
-The LaTeX document records formalization status (verified / verified modulo assumed
-paper results (see Component 6) / partially formalized with `sorry`s remaining / not
-yet formalized / **incomplete — known gaps**, when the critique–repair budget expired
-with holes abandoned: those holes are listed in the document, and the grade is never
-the reassuring "informal proof stands" one) and, when a Lean proof exists, the two
-are cross-linked so the
+The LaTeX document records **two orthogonal grades, one from each dimension**, so
+every result has a deterministic verdict:
+
+- *Formalization status*: verified / verified modulo assumed paper results (see
+  Component 6) / partially formalized with `sorry`s remaining / not formalized.
+- *Informal completeness*: complete / known gaps — the critique–repair budget
+  expired with holes abandoned; those holes are listed in the document, never
+  hidden behind a reassuring grade.
+
+A kernel-verified theorem whose writeup still has gaps, or a gap-free writeup with
+only a partial skeleton, each map to exactly one pair. When a Lean proof exists,
+the two artifacts are cross-linked so the
 informal writeup and formal proof state the same theorem. This
 mirrors how the strongest draft-sketch-prove systems work (informal reasoning first,
 formal second) and means the project always yields a usable artifact even when full
@@ -206,14 +212,17 @@ Loop discipline, so it converges instead of thrashing:
   with the justification recorded — resolves without touching the proof. Both
   `verified-closed` and `dismissed` count as resolved for the fixed point.
 - After a repair, Critique re-runs over the patch's blast radius — a fix must not
-  silently reopen a closed hole or introduce new ones.
+  silently reopen a closed hole or introduce new ones. If the re-critique finds
+  that overlapping changes invalidated an earlier `verified-closed` hole, that
+  entry returns to `open` — keeping its identity and incrementing its reopen
+  counter — rather than being logged as a new hole.
 - **No-progress detection**: a hole reopened N times triggers a strategy escalation
   (different decomposition, more search budget) or an honest stop.
 - **Critique-only requests exit at the report**: when the user asked only to find
   holes, the workflow ships its hole-ledger report — open holes included — without
   entering Repair; the loop continues past Critique only for prove/fix requests.
 - Exit is a fixed point: **no hole remains `open` or `patched`** — every entry is
-  `verified-closed` (result graded by the trust ledger; closed entries persist in
+  resolved, meaning `verified-closed` *or* `dismissed` (resolved entries persist in
   the ledger as history, so "empty" is never the test) — or budget is exhausted, in
   which case remaining holes are marked `abandoned` and the artifact ships with
   them *listed*, which is itself a useful result ("the proof is correct except for
@@ -282,6 +291,10 @@ LaTeX side of the output contract.
 - Every generated document is **compile-checked** (`latexmk`/`tectonic`) the same way
   Lean output is kernel-checked — errors feed back to the agent as structured
   messages. Weaker than kernel verification, but the same loop shape.
+- **Compilation is sandboxed like Lean elaboration**: TeX is code, not markup —
+  `\input`/`\openout` read and write files, and shell-escape executes commands.
+  Model-generated documents compile with shell-escape disabled, no network,
+  read-only mounts, and a dedicated ephemeral output directory.
 - Writeups live alongside their Lean counterparts (e.g. `results/sqrt2_irrational/`
   containing `.tex`, `.lean`, and a small manifest recording status and provenance).
 
@@ -361,7 +374,8 @@ same way. In order of preference:
   maintain a warm pool; recycle workers on memory bloat or crash.
 - **Sandboxing**: model-generated Lean code can execute arbitrary IO at elaboration
   time (`#eval`, `native_decide`). Run workers in containers with no network and a
-  read-only filesystem.
+  read-only filesystem. The LaTeX compiler runs under the same regime (see
+  Component 5) — generated TeX is equally untrusted input.
 - **Docker image** with toolchain + Mathlib cache baked in, for CI and for anyone
   reproducing results.
 
