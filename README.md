@@ -30,8 +30,8 @@ Three composable workflows, which hand a problem back and forth iteratively:
   verify the patch.
 
 Prove drafts, Critique finds the holes, Repair closes them one at a time, Critique
-re-checks — around the loop until the ledger is empty or the remaining holes are
-honestly reported.
+re-checks — around the loop until every hole is verified closed or the remaining
+ones are honestly reported.
 
 ## How
 

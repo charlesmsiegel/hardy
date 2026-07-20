@@ -353,7 +353,10 @@
     display: flex;
     justify-content: center;
     transition: transform 0.2s ease;
-    transform-origin: top center;
+    /* top-left origin: the scaled surface grows only rightward/downward, so every
+       region stays reachable via (nonnegative) scroll — top-center pushes the left
+       edge into unreachable negative overflow */
+    transform-origin: top left;
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--text-dim);
@@ -590,20 +593,20 @@
 </header>
 
 <nav class="tabbar" aria-label="Views">
-  <div class="tabbar-inner">
-    <button class="tab active" data-view="overview"><span class="k">1</span>Overview</button>
-    <button class="tab" data-view="workflows"><span class="k">2</span>Workflows</button>
-    <button class="tab" data-view="components"><span class="k">3</span>Components</button>
-    <button class="tab" data-view="frontier"><span class="k">4</span>Frontier Math</button>
-    <button class="tab" data-view="trust"><span class="k">5</span>Trust &amp; Eval</button>
-    <button class="tab" data-view="roadmap"><span class="k">6</span>Roadmap</button>
+  <div class="tabbar-inner" role="tablist">
+    <button class="tab active" role="tab" id="tab-overview" aria-controls="view-overview" aria-selected="true" data-view="overview"><span class="k">1</span>Overview</button>
+    <button class="tab" role="tab" id="tab-workflows" aria-controls="view-workflows" aria-selected="false" data-view="workflows"><span class="k">2</span>Workflows</button>
+    <button class="tab" role="tab" id="tab-components" aria-controls="view-components" aria-selected="false" data-view="components"><span class="k">3</span>Components</button>
+    <button class="tab" role="tab" id="tab-frontier" aria-controls="view-frontier" aria-selected="false" data-view="frontier"><span class="k">4</span>Frontier Math</button>
+    <button class="tab" role="tab" id="tab-trust" aria-controls="view-trust" aria-selected="false" data-view="trust"><span class="k">5</span>Trust &amp; Eval</button>
+    <button class="tab" role="tab" id="tab-roadmap" aria-controls="view-roadmap" aria-selected="false" data-view="roadmap"><span class="k">6</span>Roadmap</button>
   </div>
 </nav>
 
 <!-- ================================================================ -->
 <!-- VIEW 1: OVERVIEW                                                  -->
 <!-- ================================================================ -->
-<section class="view active" id="view-overview">
+<section class="view active" id="view-overview" role="tabpanel" aria-labelledby="tab-overview">
 
   <p class="view-intro" style="--i:0">
     Claude Code and Codex proved that the <strong>harness</strong> around a model — the loop, the
@@ -699,13 +702,13 @@ flowchart TD
 <!-- ================================================================ -->
 <!-- VIEW 2: WORKFLOWS                                                 -->
 <!-- ================================================================ -->
-<section class="view" id="view-workflows">
+<section class="view" id="view-workflows" role="tabpanel" aria-labelledby="tab-workflows">
 
   <p class="view-intro" style="--i:0">
     Every proof-oriented request is one of <strong>three composable workflows</strong>, or a chain of
     them. They hand a single problem back and forth — Prove drafts, Critique finds the gaps, Repair
-    closes them one at a time, Critique re-checks — around the loop until the ledger is empty or the
-    remaining holes are honestly reported. (A fourth workflow, <strong>Assume</strong> — &ldquo;assume
+    closes them one at a time, Critique re-checks — around the loop until no hole remains open or the
+    remaining ones are honestly reported. (A fourth workflow, <strong>Assume</strong> — &ldquo;assume
     this paper&rdquo; — prepares axiomatized paper libraries, standalone or as a preparatory step;
     see Frontier Math.)
   </p>
@@ -747,6 +750,8 @@ flowchart TD
 flowchart LR
   REQ(["'find a proof of X'"]) --> P["<b>Prove</b><br/>draft .tex + .lean"]
   EXT(["'find holes in this proof'<br/>any external proof"]) --> C
+  FIX(["'this proof has a hole;<br/>propose a fix'<br/>proof + known hole"]) --> LED["register the hole<br/>in the ledger"]
+  LED --> R
   P --> C["<b>Critique</b><br/>kernel · formalization probing ·<br/>adversarial skeptics"]
   C --> L[("hole ledger")]
   L --> D{"open<br/>holes?"}
@@ -762,7 +767,7 @@ flowchart LR
   class SHIP good;
       </pre>
     </div>
-    <p class="diagram-caption">exit is a fixed point: empty ledger, or budget out with holes listed — itself a useful result</p>
+    <p class="diagram-caption">exit is a fixed point: no hole open or patched (closed entries persist as history), or budget out with holes listed — itself a useful result</p>
   </div>
 
   <div class="grid2">
@@ -851,7 +856,7 @@ sequenceDiagram
 <!-- ================================================================ -->
 <!-- VIEW 3: COMPONENTS                                                -->
 <!-- ================================================================ -->
-<section class="view" id="view-components">
+<section class="view" id="view-components" role="tabpanel" aria-labelledby="tab-components">
 
   <p class="view-intro" style="--i:0">
     Nine components, from the REPL plumbing at the bottom to telemetry at the top. The tool layer is
@@ -980,7 +985,7 @@ sequenceDiagram
 <!-- ================================================================ -->
 <!-- VIEW 4: FRONTIER MATH                                             -->
 <!-- ================================================================ -->
-<section class="view" id="view-frontier">
+<section class="view" id="view-frontier" role="tabpanel" aria-labelledby="tab-frontier">
 
   <p class="view-intro" style="--i:0">
     Mathlib covers a lot, but real research builds on results that will never be formalized bottom-up
@@ -1062,7 +1067,7 @@ flowchart LR
 <!-- ================================================================ -->
 <!-- VIEW 5: TRUST & EVAL                                              -->
 <!-- ================================================================ -->
-<section class="view" id="view-trust">
+<section class="view" id="view-trust" role="tabpanel" aria-labelledby="tab-trust">
 
   <p class="view-intro" style="--i:0">
     You can't improve what you don't measure — and in a domain where the agent could
@@ -1140,7 +1145,7 @@ flowchart LR
 <!-- ================================================================ -->
 <!-- VIEW 6: ROADMAP                                                   -->
 <!-- ================================================================ -->
-<section class="view" id="view-roadmap">
+<section class="view" id="view-roadmap" role="tabpanel" aria-labelledby="tab-roadmap">
 
   <p class="view-intro" style="--i:0">
     Nine milestones, deliberately ordered: <strong>evaluation lands before multi-runtime support and
@@ -1189,10 +1194,12 @@ flowchart LR
       <div class="tl-item">
         <span class="tl-m">M7</span><span class="tl-t">Search strategies</span>
         <p class="tl-d">Sketch-and-discharge, parallel attempts, cheap-closer pre-pass; strategy comparison on the eval set.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — at least one strategy beats the M2 iterative-repair baseline on solve rate at equal budget, with the per-strategy comparison logged in the regression tracker.</div>
       </div>
       <div class="tl-item">
         <span class="tl-m">M8</span><span class="tl-t">Retrieval &amp; memory</span>
         <p class="tl-d">Semantic premise search, cross-theorem memory, context-summarization improvements.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — retrieval-augmented premise selection measurably improves solve rate or cost-per-solve over the built-in search tools, and a repeat run over a previously-solved domain is measurably cheaper than the first.</div>
       </div>
     </div>
   </div>
@@ -1248,7 +1255,11 @@ flowchart LR
   function switchView(name, pushHash = true) {
     const target = document.getElementById('view-' + name);
     if (!target) return;
-    tabs.forEach(t => t.classList.toggle('active', t.dataset.view === name));
+    tabs.forEach(t => {
+      const selected = t.dataset.view === name;
+      t.classList.toggle('active', selected);
+      t.setAttribute('aria-selected', String(selected));
+    });
     views.forEach(sec => sec.classList.toggle('active', sec === target));
     if (pushHash) history.replaceState(null, '', '#' + name);
     window.scrollTo({ top: 0 });

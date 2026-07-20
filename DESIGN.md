@@ -190,7 +190,7 @@ The workflows hand off to each other iteratively:
 
 ```
 Prove ──▶ draft ──▶ Critique ──▶ hole ledger
-                        ▲              │ empty? ──▶ done (status per trust ledger)
+                        ▲              │ none open/patched? ──▶ done (status per trust ledger)
                         │              ▼
                         └──────── Repair (one hole at a time)
 ```
@@ -203,10 +203,12 @@ Loop discipline, so it converges instead of thrashing:
   silently reopen a closed hole or introduce new ones.
 - **No-progress detection**: a hole reopened N times triggers a strategy escalation
   (different decomposition, more search budget) or an honest stop.
-- Exit is a fixed point: ledger empty (fully closed, graded by the trust ledger) or
-  budget exhausted — in which case the artifact ships with its remaining holes
-  *listed*, which is itself a useful result ("the proof is correct except for the
-  interchange of limits in Step 4, which we could not justify").
+- Exit is a fixed point: **no hole remains `open` or `patched`** — every entry is
+  `verified-closed` (result graded by the trust ledger; closed entries persist in
+  the ledger as history, so "empty" is never the test) — or budget is exhausted, in
+  which case remaining holes are marked `abandoned` and the artifact ships with
+  them *listed*, which is itself a useful result ("the proof is correct except for
+  the interchange of limits in Step 4, which we could not justify").
 
 Sketch-and-discharge (below) is the degenerate case where the holes are deliberate:
 a proof skeleton's `sorry`s are planned holes, discharged by the same Repair
@@ -436,9 +438,14 @@ You can't improve what you don't measure. This is as important as the agent itse
    proofs. Exit criterion: hand Hardy a proof with a known subtle gap; it finds the
    gap, patches it, and re-verifies to a clean ledger.
 8. **M7 — Search strategies**: sketch-and-discharge, parallel attempts, cheap-closer
-   pre-pass; strategy comparison on the eval set.
+   pre-pass; strategy comparison on the eval set. Exit criterion: at least one
+   strategy beats the M2 iterative-repair baseline on solve rate at equal budget,
+   with the per-strategy comparison logged in the regression tracker.
 9. **M8 — Retrieval & memory**: semantic premise search, cross-theorem memory,
-   context summarization improvements.
+   context summarization improvements. Exit criterion: retrieval-augmented premise
+   selection measurably improves solve rate or cost-per-solve over the built-in
+   search tools on the eval set, and a repeat run over a previously-solved domain
+   is measurably cheaper than the first (memory demonstrably reused).
 
 ## Open Questions
 
