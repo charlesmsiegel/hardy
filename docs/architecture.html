@@ -754,10 +754,11 @@ flowchart LR
   LED --> R
   P --> C["<b>Critique</b><br/>kernel · formalization probing ·<br/>adversarial skeptics"]
   C --> L[("hole ledger")]
-  L --> D{"open<br/>holes?"}
+  L --> D{"unresolved holes?<br/>(open or patched)"}
   D -->|"none"| SHIP["<b>Ship the workflow's output</b><br/>Prove: artifact pair + grade ·<br/>Critique: hole-ledger report ·<br/>Repair: verified patch"]
-  D -->|"open holes ·<br/>critique-only request"| SHIP
-  D -->|"open holes ·<br/>prove / repair chain"| R["<b>Repair</b><br/>fix one hole, verify patch"]
+  D -->|"patched — re-critique<br/>before anything ships"| C
+  D -->|"open ·<br/>critique-only request"| SHIP
+  D -->|"open ·<br/>prove / repair chain"| R["<b>Repair</b><br/>fix one hole, verify patch"]
   R -->|"re-critique the<br/>patch's blast radius"| C
   R -->|"same hole reopened<br/>N times"| ESC["escalate strategy —<br/>new decomposition,<br/>more budget"]
   ESC --> C
@@ -847,11 +848,19 @@ sequenceDiagram
     L-->>T: axiom manifest — standard axioms only
   else budget exhausted
     M->>M: keep usable checked skeleton, or discard the failed attempt
+    T->>L: print axioms audit on any retained skeleton
+    L-->>T: manifest for the partial artifact
   end
-  M->>T: write_latex + cite, embedding grade + manifest
-  T->>X: compile check
-  X-->>T: clean build
-  O-->>U: .tex always · .lean when verified or partial · grade + manifest
+  loop bounded retries until clean build
+    M->>T: write_latex + cite, embedding grade + manifest
+    T->>X: compile check
+    X-->>T: clean build, or structured TeX errors fed back
+  end
+  alt clean build
+    O-->>U: .tex always · .lean when verified or partial · grade + manifest
+  else TeX never built
+    O-->>U: honest failure report, with the .tex source and its errors
+  end
       </pre>
     </div>
   </div>
@@ -1038,6 +1047,8 @@ flowchart LR
   REV -->|"passes"| PKG["<b>Ship</b><br/>buildable package under<br/>papers_lean/ + manifest of<br/>paper ↔ axiom ↔ status"]
   REV -->|"flagged"| Q["<b>Quarantine</b><br/>pending human review"]
   FM -->|"cannot formalize<br/>faithfully"| SKIP["<b>Skip + list in manifest</b><br/>honest partial library beats<br/>a wrong complete one"]
+  SKIP -->|"rest of the selection<br/>continues"| PKG
+  Q -->|"excluded from the build,<br/>listed in the manifest"| PKG
   classDef warn stroke:#c2607e,stroke-width:1.6px;
   class REV,Q warn;
   classDef good stroke:#10a06a,stroke-width:1.6px;
@@ -1191,7 +1202,7 @@ flowchart LR
       </div>
       <div class="tl-item">
         <span class="tl-m">M2</span><span class="tl-t">Evaluation harness</span>
-        <p class="tl-d">miniF2F runner, anti-cheat validation, metrics + regression tracking.</p>
+        <p class="tl-d">miniF2F runner, anti-cheat validation, metrics + regression tracking. Until M6's hole ledger exists, results carry only the formalization-status grade; informal completeness reads <em>not assessed</em>, never defaulted to <em>complete</em>.</p>
         <div class="tl-exit"><strong>EXIT</strong> — reproducible baseline number for the M1 agent.</div>
       </div>
       <div class="tl-item">

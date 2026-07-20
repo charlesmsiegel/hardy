@@ -455,6 +455,9 @@ You can't improve what you don't measure. This is as important as the agent itse
    `.tex` writeup *and* a kernel-checked `.lean` proof, end to end.
 3. **M2 — Evaluation harness**: miniF2F runner, anti-cheat validation, metrics +
    regression tracking. Exit criterion: reproducible baseline number for M1 agent.
+   Note on grading before M6: until the hole ledger and critique–repair loop land,
+   results carry only the formalization-status dimension; informal completeness is
+   reported as *not assessed*, never defaulted to *complete*.
 4. **M3 — Literature layer**: arXiv search/fetch/read tools, paper store,
    machine-maintained `references.bib`, citations wired into writeups. Exit
    criterion: a writeup that cites fetched papers with a valid bibliography.
@@ -484,8 +487,11 @@ You can't improve what you don't measure. This is as important as the agent itse
 
 - REPL choice: `leanprover-community/repl` vs. Pantograph vs. LeanDojo — prototype
   against `repl` first, but keep the interaction layer abstract enough to swap.
-- Statement source of truth: for benchmarks, statements are given; for general use,
-  who formalizes? (Deferred with autoformalization.)
+- ~~Statement source of truth~~ — **decided**: benchmarks provide statements
+  verbatim (never modified — anti-cheat enforces this); for general use, Prove
+  formalizes the single statement itself, gated by a faithfulness check, core from
+  M1. Only bulk corpus autoformalization and automated statement-equivalence
+  checking remain deferred (see Later Phases).
 - How much Lean-specific prompting is too much? A harness goal is that *tool design*
   carries the Lean expertise, so weaker/general models still function.
 - ~~Assumed-paper granularity~~ — **decided**: extract the full statement inventory
