@@ -1,7 +1,12 @@
-# llm-math
+# Hardy
 
 An agentic harness for automated theorem proving — plug in any LLM and make it good
 at proving mathematical theorems.
+
+Named for G.H. Hardy, the rigorous partner who took Ramanujan's brilliant unproven
+claims and demanded proof — exactly this harness's relationship to the model plugged
+into it — and the author of *A Mathematician's Apology*, because the writeup matters
+as much as the proof.
 
 Ask it to prove that the square root of 2 is irrational and it produces **both** a
 kernel-checked Lean 4 proof and a compile-checked LaTeX writeup with citations into

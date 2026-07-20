@@ -1,4 +1,4 @@
-# llm-math: An Agentic Harness for Theorem Proving in Lean 4
+# Hardy: An Agentic Harness for Theorem Proving in Lean 4
 
 ## Vision
 
