@@ -3,14 +3,37 @@
 An agentic harness for automated theorem proving — plug in any LLM and make it good
 at proving mathematical theorems.
 
-Named for G.H. Hardy, the rigorous partner who took Ramanujan's brilliant unproven
-claims and demanded proof — exactly this harness's relationship to the model plugged
-into it — and the author of *A Mathematician's Apology*, because the writeup matters
-as much as the proof.
+## The name
+
+In 1913, G.H. Hardy received a letter from Srinivasa Ramanujan: pages of
+extraordinary mathematical claims, stated without proof. Hardy's response defined
+the collaboration — recognize the brilliance, then *demand the proof*. That is
+precisely this harness's relationship to the model plugged into it: the LLM supplies
+the flashes of insight; Hardy supplies the rigor, the verification, and the
+insistence that nothing ships until it's proved. Hardy also wrote
+*A Mathematician's Apology* — the writeup matters as much as the proof, which is why
+every result here comes with one.
+
+## What it does
 
 Ask it to prove that the square root of 2 is irrational and it produces **both** a
 kernel-checked Lean 4 proof and a compile-checked LaTeX writeup with citations into
 the project bibliography. LaTeX always; Lean wherever formalization is within reach.
+
+Three composable workflows, which hand a problem back and forth iteratively:
+
+- **Prove** — *"find a proof of X"*: search for a proof, produce the artifact pair.
+- **Critique** — *"find holes in this proof"*: take any proof — yours, the
+  literature's, or Hardy's own draft — and produce a structured ledger of gaps:
+  unjustified steps, missing cases, quantifier slips, misapplied citations.
+- **Repair** — *"this proof has a hole; propose a fix"*: patch one hole locally and
+  verify the patch.
+
+Prove drafts, Critique finds the holes, Repair closes them one at a time, Critique
+re-checks — around the loop until the ledger is empty or the remaining holes are
+honestly reported.
+
+## How
 
 The idea: Claude Code and Codex showed that the *harness* around a model (tight
 feedback loops, well-designed tools, context management) is as important as the model

@@ -422,7 +422,41 @@
 
   <div class="flow-arrow" style="--i:2">
     <svg viewBox="0 0 20 20"><path d="M10 4 L10 16 M6 12 L10 16 L14 12"/></svg>
-    the request enters the loop
+    the request enters the workflow loop
+  </div>
+
+  <!-- ⓪ Workflow loop -->
+  <div class="section section--gold" style="--i:2">
+    <h2 class="section-label"><span class="num">00</span> Prove · Critique · Repair <span class="hint">three workflows handing one problem back and forth</span></h2>
+    <div class="pipeline">
+      <div class="pipeline-step">
+        <div class="step-num">PROVE</div>
+        <div class="step-name">Draft</div>
+        <div class="step-detail">"Find a proof of X" —<br>candidate .tex + .lean</div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step pipeline-step--warn">
+        <div class="step-num">CRITIQUE</div>
+        <div class="step-name">Find holes</div>
+        <div class="step-detail">Kernel errors · formalization probing · adversarial skeptics → <strong>hole ledger</strong></div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <div class="step-num">REPAIR</div>
+        <div class="step-name">Fix one hole</div>
+        <div class="step-detail">Bridging lemma, added case, strengthened hypothesis; patch verified</div>
+      </div>
+      <div class="pipeline-arrow">↺</div>
+      <div class="pipeline-step">
+        <div class="step-num">EXIT</div>
+        <div class="step-name">Clean ledger</div>
+        <div class="step-detail">Loop until no holes remain — or ship with remaining holes listed honestly</div>
+      </div>
+    </div>
+    <div class="callout" style="margin-top:14px; padding:10px 16px; font-size:12.5px">
+      Critique also runs standalone on <strong>any proof you hand it</strong> — yours or the literature's.
+      Formalization doubles as hole detection: a step that resists Lean is a suspected gap.
+    </div>
   </div>
 
   <!-- ② Orchestrator -->

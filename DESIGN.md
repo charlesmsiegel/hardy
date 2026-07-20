@@ -97,6 +97,7 @@ theorem-proving equivalents:
 | `lookup_definition` | Unfold/show the definition and signature of any constant |
 | `list_premises` | Retrieval: given the current goal, rank candidate premises (start with built-in tactics + Loogle; add embedding retrieval later) |
 | `sketch` | Register a proof outline with `sorry` subgoals; harness tracks which subgoals remain |
+| `hole_ledger` | Record, update, and list holes found in a proof (id, location, description, status); the persistent state handed between the Prove / Critique / Repair workflows |
 | `note` | Informal scratchpad — write natural-language reasoning/proof plans that persist in context across attempts |
 | `arxiv_search` | Query the arXiv API (title/abstract/author/category); returns metadata + abstracts |
 | `fetch_paper` | Download a paper (PDF, and LaTeX source when available) into the project paper store; auto-adds a BibTeX entry |
@@ -147,7 +148,60 @@ with the **Claude Agent SDK** as the first implementation.
   have a degraded-but-functional path on the minimal loop, so results remain
   comparable across runtimes.
 
-## Component 4: Orchestration & Search Strategies
+## Component 4: Workflows, Orchestration & Search
+
+### The three core workflows
+
+Every user request is one of three composable workflows, or a chain of them:
+
+1. **Prove** — *"find a proof of X."* The flow described throughout: formalize the
+   statement, search for a proof, produce the LaTeX + Lean artifact pair.
+2. **Critique** — *"find holes in this proof."* Takes any proof — user-supplied, a
+   proof from the literature, or Hardy's own draft — and produces a structured
+   **hole ledger**: unjustified steps, missing cases, quantifier slips, circular
+   arguments, misapplied citations. Three detection layers, strongest first:
+   - *Kernel*: for Lean-backed proofs, holes are free and exact — `sorry`s, failed
+     elaboration, axiom-manifest surprises.
+   - *Formalization probing*: for informal proofs, attempt to formalize each step;
+     a step that resists formalization is a suspected hole. This is the deep reason
+     the dual-output contract pays off — formalization *is* hole detection.
+   - *Adversarial skeptics*: agents prompted to break each step (seek
+     counterexamples to intermediate claims, check edge cases, verify cited results
+     actually say what the proof needs).
+3. **Repair** — *"this proof has a hole; propose a fix."* Takes one ledger entry and
+   patches it locally — a bridging lemma, a strengthened hypothesis, an added case —
+   without regenerating the whole proof. Each patch is verified (kernel where
+   formal; re-critique where informal).
+
+### The critique–repair loop
+
+The workflows hand off to each other iteratively:
+
+```
+Prove ──▶ draft ──▶ Critique ──▶ hole ledger
+                        ▲              │ empty? ──▶ done (status per trust ledger)
+                        │              ▼
+                        └──────── Repair (one hole at a time)
+```
+
+Loop discipline, so it converges instead of thrashing:
+- The **hole ledger is persistent state**, shared across handoffs: each hole carries
+  an id, location, description, and status (`open` / `patched` /
+  `verified-closed` / `abandoned`).
+- After a repair, Critique re-runs over the patch's blast radius — a fix must not
+  silently reopen a closed hole or introduce new ones.
+- **No-progress detection**: a hole reopened N times triggers a strategy escalation
+  (different decomposition, more search budget) or an honest stop.
+- Exit is a fixed point: ledger empty (fully closed, graded by the trust ledger) or
+  budget exhausted — in which case the artifact ships with its remaining holes
+  *listed*, which is itself a useful result ("the proof is correct except for the
+  interchange of limits in Step 4, which we could not justify").
+
+Sketch-and-discharge (below) is the degenerate case where the holes are deliberate:
+a proof skeleton's `sorry`s are planned holes, discharged by the same Repair
+machinery.
+
+### Search strategies
 
 A single agent in a loop is the baseline; the interesting work is in strategies
 layered on top. Make strategy a pluggable interface so we can benchmark them against
@@ -364,9 +418,13 @@ You can't improve what you don't measure. This is as important as the agent itse
 6. **M5 — Runtime abstraction proven**: Strands adapter + built-in minimal loop
    (Ollama / OpenAI-compatible endpoints) with prompted tool-calling fallback.
    Exit criterion: the same eval runs across all three runtimes from config alone.
-7. **M6 — Search strategies**: sketch-and-discharge, parallel attempts, cheap-closer
+7. **M6 — Critique & repair**: the find-holes and fix-hole workflows, the hole
+   ledger, and the full critique–repair loop — including on user-supplied informal
+   proofs. Exit criterion: hand Hardy a proof with a known subtle gap; it finds the
+   gap, patches it, and re-verifies to a clean ledger.
+8. **M7 — Search strategies**: sketch-and-discharge, parallel attempts, cheap-closer
    pre-pass; strategy comparison on the eval set.
-8. **M7 — Retrieval & memory**: semantic premise search, cross-theorem memory,
+9. **M8 — Retrieval & memory**: semantic premise search, cross-theorem memory,
    context summarization improvements.
 
 ## Open Questions
