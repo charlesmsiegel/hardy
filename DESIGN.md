@@ -203,6 +203,9 @@ Loop discipline, so it converges instead of thrashing:
   silently reopen a closed hole or introduce new ones.
 - **No-progress detection**: a hole reopened N times triggers a strategy escalation
   (different decomposition, more search budget) or an honest stop.
+- **Critique-only requests exit at the report**: when the user asked only to find
+  holes, the workflow ships its hole-ledger report — open holes included — without
+  entering Repair; the loop continues past Critique only for prove/fix requests.
 - Exit is a fixed point: **no hole remains `open` or `patched`** — every entry is
   `verified-closed` (result graded by the trust ledger; closed entries persist in
   the ledger as history, so "empty" is never the test) — or budget is exhausted, in
@@ -306,10 +309,13 @@ literature anyway.
 1. `fetch_paper` pulls the paper (LaTeX source preferred) into the store.
 2. An extraction pass identifies the paper's definitions, theorems, lemmas, and
    propositions, with their statement text and numbering.
-3. A formalization pass turns each *result* into an `axiom` in a per-paper namespace
+3. A formalization pass mints an `axiom` for a result **on first use** — lazily,
+   from the eager inventory of step 2 — in a per-paper namespace
    (`Papers.<CiteKey>`), with a docstring linking back to the paper's numbering and
-   BibTeX key. Results the agent cannot faithfully formalize are skipped and listed
-   in the library's manifest — an honest partial library beats a wrong complete one.
+   BibTeX key. Lazy minting keeps the trusted axiom surface limited to what proofs
+   actually invoke. Results the agent cannot faithfully formalize are skipped and
+   listed in the library's manifest — an honest partial library beats a wrong
+   complete one.
 4. A **faithfulness review** pass (independent skeptic agent, different prompt or
    model) compares each axiom against the paper's stated theorem: quantifiers,
    hypotheses, edge conditions. Axioms it flags are quarantined pending human review.
@@ -455,10 +461,9 @@ You can't improve what you don't measure. This is as important as the agent itse
   who formalizes? (Deferred with autoformalization.)
 - How much Lean-specific prompting is too much? A harness goal is that *tool design*
   carries the Lean expertise, so weaker/general models still function.
-- Assumed-paper granularity: assume a whole paper eagerly, or lazily formalize only
-  the results a proof attempt actually wants to invoke? Lazy keeps the trust surface
-  minimal; eager gives the agent a browsable library. Likely answer: extract the
-  full statement inventory eagerly, formalize axioms lazily on first use.
+- ~~Assumed-paper granularity~~ — **decided**: extract the full statement inventory
+  eagerly (browsable library), mint and faithfulness-review axioms lazily on first
+  use (minimal trust surface). See the `assume_paper` workflow in Component 6.
 - Transitive assumptions: paper A's theorem depends on paper B's — do we chase the
   citation graph, or axiomatize A's results at face value? (Face value first; the
   manifest records exactly what was taken on faith either way.)

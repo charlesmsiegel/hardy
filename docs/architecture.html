@@ -756,7 +756,8 @@ flowchart LR
   C --> L[("hole ledger")]
   L --> D{"open<br/>holes?"}
   D -->|"none"| SHIP["<b>Ship the workflow's output</b><br/>Prove: artifact pair + grade ·<br/>Critique: hole-ledger report ·<br/>Repair: verified patch"]
-  D -->|"yes"| R["<b>Repair</b><br/>fix one hole, verify patch"]
+  D -->|"open holes ·<br/>critique-only request"| SHIP
+  D -->|"open holes ·<br/>prove / repair chain"| R["<b>Repair</b><br/>fix one hole, verify patch"]
   R -->|"re-critique the<br/>patch's blast radius"| C
   R -->|"same hole reopened<br/>N times"| ESC["escalate strategy —<br/>new decomposition,<br/>more budget"]
   ESC --> C
@@ -835,12 +836,16 @@ sequenceDiagram
     L-->>T: new goals or structured errors
     T-->>M: compact, actionable feedback
   end
-  T->>L: print axioms audit
-  L-->>T: axiom manifest — standard axioms only
+  alt kernel accepted
+    T->>L: print axioms audit
+    L-->>T: axiom manifest — standard axioms only
+  else budget exhausted
+    M->>M: keep usable checked skeleton, or discard the failed attempt
+  end
   M->>T: write_latex + cite, embedding grade + manifest
   T->>X: compile check
   X-->>T: clean build
-  O-->>U: .lean + .tex + trust grade + manifest
+  O-->>U: .tex always · .lean when verified or partial · grade + manifest
       </pre>
     </div>
   </div>
@@ -1022,7 +1027,7 @@ sequenceDiagram
       <pre class="mermaid">
 flowchart LR
   F["<b>Fetch</b><br/>PDF + LaTeX source<br/>into the paper store"] --> E["<b>Extract</b><br/>inventory of definitions,<br/>theorems, lemmas + numbering"]
-  E --> FM["<b>Formalize</b><br/>each result becomes an axiom<br/>in Papers.CiteKey, docstring<br/>linking paper + BibTeX key"]
+  E --> FM["<b>Formalize on first use</b><br/>axioms minted lazily from the<br/>eager inventory, in Papers.CiteKey,<br/>docstrings linking paper + BibTeX key"]
   FM --> REV{"<b>Faithfulness review</b><br/>independent skeptic checks<br/>quantifiers, hypotheses,<br/>edge conditions"}
   REV -->|"passes"| PKG["<b>Ship</b><br/>buildable package under<br/>papers_lean/ + manifest of<br/>paper ↔ axiom ↔ status"]
   REV -->|"flagged"| Q["<b>Quarantine</b><br/>pending human review"]
@@ -1056,10 +1061,11 @@ flowchart LR
   </div>
 
   <div class="callout" style="--i:5">
-    <strong>Open questions (with leanings):</strong> assume papers eagerly or lazily? — likely extract the
-    full statement inventory eagerly, mint axioms lazily on first use, keeping the trust surface minimal.
-    Chase transitive citations (paper A depends on paper B)? — take A at face value first; the manifest
-    records exactly what was taken on faith either way.
+    <strong>Adopted: eager inventory, lazy minting</strong> — the full statement inventory is extracted
+    up front (browsable), but an axiom is minted and faithfulness-reviewed only when a proof first
+    invokes that result, keeping the trusted surface minimal. Still open: chase transitive citations
+    (paper A depends on paper B)? — take A at face value first; the manifest records exactly what was
+    taken on faith either way.
   </div>
 
 </section>
