@@ -224,8 +224,10 @@ Loop discipline, so it converges instead of thrashing:
 - Exit is a fixed point: **no hole remains `open` or `patched`** — every entry is
   resolved, meaning `verified-closed` *or* `dismissed` (resolved entries persist in
   the ledger as history, so "empty" is never the test) — or budget is exhausted, in
-  which case remaining holes are marked `abandoned` and the artifact ships with
-  them *listed*, which is itself a useful result ("the proof is correct except for
+  which case remaining unresolved holes — `open`, or `patched` whose re-critique
+  never ran (an unverified patch is reported as such, never shipped as closed) —
+  are marked `abandoned` and the artifact ships with them *listed*, which is itself
+  a useful result ("the proof is correct except for
   the interchange of limits in Step 4, which we could not justify").
 
 Sketch-and-discharge (below) is the degenerate case where the holes are deliberate:
@@ -375,7 +377,10 @@ same way. In order of preference:
 - **Sandboxing**: model-generated Lean code can execute arbitrary IO at elaboration
   time (`#eval`, `native_decide`). Run workers in containers with no network and a
   read-only filesystem. The LaTeX compiler runs under the same regime (see
-  Component 5) — generated TeX is equally untrusted input.
+  Component 5) — generated TeX is equally untrusted input. The writable scratch
+  area is a per-invocation tmpfs with size and inode quotas, wiped when the
+  invocation ends or the worker recycles — untrusted code must not be able to fill
+  host storage shared with other warm workers.
 - **Docker image** with toolchain + Mathlib cache baked in, for CI and for anyone
   reproducing results.
 

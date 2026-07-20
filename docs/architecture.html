@@ -796,6 +796,7 @@ flowchart LR
   O -->|"suspected hole disproven —<br/>step justified as written,<br/>justification recorded"| DI((dismissed))
   VC -->|"overlapping repair invalidates —<br/>regression re-critique reopens,<br/>same id, reopen counter +1"| O
   O -->|"N reopens or<br/>budget out"| AB((abandoned))
+  PA -->|"budget out before re-critique —<br/>unverified patch reported as such"| AB
   classDef s stroke:#14919b,stroke-width:1.6px;
   class O,PA s;
   classDef g stroke:#10a06a,stroke-width:1.6px;
@@ -973,7 +974,7 @@ sequenceDiagram
       <ul class="plain">
         <li><strong>Pinned toolchain</strong> — <code>lean-toolchain</code> + pinned Mathlib revision; <code>lake exe cache get</code> for prebuilt oleans. Reproducibility is non-negotiable for benchmarking.</li>
         <li><strong>Warm session pool</strong> — REPL workers cost 30–60 s to start (Mathlib import); keep a warm pool, recycle on memory bloat or crash.</li>
-        <li><strong>Sandboxing</strong> — model-generated Lean can execute arbitrary IO at elaboration time (<code>#eval</code>, <code>native_decide</code>): workers run in containers with no network and a read-only filesystem plus an ephemeral scratch dir. The LaTeX compiler runs under the same regime — generated TeX is equally untrusted.</li>
+        <li><strong>Sandboxing</strong> — model-generated Lean can execute arbitrary IO at elaboration time (<code>#eval</code>, <code>native_decide</code>): workers run in containers with no network and a read-only filesystem plus an ephemeral scratch dir (per-invocation tmpfs with size/inode quotas, wiped on recycle — untrusted code can't fill host storage). The LaTeX compiler runs under the same regime — generated TeX is equally untrusted.</li>
         <li><strong>Docker image</strong> — toolchain + Mathlib cache baked in, for CI and reproduction.</li>
       </ul>
       <h2 class="card-label lbl-slate" style="margin-top:18px"><span class="num">C9</span> Telemetry &amp; trajectories</h2>
@@ -1281,6 +1282,7 @@ flowchart LR
       const selected = t.dataset.view === name;
       t.classList.toggle('active', selected);
       t.setAttribute('aria-selected', String(selected));
+      t.tabIndex = selected ? 0 : -1;  // roving tabindex: one tab stop for the whole tablist
     });
     views.forEach(sec => sec.classList.toggle('active', sec === target));
     if (pushHash) history.replaceState(null, '', '#' + name);
@@ -1290,6 +1292,21 @@ flowchart LR
 
   tabs.forEach(t => t.addEventListener('click', () => switchView(t.dataset.view)));
   window.addEventListener('hashchange', () => switchView(location.hash.slice(1) || 'overview', false));
+
+  // standard tablist arrow-key navigation
+  document.querySelector('.tabbar-inner').addEventListener('keydown', e => {
+    const names = Array.from(tabs, t => t.dataset.view);
+    const current = names.indexOf(document.querySelector('.tab.active').dataset.view);
+    let next = null;
+    if (e.key === 'ArrowRight') next = (current + 1) % names.length;
+    else if (e.key === 'ArrowLeft') next = (current - 1 + names.length) % names.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = names.length - 1;
+    if (next === null) return;
+    e.preventDefault();
+    switchView(names[next]);
+    tabs[next].focus();
+  });
 
   // number-key shortcuts 1–6
   const order = ['overview', 'workflows', 'components', 'frontier', 'trust', 'roadmap'];
