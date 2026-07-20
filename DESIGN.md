@@ -36,6 +36,10 @@ Lean attempt alone is not.
 
 ## Architecture Overview
 
+> An interactive, diagrammed version of this document — workflows, components,
+> frontier math, trust model, and roadmap — lives at
+> [docs/architecture.html](docs/architecture.html) (open it in any browser).
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                        Orchestrator                          │
@@ -169,9 +173,13 @@ Every user request is one of three composable workflows, or a chain of them:
      counterexamples to intermediate claims, check edge cases, verify cited results
      actually say what the proof needs).
 3. **Repair** — *"this proof has a hole; propose a fix."* Takes one ledger entry and
-   patches it locally — a bridging lemma, a strengthened hypothesis, an added case —
+   patches it locally — a bridging lemma, an added case, a corrected calculation —
    without regenerating the whole proof. Each patch is verified (kernel where
-   formal; re-critique where informal).
+   formal; re-critique where informal). **A repair may change the proof, never the
+   claim**: the original theorem statement is immutable during repair. If the only
+   viable fix strengthens a hypothesis or weakens the conclusion, that is a
+   *revised claim* — a distinct outcome, reported as such and re-entering the loop
+   as a new statement — never graded as a successful repair of the original.
 
 ### The critique–repair loop
 

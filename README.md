@@ -49,7 +49,9 @@ theorems can be proved *modulo* the literature — with every result carrying an
 explicit axiom manifest of exactly which paper results it relied on.
 
 See [DESIGN.md](DESIGN.md) for the full project outline: architecture, components,
-milestones, and open questions.
+milestones, and open questions — or open the interactive design map at
+[docs/architecture.html](docs/architecture.html) for a browsable, diagrammed
+version of the whole plan.
 
 ## Status
 
