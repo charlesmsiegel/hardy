@@ -793,18 +793,22 @@ flowchart LR
   O((open)) -->|"Repair<br/>proposes patch"| PA((patched))
   PA -->|"re-critique<br/>passes"| VC((verified-closed))
   PA -->|"re-critique<br/>fails"| O
+  O -->|"suspected hole disproven —<br/>step justified as written,<br/>justification recorded"| DI((dismissed))
   O -->|"N reopens or<br/>budget out"| AB((abandoned))
   classDef s stroke:#14919b,stroke-width:1.6px;
   class O,PA s;
   classDef g stroke:#10a06a,stroke-width:1.6px;
-  class VC g;
+  class VC,DI g;
   classDef b stroke:#d05353,stroke-width:1.6px;
   class AB b;
         </pre>
       </div>
       <p class="prose dim" style="font-size:12.5px; margin-top:8px">Each hole carries an id, location,
       description, and status. The ledger is <strong>persistent state shared across workflow handoffs</strong> —
-      abandoned holes are listed in the shipped artifact, never silently dropped.</p>
+      abandoned holes are listed in the shipped artifact, never silently dropped. <em>Dismissed</em>
+      handles critique false positives: a disproven suspicion resolves — with its justification
+      recorded — without touching a correct proof; it counts as resolved for the fixed point,
+      alongside verified-closed.</p>
     </div>
   </div>
 
@@ -884,7 +888,7 @@ sequenceDiagram
   </div>
 
   <div class="card" style="--i:2">
-    <h2 class="card-label lbl-navy"><span class="num">C2</span> Tool layer <span class="hint">the Read/Edit/Bash of theorem proving — 17 tools</span></h2>
+    <h2 class="card-label lbl-navy"><span class="num">C2</span> Tool layer <span class="hint">the Read/Edit/Bash of theorem proving — 16 tools</span></h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th style="width:180px">Tool</th><th>Purpose</th></tr></thead>
@@ -924,7 +928,7 @@ sequenceDiagram
   <div class="card bd-gold" style="--i:3">
     <h2 class="card-label lbl-gold"><span class="num">C3</span> Agent runtime layer <span class="hint">"plug any model in", realized one level above completions</span></h2>
     <p class="prose dim">Hardy abstracts over <strong>agent runtimes</strong> — systems that own the model
-    loop and tool execution. All 17 tools are defined once (name, JSON schema, handler) in harness code;
+    loop and tool execution. All 16 tools are defined once (name, JSON schema, handler) in harness code;
     each adapter only exposes them to its loop. That seam keeps the Lean/LaTeX/arXiv logic free of any
     SDK dependency. The interface is roughly <code>run(task, tools, config) → Trajectory</code>.</p>
     <div class="inner-grid" style="margin-top:12px">
@@ -1038,6 +1042,7 @@ flowchart LR
   class PKG good;
       </pre>
     </div>
+    <p class="diagram-caption">inside a prove/critique chain, minting fires on first use; a standalone Assume request names its selection (specific results, or the whole inventory) and mints it eagerly</p>
   </div>
 
   <div class="grid2">
@@ -1087,7 +1092,8 @@ flowchart LR
       <div class="verdict-row"><span class="pip pip--full"></span><span><span class="what">Fully verified</span> <span class="how">— kernel-checked with standard axioms only (<code>propext</code>, <code>Classical.choice</code>, <code>Quot.sound</code>)</span></span></div>
       <div class="verdict-row"><span class="pip pip--modulo"></span><span><span class="what">Verified modulo</span> <span class="how">— kernel-checked, plus an explicit list of assumed paper results from <code>#print axioms</code></span></span></div>
       <div class="verdict-row"><span class="pip pip--sketch"></span><span><span class="what">Partially formalized</span> <span class="how">— Lean skeleton with <code>sorry</code>s remaining; the partial artifact is kept and its holes listed</span></span></div>
-      <div class="verdict-row"><span class="pip pip--partial"></span><span><span class="what">LaTeX only</span> <span class="how">— informal proof stands on its own; formalization not yet attempted or out of reach</span></span></div>
+      <div class="verdict-row"><span class="pip pip--partial"></span><span><span class="what">LaTeX only</span> <span class="how">— <em>complete</em> informal proof, no unresolved holes; formalization not yet attempted or out of reach</span></span></div>
+      <div class="verdict-row"><span class="pip pip--danger"></span><span><span class="what">Incomplete — known gaps</span> <span class="how">— critique–repair budget expired with holes abandoned; they're listed in the writeup, never hidden behind a clean grade</span></span></div>
     </div>
   </div>
 

@@ -27,7 +27,10 @@ get back:
 
 The LaTeX document records formalization status (verified / verified modulo assumed
 paper results (see Component 6) / partially formalized with `sorry`s remaining / not
-yet formalized) and, when a Lean proof exists, the two are cross-linked so the
+yet formalized / **incomplete — known gaps**, when the critique–repair budget expired
+with holes abandoned: those holes are listed in the document, and the grade is never
+the reassuring "informal proof stands" one) and, when a Lean proof exists, the two
+are cross-linked so the
 informal writeup and formal proof state the same theorem. This
 mirrors how the strongest draft-sketch-prove systems work (informal reasoning first,
 formal second) and means the project always yields a usable artifact even when full
@@ -197,8 +200,11 @@ Prove ──▶ draft ──▶ Critique ──▶ hole ledger
 
 Loop discipline, so it converges instead of thrashing:
 - The **hole ledger is persistent state**, shared across handoffs: each hole carries
-  an id, location, description, and status (`open` / `patched` /
-  `verified-closed` / `abandoned`).
+  an id, location, description, and status (`open` / `patched` / `verified-closed` /
+  `dismissed` / `abandoned`). `dismissed` covers critique false positives: a
+  skeptic's suspected hole that is *disproven* — the step is justified as written,
+  with the justification recorded — resolves without touching the proof. Both
+  `verified-closed` and `dismissed` count as resolved for the fixed point.
 - After a repair, Critique re-runs over the patch's blast radius — a fix must not
   silently reopen a closed hole or introduce new ones.
 - **No-progress detection**: a hole reopened N times triggers a strategy escalation
@@ -309,13 +315,15 @@ literature anyway.
 1. `fetch_paper` pulls the paper (LaTeX source preferred) into the store.
 2. An extraction pass identifies the paper's definitions, theorems, lemmas, and
    propositions, with their statement text and numbering.
-3. A formalization pass mints an `axiom` for a result **on first use** — lazily,
-   from the eager inventory of step 2 — in a per-paper namespace
+3. A formalization pass mints an `axiom` for a result in a per-paper namespace
    (`Papers.<CiteKey>`), with a docstring linking back to the paper's numbering and
-   BibTeX key. Lazy minting keeps the trusted axiom surface limited to what proofs
-   actually invoke. Results the agent cannot faithfully formalize are skipped and
-   listed in the library's manifest — an honest partial library beats a wrong
-   complete one.
+   BibTeX key. **When to mint depends on how Assume was invoked**: inside a
+   prove/critique chain, axioms are minted lazily on first use, keeping the trusted
+   surface limited to what proofs actually invoke; a *standalone* Assume request —
+   which has no downstream proof to trigger first use — names the results to mint
+   (specific theorems, or the whole inventory) and mints that selection eagerly.
+   Results the agent cannot faithfully formalize are skipped and listed in the
+   library's manifest — an honest partial library beats a wrong complete one.
 4. A **faithfulness review** pass (independent skeptic agent, different prompt or
    model) compares each axiom against the paper's stated theorem: quantifiers,
    hypotheses, edge conditions. Axioms it flags are quarantined pending human review.
@@ -463,7 +471,8 @@ You can't improve what you don't measure. This is as important as the agent itse
   carries the Lean expertise, so weaker/general models still function.
 - ~~Assumed-paper granularity~~ — **decided**: extract the full statement inventory
   eagerly (browsable library), mint and faithfulness-review axioms lazily on first
-  use (minimal trust surface). See the `assume_paper` workflow in Component 6.
+  use (minimal trust surface); a standalone Assume request instead names its
+  selection to mint eagerly. See the `assume_paper` workflow in Component 6.
 - Transitive assumptions: paper A's theorem depends on paper B's — do we chase the
   citation graph, or axiomatize A's results at face value? (Face value first; the
   manifest records exactly what was taken on faith either way.)
