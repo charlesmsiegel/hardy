@@ -1,0 +1,1453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hardy — Design Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --font-display: 'Instrument Serif', Georgia, serif;
+    --font-body: 'Source Serif 4', Georgia, serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+    /* Light — cream paper, deep navy + gold */
+    --bg: #faf8f3;
+    --surface: #ffffff;
+    --surface2: #f4f0e7;
+    --surface-elevated: #fffdf8;
+    --border: rgba(30, 42, 60, 0.10);
+    --border-bright: rgba(30, 42, 60, 0.22);
+    --text: #1c2432;
+    --text-dim: #4b5563;
+
+    --navy: #1e3a5f;      --navy-dim: rgba(30, 58, 95, 0.07);
+    --gold: #a16207;      --gold-dim: rgba(161, 98, 7, 0.08);
+    --green: #047857;     --green-dim: rgba(4, 120, 87, 0.07);
+    --teal: #0e7490;      --teal-dim: rgba(14, 116, 144, 0.07);
+    --plum: #86274b;      --plum-dim: rgba(134, 39, 75, 0.07);
+    --slate: #475569;     --slate-dim: rgba(71, 85, 105, 0.08);
+    --danger: #b91c1c;    --danger-dim: rgba(185, 28, 28, 0.07);
+
+    --mm-node-bg: #fdfbf5;
+    --mm-node-border: #1e3a5f;
+    --mm-line: #6b7280;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161e;
+      --surface: #1a2029;
+      --surface2: #222a36;
+      --surface-elevated: #232d3c;
+      --border: rgba(220, 228, 240, 0.08);
+      --border-bright: rgba(220, 228, 240, 0.18);
+      --text: #e8e6df;
+      --text-dim: #97a0ad;
+
+      --navy: #8fb4e3;    --navy-dim: rgba(143, 180, 227, 0.10);
+      --gold: #d4a73a;    --gold-dim: rgba(212, 167, 58, 0.12);
+      --green: #4ade80;   --green-dim: rgba(74, 222, 128, 0.10);
+      --teal: #5eead4;    --teal-dim: rgba(94, 234, 212, 0.10);
+      --plum: #f0a5c0;    --plum-dim: rgba(240, 165, 192, 0.10);
+      --slate: #a8b6c8;   --slate-dim: rgba(168, 182, 200, 0.10);
+      --danger: #f87171;  --danger-dim: rgba(248, 113, 113, 0.10);
+
+      --mm-node-bg: #222a36;
+      --mm-node-border: #8fb4e3;
+      --mm-line: #97a0ad;
+    }
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    background-image:
+      radial-gradient(ellipse at 85% -5%, var(--gold-dim) 0%, transparent 45%),
+      radial-gradient(ellipse at 0% 40%, var(--navy-dim) 0%, transparent 40%);
+    color: var(--text);
+    font-family: var(--font-body);
+    min-height: 100vh;
+    line-height: 1.55;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .view.active > * {
+    animation: fadeUp 0.4s ease-out both;
+    animation-delay: calc(var(--i, 0) * 0.05s);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  /* ============ HEADER + NAV ============ */
+  .masthead {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 40px 32px 0;
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 50px;
+    letter-spacing: -0.5px;
+    line-height: 1.05;
+    text-wrap: balance;
+  }
+  h1 em { font-style: italic; color: var(--gold); }
+  .subtitle {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    margin-top: 8px;
+  }
+
+  .tabbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+    margin-top: 26px;
+  }
+  .tabbar-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 32px;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabbar-inner::-webkit-scrollbar { display: none; }
+  .tab {
+    appearance: none;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    padding: 13px 14px 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+  .tab .k {
+    display: inline-block;
+    border: 1px solid var(--border-bright);
+    border-radius: 3px;
+    font-size: 9px;
+    padding: 0 4px;
+    margin-right: 6px;
+    color: var(--text-dim);
+  }
+
+  /* ============ VIEWS ============ */
+  .view {
+    display: none;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 30px 32px 80px;
+  }
+  .view.active { display: block; }
+  .view > * + * { margin-top: 22px; }
+
+  .view-intro {
+    font-size: 16.5px;
+    max-width: 780px;
+    color: var(--text);
+  }
+  .view-intro strong { color: var(--gold); font-weight: 600; }
+
+  /* ============ CARDS ============ */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    min-width: 0;
+  }
+  .card--hero {
+    background: var(--surface-elevated);
+    border-color: color-mix(in srgb, var(--border) 40%, var(--gold) 60%);
+    box-shadow: 0 6px 24px rgba(20, 28, 44, 0.07);
+    padding: 26px 30px;
+  }
+  .card--recessed {
+    background: var(--surface2);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.04);
+  }
+
+  .card-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.6px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .card-label .num {
+    font-size: 10px;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    padding: 1px 5px;
+    opacity: 0.85;
+  }
+  .card-label .hint {
+    margin-left: auto;
+    color: var(--text-dim);
+    font-weight: 400;
+    letter-spacing: 0.4px;
+    text-transform: none;
+  }
+  .lbl-navy  { color: var(--navy); }
+  .lbl-gold  { color: var(--gold); }
+  .lbl-green { color: var(--green); }
+  .lbl-teal  { color: var(--teal); }
+  .lbl-plum  { color: var(--plum); }
+  .lbl-slate { color: var(--slate); }
+  .bd-navy  { border-color: color-mix(in srgb, var(--border) 55%, var(--navy) 45%); }
+  .bd-gold  { border-color: color-mix(in srgb, var(--border) 55%, var(--gold) 45%); }
+  .bd-green { border-color: color-mix(in srgb, var(--border) 55%, var(--green) 45%); }
+  .bd-teal  { border-color: color-mix(in srgb, var(--border) 55%, var(--teal) 45%); }
+  .bd-plum  { border-color: color-mix(in srgb, var(--border) 55%, var(--plum) 45%); }
+  .bd-slate { border-color: color-mix(in srgb, var(--border) 55%, var(--slate) 45%); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .grid2 > *, .grid3 > * { min-width: 0; }
+
+  .inner-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .inner-grid--2 { grid-template-columns: 1fr 1fr; }
+  .inner-grid--4 { grid-template-columns: repeat(4, 1fr); }
+  .inner-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 13px 15px;
+    min-width: 0;
+  }
+  .inner-card .title {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    flex-wrap: wrap;
+  }
+  .inner-card .tag {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .tag--first { background: var(--gold-dim); color: var(--gold); }
+  .tag--later { background: var(--slate-dim); color: var(--slate); }
+  .inner-card .desc {
+    color: var(--text-dim);
+    font-size: 12.5px;
+    line-height: 1.55;
+    overflow-wrap: break-word;
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background: var(--navy-dim);
+    color: var(--navy);
+    padding: 1px 5px;
+    border-radius: 3px;
+    overflow-wrap: break-word;
+  }
+
+  .prose {
+    font-size: 14.5px;
+    line-height: 1.7;
+    max-width: 820px;
+  }
+  .prose + .prose { margin-top: 10px; }
+  .prose.dim { color: var(--text-dim); }
+
+  ul.plain {
+    list-style: none;
+    font-size: 13.5px;
+    line-height: 1.85;
+  }
+  ul.plain li { padding-left: 16px; position: relative; overflow-wrap: break-word; }
+  ul.plain li::before {
+    content: '›';
+    color: var(--text-dim);
+    font-weight: 600;
+    position: absolute;
+    left: 0;
+  }
+  ul.plain li strong { font-weight: 600; }
+
+  /* ============ CONTRACT HERO ============ */
+  .request-quote {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-size: 27px;
+    text-align: center;
+  }
+  .contract {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 16px;
+  }
+  .artifact {
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 10px 16px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .artifact .mark { font-weight: 700; font-size: 14px; }
+  .artifact--tex  .mark { color: var(--gold); }
+  .artifact--lean .mark { color: var(--green); }
+  .artifact small { color: var(--text-dim); font-size: 10.5px; }
+
+  /* ============ MERMAID ============ */
+  .mermaid-wrap {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 26px 20px;
+    overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .mermaid-wrap .mermaid {
+    display: flex;
+    justify-content: center;
+    transition: transform 0.2s ease;
+    /* top-left origin: the scaled surface grows only rightward/downward, so every
+       region stays reachable via (nonnegative) scroll — top-center pushes the left
+       edge into unreachable negative overflow */
+    transform-origin: top left;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    white-space: pre;
+  }
+  .mermaid-wrap.is-zoomed { cursor: grab; }
+  .mermaid-wrap.is-panning { cursor: grabbing; user-select: none; }
+  .zoom-controls {
+    position: absolute;
+    top: 8px; right: 8px;
+    display: flex; gap: 2px;
+    z-index: 10;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px;
+  }
+  .zoom-controls button {
+    width: 28px; height: 28px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s, color 0.15s;
+  }
+  .zoom-controls button:hover { background: var(--border); color: var(--text); }
+  .mermaid .nodeLabel { font-family: var(--font-body) !important; font-size: 14.5px !important; }
+  .mermaid .edgeLabel { font-family: var(--font-mono) !important; font-size: 11.5px !important; }
+  .mermaid .node rect, .mermaid .node circle, .mermaid .node polygon, .mermaid .node path { stroke-width: 1.4px !important; }
+  .diagram-caption {
+    font-size: 12.5px;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    margin-top: 8px;
+    text-align: center;
+  }
+
+  /* ============ TABLE ============ */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+  }
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface2);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-dim);
+    text-align: left;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-bright);
+  }
+  tbody td {
+    padding: 9px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    overflow-wrap: break-word;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: var(--surface2); }
+  tr.group-row td {
+    background: var(--navy-dim);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--navy);
+    padding: 7px 16px;
+  }
+  td.tool-name { font-family: var(--font-mono); font-size: 12px; white-space: nowrap; font-weight: 500; }
+  td.tool-desc { color: var(--text-dim); }
+  td.tool-desc code { font-size: 11px; }
+
+  /* ============ VERDICT / STATUS ============ */
+  .verdict { display: flex; flex-direction: column; gap: 9px; font-size: 13.5px; }
+  .verdict-row { display: flex; align-items: baseline; gap: 9px; }
+  .pip { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; transform: translateY(1px); }
+  .pip--full    { background: var(--green); }
+  .pip--modulo  { background: var(--gold); }
+  .pip--sketch  { background: var(--teal); }
+  .pip--partial { background: var(--plum); }
+  .pip--danger  { background: var(--danger); }
+  .verdict-row .what { font-weight: 600; }
+  .verdict-row .how { color: var(--text-dim); font-size: 12.5px; }
+
+  /* ============ CODE SNIPPET ============ */
+  .snippet {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.7;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--text);
+  }
+  .snippet .kw { color: var(--plum); font-weight: 700; }
+  .snippet .cm { color: var(--text-dim); font-style: italic; }
+  .snippet .id { color: var(--navy); }
+  .snippet-title {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+
+  /* ============ TIMELINE ============ */
+  .timeline { position: relative; padding-left: 26px; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 7px; top: 8px; bottom: 8px;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--gold), var(--navy));
+    opacity: 0.45;
+    border-radius: 2px;
+  }
+  .tl-item { position: relative; padding: 0 0 22px; }
+  .tl-item:last-child { padding-bottom: 0; }
+  .tl-item::before {
+    content: '';
+    position: absolute;
+    left: -25px; top: 6px;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 2.5px solid var(--gold);
+  }
+  .tl-item:nth-child(n+5)::before { border-color: var(--navy); }
+  .tl-m {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--gold);
+    letter-spacing: 1px;
+  }
+  .tl-item:nth-child(n+5) .tl-m { color: var(--navy); }
+  .tl-t { font-weight: 600; font-size: 15.5px; display: inline; margin-left: 6px; }
+  .tl-d { color: var(--text-dim); font-size: 13.5px; margin-top: 3px; max-width: 780px; }
+  .tl-exit {
+    margin-top: 7px;
+    background: var(--green-dim);
+    border-left: 3px solid var(--green);
+    border-radius: 0 6px 6px 0;
+    padding: 7px 12px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    max-width: 780px;
+  }
+  .tl-exit strong { color: var(--green); font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 1px; }
+
+  /* ============ CALLOUT ============ */
+  .callout {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--gold);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--text-dim);
+  }
+  .callout strong { color: var(--text); font-weight: 600; }
+  .callout--danger { border-left-color: var(--danger); }
+  .callout--green { border-left-color: var(--green); }
+
+  /* ============ DECISION LOG ============ */
+  .decision {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    gap: 14px;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13.5px;
+  }
+  .decision:last-child { border-bottom: none; }
+  .decision .d-what {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--navy);
+    padding-top: 2px;
+  }
+  .decision .d-why { color: var(--text-dim); min-width: 0; }
+  .decision .d-why strong { color: var(--text); font-weight: 600; }
+
+  footer {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 32px 46px;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-align: center;
+  }
+
+  @media (max-width: 860px) {
+    .masthead { padding: 26px 18px 0; }
+    h1 { font-size: 36px; }
+    .tabbar-inner { padding: 0 12px; }
+    .view { padding: 22px 18px 60px; }
+    .grid2, .grid3, .inner-grid, .inner-grid--2, .inner-grid--4 { grid-template-columns: 1fr; }
+    .decision { grid-template-columns: 1fr; gap: 4px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <h1>Hardy <em>— the complete design map</em></h1>
+  <p class="subtitle">an agentic harness for theorem proving · Lean 4 + LaTeX · any model · every decision to date</p>
+</header>
+
+<nav class="tabbar" aria-label="Views">
+  <div class="tabbar-inner" role="tablist">
+    <button class="tab active" role="tab" id="tab-overview" aria-controls="view-overview" aria-selected="true" data-view="overview"><span class="k">1</span>Overview</button>
+    <button class="tab" role="tab" id="tab-workflows" aria-controls="view-workflows" aria-selected="false" data-view="workflows"><span class="k">2</span>Workflows</button>
+    <button class="tab" role="tab" id="tab-components" aria-controls="view-components" aria-selected="false" data-view="components"><span class="k">3</span>Components</button>
+    <button class="tab" role="tab" id="tab-frontier" aria-controls="view-frontier" aria-selected="false" data-view="frontier"><span class="k">4</span>Frontier Math</button>
+    <button class="tab" role="tab" id="tab-trust" aria-controls="view-trust" aria-selected="false" data-view="trust"><span class="k">5</span>Trust &amp; Eval</button>
+    <button class="tab" role="tab" id="tab-roadmap" aria-controls="view-roadmap" aria-selected="false" data-view="roadmap"><span class="k">6</span>Roadmap</button>
+  </div>
+</nav>
+
+<!-- ================================================================ -->
+<!-- VIEW 1: OVERVIEW                                                  -->
+<!-- ================================================================ -->
+<section class="view active" id="view-overview" role="tabpanel" aria-labelledby="tab-overview">
+
+  <p class="view-intro" style="--i:0">
+    Claude Code and Codex proved that the <strong>harness</strong> around a model — the loop, the
+    tools, the feedback channels, the context management — matters as much as the model itself.
+    Hardy applies that lesson to formal mathematics, where the payoff is uniquely large:
+    <strong>verification is free and perfect</strong>. Code has incomplete tests and prose has
+    subjective quality, but the Lean kernel gives an unambiguous ground-truth verdict on every
+    attempt. Hardy's job is to keep any capable LLM in a tight loop with that signal.
+  </p>
+
+  <div class="card card--hero" style="--i:1">
+    <h2 class="card-label lbl-gold"><span class="num">IN → OUT</span> The output contract <span class="hint">LaTeX always · Lean where possible</span></h2>
+    <p class="request-quote">&ldquo;Prove that &radic;2 is irrational.&rdquo;</p>
+    <div class="contract">
+      <div class="artifact artifact--tex">
+        <span class="mark">TeX</span>
+        <span>sqrt2_irrational.tex<br><small>formal statement · informal proof · citations · compile-checked · always produced</small></span>
+      </div>
+      <div class="artifact artifact--lean">
+        <span class="mark">∎</span>
+        <span>Sqrt2Irrational.lean<br><small>kernel-checked proof of the same statement · whenever formalization is in reach</small></span>
+      </div>
+    </div>
+    <p class="prose dim" style="margin-top:14px; text-align:center; font-size:13px">
+      The two artifacts are cross-linked, and whenever a formal statement exists the writeup's theorem
+      statement is rendered from it as a single source of truth — TeX compiling cleanly can never mask
+      a writeup about a different claim. Not-formalized runs preserve the user's original claim
+      verbatim, flagged as informally stated. A LaTeX proof marked &ldquo;not yet formalized&rdquo; is a result — a
+      failed Lean attempt alone is not. This mirrors how draft-sketch-prove systems work: informal
+      reasoning first, formal second.
+    </p>
+  </div>
+
+  <div class="card" style="--i:2">
+    <h2 class="card-label lbl-navy"><span class="num">MAP</span> The system at a glance <span class="hint">every request flows through these layers</span></h2>
+    <div class="mermaid-wrap">
+      <div class="zoom-controls">
+        <button data-zoom="1.2" title="Zoom in">+</button>
+        <button data-zoom="0.8" title="Zoom out">&minus;</button>
+        <button data-zoom="reset" title="Reset zoom">&#8634;</button>
+      </div>
+      <pre class="mermaid">
+flowchart TD
+  U(["User request<br/><i>prove · critique · repair · assume this paper</i>"]) --> O
+  subgraph HARNESS["&nbsp;Hardy&nbsp;"]
+    O["<b>Orchestrator</b><br/>workflow loop · search strategies · budgets · retries"]
+    O --> RT["<b>Agent runtime layer</b><br/>Claude Agent SDK → Strands → minimal loop"]
+    RT --> TL["<b>Tool layer</b><br/>prove · find · literature · write-up"]
+    TL --> ENV["<b>Environment layer</b><br/>warm Lean REPL pool · LaTeX toolchain · paper store · sandbox"]
+    TM["<b>Telemetry</b><br/>trajectories"]
+    RT -.-> TM
+  end
+  ENV --> LEAN["Lean 4 kernel + Mathlib<br/><i>ground truth</i>"]
+  ENV --> TEX["tectonic / latexmk<br/><i>compile check</i>"]
+  ENV --> AX["arXiv + references.bib<br/><i>the literature</i>"]
+  AX -->|"assume_paper: Papers.*<br/>axiom library, built +<br/>kernel-checked"| LEAN
+  LEAN --> OUT(["Workflow output, graded + manifested<br/><i>Prove: artifact pair · Critique: hole-ledger report ·<br/>Repair: verified patch · Assume: Papers.* library</i>"])
+  TEX --> OUT
+  EV["<b>Evaluation harness</b><br/>miniF2F · PutnamBench · anti-cheat"] -.-> O
+  classDef entry stroke:#c08a24,stroke-width:1.6px;
+  class U,OUT entry;
+      </pre>
+    </div>
+    <p class="diagram-caption">zoom: buttons, Ctrl/Cmd + scroll, drag to pan when zoomed</p>
+  </div>
+
+  <div class="grid2">
+    <div class="card bd-gold" style="--i:3">
+      <h2 class="card-label lbl-gold"><span class="num">NAME</span> Why &ldquo;Hardy&rdquo;</h2>
+      <p class="prose">In 1913, G.H. Hardy received a letter from Srinivasa Ramanujan: pages of
+      extraordinary claims, stated without proof. Hardy's response defined the collaboration —
+      recognize the brilliance, then <em>demand the proof</em>. That is precisely this harness's
+      relationship to the model plugged into it: the LLM supplies the flashes of insight; Hardy
+      supplies the rigor, the verification, and the insistence that nothing ships until it's proved.</p>
+      <p class="prose dim" style="margin-top:8px">Hardy also wrote <em>A Mathematician's Apology</em> —
+      the writeup matters as much as the proof, which is why every result here comes with one.</p>
+    </div>
+    <div class="card" style="--i:4">
+      <h2 class="card-label lbl-slate"><span class="num">LOG</span> Decisions to date</h2>
+      <div class="decision"><div class="d-what">Name</div><div class="d-why"><strong>Hardy</strong> — chosen over Porism, Ansatz, de Bruijn, Gentzen, Pólya. Aristotle, Hilbert, Bourbaki, Gödel, Ramanujan, Galois &amp; Erdős were already claimed by other provers.</div></div>
+      <div class="decision"><div class="d-what">Runtime</div><div class="d-why"><strong>Claude Agent SDK first</strong>, behind an abstraction that also admits Strands and bare model servers (Ollama, vLLM).</div></div>
+      <div class="decision"><div class="d-what">Language</div><div class="d-why"><strong>Python</strong> harness; the Lean side stays in Lean (community REPL over JSON/stdio).</div></div>
+      <div class="decision"><div class="d-what">Output</div><div class="d-why"><strong>Dual artifacts</strong>: LaTeX always, Lean where possible — never a bare formal proof, never an unverifiable claim.</div></div>
+      <div class="decision"><div class="d-what">Frontier</div><div class="d-why"><strong>&ldquo;Assume this paper&rdquo;</strong> — literature becomes axiomatized Lean libraries; results are proved <em>modulo</em> explicit assumptions.</div></div>
+    </div>
+  </div>
+
+  <div class="callout" style="--i:5">
+    <strong>How to read this map:</strong> the <em>Workflows</em> view covers the Prove / Critique / Repair
+    loop that drives everything; <em>Components</em> details all nine architectural layers;
+    <em>Frontier Math</em> covers assumed-paper libraries; <em>Trust &amp; Eval</em> covers how results are
+    graded and cheating is prevented; <em>Roadmap</em> has milestones M0–M8, the stack, and open questions.
+  </div>
+
+</section>
+
+<!-- ================================================================ -->
+<!-- VIEW 2: WORKFLOWS                                                 -->
+<!-- ================================================================ -->
+<section class="view" id="view-workflows" role="tabpanel" aria-labelledby="tab-workflows">
+
+  <p class="view-intro" style="--i:0">
+    Every proof-oriented request is one of <strong>three composable workflows</strong>, or a chain of
+    them. They hand a single problem back and forth — Prove drafts, Critique finds the gaps, Repair
+    closes them one at a time, Critique re-checks — around the loop until no hole remains open or the
+    remaining ones are honestly reported. (A fourth workflow, <strong>Assume</strong> — &ldquo;assume
+    this paper&rdquo; — prepares axiomatized paper libraries, standalone or as a preparatory step;
+    see Frontier Math.)
+  </p>
+
+  <div class="grid3">
+    <div class="card bd-navy" style="--i:1">
+      <h2 class="card-label lbl-navy"><span class="num">W1</span> Prove</h2>
+      <p class="prose dim" style="font-size:13.5px"><em>&ldquo;Find a proof of X.&rdquo;</em>
+      Formalize the statement — gated by an <em>independent</em> faithfulness review (separate prompt
+      or model, never the formalizer checking itself) — search for a proof using the strategy stack,
+      and produce the LaTeX + Lean artifact pair.</p>
+    </div>
+    <div class="card bd-plum" style="--i:2">
+      <h2 class="card-label lbl-plum"><span class="num">W2</span> Critique</h2>
+      <p class="prose dim" style="font-size:13.5px"><em>&ldquo;Find holes in this proof.&rdquo;</em>
+      Takes <strong>any</strong> proof — user-supplied, from the literature, or Hardy's own draft — and
+      produces a structured <strong>hole ledger</strong>: unjustified steps, missing cases, quantifier
+      slips, circular arguments, misapplied citations.</p>
+    </div>
+    <div class="card bd-green" style="--i:3">
+      <h2 class="card-label lbl-green"><span class="num">W3</span> Repair</h2>
+      <p class="prose dim" style="font-size:13.5px"><em>&ldquo;This proof has a hole; propose a fix.&rdquo;</em>
+      Takes one ledger entry and patches it locally — a bridging lemma, an added case, a corrected
+      calculation — without regenerating the whole proof. Every patch is verified: kernel where formal,
+      re-critique where informal. <strong>A repair may change the proof, never the claim</strong> — a fix
+      that would strengthen a hypothesis or weaken the conclusion is reported as a <em>revised claim</em>,
+      a distinct outcome, never a successful repair of the original.</p>
+    </div>
+  </div>
+
+  <div class="card" style="--i:4">
+    <h2 class="card-label lbl-gold"><span class="num">LOOP</span> The critique–repair loop <span class="hint">iterate to a fixed point</span></h2>
+    <div class="mermaid-wrap">
+      <div class="zoom-controls">
+        <button data-zoom="1.2" title="Zoom in">+</button>
+        <button data-zoom="0.8" title="Zoom out">&minus;</button>
+        <button data-zoom="reset" title="Reset zoom">&#8634;</button>
+      </div>
+      <pre class="mermaid">
+flowchart LR
+  REQ(["'find a proof of X'"]) --> P["<b>Prove</b><br/>draft .tex + .lean"]
+  EXT(["'find holes in this proof'<br/>any external proof"]) --> C
+  FIX(["'this proof has a hole;<br/>propose a fix'<br/>proof + known hole"]) --> LED["register the hole<br/>in the ledger"]
+  LED --> R
+  P --> C["<b>Critique</b><br/>kernel · formalization probing ·<br/>adversarial skeptics"]
+  C --> L[("hole ledger")]
+  L --> D{"unresolved holes?<br/>(open or patched)"}
+  D -->|"none"| SHIP["<b>Ship the workflow's output</b><br/>Prove: artifact pair + grade ·<br/>Critique: hole-ledger report ·<br/>Repair: verified patch"]
+  D -->|"patched — re-critique<br/>before anything ships"| C
+  D -->|"open ·<br/>critique-only request"| SHIP
+  D -->|"open ·<br/>prove / repair chain"| R["<b>Repair</b><br/>fix one hole, verify patch"]
+  R -->|"re-critique the<br/>patch's blast radius"| C
+  R -->|"only fix would change the claim —<br/><b>revised claim</b>, distinct outcome,<br/>re-enters as a new statement"| P
+  R -->|"same hole reopened<br/>N times"| ESC["escalate strategy —<br/>new decomposition,<br/>more budget"]
+  ESC -->|"retry with the<br/>new strategy"| C
+  ESC -->|"escalation also fails"| HON
+  D -->|"budget exhausted"| HON["<b>Honest stop</b><br/>ship with remaining<br/>holes listed"]
+  classDef warn stroke:#c2607e,stroke-width:1.6px;
+  class C,ESC warn;
+  classDef good stroke:#10a06a,stroke-width:1.6px;
+  class SHIP good;
+      </pre>
+    </div>
+    <p class="diagram-caption">exit is a fixed point: no hole open or patched (closed entries persist as history), or budget out with holes listed — itself a useful result. Exception: critique-only requests ship their ledger report immediately, open holes included</p>
+  </div>
+
+  <div class="grid2">
+    <div class="card" style="--i:5">
+      <h2 class="card-label lbl-plum"><span class="num">DETECT</span> Three detection layers <span class="hint">strongest first</span></h2>
+      <ul class="plain">
+        <li><strong>Kernel</strong> — for Lean-backed proofs, holes are free and exact: <code>sorry</code>s, failed elaboration, axiom-manifest surprises.</li>
+        <li><strong>Formalization probing</strong> — for informal proofs, attempt to formalize each step; a step that resists formalization is a suspected hole. This is the deep reason the dual-output contract pays off: <em>formalization is hole detection</em>.</li>
+        <li><strong>Adversarial skeptics</strong> — agents prompted to break each step: seek counterexamples to intermediate claims, check edge cases, verify cited results actually say what the proof needs.</li>
+      </ul>
+    </div>
+    <div class="card" style="--i:6">
+      <h2 class="card-label lbl-teal"><span class="num">STATE</span> Hole lifecycle <span class="hint">the <code>hole_ledger</code> tool's state machine</span></h2>
+      <div class="mermaid-wrap">
+        <div class="zoom-controls">
+          <button data-zoom="1.2" title="Zoom in">+</button>
+          <button data-zoom="0.8" title="Zoom out">&minus;</button>
+          <button data-zoom="reset" title="Reset zoom">&#8634;</button>
+        </div>
+        <pre class="mermaid">
+flowchart LR
+  O((open)) -->|"Repair<br/>proposes patch"| PA((patched))
+  PA -->|"re-critique<br/>passes"| VC((verified-closed))
+  PA -->|"re-critique fails —<br/>reopen counter +1"| O
+  O -->|"suspected hole disproven —<br/>step justified as written,<br/>justification recorded"| DI((dismissed))
+  VC -->|"overlapping repair invalidates —<br/>regression re-critique reopens,<br/>same id, reopen counter +1"| O
+  DI -->|"overlapping repair changes the step —<br/>justification now stale, reopens,<br/>same id, reopen counter +1"| O
+  O -->|"N reopens → strategy escalation<br/>first (per the loop); abandoned only<br/>if escalation fails too, or budget out"| AB((abandoned))
+  PA -->|"budget out before re-critique —<br/>unverified patch reported as such"| AB
+  classDef s stroke:#14919b,stroke-width:1.6px;
+  class O,PA s;
+  classDef g stroke:#10a06a,stroke-width:1.6px;
+  class VC,DI g;
+  classDef b stroke:#d05353,stroke-width:1.6px;
+  class AB b;
+        </pre>
+      </div>
+      <p class="prose dim" style="font-size:12.5px; margin-top:8px">Each hole carries an id, location,
+      description, and status. The ledger is <strong>persistent state shared across workflow handoffs</strong> —
+      abandoned holes are listed in the shipped artifact, never silently dropped. <em>Dismissed</em>
+      handles critique false positives: a disproven suspicion resolves — with its justification
+      recorded — without touching a correct proof; it counts as resolved for the fixed point,
+      alongside verified-closed.</p>
+    </div>
+  </div>
+
+  <div class="card" style="--i:7">
+    <h2 class="card-label lbl-navy"><span class="num">TRACE</span> One prove request through the stack <span class="hint">the M1 end-to-end path</span></h2>
+    <div class="mermaid-wrap">
+      <div class="zoom-controls">
+        <button data-zoom="1.2" title="Zoom in">+</button>
+        <button data-zoom="0.8" title="Zoom out">&minus;</button>
+        <button data-zoom="reset" title="Reset zoom">&#8634;</button>
+      </div>
+      <pre class="mermaid">
+sequenceDiagram
+  participant U as User
+  participant O as Orchestrator
+  participant M as Model via runtime
+  participant T as Tool layer
+  participant L as Lean REPL pool
+  participant X as LaTeX pipeline
+  U->>O: prove sqrt 2 is irrational
+  O->>M: task + tools + budgets
+  M->>T: formalize statement, sketch plan
+  T->>L: elaborate statement
+  L-->>T: elaborated goals, no errors
+  Note over M,T: faithfulness gate — an independent skeptic (separate prompt or model) confirms the formal statement matches the informal claim — never self-review
+  opt skeptic rejects the translation
+    M->>T: re-formalize and re-review (bounded) — otherwise stop with an unconfirmed-statement outcome, no proof attempted
+  end
+  loop until kernel accepts or budget out
+    M->>T: run_tactic / check_proof
+    T->>L: execute against warm session
+    L-->>T: new goals or structured errors
+    T-->>M: compact, actionable feedback
+  end
+  alt kernel accepted
+    T->>L: print axioms audit
+    L-->>T: axiom manifest — standard axioms only
+  else budget exhausted
+    M->>M: keep usable checked skeleton, or discard the failed attempt
+    opt usable skeleton retained
+      T->>L: print axioms audit on the retained skeleton
+      L-->>T: manifest for the partial artifact
+    end
+  end
+  loop bounded retries until clean build
+    M->>T: write_latex, embedding grade + manifest (cite joins at M3)
+    T->>X: compile check
+    X-->>T: clean build, or structured TeX errors fed back
+  end
+  alt clean build
+    O-->>U: .tex always · .lean when verified or partial · grade + manifest
+  else TeX never built
+    O-->>U: minimal compile-checked failure report (known-good template) + the failing .tex source and its errors — run graded as failed
+  end
+      </pre>
+    </div>
+  </div>
+
+  <div class="callout callout--green" style="--i:8">
+    <strong>Sketch-and-discharge is the degenerate case of this loop</strong> — a proof skeleton's
+    <code>sorry</code>s are <em>planned</em> holes, discharged by the same Repair machinery. One
+    mechanism covers deliberate decomposition and discovered gaps alike.
+  </div>
+
+</section>
+
+<!-- ================================================================ -->
+<!-- VIEW 3: COMPONENTS                                                -->
+<!-- ================================================================ -->
+<section class="view" id="view-components" role="tabpanel" aria-labelledby="tab-components">
+
+  <p class="view-intro" style="--i:0">
+    Nine components, from the REPL plumbing at the bottom to telemetry at the top. The tool layer is
+    the heart of the harness thesis: <strong>tool design carries the Lean expertise</strong>, so even
+    weaker general-purpose models can function.
+  </p>
+
+  <div class="card bd-green" style="--i:1">
+    <h2 class="card-label lbl-green"><span class="num">C1</span> Lean interaction layer <span class="hint">the foundation everything sits on</span></h2>
+    <p class="prose dim">Whole-file <code>lake build</code> cycles take 30 s–minutes with Mathlib — far too
+    slow for an inner loop. The model needs fast, structured feedback:</p>
+    <div class="inner-grid" style="margin-top:12px">
+      <div class="inner-card"><div class="title">Persistent REPL sessions</div><div class="desc">Mathlib imported once, reused across many attempts. Start with <code>leanprover-community/repl</code> (JSON-over-stdio, proof-state pickling); keep the layer abstract enough to swap in Pantograph or LeanDojo.</div></div>
+      <div class="inner-card"><div class="title">Structured feedback</div><div class="desc">Goal states (hypotheses + targets), errors with positions, warnings, elaboration info — parsed into typed objects, never raw text.</div></div>
+      <div class="inner-card"><div class="title">Two checking granularities</div><div class="desc"><em>Tactic-level</em>: one tactic against a proof state, enabling tree search. <em>Declaration-level</em>: the whole proof — the final source of truth.</div></div>
+      <div class="inner-card"><div class="title">Incremental via <code>sorry</code></div><div class="desc">Sketch a skeleton with <code>have</code>/<code>sorry</code> placeholders, discharge each subgoal independently — parallelizes naturally.</div></div>
+      <div class="inner-card"><div class="title">State pickling</div><div class="desc">Snapshot and restore proof states so search can branch without replaying tactic prefixes. Pickling restores proof states, <em>not</em> declarations — so independent runs fork from the pristine pinned environment (warm process, clean declarations) to prevent cross-run contamination.</div></div>
+      <div class="inner-card"><div class="title">Resource limits</div><div class="desc">Per-tactic and per-proof timeouts (<code>maxHeartbeats</code>, wall clock, memory) — a runaway <code>decide</code> or <code>simp</code> must never stall the loop.</div></div>
+    </div>
+  </div>
+
+  <div class="card" style="--i:2">
+    <h2 class="card-label lbl-navy"><span class="num">C2</span> Tool layer <span class="hint">the Read/Edit/Bash of theorem proving — 16 tools</span></h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th style="width:180px">Tool</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr class="group-row"><td colspan="2">Proving</td></tr>
+          <tr><td class="tool-name">check_proof</td><td class="tool-desc">Submit a full proof for a theorem statement; returns success or structured errors</td></tr>
+          <tr><td class="tool-name">run_tactic</td><td class="tool-desc">Apply a tactic to a named proof state; returns new goals or error</td></tr>
+          <tr><td class="tool-name">get_goal_state</td><td class="tool-desc">Pretty-printed goals with hypotheses at any <code>sorry</code>/position</td></tr>
+          <tr><td class="tool-name">sketch</td><td class="tool-desc">Register a proof outline with <code>sorry</code> subgoals; harness tracks which remain</td></tr>
+          <tr class="group-row"><td colspan="2">Search &amp; retrieval</td></tr>
+          <tr><td class="tool-name">search_lemmas</td><td class="tool-desc">Find Mathlib lemmas: <code>exact?</code>/<code>apply?</code>/<code>rw?</code> (proof-state-driven), Loogle (type-pattern), LeanSearch (natural language)</td></tr>
+          <tr><td class="tool-name">lookup_definition</td><td class="tool-desc">Unfold/show the definition and signature of any constant</td></tr>
+          <tr><td class="tool-name">list_premises</td><td class="tool-desc">Rank candidate premises for the current goal (built-in tactics + Loogle first; embedding retrieval later)</td></tr>
+          <tr class="group-row"><td colspan="2">Workflow state</td></tr>
+          <tr><td class="tool-name">hole_ledger</td><td class="tool-desc">Record, update, and list holes (id, location, description, status) — the persistent state handed between Prove / Critique / Repair</td></tr>
+          <tr><td class="tool-name">note</td><td class="tool-desc">Informal scratchpad — natural-language reasoning and proof plans that persist across attempts</td></tr>
+          <tr class="group-row"><td colspan="2">Literature</td></tr>
+          <tr><td class="tool-name">arxiv_search</td><td class="tool-desc">Query the arXiv API (title/abstract/author/category); returns metadata + abstracts</td></tr>
+          <tr><td class="tool-name">fetch_paper</td><td class="tool-desc">Download PDF + LaTeX source (when available) into the paper store; registers the paper in the bibliography by delegating to <code>cite</code>, the sole <code>.bib</code> writer. Archive extraction treats the download as untrusted: path-normalized, symlink-safe unpacking under byte/file-count quotas in an isolated temp dir, admitted to the store atomically</td></tr>
+          <tr><td class="tool-name">read_paper</td><td class="tool-desc">Serve stored papers back in digestible per-section chunks, math source intact</td></tr>
+          <tr><td class="tool-name">assume_paper</td><td class="tool-desc">Turn a stored paper's results into an axiomatized Lean library later proofs can import (→ Frontier Math)</td></tr>
+          <tr><td class="tool-name">list_assumptions</td><td class="tool-desc">Show assumed-paper libraries in scope; for any theorem, its axiom manifest — which paper results it actually used</td></tr>
+          <tr class="group-row"><td colspan="2">Writeup</td></tr>
+          <tr><td class="tool-name">cite</td><td class="tool-desc">Look up or add an entry in <code>references.bib</code>; returns the cite key — the <em>only</em> write path to the bibliography</td></tr>
+          <tr><td class="tool-name">write_latex</td><td class="tool-desc">Write/update a LaTeX document; the harness compile-checks it and feeds errors back</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout" style="margin-top:14px">
+      <strong>Design rules learned from coding agents:</strong> tools return compact, high-signal output
+      (truncate huge goal states, dedup repeated errors) · errors are actionable (failing position,
+      expected vs. actual type, nearby context) · the model never guesses hidden state — everything is
+      observable via tools.
+    </div>
+  </div>
+
+  <div class="card bd-gold" style="--i:3">
+    <h2 class="card-label lbl-gold"><span class="num">C3</span> Agent runtime layer <span class="hint">"plug any model in", realized one level above completions</span></h2>
+    <p class="prose dim">Hardy abstracts over <strong>agent runtimes</strong> — systems that own the model
+    loop and tool execution. All 16 tools are defined once (name, JSON schema, handler) in harness code;
+    each adapter only exposes them to its loop. That seam keeps the Lean/LaTeX/arXiv logic free of any
+    SDK dependency. The interface is roughly <code>run(task, tools, config) → Trajectory</code>.</p>
+    <div class="inner-grid" style="margin-top:12px">
+      <div class="inner-card"><div class="title">Claude Agent SDK <span class="tag tag--first">first</span></div><div class="desc">Production-quality loop, native tool use, context compaction, subagents for free. The MVP builds here.</div></div>
+      <div class="inner-card"><div class="title">Strands Agents <span class="tag tag--later">second</span></div><div class="desc">The proof the abstraction holds — and multi-provider model support (Bedrock, LiteLLM, …) through one adapter.</div></div>
+      <div class="inner-card"><div class="title">Minimal built-in loop <span class="tag tag--later">third</span></div><div class="desc">Ollama / vLLM / OpenAI-compatible endpoints. Native tool calling where supported; prompted-JSON fallback where not. This is what &ldquo;any model&rdquo; ultimately means.</div></div>
+    </div>
+    <ul class="plain" style="margin-top:12px">
+      <li><strong>Config, not code</strong> — runtime, model, context window, cost caps, parallelism, reasoning-effort knobs are all per-run configuration.</li>
+      <li><strong>Prompt templates versioned and swappable</strong> — prompt strategy is a first-class experimental variable.</li>
+      <li><strong>Leaky-abstraction policy</strong> — runtime-specific features (SDK subagents, compaction) live behind capability flags, but every strategy must have a degraded-but-functional path on the minimal loop so results stay comparable across runtimes.</li>
+    </ul>
+  </div>
+
+  <div class="card" style="--i:4">
+    <h2 class="card-label lbl-navy"><span class="num">C4</span> Orchestration &amp; search strategies <span class="hint">pluggable, benchmarked against each other</span></h2>
+    <p class="prose dim">The Prove / Critique / Repair workflows (→ Workflows view) run on a strategy
+    stack. A single agent in a loop is the baseline; the interesting work is layered on top:</p>
+    <div class="inner-grid" style="margin-top:12px">
+      <div class="inner-card"><div class="title">1 · Iterative repair <span class="tag tag--first">MVP</span></div><div class="desc">Attempt whole proof → read errors → revise → repeat within budget. Surprisingly strong with good error feedback.</div></div>
+      <div class="inner-card"><div class="title">2 · Sketch-and-discharge</div><div class="desc">Informal plan → <code>have</code>/<code>sorry</code> skeleton → subgoals discharged independently; parallel sub-agents, cheaper models on easy subgoals.</div></div>
+      <div class="inner-card"><div class="title">3 · Best-first tactic search</div><div class="desc">Frontier of proof states; the model proposes k tactics per state, ranked by model or heuristic scores. AlphaProof/ReProver-style with a general LLM as the policy.</div></div>
+      <div class="inner-card"><div class="title">4 · Parallel diverse attempts</div><div class="desc">n independent attempts, different temperatures/prompts/strategies; first verified proof wins. Verification makes majority voting unnecessary — pass@k is the natural metric.</div></div>
+      <div class="inner-card"><div class="title">5 · Hybrid automation</div><div class="desc">Cheap closers first — <code>simp</code>, <code>omega</code>, <code>aesop</code>, <code>exact?</code>, <code>duper</code> — before spending model tokens on a subgoal.</div></div>
+      <div class="inner-card"><div class="title">Cross-cutting</div><div class="desc"><strong>Budgets</strong> (tokens, wall-clock, Lean CPU; graceful degradation) · <strong>context management</strong> (failed attempts distilled into lessons, not replayed) · <strong>memory across theorems</strong> (later).</div></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card bd-plum" style="--i:5">
+      <h2 class="card-label lbl-plum"><span class="num">C5</span> Literature &amp; writeup layer</h2>
+      <ul class="plain">
+        <li><strong>arXiv integration</strong> — search with category/author/date filters; downloads prefer <em>LaTeX source</em> over PDF text (far more useful to a model); version-keyed store at <code>papers/&lt;arxiv-id&gt;v&lt;N&gt;/</code> with content digests in the manifest, so cached entries are immutable and citations name the exact revision used; rate-limited, cached, never re-fetches a stored version.</li>
+        <li><strong>Bibliography</strong> — one canonical machine-maintained <code>references.bib</code>: entries auto-generated from arXiv metadata, deduped by arXiv id/DOI, stable cite keys (<code>author2023short</code>), validated in CI. The <code>cite</code> tool is the only write path.</li>
+        <li><strong>LaTeX pipeline</strong> — standard template with theorem/proof environments and a formalization-status block linking the <code>.lean</code> file; every document compile-checked (<code>tectonic</code>/<code>latexmk</code>) with errors fed back — the same loop shape as the kernel, weaker guarantee. Compilation is sandboxed like Lean elaboration: TeX is code (<code>\input</code>, <code>\openout</code>, shell-escape), so generated documents build with shell-escape off, no network, read-only mounts, and an ephemeral output dir.</li>
+        <li><strong>Results layout</strong> — <code>results/sqrt2_irrational/</code> holds <code>.tex</code>, <code>.lean</code>, and a manifest recording status and provenance.</li>
+      </ul>
+    </div>
+    <div class="card bd-slate" style="--i:6">
+      <h2 class="card-label lbl-slate"><span class="num">C7</span> Environment management</h2>
+      <ul class="plain">
+        <li><strong>Pinned toolchain</strong> — <code>lean-toolchain</code> + pinned Mathlib revision; <code>lake exe cache get</code> for prebuilt oleans. Reproducibility is non-negotiable for benchmarking.</li>
+        <li><strong>Warm session pool</strong> — REPL workers cost 30–60 s to start (Mathlib import); keep a warm pool, recycle on memory bloat or crash. Between independent runs, workers reset to the pristine base environment — one run's declarations and axioms must never leak into the next.</li>
+        <li><strong>Sandboxing</strong> — model-generated Lean can execute arbitrary IO at elaboration time (<code>#eval</code>, <code>native_decide</code>): workers run in containers with no network and a read-only filesystem plus an ephemeral scratch dir (per-invocation tmpfs with size/inode quotas, wiped on recycle — untrusted code can't fill host storage), and a per-invocation <code>pids.max</code> with minimal capabilities so spawned children can't exhaust host PIDs. The LaTeX compiler runs under the same regime — generated TeX is equally untrusted.</li>
+        <li><strong>Docker image</strong> — toolchain + Mathlib cache baked in, for CI and reproduction.</li>
+      </ul>
+      <h2 class="card-label lbl-slate" style="margin-top:18px"><span class="num">C9</span> Telemetry &amp; trajectories</h2>
+      <ul class="plain">
+        <li>Every run logged as a structured trajectory: messages, tool calls, Lean feedback, timings, token counts.</li>
+        <li>Uses: debugging the harness, comparing strategies, mining failure modes — and eventually distillation/fine-tuning data for smaller models.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout" style="--i:7">
+    <strong>C6 (assumed-paper libraries)</strong> has its own view — <em>Frontier Math</em> — and
+    <strong>C8 (evaluation)</strong> lives in <em>Trust &amp; Eval</em>. They're the two components with the
+    most subtlety, so they get room to breathe.
+  </div>
+
+</section>
+
+<!-- ================================================================ -->
+<!-- VIEW 4: FRONTIER MATH                                             -->
+<!-- ================================================================ -->
+<section class="view" id="view-frontier" role="tabpanel" aria-labelledby="tab-frontier">
+
+  <p class="view-intro" style="--i:0">
+    Mathlib covers a lot, but real research builds on results that will never be formalized bottom-up
+    in time to be useful. The escape hatch: <strong>&ldquo;assume this paper&rdquo;</strong> — formalize a
+    paper's <em>statements</em> (never its proofs) as Lean <code>axiom</code> declarations, and prove new
+    results in the context of those assumptions. This is how working mathematicians already treat the
+    literature; Hardy just makes the trust chain machine-checked.
+  </p>
+
+  <div class="card bd-plum" style="--i:1">
+    <h2 class="card-label lbl-plum"><span class="num">MECH</span> The mechanism <span class="hint">Lean's <code>axiom</code> is exactly the right primitive</span></h2>
+    <p class="prose dim">Axiom dependencies are tracked by the kernel and surfaced by
+    <code>#print axioms</code>, so a downstream theorem automatically reports which paper results it
+    leaned on:</p>
+    <div class="snippet" style="margin-top:12px"><span class="kw">namespace</span> <span class="id">Papers.Smith2023</span>  <span class="cm">-- arXiv 2301.12345</span>
+
+<span class="cm">/-- Theorem 3.2 of [smith2023modular]: … -/</span>
+<span class="kw">axiom</span> <span class="id">modular_lifting</span> (p : ℕ) (hp : p.Prime) (hp5 : 5 ≤ p) : …
+
+<span class="kw">end</span> <span class="id">Papers.Smith2023</span></div>
+    <p class="prose dim" style="margin-top:12px">The anti-cheat check stops being just a cheat detector
+    and becomes a <strong>dependency ledger</strong>: every result is either <em>fully verified</em>
+    (standard axioms only) or <em>verified modulo</em> an explicit list of assumed paper results.</p>
+  </div>
+
+  <div class="card" style="--i:2">
+    <h2 class="card-label lbl-plum"><span class="num">PIPE</span> The <code>assume_paper</code> pipeline</h2>
+    <div class="mermaid-wrap">
+      <div class="zoom-controls">
+        <button data-zoom="1.2" title="Zoom in">+</button>
+        <button data-zoom="0.8" title="Zoom out">&minus;</button>
+        <button data-zoom="reset" title="Reset zoom">&#8634;</button>
+      </div>
+      <pre class="mermaid">
+flowchart LR
+  F["<b>Fetch</b><br/>PDF + LaTeX source<br/>into the paper store"] --> E["<b>Extract</b><br/>inventory of definitions,<br/>theorems, lemmas + numbering"]
+  E --> FM["<b>Formalize on first use</b><br/>axioms minted lazily from the<br/>eager inventory, in Papers.CiteKey,<br/>docstrings linking paper + BibTeX key"]
+  FM --> REV{"<b>Faithfulness review</b><br/>independent skeptic checks<br/>quantifiers, hypotheses,<br/>edge conditions"}
+  REV -->|"passes"| PKG["<b>Ship</b><br/>buildable package under<br/>papers_lean/ + manifest of<br/>paper ↔ axiom ↔ status"]
+  REV -->|"flagged"| Q["<b>Quarantine</b><br/>pending human review"]
+  FM -->|"cannot formalize<br/>faithfully"| SKIP["<b>Skip + list in manifest</b><br/>honest partial library beats<br/>a wrong complete one"]
+  SKIP -->|"rest of the selection<br/>continues"| PKG
+  Q -->|"excluded from the build,<br/>listed in the manifest"| PKG
+  classDef warn stroke:#c2607e,stroke-width:1.6px;
+  class REV,Q warn;
+  classDef good stroke:#10a06a,stroke-width:1.6px;
+  class PKG good;
+      </pre>
+    </div>
+    <p class="diagram-caption">inside a prove/critique chain, minting fires on first use; a standalone Assume request names its selection (specific results, or the whole inventory) and mints it eagerly</p>
+  </div>
+
+  <div class="grid2">
+    <div class="card" style="--i:3">
+      <h2 class="card-label lbl-navy"><span class="num">HARD</span> The hard part: definitions</h2>
+      <p class="prose dim">A theorem statement can be axiomatized, but it usually refers to objects the
+      paper defines — and <em>definitions cannot be assumed</em> the same way. In order of preference:</p>
+      <ul class="plain" style="margin-top:10px">
+        <li><strong>1 · Map onto Mathlib</strong> when a matching definition exists — best, and makes the axioms interoperate with all of Mathlib.</li>
+        <li><strong>2 · Write a real Lean definition</strong> when it's cheap.</li>
+        <li><strong>3 · <code>opaque</code> constant + characterizing axioms</strong> — viable, but each characterizing axiom widens the trust surface.</li>
+      </ul>
+    </div>
+    <div class="card" style="--i:4">
+      <h2 class="card-label lbl-plum"><span class="num">RISK</span> Soundness, managed not ignored</h2>
+      <ul class="plain">
+        <li><strong>Inconsistency</strong> — a mis-formalized axiom can make <code>False</code> derivable, letting the agent &ldquo;prove&rdquo; anything. Mitigations: the faithfulness review; minimal libraries (only assume what's used); refutation lints (<code>decide</code>/<code>simp</code> counterexample hunting on decidable statements); the manifest making any bad axiom's blast radius knowable after the fact.</li>
+        <li><strong>Definitional drift</strong> — the Lean rendering may subtly differ from the author's intent, so every writeup using assumed results states them in prose (&ldquo;assuming Theorems 3.2 and 4.1 of [smith2023modular]&rdquo;) — the trust chain stays auditable without reading Lean.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout" style="--i:5">
+    <strong>Adopted: eager inventory, lazy minting</strong> — the full statement inventory is extracted
+    up front (browsable), but an axiom is minted and faithfulness-reviewed only when a proof first
+    invokes that result — except for standalone Assume requests, which have no invoking proof and
+    instead mint their named selection eagerly — keeping the trusted surface minimal. Still open: chase transitive citations
+    (paper A depends on paper B)? — take A at face value first; the manifest records exactly what was
+    taken on faith either way.
+  </div>
+
+</section>
+
+<!-- ================================================================ -->
+<!-- VIEW 5: TRUST & EVAL                                              -->
+<!-- ================================================================ -->
+<section class="view" id="view-trust" role="tabpanel" aria-labelledby="tab-trust">
+
+  <p class="view-intro" style="--i:0">
+    You can't improve what you don't measure — and in a domain where the agent could
+    <em>look</em> successful while cheating, measurement and honesty are the same system. Every result
+    carries a grade; every &ldquo;solve&rdquo; is audited.
+  </p>
+
+  <div class="card card--hero" style="--i:1">
+    <h2 class="card-label lbl-green"><span class="num">GRADE</span> The trust ledger <span class="hint">two orthogonal dimensions — every proof-bearing result carries one grade from each</span></h2>
+    <div class="verdict">
+      <p style="font-family:var(--font-mono); font-size:10.5px; letter-spacing:1.2px; text-transform:uppercase; color:var(--text-dim)">Formalization status</p>
+      <div class="verdict-row"><span class="pip pip--full"></span><span><span class="what">Fully verified</span> <span class="how">— kernel-checked with standard axioms only (<code>propext</code>, <code>Classical.choice</code>, <code>Quot.sound</code>)</span></span></div>
+      <div class="verdict-row"><span class="pip pip--modulo"></span><span><span class="what">Verified modulo</span> <span class="how">— kernel-checked, plus an explicit list of assumed paper results from <code>#print axioms</code></span></span></div>
+      <div class="verdict-row"><span class="pip pip--sketch"></span><span><span class="what">Partially formalized</span> <span class="how">— Lean skeleton with <code>sorry</code>s remaining; the partial artifact is kept and its holes listed</span></span></div>
+      <div class="verdict-row"><span class="pip pip--partial"></span><span><span class="what">Not formalized</span> <span class="how">— no usable Lean artifact; formalization not yet attempted or out of reach</span></span></div>
+      <p style="font-family:var(--font-mono); font-size:10.5px; letter-spacing:1.2px; text-transform:uppercase; color:var(--text-dim); margin-top:6px">Informal completeness</p>
+      <div class="verdict-row"><span class="pip pip--full"></span><span><span class="what">No gaps detected</span> <span class="how">— deliberately not "complete": a heuristic grade recording which detection layers ran (kernel · probing · skeptics); only the formal dimension has a sound verifier</span></span></div>
+      <div class="verdict-row"><span class="pip pip--danger"></span><span><span class="what">Known gaps</span> <span class="how">— the run stopped with holes abandoned (budget expiry or a no-progress honest stop); they're listed in the writeup, never hidden behind a clean grade</span></span></div>
+      <div class="verdict-row"><span class="pip" style="background:var(--slate)"></span><span><span class="what">Not assessed</span> <span class="how">— pre-M6 runs, before the hole ledger and critique loop exist; never defaulted to complete</span></span></div>
+    </div>
+    <p class="prose dim" style="font-size:12.5px; margin-top:12px">The dimensions are independent, so every
+    result has a deterministic verdict — a kernel-verified theorem with a gappy writeup is
+    <em>fully&nbsp;verified&nbsp;×&nbsp;known&nbsp;gaps</em>; a clean informal proof with a
+    <code>sorry</code>-laden skeleton is <em>partially&nbsp;formalized&nbsp;×&nbsp;no&nbsp;gaps&nbsp;detected</em>.
+    Non-proof outputs carry their own status instead: a critique report <em>is</em> its hole ledger,
+    and an Assume library's status lives in its paper&nbsp;↔&nbsp;axiom manifest.</p>
+  </div>
+
+  <div class="grid2">
+    <div class="card bd-teal" style="--i:2">
+      <h2 class="card-label lbl-teal"><span class="num">C8</span> Evaluation harness</h2>
+      <ul class="plain">
+        <li><strong>Benchmarks</strong> — miniF2F (Lean 4 port) first; then PutnamBench, ProofNet (formalization), and a held-out custom set to catch contamination/overfitting.</li>
+        <li><strong>Metrics</strong> — solve rate at fixed budget (pass@1, pass@k), cost per solved theorem (tokens + Lean CPU), wall-clock, per-domain breakdowns (algebra vs. number theory vs. analysis).</li>
+        <li><strong>Output-contract check</strong> — outside benchmark mode a run isn't complete without its compile-checked writeup; the Lean artifact is graded verified / partial / absent.</li>
+        <li><strong>Regression tracking</strong> — every prompt/tool/strategy change runs against a fixed eval set, logged with config hashes <em>plus an immutable source/build revision</em>, since code can change behavior without changing configuration.</li>
+      </ul>
+    </div>
+    <div class="card bd-plum" style="--i:3">
+      <h2 class="card-label lbl-plum"><span class="num">AUDIT</span> Anti-cheat validation <span class="hint">on every claimed solve</span></h2>
+      <ul class="plain">
+        <li>Proof is <code>sorry</code>-free and compiles against the <strong>original, unmodified</strong> statement.</li>
+        <li><code>#print axioms</code> shows only expected axioms — no <code>sorryAx</code>, no smuggled axioms. <strong>Benchmark runs allow zero paper axioms</strong>; frontier runs report the manifest with the result.</li>
+        <li>Suspicious closers flagged for review: <code>native_decide</code>, <code>decide</code> on huge goals.</li>
+      </ul>
+      <div class="callout callout--danger" style="margin-top:12px">
+        <strong>Why so paranoid:</strong> a prover that can modify its statement, smuggle an axiom, or
+        lean on an inconsistent assumption can &ldquo;solve&rdquo; anything. The audit is what makes the
+        headline numbers mean something.
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="--i:4">
+    <h2 class="card-label lbl-navy"><span class="num">FLOW</span> How a claimed solve becomes a graded result</h2>
+    <div class="mermaid-wrap">
+      <div class="zoom-controls">
+        <button data-zoom="1.2" title="Zoom in">+</button>
+        <button data-zoom="0.8" title="Zoom out">&minus;</button>
+        <button data-zoom="reset" title="Reset zoom">&#8634;</button>
+      </div>
+      <pre class="mermaid">
+flowchart LR
+  S["claimed solve"] --> A{"statement<br/>unmodified?"}
+  A -->|"no"| REJ["rejected"]
+  A -->|"yes"| SCAN["source + trajectory scan<br/><i>the audit that print axioms<br/>cannot do</i>"]
+  SCAN -->|"suspicious closers:<br/>native_decide, decide<br/>on huge goals"| REVIEW["flagged for<br/>human review"]
+  REVIEW -->|"human approves<br/>the closer"| B
+  REVIEW -->|"human rejects"| REJ
+  SCAN -->|"clean"| B{"sorry-free +<br/>kernel accepts?"}
+  B -->|"no"| P2{"usable checked<br/>skeleton?"}
+  P2 -->|"yes"| PAUD["partial-artifact axiom audit —<br/>tolerates sorryAx, records<br/>remaining dependencies"]
+  PAUD --> PART["<b>partially formalized</b><br/>skeleton kept, holes listed,<br/>manifest attached"]
+  P2 -->|"no"| LTX["<b>LaTeX only</b><br/>failed attempt discarded —<br/>not itself a result"]
+  B -->|"yes"| C{"axiom audit:<br/>print axioms"}
+  C -->|"standard three only"| FULL["<b>fully verified</b>"]
+  C -->|"+ declared paper axioms"| MOD["<b>verified modulo</b><br/>manifest attached"]
+  C -->|"sorryAx or smuggled"| REJ
+  NOTE["this flow grades the formal dimension —<br/>informal completeness (no gaps detected vs.<br/>known gaps) comes from the hole ledger at loop exit"]:::note
+  classDef note stroke:#c08a24,stroke-width:1.2px,stroke-dasharray:4 3;
+  classDef good stroke:#10a06a,stroke-width:1.6px;
+  class FULL,MOD good;
+  classDef bad stroke:#d05353,stroke-width:1.6px;
+  class REJ bad;
+      </pre>
+    </div>
+  </div>
+
+</section>
+
+<!-- ================================================================ -->
+<!-- VIEW 6: ROADMAP                                                   -->
+<!-- ================================================================ -->
+<section class="view" id="view-roadmap" role="tabpanel" aria-labelledby="tab-roadmap">
+
+  <p class="view-intro" style="--i:0">
+    Nine milestones, deliberately ordered: <strong>evaluation lands before multi-runtime support and
+    search sophistication</strong> — you can't compare strategies or models without a trustworthy
+    baseline number. Each milestone has a concrete exit criterion.
+  </p>
+
+  <div class="card" style="--i:1">
+    <h2 class="card-label lbl-gold"><span class="num">M0–M8</span> Milestones</h2>
+    <div class="timeline">
+      <div class="tl-item">
+        <span class="tl-m">M0</span><span class="tl-t">Plumbing</span>
+        <p class="tl-d">Pinned Lean 4 + Mathlib project; Python wrapper around the REPL with session pooling, timeouts, structured goal/error parsing; LaTeX template + compile-check pipeline.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — check 100 proofs/minute against warm sessions and compile-check a sample writeup, with Lean workers and the TeX compiler already inside the C7 sandbox (no network, read-only mounts, quota'd tmpfs) — M1 executes untrusted generated code, so isolation precedes it.</div>
+      </div>
+      <div class="tl-item">
+        <span class="tl-m">M1</span><span class="tl-t">Minimal agent (Claude Agent SDK)</span>
+        <p class="tl-d">First <code>AgentRuntime</code> adapter; core tools (<code>check_proof</code>, <code>run_tactic</code>, <code>get_goal_state</code>, <code>search_lemmas</code>, <code>write_latex</code>); iterative-repair loop; dual-output workflow; minimal <code>#print axioms</code> audit (full anti-cheat suite lands in M2); statement faithfulness gated by an independent skeptic, never self-review. Citations (<code>cite</code> + <code>references.bib</code>) are explicitly deferred to M3 — M1 writeups carry none.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — &ldquo;prove that the square root of 2 is irrational&rdquo; produces a compile-checked .tex writeup <em>and</em> a kernel-checked .lean proof, end to end.</div>
+      </div>
+      <div class="tl-item">
+        <span class="tl-m">M2</span><span class="tl-t">Evaluation harness</span>
+        <p class="tl-d">miniF2F runner, anti-cheat validation, metrics + regression tracking. Until M6's hole ledger exists, results carry only the formalization-status grade; informal completeness reads <em>not assessed</em>, never defaulted to <em>complete</em>.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — reproducible baseline number for the M1 agent.</div>
+      </div>
+      <div class="tl-item">
+        <span class="tl-m">M3</span><span class="tl-t">Literature layer</span>
+        <p class="tl-d">arXiv search/fetch/read tools, paper store, machine-maintained <code>references.bib</code>, citations wired into writeups.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — a writeup that cites fetched papers with a valid bibliography.</div>
+      </div>
+      <div class="tl-item">
+        <span class="tl-m">M4</span><span class="tl-t">Assumed-paper libraries</span>
+        <p class="tl-d"><code>assume_paper</code> pipeline (extract → formalize statements as axioms → faithfulness review → buildable <code>Papers.*</code> package); axiom manifests wired into results and writeups.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — assume a real arXiv paper and prove a small corollary of its main theorem, with the writeup stating the assumptions.</div>
+      </div>
+      <div class="tl-item">
+        <span class="tl-m">M5</span><span class="tl-t">Runtime abstraction proven</span>
+        <p class="tl-d">Strands adapter + built-in minimal loop (Ollama / OpenAI-compatible endpoints) with prompted tool-calling fallback.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — the same eval runs across all three runtimes from config alone.</div>
+      </div>
+      <div class="tl-item">
+        <span class="tl-m">M6</span><span class="tl-t">Critique &amp; repair</span>
+        <p class="tl-d">The find-holes and fix-hole workflows, the hole ledger, and the full critique–repair loop — including on user-supplied informal proofs.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — hand Hardy a proof with a known subtle gap; it finds the gap, patches it, and re-verifies to a clean ledger.</div>
+      </div>
+      <div class="tl-item">
+        <span class="tl-m">M7</span><span class="tl-t">Search strategies</span>
+        <p class="tl-d">Sketch-and-discharge, best-first tactic search, parallel attempts, cheap-closer pre-pass; strategy comparison on the eval set.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — at least one strategy beats iterative repair on solve rate at equal budget, with iterative repair <em>re-run contemporaneously</em> under the same M7 code, model, and eval configuration (never the historical M2 number, which would confound the strategy with every intervening change); per-strategy comparison logged in the regression tracker.</div>
+      </div>
+      <div class="tl-item">
+        <span class="tl-m">M8</span><span class="tl-t">Retrieval &amp; memory</span>
+        <p class="tl-d">Semantic premise search, cross-theorem memory, context-summarization improvements.</p>
+        <div class="tl-exit"><strong>EXIT</strong> — retrieval-augmented premise selection measurably improves solve rate or cost-per-solve against a <em>retrieval-disabled run under the same M8 code, model, eval config, and equal budget</em> (tokens, Lean CPU, wall clock); memory transfer is measured on <em>held-out</em> theorems from a previously-solved domain against a <em>memory-disabled run under the same M8 code, model, and eval config</em> (snapshots fix the store, not comparability), with exact-repeat cache savings reported separately — replaying cached proofs doesn't count as transfer.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card" style="--i:2">
+      <h2 class="card-label lbl-slate"><span class="num">STACK</span> Proposed stack</h2>
+      <ul class="plain">
+        <li><strong>Harness</strong> — Python (model APIs, async orchestration, analysis); Lean side stays in Lean, JSON over stdio.</li>
+        <li><strong>Agent runtimes</strong> — <code>claude-agent-sdk</code> → <code>strands-agents</code> → hand-rolled minimal loop.</li>
+        <li><strong>Lean</strong> — <code>leanprover-community/repl</code>, Mathlib (pinned).</li>
+        <li><strong>Literature/writeup</strong> — <code>arxiv</code>, <code>bibtexparser</code>, <code>tectonic</code> or <code>latexmk</code>.</li>
+        <li><strong>Plumbing</strong> — pydantic for typed tool/trajectory schemas.</li>
+      </ul>
+      <h2 class="card-label lbl-slate" style="margin-top:18px"><span class="num">LATER</span> Explicitly out of MVP scope</h2>
+      <ul class="plain">
+        <li><strong>Autoformalization at scale</strong> — single-statement NL → Lean formalization is core from M1 (with a faithfulness check before proving); the deferred part is bulk corpus formalization and automated statement-equivalence checking.</li>
+        <li><strong>Premise-retrieval model</strong> — embedding-based Mathlib retrieval (ReProver-style).</li>
+        <li><strong>Lemma library growth</strong> — the agent proposes and proves reusable intermediate lemmas.</li>
+        <li><strong>Broader multi-agent review</strong> — beyond the core M1 faithfulness skeptic: richer panels checking vacuity, degenerate instances, and whole-library mis-formalization.</li>
+      </ul>
+    </div>
+    <div class="card" style="--i:3">
+      <h2 class="card-label lbl-navy"><span class="num">OPEN</span> Open questions <span class="hint">with current leanings</span></h2>
+      <ul class="plain">
+        <li><strong>REPL choice</strong> — <code>leanprover-community/repl</code> vs. Pantograph vs. LeanDojo. Prototype against <code>repl</code>; keep the layer swappable.</li>
+        <li><strong>Statement source of truth</strong> — benchmarks provide statements; for general use the agent formalizes, with a faithfulness check. Bulk autoformalization deferred.</li>
+        <li><strong>How much Lean-specific prompting is too much?</strong> — the harness goal is that <em>tool design</em> carries the Lean expertise, so weaker general models still function.</li>
+        <li><strong>Assumed-paper granularity</strong> — eager statement inventory, lazy axiom minting on first use (keeps the trust surface minimal); standalone Assume requests, having no invoking proof, mint their named selection eagerly.</li>
+        <li><strong>Transitive assumptions</strong> — axiomatize paper A at face value rather than chasing its citation graph; the manifest records what was taken on faith.</li>
+      </ul>
+      <div class="callout" style="margin-top:14px">
+        <strong>Status:</strong> design phase — no code yet. The repo holds <code>README.md</code>
+        (name + contract), <code>DESIGN.md</code> (the full spec this map renders), and this document,
+        developed on <code>claude/agentic-theorem-proving-ugb8ow</code> with PR #1 into <code>main</code>.
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<footer>Hardy · design map · rendered from DESIGN.md + project decisions · LaTeX always, Lean where possible</footer>
+
+<script>
+  // Navigation, keyboard shortcuts, and zoom controls are deliberately independent
+  // of the Mermaid CDN module below: if it fails to load, diagrams degrade to their
+  // source text but every view stays reachable.
+
+  // ---- Tab switching ----
+  const tabs = document.querySelectorAll('.tab');
+  const views = document.querySelectorAll('.view');
+
+  function switchView(name, pushHash = true) {
+    const target = document.getElementById('view-' + name);
+    if (!target) return;
+    tabs.forEach(t => {
+      const selected = t.dataset.view === name;
+      t.classList.toggle('active', selected);
+      t.setAttribute('aria-selected', String(selected));
+      t.tabIndex = selected ? 0 : -1;  // roving tabindex: one tab stop for the whole tablist
+    });
+    views.forEach(sec => sec.classList.toggle('active', sec === target));
+    if (pushHash) history.replaceState(null, '', '#' + name);
+    window.scrollTo({ top: 0 });
+    if (window.renderMermaidIn) window.renderMermaidIn(target);
+  }
+
+  tabs.forEach(t => t.addEventListener('click', () => switchView(t.dataset.view)));
+  window.addEventListener('hashchange', () => switchView(location.hash.slice(1) || 'overview', false));
+
+  // standard tablist arrow-key navigation
+  document.querySelector('.tabbar-inner').addEventListener('keydown', e => {
+    const names = Array.from(tabs, t => t.dataset.view);
+    const current = names.indexOf(document.querySelector('.tab.active').dataset.view);
+    let next = null;
+    if (e.key === 'ArrowRight') next = (current + 1) % names.length;
+    else if (e.key === 'ArrowLeft') next = (current - 1 + names.length) % names.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = names.length - 1;
+    if (next === null) return;
+    e.preventDefault();
+    switchView(names[next]);
+    tabs[next].focus();
+  });
+
+  // number-key shortcuts 1–6
+  const order = ['overview', 'workflows', 'components', 'frontier', 'trust', 'roadmap'];
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= order.length) switchView(order[n - 1]);
+  });
+
+  // initial view (honor deep link)
+  switchView(location.hash.slice(1) || 'overview', false);
+
+  // ---- Zoom controls ----
+  function setZoom(wrap, next) {
+    const target = wrap.querySelector('.mermaid');
+    target.dataset.zoom = next;
+    target.style.transform = 'scale(' + next + ')';
+    wrap.classList.toggle('is-zoomed', next > 1);
+  }
+  document.querySelectorAll('.zoom-controls button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const wrap = btn.closest('.mermaid-wrap');
+      const target = wrap.querySelector('.mermaid');
+      const current = parseFloat(target.dataset.zoom || '1');
+      if (btn.dataset.zoom === 'reset') { setZoom(wrap, 1); return; }
+      const next = Math.min(Math.max(current * parseFloat(btn.dataset.zoom), 0.3), 5);
+      setZoom(wrap, next);
+    });
+  });
+  document.querySelectorAll('.mermaid-wrap').forEach(wrap => {
+    wrap.addEventListener('wheel', e => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const target = wrap.querySelector('.mermaid');
+      const current = parseFloat(target.dataset.zoom || '1');
+      const next = Math.min(Math.max(current * (e.deltaY < 0 ? 1.1 : 0.9), 0.3), 5);
+      setZoom(wrap, next);
+    }, { passive: false });
+
+    let startX, startY, scrollL, scrollT;
+    wrap.addEventListener('mousedown', e => {
+      if (e.target.closest('.zoom-controls')) return;
+      const target = wrap.querySelector('.mermaid');
+      if (parseFloat(target.dataset.zoom || '1') <= 1) return;
+      wrap.classList.add('is-panning');
+      startX = e.clientX; startY = e.clientY;
+      scrollL = wrap.scrollLeft; scrollT = wrap.scrollTop;
+    });
+    window.addEventListener('mousemove', e => {
+      if (!wrap.classList.contains('is-panning')) return;
+      wrap.scrollLeft = scrollL - (e.clientX - startX);
+      wrap.scrollTop = scrollT - (e.clientY - startY);
+    });
+    window.addEventListener('mouseup', () => wrap.classList.remove('is-panning'));
+  });
+</script>
+
+<script type="module">
+  // Mermaid loads separately and optionally; a CDN failure leaves diagram source
+  // text visible (styled readable) without affecting navigation above.
+  let mermaid;
+  try {
+    ({ default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'));
+  } catch (e) {
+    console.warn('Mermaid CDN unavailable; diagrams shown as source text.', e);
+  }
+  if (mermaid) {
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    look: 'classic',
+    themeVariables: {
+      primaryColor: isDark ? '#232d3c' : '#fdfbf5',
+      primaryBorderColor: isDark ? '#8fb4e3' : '#1e3a5f',
+      primaryTextColor: isDark ? '#e8e6df' : '#1c2432',
+      secondaryColor: isDark ? '#2a2415' : '#faf3e3',
+      secondaryBorderColor: isDark ? '#d4a73a' : '#a16207',
+      secondaryTextColor: isDark ? '#e8e6df' : '#1c2432',
+      tertiaryColor: isDark ? '#222a36' : '#f4f0e7',
+      tertiaryBorderColor: isDark ? '#a8b6c8' : '#475569',
+      tertiaryTextColor: isDark ? '#e8e6df' : '#1c2432',
+      lineColor: isDark ? '#97a0ad' : '#6b7280',
+      fontSize: '14px',
+      fontFamily: "'Source Serif 4', Georgia, serif",
+      clusterBkg: isDark ? 'rgba(143,180,227,0.06)' : 'rgba(30,58,95,0.04)',
+      clusterBorder: isDark ? 'rgba(220,228,240,0.18)' : 'rgba(30,42,60,0.22)',
+      actorBkg: isDark ? '#232d3c' : '#fdfbf5',
+      actorBorder: isDark ? '#8fb4e3' : '#1e3a5f',
+      actorTextColor: isDark ? '#e8e6df' : '#1c2432',
+      signalColor: isDark ? '#97a0ad' : '#4b5563',
+      signalTextColor: isDark ? '#97a0ad' : '#4b5563',
+      loopTextColor: isDark ? '#d4a73a' : '#a16207',
+      noteBkgColor: isDark ? '#2a2415' : '#faf3e3',
+      noteBorderColor: isDark ? '#d4a73a' : '#a16207',
+      noteTextColor: isDark ? '#e8e6df' : '#1c2432',
+    }
+  });
+
+  window.renderMermaidIn = async view => {
+    const nodes = view.querySelectorAll('.mermaid:not([data-processed])');
+    if (nodes.length) {
+      try { await mermaid.run({ nodes }); } catch (e) { /* leave source text visible */ }
+    }
+  };
+  const active = document.querySelector('.view.active');
+  if (active) window.renderMermaidIn(active);
+  }
+</script>
+
+</body>
+</html>

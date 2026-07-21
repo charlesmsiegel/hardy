@@ -1,4 +1,4 @@
-# llm-math: An Agentic Harness for Theorem Proving in Lean 4
+# Hardy: An Agentic Harness for Theorem Proving in Lean 4
 
 ## Vision
 
@@ -25,9 +25,27 @@ get back:
    formal statement, whenever formalization is within reach (Mathlib coverage,
    tractable statement).
 
-The LaTeX document records formalization status (verified / verified modulo assumed
-paper results (see Component 6) / partially formalized with `sorry`s remaining / not
-yet formalized) and, when a Lean proof exists, the two are cross-linked so the
+The LaTeX document records **two orthogonal grades, one from each dimension**, so
+every result has a deterministic verdict:
+
+- *Formalization status*: verified / verified modulo assumed paper results (see
+  Component 6) / partially formalized with `sorry`s remaining / not formalized.
+- *Informal completeness*: **no gaps detected** — a heuristic grade, deliberately
+  not named "complete": critique's detection layers can miss gaps, so the grade
+  records which layers ran (kernel, formalization probing, skeptics) as assessment
+  provenance; only the formal dimension has a sound verifier — / known gaps — the
+  run stopped with holes abandoned, whether by budget expiry or a no-progress
+  honest stop; those holes are listed in the document, never hidden behind a
+  reassuring grade — / *not assessed*, for runs made before the critique–repair
+  loop exists (pre-M6), which never default upward.
+
+A kernel-verified theorem whose writeup still has gaps, or a gap-free writeup with
+only a partial skeleton, each map to exactly one pair. Whenever a formal statement
+exists, the theorem statement in the writeup is **rendered from it as the single
+source of truth** (and re-checked whenever either artifact changes), so TeX
+compilation success can never mask a writeup about a different claim; a
+not-formalized run instead preserves the user's original claim verbatim, flagged
+as informally stated. When a Lean proof exists, the two artifacts are cross-linked so the
 informal writeup and formal proof state the same theorem. This
 mirrors how the strongest draft-sketch-prove systems work (informal reasoning first,
 formal second) and means the project always yields a usable artifact even when full
@@ -35,6 +53,10 @@ formalization fails — a LaTeX proof marked "not yet formalized" is a result; a
 Lean attempt alone is not.
 
 ## Architecture Overview
+
+> An interactive, diagrammed version of this document — workflows, components,
+> frontier math, trust model, and roadmap — lives at
+> [docs/architecture.html](docs/architecture.html) (open it in any browser).
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -80,6 +102,13 @@ an inner loop.
   work, and it parallelizes naturally.
 - **State pickling**: snapshot and restore proof states so search can branch without
   replaying tactic prefixes.
+- **Environment isolation between runs**: proof-state pickling restores a proof
+  state, *not* the declaration environment — declarations, axioms, helper lemmas,
+  and instances added by one run's generated source would otherwise persist in a
+  reused worker and contaminate later elaboration, search, and benchmark results.
+  Every independent run forks from (or resets to) the pristine pinned environment —
+  base Mathlib imports only — while keeping the warm imported process; a worker
+  whose environment cleanliness is in doubt is recycled, not reused.
 - **Timeouts and resource limits** per tactic and per proof (`maxHeartbeats`, wall
   clock, memory) — runaway `decide`/`simp` calls must not stall the loop.
 
@@ -97,9 +126,10 @@ theorem-proving equivalents:
 | `lookup_definition` | Unfold/show the definition and signature of any constant |
 | `list_premises` | Retrieval: given the current goal, rank candidate premises (start with built-in tactics + Loogle; add embedding retrieval later) |
 | `sketch` | Register a proof outline with `sorry` subgoals; harness tracks which subgoals remain |
+| `hole_ledger` | Record, update, and list holes found in a proof (id, location, description, status); the persistent state handed between the Prove / Critique / Repair workflows |
 | `note` | Informal scratchpad — write natural-language reasoning/proof plans that persist in context across attempts |
 | `arxiv_search` | Query the arXiv API (title/abstract/author/category); returns metadata + abstracts |
-| `fetch_paper` | Download a paper (PDF, and LaTeX source when available) into the project paper store; auto-adds a BibTeX entry |
+| `fetch_paper` | Download a paper (PDF, and LaTeX source when available) into the project paper store; registers it in the bibliography by delegating to `cite`, the sole `.bib` writer |
 | `read_paper` | Extract text/sections from a stored paper for the agent to read |
 | `assume_paper` | Turn a stored paper's results into an axiomatized Lean library (see Component 6) that later proofs can import |
 | `list_assumptions` | Show the assumed-paper libraries in scope and, for any proved theorem, its axiom manifest (which paper results it actually used) |
@@ -147,7 +177,87 @@ with the **Claude Agent SDK** as the first implementation.
   have a degraded-but-functional path on the minimal loop, so results remain
   comparable across runtimes.
 
-## Component 4: Orchestration & Search Strategies
+## Component 4: Workflows, Orchestration & Search
+
+### The core workflows
+
+Every proof-oriented request is one of three composable workflows, or a chain of
+them. (A fourth workflow, **Assume** — *"assume this paper"*, detailed in
+Component 6 — prepares axiomatized paper libraries; it runs standalone or as a
+preparatory step the other three call on.)
+
+1. **Prove** — *"find a proof of X."* The flow described throughout: formalize the
+   statement, search for a proof, produce the LaTeX + Lean artifact pair. A
+   rejected faithfulness review loops back to re-formalization (bounded) or stops
+   with an explicit unconfirmed-statement outcome — proving never starts on an
+   unconfirmed statement.
+2. **Critique** — *"find holes in this proof."* Takes any proof — user-supplied, a
+   proof from the literature, or Hardy's own draft — and produces a structured
+   **hole ledger**: unjustified steps, missing cases, quantifier slips, circular
+   arguments, misapplied citations. Three detection layers, strongest first:
+   - *Kernel*: for Lean-backed proofs, holes are free and exact — `sorry`s, failed
+     elaboration, axiom-manifest surprises.
+   - *Formalization probing*: for informal proofs, attempt to formalize each step;
+     a step that resists formalization is a suspected hole. This is the deep reason
+     the dual-output contract pays off — formalization *is* hole detection.
+   - *Adversarial skeptics*: agents prompted to break each step (seek
+     counterexamples to intermediate claims, check edge cases, verify cited results
+     actually say what the proof needs).
+3. **Repair** — *"this proof has a hole; propose a fix."* Takes one ledger entry and
+   patches it locally — a bridging lemma, an added case, a corrected calculation —
+   without regenerating the whole proof. Each patch is verified (kernel where
+   formal; re-critique where informal). **A repair may change the proof, never the
+   claim**: the original theorem statement is immutable during repair. If the only
+   viable fix strengthens a hypothesis or weakens the conclusion, that is a
+   *revised claim* — a distinct outcome, reported as such and re-entering the loop
+   as a new statement — never graded as a successful repair of the original.
+
+### The critique–repair loop
+
+The workflows hand off to each other iteratively:
+
+```
+Prove ──▶ draft ──▶ Critique ──▶ hole ledger
+                        ▲              │ none open/patched? ──▶ done (status per trust ledger)
+                        │              ▼
+                        └──────── Repair (one hole at a time)
+```
+
+Loop discipline, so it converges instead of thrashing:
+- The **hole ledger is persistent state**, shared across handoffs: each hole carries
+  an id, location, description, and status (`open` / `patched` / `verified-closed` /
+  `dismissed` / `abandoned`). `dismissed` covers critique false positives: a
+  skeptic's suspected hole that is *disproven* — the step is justified as written,
+  with the justification recorded — resolves without touching the proof. Both
+  `verified-closed` and `dismissed` count as resolved for the fixed point.
+- After a repair, Critique re-runs over the patch's blast radius — a fix must not
+  silently reopen a closed hole or introduce new ones. If the re-critique finds
+  that overlapping changes invalidated an earlier resolved hole — `verified-closed`,
+  or `dismissed` whose recorded justification applied to the now-changed text —
+  that entry returns to `open`, keeping its identity and incrementing its reopen
+  counter, rather than being logged as a new hole.
+- **No-progress detection**: a hole reopened N times — counting both rejected
+  patches (`patched` → `open` on failed re-critique) and regressions (a closed hole
+  invalidated by an overlapping repair) — triggers a strategy escalation (different
+  decomposition, more search budget); if the escalated strategy also fails to close
+  the hole, the honest stop follows.
+- **Critique-only requests exit at the report**: when the user asked only to find
+  holes, the workflow ships its hole-ledger report — open holes included — without
+  entering Repair; the loop continues past Critique only for prove/fix requests.
+- Exit is a fixed point: **no hole remains `open` or `patched`** — every entry is
+  resolved, meaning `verified-closed` *or* `dismissed` (resolved entries persist in
+  the ledger as history, so "empty" is never the test) — or budget is exhausted, in
+  which case remaining unresolved holes — `open`, or `patched` whose re-critique
+  never ran (an unverified patch is reported as such, never shipped as closed) —
+  are marked `abandoned` and the artifact ships with them *listed*, which is itself
+  a useful result ("the proof is correct except for
+  the interchange of limits in Step 4, which we could not justify").
+
+Sketch-and-discharge (below) is the degenerate case where the holes are deliberate:
+a proof skeleton's `sorry`s are planned holes, discharged by the same Repair
+machinery.
+
+### Search strategies
 
 A single agent in a loop is the baseline; the interesting work is in strategies
 layered on top. Make strategy a pluggable interface so we can benchmark them against
@@ -185,12 +295,20 @@ LaTeX side of the output contract.
 - `arxiv_search` against the arXiv API with the usual filters (category — `math.NT`,
   `math.CO`, etc. — author, title/abstract text, date range).
 - `fetch_paper` downloads the PDF *and the LaTeX source when available* (source is
-  far more useful to a model than extracted PDF text) into a content-addressed
-  paper store (`papers/<arxiv-id>/`), and registers the paper in the bibliography.
+  far more useful to a model than extracted PDF text) into a version-keyed paper
+  store (`papers/<arxiv-id>v<N>/`, with a content digest recorded in the manifest):
+  an unversioned fetch resolves to the latest revision and is stored under its
+  resolved version, so cached entries are immutable and a paper's later revisions
+  are distinct store entries — citations and assumed-paper libraries always name
+  the exact version they used. It registers the paper in the bibliography.
+  Archive extraction treats the download as untrusted input: path-normalized,
+  symlink-safe unpacking under byte and file-count quotas, in an isolated
+  temporary directory, admitted to the persistent store atomically.
 - `read_paper` serves stored papers back to the agent in digestible chunks
   (per-section, with math source intact when we have the LaTeX).
 - Polite API usage: rate limiting, caching of queries and downloads — never
-  re-fetch what's in the store.
+  re-fetch a version that's in the store (new revisions are new entries, not
+  re-fetches).
 
 **Bibliography management:**
 - One canonical `references.bib` for the project, machine-maintained:
@@ -206,6 +324,16 @@ LaTeX side of the output contract.
 - Every generated document is **compile-checked** (`latexmk`/`tectonic`) the same way
   Lean output is kernel-checked — errors feed back to the agent as structured
   messages. Weaker than kernel verification, but the same loop shape.
+- **Compilation is sandboxed like Lean elaboration**: TeX is code, not markup —
+  `\input`/`\openout` read and write files, and shell-escape executes commands.
+  Model-generated documents compile with shell-escape disabled, no network,
+  read-only mounts, and a dedicated ephemeral output directory.
+- **Failure keeps the contract**: if a document still fails after bounded
+  compile-and-repair retries, the run ships a *minimal compile-checked failure
+  report* (generated from a known-good template: status, errors, the failing
+  source attached) — the LaTeX-always contract holds even when the generated
+  document never builds, and the request is graded as failed, not silently served
+  broken TeX.
 - Writeups live alongside their Lean counterparts (e.g. `results/sqrt2_irrational/`
   containing `.tex`, `.lean`, and a small manifest recording status and provenance).
 
@@ -239,10 +367,15 @@ literature anyway.
 1. `fetch_paper` pulls the paper (LaTeX source preferred) into the store.
 2. An extraction pass identifies the paper's definitions, theorems, lemmas, and
    propositions, with their statement text and numbering.
-3. A formalization pass turns each *result* into an `axiom` in a per-paper namespace
+3. A formalization pass mints an `axiom` for a result in a per-paper namespace
    (`Papers.<CiteKey>`), with a docstring linking back to the paper's numbering and
-   BibTeX key. Results the agent cannot faithfully formalize are skipped and listed
-   in the library's manifest — an honest partial library beats a wrong complete one.
+   BibTeX key. **When to mint depends on how Assume was invoked**: inside a
+   prove/critique chain, axioms are minted lazily on first use, keeping the trusted
+   surface limited to what proofs actually invoke; a *standalone* Assume request —
+   which has no downstream proof to trigger first use — names the results to mint
+   (specific theorems, or the whole inventory) and mints that selection eagerly.
+   Results the agent cannot faithfully formalize are skipped and listed in the
+   library's manifest — an honest partial library beats a wrong complete one.
 4. A **faithfulness review** pass (independent skeptic agent, different prompt or
    model) compares each axiom against the paper's stated theorem: quantifiers,
    hypotheses, edge conditions. Axioms it flags are quarantined pending human review.
@@ -277,10 +410,18 @@ same way. In order of preference:
   `lake exe cache get` for prebuilt oleans. Reproducibility is non-negotiable for
   benchmarking.
 - **Session pool**: REPL workers are expensive to start (Mathlib import ~30–60s), so
-  maintain a warm pool; recycle workers on memory bloat or crash.
+  maintain a warm pool; recycle workers on memory bloat or crash. Between
+  independent runs a worker resets to the pristine base environment (see
+  Component 1) — warm process, clean declarations.
 - **Sandboxing**: model-generated Lean code can execute arbitrary IO at elaboration
   time (`#eval`, `native_decide`). Run workers in containers with no network and a
-  read-only filesystem.
+  read-only filesystem. The LaTeX compiler runs under the same regime (see
+  Component 5) — generated TeX is equally untrusted input. The writable scratch
+  area is a per-invocation tmpfs with size and inode quotas, wiped when the
+  invocation ends or the worker recycles — untrusted code must not be able to fill
+  host storage shared with other warm workers. Each invocation also carries a
+  `pids.max` limit (and minimal capabilities), so spawned child processes cannot
+  exhaust host PIDs and disrupt other workers before timeout cleanup.
 - **Docker image** with toolchain + Mathlib cache baked in, for CI and for anyone
   reproducing results.
 
@@ -301,12 +442,16 @@ You can't improve what you don't measure. This is as important as the agent itse
     `Classical.choice`, `Quot.sound`) plus explicitly declared assumed-paper axioms
     (Component 6) — no `sorryAx`, no smuggled axioms. Benchmark runs allow *no*
     paper axioms; frontier runs report the axiom manifest with the result;
-  - flag suspicious closers (`native_decide`, `decide` on huge goals) for review.
+  - flag suspicious closers (`native_decide`, `decide` on huge goals) for review —
+    detected by scanning the submitted source and recorded tactic trajectory, since
+    `#print axioms` alone cannot reveal which tactic produced a term.
 - **Output-contract check**: outside pure benchmark mode, a run isn't complete
   without its compile-checked LaTeX writeup; the Lean artifact is graded as
   verified / partial / absent.
 - **Regression tracking**: every change to prompts/tools/strategy runs against a fixed
-  eval set; results logged with config hashes so runs are comparable.
+  eval set; results logged with config hashes *plus an immutable source/build
+  revision* — code can change behavior without changing configuration, so
+  configuration alone is insufficient provenance.
 
 ## Component 9: Telemetry & Trajectories
 
@@ -319,15 +464,18 @@ You can't improve what you don't measure. This is as important as the agent itse
 
 - **Autoformalization at scale**: basic natural-language → Lean *statement*
   formalization is part of the core workflow from M1 (the user says "prove √2 is
-  irrational"; the agent writes the Lean statement itself, and a faithfulness check
-  confirms the formal statement matches the informal claim before proving begins).
+  irrational"; the agent writes the Lean statement itself, and an *independent*
+  faithfulness review — separate prompt or model, never self-review — confirms the
+  formal statement matches the informal claim before proving begins).
   What's deferred is the hard research version: bulk formalization of corpora and
   automated statement-equivalence checking.
 - **Premise-retrieval model**: embedding-based Mathlib retrieval (ReProver-style)
   as a tool.
 - **Lemma library growth**: agent proposes and proves reusable intermediate lemmas.
-- **Multi-agent review**: a skeptic agent that inspects statements for vacuity or
-  mis-formalization before effort is spent.
+- **Broader multi-agent review**: beyond the M1 statement-faithfulness skeptic
+  (which is core, not deferred) — richer review panels checking for vacuity,
+  degenerate instances, and mis-formalization across whole assumed-paper
+  libraries.
 
 ## Proposed Stack
 
@@ -344,15 +492,27 @@ You can't improve what you don't measure. This is as important as the agent itse
 
 1. **M0 — Plumbing**: pinned Lean 4 + Mathlib project; Python wrapper around the
    REPL with session pooling, timeouts, structured goal/error parsing; LaTeX
-   template + compile-check pipeline. Exit criterion: check 100 proofs/minute
-   against warm sessions; compile-check a sample writeup.
+   template + compile-check pipeline; and the Component 7 sandbox (no-network,
+   read-only containers with quota'd tmpfs scratch) around both Lean workers and
+   the TeX compiler — M1 executes untrusted generated code, so isolation must
+   precede it. Exit criterion: check 100 proofs/minute against warm sessions and
+   compile-check a sample writeup, both running inside the sandbox.
 2. **M1 — Minimal agent (Claude Agent SDK)**: first `AgentRuntime` adapter on the
-   Claude Agent SDK; core tools (`check_proof`, `get_goal_state`, `search_lemmas`,
-   `write_latex`); iterative-repair loop; dual-output workflow. Exit criterion:
+   Claude Agent SDK; core tools (`check_proof`, `run_tactic`, `get_goal_state`,
+   `search_lemmas`, `write_latex`); iterative-repair loop; dual-output workflow;
+   a minimal `#print axioms` audit on results (the full anti-cheat validation
+   suite lands in M2); statement faithfulness gated by an *independent* skeptic —
+   separate prompt or model, never the formalizing model reviewing its own
+   translation. The citation half
+   of the output contract (`cite` + `references.bib`) is explicitly deferred to
+   M3 — M1 writeups carry no citations. Exit criterion:
    "prove that the square root of 2 is irrational" produces a compile-checked
    `.tex` writeup *and* a kernel-checked `.lean` proof, end to end.
 3. **M2 — Evaluation harness**: miniF2F runner, anti-cheat validation, metrics +
    regression tracking. Exit criterion: reproducible baseline number for M1 agent.
+   Note on grading before M6: until the hole ledger and critique–repair loop land,
+   results carry only the formalization-status dimension; informal completeness is
+   reported as *not assessed*, never defaulted upward.
 4. **M3 — Literature layer**: arXiv search/fetch/read tools, paper store,
    machine-maintained `references.bib`, citations wired into writeups. Exit
    criterion: a writeup that cites fetched papers with a valid bibliography.
@@ -364,23 +524,45 @@ You can't improve what you don't measure. This is as important as the agent itse
 6. **M5 — Runtime abstraction proven**: Strands adapter + built-in minimal loop
    (Ollama / OpenAI-compatible endpoints) with prompted tool-calling fallback.
    Exit criterion: the same eval runs across all three runtimes from config alone.
-7. **M6 — Search strategies**: sketch-and-discharge, parallel attempts, cheap-closer
-   pre-pass; strategy comparison on the eval set.
-8. **M7 — Retrieval & memory**: semantic premise search, cross-theorem memory,
-   context summarization improvements.
+7. **M6 — Critique & repair**: the find-holes and fix-hole workflows, the hole
+   ledger, and the full critique–repair loop — including on user-supplied informal
+   proofs. Exit criterion: hand Hardy a proof with a known subtle gap; it finds the
+   gap, patches it, and re-verifies to a clean ledger.
+8. **M7 — Search strategies**: sketch-and-discharge, best-first tactic search,
+   parallel attempts, cheap-closer pre-pass; strategy comparison on the eval set.
+   Exit criterion: at least one strategy beats iterative repair on solve rate at
+   equal budget, where iterative repair is *re-run contemporaneously* under the
+   same M7 code, model, environment, and eval configuration — never compared
+   against the historical M2 number, which would confound the strategy with every
+   intervening change — with the per-strategy comparison logged in the regression
+   tracker.
+9. **M8 — Retrieval & memory**: semantic premise search, cross-theorem memory,
+   context summarization improvements. Exit criterion: retrieval-augmented premise
+   selection measurably improves solve rate or cost-per-solve against a
+   *retrieval-disabled run under the same M8 code, model, environment, budget, and
+   eval configuration* (same contemporaneous-baseline rule as memory, below); memory transfer is measured on *held-out* theorems
+   from a previously-solved domain — never the solved theorems themselves — and
+   compared against a *memory-disabled run under the same M8 code, model,
+   environment, and eval configuration* (a versioned snapshot fixes the store's
+   contents but cannot make results comparable to the historical M2 number), with
+   exact-repeat cache savings reported separately (replaying cached proofs is not
+   transfer).
 
 ## Open Questions
 
 - REPL choice: `leanprover-community/repl` vs. Pantograph vs. LeanDojo — prototype
   against `repl` first, but keep the interaction layer abstract enough to swap.
-- Statement source of truth: for benchmarks, statements are given; for general use,
-  who formalizes? (Deferred with autoformalization.)
+- ~~Statement source of truth~~ — **decided**: benchmarks provide statements
+  verbatim (never modified — anti-cheat enforces this); for general use, Prove
+  formalizes the single statement itself, gated by a faithfulness check, core from
+  M1. Only bulk corpus autoformalization and automated statement-equivalence
+  checking remain deferred (see Later Phases).
 - How much Lean-specific prompting is too much? A harness goal is that *tool design*
   carries the Lean expertise, so weaker/general models still function.
-- Assumed-paper granularity: assume a whole paper eagerly, or lazily formalize only
-  the results a proof attempt actually wants to invoke? Lazy keeps the trust surface
-  minimal; eager gives the agent a browsable library. Likely answer: extract the
-  full statement inventory eagerly, formalize axioms lazily on first use.
+- ~~Assumed-paper granularity~~ — **decided**: extract the full statement inventory
+  eagerly (browsable library), mint and faithfulness-review axioms lazily on first
+  use (minimal trust surface); a standalone Assume request instead names its
+  selection to mint eagerly. See the `assume_paper` workflow in Component 6.
 - Transitive assumptions: paper A's theorem depends on paper B's — do we chase the
   citation graph, or axiomatize A's results at face value? (Face value first; the
   manifest records exactly what was taken on faith either way.)
