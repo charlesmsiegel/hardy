@@ -66,6 +66,50 @@ async def test_close_wakes_queued_waiters():
         await asyncio.wait_for(queued, timeout=10)
 
 
+async def test_start_cancellation_retires_spawned_workers(monkeypatch):
+    # Cancelling start() mid-spawn must not strand a worker that already
+    # finished importing (in _live but not yet idle).
+    pool = make_pool(size=2)
+    real_spawn = pool._spawn
+    done_one = []
+
+    async def one_fast_one_slow():
+        if not done_one:
+            done_one.append(1)
+            return await real_spawn()
+        await asyncio.sleep(3600)  # second worker never finishes
+
+    monkeypatch.setattr(pool, "_spawn", one_fast_one_slow)
+    task = asyncio.create_task(pool.start())
+    await asyncio.sleep(0.3)  # first worker registered in _live; second spawning
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert pool._live == set()  # the completed worker was retired, not leaked
+
+
+async def test_replacement_spawned_after_close_is_retired(monkeypatch):
+    # If close() wins the race while _replace() is spawning, the fresh worker
+    # must be retired, not queued into a dead pool.
+    pool = make_pool(max_commands=1)
+    await pool.start()
+    real_spawn = pool._spawn
+    spawned = []
+
+    async def spawn_then_close():
+        worker = await real_spawn()
+        spawned.append(worker)
+        pool._closed = True  # simulate close() landing during the spawn await
+        return worker
+
+    monkeypatch.setattr(pool, "_spawn", spawn_then_close)
+    v = await pool.check_proof("theorem t : True := trivial")  # dirty -> _replace
+    assert v.complete
+    assert spawned and not spawned[0].repl.alive  # replacement retired
+    assert pool._live == set()  # nothing leaked into the closed pool
+    await pool.close()
+
+
 async def test_fatal_response_recycles_worker(monkeypatch):
     # A worker that answers with a fatal repl-level message has lost the base
     # environment; it must be replaced, not requeued to fail every next check.

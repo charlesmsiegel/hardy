@@ -99,6 +99,29 @@ async def test_oversized_frame_treated_as_protocol_death():
     await repl.close()
 
 
+async def test_cumulative_frame_bound_treated_as_protocol_death():
+    # Many short lines below the per-line limit must still be bounded in
+    # aggregate, or a worker could exhaust host memory before its timeout.
+    repl = await make_repl(stream_limit=64 * 1024)
+    with pytest.raises(ReplDied):
+        await repl.run_command("FLOOD")
+    assert not repl.alive
+    await repl.close()
+
+
+async def test_timeout_covers_stdin_drain():
+    # A worker that never reads stdin can block drain() on a large request; the
+    # per-command timeout must cover the drain phase, not just the read phase.
+    argv = [sys.executable, "-c", "import time; time.sleep(3600)"]
+    repl = LeanRepl(argv, default_timeout=0.5)
+    await repl.start()
+    big = "x" * (4 * 1024 * 1024)  # exceed the OS pipe buffer so drain blocks
+    with pytest.raises(ReplTimeout):
+        await repl.run_command(big)
+    assert not repl.alive
+    await repl.close()
+
+
 async def test_default_stream_limit_accepts_large_goals():
     # Default limit (10 MB) must comfortably hold a ~1 MB goal state.
     repl = await make_repl()

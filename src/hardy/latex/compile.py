@@ -40,6 +40,37 @@ _ARTIFACT_CAP = 64 * 1024 * 1024   # bytes of tar-streamed artifacts accepted ba
 _LOG_TAIL_CAP = 256 * 1024         # bytes of main.log we ever read
 
 
+def _sandbox_timeout_arg(timeout: float) -> str:
+    """Format the in-container `timeout` duration without truncating fractions.
+
+    GNU timeout accepts a floating-point DURATION, so int()-truncating would
+    both shorten (1.9 -> 1) and inflate (0.5 -> 1) the caller's real budget.
+    """
+    return f"{max(0.1, float(timeout)):g}"
+
+
+# Host-side Docker connection variables to preserve when running the docker
+# CLI with an otherwise-scrubbed environment — rootless/remote/TLS daemons are
+# selected through these, so dropping them would silently target the default
+# socket and fail before compilation.
+_DOCKER_CLIENT_VARS = (
+    "DOCKER_HOST",
+    "DOCKER_CONTEXT",
+    "DOCKER_CONFIG",
+    "DOCKER_CERT_PATH",
+    "DOCKER_TLS_VERIFY",
+    "HOME",
+)
+
+
+def _docker_client_env() -> dict[str, str]:
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    for var in _DOCKER_CLIENT_VARS:
+        if var in os.environ:
+            env[var] = os.environ[var]
+    return env
+
+
 def _kill_process_group(proc: subprocess.Popen) -> None:
     """Kill the whole process group of a locally-launched engine.
 
@@ -195,12 +226,12 @@ def compile_tex_sandboxed(
         )
         script = (
             "cp /staging/main.tex /scratch/ && cd /scratch && "
-            f"timeout {max(1, int(timeout))} "
+            f"timeout {_sandbox_timeout_arg(timeout)} "
             "tectonic --untrusted --only-cached --chatter minimal main.tex >&2; "
             "status=$?; tar -cf - main.pdf main.log 2>/dev/null; exit $status"
         )
         argv = docker_argv(cfg, ["/bin/sh", "-c", script])
-        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+        env = _docker_client_env()
         code, tar_bytes, stderr_text, abort = _run_streams_capped(
             argv, env, timeout + 15, _ARTIFACT_CAP, _OUTPUT_CAP
         )
