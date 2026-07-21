@@ -3,23 +3,28 @@
 # self-contained TeX Live + busybox (sh/cp/tar/timeout/find) — nothing Lean or
 # repo-related, so untrusted TeX has nothing to \input beyond its own staging.
 #
-# Build:  nix-build nix/tex-image.nix && docker load < result
-# Produces image  hardy-tex:dev
+# Runs as an unprivileged user (65534): defense-in-depth on top of the
+# sandbox's --cap-drop ALL / --read-only / --network none / no-new-privileges.
+# The compile writes only to the quota'd /scratch tmpfs (HOME/TEXMFVAR there).
+#
+# Build:  nix-build nix/tex-image.nix && docker load < result   (-> hardy-tex:dev)
 let
-  pkgs = import (fetchTarball {
-    url = "https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1038038.421eebfd0ec7/nixexprs.tar.xz";
-  }) { };
+  pkgs = import ./nixpkgs.nix;
 in
 pkgs.dockerTools.buildLayeredImage {
   name = "hardy-tex";
   tag = "dev";
-  contents = pkgs.buildEnv {
-    name = "hardy-tex-root";
-    paths = [ pkgs.texliveMedium pkgs.busybox pkgs.coreutils ];
-    pathsToLink = [ "/bin" "/share" ];
-  };
+  contents = [
+    (pkgs.buildEnv {
+      name = "hardy-tex-root";
+      paths = [ pkgs.texliveMedium pkgs.busybox pkgs.coreutils ];
+      pathsToLink = [ "/bin" "/share" ];
+    })
+    pkgs.dockerTools.fakeNss # /etc/passwd etc. with a nobody(65534) entry
+  ];
   config = {
     Env = [ "PATH=/bin" ];
+    User = "65534:65534";
     Cmd = [ "/bin/sh" ];
   };
 }

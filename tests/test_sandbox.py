@@ -22,7 +22,7 @@ def test_quotas_rendered():
         ["true"],
     )
     joined = " ".join(argv)
-    assert "--tmpfs /scratch:rw,size=256m,nr_inodes=5000" in joined
+    assert "--tmpfs /scratch:rw,mode=1777,size=256m,nr_inodes=5000" in joined
     assert "--pids-limit 64" in joined
     assert "--memory 1024m" in joined
     assert "--cpus 1.5" in joined
