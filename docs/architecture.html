@@ -985,7 +985,7 @@ sequenceDiagram
     <div class="card bd-plum" style="--i:5">
       <h2 class="card-label lbl-plum"><span class="num">C5</span> Literature &amp; writeup layer</h2>
       <ul class="plain">
-        <li><strong>arXiv integration</strong> — search with category/author/date filters; downloads prefer <em>LaTeX source</em> over PDF text (far more useful to a model); content-addressed store at <code>papers/&lt;arxiv-id&gt;/</code>; rate-limited, cached, never re-fetches.</li>
+        <li><strong>arXiv integration</strong> — search with category/author/date filters; downloads prefer <em>LaTeX source</em> over PDF text (far more useful to a model); version-keyed store at <code>papers/&lt;arxiv-id&gt;v&lt;N&gt;/</code> with content digests in the manifest, so cached entries are immutable and citations name the exact revision used; rate-limited, cached, never re-fetches a stored version.</li>
         <li><strong>Bibliography</strong> — one canonical machine-maintained <code>references.bib</code>: entries auto-generated from arXiv metadata, deduped by arXiv id/DOI, stable cite keys (<code>author2023short</code>), validated in CI. The <code>cite</code> tool is the only write path.</li>
         <li><strong>LaTeX pipeline</strong> — standard template with theorem/proof environments and a formalization-status block linking the <code>.lean</code> file; every document compile-checked (<code>tectonic</code>/<code>latexmk</code>) with errors fed back — the same loop shape as the kernel, weaker guarantee. Compilation is sandboxed like Lean elaboration: TeX is code (<code>\input</code>, <code>\openout</code>, shell-escape), so generated documents build with shell-escape off, no network, read-only mounts, and an ephemeral output dir.</li>
         <li><strong>Results layout</strong> — <code>results/sqrt2_irrational/</code> holds <code>.tex</code>, <code>.lean</code>, and a manifest recording status and provenance.</li>
@@ -1253,7 +1253,7 @@ flowchart LR
       <div class="tl-item">
         <span class="tl-m">M8</span><span class="tl-t">Retrieval &amp; memory</span>
         <p class="tl-d">Semantic premise search, cross-theorem memory, context-summarization improvements.</p>
-        <div class="tl-exit"><strong>EXIT</strong> — retrieval-augmented premise selection measurably improves solve rate or cost-per-solve against a <em>retrieval-disabled run under the same M8 code, model, and eval config</em>; memory transfer is measured on <em>held-out</em> theorems from a previously-solved domain against a <em>memory-disabled run under the same M8 code, model, and eval config</em> (snapshots fix the store, not comparability), with exact-repeat cache savings reported separately — replaying cached proofs doesn't count as transfer.</div>
+        <div class="tl-exit"><strong>EXIT</strong> — retrieval-augmented premise selection measurably improves solve rate or cost-per-solve against a <em>retrieval-disabled run under the same M8 code, model, eval config, and equal budget</em> (tokens, Lean CPU, wall clock); memory transfer is measured on <em>held-out</em> theorems from a previously-solved domain against a <em>memory-disabled run under the same M8 code, model, and eval config</em> (snapshots fix the store, not comparability), with exact-repeat cache savings reported separately — replaying cached proofs doesn't count as transfer.</div>
       </div>
     </div>
   </div>

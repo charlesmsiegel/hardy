@@ -295,15 +295,20 @@ LaTeX side of the output contract.
 - `arxiv_search` against the arXiv API with the usual filters (category — `math.NT`,
   `math.CO`, etc. — author, title/abstract text, date range).
 - `fetch_paper` downloads the PDF *and the LaTeX source when available* (source is
-  far more useful to a model than extracted PDF text) into a content-addressed
-  paper store (`papers/<arxiv-id>/`), and registers the paper in the bibliography.
+  far more useful to a model than extracted PDF text) into a version-keyed paper
+  store (`papers/<arxiv-id>v<N>/`, with a content digest recorded in the manifest):
+  an unversioned fetch resolves to the latest revision and is stored under its
+  resolved version, so cached entries are immutable and a paper's later revisions
+  are distinct store entries — citations and assumed-paper libraries always name
+  the exact version they used. It registers the paper in the bibliography.
   Archive extraction treats the download as untrusted input: path-normalized,
   symlink-safe unpacking under byte and file-count quotas, in an isolated
   temporary directory, admitted to the persistent store atomically.
 - `read_paper` serves stored papers back to the agent in digestible chunks
   (per-section, with math source intact when we have the LaTeX).
 - Polite API usage: rate limiting, caching of queries and downloads — never
-  re-fetch what's in the store.
+  re-fetch a version that's in the store (new revisions are new entries, not
+  re-fetches).
 
 **Bibliography management:**
 - One canonical `references.bib` for the project, machine-maintained:
