@@ -842,7 +842,7 @@ sequenceDiagram
   M->>T: formalize statement, sketch plan
   T->>L: elaborate statement
   L-->>T: elaborated goals, no errors
-  Note over M,T: faithfulness gate — an independent skeptic (separate prompt or model) confirms the formal statement matches the informal claim; never self-review
+  Note over M,T: faithfulness gate — an independent skeptic (separate prompt or model) confirms the formal statement matches the informal claim — never self-review
   loop until kernel accepts or budget out
     M->>T: run_tactic / check_proof
     T->>L: execute against warm session
