@@ -798,7 +798,7 @@ flowchart LR
   O -->|"suspected hole disproven —<br/>step justified as written,<br/>justification recorded"| DI((dismissed))
   VC -->|"overlapping repair invalidates —<br/>regression re-critique reopens,<br/>same id, reopen counter +1"| O
   DI -->|"overlapping repair changes the step —<br/>justification now stale, reopens,<br/>same id, reopen counter +1"| O
-  O -->|"N reopens or<br/>budget out"| AB((abandoned))
+  O -->|"N reopens → strategy escalation<br/>first (per the loop); abandoned only<br/>if escalation fails too, or budget out"| AB((abandoned))
   PA -->|"budget out before re-critique —<br/>unverified patch reported as such"| AB
   classDef s stroke:#14919b,stroke-width:1.6px;
   class O,PA s;
@@ -1205,7 +1205,7 @@ flowchart LR
       </div>
       <div class="tl-item">
         <span class="tl-m">M1</span><span class="tl-t">Minimal agent (Claude Agent SDK)</span>
-        <p class="tl-d">First <code>AgentRuntime</code> adapter; core tools (<code>check_proof</code>, <code>get_goal_state</code>, <code>search_lemmas</code>, <code>write_latex</code>); iterative-repair loop; dual-output workflow. Citations (<code>cite</code> + <code>references.bib</code>) are explicitly deferred to M3 — M1 writeups carry none.</p>
+        <p class="tl-d">First <code>AgentRuntime</code> adapter; core tools (<code>check_proof</code>, <code>run_tactic</code>, <code>get_goal_state</code>, <code>search_lemmas</code>, <code>write_latex</code>); iterative-repair loop; dual-output workflow. Citations (<code>cite</code> + <code>references.bib</code>) are explicitly deferred to M3 — M1 writeups carry none.</p>
         <div class="tl-exit"><strong>EXIT</strong> — &ldquo;prove that the square root of 2 is irrational&rdquo; produces a compile-checked .tex writeup <em>and</em> a kernel-checked .lean proof, end to end.</div>
       </div>
       <div class="tl-item">
@@ -1236,7 +1236,7 @@ flowchart LR
       <div class="tl-item">
         <span class="tl-m">M7</span><span class="tl-t">Search strategies</span>
         <p class="tl-d">Sketch-and-discharge, best-first tactic search, parallel attempts, cheap-closer pre-pass; strategy comparison on the eval set.</p>
-        <div class="tl-exit"><strong>EXIT</strong> — at least one strategy beats the M2 iterative-repair baseline on solve rate at equal budget, with the per-strategy comparison logged in the regression tracker.</div>
+        <div class="tl-exit"><strong>EXIT</strong> — at least one strategy beats iterative repair on solve rate at equal budget, with iterative repair <em>re-run contemporaneously</em> under the same M7 code, model, and eval configuration (never the historical M2 number, which would confound the strategy with every intervening change); per-strategy comparison logged in the regression tracker.</div>
       </div>
       <div class="tl-item">
         <span class="tl-m">M8</span><span class="tl-t">Retrieval &amp; memory</span>

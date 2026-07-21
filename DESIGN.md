@@ -466,8 +466,8 @@ You can't improve what you don't measure. This is as important as the agent itse
    precede it. Exit criterion: check 100 proofs/minute against warm sessions and
    compile-check a sample writeup, both running inside the sandbox.
 2. **M1 — Minimal agent (Claude Agent SDK)**: first `AgentRuntime` adapter on the
-   Claude Agent SDK; core tools (`check_proof`, `get_goal_state`, `search_lemmas`,
-   `write_latex`); iterative-repair loop; dual-output workflow. The citation half
+   Claude Agent SDK; core tools (`check_proof`, `run_tactic`, `get_goal_state`,
+   `search_lemmas`, `write_latex`); iterative-repair loop; dual-output workflow. The citation half
    of the output contract (`cite` + `references.bib`) is explicitly deferred to
    M3 — M1 writeups carry no citations. Exit criterion:
    "prove that the square root of 2 is irrational" produces a compile-checked
@@ -493,9 +493,13 @@ You can't improve what you don't measure. This is as important as the agent itse
    proofs. Exit criterion: hand Hardy a proof with a known subtle gap; it finds the
    gap, patches it, and re-verifies to a clean ledger.
 8. **M7 — Search strategies**: sketch-and-discharge, best-first tactic search,
-   parallel attempts, cheap-closer pre-pass; strategy comparison on the eval set. Exit criterion: at least one
-   strategy beats the M2 iterative-repair baseline on solve rate at equal budget,
-   with the per-strategy comparison logged in the regression tracker.
+   parallel attempts, cheap-closer pre-pass; strategy comparison on the eval set.
+   Exit criterion: at least one strategy beats iterative repair on solve rate at
+   equal budget, where iterative repair is *re-run contemporaneously* under the
+   same M7 code, model, environment, and eval configuration — never compared
+   against the historical M2 number, which would confound the strategy with every
+   intervening change — with the per-strategy comparison logged in the regression
+   tracker.
 9. **M8 — Retrieval & memory**: semantic premise search, cross-theorem memory,
    context summarization improvements. Exit criterion: retrieval-augmented premise
    selection measurably improves solve rate or cost-per-solve over the built-in
