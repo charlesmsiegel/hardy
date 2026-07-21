@@ -86,8 +86,10 @@ class LeanRepl:
         # exhausted) must stay 0, not silently fall back to the default.
         resolved = self._default_timeout if timeout is None else timeout
         try:
-            await self._proc.stdin.drain()
-            raw = await asyncio.wait_for(self._read_response(), resolved)
+            # Both phases share the one deadline: a worker that stops consuming
+            # stdin can block drain() indefinitely on a large request, and the
+            # per-command wall-clock guarantee must cover that, not just reads.
+            raw = await asyncio.wait_for(self._drain_and_read(), resolved)
         except asyncio.CancelledError:
             # A cancelled request (e.g. an outer asyncio.wait_for) leaves the
             # command still running in the process, so its response could later
@@ -115,8 +117,13 @@ class LeanRepl:
             await self.close()
             raise ReplDied("malformed JSON from repl") from None
 
+    async def _drain_and_read(self) -> str:
+        await self._proc.stdin.drain()
+        return await self._read_response()
+
     async def _read_response(self) -> str:
         lines: list[bytes] = []
+        total = 0
         while True:
             line = await self._proc.stdout.readline()
             if not line:
@@ -125,6 +132,12 @@ class LeanRepl:
                 if lines:
                     return b"".join(lines).decode()
                 continue  # tolerate leading blank lines
+            # readline caps a single line at stream_limit; also bound the whole
+            # multi-line frame so many short lines can't exhaust host memory
+            # before the timeout fires (ValueError → ReplDied in send()).
+            total += len(line)
+            if total > self._stream_limit:
+                raise ValueError(f"response frame exceeded {self._stream_limit} bytes")
             lines.append(line)
 
     async def _validate(self, model, payload: dict):

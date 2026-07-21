@@ -76,6 +76,28 @@ def test_abort_kills_engine_child_process_group(tmp_path):
     assert not marker.exists()
 
 
+def test_sandbox_timeout_arg_preserves_fractions():
+    from hardy.latex.compile import _sandbox_timeout_arg
+
+    assert _sandbox_timeout_arg(1.9) == "1.9"
+    assert _sandbox_timeout_arg(0.5) == "0.5"
+    assert float(_sandbox_timeout_arg(120.0)) == 120.0
+    assert float(_sandbox_timeout_arg(0.0)) > 0  # never a zero/negative duration
+
+
+def test_docker_client_env_preserves_connection(monkeypatch):
+    from hardy.latex.compile import _docker_client_env
+
+    monkeypatch.setenv("DOCKER_HOST", "tcp://remote:2376")
+    monkeypatch.setenv("DOCKER_CONTEXT", "prod")
+    monkeypatch.setenv("HARDY_SECRET_TOKEN", "hunter2")
+    env = _docker_client_env()
+    assert env["DOCKER_HOST"] == "tcp://remote:2376"
+    assert env["DOCKER_CONTEXT"] == "prod"
+    assert "PATH" in env
+    assert "HARDY_SECRET_TOKEN" not in env  # still scrubbed to the allowlist
+
+
 def test_environment_is_scrubbed(tmp_path, monkeypatch):
     monkeypatch.setenv("HARDY_SECRET_TOKEN", "hunter2")
     result = compile_tex(

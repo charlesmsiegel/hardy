@@ -130,9 +130,18 @@ class ReplPool:
         self._idle: asyncio.Queue = asyncio.Queue()
 
     async def start(self) -> None:
-        results = await asyncio.gather(
-            *(self._spawn() for _ in range(self._size)), return_exceptions=True
-        )
+        try:
+            results = await asyncio.gather(
+                *(self._spawn() for _ in range(self._size)), return_exceptions=True
+            )
+        except asyncio.CancelledError:
+            # Cancelled mid-startup (e.g. an outer deadline): a worker that
+            # already finished importing is in _live but not yet idle, and the
+            # caller never reaches its own cleanup — retire everything spawned.
+            for worker in list(self._live):
+                await worker.repl.close()
+            self._live.clear()
+            raise
         workers = [r for r in results if isinstance(r, PoolWorker)]
         failures = [r for r in results if not isinstance(r, PoolWorker)]
         if failures:
@@ -235,11 +244,18 @@ class ReplPool:
             last_error: Exception | None = None
             for attempt in range(self._spawn_retries):
                 try:
-                    self._idle.put_nowait(await self._spawn())
-                    return
+                    new = await self._spawn()
                 except Exception as exc:  # transient docker/toolchain pressure
                     last_error = exc
                     await asyncio.sleep(self._spawn_retry_delay * (attempt + 1))
+                    continue
+                if self._closed:
+                    # close() took its _live snapshot while we were spawning;
+                    # this fresh worker would leak if queued into a dead pool.
+                    await self._retire(new)
+                    return
+                self._idle.put_nowait(new)
+                return
             # Unrecoverable: poison the queue so callers fail promptly rather
             # than deadlocking on a slot that will never be refilled.
             self._broken = last_error

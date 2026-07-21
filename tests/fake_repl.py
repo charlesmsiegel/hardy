@@ -7,6 +7,8 @@ commands drive failure modes:
   BADJSON   — responds with non-JSON garbage (protocol-error tests)
   BADSCHEMA — responds with valid JSON that fails schema validation
   HUGE      — responds with a single ~1 MB JSON line (frame-limit tests)
+  FLOOD     — emits many short lines with no blank separator (cumulative
+              frame-limit tests)
   ERROR     — responds with an error message
   FATAL     — responds with a fatal repl-level message and no env
   sorry     — any cmd containing "sorry" responds with a sorries entry
@@ -71,6 +73,13 @@ def main():
                         ],
                     }
                 )
+                continue
+            if cmd == "FLOOD":
+                # Many short lines, each well under the per-line limit, and no
+                # blank separator: exercises the cumulative frame bound.
+                for _ in range(200000):
+                    sys.stdout.write("x" * 50 + "\n")
+                sys.stdout.flush()
                 continue
             if cmd == "HUGE":
                 data = "x" * (1 << 20)
