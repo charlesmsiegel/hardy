@@ -145,6 +145,14 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   statement equals the current goal is served as a cache hit and **flagged in
   the trajectory** — the comparison harness reports these separately from
   transfer (the DESIGN rule that replaying cached proofs is not transfer).
+  Blocking benchmark *writes* doesn't stop read-side contamination: an
+  ordinary run may already have distilled a proof whose statement matches a
+  benchmark item, and a benchmark run reading that snapshot would receive the
+  answer whole. **Benchmark-mode recall therefore filters out any entry whose
+  statement matches the loaded benchmark corpus** (checked against the M2
+  corpus digest set); if a match nonetheless reaches an attempt, the attempt
+  is marked contaminated and excluded from headline solve metrics — a flag
+  that still counts toward pass@k would just be contamination with a label.
 - **Held-out transfer protocol:** `compare_configs.py` gains a two-phase
   protocol mode. Phase 1 — *population* — runs domain set A in an explicit
   **write-enabled mode**: not benchmark mode (whose runs never write) but a

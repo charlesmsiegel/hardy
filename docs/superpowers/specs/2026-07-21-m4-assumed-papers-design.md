@@ -65,8 +65,15 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   `StatementInventory(paper: str /* id_v */, items: list[InventoryItem])`;
   `InventoryItem(label: str /* "Theorem 3.2" */, kind, statement_text: str,
   depends_on_definitions: list[str], page_or_section: str)`.
-- Extraction is eager and cached — re-assuming a paper never re-extracts. The
-  cache lives **outside the admitted paper entry**, in a derived-data layer
+- Extraction is eager and cached — re-assuming a paper never re-extracts, and
+  **one inventory is elected per paper under the per-paper lock**: extraction
+  is a nondeterministic agent run, so two concurrent first-time
+  `Assume`/`ensure_axiom` calls racing outside the lock could each produce a
+  different inventory, one minting from A while B becomes the durable cache —
+  and a later `ensure_axiom` would treat a label as satisfied by an axiom
+  whose cached statement now reads differently. The first writer under the
+  lock wins; everyone else reads the elected inventory. The cache lives
+  **outside the admitted paper entry**, in a derived-data layer
   (`papers/_derived/<id>v<N>/inventory.json`, keyed additionally by extractor
   version): M3 defines admitted entries as immutable after atomic admission, so
   writing into one would break the store's digest guarantees (and read-only
@@ -84,7 +91,15 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   in M8 and slots in as an upgrade — then a real definition; `opaque` +
   characterizing axioms last, each extra axiom justified in the docstring).
 - Every minted declaration carries a docstring:
-  `/-- Theorem 3.2 of [smith2023modular]: <verbatim statement text> -/`.
+  `/-- Theorem 3.2 of [smith2023modular]: <verbatim statement text> -/` —
+  with the interpolated paper text **escaped** (`-/` sequences neutralized):
+  paper text is untrusted, and an unescaped `-/` would terminate the comment
+  and inject live source. The generated file is **parsed and its declarations
+  classified before publication**: only the requested `axiom` plus explicitly
+  declared support definitions are allowed, and *every* `axiom`/`opaque` in
+  the file — not just the requested one — must have its own review and
+  manifest entry. A clean `lake build` is no gate against a smuggled helper
+  axiom widening the importable trust surface unreviewed.
 - Elaboration gate: the generated file must build (against Mathlib + previously
   minted items in the same namespace) via the pool before review; failures are
   retried bounded times, then the item is recorded `skipped(reason)` in the
@@ -135,8 +150,13 @@ papers_lean/     — the Lean package of assumed libraries (committed)
 - **Axiom manifest** (per downstream result): M4 extends M1/M2's audit — the
   `#print axioms` set is partitioned into standard axioms, `Papers.*` axioms
   (resolved to paper + label via library manifests), and *unexpected* (anything
-  else = audit failure). Stored in the result's `manifest.json`; benchmark mode
-  (M2) continues to reject any `Papers.*` axiom.
+  else = audit failure). For each used paper axiom the manifest pins **the
+  content hash and canonical formal type of the declaration as used, plus the
+  package generation id** — a later correction to a live axiom under the same
+  name would otherwise leave two materially different trust bases rendering as
+  the same "verified modulo" ledger, and the historical result could no longer
+  say what it actually assumed. Stored in the result's `manifest.json`;
+  benchmark mode (M2) continues to reject any `Papers.*` axiom.
 
 ### Workflow and tools
 
@@ -157,9 +177,15 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   publications of different papers would race on without conflicting
   per-paper locks — registry mutation happens under an additional
   **package-wide lock**, taken only for the registry edit and final package
-  build so per-paper minting still parallelizes. Publication itself is atomic
-  — source, manifest, registry entry, and copied oleans replace together from
-  the staged build, never piecemeal.
+  build so per-paper minting still parallelizes. Publication is a **generation
+  switch, not per-file renames** — multiple files cannot be replaced atomically
+  one rename at a time, and a crash mid-sequence would leave workers importing
+  oleans inconsistent with the live source or a registry pointing at a
+  half-published namespace: each publish materializes a complete versioned
+  generation directory (source, manifests, registry, oleans) and flips one
+  pointer (symlink or generation file) to it atomically; workers resolve the
+  pointer at lease time and hold their generation for the lease's duration;
+  stale generations are garbage-collected once unreferenced.
 - `assume_paper` tool wraps standalone mode; `list_assumptions` renders library
   manifests and, given a result, its axiom manifest.
 - Pool integration: workers for frontier runs import `Papers.*` libraries in
