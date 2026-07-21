@@ -313,8 +313,10 @@ LaTeX side of the output contract.
 **Bibliography management:**
 - One canonical `references.bib` for the project, machine-maintained:
   auto-generated entries from arXiv metadata (with DOI/journal fields when arXiv
-  provides them), deduplication by arXiv id/DOI, stable cite keys
-  (`author2023short`), and a validation pass (bibtex parses, no duplicate keys) in CI.
+  provides them), deduplication by **arXiv id + version** (or DOI), stable cite
+  keys (`author2023short`; a second revision in scope gets a distinct
+  version-qualified key, e.g. `author2023shortV3`), and a validation pass (bibtex
+  parses, no duplicate keys) in CI. Entries record the exact arXiv version.
 - The `cite` tool is the only write path — the agent never edits the `.bib` by hand,
   so the file stays clean.
 
@@ -327,7 +329,12 @@ LaTeX side of the output contract.
 - **Compilation is sandboxed like Lean elaboration**: TeX is code, not markup —
   `\input`/`\openout` read and write files, and shell-escape executes commands.
   Model-generated documents compile with shell-escape disabled, no network,
-  read-only mounts, and a dedicated ephemeral output directory.
+  and a dedicated ephemeral output directory — and because read-only mounts stop
+  mutation but not *disclosure* (`\input` can copy any visible file into the
+  emitted PDF or log), the compiler sees only an allowlisted staging directory
+  containing the current source, the template, and the needed bibliography
+  fragment, with a scrubbed process environment. No project tree, paper store, or
+  credentials are visible to it.
 - **Failure keeps the contract**: if a document still fails after bounded
   compile-and-repair retries, the run ships a *minimal compile-checked failure
   report* (generated from a known-good template: status, errors, the failing
@@ -368,7 +375,11 @@ literature anyway.
 2. An extraction pass identifies the paper's definitions, theorems, lemmas, and
    propositions, with their statement text and numbering.
 3. A formalization pass mints an `axiom` for a result in a per-paper namespace
-   (`Papers.<CiteKey>`), with a docstring linking back to the paper's numbering and
+   (`Papers.<CiteKey>` — and the cite key resolves to exactly one stored paper
+   version, recorded in the library's manifest; a second revision imported
+   alongside gets its own version-qualified key and namespace, e.g.
+   `Papers.Smith2023V3`, so revisions can never collide or silently resolve
+   through each other), with a docstring linking back to the paper's numbering and
    BibTeX key. **When to mint depends on how Assume was invoked**: inside a
    prove/critique chain, axioms are minted lazily on first use, keeping the trusted
    surface limited to what proofs actually invoke; a *standalone* Assume request —
@@ -546,7 +557,10 @@ You can't improve what you don't measure. This is as important as the agent itse
    environment, and eval configuration* (a versioned snapshot fixes the store's
    contents but cannot make results comparable to the historical M2 number), with
    exact-repeat cache savings reported separately (replaying cached proofs is not
-   transfer).
+   transfer). The third deliverable gets the same discipline: context
+   summarization is compared summarized-vs-unsummarized on long-context runs at
+   equal budget, measuring solve rate, cost, and context-overflow failures, so a
+   summarizer that drops needed hypotheses cannot regress unnoticed.
 
 ## Open Questions
 
