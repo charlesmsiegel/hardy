@@ -25,8 +25,13 @@ def run(command, **kwargs):
 
 
 def test_no_network():
-    proc = run(["curl", "-sS", "--max-time", "5", "https://example.com"])
-    assert proc.returncode != 0
+    # Use busybox wget (present in the image) and distinguish a real connection
+    # failure from a missing binary — a command-not-found would pass spuriously.
+    probe = run(["wget", "-T", "5", "-q", "-O", "/dev/null", "http://example.com"])
+    assert probe.returncode != 0, "wget unexpectedly reached the network"
+    assert "not found" not in (probe.stderr or "").lower(), "wget missing from image"
+    # A DNS/connect probe (nslookup) must also fail with --network none.
+    assert run(["nslookup", "example.com"]).returncode != 0
 
 
 def test_rootfs_read_only_but_scratch_writable():
