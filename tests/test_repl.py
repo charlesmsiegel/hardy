@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy.lean.repl import LeanRepl, ReplDied, ReplTimeout
+from hardy.lean.repl import LeanRepl, LeanReplError, ReplDied, ReplTimeout
 
 FAKE = [sys.executable, str(Path(__file__).parent / "fake_repl.py")]
 
@@ -141,6 +141,15 @@ async def test_cancelled_request_kills_process():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert not repl.alive
+    await repl.close()
+
+
+async def test_double_start_rejected():
+    # A second start() on a live instance would orphan the first process.
+    repl = await make_repl()
+    with pytest.raises(LeanReplError):
+        await repl.start()
+    assert repl.alive
     await repl.close()
 
 

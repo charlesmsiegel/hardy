@@ -65,6 +65,7 @@ LaTeX template + compile-check pipeline, sandbox layer. The M0 exit
 criterion (100+ sandboxed proof checks/minute + a sandboxed
 compile-checked sample writeup) has NOT yet been run — it needs a machine
 with Docker, ~30 GB disk, and network for the initial Mathlib cache; run
-scripts/setup_lean.sh, build both docker/Dockerfile targets, then
+`pip install -e .` (the scripts import the `hardy` package from `src/`),
+then scripts/setup_lean.sh, build both docker/Dockerfile targets, then
 scripts/bench_throughput.py --sandbox and scripts/sample_writeup.py
 --sandbox. M0 is not complete until both print PASS.
