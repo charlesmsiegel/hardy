@@ -180,6 +180,11 @@ def compile_tex_sandboxed(
     inputs = Path(tempfile.mkdtemp(prefix="hardy-texin-"))
     try:
         (inputs / "main.tex").write_text(source)
+        # mkdtemp is 0700 and the container runs as an unprivileged user with a
+        # different UID; without these bits it can't traverse /staging to read
+        # main.tex. World read/traverse is safe — the dir holds only main.tex.
+        os.chmod(inputs, 0o755)
+        os.chmod(inputs / "main.tex", 0o644)
         name = f"hardy-tex-{uuid.uuid4().hex[:12]}"
         cfg = SandboxConfig(
             image=image,

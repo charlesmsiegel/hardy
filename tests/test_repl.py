@@ -121,6 +121,16 @@ async def test_cancelled_request_kills_process():
     await repl.close()
 
 
+async def test_explicit_zero_timeout_is_honored():
+    # timeout=0.0 (budget exhausted) must not fall back to the default and let
+    # the command run for another default window.
+    repl = await make_repl(default_timeout=30)
+    with pytest.raises(ReplTimeout):
+        await repl.run_command("HANG", timeout=0)
+    assert not repl.alive
+    await repl.close()
+
+
 async def test_close_bounds_a_hanging_cleanup():
     # A cleanup helper that never exits must not make close() (hence the
     # per-command timeout that calls it) hang forever.

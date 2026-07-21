@@ -66,6 +66,53 @@ async def test_close_wakes_queued_waiters():
         await asyncio.wait_for(queued, timeout=10)
 
 
+async def test_fatal_response_recycles_worker(monkeypatch):
+    # A worker that answers with a fatal repl-level message has lost the base
+    # environment; it must be replaced, not requeued to fail every next check.
+    pool = make_pool()
+    await pool.start()
+    spawns = 0
+    real_spawn = pool._spawn
+
+    async def counting_spawn():
+        nonlocal spawns
+        spawns += 1
+        return await real_spawn()
+
+    monkeypatch.setattr(pool, "_spawn", counting_spawn)
+    v = await pool.check_proof("FATAL")
+    assert not v.complete
+    assert spawns == 1  # worker replaced after losing the base env
+    v2 = await pool.check_proof("SHOW_ENV")
+    assert v2.warnings[0].data == "env=0"  # replacement re-established base_env
+    await pool.close()
+
+
+async def test_cancel_during_replacement_poisons_pool(monkeypatch):
+    # Cancelling while _replace() is spawning the new worker must not silently
+    # drop the slot; later checks fail fast instead of deadlocking.
+    pool = make_pool(max_commands=1)
+    await pool.start()
+    real_spawn = pool._spawn
+
+    async def slow_spawn():
+        await asyncio.sleep(2)  # wide window to cancel inside _replace
+        return await real_spawn()
+
+    # Patch before the check so its dirty-path replacement uses the slow spawn.
+    monkeypatch.setattr(pool, "_spawn", slow_spawn)
+    task = asyncio.create_task(pool.check_proof("theorem t : True := trivial"))
+    await asyncio.sleep(0.3)  # check done + dirty (max_commands=1); now replacing
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    with pytest.raises(LeanReplError):
+        await asyncio.wait_for(
+            pool.check_proof("theorem u : True := trivial"), timeout=10
+        )
+    await pool.close()
+
+
 async def test_cancel_during_scratch_reset_recycles_worker():
     # Cancellation can land while the reset command runs (not just the check);
     # the worker must still be retired so a size-1 pool doesn't deadlock.
