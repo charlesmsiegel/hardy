@@ -111,10 +111,16 @@ violation:
   to the tracking store as attempts finish (a crashed eval run keeps its completed
   attempts). Lean CPU is measured, not inferred from wall time (parallel workers
   and host load make the two incomparable): sandboxed workers read the container's
-  cgroup `cpuacct`/`cpu.stat` usage delta around each command (the container name
-  from `sandboxed_worker_spec` makes it addressable); direct workers read the
-  process's `psutil` CPU-times delta. The session accumulates the deltas per
-  attempt.
+  cgroup `cpuacct`/`cpu.stat` usage (the container name from
+  `sandboxed_worker_spec` makes it addressable); direct workers read the
+  process's `psutil` CPU-times. Sampling must survive worker teardown — on
+  timeout/crash/protocol error `LeanRepl` kills the container before the
+  failure propagates, so a read-after-command scheme would lose exactly the
+  most expensive failed attempts: a lightweight monitor samples the counter
+  *during* execution, the teardown path keeps the last sample, and when no
+  final sample exists the attempt is charged a conservative upper bound
+  (elapsed wall-clock × the sandbox's CPU cap), marked estimated. The session
+  accumulates per attempt.
 
 ### `metrics.py`
 

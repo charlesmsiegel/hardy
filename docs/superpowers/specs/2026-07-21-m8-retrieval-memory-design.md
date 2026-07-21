@@ -136,7 +136,14 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   dedicated population mode in which the normal write-path gates apply (run
   success + anti-cheat pass) and distilled entries are admitted; without this
   carve-out the read-only eval rule would leave the snapshot empty and B could
-  measure nothing. The resulting snapshot is then **frozen** (id recorded).
+  measure nothing. Population starts from a **recorded base snapshot** (empty
+  by default for the exit criterion), and what freezes is exactly **base + the
+  phase-A delta**: freezing whatever the shared store happens to contain would
+  let pre-existing same-domain — or even B-derived — entries from ordinary
+  prior runs masquerade as transfer, and `A∩B = ∅` alone cannot detect that.
+  Every delta entry's provenance is audited at freeze time; an entry whose
+  provenance references any B item (or is missing) is rejected. The frozen
+  snapshot id and base id both land in the comparison record.
   Phase 2 — *comparison* — evaluates held-out set B from the same domain
   against that frozen snapshot, memory-on vs. memory-off, contemporaneously and
   strictly read-only. Set membership for both phases is recorded in the

@@ -51,10 +51,21 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   author, title/abstract text, date range, max results. `PaperMeta` carries id,
   version, title, authors, abstract, categories, DOI/journal when present.
 - `resolve_version(arxiv_id) -> str` and `download(arxiv_id_v) ->
-  DownloadedPaper(pdf_bytes, source_tar: bytes | None)` — source (e-print tarball)
-  fetched whenever available; its absence is recorded, not an error.
-- **Rate limiting:** a module-level async limiter honoring arXiv's published
-  guidance (1 request / 3 s, single connection); every call path goes through it.
+  DownloadedPaper(pdf_path: Path, source_tar_path: Path | None)` — source
+  (e-print tarball) fetched whenever available; its absence is recorded, not an
+  error. Downloads **stream to temporary storage under explicit byte limits**
+  (per-payload caps, checked on the compressed bytes as they arrive; the
+  response is aborted the moment a cap is exceeded) — materializing whole
+  responses as `bytes` would let one oversized or hostile payload exhaust host
+  memory before the store's extraction quotas or the PDF parser's bounds ever
+  run.
+- **Rate limiting:** a limiter honoring arXiv's published guidance
+  (1 request / 3 s, single connection), coordinated **across processes** — the
+  interval and connection lease live behind an interprocess lock with a shared
+  last-request timestamp (same lock discipline as the bibliography), because
+  concurrent Hardy runs are a supported scenario and per-process limiters
+  would multiply the real request rate and invite throttling or bans. Every
+  call path goes through it.
 - **Query cache:** search responses cached on disk keyed by canonicalized query,
   with a TTL (default 24 h) — searches are cheap to redo but the agent may loop.
 

@@ -179,6 +179,12 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   (`eval_results/comparisons.jsonl`) linking them: per-strategy solve rate,
   cost per solve, budget utilization — the logged per-strategy comparison the
   exit criterion names. The historical M2 number is never referenced.
+- **One model throughout:** the harness rejects `strategy_params` containing
+  model overrides (e.g. sketch's `subgoal_model`) in exit-criterion
+  comparisons — "same model" applies to nested strategy work, not just the
+  outer config, or an apparent strategy win could actually be a model change.
+  Heterogeneous-model configurations are a legitimate *separate* experiment
+  axis, tracked as such, never the headline strategy comparison.
 
 ## Key decisions and rationale
 
