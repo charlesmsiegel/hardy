@@ -443,8 +443,9 @@ You can't improve what you don't measure. This is as important as the agent itse
 
 - **Autoformalization at scale**: basic natural-language → Lean *statement*
   formalization is part of the core workflow from M1 (the user says "prove √2 is
-  irrational"; the agent writes the Lean statement itself, and a faithfulness check
-  confirms the formal statement matches the informal claim before proving begins).
+  irrational"; the agent writes the Lean statement itself, and an *independent*
+  faithfulness review — separate prompt or model, never self-review — confirms the
+  formal statement matches the informal claim before proving begins).
   What's deferred is the hard research version: bulk formalization of corpora and
   automated statement-equivalence checking.
 - **Premise-retrieval model**: embedding-based Mathlib retrieval (ReProver-style)
@@ -475,7 +476,11 @@ You can't improve what you don't measure. This is as important as the agent itse
    compile-check a sample writeup, both running inside the sandbox.
 2. **M1 — Minimal agent (Claude Agent SDK)**: first `AgentRuntime` adapter on the
    Claude Agent SDK; core tools (`check_proof`, `run_tactic`, `get_goal_state`,
-   `search_lemmas`, `write_latex`); iterative-repair loop; dual-output workflow. The citation half
+   `search_lemmas`, `write_latex`); iterative-repair loop; dual-output workflow;
+   a minimal `#print axioms` audit on results (the full anti-cheat validation
+   suite lands in M2); statement faithfulness gated by an *independent* skeptic —
+   separate prompt or model, never the formalizing model reviewing its own
+   translation. The citation half
    of the output contract (`cite` + `references.bib`) is explicitly deferred to
    M3 — M1 writeups carry no citations. Exit criterion:
    "prove that the square root of 2 is irrational" produces a compile-checked

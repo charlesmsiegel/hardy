@@ -720,8 +720,9 @@ flowchart TD
     <div class="card bd-navy" style="--i:1">
       <h2 class="card-label lbl-navy"><span class="num">W1</span> Prove</h2>
       <p class="prose dim" style="font-size:13.5px"><em>&ldquo;Find a proof of X.&rdquo;</em>
-      Formalize the statement (with a faithfulness check that the Lean statement matches the informal
-      claim), search for a proof using the strategy stack, and produce the LaTeX + Lean artifact pair.</p>
+      Formalize the statement — gated by an <em>independent</em> faithfulness review (separate prompt
+      or model, never the formalizer checking itself) — search for a proof using the strategy stack,
+      and produce the LaTeX + Lean artifact pair.</p>
     </div>
     <div class="card bd-plum" style="--i:2">
       <h2 class="card-label lbl-plum"><span class="num">W2</span> Critique</h2>
@@ -841,7 +842,7 @@ sequenceDiagram
   M->>T: formalize statement, sketch plan
   T->>L: elaborate statement
   L-->>T: elaborated goals, no errors
-  M->>M: faithfulness check — formal statement matches the informal claim
+  Note over M,T: faithfulness gate — an independent skeptic (separate prompt or model) confirms the formal statement matches the informal claim; never self-review
   loop until kernel accepts or budget out
     M->>T: run_tactic / check_proof
     T->>L: execute against warm session
@@ -1178,7 +1179,7 @@ flowchart LR
   C -->|"standard three only"| FULL["<b>fully verified</b>"]
   C -->|"+ declared paper axioms"| MOD["<b>verified modulo</b><br/>manifest attached"]
   C -->|"sorryAx or smuggled"| REJ
-  NOTE["this flow grades the formal dimension —<br/>informal completeness (complete vs. known gaps)<br/>comes from the hole ledger at loop exit"]:::note
+  NOTE["this flow grades the formal dimension —<br/>informal completeness (no gaps detected vs.<br/>known gaps) comes from the hole ledger at loop exit"]:::note
   classDef note stroke:#c08a24,stroke-width:1.2px,stroke-dasharray:4 3;
   classDef good stroke:#10a06a,stroke-width:1.6px;
   class FULL,MOD good;
@@ -1211,7 +1212,7 @@ flowchart LR
       </div>
       <div class="tl-item">
         <span class="tl-m">M1</span><span class="tl-t">Minimal agent (Claude Agent SDK)</span>
-        <p class="tl-d">First <code>AgentRuntime</code> adapter; core tools (<code>check_proof</code>, <code>run_tactic</code>, <code>get_goal_state</code>, <code>search_lemmas</code>, <code>write_latex</code>); iterative-repair loop; dual-output workflow. Citations (<code>cite</code> + <code>references.bib</code>) are explicitly deferred to M3 — M1 writeups carry none.</p>
+        <p class="tl-d">First <code>AgentRuntime</code> adapter; core tools (<code>check_proof</code>, <code>run_tactic</code>, <code>get_goal_state</code>, <code>search_lemmas</code>, <code>write_latex</code>); iterative-repair loop; dual-output workflow; minimal <code>#print axioms</code> audit (full anti-cheat suite lands in M2); statement faithfulness gated by an independent skeptic, never self-review. Citations (<code>cite</code> + <code>references.bib</code>) are explicitly deferred to M3 — M1 writeups carry none.</p>
         <div class="tl-exit"><strong>EXIT</strong> — &ldquo;prove that the square root of 2 is irrational&rdquo; produces a compile-checked .tex writeup <em>and</em> a kernel-checked .lean proof, end to end.</div>
       </div>
       <div class="tl-item">

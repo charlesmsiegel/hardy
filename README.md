@@ -16,9 +16,13 @@ every result here comes with one.
 
 ## What it does
 
-Ask it to prove that the square root of 2 is irrational and it produces **both** a
-kernel-checked Lean 4 proof and a compile-checked LaTeX writeup with citations into
-the project bibliography. LaTeX always; Lean wherever formalization is within reach.
+Ask it to prove that the square root of 2 is irrational and it produces a
+compile-checked LaTeX writeup with citations into the project bibliography **and**,
+whenever formalization succeeds, a kernel-checked Lean 4 proof. LaTeX always; Lean
+wherever formalization is within reach — and when it falls short, it says so:
+every result ships with an explicit grade (fully verified / verified modulo
+assumed papers / partially formalized / known gaps listed), never a silent
+overclaim.
 
 Three composable workflows, which hand a problem back and forth iteratively:
 
