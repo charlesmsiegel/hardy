@@ -161,10 +161,15 @@ runtimes and M6 can splice Critique/Repair in between:
 1. **Formalize.** An agent run turns the user's informal claim into a Lean
    `theorem` statement. `check_proof` cannot serve here — it takes a proof body
    for an already-frozen statement, and no statement exists yet — so the
-   formalize phase gets its own tool, **`propose_statement`**: it accepts a full
-   `theorem <name> : <prop>` declaration, the harness appends `:= by sorry` and
-   elaborates it through the session, and returns structured elaboration
-   feedback (errors with positions, or clean). The statement freezes on the
+   formalize phase gets its own tool, **`propose_statement`**: it accepts
+   **exactly one bodyless `theorem <name> : <prop>` declaration** — the handler
+   parses the submission and rejects multiple commands, auxiliary declarations,
+   or a theorem that already carries a body *before* elaboration (otherwise a
+   completed declaration smuggled alongside a bodyless one could elaborate
+   cleanly while leaving ambiguous which header the harness froze, defeating
+   the immutability guarantee) — then appends `:= by sorry`, elaborates it
+   through the session, and returns structured elaboration feedback (errors
+   with positions, or clean). The statement freezes on the
    first clean elaboration; `propose_statement` is only in the formalize phase's
    registry, and bounded retries apply.
 2. **Faithfulness gate** (`hardy.workflows.faithfulness`). An *independent* skeptic

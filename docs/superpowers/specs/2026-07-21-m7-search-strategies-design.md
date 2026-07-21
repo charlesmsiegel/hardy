@@ -70,8 +70,16 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   None)` — one shared meter object, decremented by every model call and Lean
   command the strategy makes; strategies read `budget.remaining` to degrade
   (e.g. parallel attempts stop launching new branches below a threshold; sketch
-  stops decomposing and tries direct closure). Overspend is clipped by the
-  meter, not trusted to strategy code.
+  stops decomposing and tries direct closure). Spending is **reservation-based
+  and atomic**: before each model call or Lean command, the enforcement layer
+  reserves an allowance from the meter (an upper estimate for the call), then
+  settles actual usage and refunds the difference — checking `remaining` and
+  spending afterward would let concurrent branches all observe the same balance
+  and collectively overshoot by work that clipping cannot recover, quietly
+  breaking the equal-budget guarantee. A call whose reservation fails does not
+  start, and when the remainder can no longer fund concurrent reservations,
+  branch launches serialize. Enforcement lives in the meter/client layer, not
+  in strategy code.
 - Registration: `RunConfig.strategy: str` + `strategy_params: dict` — config,
   not code, selects and parameterizes; the tracking entry records both.
 - The Prove workflow's phase 3 becomes `strategy.prove(...)`; benchmark mode

@@ -120,8 +120,11 @@ violation:
 
 - pass@1 and pass@k (unbiased estimator when attempts ≥ k), overall and per-domain.
 - Cost per solved theorem: total tokens across *all* attempts (solved and not)
-  divided by solves; same for Lean CPU seconds and wall clock — the denominator
-  discipline is fixed here so later strategy comparisons (M7) are apples-to-apples.
+  divided by **unique solved items** (item ids with at least one
+  anti-cheat-validated solve — with `attempts_per_item > 1`, counting solved
+  *attempts* would tally one theorem several times and understate cost); same
+  for Lean CPU seconds and wall clock — the denominator discipline is fixed
+  here so later strategy comparisons (M7) are apples-to-apples.
 - Anti-cheat summary: solves with flags reported as a separate line, never blended
   into the headline number.
 
@@ -130,7 +133,11 @@ violation:
 - Append-only JSONL at `eval_results/runs.jsonl`; one entry per eval run:
   timestamp, config hash, full `EvalConfig`, **git commit SHA of the harness**
   (refusing to log from a dirty working tree unless `--allow-dirty` explicitly
-  overrides, in which case the entry is marked dirty), Lean toolchain + Mathlib
+  overrides — in which case the entry additionally records a digest of the
+  uncommitted changes (`git diff HEAD` hashed, untracked files listed with
+  content digests), since a clean SHA alone cannot identify the code that
+  actually ran; dirty entries are excluded from `--compare` baselines unless
+  explicitly opted in), Lean toolchain + Mathlib
   pin, model identifier, metrics blob, and paths to per-attempt results.
 - `scripts/run_eval.py --compare <run-id> <run-id>` renders a metrics diff — the
   regression check is *available* from day one; wiring it into CI is deferred

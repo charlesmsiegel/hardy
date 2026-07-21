@@ -89,7 +89,12 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   with `eprint`, `archivePrefix`, `primaryClass`, DOI/journal when known, and a
   `note = {arXiv <id>v<N>}` recording the exact version).
 - `Bibliography.load(path)` / `.save(path)` via `bibtexparser`; save is atomic
-  (temp file + rename) and normalizes formatting so diffs stay reviewable.
+  (temp file + rename) and normalizes formatting so diffs stay reviewable. The
+  whole load → dedup/mint → save transaction runs under an **interprocess file
+  lock** (`references.bib.lock`): atomic rename protects readers from partial
+  files but does not serialize concurrent writers — two parallel runs calling
+  `cite`/`fetch_paper` would otherwise each load, mint, and rename, and the
+  last rename would silently discard the other's entry.
 - `mint_key(meta) -> str`: `<first-author-surname><year><first-content-word>`
   (ASCII-folded, lowercased). Collision with a *different* paper appends `a`, `b`,
   …; a different *version of the same paper* gets the version-qualified key
