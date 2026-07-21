@@ -94,7 +94,7 @@ Output-shaping rules (Component 2 of DESIGN.md, enforced in handlers, unit-teste
 | `check_proof` | `ProofSession.check` | Submit complete Lean source for the *fixed* statement; returns verdict rendering (success, or errors/sorries with positions). Also records the attempt in the trajectory. |
 | `run_tactic` | `ProofSession.tactic` | Apply one tactic to a named proof state id; returns new goals or error. |
 | `get_goal_state` | `ProofSession` state table | Pretty-printed goals + hypotheses for any proof state id the session has seen (from `sorries` or `run_tactic` results). |
-| `search_lemmas` | `ProofSession.check` with query commands | M1 scope: proof-state-driven only — runs `exact?`/`apply?`/`rw?` against a proof state and returns the suggestions Lean prints. Loogle/LeanSearch are out of scope until M8 (retrieval). |
+| `search_lemmas` | `ProofSession.tactic` | M1 scope: proof-state-driven only — `exact?`/`apply?`/`rw?` are *tactics*, so they run through the REPL's tactic command against the named proof-state id (a file-level command could never address one); the handler renders the suggestion messages Lean prints. Loogle/LeanSearch are out of scope until M8 (retrieval). |
 | `write_latex` | `render_writeup` + `compile_tex_sandboxed` | Takes title/informal-proof fields (not raw TeX preamble — the template owns the document shell), renders, compile-checks, returns structured errors or success. The theorem statement is **not** an input: the handler injects the harness-owned statement (frozen at formalization), so the agent cannot ship a polished writeup about a different claim. |
 
 Statement immutability: `check_proof` takes only the *proof body*; the harness owns

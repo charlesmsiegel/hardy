@@ -123,11 +123,17 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   statement equals the current goal is served as a cache hit and **flagged in
   the trajectory** — the comparison harness reports these separately from
   transfer (the DESIGN rule that replaying cached proofs is not transfer).
-- **Held-out transfer protocol:** `compare_configs.py` gains a protocol mode:
-  populate memory by running domain set A (recorded snapshot), then evaluate on
-  held-out set B from the same domain, memory-on vs. memory-off,
-  contemporaneously. Set membership is recorded in the comparison record so
-  A∩B = ∅ is checkable, not asserted.
+- **Held-out transfer protocol:** `compare_configs.py` gains a two-phase
+  protocol mode. Phase 1 — *population* — runs domain set A in an explicit
+  **write-enabled mode**: not benchmark mode (whose runs never write) but a
+  dedicated population mode in which the normal write-path gates apply (run
+  success + anti-cheat pass) and distilled entries are admitted; without this
+  carve-out the read-only eval rule would leave the snapshot empty and B could
+  measure nothing. The resulting snapshot is then **frozen** (id recorded).
+  Phase 2 — *comparison* — evaluates held-out set B from the same domain
+  against that frozen snapshot, memory-on vs. memory-off, contemporaneously and
+  strictly read-only. Set membership for both phases is recorded in the
+  comparison record so A∩B = ∅ is checkable, not asserted.
 
 ### Context summarization (`hardy/agent/summarize.py`)
 
