@@ -31,11 +31,16 @@ fi
     exit 1
   fi
   # ...and from pristine sources: checkout does not discard local edits, and a
-  # locally modified repl silently breaks benchmark reproducibility.
-  # (--untracked-files=no ignores build artifacts like .lake/.)
-  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-    echo "ERROR: vendor/repl has local modifications; refusing to build an"
-    echo "       unreproducible repl. Delete vendor/repl and re-run."
+  # locally modified OR stray-untracked repl silently breaks reproducibility
+  # (an untracked .lean/lakefile could even shadow an imported module, and the
+  # same files get COPYed into the Docker image). Ignore only .lake/ build
+  # output; reject every other modified or untracked path.
+  dirty="$(git status --porcelain | grep -vE '^\?\? \.lake/' || true)"
+  if [ -n "$dirty" ]; then
+    echo "ERROR: vendor/repl has local modifications or stray untracked files;"
+    echo "       refusing to build an unreproducible repl. Offending paths:"
+    echo "$dirty"
+    echo "Delete vendor/repl and re-run."
     exit 1
   fi
   lake build )
