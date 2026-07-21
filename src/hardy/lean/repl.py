@@ -82,11 +82,12 @@ class LeanRepl:
             raise ReplDied("repl process is not running")
         payload = json.dumps(request, ensure_ascii=False) + "\n\n"
         self._proc.stdin.write(payload.encode())
+        # Resolve on `is None`, not truthiness: an explicit timeout=0.0 (budget
+        # exhausted) must stay 0, not silently fall back to the default.
+        resolved = self._default_timeout if timeout is None else timeout
         try:
             await self._proc.stdin.drain()
-            raw = await asyncio.wait_for(
-                self._read_response(), timeout or self._default_timeout
-            )
+            raw = await asyncio.wait_for(self._read_response(), resolved)
         except asyncio.CancelledError:
             # A cancelled request (e.g. an outer asyncio.wait_for) leaves the
             # command still running in the process, so its response could later
@@ -97,7 +98,7 @@ class LeanRepl:
         except TimeoutError:
             await self.close()
             raise ReplTimeout(
-                f"no response within {timeout or self._default_timeout}s"
+                f"no response within {resolved}s"
             ) from None
         except (ReplDied, ConnectionResetError, BrokenPipeError) as exc:
             await self.close()

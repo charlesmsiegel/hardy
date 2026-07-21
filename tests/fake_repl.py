@@ -8,6 +8,7 @@ commands drive failure modes:
   BADSCHEMA — responds with valid JSON that fails schema validation
   HUGE      — responds with a single ~1 MB JSON line (frame-limit tests)
   ERROR     — responds with an error message
+  FATAL     — responds with a fatal repl-level message and no env
   sorry     — any cmd containing "sorry" responds with a sorries entry
   SHOW_ENV  — echoes the request's "env" field back as a warning message
 Anything else gets {"env": N} with N incrementing per command.
@@ -48,6 +49,11 @@ def main():
                 time.sleep(3600)
             if cmd == "DIE":
                 sys.exit(1)
+            if cmd == "FATAL":
+                # Fatal repl-level error (e.g. unknown environment): message,
+                # no env — the worker can no longer serve the base environment.
+                respond({"message": "unknown environment 0"})
+                continue
             if cmd == "BADJSON":
                 sys.stdout.write("this is not json\n\n")
                 sys.stdout.flush()

@@ -187,7 +187,11 @@ class ReplPool:
             )
         try:
             resp = await worker.check(code, timeout=timeout)
-            dirty = self._should_recycle(worker)
+            # A fatal repl-level message (e.g. "unknown environment" for our
+            # recorded base_env) means the worker can no longer service the
+            # pristine base — replace it rather than requeue a slot that would
+            # fail every future check the same way.
+            dirty = self._should_recycle(worker) or resp.message is not None
             # The scratch reset is inside the try so a cancellation landing
             # during it (not just during the check) still retires the worker.
             if not dirty and worker.spec.reset_argv is not None:
@@ -224,22 +228,33 @@ class ReplPool:
         await worker.repl.close()
 
     async def _replace(self, worker: PoolWorker) -> None:
-        await self._retire(worker)
-        if self._closed:
-            return  # a closing pool must not spawn fresh workers
-        last_error: Exception | None = None
-        for attempt in range(self._spawn_retries):
-            try:
-                self._idle.put_nowait(await self._spawn())
-                return
-            except Exception as exc:  # transient docker/toolchain pressure
-                last_error = exc
-                await asyncio.sleep(self._spawn_retry_delay * (attempt + 1))
-        # Unrecoverable: poison the queue so callers fail promptly rather
-        # than deadlocking on a slot that will never be refilled.
-        self._broken = last_error
-        self._idle.put_nowait(_POISON)
-        raise LeanReplError(f"could not replace worker: {last_error}")
+        try:
+            await self._retire(worker)
+            if self._closed:
+                return  # a closing pool must not spawn fresh workers
+            last_error: Exception | None = None
+            for attempt in range(self._spawn_retries):
+                try:
+                    self._idle.put_nowait(await self._spawn())
+                    return
+                except Exception as exc:  # transient docker/toolchain pressure
+                    last_error = exc
+                    await asyncio.sleep(self._spawn_retry_delay * (attempt + 1))
+            # Unrecoverable: poison the queue so callers fail promptly rather
+            # than deadlocking on a slot that will never be refilled.
+            self._broken = last_error
+            self._idle.put_nowait(_POISON)
+            raise LeanReplError(f"could not replace worker: {last_error}")
+        except asyncio.CancelledError:
+            # Cancelled mid-replacement (retire, spawn, or backoff). The old
+            # worker is already gone, so the slot would silently vanish and
+            # deadlock later waiters — poison it so they fail fast instead,
+            # then propagate the cancellation.
+            if not self._closed:
+                if self._broken is None:
+                    self._broken = LeanReplError("worker replacement cancelled")
+                self._idle.put_nowait(_POISON)
+            raise
 
     async def close(self) -> None:
         # Mark closed first so any in-flight check retires its worker on return
