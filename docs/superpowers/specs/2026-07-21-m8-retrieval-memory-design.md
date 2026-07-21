@@ -7,7 +7,11 @@ context summarization improvements.
 
 1. Retrieval-augmented premise selection measurably improves solve rate or
    cost-per-solve against a **retrieval-disabled run under the same M8 code,
-   model, environment, budget, and eval configuration**.
+   model, environment, budget, and eval configuration** — where a
+   cost-per-solve win counts **only under a predeclared solve-rate
+   non-inferiority margin** (the two ratios are computed over different
+   solved populations, so retrieval that solves one cheap item while
+   regressing solve rate would otherwise "win" on cost while helping less).
 2. Memory transfer is measured on **held-out theorems from a previously-solved
    domain — never the solved theorems themselves** — against a memory-disabled
    contemporaneous baseline, with exact-repeat cache savings reported separately

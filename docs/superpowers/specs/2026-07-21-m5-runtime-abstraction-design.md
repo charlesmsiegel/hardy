@@ -64,9 +64,14 @@ hardy/agent/
   **enforced, not honor-system**: config load recursively scans
   `provider_params` and rejects it when a field path matches credential
   patterns (`*key*`, `*token*`, `*secret*`, `*password*`, `authorization`,
-  `cookie`, header maps) *or* a string value matches known credential shapes
-  (`Bearer …`, `sk-…`, AWS key ids, high-entropy opaque strings) — such fields
-  must move to `provider_secrets` as `env:` references before the run starts,
+  `cookie`, header maps) *or* a string value matches an **unambiguous** credential shape
+  (`Bearer …` prefixes, `sk-…`, AWS `AKIA…` key ids — deliberately *not*
+  generic high-entropy rejection, which would misclassify legitimate opaque
+  deployment/model-revision/inference-profile identifiers that must stay in
+  `provider_params` for the config hash) — such fields must move to
+  `provider_secrets` as `env:` references before the run starts; where a
+  provider ships a typed config schema, that schema's secret/non-secret field
+  classification is used instead of pattern heuristics,
   so credentials never reach the append-only results however they're named
   (`headers.Authorization` included),
   `max_cost_usd: float | None` (DESIGN promises *cost* caps, and a token cap is
