@@ -145,9 +145,12 @@ adapters. A shared parametrized test suite (`tests/runtime_conformance.py`) runs
 every adapter against a scripted fake model/server and asserts identical
 observable behavior: tool schema exposure, argument round-tripping (unicode,
 nesting, empty args), tool errors surfaced as results (not crashes), enforcement of
-all three budgets (`max_turns`, wall-clock, `max_tokens_total` — the token cap
-stops the run before the next model call and records the exhaustion kind),
-trajectory event ordering and totals, final-text extraction. The SDK and Strands adapters run it against their frameworks' test
+every budget dimension (`max_turns`, wall-clock, `max_tokens_total`,
+`max_cost_usd` — caps stop the run before the next model call and record the
+exhaustion kind; the cost cases include capped-cost enforcement,
+missing-pricing rejection, and exhaustion recording, so an adapter that skips
+cost settlement cannot pass the suite), trajectory event ordering and totals,
+final-text extraction. The SDK and Strands adapters run it against their frameworks' test
 seams (or a local fake endpoint where the framework allows); the minimal loop
 runs it against a fake OpenAI-compatible server (aiohttp test server) in both
 native and prompted modes.

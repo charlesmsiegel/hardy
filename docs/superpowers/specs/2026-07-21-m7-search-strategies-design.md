@@ -75,7 +75,13 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   lesson summaries), and adapter-owned `max_turns`/`max_cost_usd` reset per
   invocation — each inner call therefore receives only the meter's *remaining*
   turn and cost allowances as its config, exactly as M1 does across Prove
-  phases; strategies read `budget.remaining` to degrade
+  phases. **Wall clock is the exception: a monotonic run deadline, not an
+  additive reservation** — three branches running through the same 10 seconds
+  advance the theorem's wall time by 10, not 30, and reserve-settle accounting
+  on it would spuriously serialize parallel work and rig the equal-wall-budget
+  comparison against parallel strategies. Only genuinely additive dimensions
+  (tokens, turns, cost, Lean CPU) go through reservations; every call and
+  launch simply checks the shared deadline; strategies read `budget.remaining` to degrade
   (e.g. parallel attempts stop launching new branches below a threshold; sketch
   stops decomposing and tries direct closure). Spending is **reservation-based
   and atomic**: before each model call or Lean command, the enforcement layer
