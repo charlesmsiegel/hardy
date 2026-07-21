@@ -136,7 +136,11 @@ violation:
 
 ### `tracking.py`
 
-- Append-only JSONL at `eval_results/runs.jsonl`; one entry per eval run:
+- Append-only JSONL at `eval_results/runs.jsonl`; each record append happens
+  under an interprocess lock with the complete line flushed and fsynced before
+  release — two eval processes finishing together would otherwise interleave
+  buffered writes and corrupt the stream, losing both records. One entry per
+  eval run:
   timestamp, config hash, full `EvalConfig`, **git commit SHA of the harness**
   (refusing to log from a dirty working tree unless `--allow-dirty` explicitly
   overrides — in which case the entry additionally records a digest of the
@@ -147,9 +151,14 @@ violation:
   pin, **the content digests of the worker images actually used**
   (`hardy-lean:dev`/`hardy-tex:dev` image IDs — source-level pins cannot detect
   a stale or differently-rebuilt image, and two runs recording identical SHAs
-  and pins can still execute different worker bytes), model identifier, metrics
-  blob, and paths to per-attempt results. `--compare` surfaces image-digest
-  mismatches between the runs it diffs.
+  and pins can still execute different worker bytes), model identity — the configured identifier
+  *plus the resolved immutable revision* (provider-reported model version /
+  response system fingerprint) where the provider exposes one, since a mutable
+  alias can re-point to new weights between two runs that record identical
+  code, images, and config; runs whose provider exposes no immutable identity
+  are marked as such so comparisons can segregate them — metrics blob, and
+  paths to per-attempt results. `--compare` surfaces image-digest and
+  model-revision mismatches between the runs it diffs.
 - `scripts/run_eval.py --compare <run-id> <run-id>` renders a metrics diff — the
   regression check is *available* from day one; wiring it into CI is deferred
   until eval runs stop needing a live model.

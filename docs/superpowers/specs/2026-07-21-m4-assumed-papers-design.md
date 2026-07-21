@@ -134,7 +134,15 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   review → lint → build package → manifest. **Chained mode** — exposes
   `ensure_axiom(paper, label)` used by Prove/Repair: extract (cached) → mint that
   item lazily → review → lint → rebuild. Prove sees assumed axioms only through
-  `ensure_axiom`, keeping the trusted surface limited to first use.
+  `ensure_axiom`, keeping the trusted surface limited to first use. The whole
+  mint → review → lint → publish transaction is **serialized per namespace**
+  (an interprocess lock on `Papers/<Key>.lock`, same discipline as the M3
+  ledgers): two runs lazily minting different labels of one paper would
+  otherwise write `Papers/<Key>.lean` and its manifest from overlapping
+  snapshots, and the last publication could drop the other's declaration or
+  ship oleans disagreeing with the final source. Publication itself is atomic
+  — source, manifest, and copied oleans replace together from the staged
+  build, never piecemeal.
 - `assume_paper` tool wraps standalone mode; `list_assumptions` renders library
   manifests and, given a result, its axiom manifest.
 - Pool integration: workers for frontier runs import `Papers.*` libraries in

@@ -85,8 +85,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   embedder so criterion 1 measures retrieval, not embedder spend. Queries
   embed the pretty-printed goal (hypotheses + target).
 - **Index:** built offline by `scripts/build_index.py`; loaded read-only at run
-  time; refuses to load when its key doesn't match the running pin/embedder
-  (silent staleness is the failure mode to design out). Nearest-neighbor over
+  time; its key is `(mathlib_rev, corpus content digest, embedder identity)` —
+  the corpus digest (which subsumes the extractor version *and* its actual
+  output) matters because a new extractor can change corpus contents while pin
+  and embedder stay fixed, and a pin+embedder key would happily serve vectors
+  of the old corpus. Load refuses on any component mismatch (silent staleness
+  is the failure mode to design out). Nearest-neighbor over
   normalized vectors; the index format is an implementation detail behind
   `index.py` (start with a simple exact-search matrix — Mathlib-scale is ~200k
   declarations, fine on CPU; ANN is an optimization, not a requirement).
