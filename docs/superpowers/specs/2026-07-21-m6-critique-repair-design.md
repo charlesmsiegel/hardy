@@ -209,7 +209,12 @@ Critique must accept "any proof", so both workflows operate on one structure:
   hole (concretely: re-run Repair with the alternate strategy prompt and 2×
   step budget; once M7 lands, strategy escalation plugs in here). Escalated
   failure → the honest stop *for that hole*: it and its dependents are marked
-  `abandoned`, and the loop **continues with the remaining independent holes**
+  `abandoned` — a dependent currently `verified-closed` or `dismissed` first
+  **reopens through the legal regression transition** (keeping its identity
+  and reopen accounting) and is then abandoned, since the transition table has
+  no resolved→abandoned edge and a direct jump would raise instead of
+  shipping the honest-stop artifact — and the loop **continues with the
+  remaining independent holes**
   (they are still tractable work; exiting immediately would leave them `open`,
   violating the fixed point and letting the "known gaps" list omit them). The
   loop ends when no entry is `open` or `patched` — via resolution or

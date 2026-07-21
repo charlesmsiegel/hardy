@@ -77,7 +77,15 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
 - `PaperStore.get(id_v) -> StoredPaper | None`; `PaperStore.admit(downloaded) ->
   StoredPaper` — extraction and digesting happen in an isolated temp directory;
   the completed entry is `rename()`d into place (atomic admission); a partially
-  admitted entry can never be observed.
+  admitted entry can never be observed. Admission and digest publication are
+  **jointly crash-safe**: holding the ledger lock, `admit` first appends a
+  *pending* ledger record (id, version, digest), then renames the entry into
+  place, then marks the record committed — recovery under the same lock
+  reconciles the two (pending + entry present → commit; pending + no entry →
+  drop). Rename-then-publish without the journal would let a crash strand an
+  admitted entry whose digest never becomes durable, and the no-refetch rule
+  would preserve that hole forever; publish-then-rename would bless digests
+  for entries that don't exist.
 - **Safe extraction** (untrusted tarball): members are rejected unless a regular
   file or directory; paths normalized and confined under the target (no `..`, no
   absolute paths); symlinks/hardlinks/devices skipped and logged in the extraction

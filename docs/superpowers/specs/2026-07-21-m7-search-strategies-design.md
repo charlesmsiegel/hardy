@@ -66,9 +66,16 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   - `StrategyResult(proved: bool, source: str | None, verdict, budget_spent,
     events)` — events fold into the run's `Trajectory` so M2 metrics and
     telemetry see strategy-internal work (tactic proposals, subgoal outcomes).
-- `StrategyBudget(tokens: int | None, wall_clock_s: float, lean_cpu_s: float |
-  None)` — one shared meter object, decremented by every model call and Lean
-  command the strategy makes; strategies read `budget.remaining` to degrade
+- `StrategyBudget(tokens: int | None, turns: int | None, cost_usd: float |
+  None, wall_clock_s: float, lean_cpu_s: float | None)` — one shared meter
+  object covering **every budget dimension the run advertises**, decremented by
+  every model call and Lean command the strategy makes. Turns and monetary
+  cost are in the meter for the same reason tokens are: a strategy makes many
+  inner `AgentRuntime.run` invocations (plan, skeleton, per-subgoal, branches,
+  lesson summaries), and adapter-owned `max_turns`/`max_cost_usd` reset per
+  invocation — each inner call therefore receives only the meter's *remaining*
+  turn and cost allowances as its config, exactly as M1 does across Prove
+  phases; strategies read `budget.remaining` to degrade
   (e.g. parallel attempts stop launching new branches below a threshold; sketch
   stops decomposing and tries direct closure). Spending is **reservation-based
   and atomic**: before each model call or Lean command, the enforcement layer
@@ -140,8 +147,17 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   staging is not an option: warm pool containers already exist when the per-run
   pickle directory is created, and Docker cannot add a mount to a running
   container — so staged pickles are copied in, never mounted, and the copy
-  lands in scratch the worker's between-check wipe already manages. A node whose worker died unpickles on a fresh
-  lease; unpicklable nodes are pruned with the loss logged.
+  lands in scratch the worker's between-check wipe already manages. A pickle restores the **proof state
+  only** — not declarations, instances, or options the creating commands added
+  to their environment — so each snapshot carries the **harness-owned
+  declaration prefix** (the ordered commands that built its environment beyond
+  base imports: skeleton `have`s, generated helper definitions, assumed-paper
+  imports) plus a hash of that prefix. Migration replays the prefix on the
+  destination lease and verifies the hash *before* `unpickleProofStateFrom`;
+  transferring the pickle alone would make nodes referencing skeleton helpers
+  fail or silently behave differently on a pristine worker. A node whose
+  worker died unpickles on a fresh lease this way; nodes whose prefix replay
+  or unpickle fails are pruned with the loss logged.
 - Termination: goals empty at a node → assemble the tactic path, final
   `check_proof` verifies (search bugs must not ship unverified proofs); budget
   out → unproved, best partial path recorded.

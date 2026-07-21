@@ -60,8 +60,14 @@ hardy/agent/
   `provider_secrets: dict[str, str]` — values that are **required to be
   `env:<VAR>` references** (validated at config load; a literal that doesn't
   parse as a reference is rejected before any run), resolved by the adapter at
-  run time, and logged/hashed only as the reference strings, so credentials
-  never reach the append-only results however they're named
+  run time, and logged/hashed only as the reference strings. The split is
+  **enforced, not honor-system**: config load recursively scans
+  `provider_params` and rejects it when a field path matches credential
+  patterns (`*key*`, `*token*`, `*secret*`, `*password*`, `authorization`,
+  `cookie`, header maps) *or* a string value matches known credential shapes
+  (`Bearer …`, `sk-…`, AWS key ids, high-entropy opaque strings) — such fields
+  must move to `provider_secrets` as `env:` references before the run starts,
+  so credentials never reach the append-only results however they're named
   (`headers.Authorization` included),
   `max_cost_usd: float | None` (DESIGN promises *cost* caps, and a token cap is
   not one — providers price input/output/reasoning/tool tokens differently:
