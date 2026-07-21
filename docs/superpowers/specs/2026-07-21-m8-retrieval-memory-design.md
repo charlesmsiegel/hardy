@@ -96,8 +96,14 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   declarations, fine on CPU; ANN is an optimization, not a requirement).
 - **Loogle:** type-pattern search via a locally installed Loogle executable
   (config path), falling back to the public API behind a `network` capability
-  flag with the M3-style rate limiting. Absence of both → the source reports
-  unavailable and ranking proceeds without it (degraded, not broken).
+  flag with the M3-style rate limiting. The public service indexes a rolling
+  Mathlib revision, not our pin, so its hits are **validated against the
+  pinned corpus before ranking** — a declaration name absent from the local
+  corpus is dropped (it would waste proof budget on a lemma that doesn't
+  exist here) — and reproducible/comparison runs disable the public fallback
+  outright, since their results must not depend on mutable external state.
+  Absence of both → the source reports unavailable and ranking proceeds
+  without it (degraded, not broken).
 - **`list_premises` tool:** given the current proof state (or an explicit goal
   string), gather candidates from: embedding retrieval (top-N), Loogle when a
   type pattern is derivable/supplied, and the goal's head-symbol name matches;
@@ -114,8 +120,13 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
 
 ### Memory (`hardy/memory/`)
 
-- **Store:** append-only JSONL + periodic snapshot; every entry carries
-  provenance (source run id, theorem, config hash) and entry kind:
+- **Store:** append-only JSONL + periodic snapshot, both under an
+  interprocess store lock (the M3 ledger discipline): appends publish one
+  complete fsynced line at a time, and a snapshot cut holds the same lock so
+  it can never capture a torn prefix of a concurrent write — concurrent
+  successful runs distilling together are the normal case, and an
+  inconsistent snapshot would make recorded snapshot ids nondeterministic.
+  Every entry carries provenance (source run id, theorem, config hash) and entry kind:
   - `proved_lemma` — statement + proof source of harness-proved auxiliary
     lemmas (M7 sketch subgoals are the main producers);
   - `tactic_pattern` — goal-shape → tactic-sequence pairs mined from successful

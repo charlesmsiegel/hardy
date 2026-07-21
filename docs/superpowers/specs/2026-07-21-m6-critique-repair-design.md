@@ -176,15 +176,27 @@ Critique must accept "any proof", so both workflows operate on one structure:
   would leave the run's document mutated and its ledger unresolved when the
   guard then stops the run, violating claim immutability on the way to
   enforcing it. Claim unchanged → the staged edit and ledger transition commit
-  together. Any change → nothing persists, and the run stops with outcome
+  together — **crash-atomically**, via the event log itself: an *intent* event
+  (patch content hash) is appended first, then the document publishes
+  (temp-file + rename), then the *commit* event; replay after a crash
+  completes or rolls back the half-done transaction by comparing the
+  document's content hash against the intent. Two separate files "committing
+  together" is otherwise wishful — a crash between the writes would leave
+  document and ledger describing different repair states. Any change → nothing persists, and the run stops with outcome
   `revised_claim(new_claim)`: reported as such, re-entering the loop as a new
   statement only on explicit user/driver acceptance — never graded as a repair.
 
 ### `blast.py` + `loop.py` — the driver
 
-- Blast radius of a patch: the edited steps, any step referencing them
-  (citation/dependency edges captured at segmentation), and — for Lean deltas —
-  any declaration whose elaboration consumed a changed declaration. Resolved
+- Blast radius of a patch: computed on the **rebuilt** dependency graph, not
+  the one captured at original segmentation — a patch that inserts a bridging
+  step or repoints a step at a different predecessor changes the edges, and
+  stale edges would omit already-resolved dependents from re-critique exactly
+  when a later edit invalidates them. Patch application re-derives edges for
+  every inserted/edited step, revalidates acyclicity (a violation is itself a
+  hole), and only then takes the radius: the edited steps, any step
+  referencing them, and — for Lean deltas — any declaration whose elaboration
+  consumed a changed declaration. Resolved
   holes whose location intersects the radius get re-checked: `verified-closed`
   re-verifies by its layer; `dismissed` re-opens iff its recorded justification
   referred to now-changed text. Invalidation → `open`, reopen_count += 1.
