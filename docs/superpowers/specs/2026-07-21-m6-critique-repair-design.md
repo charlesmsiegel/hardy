@@ -107,12 +107,20 @@ Critique must accept "any proof", so both workflows operate on one structure:
    axioms via the M4 partition) each become holes with `layer="kernel"` and
    exact locations. Free and exact.
 2. **Formalization probing** (informal steps): for each step without a
-   `lean_ref`, a bounded agent run attempts to formalize the step's claim as a
-   Lean statement (not prove it — statement elaboration plus a faithfulness
-   check, reusing M1's skeptic). A step that resists formalization after the
-   bounded attempts becomes a suspected hole (`layer="probing"`) with the
-   resistance reason. This is the dual-output contract paying off:
-   formalization *is* hole detection.
+   `lean_ref`, a bounded agent run formalizes the step's claim as a Lean
+   statement *in context* — a lemma whose hypotheses are the formalized
+   conclusions of the steps it depends on (faithfulness-checked, reusing M1's
+   skeptic) — and then **attempts to discharge it**: cheap closers plus a
+   small-budget agent attempt. Elaboration alone is not probing — a false but
+   well-typed intermediate claim (the usual shape of a subtle gap) elaborates
+   exactly like a true one, and the layer would mark the step visited having
+   tested nothing. Two distinct suspicion signals feed the ledger: a step whose
+   claim *resists formalization* (with the resistance reason), and a step
+   whose formalized claim *resists proof from its stated premises* (residual
+   goals/`sorry`s recorded). Both are suspected holes (`layer="probing"`) —
+   failure to prove within budget is suspicion, not disproof, which is why
+   skeptic disproof can still `dismiss` them. This is the dual-output contract
+   paying off: formalization *is* hole detection.
 3. **Adversarial skeptics**: per-step agent runs prompted to *break* the step —
    seek counterexamples to intermediate claims (with Lean `decide`/`simp`
    checks on small instances where the claim specializes), probe edge cases

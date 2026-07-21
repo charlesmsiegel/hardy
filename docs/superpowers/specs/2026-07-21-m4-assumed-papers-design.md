@@ -156,6 +156,15 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   writable in the sandbox); on success the trusted host copies back only the
   expected artifacts (the `.lake` oleans for the built targets), and the staged
   copy is discarded. Workers then mount the updated package read-only.
+  **Lazy minting also has an environment lifecycle, not just a filesystem
+  one**: a worker's base environment fixed its imports at spawn, so a rebuilt
+  package alone leaves `import Papers.<Key>` unavailable to the proving
+  session already underway. After chained `ensure_axiom` completes, the
+  session refreshes: it retires its current worker and leases a replacement
+  spawned with the extended per-run imports string (existing proof states are
+  invalidated — the same recovery contract as worker death, and `check_proof`
+  re-elaborates from source), and the pool's spec for that run carries the
+  extended imports so later replacements match.
 - Writeups: when the axiom manifest is non-empty, the template's status block
   reads *verified modulo assumed paper results* and a generated "Assumptions"
   paragraph states them in prose with `\cite` (M3): "assuming Theorem 3.2 of

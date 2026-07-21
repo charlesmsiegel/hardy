@@ -53,12 +53,15 @@ hardy/agent/
   interpretation: `endpoint: str | None` (base URL for minimal),
   `provider_config: dict` (passed through to Strands model providers —
   **never containing literal credentials**: secret-valued fields hold
-  `env:<VAR>` references the adapter resolves at run time, so the config stays
-  loggable; the tracking layer additionally redacts any field whose name
-  matches a secret pattern (`*key*`, `*token*`, `*secret*`, `*password*`)
-  before logging and before the config-hash input, deterministically, so
-  entries stay comparable without ever persisting credentials in the
-  append-only results),
+  `env:<VAR>` references the adapter resolves at run time. Because name-pattern
+  redaction is unwinnable — a bearer token can arrive in a field named
+  `headers.Authorization` and match no `*key*`/`*token*` pattern — the
+  tracking layer logs `provider_config` **allowlist-first**: a recursive walk
+  keeps only leaf fields on a known-safe allowlist (model/deployment ids,
+  region, endpoint URL, timeouts, `env:` reference strings) and replaces every
+  other leaf value with `<redacted>`; the config-hash input uses the same
+  allowlisted projection, so entries stay comparable without ever persisting
+  unrecognized — hence possibly secret — values in the append-only results),
   `context_window: int | None`, `reasoning_effort: str | None`,
   `tool_call_style: Literal["auto", "native", "prompted"] = "auto"`.
   Every field lands in the eval tracking entry (M2) as part of the config hash.
@@ -102,10 +105,15 @@ hardy/agent/
   cost is recorded in the trajectory.
 - `prompted_tools.py`: the fallback — tool schemas rendered into the system
   prompt with strict output instructions (one fenced ```json block per call:
-  `{"tool": ..., "arguments": {...}}`); a tolerant parser (fence-first, then
-  brace-scan) extracts calls, validates against the pydantic input model, and on
-  parse/validation failure feeds a corrective message back to the model (bounded
-  retries per turn, then the turn counts as a no-op and the loop continues).
+  `{"tool": ..., "arguments": {...}}`); the parser executes **only** properly fenced
+  blocks — never JSON found by scanning prose, which would turn an *example*
+  call quoted in a final answer (plausible from exactly the small models this
+  fallback targets) into a real side-effecting tool execution. It validates
+  fenced calls against the pydantic input model; on validation failure — or
+  when a response visibly attempts a call outside the protocol (contains
+  `"tool":` but no valid fence) — it feeds a corrective message back (bounded
+  retries per turn, then the turn counts as a no-op and the loop continues); a
+  response with no fence and no attempted call is simply final text.
   Malformed output must degrade the *run*, never crash the harness.
 
 ### Capability flags (`capabilities.py`)
