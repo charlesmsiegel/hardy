@@ -184,10 +184,13 @@ Critique must accept "any proof", so both workflows operate on one structure:
   guard then stops the run, violating claim immutability on the way to
   enforcing it. Claim unchanged → the staged edit and ledger transition commit
   together — **crash-atomically**, via the event log itself: an *intent* event
-  (patch content hash) is appended first, then the document publishes
-  (temp-file + rename), then the *commit* event; replay after a crash
-  completes or rolls back the half-done transaction by comparing the
-  document's content hash against the intent. Two separate files "committing
+  is appended first — carrying the expected **pre-image hash, post-image
+  hash, and a durable copy of the patch (or post-image)**, since a patch hash
+  alone can neither be compared against the resulting document nor recreate
+  the intended one — then the document publishes (temp-file + rename), then
+  the *commit* event; replay after a crash compares the on-disk document hash
+  against the intent's pre/post hashes to decide state, and completes the
+  transaction from the stored patch or rolls it back. Two separate files "committing
   together" is otherwise wishful — a crash between the writes would leave
   document and ledger describing different repair states. Any change → nothing persists, and the run stops with outcome
   `revised_claim(new_claim)`: reported as such, re-entering the loop as a new

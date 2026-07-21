@@ -88,10 +88,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   milestone exists to run. The exit-criterion comparisons default to the local
   embedder so criterion 1 measures retrieval, not embedder spend — and local
   retrieval compute is **not free either**: embedding and matrix-scan CPU is
-  measured per query and recorded as retrieval CPU in the trajectory, counted
-  into the comparison's cost side (M7's meter and M2's cost metric otherwise
-  cover only Lean CPU, and a retrieval win that omits its own main added
-  computation isn't a win). Queries
+  measured per query, recorded as retrieval CPU in the trajectory, **and
+  decremented against the shared meter's CPU dimension** (in M8,
+  `StrategyBudget`'s CPU allowance covers Lean *and* retrieval compute) —
+  merely reporting it afterward would let the retrieval-on arm consume extra
+  host CPU outside the supposedly equal budget and attribute the resulting
+  win to retrieval. It is likewise counted into the comparison's cost side. Queries
   embed the pretty-printed goal (hypotheses + target).
 - **Index:** built offline by `scripts/build_index.py`; loaded read-only at run
   time; its key is `(mathlib_rev, corpus content digest, embedder identity)` —
@@ -104,8 +106,13 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   `index.py` (start with a simple exact-search matrix — Mathlib-scale is ~200k
   declarations, fine on CPU; ANN is an optimization, not a requirement).
 - **Loogle:** type-pattern search via a locally installed Loogle executable
-  (config path), falling back to the public API behind a `network` capability
-  flag with the M3-style rate limiting. The public service indexes a rolling
+  (config path) whose index is **built against, or validated to match, the
+  pinned Mathlib revision** — its content/version digest is recorded in run
+  provenance, and comparison runs refuse a mismatch (a local binary built
+  against a different revision varies the candidate set across machines while
+  every recorded pin looks identical); its hits pass the same pinned-corpus
+  validation as the public path. Falls back to the public API behind a
+  `network` capability flag with the M3-style rate limiting. The public service indexes a rolling
   Mathlib revision, not our pin, so its hits are **validated against the
   pinned corpus before ranking** — a declaration name absent from the local
   corpus is dropped (it would waste proof budget on a lemma that doesn't
@@ -154,7 +161,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   index over store entries, rebuilt on snapshot); returns capped, compact
   context blocks injected alongside premises. Config-gated (`memory.enabled`).
 - **Distill (write path):** post-run, gated on run success + anti-cheat pass;
-  dedup by statement/pattern hash; **benchmark-mode runs never write** (memory
+  dedup by statement/pattern hash **plus elaboration environment** for proved
+  lemmas — statement-only dedup would let an early non-portable proof (one
+  leaning on a paper import or source-run helper) permanently suppress a
+  later Mathlib-only proof of the same statement, leaving future recalls only
+  the entry they must skip; a new proof with a strictly more portable
+  dependency set replaces the less portable entry; **benchmark-mode runs never write** (memory
   must not become a benchmark-contamination channel) and eval runs consult
   read-only snapshots. Exact-repeat detection: recall of a `proved_lemma` whose
   statement equals the current goal is served as a cache hit and **flagged in
