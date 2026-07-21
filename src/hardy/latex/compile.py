@@ -39,9 +39,12 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-# Self-contained TeX Live pdflatex: no network at compile time, shell-escape
-# off. (tectonic's network bundle fetch can't run under a no-network policy.)
-DEFAULT_ENGINE = ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape"]
+# Self-contained TeX Live lualatex: no network at compile time, shell-escape
+# off, and Unicode-math capable (√/∀/→/ℤ in arbitrary model output compile,
+# where pdflatex errors and tectonic's network bundle fetch can't run).
+DEFAULT_ENGINE = [
+    "lualatex", "-interaction=nonstopmode", "-halt-on-error", "--no-shell-escape",
+]
 _OUTPUT_CAP = 1_000_000            # bytes of diagnostics before the compile is killed
 _ARTIFACT_CAP = 64 * 1024 * 1024   # bytes of tar-streamed artifacts accepted back
 _LOG_TAIL_CAP = 256 * 1024         # bytes of main.log we ever read
@@ -238,7 +241,7 @@ def compile_tex_sandboxed(
             "cp /staging/main.tex /scratch/ && cd /scratch && "
             "export HOME=/scratch TEXMFVAR=/scratch/texmf-var && "
             f"timeout {_sandbox_timeout_arg(timeout)} "
-            "pdflatex -interaction=nonstopmode -halt-on-error -no-shell-escape "
+            "lualatex -interaction=nonstopmode -halt-on-error --no-shell-escape "
             "main.tex >&2; "
             "status=$?; tar -cf - main.pdf main.log 2>/dev/null; exit $status"
         )

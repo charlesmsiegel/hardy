@@ -51,7 +51,9 @@ def docker_argv(
         "--memory", f"{cfg.memory_mb}m",
         "--cpus", str(cfg.cpus),
         "--tmpfs",
-        f"{cfg.tmpfs_path}:rw,size={cfg.tmpfs_size_mb}m,nr_inodes={cfg.tmpfs_inodes}",
+        # mode=1777 so the image's unprivileged user can write scratch.
+        f"{cfg.tmpfs_path}:rw,mode=1777,size={cfg.tmpfs_size_mb}m"
+        f",nr_inodes={cfg.tmpfs_inodes}",
     ]
     if cfg.name:
         argv += ["--name", cfg.name]

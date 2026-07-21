@@ -17,7 +17,11 @@ FORMALIZATION_STATUSES = (
 
 _TEMPLATE = r"""\documentclass{article}
 \usepackage{amsmath}
-\usepackage{amssymb}
+% unicode-math (+ lualatex) so arbitrary model output can use Unicode math
+% directly (√, ∀, →, ℤ, …) as well as LaTeX macros; it also supplies the
+% amssymb symbols (\mathbb, \notin, …), so amssymb is not loaded separately.
+\usepackage{unicode-math}
+\setmathfont{Latin Modern Math}
 \usepackage{amsthm}
 \newtheorem{theorem}{Theorem}
 
