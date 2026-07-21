@@ -69,9 +69,16 @@ Critique must accept "any proof", so both workflows operate on one structure:
 
 - `ProofDocument(claim: Claim, steps: list[ProofStep], source: Literal["user",
   "literature", "hardy"], lean: LeanArtifact | None)`.
-- `Claim(informal: str, formal: str | None)` — **immutable during repair**
-  (enforced: `repair` receives the document with the claim frozen; producing a
-  different claim is the `revised_claim` outcome, see below).
+- `Claim(informal: str, formal: str | None, frozen_deps: dict[str, str] |
+  None)` — **immutable during repair** (enforced: `repair` receives the
+  document with the claim frozen; producing a different claim is the
+  `revised_claim` outcome, see below). For Lean-backed documents the freeze
+  covers more than the statement text: at ingestion the harness records the
+  **local (non-Mathlib) declarations, imports, options, and notation the
+  statement's elaboration consumed**, keyed to content hashes (`frozen_deps`) —
+  statement-text comparison alone is spoofable, since a repair's `lean_delta`
+  could redefine a predicate the conclusion mentions (making it trivially
+  true) while leaving the theorem line byte-identical.
 - `ProofStep(id, text, lean_ref: SorryRef | DeclRef | None)` — informal proofs
   are segmented into steps by a bounded agent pass at ingestion (segmentation is
   recorded so re-runs are stable); Lean-backed proofs get steps from their
@@ -95,10 +102,17 @@ Critique must accept "any proof", so both workflows operate on one structure:
   ledger is replayed from events, so history is never lost and concurrent
   tooling can tail it. Resolved entries persist; the fixed-point test is "no
   entry with status `open` or `patched`", never emptiness.
-- `hole_ledger` tool: record/update/list holes — the agent-facing view the
-  workflows and (in sketch-and-discharge, M7) strategies share. `note` tool: the
-  informal scratchpad from Component 2, persisted per-result and re-injected
-  across attempts (context management for the loop).
+- `hole_ledger` tool: the agent-facing surface exposes **creation and
+  observation only** — record a suspected hole, attach evidence/observations,
+  list entries. **Status transitions are harness-owned**: `dismissed` in
+  particular counts as resolved and feeds the clean grade, so letting an agent
+  write it would let the model close a genuine hole with a plausible
+  justification string no verifier ever checked. The harness performs a
+  dismissal only on recorded verification evidence — a kernel check, or an
+  independent skeptic run (M1 pattern) that *confirms* the disproof — and
+  stores that evidence with the justification. `note` tool: the informal
+  scratchpad from Component 2, persisted per-result and re-injected across
+  attempts (context management for the loop).
 
 ### `critique.py` — three layers, strongest first
 
@@ -109,8 +123,13 @@ Critique must accept "any proof", so both workflows operate on one structure:
 2. **Formalization probing** (informal steps): for each step without a
    `lean_ref`, a bounded agent run formalizes the step's claim as a Lean
    statement *in context* — a lemma whose hypotheses are the formalized
-   conclusions of the steps it depends on (faithfulness-checked, reusing M1's
-   skeptic) — and then **attempts to discharge it**: cheap closers plus a
+   conclusions of **strictly earlier established steps only**: the dependency
+   graph is validated acyclic at segmentation, and a probing lemma may assume
+   only topologically-preceding conclusions (a cycle, self-dependency, or
+   dependency on a later step would hand the lemma the very conclusion under
+   assessment as a hypothesis, making it trivially dischargeable and the layer
+   worthless); any cyclic or forward dependency is itself recorded as a
+   suspected hole (faithfulness-checked, reusing M1's skeptic) — and then **attempts to discharge it**: cheap closers plus a
    small-budget agent attempt. Elaboration alone is not probing — a false but
    well-typed intermediate claim (the usual shape of a subtle gap) elaborates
    exactly like a true one, and the layer would mark the step visited having
@@ -150,8 +169,10 @@ Critique must accept "any proof", so both workflows operate on one structure:
   scoped). Success → `verified-closed`; failure → back to `open` with
   reopen_count incremented and the failed patch recorded.
 - **Claim guard:** the patch is applied to a **staged copy** of the document
-  and the claim diffed there (informal text and formal statement both) *before*
-  anything persists — committing the edit and the `patched` transition first
+  and the claim diffed there — informal text, formal statement, **and the
+  `frozen_deps` content hashes** (a delta touching any declaration the
+  statement depends on is a claim change even when the theorem line is
+  untouched) — *before* anything persists — committing the edit and the `patched` transition first
   would leave the run's document mutated and its ledger unresolved when the
   guard then stops the run, violating claim immutability on the way to
   enforcing it. Claim unchanged → the staged edit and ledger transition commit

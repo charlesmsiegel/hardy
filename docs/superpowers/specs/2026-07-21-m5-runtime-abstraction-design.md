@@ -51,17 +51,24 @@ hardy/agent/
   config.
 - `RunConfig` grows the knobs DESIGN names, all optional with adapter-specific
   interpretation: `endpoint: str | None` (base URL for minimal),
-  `provider_config: dict` (passed through to Strands model providers —
-  **never containing literal credentials**: secret-valued fields hold
-  `env:<VAR>` references the adapter resolves at run time. Because name-pattern
-  redaction is unwinnable — a bearer token can arrive in a field named
-  `headers.Authorization` and match no `*key*`/`*token*` pattern — the
-  tracking layer logs `provider_config` **allowlist-first**: a recursive walk
-  keeps only leaf fields on a known-safe allowlist (model/deployment ids,
-  region, endpoint URL, timeouts, `env:` reference strings) and replaces every
-  other leaf value with `<redacted>`; the config-hash input uses the same
-  allowlisted projection, so entries stay comparable without ever persisting
-  unrecognized — hence possibly secret — values in the append-only results),
+  two **typed, separated** provider fields (one dict would force a choice
+  between leaking secrets and hashing away behavior): `provider_params: dict` —
+  non-secret knobs (model/deployment ids, region, endpoint, temperature,
+  top_p, feature flags) that are logged verbatim and included in the config
+  hash in full, because projecting a changed `temperature` to `<redacted>`
+  would give behaviorally different runs identical hashes; and
+  `provider_secrets: dict[str, str]` — values that are **required to be
+  `env:<VAR>` references** (validated at config load; a literal that doesn't
+  parse as a reference is rejected before any run), resolved by the adapter at
+  run time, and logged/hashed only as the reference strings, so credentials
+  never reach the append-only results however they're named
+  (`headers.Authorization` included),
+  `max_cost_usd: float | None` (DESIGN promises *cost* caps, and a token cap is
+  not one — providers price input/output/reasoning/tool tokens differently:
+  spend is accounted against a per-model pricing table from config, or
+  provider-reported cost where available, through the same
+  reservation/accounting path as tokens; a cost-capped run whose model has no
+  pricing entry is rejected up front rather than unenforceably accepted),
   `context_window: int | None`, `reasoning_effort: str | None`,
   `tool_call_style: Literal["auto", "native", "prompted"] = "auto"`.
   Every field lands in the eval tracking entry (M2) as part of the config hash.

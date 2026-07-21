@@ -162,7 +162,13 @@ one pool worker for the duration of one agent task.
 ### Component 5: the Prove workflow (`hardy.workflows.prove`)
 
 Sequential phases, each a plain async function so M5 can rerun them on other
-runtimes and M6 can splice Critique/Repair in between:
+runtimes and M6 can splice Critique/Repair in between. **The budgets are
+run-level, shared across phases**: the workflow owns one reserve-and-settle
+meter for tokens/turns/wall-clock, and each phase's `AgentRuntime.run` receives
+the meter's *remaining* allowance as its config — per-invocation caps that
+reset each phase would let a nominal 10k-token run spend several multiples of
+that (three rejected faithfulness rounds alone are seven agent runs before the
+writeup). Phase budget splits are config, but the sum is the cap.
 
 1. **Formalize.** An agent run turns the user's informal claim into a Lean
    `theorem` statement. `check_proof` cannot serve here — it takes a proof body
