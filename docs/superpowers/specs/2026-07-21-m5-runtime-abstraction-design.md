@@ -62,9 +62,13 @@ hardy/agent/
   parse as a reference is rejected before any run), resolved by the adapter at
   run time, and logged/hashed only as the reference strings. The split is
   **enforced, not honor-system**: config load recursively scans
-  `provider_params` and rejects it when a field path matches credential
-  patterns (`*key*`, `*token*`, `*secret*`, `*password*`, `authorization`,
-  `cookie` — header maps are classified **per header name**, not wholesale:
+  `provider_params` and rejects it when a field path matches **known credential field names**
+  (`api_key`/`apikey`, `access_key`, `secret_key`, `private_key`, `token`,
+  `secret`, `password`, `authorization`, `cookie` — deliberately *not* every
+  path containing `key`, which would misclassify behavioral fields like
+  `X-Routing-Key`, `Idempotency-Key`, or `prompt_cache_key` and force their
+  values out of the config hash; header maps are classified **per header
+  name**, not wholesale:
   `Authorization`/`Cookie`/`Proxy-Authorization`/`X-Api-Key` are secret, while
   a non-secret API-version, organization, or routing header is a behavioral
   parameter that must stay in `provider_params` for the config hash) *or* a string value matches an **unambiguous** credential shape
@@ -135,9 +139,13 @@ hardy/agent/
   this design must rule out. The parser validates envelope calls against the
   pydantic input model; on validation failure — or when a response visibly
   attempts a call outside the protocol (contains `"tool":` but isn't a valid
-  envelope) — it feeds a corrective message back (bounded retries per turn,
-  then the turn counts as a no-op and the loop continues); a response with no
-  envelope and no attempted call is simply final text.
+  envelope) — it feeds a corrective message back, and **every corrective
+  request is itself a model call charged against `max_turns` and the
+  token/cost meters** (bounded retries, then the sequence ends as a no-op and
+  the loop continues); charging only the nominal turn would let a
+  frequently-corrected local model make several times the calls of the native
+  adapters under the same turn cap, invalidating fixed-turn comparisons. A
+  response with no envelope and no attempted call is simply final text.
   Malformed output must degrade the *run*, never crash the harness.
 
 ### Capability flags (`capabilities.py`)

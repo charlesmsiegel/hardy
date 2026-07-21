@@ -96,8 +96,13 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   and collectively overshoot by work that clipping cannot recover, quietly
   breaking the equal-budget guarantee. A call whose reservation fails does not
   start, and when the remainder can no longer fund concurrent reservations,
-  branch launches serialize. Enforcement lives in the meter/client layer, not
-  in strategy code.
+  branch launches serialize. For Lean CPU the reservation is also **enforced
+  during the command, not just settled after it**: the M2 CPU-sampling
+  monitor kills a command at its reserved allowance (the existing timeout is
+  wall-clock and cannot bound CPU) — otherwise a command launched with one
+  CPU-second remaining could consume arbitrarily more before returning, and
+  settlement can't recover spend that already happened. Enforcement lives in
+  the meter/client layer, not in strategy code.
 - Registration: `RunConfig.strategy: str` + `strategy_params: dict` — config,
   not code, selects and parameterizes; the tracking entry records both.
 - The Prove workflow's phase 3 becomes `strategy.prove(...)`; benchmark mode
