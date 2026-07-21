@@ -123,15 +123,18 @@ hardy/agent/
   cost is recorded in the trajectory.
 - `prompted_tools.py`: the fallback — tool schemas rendered into the system
   prompt with strict output instructions (one fenced ```json block per call:
-  `{"tool": ..., "arguments": {...}}`); the parser executes **only** properly fenced
-  blocks — never JSON found by scanning prose, which would turn an *example*
-  call quoted in a final answer (plausible from exactly the small models this
-  fallback targets) into a real side-effecting tool execution. It validates
-  fenced calls against the pydantic input model; on validation failure — or
-  when a response visibly attempts a call outside the protocol (contains
-  `"tool":` but no valid fence) — it feeds a corrective message back (bounded
-  retries per turn, then the turn counts as a no-op and the loop continues); a
-  response with no fence and no attempted call is simply final text.
+  `{"tool": ..., "arguments": {...}}`); a tool call is recognized **only as a
+  whole-response envelope**: the entire response (whitespace aside) must be
+  the fenced call block — a fence *embedded in surrounding prose* is treated
+  as final-answer content (a quoted example), never executed, because the
+  fence alone is not an intent signal and executing an example quoted in a
+  prose answer is precisely the accidental `cite`/`assume_paper` side effect
+  this design must rule out. The parser validates envelope calls against the
+  pydantic input model; on validation failure — or when a response visibly
+  attempts a call outside the protocol (contains `"tool":` but isn't a valid
+  envelope) — it feeds a corrective message back (bounded retries per turn,
+  then the turn counts as a no-op and the loop continues); a response with no
+  envelope and no attempted call is simply final text.
   Malformed output must degrade the *run*, never crash the harness.
 
 ### Capability flags (`capabilities.py`)
