@@ -204,9 +204,15 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   elaboration executes arbitrary IO, so a generated declaration could overwrite
   committed live axioms or manifests mid-build. The build runs on a **disposable
   staged copy** (host-side copy of `papers_lean` into a temp build dir, mounted
-  writable in the sandbox); on success the trusted host copies back only the
-  expected artifacts (the `.lake` oleans for the built targets), and the staged
-  copy is discarded. Workers then mount the updated package read-only.
+  writable in the sandbox) — and builds **one module per sandbox, in
+  dependency order**: each invocation sees the reviewed sources and previously
+  admitted oleans *read-only* and writes only its own module's output
+  directory, which the host admits per module. A whole-package writable build
+  with a copy-back allowlist is not enough, because elaborator-time IO in one
+  generated module could overwrite a *different* module's already-built olean
+  under an allowlisted filename — per-module isolation pins each elaboration's
+  blast radius to exactly the artifact it legitimately produces. On success
+  the staged copy is discarded. Workers then mount the updated package read-only.
   **Lazy minting also has an environment lifecycle, not just a filesystem
   one**: a worker's base environment fixed its imports at spawn, so a rebuilt
   package alone leaves `import Papers.<Key>` unavailable to the proving
