@@ -13,7 +13,7 @@ in
 pkgs.dockerTools.buildLayeredImage {
   name = "hardy-tex";
   tag = "dev";
-  copyToRoot = pkgs.buildEnv {
+  contents = pkgs.buildEnv {
     name = "hardy-tex-root";
     paths = [ pkgs.texliveMedium pkgs.busybox pkgs.coreutils ];
     pathsToLink = [ "/bin" "/share" ];

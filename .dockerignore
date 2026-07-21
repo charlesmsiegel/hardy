@@ -1,9 +1,0 @@
-.git
-.venv
-.pytest_cache
-lean_project/.lake
-vendor/repl/.lake
-results
-tests
-src
-docs

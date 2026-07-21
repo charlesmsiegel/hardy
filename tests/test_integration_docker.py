@@ -1,7 +1,8 @@
 """Integration tests against the built sandbox images.
 
-Prereq: docker build -f docker/Dockerfile --target tex  -t hardy-tex:dev  .
-        docker build -f docker/Dockerfile --target lean -t hardy-lean:dev .
+Prereq (Nix-built images, no Docker Hub / GitHub releases):
+    nix-build nix/tex-image.nix  && docker load < result   # hardy-tex:dev
+    nix-build nix/lean-image.nix && docker load < result   # hardy-lean:dev
 Run with: pytest -m docker
 """
 
@@ -91,7 +92,7 @@ async def test_timeout_kills_the_container_not_just_the_client():
     assert live.stdout.strip() == ""  # cleanup_argv killed the container itself
 
 
-def test_sandboxed_tectonic_compiles_offline(tmp_path):
+def test_sandboxed_texlive_compiles_offline(tmp_path):
     from hardy.latex.compile import compile_tex_sandboxed
     from hardy.latex.template import render_writeup
 
