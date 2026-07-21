@@ -60,12 +60,35 @@ version of the whole plan.
 
 ## Status
 
-M0 (plumbing) code landed and unit-tested: REPL wrapper + session pool,
-LaTeX template + compile-check pipeline, sandbox layer. The M0 exit
-criterion (100+ sandboxed proof checks/minute + a sandboxed
-compile-checked sample writeup) has NOT yet been run — it needs a machine
-with Docker, ~30 GB disk, and network for the initial Mathlib cache; run
-`pip install -e .` (the scripts import the `hardy` package from `src/`),
-then scripts/setup_lean.sh, build both docker/Dockerfile targets, then
-scripts/bench_throughput.py --sandbox and scripts/sample_writeup.py
---sandbox. M0 is not complete until both print PASS.
+**M0 (plumbing) complete.** A pinned Lean 4 + Mathlib project, a warm REPL
+session pool with base-environment isolation, a LaTeX template +
+compile-check pipeline, and the no-network/read-only sandbox around both —
+unit-tested (Python) and integration-tested against the real Lean toolchain.
+
+M0 exit criterion **met**:
+
+- **Throughput:** 200/200 proofs verified in ~1 s against 8 warm sessions —
+  **~11,900 proofs/minute** (`scripts/bench_throughput.py`), far past the
+  100/minute bar.
+- **Writeup:** the sample writeup compile-checks to a real PDF, both directly
+  and **inside the sandbox** (`scripts/sample_writeup.py [--sandbox]`).
+
+### Reproducing it
+
+Requires Nix (`lean4` from a pinned nixpkgs), git access to the Lean/Mathlib
+repos, the Mathlib olean cache, and TeX Live — no Docker Hub, no GitHub
+release downloads. Then:
+
+```sh
+pip install -e .            # the scripts import `hardy` from src/
+scripts/setup_lean.sh       # build lean_project (Mathlib) + the repl
+pytest -m lean              # real-toolchain integration tests
+scripts/bench_throughput.py --imports "import Mathlib.Tactic"   # throughput
+nix-build nix/tex-image.nix && docker load < result            # hardy-tex:dev
+scripts/sample_writeup.py --sandbox                            # sandboxed writeup
+```
+
+The sandbox images are built from the Nix store (`nix/`, no Docker Hub /
+GitHub releases). The sandboxed throughput run additionally needs
+`hardy-lean:dev` (`nix/lean-image.nix`), which bakes full Mathlib's oleans
+and so wants a host with generous disk. Next: **M1 (minimal agent)**.

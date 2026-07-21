@@ -33,17 +33,26 @@ pkgs.dockerTools.buildLayeredImage {
     mkdir -p home/hardy
     cp -r --no-preserve=mode,ownership ${leanProject} home/hardy/lean_project
     cp -r --no-preserve=mode,ownership ${repl} home/hardy/repl
-    # Capture LEAN_PATH over every built package's olean lib dir (container
-    # paths are /home/hardy/...). No lake at runtime on the read-only rootfs.
+    # repl-env.sh exports the toolchain env a directly-launched repl needs
+    # (see hardy.lean.launch.repl_env): LEAN_SYSROOT is essential — without it
+    # continuation checks lose core (numeric literals / OfNat) — plus LEAN_PATH
+    # over every built package olean dir and LD_LIBRARY_PATH for the shared
+    # runtime. No lake at runtime on the read-only rootfs.
     lp=""
     for d in home/hardy/lean_project/.lake/build/lib/lean \
              home/hardy/lean_project/.lake/packages/*/.lake/build/lib/lean; do
       [ -d "$d" ] && lp="/$d:$lp"
     done
-    echo "export LEAN_PATH=$lp" > home/hardy/repl-env.sh
+    {
+      echo "export LEAN_SYSROOT=${pkgs.lean4}"
+      echo "export LD_LIBRARY_PATH=${pkgs.lean4}/lib/lean:${pkgs.lean4}/lib"
+      echo "export LEAN_PATH=$lp"
+    } > home/hardy/repl-env.sh
   '';
   config = {
     Env = [ "PATH=/bin" ];
+    # Unprivileged: model-generated Lean runs arbitrary IO during elaboration.
+    User = "65534:65534";
     Cmd = [ "/bin/sh" ];
   };
 }
