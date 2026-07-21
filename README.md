@@ -60,4 +60,11 @@ version of the whole plan.
 
 ## Status
 
-Design phase. No code yet.
+M0 (plumbing) code landed and unit-tested: REPL wrapper + session pool,
+LaTeX template + compile-check pipeline, sandbox layer. The M0 exit
+criterion (100+ sandboxed proof checks/minute + a sandboxed
+compile-checked sample writeup) has NOT yet been run — it needs a machine
+with Docker, ~30 GB disk, and network for the initial Mathlib cache; run
+scripts/setup_lean.sh, build both docker/Dockerfile targets, then
+scripts/bench_throughput.py --sandbox and scripts/sample_writeup.py
+--sandbox. M0 is not complete until both print PASS.
