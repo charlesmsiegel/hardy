@@ -141,8 +141,13 @@ Critique must accept "any proof", so both workflows operate on one structure:
   informal holes → re-critique of the patched step (probing + skeptic layers,
   scoped). Success → `verified-closed`; failure → back to `open` with
   reopen_count incremented and the failed patch recorded.
-- **Claim guard:** after applying a patch, the claim is diffed (informal text
-  and formal statement both). Any change → the run stops with outcome
+- **Claim guard:** the patch is applied to a **staged copy** of the document
+  and the claim diffed there (informal text and formal statement both) *before*
+  anything persists — committing the edit and the `patched` transition first
+  would leave the run's document mutated and its ledger unresolved when the
+  guard then stops the run, violating claim immutability on the way to
+  enforcing it. Claim unchanged → the staged edit and ledger transition commit
+  together. Any change → nothing persists, and the run stops with outcome
   `revised_claim(new_claim)`: reported as such, re-entering the loop as a new
   statement only on explicit user/driver acceptance — never graded as a repair.
 
@@ -181,10 +186,13 @@ Critique must accept "any proof", so both workflows operate on one structure:
   by <layer>"), listed in the document like any other abandoned hole. *No gaps
   detected* requires the fixed point **and** a fully visited coverage plan.
 - Grading integration: the writeup's informal-completeness grade is now computed
-  — *no gaps detected* (fixed point reached with full coverage; the grade
-  records which layers ran as assessment provenance) or *known gaps* (abandoned
-  holes — including unassessed-step entries — listed in the document, never
-  hidden). *Not assessed* remains only for pre-M6 results.
+  — *no gaps detected* requires the fixed point, a fully visited coverage
+  plan, **and zero `abandoned` entries** (the loop reaches its fixed point
+  *through* abandonment on the escalation and budget paths, so fixed point +
+  coverage alone would grade a run clean despite a known unresolved gap; the
+  grade records which layers ran as assessment provenance) — otherwise *known
+  gaps* (abandoned holes — including unassessed-step entries — listed in the
+  document, never hidden). *Not assessed* remains only for pre-M6 results.
 
 ## Key decisions and rationale
 
