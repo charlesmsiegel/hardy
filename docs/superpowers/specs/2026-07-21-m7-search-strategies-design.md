@@ -174,8 +174,13 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   repair) with diversity across branches: temperature schedule, prompt-template
   variant, and optionally strategy mix (`strategy_params.branches` lists
   per-branch overrides). Branches share nothing except the goal and the meter.
-- First kernel-verified success cancels the rest (cancellation is safe: workers
-  are recycled by the pool's existing discipline). A cancelled branch's
+- The first `check_proof` success makes its branch the **provisional** winner:
+  other branches *pause* (no new calls launched) while the candidate runs the
+  full downstream validation — axiom audit and, in eval, anti-cheat. Only a
+  fully validated winner cancels the rest; a rejected candidate (say, a
+  `native_decide` proof failing the audit) resumes the paused branches instead
+  of having already killed an honest proof still in flight. (Cancellation
+  itself is safe: workers are recycled by the pool's existing discipline.) A cancelled branch's
   **in-flight model call keeps its full reservation** unless provider-confirmed
   final usage arrives — task cancellation doesn't necessarily stop provider-side
   generation or return usage, so settling cancelled calls at zero would

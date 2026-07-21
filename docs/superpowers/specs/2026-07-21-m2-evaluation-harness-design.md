@@ -130,8 +130,12 @@ violation:
   anti-cheat-validated solve — with `attempts_per_item > 1`, counting solved
   *attempts* would tally one theorem several times and understate cost); same
   for Lean CPU seconds and wall clock — the denominator discipline is fixed
-  here so later strategy comparisons (M7) are apples-to-apples. **Zero solves
-  is a defined case, not a crash**: cost-per-solve is `null` with an explicit
+  here so later strategy comparisons (M7) are apples-to-apples. Wall-clock
+  cost distinguishes **makespan from worker-seconds**: with `parallelism > 1`
+  attempts overlap, so summed per-attempt wall time overstates latency in
+  proportion to concurrency — the run and per-item elapsed makespan is the
+  latency metric, and summed attempt time is kept only under an explicit
+  *utilization* name. **Zero solves is a defined case, not a crash**: cost-per-solve is `null` with an explicit
   zero-solve marker in the metrics blob (a weak local model or a hard subset
   will produce it, and the baseline record must still be written); it's in the
   metrics edge-case tests.

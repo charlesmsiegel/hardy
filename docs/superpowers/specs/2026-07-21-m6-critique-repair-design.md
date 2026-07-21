@@ -74,8 +74,11 @@ Critique must accept "any proof", so both workflows operate on one structure:
   document with the claim frozen; producing a different claim is the
   `revised_claim` outcome, see below). For Lean-backed documents the freeze
   covers more than the statement text: at ingestion the harness records the
-  **local (non-Mathlib) declarations, imports, options, and notation the
-  statement's elaboration consumed**, keyed to content hashes (`frozen_deps`) —
+  **transitive closure** of the local (non-Mathlib) declarations, imports,
+  options, and notation the statement's elaboration consumed, keyed to content
+  hashes (`frozen_deps`) — direct dependencies alone are spoofable one level
+  down: a claim mentioning local `wrapped` whose body uses local `base` keeps
+  its statement and `wrapped` hashes unchanged while a repair rewrites `base` —
   statement-text comparison alone is spoofable, since a repair's `lean_delta`
   could redefine a predicate the conclusion mentions (making it trivially
   true) while leaving the theorem line byte-identical.
