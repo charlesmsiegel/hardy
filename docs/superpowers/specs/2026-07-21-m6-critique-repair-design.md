@@ -162,8 +162,14 @@ Critique must accept "any proof", so both workflows operate on one structure:
   the escalated attempt — a different decomposition and a larger budget for that
   hole (concretely: re-run Repair with the alternate strategy prompt and 2×
   step budget; once M7 lands, strategy escalation plugs in here). Escalated
-  failure → the honest stop: the hole and its dependents are marked `abandoned`,
-  the loop exits.
+  failure → the honest stop *for that hole*: it and its dependents are marked
+  `abandoned`, and the loop **continues with the remaining independent holes**
+  (they are still tractable work; exiting immediately would leave them `open`,
+  violating the fixed point and letting the "known gaps" list omit them). The
+  loop ends when no entry is `open` or `patched` — via resolution or
+  abandonment — or when budget expires, at which point every remaining
+  `open`/`patched` entry is transitioned to `abandoned` before the artifact
+  ships, so the exit discipline holds on every path.
 - Budget exhaustion at any point: unresolved holes → `abandoned`, artifact ships
   with them listed.
 - Grading integration: the writeup's informal-completeness grade is now computed

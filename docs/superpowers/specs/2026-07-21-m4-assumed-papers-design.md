@@ -65,9 +65,13 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   `StatementInventory(paper: str /* id_v */, items: list[InventoryItem])`;
   `InventoryItem(label: str /* "Theorem 3.2" */, kind, statement_text: str,
   depends_on_definitions: list[str], page_or_section: str)`.
-- Extraction is eager and cached in the paper store entry (`inventory.json`) —
-  re-assuming a paper never re-extracts. The inventory is *informal* (verbatim
-  statement text); no Lean yet.
+- Extraction is eager and cached — re-assuming a paper never re-extracts. The
+  cache lives **outside the admitted paper entry**, in a derived-data layer
+  (`papers/_derived/<id>v<N>/inventory.json`, keyed additionally by extractor
+  version): M3 defines admitted entries as immutable after atomic admission, so
+  writing into one would break the store's digest guarantees (and read-only
+  deployments). The inventory is *informal* (verbatim statement text); no Lean
+  yet.
 
 ### `minting.py` — formalization pass
 
@@ -136,7 +140,16 @@ papers_lean/     — the Lean package of assumed libraries (committed)
 - Pool integration: workers for frontier runs import `Papers.*` libraries in
   their base environment via a per-run imports string (`import Mathlib\nimport
   Papers.Smith2023`) — the existing `ReplPool(imports=...)` parameter already
-  supports this; benchmark pools never include paper imports.
+  supports this; benchmark pools never include paper imports. **Sandbox
+  visibility is real work, not just an imports string**: the `hardy-lean:dev`
+  image bakes `LEAN_PATH` at image build and contains only `lean_project`, so a
+  library minted afterward would fail to import. M4 extends
+  `sandboxed_worker_spec` to mount the built `papers_lean` package (its source
+  and `.lake` oleans) **read-only** into the container and to extend the
+  worker's `LEAN_PATH` env with the mounted olean paths — no image rebuild per
+  minted axiom. The package itself is built by a dedicated sandboxed `lake
+  build` step (generated code is untrusted until reviewed) with a writable
+  mount of only `papers_lean`, before any worker mounts it read-only.
 - Writeups: when the axiom manifest is non-empty, the template's status block
   reads *verified modulo assumed paper results* and a generated "Assumptions"
   paragraph states them in prose with `\cite` (M3): "assuming Theorem 3.2 of

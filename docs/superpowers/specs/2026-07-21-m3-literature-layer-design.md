@@ -88,8 +88,13 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   (ASCII-folded, lowercased). Collision with a *different* paper appends `a`, `b`,
   …; a different *version of the same paper* gets the version-qualified key
   (`author2023shortV3`) per DESIGN.
-- `add_or_get(meta) -> str`: dedup by (arXiv id, version), else DOI; returns the
-  existing key when already present. This is the single write path.
+- `add_or_get(meta) -> str`: dedup by (arXiv id, version); the DOI fallback
+  applies **only when the entry has no arXiv identity** — revisions of one arXiv
+  paper share a DOI, and letting v3 resolve to v1's entry through it would
+  silently point citations (and M4 namespaces keyed from them) at the wrong
+  version. Distinct versions of an arXiv record always get distinct entries and
+  version-qualified keys. Returns the existing key when already present. This is
+  the single write path.
 - `validate(path) -> list[str]`: parse errors, duplicate keys, entries missing
   required fields — wired into CI via `scripts/validate_bib.py` (runs in the
   default unit-test tier; no network).

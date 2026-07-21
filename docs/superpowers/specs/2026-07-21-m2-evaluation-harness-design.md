@@ -70,9 +70,13 @@ violation:
 1. **Statement immutability.** M1's Prove splices the model's proof body into the
    harness-owned statement, so benchmark runs construct the checked source as
    `item.header + item.statement + body`. The check re-verifies the invariant
-   defensively: the checked source must contain the benchmark statement byte-for-
-   byte (modulo the documented splice point). Belt-and-suspenders, cheap, and it
-   protects against future workflow drift.
+   defensively by **reconstruction, not containment**: it independently rebuilds
+   the expected source from the benchmark item plus the recorded proof body and
+   requires the actually-checked source to equal it byte-for-byte. (Mere
+   containment would pass when the original statement survives in a comment,
+   string, or dead declaration while the graded declaration proves an easier
+   claim.) Belt-and-suspenders, cheap, and it protects against future workflow
+   drift.
 2. **`sorry`-free.** The final verdict has no sorries *and* the source contains no
    `sorry`/`admit` token (comment/string-stripped lexical scan, not regex-in-place)
    — the kernel result is authoritative but the lexical scan catches smuggling into
@@ -103,8 +107,14 @@ violation:
   as an unsolved attempt with its failure kind — never silently dropped, never
   retried outside the configured attempt count.
 - Output: `EvalResult` per attempt (item id, solved, anti-cheat report, tokens,
-  Lean wall-clock, total wall-clock, trajectory path), streamed to the tracking
-  store as attempts finish (a crashed eval run keeps its completed attempts).
+  Lean CPU seconds, Lean wall-clock, total wall-clock, trajectory path), streamed
+  to the tracking store as attempts finish (a crashed eval run keeps its completed
+  attempts). Lean CPU is measured, not inferred from wall time (parallel workers
+  and host load make the two incomparable): sandboxed workers read the container's
+  cgroup `cpuacct`/`cpu.stat` usage delta around each command (the container name
+  from `sandboxed_worker_spec` makes it addressable); direct workers read the
+  process's `psutil` CPU-times delta. The session accumulates the deltas per
+  attempt.
 
 ### `metrics.py`
 
