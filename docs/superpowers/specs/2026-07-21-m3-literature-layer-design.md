@@ -75,7 +75,13 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   the abort recorded.
 - Immutability: `admit` refuses to overwrite an existing version directory; a
   digest mismatch on re-download of the same version is an error surfaced to the
-  user (upstream mutation of a published version is anomalous).
+  user (upstream mutation of a published version is anomalous). For that check to
+  survive a fresh clone (where no old store entry exists to compare against),
+  digests are also recorded **durably in a committed ledger** —
+  `papers/DIGESTS.json`, tiny, append-only, written only through `admit` — and
+  every refetch verifies against it; per-result manifests additionally record the
+  digests of the papers they used, so a writeup's exact inputs are auditable even
+  without the store.
 
 ### `bibliography.py`
 
@@ -103,8 +109,14 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
 
 - `read(stored: StoredPaper, section: str | None, offset: int, limit: int) ->
   ReadResult` — when LaTeX source exists, serve it section-chunked (split on
-  `\section`/`\subsection`, math source intact); otherwise extracted PDF text
-  (via `pypdf`), page-chunked. Output capped per call (compact, high-signal —
+  `\section`/`\subsection`, math source intact); otherwise extracted PDF text, page-chunked.
+  PDF parsing treats the file as untrusted input (it came from the network,
+  chosen by the agent): extraction runs in a **resource-limited subprocess**
+  (rss/cpu rlimits, wall-clock kill, bounded input size and page count) — a
+  malformed or decompression-bomb PDF can burn unbounded CPU/memory *inside*
+  the parser, long before any output cap applies, so the cap alone cannot
+  protect the harness process. Extracted text is cached in the derived-data
+  layer so the parse happens once per paper. Output capped per call (compact, high-signal —
   Component 2 rules), with a table of contents served on the first call so the
   agent can navigate.
 
@@ -136,8 +148,9 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   PDFs don't belong in the repo); `references.bib` *is* committed — it is the
   durable, reviewable artifact and writeups must build from a fresh clone plus
   fetches. Considered committing `meta.json` manifests; rejected — the `.bib`
-  entry already records the version and digest-bearing manifests regenerate on
-  fetch.
+  entry records the version, and the committed `papers/DIGESTS.json` ledger
+  (above) carries the content digests, the one piece of manifest data that must
+  survive a fresh clone. (`papers/` stays gitignored except that ledger.)
 - **Wrap the arXiv client library.** Alternative: call the Atom API directly.
   The library saves parsing work, but everything routes through our façade so
   rate-limit policy and caching are ours and the dependency is swappable.

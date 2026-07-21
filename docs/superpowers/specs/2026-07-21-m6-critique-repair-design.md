@@ -172,10 +172,19 @@ Critique must accept "any proof", so both workflows operate on one structure:
   ships, so the exit discipline holds on every path.
 - Budget exhaustion at any point: unresolved holes → `abandoned`, artifact ships
   with them listed.
+- **Coverage tracking:** an empty ledger is not evidence of assessment — if the
+  budget expires before probing/skeptic runs visit every informal step, there
+  may be nothing `open` to abandon and the fixed point would hold vacuously.
+  Critique therefore registers its **coverage plan** up front (every step ×
+  applicable layer) and marks entries visited as layers complete; at exit, each
+  unvisited step×layer becomes an `abandoned` ledger entry ("step not assessed
+  by <layer>"), listed in the document like any other abandoned hole. *No gaps
+  detected* requires the fixed point **and** a fully visited coverage plan.
 - Grading integration: the writeup's informal-completeness grade is now computed
-  — *no gaps detected* (fixed point reached; the grade records which layers ran
-  as assessment provenance) or *known gaps* (abandoned holes listed in the
-  document, never hidden). *Not assessed* remains only for pre-M6 results.
+  — *no gaps detected* (fixed point reached with full coverage; the grade
+  records which layers ran as assessment provenance) or *known gaps* (abandoned
+  holes — including unassessed-step entries — listed in the document, never
+  hidden). *Not assessed* remains only for pre-M6 results.
 
 ## Key decisions and rationale
 

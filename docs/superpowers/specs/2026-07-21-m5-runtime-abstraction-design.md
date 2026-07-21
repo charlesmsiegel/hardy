@@ -51,7 +51,14 @@ hardy/agent/
   config.
 - `RunConfig` grows the knobs DESIGN names, all optional with adapter-specific
   interpretation: `endpoint: str | None` (base URL for minimal),
-  `provider_config: dict` (passed through to Strands model providers),
+  `provider_config: dict` (passed through to Strands model providers —
+  **never containing literal credentials**: secret-valued fields hold
+  `env:<VAR>` references the adapter resolves at run time, so the config stays
+  loggable; the tracking layer additionally redacts any field whose name
+  matches a secret pattern (`*key*`, `*token*`, `*secret*`, `*password*`)
+  before logging and before the config-hash input, deterministically, so
+  entries stay comparable without ever persisting credentials in the
+  append-only results),
   `context_window: int | None`, `reasoning_effort: str | None`,
   `tool_call_style: Literal["auto", "native", "prompted"] = "auto"`.
   Every field lands in the eval tracking entry (M2) as part of the config hash.
@@ -76,12 +83,23 @@ hardy/agent/
 - `openai_api.py`: minimal async client for `/v1/chat/completions` (httpx);
   covers Ollama and vLLM via their OpenAI-compatible endpoints. No streaming in
   M5 (nothing consumes partial events yet); usage tallied from response `usage`
-  fields, with token counts marked *unreported* in the trajectory when the server
-  omits them (small local servers sometimes do) rather than silently zero.
+  fields. When the server omits usage (small local servers sometimes do), counts
+  are never silently zero — that would let a token-capped run blow through
+  `max_tokens_total` unmetered: the adapter substitutes a **conservative local
+  estimate** (a documented deliberately-overcounting approximation over the
+  request and response text) that accumulates toward the cap like real usage,
+  and both the trajectory and the M2 tracking entry mark the run's token counts
+  *estimated*, so fixed-token comparisons can exclude or segregate such runs.
 - `native_tools.py`: emits the registry as the API's `tools` array; parses
-  `tool_calls` back. Used when the endpoint reports/handles it (`tool_call_style
-  = "auto"` probes once per run: if the first response errors on the `tools`
-  field or never emits `tool_calls` while claiming support is unknown, fall back).
+  `tool_calls` back. `tool_call_style = "auto"` decides by a **dedicated
+  synthetic probe** once per run, before the task starts: a trivial request
+  with a one-field probe tool and `tool_choice` forcing it — a well-formed
+  `tool_calls` response means native, an API error on the `tools`/`tool_choice`
+  fields (or no tool call despite the forced choice) means prompted fallback.
+  The real first task response is never used as the signal: a capable model can
+  legitimately answer it with prose, and misreading that would silently switch
+  protocols and change budget use between otherwise identical runs. The probe's
+  cost is recorded in the trajectory.
 - `prompted_tools.py`: the fallback — tool schemas rendered into the system
   prompt with strict output instructions (one fenced ```json block per call:
   `{"tool": ..., "arguments": {...}}`); a tolerant parser (fence-first, then

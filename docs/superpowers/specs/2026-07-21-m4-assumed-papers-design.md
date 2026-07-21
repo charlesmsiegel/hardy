@@ -148,8 +148,14 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   and `.lake` oleans) **read-only** into the container and to extend the
   worker's `LEAN_PATH` env with the mounted olean paths — no image rebuild per
   minted axiom. The package itself is built by a dedicated sandboxed `lake
-  build` step (generated code is untrusted until reviewed) with a writable
-  mount of only `papers_lean`, before any worker mounts it read-only.
+  build` step (generated code is untrusted until reviewed) — and the build must
+  never get a writable mount of the host's persistent `papers_lean` tree:
+  elaboration executes arbitrary IO, so a generated declaration could overwrite
+  committed live axioms or manifests mid-build. The build runs on a **disposable
+  staged copy** (host-side copy of `papers_lean` into a temp build dir, mounted
+  writable in the sandbox); on success the trusted host copies back only the
+  expected artifacts (the `.lake` oleans for the built targets), and the staged
+  copy is discarded. Workers then mount the updated package read-only.
 - Writeups: when the axiom manifest is non-empty, the template's status block
   reads *verified modulo assumed paper results* and a generated "Assumptions"
   paragraph states them in prose with `\cite` (M3): "assuming Theorem 3.2 of

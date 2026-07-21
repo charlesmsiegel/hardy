@@ -125,9 +125,14 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   completed pickle out to harness-owned storage** (a per-run host directory
   with a size cap and end-of-run cleanup) immediately after `pickleTo` —
   streamed out of the sandbox the same tar-over-stdout way the TeX compiler
-  returns artifacts — and stages it into the destination worker's sandbox
-  (read-only mount of the per-run pickle directory) before
-  `unpickleProofStateFrom`. A node whose worker died unpickles on a fresh
+  returns artifacts — and stages it into the destination worker via a **trusted
+  host-side copy into that worker's existing `/scratch`** (`docker cp`-style
+  side channel against the named container, the same mechanism `reset_argv`
+  already uses; size-capped) before `unpickleProofStateFrom`. Mount-based
+  staging is not an option: warm pool containers already exist when the per-run
+  pickle directory is created, and Docker cannot add a mount to a running
+  container — so staged pickles are copied in, never mounted, and the copy
+  lands in scratch the worker's between-check wipe already manages. A node whose worker died unpickles on a fresh
   lease; unpicklable nodes are pruned with the loss logged.
 - Termination: goals empty at a node → assemble the tactic path, final
   `check_proof` verifies (search bugs must not ship unverified proofs); budget
