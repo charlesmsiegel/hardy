@@ -1,0 +1,184 @@
+# M4 — Assumed-Paper Libraries — Design Spec
+
+**Milestone goal (DESIGN.md):** the `assume_paper` pipeline (extract → formalize
+statements as axioms → faithfulness review → buildable `Papers.*` package), axiom
+manifests wired into results and writeups.
+
+**Exit criterion:** assume a real arXiv paper and prove a small corollary of its
+main theorem, with the writeup stating the assumptions.
+
+## Context: what M4 builds on
+
+- M3's paper store (version-keyed, immutable), bibliography (cite keys are the
+  namespace keys here), and `read_paper`.
+- M1's workflows/agent runs (extraction and formalization passes are agent runs),
+  faithfulness-skeptic pattern (reused against axioms), and audit machinery
+  (extended from "standard three only" to manifest reporting).
+- M0's pinned Lean project (`lean_project/`), which the new package integrates
+  with, and the pool (workers must be able to import assumed libraries).
+
+## Requirements (from DESIGN.md Component 6)
+
+- Axioms live in per-paper namespaces `Papers.<CiteKey>`; a cite key resolves to
+  exactly one stored paper version, recorded in the library manifest; a second
+  revision gets its own key and namespace (`Papers.Smith2023V3`) — revisions never
+  collide or resolve through each other.
+- Minting policy: inside a prove/critique chain, axioms are minted **lazily on
+  first use**; a **standalone** Assume request names its selection (specific
+  results or the whole inventory) and mints eagerly. Extraction of the full
+  statement inventory is always eager (browsable library).
+- Every axiom's docstring links the paper's numbering and BibTeX key.
+- Results the agent cannot faithfully formalize are skipped and listed in the
+  manifest — an honest partial library beats a wrong complete one.
+- Independent faithfulness review per axiom (different prompt or model);
+  flagged axioms are **quarantined pending human review** — never importable.
+- Definitions strategy, in order: map to Mathlib; write a real definition when
+  cheap; `opaque` constant + characterizing axioms (each widens the trust
+  surface, recorded as such).
+- Soundness mitigations: minimal libraries (only what gets used); a refutation
+  lint (cheap `decide`/`simp`/small-instance counterexample search per axiom);
+  axiom manifest on every downstream result.
+- Downstream grading: results are *fully verified* (standard axioms only) or
+  *verified modulo* an explicit list of assumed paper results; writeups state
+  assumptions in prose.
+
+## Architecture
+
+```
+hardy/papers/
+  inventory.py   — extraction pass output: the paper's statement inventory
+  minting.py     — axiom formalization pass + namespace/package management
+  review.py      — per-axiom faithfulness review + quarantine
+  refute.py      — cheap-refutation lint
+  manifest.py    — library manifest (paper ↔ axiom ↔ status) + axiom manifests
+hardy/workflows/assume.py — the Assume workflow (standalone and as a callee)
+hardy/tools/papers_tools.py — assume_paper, list_assumptions
+papers_lean/     — the Lean package of assumed libraries (committed)
+  lakefile.toml  — package `papers`, one lean_lib per paper namespace
+  Papers/Smith2023.lean — generated, human-reviewable
+  Papers/Smith2023.manifest.json
+```
+
+### `inventory.py` — extraction pass
+
+- An agent run over `read_paper` output produces
+  `StatementInventory(paper: str /* id_v */, items: list[InventoryItem])`;
+  `InventoryItem(label: str /* "Theorem 3.2" */, kind, statement_text: str,
+  depends_on_definitions: list[str], page_or_section: str)`.
+- Extraction is eager and cached in the paper store entry (`inventory.json`) —
+  re-assuming a paper never re-extracts. The inventory is *informal* (verbatim
+  statement text); no Lean yet.
+
+### `minting.py` — formalization pass
+
+- `mint(item, inventory, target_namespace) -> MintResult` — an agent run that
+  writes the Lean rendering: the `axiom` declaration plus any needed definition
+  support, following the definitions ladder (Mathlib mapping first — the prompt
+  requires the agent to hunt for existing definitions via the `lookup_definition`
+  tool added here, which shows the definition and signature of any named constant,
+  plus trial elaboration of candidate names; semantic search over Mathlib arrives
+  in M8 and slots in as an upgrade — then a real definition; `opaque` +
+  characterizing axioms last, each extra axiom justified in the docstring).
+- Every minted declaration carries a docstring:
+  `/-- Theorem 3.2 of [smith2023modular]: <verbatim statement text> -/`.
+- Elaboration gate: the generated file must build (against Mathlib + previously
+  minted items in the same namespace) via the pool before review; failures are
+  retried bounded times, then the item is recorded `skipped(reason)` in the
+  manifest.
+- Namespace: `Papers.<CiteKeyPascal>`; the manifest records cite key ↔ exact
+  stored paper version. A version-qualified cite key yields a version-qualified
+  namespace mechanically.
+
+### `review.py` — faithfulness review + quarantine
+
+- Reuses the M1 skeptic pattern: an independent agent run (own prompt
+  `axiom_faithfulness_v1`; different model when config provides one) sees the
+  verbatim statement text and the minted Lean, and returns
+  `faithful | flagged(reason)` per axiom, explicitly checking quantifiers,
+  hypotheses, edge conditions, and definition correspondence.
+- Quarantine is structural, not advisory: a flagged axiom is written to
+  `Papers/<Key>/Quarantine.lean`, which **no library target includes** — it exists
+  only for human review. The manifest records `quarantined(reason)`. Promotion to
+  the live library is a manual edit (human review is the point).
+
+### `refute.py` — cheap-refutation lint
+
+- For each *live* axiom, attempt bounded refutations in a scratch environment:
+  elaborate the negation and try `decide`/`simp`/`omega`/small-instance
+  enumeration when the statement (or a specialization the linter can construct)
+  is decidable; timeout small.
+- A successful refutation demotes the axiom to quarantine with the counterexample
+  recorded. Absence of refutation is *not* evidence of soundness — the manifest
+  wording keeps this honest (`refutation_lint: passed | refuted | inapplicable`).
+
+### `manifest.py` — two manifests
+
+- **Library manifest** (`Papers/<Key>.manifest.json`): paper id+version, cite key,
+  per-item status (`live` / `quarantined` / `skipped` / `not_minted`), the
+  definitions ladder rung used, refutation-lint result, review verdict, prompt
+  versions. `list_assumptions` renders this.
+- **Axiom manifest** (per downstream result): M4 extends M1/M2's audit — the
+  `#print axioms` set is partitioned into standard axioms, `Papers.*` axioms
+  (resolved to paper + label via library manifests), and *unexpected* (anything
+  else = audit failure). Stored in the result's `manifest.json`; benchmark mode
+  (M2) continues to reject any `Papers.*` axiom.
+
+### Workflow and tools
+
+- `assume.py`: **standalone mode** — takes a paper reference + selection
+  (labels, or `all`), runs fetch (M3) → extract → mint (eager, selection only) →
+  review → lint → build package → manifest. **Chained mode** — exposes
+  `ensure_axiom(paper, label)` used by Prove/Repair: extract (cached) → mint that
+  item lazily → review → lint → rebuild. Prove sees assumed axioms only through
+  `ensure_axiom`, keeping the trusted surface limited to first use.
+- `assume_paper` tool wraps standalone mode; `list_assumptions` renders library
+  manifests and, given a result, its axiom manifest.
+- Pool integration: workers for frontier runs import `Papers.*` libraries in
+  their base environment via a per-run imports string (`import Mathlib\nimport
+  Papers.Smith2023`) — the existing `ReplPool(imports=...)` parameter already
+  supports this; benchmark pools never include paper imports.
+- Writeups: when the axiom manifest is non-empty, the template's status block
+  reads *verified modulo assumed paper results* and a generated "Assumptions"
+  paragraph states them in prose with `\cite` (M3): "assuming Theorem 3.2 of
+  [smith2023modular]".
+
+## Key decisions and rationale
+
+- **Quarantine as a non-included file, not a status bit.** A status bit that
+  tooling must remember to check will eventually be forgotten; making quarantined
+  axioms unimportable-by-construction turns the safety property structural.
+- **Generated Lean is committed.** Alternative: regenerate on demand. Rejected:
+  the library is part of the trusted surface and must be human-reviewable in PRs;
+  regeneration is nondeterministic (agent runs).
+- **`ensure_axiom` as the only lazy-minting entry point.** Keeps DESIGN's
+  lazy/eager split enforceable in one place, and gives Critique (M6) the same
+  hook.
+- **Refutation lint is advisory-negative only.** It can only demote, never
+  promote; phrasing in manifests avoids implying soundness (a lint pass is not a
+  consistency proof).
+- **Rebuild granularity.** Each paper namespace is its own `lean_lib`, so adding
+  an axiom rebuilds one small library, not the world; the package depends on the
+  same pinned Mathlib as `lean_project` (single toolchain — the M0 pin discipline
+  extends here, verified in setup).
+
+## Testing strategy
+
+- **Unit:** manifest models and status transitions; namespace/key derivation incl.
+  version-qualified; axiom-manifest partitioning on fixture `#print axioms`
+  output (standard / papers / unexpected); quarantine file exclusion (generated
+  lakefile targets never reference `Quarantine.lean`); `ensure_axiom` laziness
+  (second call is a no-op) with `FakeRuntime`; writeup assumptions paragraph
+  rendering; refutation-lint outcome recording.
+- **`lean`:** a hand-written miniature "paper" (fixture inventory) minted into a
+  real buildable `Papers.Test` library; a downstream theorem proved from it shows
+  the axiom in `#print axioms`; the pool imports the library; the refutation lint
+  demotes a deliberately false decidable axiom (`axiom bad : 1 + 1 = 3`).
+- **`model`:** the exit criterion — a real small arXiv paper assumed, a corollary
+  proved, the writeup stating assumptions.
+
+## Out of scope for M4
+
+- Transitive assumption chasing (face value per DESIGN's open question — the
+  manifest records what was taken on faith); bulk multi-paper review panels
+  (Later Phases); automated quarantine promotion; statement-equivalence checking;
+  proof extraction from papers (statements only).

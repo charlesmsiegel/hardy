@@ -1,0 +1,165 @@
+# M3 — Literature Layer — Design Spec
+
+**Milestone goal (DESIGN.md):** arXiv search/fetch/read tools, paper store,
+machine-maintained `references.bib`, citations wired into writeups.
+
+**Exit criterion:** a writeup that cites fetched papers with a valid bibliography.
+
+## Context: what M3 builds on
+
+- M1's `ToolRegistry` — the new tools are `ToolDef`s like every other.
+- M1's `write_latex` pipeline and M0's template/compile layer, which M3 extends
+  with bibliography support.
+- M1's Prove workflow, which gains an optional literature phase.
+
+## Requirements (from DESIGN.md Component 5)
+
+- Version-keyed paper store: `papers/<arxiv-id>v<N>/` with a content digest in the
+  manifest; an unversioned fetch resolves to the latest revision and is stored
+  under its resolved version; cached entries are **immutable**; later revisions
+  are distinct entries.
+- Archive extraction treats downloads as untrusted: path-normalized, symlink-safe
+  unpacking, byte and file-count quotas, isolated temp dir, atomic admission.
+- Polite API usage: rate limiting, query caching, never re-fetch a stored version.
+- One canonical `references.bib`, machine-maintained: entries from arXiv metadata,
+  dedup by arXiv id + version (or DOI), stable cite keys (`author2023short`;
+  version-qualified on collision, e.g. `author2023shortV3`), validation in CI.
+- The `cite` tool is the **only** write path to the `.bib` — `fetch_paper`
+  registers papers by delegating to it.
+- Writeup pipeline gains `\cite` + bibliography; compile-check covers the
+  bibliography (missing keys are errors, not warnings to ignore).
+
+## Architecture
+
+```
+hardy/literature/
+  arxiv.py       — API client: search, metadata, download (rate-limited, cached)
+  store.py       — version-keyed immutable paper store + safe extraction
+  bibliography.py— references.bib read/model/write; cite-key minting; validation
+  reading.py     — section-chunked serving of stored papers
+hardy/tools/literature_tools.py — arxiv_search, fetch_paper, read_paper, cite
+papers/          — the store (gitignored except manifests? see decision below)
+references.bib   — canonical bibliography (committed)
+scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-formed
+```
+
+### `arxiv.py`
+
+- Thin client over the arXiv Atom API (the `arxiv` PyPI package per DESIGN's
+  stack, wrapped behind our own interface so it stays swappable).
+- `search(query: ArxivQuery) -> list[PaperMeta]` — `ArxivQuery` supports category,
+  author, title/abstract text, date range, max results. `PaperMeta` carries id,
+  version, title, authors, abstract, categories, DOI/journal when present.
+- `resolve_version(arxiv_id) -> str` and `download(arxiv_id_v) ->
+  DownloadedPaper(pdf_bytes, source_tar: bytes | None)` — source (e-print tarball)
+  fetched whenever available; its absence is recorded, not an error.
+- **Rate limiting:** a module-level async limiter honoring arXiv's published
+  guidance (1 request / 3 s, single connection); every call path goes through it.
+- **Query cache:** search responses cached on disk keyed by canonicalized query,
+  with a TTL (default 24 h) — searches are cheap to redo but the agent may loop.
+
+### `store.py`
+
+- Layout: `papers/<id>v<N>/` containing `paper.pdf`, `source/` (extracted LaTeX
+  when available), `meta.json` (PaperMeta + fetch timestamp + SHA-256 digests +
+  extraction report).
+- `PaperStore.get(id_v) -> StoredPaper | None`; `PaperStore.admit(downloaded) ->
+  StoredPaper` — extraction and digesting happen in an isolated temp directory;
+  the completed entry is `rename()`d into place (atomic admission); a partially
+  admitted entry can never be observed.
+- **Safe extraction** (untrusted tarball): members are rejected unless a regular
+  file or directory; paths normalized and confined under the target (no `..`, no
+  absolute paths); symlinks/hardlinks/devices skipped and logged in the extraction
+  report; quotas — max total bytes (default 512 MB) and max file count (default
+  10 000) — abort extraction over-quota, and the entry is admitted PDF-only with
+  the abort recorded.
+- Immutability: `admit` refuses to overwrite an existing version directory; a
+  digest mismatch on re-download of the same version is an error surfaced to the
+  user (upstream mutation of a published version is anomalous).
+
+### `bibliography.py`
+
+- Model: `BibEntry` (pydantic) covering the fields we emit (`@article`/`@misc`
+  with `eprint`, `archivePrefix`, `primaryClass`, DOI/journal when known, and a
+  `note = {arXiv <id>v<N>}` recording the exact version).
+- `Bibliography.load(path)` / `.save(path)` via `bibtexparser`; save is atomic
+  (temp file + rename) and normalizes formatting so diffs stay reviewable.
+- `mint_key(meta) -> str`: `<first-author-surname><year><first-content-word>`
+  (ASCII-folded, lowercased). Collision with a *different* paper appends `a`, `b`,
+  …; a different *version of the same paper* gets the version-qualified key
+  (`author2023shortV3`) per DESIGN.
+- `add_or_get(meta) -> str`: dedup by (arXiv id, version), else DOI; returns the
+  existing key when already present. This is the single write path.
+- `validate(path) -> list[str]`: parse errors, duplicate keys, entries missing
+  required fields — wired into CI via `scripts/validate_bib.py` (runs in the
+  default unit-test tier; no network).
+
+### `reading.py`
+
+- `read(stored: StoredPaper, section: str | None, offset: int, limit: int) ->
+  ReadResult` — when LaTeX source exists, serve it section-chunked (split on
+  `\section`/`\subsection`, math source intact); otherwise extracted PDF text
+  (via `pypdf`), page-chunked. Output capped per call (compact, high-signal —
+  Component 2 rules), with a table of contents served on the first call so the
+  agent can navigate.
+
+### Tools (`literature_tools.py`)
+
+| Tool | Backing | Notes |
+|------|---------|-------|
+| `arxiv_search` | `arxiv.search` | Returns id, version, title, authors, truncated abstract per hit. |
+| `fetch_paper` | `download` + `store.admit` + `bibliography.add_or_get` | Returns the store path, cite key, and whether LaTeX source is available. Idempotent on stored versions (no re-fetch). |
+| `read_paper` | `reading.read` | Sectioned reading with navigation. |
+| `cite` | `bibliography.add_or_get` / lookup | Look up or add; returns the cite key. The only `.bib` writer (fetch_paper delegates here). |
+
+### Writeup pipeline changes
+
+- `render_writeup` gains `bibliography: bool` behavior: when the document body
+  contains `\cite`, the template emits `\bibliographystyle`+`\bibliography`
+  pointing at a staged copy of the **needed fragment** of `references.bib` (the
+  compile sandbox sees only the staging directory — DESIGN Component 5 — so the
+  full project `.bib` is filtered to the cited keys and staged).
+- The compile step treats unresolved citations as failures: after the run, the log
+  is scanned for `Citation ... undefined`; that error feeds back to the agent like
+  any TeX error. (Tectonic runs the bib pass automatically.)
+- The Prove workflow's writeup phase gains the literature tools in its registry;
+  M1's "no citations" rule is retired.
+
+## Key decisions and rationale
+
+- **Store is data, not git content.** `papers/` is gitignored (multi-hundred-MB
+  PDFs don't belong in the repo); `references.bib` *is* committed — it is the
+  durable, reviewable artifact and writeups must build from a fresh clone plus
+  fetches. Considered committing `meta.json` manifests; rejected — the `.bib`
+  entry already records the version and digest-bearing manifests regenerate on
+  fetch.
+- **Wrap the arXiv client library.** Alternative: call the Atom API directly.
+  The library saves parsing work, but everything routes through our façade so
+  rate-limit policy and caching are ours and the dependency is swappable.
+- **Filter the `.bib` into staging rather than mount it whole.** The sandboxed
+  compiler must not see project state beyond the document's needs (disclosure
+  rule, Component 5); filtering to cited keys is cheap and keeps the invariant.
+- **PDF-only admission on source problems.** A paper whose e-print is missing,
+  over-quota, or hostile still enters the store (the PDF is independently useful);
+  the extraction report keeps the failure visible instead of failing the fetch.
+
+## Testing strategy
+
+- **Unit:** query canonicalization + cache TTL; safe extraction against crafted
+  tarballs (traversal via `..` and absolute paths, symlink escape, hardlink,
+  device node, byte-quota and count-quota breaches) — fixture tarballs built in
+  the test, no network; store atomicity (crash-mid-admit leaves nothing);
+  immutability refusals; key minting incl. collisions and version qualification;
+  dedup; bib round-trip + validator; section chunking on fixture LaTeX; each tool
+  handler against fakes.
+- **`tex`:** a writeup with `\cite` compiles against a staged bib fragment; an
+  undefined citation is reported as a failure.
+- **`network` (new marker):** one live arXiv search + fetch of a small canonical
+  paper, exercising rate limiting and idempotent re-fetch. Excluded from CI.
+- **CI:** `scripts/validate_bib.py` joins the unit job.
+
+## Out of scope for M3
+
+- `assume_paper`/axiomatization (M4 — `list_assumptions` too); semantic retrieval
+  over papers (M8); citation-graph chasing; non-arXiv sources; OCR for scanned
+  PDFs; bibliography styles beyond the template default.
