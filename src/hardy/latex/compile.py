@@ -1,8 +1,13 @@
 """Compile-check LaTeX the way Lean output is kernel-checked (DESIGN.md
 Component 5): errors come back structured, and generated TeX is treated as
-untrusted code — shell-escape stays disabled (`--untrusted`), the compiler
-sees only its staging, and the subprocess environment is scrubbed to
-PATH + HOME (+ explicit extra_env) so nothing can leak through it.
+untrusted code — shell-escape stays disabled (`-no-shell-escape`), the
+compiler sees only its staging, and the subprocess environment is scrubbed
+to PATH + HOME (+ explicit extra_env) so nothing can leak through it.
+
+Engine: pdflatex from a self-contained TeX Live install (every package on
+disk, zero network at compile time). This replaces tectonic, whose
+fetch-the-bundle-once model cannot run under a no-network/egress-locked
+policy; a custom engine is still accepted via the `engine` argument.
 
 Host-side containment: compiler output is read through a hard byte cap (a
 document that spews diagnostics in a loop is killed, never buffered into
@@ -11,7 +16,7 @@ main.pdf/main.log are deleted before each run so a failed compile can
 never serve a previous run's artifacts.
 
 Two entry points: compile_tex runs a local (or arbitrary-argv) engine;
-compile_tex_sandboxed runs tectonic in the hardy-tex:dev container with NO
+compile_tex_sandboxed runs pdflatex in the hardy-tex:dev container with NO
 writable host mount at all — the untrusted container sees a read-only
 /staging plus its quota'd /scratch tmpfs, streams artifacts back as a tar
 on stdout, and the trusted host side extracts exactly main.pdf/main.log
@@ -34,7 +39,9 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-DEFAULT_ENGINE = ["tectonic", "--untrusted", "--chatter", "minimal"]
+# Self-contained TeX Live pdflatex: no network at compile time, shell-escape
+# off. (tectonic's network bundle fetch can't run under a no-network policy.)
+DEFAULT_ENGINE = ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape"]
 _OUTPUT_CAP = 1_000_000            # bytes of diagnostics before the compile is killed
 _ARTIFACT_CAP = 64 * 1024 * 1024   # bytes of tar-streamed artifacts accepted back
 _LOG_TAIL_CAP = 256 * 1024         # bytes of main.log we ever read
@@ -188,7 +195,7 @@ def compile_tex_sandboxed(
     the caller's output directory, which may sit beside a writeup's Lean
     source and manifest; otherwise generated TeX could \\input a sibling file
     and copy its contents into the PDF or log. Artifacts return as a tar
-    stream on the container's stdout (tectonic's own chatter is diverted to
+    stream on the container's stdout (pdflatex's own chatter is diverted to
     stderr); the trusted host side extracts exactly main.pdf/main.log under
     _ARTIFACT_CAP into `staging`. The container is named, and any host-side
     abort docker-kills it — killing only the docker client is never proxied,
@@ -229,8 +236,10 @@ def compile_tex_sandboxed(
         )
         script = (
             "cp /staging/main.tex /scratch/ && cd /scratch && "
+            "export HOME=/scratch TEXMFVAR=/scratch/texmf-var && "
             f"timeout {_sandbox_timeout_arg(timeout)} "
-            "tectonic --untrusted --only-cached --chatter minimal main.tex >&2; "
+            "pdflatex -interaction=nonstopmode -halt-on-error -no-shell-escape "
+            "main.tex >&2; "
             "status=$?; tar -cf - main.pdf main.log 2>/dev/null; exit $status"
         )
         argv = docker_argv(cfg, ["/bin/sh", "-c", script])
