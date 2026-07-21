@@ -24,8 +24,11 @@ import io
 import os
 import re
 import selectors
+import shutil
+import signal
 import subprocess
 import tarfile
+import tempfile
 import time
 from pathlib import Path
 
@@ -35,6 +38,20 @@ DEFAULT_ENGINE = ["tectonic", "--untrusted", "--chatter", "minimal"]
 _OUTPUT_CAP = 1_000_000            # bytes of diagnostics before the compile is killed
 _ARTIFACT_CAP = 64 * 1024 * 1024   # bytes of tar-streamed artifacts accepted back
 _LOG_TAIL_CAP = 256 * 1024         # bytes of main.log we ever read
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Kill the whole process group of a locally-launched engine.
+
+    Engines started with start_new_session=True lead their own group, so an
+    abort (timeout / output cap) can take down helper processes they spawned;
+    killing only the immediate process would leave children alive to keep
+    writing into the staging directory after we return.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.kill()  # group gone or unavailable — fall back to the leader
 
 _STDERR_RE = re.compile(r"^error: (?:(?P<file>[^:\s][^:]*):(?P<line>\d+):\s*)?(?P<msg>.+)$")
 _LOG_RE = re.compile(r"^! (?P<msg>.+)$")
@@ -62,7 +79,11 @@ def _run_streams_capped(
     returncode is None (and abort_reason set) when the process was killed
     for timeout or exceeding a cap."""
     proc = subprocess.Popen(
-        argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        argv,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,  # own process group, so abort kills helpers too
     )
     sel = selectors.DefaultSelector()
     for pipe, tag in ((proc.stdout, "stdout"), (proc.stderr, "stderr")):
@@ -90,14 +111,14 @@ def _run_streams_capped(
                 abort = f"{key.data} exceeded {caps[key.data]} byte cap"
                 break
     if abort is not None:
-        proc.kill()
+        _kill_process_group(proc)
         proc.wait()
         code = None
     else:
         try:
             code = proc.wait(timeout=max(1.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
-            proc.kill()
+            _kill_process_group(proc)
             proc.wait()
             code, abort = None, f"timed out after {timeout}s"
     return code, bytes(bufs["stdout"]), bufs["stderr"].decode(errors="replace"), abort
@@ -132,16 +153,18 @@ def compile_tex_sandboxed(
 
     The untrusted container sees only a read-only /staging and its quota'd
     /scratch tmpfs, so nothing it runs can write host-backed storage.
-    Artifacts return as a tar stream on the container's stdout (tectonic's
-    own chatter is diverted to stderr); the trusted host side extracts
-    exactly main.pdf/main.log under _ARTIFACT_CAP. The container is named,
-    and any host-side abort docker-kills it — killing only the docker
-    client is never proxied, and a lingering compile could otherwise drop
-    artifacts into a later attempt. The in-container `timeout` matches the
-    requested budget; the host allows a small grace on top so the inner
-    timeout normally fires first and the container exits cleanly. The
-    image (hardy-tex:dev) contains no Lean project or repo state, so TeX
-    \\input primitives have nothing to disclose beyond staging itself.
+    /staging is a freshly-made input directory holding ONLY main.tex — never
+    the caller's output directory, which may sit beside a writeup's Lean
+    source and manifest; otherwise generated TeX could \\input a sibling file
+    and copy its contents into the PDF or log. Artifacts return as a tar
+    stream on the container's stdout (tectonic's own chatter is diverted to
+    stderr); the trusted host side extracts exactly main.pdf/main.log under
+    _ARTIFACT_CAP into `staging`. The container is named, and any host-side
+    abort docker-kills it — killing only the docker client is never proxied,
+    and a lingering compile could otherwise drop artifacts into a later
+    attempt. The in-container `timeout` matches the requested budget; the host
+    allows a small grace on top so the inner timeout normally fires first and
+    the container exits cleanly.
     """
     import uuid
 
@@ -151,25 +174,33 @@ def compile_tex_sandboxed(
     for stale in ("main.pdf", "main.log"):
         # Never grade this run against a previous run's artifacts.
         (staging / stale).unlink(missing_ok=True)
-    (staging / "main.tex").write_text(source)
 
-    name = f"hardy-tex-{uuid.uuid4().hex[:12]}"
-    cfg = SandboxConfig(
-        image=image,
-        name=name,
-        mounts=[Mount(host=str(staging.resolve()), container="/staging", mode="ro")],
-    )
-    script = (
-        "cp /staging/main.tex /scratch/ && cd /scratch && "
-        f"timeout {max(1, int(timeout))} "
-        "tectonic --untrusted --only-cached --chatter minimal main.tex >&2; "
-        "status=$?; tar -cf - main.pdf main.log 2>/dev/null; exit $status"
-    )
-    argv = docker_argv(cfg, ["/bin/sh", "-c", script])
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
-    code, tar_bytes, stderr_text, abort = _run_streams_capped(
-        argv, env, timeout + 15, _ARTIFACT_CAP, _OUTPUT_CAP
-    )
+    # Mount an isolated input dir containing only main.tex, so untrusted TeX
+    # cannot \input anything else living in the caller's staging directory.
+    inputs = Path(tempfile.mkdtemp(prefix="hardy-texin-"))
+    try:
+        (inputs / "main.tex").write_text(source)
+        name = f"hardy-tex-{uuid.uuid4().hex[:12]}"
+        cfg = SandboxConfig(
+            image=image,
+            name=name,
+            mounts=[
+                Mount(host=str(inputs.resolve()), container="/staging", mode="ro")
+            ],
+        )
+        script = (
+            "cp /staging/main.tex /scratch/ && cd /scratch && "
+            f"timeout {max(1, int(timeout))} "
+            "tectonic --untrusted --only-cached --chatter minimal main.tex >&2; "
+            "status=$?; tar -cf - main.pdf main.log 2>/dev/null; exit $status"
+        )
+        argv = docker_argv(cfg, ["/bin/sh", "-c", script])
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+        code, tar_bytes, stderr_text, abort = _run_streams_capped(
+            argv, env, timeout + 15, _ARTIFACT_CAP, _OUTPUT_CAP
+        )
+    finally:
+        shutil.rmtree(inputs, ignore_errors=True)
     if abort is not None:
         subprocess.run(["docker", "kill", name], capture_output=True, timeout=60)
         return CompileResult(
@@ -198,7 +229,12 @@ def _run_capped(
     bytes. Returns (returncode, output, over_cap); returncode is None when
     the process was killed for timeout or output volume."""
     proc = subprocess.Popen(
-        argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        argv,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,  # own process group, so abort kills helpers too
     )
     os.set_blocking(proc.stdout.fileno(), False)
     deadline = time.monotonic() + timeout
@@ -208,7 +244,7 @@ def _run_capped(
         chunk = proc.stdout.read(65536)
         if chunk is None:  # no data available yet
             if time.monotonic() > deadline:
-                proc.kill()
+                _kill_process_group(proc)
                 proc.wait()
                 return None, b"".join(chunks).decode(errors="replace"), False
             time.sleep(0.05)
@@ -220,14 +256,14 @@ def _run_capped(
             try:
                 code = proc.wait(timeout=max(0.0, remaining))
             except subprocess.TimeoutExpired:
-                proc.kill()
+                _kill_process_group(proc)
                 proc.wait()
                 return None, b"".join(chunks).decode(errors="replace"), False
             return code, b"".join(chunks).decode(errors="replace"), False
         total += len(chunk)
         chunks.append(chunk)
         if total > _OUTPUT_CAP:
-            proc.kill()
+            _kill_process_group(proc)
             proc.wait()
             return None, b"".join(chunks)[-_OUTPUT_CAP:].decode(errors="replace"), True
 

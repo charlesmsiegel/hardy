@@ -47,12 +47,14 @@ class LeanRepl:
         default_timeout: float = 60.0,
         cleanup_argv: list[str] | None = None,
         stream_limit: int = 10 * 1024 * 1024,
+        cleanup_timeout: float = 30.0,
     ):
         self._argv = argv
         self._cwd = cwd
         self._default_timeout = default_timeout
         self._cleanup_argv = cleanup_argv
         self._stream_limit = stream_limit
+        self._cleanup_timeout = cleanup_timeout
         self._proc: asyncio.subprocess.Process | None = None
 
     async def start(self) -> None:
@@ -85,6 +87,13 @@ class LeanRepl:
             raw = await asyncio.wait_for(
                 self._read_response(), timeout or self._default_timeout
             )
+        except asyncio.CancelledError:
+            # A cancelled request (e.g. an outer asyncio.wait_for) leaves the
+            # command still running in the process, so its response could later
+            # land on stdout and desync the next request. Kill the process
+            # before propagating so the instance is never reused half-spoken.
+            await self.close()
+            raise
         except TimeoutError:
             await self.close()
             raise ReplTimeout(
@@ -145,13 +154,23 @@ class LeanRepl:
             self._proc.kill()
             await self._proc.wait()
         if self._cleanup_argv is not None:
+            cleanup_argv, self._cleanup_argv = self._cleanup_argv, None
             try:
                 cleanup = await asyncio.create_subprocess_exec(
-                    *self._cleanup_argv,
+                    *cleanup_argv,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
-                await cleanup.wait()
             except OSError:
-                pass  # best-effort: close() must never raise over cleanup
-            self._cleanup_argv = None
+                return  # best-effort: close() must never raise over cleanup
+            # Bound the cleanup: timeout handling calls close() before raising
+            # ReplTimeout, so a cleanup helper that hangs (e.g. a stalled docker
+            # CLI) would otherwise stall the advertised per-command timeout.
+            try:
+                await asyncio.wait_for(cleanup.wait(), self._cleanup_timeout)
+            except TimeoutError:
+                cleanup.kill()
+                try:
+                    await cleanup.wait()
+                except OSError:
+                    pass

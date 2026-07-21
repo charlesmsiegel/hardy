@@ -70,6 +70,10 @@ async def _run_argv_ok(argv: list[str], timeout: float = 30.0) -> bool:
         proc.kill()
         await proc.wait()
         return False
+    except asyncio.CancelledError:
+        # Don't leave the reset subprocess running when the check is cancelled.
+        proc.kill()
+        raise
 
 
 class PoolWorker:
@@ -178,9 +182,16 @@ class ReplPool:
         worker = await self._idle.get()
         if worker is _POISON:
             self._idle.put_nowait(_POISON)  # chain: wake the next waiter too
-            raise LeanReplError(f"pool is broken: {self._broken}")
+            raise LeanReplError(
+                f"pool is broken: {self._broken}" if self._broken else "pool is closed"
+            )
         try:
             resp = await worker.check(code, timeout=timeout)
+            dirty = self._should_recycle(worker)
+            # The scratch reset is inside the try so a cancellation landing
+            # during it (not just during the check) still retires the worker.
+            if not dirty and worker.spec.reset_argv is not None:
+                dirty = not await _run_argv_ok(worker.spec.reset_argv)
         except ReplTimeout:
             await self._replace(worker)
             return failure_verdict("timeout")
@@ -197,9 +208,6 @@ class ReplPool:
             except LeanReplError:
                 pass  # refill failed and poisoned the pool; still re-raise cancel
             raise
-        dirty = self._should_recycle(worker)
-        if not dirty and worker.spec.reset_argv is not None:
-            dirty = not await _run_argv_ok(worker.spec.reset_argv)
         if dirty:
             await self._replace(worker)
         elif self._closed:
@@ -246,3 +254,7 @@ class ReplPool:
         for worker in list(self._live):
             await worker.repl.close()
         self._live.clear()
+        # Wake any callers already blocked in _idle.get(): no worker will ever
+        # be returned now, so hand them a poison sentinel that chains to the
+        # next waiter (each raises LeanReplError instead of hanging forever).
+        self._idle.put_nowait(_POISON)

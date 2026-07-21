@@ -51,6 +51,41 @@ async def test_close_terminates_in_flight_worker():
     assert pool._live == set()  # nothing leaked
 
 
+async def test_close_wakes_queued_waiters():
+    pool = make_pool(command_timeout=30)  # size 1
+    await pool.start()
+    inflight = asyncio.create_task(pool.check_proof("HANG", timeout=30))
+    await asyncio.sleep(0.1)  # this check owns the only worker
+    queued = asyncio.create_task(pool.check_proof("theorem t : True := trivial"))
+    await asyncio.sleep(0.1)  # this one is blocked in _idle.get()
+    await pool.close()
+    # Neither may hang: the in-flight check crashes out, the queued one errors.
+    v = await asyncio.wait_for(inflight, timeout=10)
+    assert not v.complete
+    with pytest.raises(LeanReplError):
+        await asyncio.wait_for(queued, timeout=10)
+
+
+async def test_cancel_during_scratch_reset_recycles_worker():
+    # Cancellation can land while the reset command runs (not just the check);
+    # the worker must still be retired so a size-1 pool doesn't deadlock.
+    spec = WorkerSpec(
+        argv=FAKE, reset_argv=[sys.executable, "-c", "import time; time.sleep(3)"]
+    )
+    pool = ReplPool(size=1, spec_factory=lambda: spec)
+    await pool.start()
+    task = asyncio.create_task(pool.check_proof("theorem t : True := trivial"))
+    await asyncio.sleep(0.3)  # check answered fast; now blocked in the reset
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    v = await asyncio.wait_for(
+        pool.check_proof("theorem u : True := trivial"), timeout=10
+    )
+    assert v.complete  # replacement worker serves the next check
+    await pool.close()
+
+
 async def test_check_proof_returns_verdict():
     pool = make_pool()
     await pool.start()

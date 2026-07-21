@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from pathlib import Path
 
@@ -104,6 +105,29 @@ async def test_default_stream_limit_accepts_large_goals():
     resp = await repl.run_command("HUGE")
     assert len(resp.messages[0].data) == 1 << 20
     await repl.close()
+
+
+async def test_cancelled_request_kills_process():
+    # A cancelled request (e.g. outer wait_for) leaves the command running in
+    # the process; the instance must be killed so a stale response can't desync
+    # the next request.
+    repl = await make_repl(default_timeout=30)
+    task = asyncio.create_task(repl.run_command("HANG"))
+    await asyncio.sleep(0.2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not repl.alive
+    await repl.close()
+
+
+async def test_close_bounds_a_hanging_cleanup():
+    # A cleanup helper that never exits must not make close() (hence the
+    # per-command timeout that calls it) hang forever.
+    cleanup = [sys.executable, "-c", "import time; time.sleep(3600)"]
+    repl = LeanRepl(FAKE, cleanup_argv=cleanup, cleanup_timeout=0.5)
+    await repl.start()
+    await asyncio.wait_for(repl.close(), timeout=5)
 
 
 async def test_cleanup_argv_runs_on_close(tmp_path):
