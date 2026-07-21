@@ -128,7 +128,13 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   inconsistent snapshot would make recorded snapshot ids nondeterministic.
   Every entry carries provenance (source run id, theorem, config hash) and entry kind:
   - `proved_lemma` — statement + proof source of harness-proved auxiliary
-    lemmas (M7 sketch subgoals are the main producers);
+    lemmas (M7 sketch subgoals are the main producers), **together with the
+    environment it elaborates in**: required imports, transitive local
+    declaration dependencies, nondefault options, and its axiom manifest — a
+    lemma that leaned on a source-run helper or paper library would otherwise
+    be served as an exact cache hit that cannot elaborate in the new theorem's
+    pristine environment, wasting the attempt; recall validates the stored
+    environment against the current one and skips incompatible entries;
   - `tactic_pattern` — goal-shape → tactic-sequence pairs mined from successful
     trajectories;
   - `domain_trick` — distilled prose lessons (M7 `lessons.py` output promoted
@@ -164,8 +170,11 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   phase-A delta**: freezing whatever the shared store happens to contain would
   let pre-existing same-domain — or even B-derived — entries from ordinary
   prior runs masquerade as transfer, and `A∩B = ∅` alone cannot detect that.
-  Every delta entry's provenance is audited at freeze time; an entry whose
-  provenance references any B item (or is missing) is rejected. The frozen
+  Every delta entry's provenance is audited at freeze time — **positively**:
+  an entry is admitted only when its provenance identifies one of phase A's
+  own run/item ids; rejecting just B-references or missing provenance would
+  still admit entries from an unrelated concurrent run's set C, and the
+  measured "transfer" would no longer be attributable to A. The frozen
   snapshot id and base id both land in the comparison record.
   Phase 2 — *comparison* — evaluates held-out set B from the same domain
   against that frozen snapshot, memory-on vs. memory-off, contemporaneously and
