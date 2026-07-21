@@ -56,13 +56,17 @@ class LeanRepl:
         self._stream_limit = stream_limit
         self._cleanup_timeout = cleanup_timeout
         self._proc: asyncio.subprocess.Process | None = None
+        self._started = False
 
     async def start(self) -> None:
-        # Reject a second start on a live instance: overwriting _proc would
-        # orphan the first subprocess, and close() would then only reach the new
-        # one. Callers that want a restart must close() first.
-        if self._proc is not None and self._proc.returncode is None:
-            raise LeanReplError("repl already started")
+        # LeanRepl is single-use: start() may run exactly once. Restarting would
+        # orphan the first subprocess and, after a close() that cleared
+        # cleanup_argv, leave a sandbox container un-killed on the second run.
+        # The pool always retires a worker and spawns a fresh instance, so this
+        # costs nothing; callers wanting a "restart" must build a new LeanRepl.
+        if self._started:
+            raise LeanReplError("LeanRepl is single-use; create a new instance")
+        self._started = True
         # limit bounds a single response line; asyncio's 64 KB default is far
         # too small for real goal states, and overflow raises ValueError.
         self._proc = await asyncio.create_subprocess_exec(
