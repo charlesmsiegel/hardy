@@ -222,9 +222,10 @@ Loop discipline, so it converges instead of thrashing:
   `verified-closed` and `dismissed` count as resolved for the fixed point.
 - After a repair, Critique re-runs over the patch's blast radius — a fix must not
   silently reopen a closed hole or introduce new ones. If the re-critique finds
-  that overlapping changes invalidated an earlier `verified-closed` hole, that
-  entry returns to `open` — keeping its identity and incrementing its reopen
-  counter — rather than being logged as a new hole.
+  that overlapping changes invalidated an earlier resolved hole — `verified-closed`,
+  or `dismissed` whose recorded justification applied to the now-changed text —
+  that entry returns to `open`, keeping its identity and incrementing its reopen
+  counter, rather than being logged as a new hole.
 - **No-progress detection**: a hole reopened N times — counting both rejected
   patches (`patched` → `open` on failed re-critique) and regressions (a closed hole
   invalidated by an overlapping repair) — triggers a strategy escalation (different
@@ -459,8 +460,11 @@ You can't improve what you don't measure. This is as important as the agent itse
 
 1. **M0 — Plumbing**: pinned Lean 4 + Mathlib project; Python wrapper around the
    REPL with session pooling, timeouts, structured goal/error parsing; LaTeX
-   template + compile-check pipeline. Exit criterion: check 100 proofs/minute
-   against warm sessions; compile-check a sample writeup.
+   template + compile-check pipeline; and the Component 7 sandbox (no-network,
+   read-only containers with quota'd tmpfs scratch) around both Lean workers and
+   the TeX compiler — M1 executes untrusted generated code, so isolation must
+   precede it. Exit criterion: check 100 proofs/minute against warm sessions and
+   compile-check a sample writeup, both running inside the sandbox.
 2. **M1 — Minimal agent (Claude Agent SDK)**: first `AgentRuntime` adapter on the
    Claude Agent SDK; core tools (`check_proof`, `get_goal_state`, `search_lemmas`,
    `write_latex`); iterative-repair loop; dual-output workflow. The citation half
@@ -495,8 +499,11 @@ You can't improve what you don't measure. This is as important as the agent itse
 9. **M8 — Retrieval & memory**: semantic premise search, cross-theorem memory,
    context summarization improvements. Exit criterion: retrieval-augmented premise
    selection measurably improves solve rate or cost-per-solve over the built-in
-   search tools on the eval set, and a repeat run over a previously-solved domain
-   is measurably cheaper than the first (memory demonstrably reused).
+   search tools on the eval set; memory transfer is measured on *held-out* theorems
+   from a previously-solved domain — never the solved theorems themselves — under a
+   versioned memory snapshot so results stay comparable to the cold M2 baseline,
+   with exact-repeat cache savings reported separately (replaying cached proofs is
+   not transfer).
 
 ## Open Questions
 
