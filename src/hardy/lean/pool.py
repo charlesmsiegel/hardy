@@ -1,0 +1,207 @@
+"""Warm REPL worker pool with environment isolation and recycling.
+
+Isolation (DESIGN.md Component 1): each worker runs the configured imports
+once at spawn — validated clean (no errors, no sorries, no fatal message)
+before the worker is admitted, so a broken import can never masquerade as
+the pristine base — and records the returned environment id as base_env.
+Every check_proof forks from base_env, so declarations, axioms, and
+instances introduced by one run are invisible to every other run — warm
+process, clean declarations. Workers are replaced (never reused) after a
+timeout, crash, or protocol error, after max_commands checks, or when
+resident memory exceeds max_rss_mb.
+
+Sandboxed workers carry two trusted side-channels in their WorkerSpec:
+reset_argv kills straggler processes and wipes the container's /scratch
+between checks (resetting the Lean environment id resets neither
+filesystem state nor forked children — without this, one untrusted proof
+could leave files or background processes behind to interfere with the
+next); cleanup_argv kills the container itself on close. A worker whose
+reset fails is dirty and is replaced.
+
+Replacement failures must not shrink the pool silently: _replace retries
+spawning with backoff, and if the slot is unrecoverable the queue is
+poisoned so every current and future caller fails promptly with
+LeanReplError instead of deadlocking on a worker that will never arrive.
+
+Memory caveat: the RSS check reads the spawned process via psutil, which is
+meaningful for directly-spawned workers. For sandboxed workers the local
+process is just the docker client — there the container's own --memory
+limit (hardy.sandbox) is the real cap.
+"""
+
+import asyncio
+from collections.abc import Callable
+from pathlib import Path
+
+import psutil
+from pydantic import BaseModel
+
+from .feedback import ProofVerdict, failure_verdict, verdict
+from .messages import CommandResponse
+from .repl import LeanRepl, LeanReplError, ReplDied, ReplTimeout
+
+# Queue sentinel marking a broken pool; it wakes waiters instead of a worker.
+_POISON = object()
+
+
+class WorkerSpec(BaseModel):
+    argv: list[str]
+    cwd: Path | None = None
+    # Trusted command wiping the worker's scratch between checks (sandboxed).
+    reset_argv: list[str] | None = None
+    # Trusted command killing the worker's container on close (sandboxed).
+    cleanup_argv: list[str] | None = None
+
+
+async def _run_argv_ok(argv: list[str], timeout: float = 30.0) -> bool:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        # Can't even launch the trusted command (fd/process pressure, missing
+        # binary): report failure so the caller recycles — never propagate.
+        return False
+    try:
+        return await asyncio.wait_for(proc.wait(), timeout) == 0
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return False
+
+
+class PoolWorker:
+    def __init__(self, repl: LeanRepl, base_env: int, spec: WorkerSpec):
+        self.repl = repl
+        self.base_env = base_env
+        self.spec = spec
+        self.commands_run = 0
+
+    async def check(self, code: str, timeout: float | None) -> CommandResponse:
+        self.commands_run += 1
+        return await self.repl.run_command(code, env=self.base_env, timeout=timeout)
+
+
+class ReplPool:
+    def __init__(
+        self,
+        *,
+        size: int,
+        argv: list[str] | None = None,
+        cwd: Path | None = None,
+        spec_factory: Callable[[], WorkerSpec] | None = None,
+        imports: str = "import Mathlib",
+        import_timeout: float = 600.0,
+        command_timeout: float = 60.0,
+        max_commands: int = 500,
+        max_rss_mb: int = 12_000,
+        spawn_retries: int = 3,
+        spawn_retry_delay: float = 1.0,
+    ):
+        if spec_factory is None:
+            if argv is None:
+                raise ValueError("pass argv (with optional cwd) or spec_factory")
+            base = WorkerSpec(argv=argv, cwd=cwd)
+            spec_factory = lambda: base  # noqa: E731
+        self._size = size
+        self._spec_factory = spec_factory
+        self._imports = imports
+        self._import_timeout = import_timeout
+        self._command_timeout = command_timeout
+        self._max_commands = max_commands
+        self._max_rss_mb = max_rss_mb
+        self._spawn_retries = spawn_retries
+        self._spawn_retry_delay = spawn_retry_delay
+        self._broken: Exception | None = None
+        self._idle: asyncio.Queue = asyncio.Queue()
+
+    async def start(self) -> None:
+        results = await asyncio.gather(
+            *(self._spawn() for _ in range(self._size)), return_exceptions=True
+        )
+        workers = [r for r in results if isinstance(r, PoolWorker)]
+        failures = [r for r in results if not isinstance(r, PoolWorker)]
+        if failures:
+            # A partial start must not strand the workers that did spawn.
+            for worker in workers:
+                await worker.repl.close()
+            raise failures[0]
+        for worker in workers:
+            self._idle.put_nowait(worker)
+
+    async def _spawn(self) -> PoolWorker:
+        spec = self._spec_factory()
+        repl = LeanRepl(
+            spec.argv,
+            cwd=spec.cwd,
+            default_timeout=self._command_timeout,
+            cleanup_argv=spec.cleanup_argv,
+        )
+        await repl.start()
+        resp = await repl.run_command(self._imports, timeout=self._import_timeout)
+        # The REPL can return an env id *and* error messages; an import that
+        # "succeeded" with errors is not a pristine base environment.
+        if not verdict(resp).complete:
+            await repl.close()
+            raise LeanReplError(f"worker imports failed: {resp}")
+        return PoolWorker(repl, base_env=resp.env, spec=spec)
+
+    def _should_recycle(self, worker: PoolWorker) -> bool:
+        if worker.commands_run >= self._max_commands:
+            return True
+        pid = worker.repl.pid
+        if pid is None:
+            return True
+        try:
+            rss = psutil.Process(pid).memory_info().rss
+        except psutil.Error:
+            return True
+        return rss > self._max_rss_mb * 1024 * 1024
+
+    async def check_proof(self, code: str, timeout: float | None = None) -> ProofVerdict:
+        if self._broken is not None:
+            raise LeanReplError(f"pool is broken: {self._broken}")
+        worker = await self._idle.get()
+        if worker is _POISON:
+            self._idle.put_nowait(_POISON)  # chain: wake the next waiter too
+            raise LeanReplError(f"pool is broken: {self._broken}")
+        try:
+            resp = await worker.check(code, timeout=timeout)
+        except ReplTimeout:
+            await self._replace(worker)
+            return failure_verdict("timeout")
+        except (ReplDied, LeanReplError):
+            await self._replace(worker)
+            return failure_verdict("crash")
+        dirty = self._should_recycle(worker)
+        if not dirty and worker.spec.reset_argv is not None:
+            dirty = not await _run_argv_ok(worker.spec.reset_argv)
+        if dirty:
+            await self._replace(worker)
+        else:
+            self._idle.put_nowait(worker)
+        return verdict(resp)
+
+    async def _replace(self, worker: PoolWorker) -> None:
+        await worker.repl.close()
+        last_error: Exception | None = None
+        for attempt in range(self._spawn_retries):
+            try:
+                self._idle.put_nowait(await self._spawn())
+                return
+            except Exception as exc:  # transient docker/toolchain pressure
+                last_error = exc
+                await asyncio.sleep(self._spawn_retry_delay * (attempt + 1))
+        # Unrecoverable: poison the queue so callers fail promptly rather
+        # than deadlocking on a slot that will never be refilled.
+        self._broken = last_error
+        self._idle.put_nowait(_POISON)
+        raise LeanReplError(f"could not replace worker: {last_error}")
+
+    async def close(self) -> None:
+        while not self._idle.empty():
+            worker = self._idle.get_nowait()
+            if worker is not _POISON:
+                await worker.repl.close()
