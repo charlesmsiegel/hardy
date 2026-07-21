@@ -58,6 +58,11 @@ class LeanRepl:
         self._proc: asyncio.subprocess.Process | None = None
 
     async def start(self) -> None:
+        # Reject a second start on a live instance: overwriting _proc would
+        # orphan the first subprocess, and close() would then only reach the new
+        # one. Callers that want a restart must close() first.
+        if self._proc is not None and self._proc.returncode is None:
+            raise LeanReplError("repl already started")
         # limit bounds a single response line; asyncio's 64 KB default is far
         # too small for real goal states, and overflow raises ValueError.
         self._proc = await asyncio.create_subprocess_exec(

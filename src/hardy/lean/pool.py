@@ -149,6 +149,13 @@ class ReplPool:
             for worker in workers:
                 await self._retire(worker)
             raise failures[0]
+        if self._closed:
+            # close() ran (and finished) while our spawns were still in flight;
+            # queueing these now-orphaned workers into a closed pool would leak
+            # them. Retire instead — no check will ever use them.
+            for worker in workers:
+                await self._retire(worker)
+            return
         for worker in workers:
             self._idle.put_nowait(worker)
 

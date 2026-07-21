@@ -88,6 +88,26 @@ async def test_start_cancellation_retires_spawned_workers(monkeypatch):
     assert pool._live == set()  # the completed worker was retired, not leaked
 
 
+async def test_close_during_start_retires_late_workers(monkeypatch):
+    # If close() finishes while start()'s spawns are still in flight, the late
+    # workers must be retired, not queued into a closed pool.
+    pool = make_pool(size=1)
+    real_spawn = pool._spawn
+
+    async def slow_spawn():
+        await asyncio.sleep(0.4)  # completes after close() has run
+        return await real_spawn()
+
+    monkeypatch.setattr(pool, "_spawn", slow_spawn)
+    start_task = asyncio.create_task(pool.start())
+    await asyncio.sleep(0.1)  # start() is mid-spawn
+    await pool.close()  # shutdown wins the race
+    await start_task  # start() completes and must retire, not enqueue
+    assert pool._live == set()  # no worker leaked
+    with pytest.raises(LeanReplError):
+        await pool.check_proof("theorem t : True := trivial")
+
+
 async def test_replacement_spawned_after_close_is_retired(monkeypatch):
     # If close() wins the race while _replace() is spawning, the fresh worker
     # must be retired, not queued into a dead pool.
