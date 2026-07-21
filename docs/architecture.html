@@ -631,9 +631,10 @@
       </div>
     </div>
     <p class="prose dim" style="margin-top:14px; text-align:center; font-size:13px">
-      The two artifacts are cross-linked, and the writeup's theorem statement is rendered from the
-      formal statement as a single source of truth — TeX compiling cleanly can never mask a writeup
-      about a different claim. A LaTeX proof marked &ldquo;not yet formalized&rdquo; is a result — a
+      The two artifacts are cross-linked, and whenever a formal statement exists the writeup's theorem
+      statement is rendered from it as a single source of truth — TeX compiling cleanly can never mask
+      a writeup about a different claim. Not-formalized runs preserve the user's original claim
+      verbatim, flagged as informally stated. A LaTeX proof marked &ldquo;not yet formalized&rdquo; is a result — a
       failed Lean attempt alone is not. This mirrors how draft-sketch-prove systems work: informal
       reasoning first, formal second.
     </p>
@@ -766,7 +767,8 @@ flowchart LR
   R -->|"re-critique the<br/>patch's blast radius"| C
   R -->|"only fix would change the claim —<br/><b>revised claim</b>, distinct outcome,<br/>re-enters as a new statement"| P
   R -->|"same hole reopened<br/>N times"| ESC["escalate strategy —<br/>new decomposition,<br/>more budget"]
-  ESC --> C
+  ESC -->|"retry with the<br/>new strategy"| C
+  ESC -->|"escalation also fails"| HON
   D -->|"budget exhausted"| HON["<b>Honest stop</b><br/>ship with remaining<br/>holes listed"]
   classDef warn stroke:#c2607e,stroke-width:1.6px;
   class C,ESC warn;
@@ -774,7 +776,7 @@ flowchart LR
   class SHIP good;
       </pre>
     </div>
-    <p class="diagram-caption">exit is a fixed point: no hole open or patched (closed entries persist as history), or budget out with holes listed — itself a useful result</p>
+    <p class="diagram-caption">exit is a fixed point: no hole open or patched (closed entries persist as history), or budget out with holes listed — itself a useful result. Exception: critique-only requests ship their ledger report immediately, open holes included</p>
   </div>
 
   <div class="grid2">
@@ -843,6 +845,9 @@ sequenceDiagram
   T->>L: elaborate statement
   L-->>T: elaborated goals, no errors
   Note over M,T: faithfulness gate — an independent skeptic (separate prompt or model) confirms the formal statement matches the informal claim — never self-review
+  opt skeptic rejects the translation
+    M->>T: re-formalize and re-review (bounded) — otherwise stop with an unconfirmed-statement outcome, no proof attempted
+  end
   loop until kernel accepts or budget out
     M->>T: run_tactic / check_proof
     T->>L: execute against warm session
@@ -926,7 +931,7 @@ sequenceDiagram
           <tr><td class="tool-name">note</td><td class="tool-desc">Informal scratchpad — natural-language reasoning and proof plans that persist across attempts</td></tr>
           <tr class="group-row"><td colspan="2">Literature</td></tr>
           <tr><td class="tool-name">arxiv_search</td><td class="tool-desc">Query the arXiv API (title/abstract/author/category); returns metadata + abstracts</td></tr>
-          <tr><td class="tool-name">fetch_paper</td><td class="tool-desc">Download PDF + LaTeX source (when available) into the paper store; registers the paper in the bibliography by delegating to <code>cite</code>, the sole <code>.bib</code> writer</td></tr>
+          <tr><td class="tool-name">fetch_paper</td><td class="tool-desc">Download PDF + LaTeX source (when available) into the paper store; registers the paper in the bibliography by delegating to <code>cite</code>, the sole <code>.bib</code> writer. Archive extraction treats the download as untrusted: path-normalized, symlink-safe unpacking under byte/file-count quotas in an isolated temp dir, admitted to the store atomically</td></tr>
           <tr><td class="tool-name">read_paper</td><td class="tool-desc">Serve stored papers back in digestible per-section chunks, math source intact</td></tr>
           <tr><td class="tool-name">assume_paper</td><td class="tool-desc">Turn a stored paper's results into an axiomatized Lean library later proofs can import (→ Frontier Math)</td></tr>
           <tr><td class="tool-name">list_assumptions</td><td class="tool-desc">Show assumed-paper libraries in scope; for any theorem, its axiom manifest — which paper results it actually used</td></tr>
@@ -1136,7 +1141,7 @@ flowchart LR
         <li><strong>Benchmarks</strong> — miniF2F (Lean 4 port) first; then PutnamBench, ProofNet (formalization), and a held-out custom set to catch contamination/overfitting.</li>
         <li><strong>Metrics</strong> — solve rate at fixed budget (pass@1, pass@k), cost per solved theorem (tokens + Lean CPU), wall-clock, per-domain breakdowns (algebra vs. number theory vs. analysis).</li>
         <li><strong>Output-contract check</strong> — outside benchmark mode a run isn't complete without its compile-checked writeup; the Lean artifact is graded verified / partial / absent.</li>
-        <li><strong>Regression tracking</strong> — every prompt/tool/strategy change runs against a fixed eval set, logged with config hashes so runs are comparable.</li>
+        <li><strong>Regression tracking</strong> — every prompt/tool/strategy change runs against a fixed eval set, logged with config hashes <em>plus an immutable source/build revision</em>, since code can change behavior without changing configuration.</li>
       </ul>
     </div>
     <div class="card bd-plum" style="--i:3">

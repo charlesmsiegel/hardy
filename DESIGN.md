@@ -40,11 +40,12 @@ every result has a deterministic verdict:
   loop exists (pre-M6), which never default upward.
 
 A kernel-verified theorem whose writeup still has gaps, or a gap-free writeup with
-only a partial skeleton, each map to exactly one pair. When a Lean proof exists,
-the theorem statement in the writeup is **rendered from the formal statement as
-the single source of truth** (and re-checked whenever either artifact changes), so
-TeX compilation success can never mask a writeup about a different claim; the two
-artifacts are cross-linked so the
+only a partial skeleton, each map to exactly one pair. Whenever a formal statement
+exists, the theorem statement in the writeup is **rendered from it as the single
+source of truth** (and re-checked whenever either artifact changes), so TeX
+compilation success can never mask a writeup about a different claim; a
+not-formalized run instead preserves the user's original claim verbatim, flagged
+as informally stated. When a Lean proof exists, the two artifacts are cross-linked so the
 informal writeup and formal proof state the same theorem. This
 mirrors how the strongest draft-sketch-prove systems work (informal reasoning first,
 formal second) and means the project always yields a usable artifact even when full
@@ -186,7 +187,10 @@ Component 6 — prepares axiomatized paper libraries; it runs standalone or as a
 preparatory step the other three call on.)
 
 1. **Prove** — *"find a proof of X."* The flow described throughout: formalize the
-   statement, search for a proof, produce the LaTeX + Lean artifact pair.
+   statement, search for a proof, produce the LaTeX + Lean artifact pair. A
+   rejected faithfulness review loops back to re-formalization (bounded) or stops
+   with an explicit unconfirmed-statement outcome — proving never starts on an
+   unconfirmed statement.
 2. **Critique** — *"find holes in this proof."* Takes any proof — user-supplied, a
    proof from the literature, or Hardy's own draft — and produces a structured
    **hole ledger**: unjustified steps, missing cases, quantifier slips, circular
@@ -235,7 +239,8 @@ Loop discipline, so it converges instead of thrashing:
 - **No-progress detection**: a hole reopened N times — counting both rejected
   patches (`patched` → `open` on failed re-critique) and regressions (a closed hole
   invalidated by an overlapping repair) — triggers a strategy escalation (different
-  decomposition, more search budget) or an honest stop.
+  decomposition, more search budget); if the escalated strategy also fails to close
+  the hole, the honest stop follows.
 - **Critique-only requests exit at the report**: when the user asked only to find
   holes, the workflow ships its hole-ledger report — open holes included — without
   entering Repair; the loop continues past Critique only for prove/fix requests.
@@ -292,6 +297,9 @@ LaTeX side of the output contract.
 - `fetch_paper` downloads the PDF *and the LaTeX source when available* (source is
   far more useful to a model than extracted PDF text) into a content-addressed
   paper store (`papers/<arxiv-id>/`), and registers the paper in the bibliography.
+  Archive extraction treats the download as untrusted input: path-normalized,
+  symlink-safe unpacking under byte and file-count quotas, in an isolated
+  temporary directory, admitted to the persistent store atomically.
 - `read_paper` serves stored papers back to the agent in digestible chunks
   (per-section, with math source intact when we have the LaTeX).
 - Polite API usage: rate limiting, caching of queries and downloads — never
@@ -436,7 +444,9 @@ You can't improve what you don't measure. This is as important as the agent itse
   without its compile-checked LaTeX writeup; the Lean artifact is graded as
   verified / partial / absent.
 - **Regression tracking**: every change to prompts/tools/strategy runs against a fixed
-  eval set; results logged with config hashes so runs are comparable.
+  eval set; results logged with config hashes *plus an immutable source/build
+  revision* — code can change behavior without changing configuration, so
+  configuration alone is insufficient provenance.
 
 ## Component 9: Telemetry & Trajectories
 
