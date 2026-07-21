@@ -178,9 +178,9 @@ from hardy.latex.template import render_writeup
 
 
 @pytest.mark.tex
-def test_rendered_template_compiles_with_real_tectonic(tmp_path):
-    if shutil.which("tectonic") is None:
-        pytest.skip("tectonic not installed")
+def test_rendered_template_compiles_with_real_texlive(tmp_path):
+    if shutil.which("pdflatex") is None:
+        pytest.skip("pdflatex (TeX Live) not installed")
     source = render_writeup(
         title="A Test Theorem",
         statement=r"For every natural number $n$, $n + 0 = n$.",
