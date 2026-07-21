@@ -631,9 +631,11 @@
       </div>
     </div>
     <p class="prose dim" style="margin-top:14px; text-align:center; font-size:13px">
-      The two artifacts are cross-linked; the LaTeX records formalization status. A LaTeX proof marked
-      &ldquo;not yet formalized&rdquo; is a result — a failed Lean attempt alone is not. This mirrors how
-      draft-sketch-prove systems work: informal reasoning first, formal second.
+      The two artifacts are cross-linked, and the writeup's theorem statement is rendered from the
+      formal statement as a single source of truth — TeX compiling cleanly can never mask a writeup
+      about a different claim. A LaTeX proof marked &ldquo;not yet formalized&rdquo; is a result — a
+      failed Lean attempt alone is not. This mirrors how draft-sketch-prove systems work: informal
+      reasoning first, formal second.
     </p>
   </div>
 
@@ -988,7 +990,7 @@ sequenceDiagram
       <ul class="plain">
         <li><strong>Pinned toolchain</strong> — <code>lean-toolchain</code> + pinned Mathlib revision; <code>lake exe cache get</code> for prebuilt oleans. Reproducibility is non-negotiable for benchmarking.</li>
         <li><strong>Warm session pool</strong> — REPL workers cost 30–60 s to start (Mathlib import); keep a warm pool, recycle on memory bloat or crash. Between independent runs, workers reset to the pristine base environment — one run's declarations and axioms must never leak into the next.</li>
-        <li><strong>Sandboxing</strong> — model-generated Lean can execute arbitrary IO at elaboration time (<code>#eval</code>, <code>native_decide</code>): workers run in containers with no network and a read-only filesystem plus an ephemeral scratch dir (per-invocation tmpfs with size/inode quotas, wiped on recycle — untrusted code can't fill host storage). The LaTeX compiler runs under the same regime — generated TeX is equally untrusted.</li>
+        <li><strong>Sandboxing</strong> — model-generated Lean can execute arbitrary IO at elaboration time (<code>#eval</code>, <code>native_decide</code>): workers run in containers with no network and a read-only filesystem plus an ephemeral scratch dir (per-invocation tmpfs with size/inode quotas, wiped on recycle — untrusted code can't fill host storage), and a per-invocation <code>pids.max</code> with minimal capabilities so spawned children can't exhaust host PIDs. The LaTeX compiler runs under the same regime — generated TeX is equally untrusted.</li>
         <li><strong>Docker image</strong> — toolchain + Mathlib cache baked in, for CI and reproduction.</li>
       </ul>
       <h2 class="card-label lbl-slate" style="margin-top:18px"><span class="num">C9</span> Telemetry &amp; trajectories</h2>
@@ -1114,14 +1116,14 @@ flowchart LR
       <div class="verdict-row"><span class="pip pip--sketch"></span><span><span class="what">Partially formalized</span> <span class="how">— Lean skeleton with <code>sorry</code>s remaining; the partial artifact is kept and its holes listed</span></span></div>
       <div class="verdict-row"><span class="pip pip--partial"></span><span><span class="what">Not formalized</span> <span class="how">— no usable Lean artifact; formalization not yet attempted or out of reach</span></span></div>
       <p style="font-family:var(--font-mono); font-size:10.5px; letter-spacing:1.2px; text-transform:uppercase; color:var(--text-dim); margin-top:6px">Informal completeness</p>
-      <div class="verdict-row"><span class="pip pip--full"></span><span><span class="what">Complete</span> <span class="how">— the writeup's argument has no unresolved holes</span></span></div>
+      <div class="verdict-row"><span class="pip pip--full"></span><span><span class="what">No gaps detected</span> <span class="how">— deliberately not "complete": a heuristic grade recording which detection layers ran (kernel · probing · skeptics); only the formal dimension has a sound verifier</span></span></div>
       <div class="verdict-row"><span class="pip pip--danger"></span><span><span class="what">Known gaps</span> <span class="how">— the run stopped with holes abandoned (budget expiry or a no-progress honest stop); they're listed in the writeup, never hidden behind a clean grade</span></span></div>
       <div class="verdict-row"><span class="pip" style="background:var(--slate)"></span><span><span class="what">Not assessed</span> <span class="how">— pre-M6 runs, before the hole ledger and critique loop exist; never defaulted to complete</span></span></div>
     </div>
     <p class="prose dim" style="font-size:12.5px; margin-top:12px">The dimensions are independent, so every
     result has a deterministic verdict — a kernel-verified theorem with a gappy writeup is
     <em>fully&nbsp;verified&nbsp;×&nbsp;known&nbsp;gaps</em>; a clean informal proof with a
-    <code>sorry</code>-laden skeleton is <em>partially&nbsp;formalized&nbsp;×&nbsp;complete</em>.
+    <code>sorry</code>-laden skeleton is <em>partially&nbsp;formalized&nbsp;×&nbsp;no&nbsp;gaps&nbsp;detected</em>.
     Non-proof outputs carry their own status instead: a critique report <em>is</em> its hole ledger,
     and an Assume library's status lives in its paper&nbsp;↔&nbsp;axiom manifest.</p>
   </div>
@@ -1169,7 +1171,8 @@ flowchart LR
   REVIEW -->|"human rejects"| REJ
   SCAN -->|"clean"| B{"sorry-free +<br/>kernel accepts?"}
   B -->|"no"| P2{"usable checked<br/>skeleton?"}
-  P2 -->|"yes"| PART["<b>partially formalized</b><br/>skeleton kept, holes listed"]
+  P2 -->|"yes"| PAUD["partial-artifact axiom audit —<br/>tolerates sorryAx, records<br/>remaining dependencies"]
+  PAUD --> PART["<b>partially formalized</b><br/>skeleton kept, holes listed,<br/>manifest attached"]
   P2 -->|"no"| LTX["<b>LaTeX only</b><br/>failed attempt discarded —<br/>not itself a result"]
   B -->|"yes"| C{"axiom audit:<br/>print axioms"}
   C -->|"standard three only"| FULL["<b>fully verified</b>"]
@@ -1244,7 +1247,7 @@ flowchart LR
       <div class="tl-item">
         <span class="tl-m">M8</span><span class="tl-t">Retrieval &amp; memory</span>
         <p class="tl-d">Semantic premise search, cross-theorem memory, context-summarization improvements.</p>
-        <div class="tl-exit"><strong>EXIT</strong> — retrieval-augmented premise selection measurably improves solve rate or cost-per-solve over the built-in search tools; memory transfer is measured on <em>held-out</em> theorems from a previously-solved domain under a versioned memory snapshot (comparable to the cold M2 baseline), with exact-repeat cache savings reported separately — replaying cached proofs doesn't count as transfer.</div>
+        <div class="tl-exit"><strong>EXIT</strong> — retrieval-augmented premise selection measurably improves solve rate or cost-per-solve over the built-in search tools; memory transfer is measured on <em>held-out</em> theorems from a previously-solved domain against a <em>memory-disabled run under the same M8 code, model, and eval config</em> (snapshots fix the store, not comparability), with exact-repeat cache savings reported separately — replaying cached proofs doesn't count as transfer.</div>
       </div>
     </div>
   </div>

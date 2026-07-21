@@ -30,15 +30,21 @@ every result has a deterministic verdict:
 
 - *Formalization status*: verified / verified modulo assumed paper results (see
   Component 6) / partially formalized with `sorry`s remaining / not formalized.
-- *Informal completeness*: complete / known gaps — the run stopped with holes
-  abandoned, whether by budget expiry or a no-progress honest stop; those holes
-  are listed in the document, never hidden behind a reassuring grade — or *not
-  assessed*, for runs made before the critique–repair loop exists (pre-M6), which
-  never default to *complete*.
+- *Informal completeness*: **no gaps detected** — a heuristic grade, deliberately
+  not named "complete": critique's detection layers can miss gaps, so the grade
+  records which layers ran (kernel, formalization probing, skeptics) as assessment
+  provenance; only the formal dimension has a sound verifier — / known gaps — the
+  run stopped with holes abandoned, whether by budget expiry or a no-progress
+  honest stop; those holes are listed in the document, never hidden behind a
+  reassuring grade — / *not assessed*, for runs made before the critique–repair
+  loop exists (pre-M6), which never default upward.
 
 A kernel-verified theorem whose writeup still has gaps, or a gap-free writeup with
 only a partial skeleton, each map to exactly one pair. When a Lean proof exists,
-the two artifacts are cross-linked so the
+the theorem statement in the writeup is **rendered from the formal statement as
+the single source of truth** (and re-checked whenever either artifact changes), so
+TeX compilation success can never mask a writeup about a different claim; the two
+artifacts are cross-linked so the
 informal writeup and formal proof state the same theorem. This
 mirrors how the strongest draft-sketch-prove systems work (informal reasoning first,
 formal second) and means the project always yields a usable artifact even when full
@@ -394,7 +400,9 @@ same way. In order of preference:
   Component 5) — generated TeX is equally untrusted input. The writable scratch
   area is a per-invocation tmpfs with size and inode quotas, wiped when the
   invocation ends or the worker recycles — untrusted code must not be able to fill
-  host storage shared with other warm workers.
+  host storage shared with other warm workers. Each invocation also carries a
+  `pids.max` limit (and minimal capabilities), so spawned child processes cannot
+  exhaust host PIDs and disrupt other workers before timeout cleanup.
 - **Docker image** with toolchain + Mathlib cache baked in, for CI and for anyone
   reproducing results.
 
@@ -476,7 +484,7 @@ You can't improve what you don't measure. This is as important as the agent itse
    regression tracking. Exit criterion: reproducible baseline number for M1 agent.
    Note on grading before M6: until the hole ledger and critique–repair loop land,
    results carry only the formalization-status dimension; informal completeness is
-   reported as *not assessed*, never defaulted to *complete*.
+   reported as *not assessed*, never defaulted upward.
 4. **M3 — Literature layer**: arXiv search/fetch/read tools, paper store,
    machine-maintained `references.bib`, citations wired into writeups. Exit
    criterion: a writeup that cites fetched papers with a valid bibliography.
@@ -504,10 +512,12 @@ You can't improve what you don't measure. This is as important as the agent itse
    context summarization improvements. Exit criterion: retrieval-augmented premise
    selection measurably improves solve rate or cost-per-solve over the built-in
    search tools on the eval set; memory transfer is measured on *held-out* theorems
-   from a previously-solved domain — never the solved theorems themselves — under a
-   versioned memory snapshot so results stay comparable to the cold M2 baseline,
-   with exact-repeat cache savings reported separately (replaying cached proofs is
-   not transfer).
+   from a previously-solved domain — never the solved theorems themselves — and
+   compared against a *memory-disabled run under the same M8 code, model,
+   environment, and eval configuration* (a versioned snapshot fixes the store's
+   contents but cannot make results comparable to the historical M2 number), with
+   exact-repeat cache savings reported separately (replaying cached proofs is not
+   transfer).
 
 ## Open Questions
 
