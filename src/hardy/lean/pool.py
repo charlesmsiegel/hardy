@@ -123,6 +123,7 @@ class ReplPool:
         self._spawn_retries = spawn_retries
         self._spawn_retry_delay = spawn_retry_delay
         self._broken: Exception | None = None
+        self._started = False
         self._closed = False
         # Every worker that currently owns a process — idle OR checked out — so
         # close() can terminate in-flight workers, not just the idle queue.
@@ -130,6 +131,16 @@ class ReplPool:
         self._idle: asyncio.Queue = asyncio.Queue()
 
     async def start(self) -> None:
+        # Reject anything but a pristine, open pool: a second start() would
+        # spawn another _size workers (blowing past the configured limits), and
+        # a start() after close() would run the expensive imports only for every
+        # check to reject the closed pool. Set synchronously (before the first
+        # await) so a concurrent double-start can't slip through.
+        if self._closed:
+            raise LeanReplError("pool is closed")
+        if self._started:
+            raise LeanReplError("pool already started")
+        self._started = True
         try:
             results = await asyncio.gather(
                 *(self._spawn() for _ in range(self._size)), return_exceptions=True

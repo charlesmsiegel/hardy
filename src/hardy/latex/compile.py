@@ -205,6 +205,9 @@ def compile_tex_sandboxed(
     for stale in ("main.pdf", "main.log"):
         # Never grade this run against a previous run's artifacts.
         (staging / stale).unlink(missing_ok=True)
+    # Record the exact source compiled, so staging/main.tex never lags the
+    # main.pdf/main.log beside it (and a clean run still leaves a .tex behind).
+    (staging / "main.tex").write_text(source)
 
     # Mount an isolated input dir containing only main.tex, so untrusted TeX
     # cannot \input anything else living in the caller's staging directory.
@@ -238,7 +241,12 @@ def compile_tex_sandboxed(
     finally:
         shutil.rmtree(inputs, ignore_errors=True)
     if abort is not None:
-        subprocess.run(["docker", "kill", name], capture_output=True, timeout=60)
+        # Best-effort, bounded container kill: a stalled/unavailable docker CLI
+        # must not turn a handled abort into an exception or add to the deadline.
+        try:
+            subprocess.run(["docker", "kill", name], capture_output=True, timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            pass
         return CompileResult(
             success=False,
             errors=[TexError(message=f"compile aborted: {abort}")],

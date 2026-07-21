@@ -66,6 +66,23 @@ async def test_close_wakes_queued_waiters():
         await asyncio.wait_for(queued, timeout=10)
 
 
+async def test_double_start_rejected():
+    # A second start() would spawn another _size workers past the limit.
+    pool = make_pool()
+    await pool.start()
+    with pytest.raises(LeanReplError):
+        await pool.start()
+    await pool.close()
+
+
+async def test_start_after_close_rejected():
+    pool = make_pool()
+    await pool.start()
+    await pool.close()
+    with pytest.raises(LeanReplError):
+        await pool.start()
+
+
 async def test_start_cancellation_retires_spawned_workers(monkeypatch):
     # Cancelling start() mid-spawn must not strand a worker that already
     # finished importing (in _live but not yet idle).
