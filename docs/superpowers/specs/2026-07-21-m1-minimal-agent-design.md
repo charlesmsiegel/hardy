@@ -51,7 +51,7 @@ hardy/agent/
   claude_sdk.py   — first adapter: Claude Agent SDK implementation
 hardy/tools/
   registry.py     — ToolDef (name, description, JSON schema, async handler), ToolRegistry
-  lean_tools.py   — check_proof, run_tactic, get_goal_state, search_lemmas
+  lean_tools.py   — propose_statement, check_proof, run_tactic, get_goal_state, search_lemmas
   latex_tools.py  — write_latex
 hardy/workflows/
   prove.py        — the Prove workflow: formalize → faithfulness gate → search → audit → writeup
@@ -90,11 +90,12 @@ Output-shaping rules (Component 2 of DESIGN.md, enforced in handlers, unit-teste
 
 | Tool | Backing | Behavior |
 |------|---------|----------|
+| `propose_statement` | `ProofSession.check` | Formalize-phase only: submit a candidate `theorem` declaration; harness appends `:= by sorry`, elaborates, returns structured feedback. The statement freezes on first clean elaboration. |
 | `check_proof` | `ProofSession.check` | Submit complete Lean source for the *fixed* statement; returns verdict rendering (success, or errors/sorries with positions). Also records the attempt in the trajectory. |
 | `run_tactic` | `ProofSession.tactic` | Apply one tactic to a named proof state id; returns new goals or error. |
 | `get_goal_state` | `ProofSession` state table | Pretty-printed goals + hypotheses for any proof state id the session has seen (from `sorries` or `run_tactic` results). |
 | `search_lemmas` | `ProofSession.check` with query commands | M1 scope: proof-state-driven only — runs `exact?`/`apply?`/`rw?` against a proof state and returns the suggestions Lean prints. Loogle/LeanSearch are out of scope until M8 (retrieval). |
-| `write_latex` | `render_writeup` + `compile_tex_sandboxed` | Takes title/statement/informal-proof fields (not raw TeX preamble — the template owns the document shell), renders, compile-checks, returns structured errors or success. |
+| `write_latex` | `render_writeup` + `compile_tex_sandboxed` | Takes title/informal-proof fields (not raw TeX preamble — the template owns the document shell), renders, compile-checks, returns structured errors or success. The theorem statement is **not** an input: the handler injects the harness-owned statement (frozen at formalization), so the agent cannot ship a polished writeup about a different claim. |
 
 Statement immutability: `check_proof` takes only the *proof body*; the harness owns
 the theorem statement (fixed at formalization time) and splices the body in. The
@@ -107,16 +108,25 @@ construction in M1.
 proof states, which are **per-worker-process** ids. New: `ProofSession`, a lease of
 one pool worker for the duration of one agent task.
 
-- `async ReplPool.lease() -> ProofSession` — checks a worker out of the idle queue;
-  `async ProofSession.release()` returns it (or retires it if dirty/over-budget).
+- `async ReplPool.lease() -> ProofSession` — checks a worker out of the idle
+  queue. The lease is an **async context manager** (`async with pool.lease() as
+  session:`); exit — including cancellation by the wall-clock deadline or any
+  exception — always returns the worker (or retires it if dirty/over-budget), so
+  cancelled agent tasks can never strand workers and exhaust the pool. A bare
+  `release()` exists but the context-manager form is the contract workflows use.
 - All session commands fork from `base_env` exactly like `check_proof`; the session
   additionally tracks `proof_state` ids returned in `sorries`/tactic responses, and
   the goal text for each, so `get_goal_state` answers from the session table.
 - A timeout/crash inside a session invalidates **all** its proof states (they lived
-  in the dead process): the session marks itself dead, subsequent tool calls return
-  an actionable error telling the model to re-`check_proof` from source, and the
-  pool replaces the worker on release. Proof-state pickling (DESIGN Component 1) is
-  deferred — M1 accepts state loss on worker death.
+  in the dead process). The session recovers *within* the task: it retires the dead
+  worker and transparently acquires a replacement from the pool on the next tool
+  call, so `check_proof` (which re-elaborates from source) works again immediately;
+  only `run_tactic`/`get_goal_state` against pre-death proof-state ids return the
+  actionable error ("state lost with a recycled worker — re-`check_proof` from
+  source"). Without in-task replacement, one timed-out tactic would consume the
+  rest of the proving run. Replacement failure (pool poisoned/broken) ends the
+  task. Proof-state pickling (DESIGN Component 1) is deferred — M1 accepts state
+  loss on worker death.
 - Sessions count against the same recycling budgets (`max_commands`, RSS) as
   stateless checks.
 
@@ -131,9 +141,14 @@ one pool worker for the duration of one agent task.
   the format M2 metrics and Component 9 telemetry consume; it is defined here, not
   in the adapter.
 - `AgentRuntime` protocol: `async run(task: str, system_prompt: str,
-  tools: ToolRegistry, config: RunConfig) -> Trajectory`.
+  tools: ToolRegistry, config: RunConfig) -> Trajectory`. Budget enforcement is
+  part of the protocol contract, owned by every adapter: `max_turns`, wall-clock,
+  **and `max_tokens_total`** — when cumulative usage (tallied from the adapter's
+  usage events) reaches the cap, the adapter stops before the next model call and
+  records the exhaustion kind in the trajectory. Token-limited runs exceeding
+  their cap would invalidate every fixed-budget comparison M2/M7/M8 make.
 - `ClaudeSdkRuntime` — first implementation, on `claude-agent-sdk`: exposes the
-  registry as in-process (SDK/MCP) tools, enforces `max_turns` and wall-clock,
+  registry as in-process (SDK/MCP) tools, enforces all three budgets as above,
   records every event into the trajectory. SDK-specific niceties (subagents,
   compaction) are **not used in M1** — the M1 loop must be reproducible on the
   minimal runtime later.
@@ -143,10 +158,15 @@ one pool worker for the duration of one agent task.
 Sequential phases, each a plain async function so M5 can rerun them on other
 runtimes and M6 can splice Critique/Repair in between:
 
-1. **Formalize.** An agent run (no Lean tools needed beyond `check_proof` to
-   elaborate the bare statement with `:= by sorry`) turns the user's informal claim
-   into a Lean `theorem` statement that elaborates cleanly. Bounded retries on
-   elaboration failure.
+1. **Formalize.** An agent run turns the user's informal claim into a Lean
+   `theorem` statement. `check_proof` cannot serve here — it takes a proof body
+   for an already-frozen statement, and no statement exists yet — so the
+   formalize phase gets its own tool, **`propose_statement`**: it accepts a full
+   `theorem <name> : <prop>` declaration, the harness appends `:= by sorry` and
+   elaborates it through the session, and returns structured elaboration
+   feedback (errors with positions, or clean). The statement freezes on the
+   first clean elaboration; `propose_statement` is only in the formalize phase's
+   registry, and bounded retries apply.
 2. **Faithfulness gate** (`hardy.workflows.faithfulness`). An *independent* skeptic
    — separate agent run with its own prompt (`faithfulness_v1`), no shared context
    with the formalizer — sees the informal claim and the formal statement, and
@@ -157,7 +177,8 @@ runtimes and M6 can splice Critique/Repair in between:
    run stops, ships a failure-report writeup, and never enters proving.
 3. **Prove (iterative repair).** The main agent run: system prompt + statement +
    tools (`check_proof`, `run_tactic`, `get_goal_state`, `search_lemmas`); loop
-   until `check_proof` reports complete or budget (turns/wall-clock) expires.
+   until `check_proof` reports complete or budget (turns, wall-clock, or total
+   tokens) expires.
    Strategy is hardcoded iterative-repair in M1; the strategy interface is M7.
 4. **Audit** (`hardy.workflows.audit`). For a complete proof: run
    `#print axioms <name>` in the same environment the proof checked in; parse the

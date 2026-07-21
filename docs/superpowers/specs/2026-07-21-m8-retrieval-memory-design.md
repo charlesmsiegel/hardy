@@ -68,7 +68,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   a versioned artifact keyed by `(mathlib_rev, extractor_version)`; the REPL
   worker environment is not involved at query time.
 - **Embedding backend:** `Embedder` protocol (`embed_batch(texts) ->
-  vectors`, plus an identity string that keys the index). Default: a local
+  vectors`, plus an identity that keys the index — and the identity is
+  **immutable by construction**: a digest of the model weights (or the
+  provider's model revision id when weights aren't local) plus the
+  preprocessing/normalization parameters and embedder-code version, never just
+  a configured model *name*, which can silently point at updated weights and
+  leave a stale index matching a different vector space). Default: a local
   sentence-embedding model (config names it), so retrieval works offline and
   adds no per-query API cost; an API-based embedder is a config swap. Queries
   embed the pretty-printed goal (hypotheses + target).

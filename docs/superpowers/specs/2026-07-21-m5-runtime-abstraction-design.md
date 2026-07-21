@@ -105,9 +105,10 @@ The real deliverable is confidence that trajectories mean the same thing across
 adapters. A shared parametrized test suite (`tests/runtime_conformance.py`) runs
 every adapter against a scripted fake model/server and asserts identical
 observable behavior: tool schema exposure, argument round-tripping (unicode,
-nesting, empty args), tool errors surfaced as results (not crashes), `max_turns`
-and wall-clock enforcement, trajectory event ordering and totals, final-text
-extraction. The SDK and Strands adapters run it against their frameworks' test
+nesting, empty args), tool errors surfaced as results (not crashes), enforcement of
+all three budgets (`max_turns`, wall-clock, `max_tokens_total` — the token cap
+stops the run before the next model call and records the exhaustion kind),
+trajectory event ordering and totals, final-text extraction. The SDK and Strands adapters run it against their frameworks' test
 seams (or a local fake endpoint where the framework allows); the minimal loop
 runs it against a fake OpenAI-compatible server (aiohttp test server) in both
 native and prompted modes.

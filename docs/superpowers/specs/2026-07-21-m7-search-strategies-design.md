@@ -116,12 +116,19 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   tie-breaks on goal-size decrease), failures are recorded as node lessons so
   re-proposals don't repeat them.
 - **Proof-state pickling** (`hardy/lean/pickle.py`): the community repl's
-  `pickleTo`/`unpickleProofStateFrom` commands, wrapped on `ProofSession`, with
-  pickle files on the worker's sandbox scratch. Needed because a frontier
-  outlives worker recycling and may migrate across workers (proof-state ids are
-  per-process — the M1 limitation this milestone finally pays down). A node
-  whose worker died unpickles on a fresh lease; unpicklable nodes are pruned
-  with the loss logged.
+  `pickleTo`/`unpickleProofStateFrom` commands, wrapped on `ProofSession`.
+  Needed because a frontier outlives worker recycling and may migrate across
+  workers (proof-state ids are per-process — the M1 limitation this milestone
+  finally pays down). Pickles must survive the worker: a container's `/scratch`
+  tmpfs dies with it (and is wiped between checks), so a pickle left there is
+  gone exactly when recovery needs it. The wrapper therefore **copies each
+  completed pickle out to harness-owned storage** (a per-run host directory
+  with a size cap and end-of-run cleanup) immediately after `pickleTo` —
+  streamed out of the sandbox the same tar-over-stdout way the TeX compiler
+  returns artifacts — and stages it into the destination worker's sandbox
+  (read-only mount of the per-run pickle directory) before
+  `unpickleProofStateFrom`. A node whose worker died unpickles on a fresh
+  lease; unpicklable nodes are pruned with the loss logged.
 - Termination: goals empty at a node → assemble the tactic path, final
   `check_proof` verifies (search bugs must not ship unverified proofs); budget
   out → unproved, best partial path recorded.
