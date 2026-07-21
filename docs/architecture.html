@@ -760,6 +760,7 @@ flowchart LR
   D -->|"open ·<br/>critique-only request"| SHIP
   D -->|"open ·<br/>prove / repair chain"| R["<b>Repair</b><br/>fix one hole, verify patch"]
   R -->|"re-critique the<br/>patch's blast radius"| C
+  R -->|"only fix would change the claim —<br/><b>revised claim</b>, distinct outcome,<br/>re-enters as a new statement"| P
   R -->|"same hole reopened<br/>N times"| ESC["escalate strategy —<br/>new decomposition,<br/>more budget"]
   ESC --> C
   D -->|"budget exhausted"| HON["<b>Honest stop</b><br/>ship with remaining<br/>holes listed"]
@@ -793,7 +794,7 @@ flowchart LR
 flowchart LR
   O((open)) -->|"Repair<br/>proposes patch"| PA((patched))
   PA -->|"re-critique<br/>passes"| VC((verified-closed))
-  PA -->|"re-critique<br/>fails"| O
+  PA -->|"re-critique fails —<br/>reopen counter +1"| O
   O -->|"suspected hole disproven —<br/>step justified as written,<br/>justification recorded"| DI((dismissed))
   VC -->|"overlapping repair invalidates —<br/>regression re-critique reopens,<br/>same id, reopen counter +1"| O
   O -->|"N reopens or<br/>budget out"| AB((abandoned))
@@ -854,7 +855,7 @@ sequenceDiagram
     end
   end
   loop bounded retries until clean build
-    M->>T: write_latex + cite, embedding grade + manifest
+    M->>T: write_latex, embedding grade + manifest (cite joins at M3)
     T->>X: compile check
     X-->>T: clean build, or structured TeX errors fed back
   end
@@ -1102,7 +1103,7 @@ flowchart LR
   </p>
 
   <div class="card card--hero" style="--i:1">
-    <h2 class="card-label lbl-green"><span class="num">GRADE</span> The trust ledger <span class="hint">two orthogonal dimensions — every result carries one grade from each</span></h2>
+    <h2 class="card-label lbl-green"><span class="num">GRADE</span> The trust ledger <span class="hint">two orthogonal dimensions — every proof-bearing result carries one grade from each</span></h2>
     <div class="verdict">
       <p style="font-family:var(--font-mono); font-size:10.5px; letter-spacing:1.2px; text-transform:uppercase; color:var(--text-dim)">Formalization status</p>
       <div class="verdict-row"><span class="pip pip--full"></span><span><span class="what">Fully verified</span> <span class="how">— kernel-checked with standard axioms only (<code>propext</code>, <code>Classical.choice</code>, <code>Quot.sound</code>)</span></span></div>
@@ -1117,7 +1118,9 @@ flowchart LR
     <p class="prose dim" style="font-size:12.5px; margin-top:12px">The dimensions are independent, so every
     result has a deterministic verdict — a kernel-verified theorem with a gappy writeup is
     <em>fully&nbsp;verified&nbsp;×&nbsp;known&nbsp;gaps</em>; a clean informal proof with a
-    <code>sorry</code>-laden skeleton is <em>partially&nbsp;formalized&nbsp;×&nbsp;complete</em>.</p>
+    <code>sorry</code>-laden skeleton is <em>partially&nbsp;formalized&nbsp;×&nbsp;complete</em>.
+    Non-proof outputs carry their own status instead: a critique report <em>is</em> its hole ledger,
+    and an Assume library's status lives in its paper&nbsp;↔&nbsp;axiom manifest.</p>
   </div>
 
   <div class="grid2">
@@ -1230,7 +1233,7 @@ flowchart LR
       </div>
       <div class="tl-item">
         <span class="tl-m">M7</span><span class="tl-t">Search strategies</span>
-        <p class="tl-d">Sketch-and-discharge, parallel attempts, cheap-closer pre-pass; strategy comparison on the eval set.</p>
+        <p class="tl-d">Sketch-and-discharge, best-first tactic search, parallel attempts, cheap-closer pre-pass; strategy comparison on the eval set.</p>
         <div class="tl-exit"><strong>EXIT</strong> — at least one strategy beats the M2 iterative-repair baseline on solve rate at equal budget, with the per-strategy comparison logged in the regression tracker.</div>
       </div>
       <div class="tl-item">

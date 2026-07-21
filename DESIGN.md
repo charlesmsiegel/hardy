@@ -224,8 +224,10 @@ Loop discipline, so it converges instead of thrashing:
   that overlapping changes invalidated an earlier `verified-closed` hole, that
   entry returns to `open` — keeping its identity and incrementing its reopen
   counter — rather than being logged as a new hole.
-- **No-progress detection**: a hole reopened N times triggers a strategy escalation
-  (different decomposition, more search budget) or an honest stop.
+- **No-progress detection**: a hole reopened N times — counting both rejected
+  patches (`patched` → `open` on failed re-critique) and regressions (a closed hole
+  invalidated by an overlapping repair) — triggers a strategy escalation (different
+  decomposition, more search budget) or an honest stop.
 - **Critique-only requests exit at the report**: when the user asked only to find
   holes, the workflow ships its hole-ledger report — open holes included — without
   entering Repair; the loop continues past Critique only for prove/fix requests.
@@ -485,8 +487,8 @@ You can't improve what you don't measure. This is as important as the agent itse
    ledger, and the full critique–repair loop — including on user-supplied informal
    proofs. Exit criterion: hand Hardy a proof with a known subtle gap; it finds the
    gap, patches it, and re-verifies to a clean ledger.
-8. **M7 — Search strategies**: sketch-and-discharge, parallel attempts, cheap-closer
-   pre-pass; strategy comparison on the eval set. Exit criterion: at least one
+8. **M7 — Search strategies**: sketch-and-discharge, best-first tactic search,
+   parallel attempts, cheap-closer pre-pass; strategy comparison on the eval set. Exit criterion: at least one
    strategy beats the M2 iterative-repair baseline on solve rate at equal budget,
    with the per-strategy comparison logged in the regression tracker.
 9. **M8 — Retrieval & memory**: semantic premise search, cross-theorem memory,
