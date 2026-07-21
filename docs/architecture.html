@@ -867,7 +867,7 @@ sequenceDiagram
   alt clean build
     O-->>U: .tex always · .lean when verified or partial · grade + manifest
   else TeX never built
-    O-->>U: honest failure report, with the .tex source and its errors
+    O-->>U: minimal compile-checked failure report (known-good template) + the failing .tex source and its errors — run graded as failed
   end
       </pre>
     </div>
@@ -1248,7 +1248,7 @@ flowchart LR
       <div class="tl-item">
         <span class="tl-m">M8</span><span class="tl-t">Retrieval &amp; memory</span>
         <p class="tl-d">Semantic premise search, cross-theorem memory, context-summarization improvements.</p>
-        <div class="tl-exit"><strong>EXIT</strong> — retrieval-augmented premise selection measurably improves solve rate or cost-per-solve over the built-in search tools; memory transfer is measured on <em>held-out</em> theorems from a previously-solved domain against a <em>memory-disabled run under the same M8 code, model, and eval config</em> (snapshots fix the store, not comparability), with exact-repeat cache savings reported separately — replaying cached proofs doesn't count as transfer.</div>
+        <div class="tl-exit"><strong>EXIT</strong> — retrieval-augmented premise selection measurably improves solve rate or cost-per-solve against a <em>retrieval-disabled run under the same M8 code, model, and eval config</em>; memory transfer is measured on <em>held-out</em> theorems from a previously-solved domain against a <em>memory-disabled run under the same M8 code, model, and eval config</em> (snapshots fix the store, not comparability), with exact-repeat cache savings reported separately — replaying cached proofs doesn't count as transfer.</div>
       </div>
     </div>
   </div>
@@ -1268,7 +1268,7 @@ flowchart LR
         <li><strong>Autoformalization at scale</strong> — single-statement NL → Lean formalization is core from M1 (with a faithfulness check before proving); the deferred part is bulk corpus formalization and automated statement-equivalence checking.</li>
         <li><strong>Premise-retrieval model</strong> — embedding-based Mathlib retrieval (ReProver-style).</li>
         <li><strong>Lemma library growth</strong> — the agent proposes and proves reusable intermediate lemmas.</li>
-        <li><strong>Multi-agent review</strong> — a skeptic that inspects statements for vacuity or mis-formalization before effort is spent.</li>
+        <li><strong>Broader multi-agent review</strong> — beyond the core M1 faithfulness skeptic: richer panels checking vacuity, degenerate instances, and whole-library mis-formalization.</li>
       </ul>
     </div>
     <div class="card" style="--i:3">

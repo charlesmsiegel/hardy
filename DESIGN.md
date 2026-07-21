@@ -315,6 +315,12 @@ LaTeX side of the output contract.
   `\input`/`\openout` read and write files, and shell-escape executes commands.
   Model-generated documents compile with shell-escape disabled, no network,
   read-only mounts, and a dedicated ephemeral output directory.
+- **Failure keeps the contract**: if a document still fails after bounded
+  compile-and-repair retries, the run ships a *minimal compile-checked failure
+  report* (generated from a known-good template: status, errors, the failing
+  source attached) — the LaTeX-always contract holds even when the generated
+  document never builds, and the request is graded as failed, not silently served
+  broken TeX.
 - Writeups live alongside their Lean counterparts (e.g. `results/sqrt2_irrational/`
   containing `.tex`, `.lean`, and a small manifest recording status and provenance).
 
@@ -451,8 +457,10 @@ You can't improve what you don't measure. This is as important as the agent itse
 - **Premise-retrieval model**: embedding-based Mathlib retrieval (ReProver-style)
   as a tool.
 - **Lemma library growth**: agent proposes and proves reusable intermediate lemmas.
-- **Multi-agent review**: a skeptic agent that inspects statements for vacuity or
-  mis-formalization before effort is spent.
+- **Broader multi-agent review**: beyond the M1 statement-faithfulness skeptic
+  (which is core, not deferred) — richer review panels checking for vacuity,
+  degenerate instances, and mis-formalization across whole assumed-paper
+  libraries.
 
 ## Proposed Stack
 
@@ -515,8 +523,9 @@ You can't improve what you don't measure. This is as important as the agent itse
    tracker.
 9. **M8 — Retrieval & memory**: semantic premise search, cross-theorem memory,
    context summarization improvements. Exit criterion: retrieval-augmented premise
-   selection measurably improves solve rate or cost-per-solve over the built-in
-   search tools on the eval set; memory transfer is measured on *held-out* theorems
+   selection measurably improves solve rate or cost-per-solve against a
+   *retrieval-disabled run under the same M8 code, model, environment, budget, and
+   eval configuration* (same contemporaneous-baseline rule as memory, below); memory transfer is measured on *held-out* theorems
    from a previously-solved domain — never the solved theorems themselves — and
    compared against a *memory-disabled run under the same M8 code, model,
    environment, and eval configuration* (a versioned snapshot fixes the store's
