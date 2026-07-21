@@ -104,7 +104,13 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   can paraphrase or drop a hypothesis, and a review comparing Lean only
   against its own corrupted extraction would bless an axiom the paper never
   states) and Lean-vs-inventory (quantifiers, hypotheses, edge conditions,
-  definition correspondence).
+  definition correspondence). For the definition-correspondence check to be
+  more than a promise, the reviewer's input also includes **the unfolded
+  definitions and signatures (with content hashes) of every constant the
+  minted axiom references**, gathered by a trusted harness-side
+  `lookup_definition` pass — the minting agent may have mapped a paper notion
+  onto a similarly *named* but semantically different Mathlib constant, and a
+  reviewer shown only the axiom text would have no evidence to catch it.
 - Quarantine is structural, not advisory: a flagged axiom is written to
   `Papers/<Key>/Quarantine.lean`, which **no library target includes** — it exists
   only for human review. The manifest records `quarantined(reason)`. Promotion to

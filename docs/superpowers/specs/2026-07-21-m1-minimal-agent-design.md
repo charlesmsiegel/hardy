@@ -181,9 +181,14 @@ writeup). Phase budget splits are config, but the sum is the cap.
    cleanly while leaving ambiguous which header the harness froze, defeating
    the immutability guarantee) — then appends `:= by sorry`, elaborates it
    through the session, and returns structured elaboration feedback (errors
-   with positions, or clean). The statement freezes on the
-   first clean elaboration; `propose_statement` is only in the formalize phase's
-   registry, and bounded retries apply.
+   with positions, or clean). The first clean elaboration fixes that round's
+   **candidate**; `propose_statement` is only in the formalize phase's
+   registry, and bounded retries apply. The freeze is **per-round**: a
+   faithfulness rejection (step 2) explicitly discards the candidate and opens
+   a fresh formalization round — without that transition, an implementation
+   honoring the freeze would either keep proving the rejected statement or
+   refuse the corrected one. The statement becomes immutable for the rest of
+   the run only when a round's candidate is *accepted* by the skeptic.
 2. **Faithfulness gate** (`hardy.workflows.faithfulness`). An *independent* skeptic
    — separate agent run with its own prompt (`faithfulness_v1`), no shared context
    with the formalizer — sees the informal claim and the formal statement, and
@@ -203,7 +208,12 @@ writeup). Phase budget splits are config, but the sum is the cap.
    imports, so an audit forked from it could never find the declaration and
    every success would fail its own audit. The session retains the winning
    command's env id for exactly this purpose (ordinary checks keep forking from
-   `base_env`). Parse the axiom list; pass iff it is a subset of `{propext, Classical.choice, Quot.sound}`
+   `base_env`). The audit **fails closed**: it passes only on a successful,
+   error-free response whose payload parses as a recognized axiom list for the
+   audited declaration — a timeout, crash, missing declaration, or unparsable
+   output must demote the result as an audit *failure*, never fall through as
+   an empty axiom set that vacuously satisfies the subset test. Parse the
+   axiom list; pass iff it is a subset of `{propext, Classical.choice, Quot.sound}`
    and contains no `sorryAx`. Fail → the result is demoted to *partially
    formalized* and the discrepancy recorded in the manifest (the full anti-cheat
    suite — statement diffing, suspicious-closer scan — is M2).

@@ -169,10 +169,17 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
 - Policy, not adapter magic: when a run's context (tracked per-adapter via
   `Trajectory` usage events) crosses a configured threshold, the oldest
   completed segments (attempt cycles, tool-call bursts) are replaced by a
-  structured summary produced by a cheap summarization call — required to
-  preserve, verbatim: the goal statement, current open goals/hypotheses,
-  active lesson list, and any constraint the harness owns (budgets, statement
-  immutability). The free-prose part covers what was tried and why it failed.
+  structured summary produced by a cheap summarization call. Harness-owned
+  state — the goal statement, current open goals/hypotheses, active lesson
+  list, and standing constraints (budgets, statement immutability) — is
+  **never entrusted to the summary at all**: the harness holds those fields
+  itself and re-injects them mechanically after every compaction, so a
+  summarizer (or a runtime's native compaction) that omits or rewrites them
+  cannot leave later attempts running on incomplete state; where native
+  compaction is used, the re-injected block is validated present-verbatim
+  afterward, and a violation falls back to our own segment replacement. The
+  generated summary covers only the prose history: what was tried and why it
+  failed.
 - Implemented in the minimal loop directly (it owns its message list); for the
   SDK/Strands adapters it uses their native compaction **behind the M5
   capability flag** with our preservation-contract prompt where the framework

@@ -130,7 +130,11 @@ violation:
   anti-cheat-validated solve — with `attempts_per_item > 1`, counting solved
   *attempts* would tally one theorem several times and understate cost); same
   for Lean CPU seconds and wall clock — the denominator discipline is fixed
-  here so later strategy comparisons (M7) are apples-to-apples.
+  here so later strategy comparisons (M7) are apples-to-apples. **Zero solves
+  is a defined case, not a crash**: cost-per-solve is `null` with an explicit
+  zero-solve marker in the metrics blob (a weak local model or a hard subset
+  will produce it, and the baseline record must still be written); it's in the
+  metrics edge-case tests.
 - Anti-cheat summary: solves with flags reported as a separate line, never blended
   into the headline number.
 
@@ -156,9 +160,14 @@ violation:
   response system fingerprint) where the provider exposes one, since a mutable
   alias can re-point to new weights between two runs that record identical
   code, images, and config; runs whose provider exposes no immutable identity
-  are marked as such so comparisons can segregate them — metrics blob, and
-  paths to per-attempt results. `--compare` surfaces image-digest and
-  model-revision mismatches between the runs it diffs.
+  are marked as such so comparisons can segregate them — metrics blob,
+  **a canonical digest of the loaded benchmark corpus** (item ids, headers,
+  statements, domains, splits — `load_custom` files live outside the repo, so
+  the harness SHA and config hash can stay identical across materially
+  different statement sets), and paths to per-attempt results. `--compare`
+  surfaces image-digest and model-revision mismatches and **refuses** runs
+  whose corpus digests differ — that comparison would attribute a statement-set
+  change to the model or strategy.
 - `scripts/run_eval.py --compare <run-id> <run-id>` renders a metrics diff — the
   regression check is *available* from day one; wiring it into CI is deferred
   until eval runs stop needing a live model.
