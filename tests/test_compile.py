@@ -76,6 +76,15 @@ def test_abort_kills_engine_child_process_group(tmp_path):
     assert not marker.exists()
 
 
+def test_missing_engine_returns_structured_failure(tmp_path):
+    # A missing/typo'd engine must yield a CompileResult, not an OSError.
+    result = compile_tex(
+        SOURCE, tmp_path / "staging", engine=["/nonexistent/tex-binary"]
+    )
+    assert not result.success
+    assert result.errors and "could not launch compiler" in result.errors[0].message
+
+
 def test_sandbox_timeout_arg_preserves_fractions():
     from hardy.latex.compile import _sandbox_timeout_arg
 

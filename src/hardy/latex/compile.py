@@ -235,9 +235,16 @@ def compile_tex_sandboxed(
         )
         argv = docker_argv(cfg, ["/bin/sh", "-c", script])
         env = _docker_client_env()
-        code, tar_bytes, stderr_text, abort = _run_streams_capped(
-            argv, env, timeout + 15, _ARTIFACT_CAP, _OUTPUT_CAP
-        )
+        try:
+            code, tar_bytes, stderr_text, abort = _run_streams_capped(
+                argv, env, timeout + 15, _ARTIFACT_CAP, _OUTPUT_CAP
+            )
+        except OSError as exc:
+            # docker binary missing / unspawnable: structured failure, no raise.
+            return CompileResult(
+                success=False,
+                errors=[TexError(message=f"could not launch docker: {exc}")],
+            )
     finally:
         shutil.rmtree(inputs, ignore_errors=True)
     if abort is not None:
@@ -356,7 +363,15 @@ def compile_tex(
     argv = list(engine or DEFAULT_ENGINE) + ["main.tex"]
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(staging)}
     env.update(extra_env or {})
-    code, output, over_cap = _run_capped(argv, staging, env, timeout)
+    try:
+        code, output, over_cap = _run_capped(argv, staging, env, timeout)
+    except OSError as exc:
+        # Missing/non-executable engine (e.g. a typo in a custom `engine`), or
+        # spawn failure under process pressure: report structured, don't raise.
+        return CompileResult(
+            success=False,
+            errors=[TexError(message=f"could not launch compiler: {exc}")],
+        )
     if code is None:
         reason = (
             f"output exceeded {_OUTPUT_CAP} byte cap"
