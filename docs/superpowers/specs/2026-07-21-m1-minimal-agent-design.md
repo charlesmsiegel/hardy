@@ -143,10 +143,16 @@ one pool worker for the duration of one agent task.
 - `AgentRuntime` protocol: `async run(task: str, system_prompt: str,
   tools: ToolRegistry, config: RunConfig) -> Trajectory`. Budget enforcement is
   part of the protocol contract, owned by every adapter: `max_turns`, wall-clock,
-  **and `max_tokens_total`** — when cumulative usage (tallied from the adapter's
-  usage events) reaches the cap, the adapter stops before the next model call and
-  records the exhaustion kind in the trajectory. Token-limited runs exceeding
-  their cap would invalidate every fixed-budget comparison M2/M7/M8 make.
+  **and `max_tokens_total`** — enforced *before* each call, not just between
+  calls: the adapter counts (or conservatively estimates) the pending request's
+  tokens against the remaining allowance and clamps the response's
+  max-tokens parameter to what remains; if the request plus a minimum useful
+  response no longer fits, it stops without issuing the call. A check that
+  runs only after the response would let one final call overshoot the cap by
+  its own size, and those tokens are unrecoverable. Exhaustion is recorded in
+  the trajectory with its kind. Token-limited runs exceeding their cap would
+  invalidate every fixed-budget comparison M2/M7/M8 make (M7 later generalizes
+  this same reserve-then-settle discipline into the shared strategy meter).
 - `ClaudeSdkRuntime` — first implementation, on `claude-agent-sdk`: exposes the
   registry as in-process (SDK/MCP) tools, enforces all three budgets as above,
   records every event into the trajectory. SDK-specific niceties (subagents,

@@ -160,11 +160,16 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   one**: a worker's base environment fixed its imports at spawn, so a rebuilt
   package alone leaves `import Papers.<Key>` unavailable to the proving
   session already underway. After chained `ensure_axiom` completes, the
-  session refreshes: it retires its current worker and leases a replacement
-  spawned with the extended per-run imports string (existing proof states are
-  invalidated — the same recovery contract as worker death, and `check_proof`
-  re-elaborates from source), and the pool's spec for that run carries the
-  extended imports so later replacements match.
+  session refreshes — and so does the **whole run pool**, not just the one
+  leased worker, since with pool size > 1 the idle queue still holds workers
+  spawned with the old imports and the next lease could resurrect the missing
+  import: the pool's imports string is versioned, each worker records the
+  version it was spawned with, and `ensure_axiom` bumps the version — a lease
+  hands out only current-version workers, lazily retiring and replacing any
+  stale one it dequeues. The refreshing session retires its own worker and
+  leases a current-version replacement (existing proof states are invalidated —
+  the same recovery contract as worker death, and `check_proof` re-elaborates
+  from source).
 - Writeups: when the axiom manifest is non-empty, the template's status block
   reads *verified modulo assumed paper results* and a generated "Assumptions"
   paragraph states them in prose with `\cite` (M3): "assuming Theorem 3.2 of

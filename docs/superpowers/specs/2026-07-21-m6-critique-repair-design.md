@@ -189,9 +189,15 @@ Critique must accept "any proof", so both workflows operate on one structure:
   budget expires before probing/skeptic runs visit every informal step, there
   may be nothing `open` to abandon and the fixed point would hold vacuously.
   Critique therefore registers its **coverage plan** up front (every step ×
-  applicable layer) and marks entries visited as layers complete; at exit, each
-  unvisited step×layer becomes an `abandoned` ledger entry ("step not assessed
-  by <layer>"), listed in the document like any other abandoned hole. *No gaps
+  applicable layer) and marks entries visited as layers complete. The plan is
+  **live, not fixed**: a `Patch` may insert or replace steps (`new_steps`,
+  `step_edits`), and every inserted or replaced step joins the plan for its
+  applicable layers the moment the patch applies — otherwise a repair could
+  smuggle in an unassessed bridging step, finish the original plan, and grade
+  clean on reasoning nothing ever probed; the scoped re-critique must visit
+  those new entries before they count. At exit, each unvisited step×layer
+  becomes an `abandoned` ledger entry ("step not assessed by <layer>"), listed
+  in the document like any other abandoned hole. *No gaps
   detected* requires the fixed point **and** a fully visited coverage plan.
 - Grading integration: the writeup's informal-completeness grade is now computed
   — *no gaps detected* requires the fixed point, a fully visited coverage
