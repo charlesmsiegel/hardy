@@ -147,9 +147,13 @@ Critique must accept "any proof", so both workflows operate on one structure:
    seek counterexamples to intermediate claims (with Lean `decide`/`simp`
    checks on small instances where the claim specializes), probe edge cases
    (n = 0, empty sets, degenerate configurations), and verify citations: a step
-   citing [paper, Thm X] triggers a check against the stored paper's inventory
-   (M4) that the cited result actually says what the proof needs — mismatch is a
-   hole. Skeptic *suspicions* enter the ledger as `open`; a suspicion later
+   citing [paper, Thm X] triggers a check that the cited result actually says
+   what the proof needs — against **the original stored-paper excerpt**
+   (served via `read_paper`), not the M4 inventory alone: the inventory is an
+   agent extraction that may itself have dropped a hypothesis, and it only
+   gets excerpt-verified during per-axiom review, which an unminted citation
+   has never undergone. (Where the citation warrants formalization, the
+   reviewed `ensure_axiom` path subsumes this.) Mismatch is a hole. Skeptic *suspicions* enter the ledger as `open`; a suspicion later
    *disproven* (the step is justified as written) is `dismissed` with the
    justification recorded.
 - Layer ordering is budget discipline: kernel findings are free; probing spends
@@ -199,10 +203,14 @@ Critique must accept "any proof", so both workflows operate on one structure:
   every inserted/edited step, revalidates acyclicity (a violation is itself a
   hole), and only then takes the radius: the edited steps, any step
   referencing them, and — for Lean deltas — any declaration whose elaboration
-  consumed a changed declaration. Resolved
-  holes whose location intersects the radius get re-checked: `verified-closed`
-  re-verifies by its layer; `dismissed` re-opens iff its recorded justification
-  referred to now-changed text. Invalidation → `open`, reopen_count += 1.
+  consumed a changed declaration. **Every** resolved
+  hole whose location intersects the radius is re-checked: `verified-closed`
+  re-verifies by its layer, and `dismissed` **reopens unconditionally** for
+  fresh dismissal against the changed proof — whether a free-form
+  justification "referred to" changed text is not a sound invalidation
+  predicate, and an upstream semantic change can invalidate a dismissal whose
+  wording never mentioned the edited step. Invalidation → `open`,
+  reopen_count += 1.
 - Loop: `Prove → Critique → [pick one open hole → Repair → scoped re-Critique]*`
   until fixed point or budget out. Hole selection: kernel holes first, then by
   reopen count ascending (cheapest progress first) — simple and deterministic;

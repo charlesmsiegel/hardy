@@ -61,8 +61,13 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   config, budget: StrategyBudget) -> StrategyResult`.
   - `ProveGoal`: the harness-owned statement + header (same operand Prove/eval
     already pass around).
-  - `session_factory`: `async () -> ProofSession` — strategies that parallelize
-    lease multiple workers; the pool's size caps real concurrency.
+  - `session_factory`: `() -> AsyncContextManager[ProofSession]` — the same
+    cancellation-safe lease contract M1 requires of workflows: strategies
+    acquire every session with `async with`, so a branch cancelled by a
+    winner or deadline (parallel strategies cancel constantly) always returns
+    or retires its worker — a factory handing out bare acquired sessions
+    would let repeated parallel attempts drain the pool and deadlock later
+    leases. The pool's size caps real concurrency.
   - `StrategyResult(proved: bool, source: str | None, verdict, budget_spent,
     events)` — events fold into the run's `Trajectory` so M2 metrics and
     telemetry see strategy-internal work (tactic proposals, subgoal outcomes).
