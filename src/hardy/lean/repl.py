@@ -48,9 +48,11 @@ class LeanRepl:
         cleanup_argv: list[str] | None = None,
         stream_limit: int = 10 * 1024 * 1024,
         cleanup_timeout: float = 30.0,
+        env: dict[str, str] | None = None,
     ):
         self._argv = argv
         self._cwd = cwd
+        self._env = env
         self._default_timeout = default_timeout
         self._cleanup_argv = cleanup_argv
         self._stream_limit = stream_limit
@@ -80,6 +82,7 @@ class LeanRepl:
             self._proc = await asyncio.create_subprocess_exec(
                 *self._argv,
                 cwd=self._cwd,
+                env=self._env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,

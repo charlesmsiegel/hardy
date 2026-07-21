@@ -47,6 +47,10 @@ _POISON = object()
 class WorkerSpec(BaseModel):
     argv: list[str]
     cwd: Path | None = None
+    # Process environment for the worker (direct launch needs the toolchain
+    # vars — LEAN_SYSROOT etc.; None inherits os.environ). Sandboxed workers
+    # leave this None since the container sets its own env.
+    env: dict[str, str] | None = None
     # Trusted command wiping the worker's scratch between checks (sandboxed).
     reset_argv: list[str] | None = None
     # Trusted command killing the worker's container on close (sandboxed).
@@ -95,6 +99,7 @@ class ReplPool:
         size: int,
         argv: list[str] | None = None,
         cwd: Path | None = None,
+        env: dict[str, str] | None = None,
         spec_factory: Callable[[], WorkerSpec] | None = None,
         imports: str = "import Mathlib",
         import_timeout: float = 600.0,
@@ -111,7 +116,7 @@ class ReplPool:
         if spec_factory is None:
             if argv is None:
                 raise ValueError("pass argv (with optional cwd) or spec_factory")
-            base = WorkerSpec(argv=argv, cwd=cwd)
+            base = WorkerSpec(argv=argv, cwd=cwd, env=env)
             spec_factory = lambda: base  # noqa: E731
         self._size = size
         self._spec_factory = spec_factory
@@ -180,6 +185,7 @@ class ReplPool:
         repl = LeanRepl(
             spec.argv,
             cwd=spec.cwd,
+            env=spec.env,
             default_timeout=self._command_timeout,
             cleanup_argv=spec.cleanup_argv,
         )

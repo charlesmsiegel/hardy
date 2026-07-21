@@ -1,19 +1,54 @@
 """Where the real REPL lives and how to launch it.
 
-The repl binary is built in its own repo (vendor/repl) but must run from
-inside lean_project via `lake env`, so Mathlib's oleans are on LEAN_PATH.
+The repl binary is built in its own repo (vendor/repl) but needs Mathlib's
+oleans and the Lean core on its environment. It must be launched DIRECTLY
+(not wrapped in `lake env`): `lake env <repl>` deadlocks the framed
+async stdio the pool speaks. Instead repl_env() captures the toolchain
+variables `lake env` would set — critically LEAN_SYSROOT (without it the
+elaborator can't find core, so even `2 + 0` fails with "Unknown constant
+OfNat") plus LEAN_PATH / LEAN_SRC_PATH / LD_LIBRARY_PATH — and the repl is
+run with that environment.
 """
 
+import functools
+import os
+import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LEAN_PROJECT = REPO_ROOT / "lean_project"
 REPL_BIN = REPO_ROOT / "vendor" / "repl" / ".lake" / "build" / "bin" / "repl"
 
+# Toolchain vars `lake env` exports; captured once and set directly so the repl
+# runs without the `lake env` wrapper. LEAN_SYSROOT is the essential one.
+_REPL_ENV_VARS = ("LEAN_PATH", "LEAN_SRC_PATH", "LEAN_SYSROOT", "LD_LIBRARY_PATH")
+
 
 def repl_argv() -> list[str]:
-    """Argv for the real REPL. Run with cwd=LEAN_PROJECT."""
-    return ["lake", "env", str(REPL_BIN)]
+    """Argv for the real REPL, launched directly. Run with cwd=LEAN_PROJECT and
+    env=repl_env(); do NOT wrap in `lake env` (it deadlocks the framed stdio)."""
+    return [str(REPL_BIN)]
+
+
+@functools.cache
+def repl_env() -> dict[str, str]:
+    """os.environ plus the toolchain vars `lake env` would set for the repl.
+
+    Captured once via `lake env printenv <VAR>` (cwd=LEAN_PROJECT). Must include
+    LEAN_SYSROOT, or continuation commands lose core (OfNat, numeric literals).
+    """
+    env = dict(os.environ)
+    for var in _REPL_ENV_VARS:
+        result = subprocess.run(
+            ["lake", "env", "printenv", var],
+            cwd=LEAN_PROJECT,
+            capture_output=True,
+            text=True,
+        )
+        value = result.stdout.strip()
+        if value:
+            env[var] = value
+    return env
 
 
 _RESET_SCRIPT = (
