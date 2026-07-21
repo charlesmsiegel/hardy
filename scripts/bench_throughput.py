@@ -10,7 +10,12 @@ import asyncio
 import sys
 import time
 
-from hardy.lean.launch import LEAN_PROJECT, repl_argv, sandboxed_worker_spec
+from hardy.lean.launch import (
+    LEAN_PROJECT,
+    repl_argv,
+    repl_env,
+    sandboxed_worker_spec,
+)
 from hardy.lean.pool import ReplPool
 
 
@@ -33,15 +38,27 @@ async def main() -> int:
     parser.add_argument("--proofs", type=int, default=200)
     parser.add_argument("--sandbox", action="store_true")
     parser.add_argument("--image", default="hardy-lean:dev")
+    parser.add_argument(
+        "--imports",
+        default="import Mathlib",
+        help="warm-session imports (e.g. 'import Mathlib.Tactic' for a lighter session)",
+    )
     args = parser.parse_args()
 
     if args.sandbox:
         pool = ReplPool(
             size=args.workers,
             spec_factory=lambda: sandboxed_worker_spec(args.image),
+            imports=args.imports,
         )
     else:
-        pool = ReplPool(size=args.workers, argv=repl_argv(), cwd=LEAN_PROJECT)
+        pool = ReplPool(
+            size=args.workers,
+            argv=repl_argv(),
+            cwd=LEAN_PROJECT,
+            env=repl_env(),
+            imports=args.imports,
+        )
     print(f"starting {args.workers} workers (importing Mathlib; slow first time)...")
     await pool.start()
 
