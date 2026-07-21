@@ -26,3 +26,18 @@ def test_repl_smoke():
     first = json.loads(proc.stdout.split("\n\n")[0])
     assert first.get("env") == 0
     assert not first.get("messages")
+
+
+async def test_lean_repl_wrapper_checks_a_proof():
+    from hardy.lean.repl import LeanRepl
+
+    repl = LeanRepl(repl_argv(), cwd=LEAN_PROJECT, default_timeout=300)
+    await repl.start()
+    try:
+        resp = await repl.run_command("theorem t : 2 + 2 = 4 := rfl")
+        assert resp.env is not None
+        assert not resp.messages
+        bad = await repl.run_command("theorem u : 2 + 2 = 5 := rfl")
+        assert any(m.severity == "error" for m in bad.messages)
+    finally:
+        await repl.close()
