@@ -46,8 +46,25 @@ _TEMPLATE = r"""\documentclass{article}
 """
 
 
+# LaTeX metacharacters that must be escaped inside \texttt{...}. Every char is
+# mapped from the original string in one pass, so the braces/backslashes that
+# the replacements introduce are never re-escaped.
+_LATEX_SPECIAL = {
+    "\\": r"\textbackslash{}",
+    "&": r"\&",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "_": r"\_",
+    "{": r"\{",
+    "}": r"\}",
+    "~": r"\textasciitilde{}",
+    "^": r"\textasciicircum{}",
+}
+
+
 def _escape_path(path: str) -> str:
-    return path.replace("_", r"\_")
+    return "".join(_LATEX_SPECIAL.get(ch, ch) for ch in path)
 
 
 def render_writeup(

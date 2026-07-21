@@ -3,6 +3,7 @@ pass it through compile_tex's extra_env — which also proves extra_env works):
   ok (default) — writes main.pdf, exit 0
   fail         — tectonic-style stderr error + `! ...` log line, exit 1
   hang         — sleeps forever (timeout tests)
+  closehang    — closes stdout+stderr, then sleeps forever (EOF-then-hang tests)
   dump-env     — prints its environment variable names to stderr, exit 1
   spew         — floods stderr with ~4 MB of diagnostics (output-cap tests)
 """
@@ -15,6 +16,12 @@ from pathlib import Path
 mode = os.environ.get("FAKE_TEX_MODE", "ok")
 
 if mode == "hang":
+    time.sleep(3600)
+elif mode == "closehang":
+    # EOF on both pipes, but the process keeps running: the harness must still
+    # enforce its timeout rather than blocking forever on wait().
+    os.close(1)
+    os.close(2)
     time.sleep(3600)
 elif mode == "fail":
     sys.stderr.write("error: main.tex:3: Undefined control sequence\n")
