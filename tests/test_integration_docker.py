@@ -106,3 +106,4 @@ def test_sandboxed_tectonic_compiles_offline(tmp_path):
     result = compile_tex_sandboxed(source, staging, timeout=300)
     assert result.success, result.errors
     assert (staging / "main.pdf").exists()  # streamed back out of the tmpfs
+    assert (staging / "main.tex").read_text() == source  # source persisted beside it
