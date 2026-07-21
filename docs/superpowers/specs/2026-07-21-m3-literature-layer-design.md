@@ -135,8 +135,12 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   (rss/cpu rlimits, wall-clock kill, bounded input size and page count) — a
   malformed or decompression-bomb PDF can burn unbounded CPU/memory *inside*
   the parser, long before any output cap applies, so the cap alone cannot
-  protect the harness process. Extracted text is cached in the derived-data
-  layer so the parse happens once per paper. Output capped per call (compact, high-signal —
+  protect the harness process. The extractor's *output* is bounded too — streamed through a
+  hard byte quota before the cache admits it, aborting over-quota — because a
+  bounded-size PDF can still expand into an enormous text stream that would
+  exhaust disk/memory after the parser's own rlimits and before any per-call
+  response cap applies. Extracted text is cached in the derived-data layer so
+  the parse happens once per paper. Output capped per call (compact, high-signal —
   Component 2 rules), with a table of contents served on the first call so the
   agent can navigate.
 

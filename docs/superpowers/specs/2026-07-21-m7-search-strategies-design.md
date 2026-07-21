@@ -153,7 +153,11 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   variant, and optionally strategy mix (`strategy_params.branches` lists
   per-branch overrides). Branches share nothing except the goal and the meter.
 - First kernel-verified success cancels the rest (cancellation is safe: workers
-  are recycled by the pool's existing discipline); budget is the *shared* meter
+  are recycled by the pool's existing discipline). A cancelled branch's
+  **in-flight model call keeps its full reservation** unless provider-confirmed
+  final usage arrives — task cancellation doesn't necessarily stop provider-side
+  generation or return usage, so settling cancelled calls at zero would
+  understate the parallel strategy's real spend. Budget is the *shared* meter
   so n branches at budget B cost B total, not n·B — this is what makes the
   equal-budget comparison meaningful.
 - Verification makes majority voting unnecessary (DESIGN); pass@k reporting
@@ -179,6 +183,16 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   (`eval_results/comparisons.jsonl`) linking them: per-strategy solve rate,
   cost per solve, budget utilization — the logged per-strategy comparison the
   exit criterion names. The historical M2 number is never referenced.
+- **A win needs statistical evidence, not a bigger point estimate:** with
+  stochastic sampling on a small eval subset, *some* strategy will beat the
+  baseline by luck. The comparison record therefore includes a **predeclared
+  decision rule**, fixed in config before the run: paired per-item outcomes
+  (each strategy vs. baseline on the same items), a paired test with a
+  confidence interval (bootstrap over items, or McNemar for solve/no-solve),
+  and a multiple-comparison correction across however many strategies were
+  compared. The exit criterion's "beats iterative repair" means the corrected
+  interval excludes zero — a point-estimate win records as *inconclusive*,
+  and the honest response is more attempts/items, not a declared victory.
 - **One model throughout:** the harness rejects `strategy_params` containing
   model overrides (e.g. sketch's `subgoal_model`) in exit-criterion
   comparisons — "same model" applies to nested strategy work, not just the

@@ -96,10 +96,15 @@ papers_lean/     — the Lean package of assumed libraries (committed)
 ### `review.py` — faithfulness review + quarantine
 
 - Reuses the M1 skeptic pattern: an independent agent run (own prompt
-  `axiom_faithfulness_v1`; different model when config provides one) sees the
-  verbatim statement text and the minted Lean, and returns
-  `faithful | flagged(reason)` per axiom, explicitly checking quantifiers,
-  hypotheses, edge conditions, and definition correspondence.
+  `axiom_faithfulness_v1`; different model when config provides one) sees
+  **the original stored-paper excerpt** (the section/page the inventory item
+  points at, served via `read_paper`), the inventory's statement text, *and*
+  the minted Lean, and returns `faithful | flagged(reason)` per axiom —
+  checking the chain at both links: inventory-vs-paper (the extraction agent
+  can paraphrase or drop a hypothesis, and a review comparing Lean only
+  against its own corrupted extraction would bless an axiom the paper never
+  states) and Lean-vs-inventory (quantifiers, hypotheses, edge conditions,
+  definition correspondence).
 - Quarantine is structural, not advisory: a flagged axiom is written to
   `Papers/<Key>/Quarantine.lean`, which **no library target includes** — it exists
   only for human review. The manifest records `quarantined(reason)`. Promotion to
@@ -140,9 +145,15 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   ledgers): two runs lazily minting different labels of one paper would
   otherwise write `Papers/<Key>.lean` and its manifest from overlapping
   snapshots, and the last publication could drop the other's declaration or
-  ship oleans disagreeing with the final source. Publication itself is atomic
-  — source, manifest, and copied oleans replace together from the staged
-  build, never piecemeal.
+  ship oleans disagreeing with the final source. Per-namespace locks are not
+  enough on their own: adding a *new* namespace edits the shared
+  `papers_lean/lakefile.toml` target registry, which two first-time
+  publications of different papers would race on without conflicting
+  per-paper locks — registry mutation happens under an additional
+  **package-wide lock**, taken only for the registry edit and final package
+  build so per-paper minting still parallelizes. Publication itself is atomic
+  — source, manifest, registry entry, and copied oleans replace together from
+  the staged build, never piecemeal.
 - `assume_paper` tool wraps standalone mode; `list_assumptions` renders library
   manifests and, given a result, its axiom manifest.
 - Pool integration: workers for frontier runs import `Papers.*` libraries in
