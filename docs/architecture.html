@@ -659,6 +659,7 @@ flowchart TD
   ENV --> LEAN["Lean 4 kernel + Mathlib<br/><i>ground truth</i>"]
   ENV --> TEX["tectonic / latexmk<br/><i>compile check</i>"]
   ENV --> AX["arXiv + references.bib<br/><i>the literature</i>"]
+  AX -->|"assume_paper: Papers.*<br/>axiom library, built +<br/>kernel-checked"| LEAN
   LEAN --> OUT(["Workflow output, graded + manifested<br/><i>Prove: artifact pair · Critique: hole-ledger report ·<br/>Repair: verified patch · Assume: Papers.* library</i>"])
   TEX --> OUT
   EV["<b>Evaluation harness</b><br/>miniF2F · PutnamBench · anti-cheat"] -.-> O
@@ -1164,6 +1165,8 @@ flowchart LR
   A -->|"no"| REJ["rejected"]
   A -->|"yes"| SCAN["source + trajectory scan<br/><i>the audit that print axioms<br/>cannot do</i>"]
   SCAN -->|"suspicious closers:<br/>native_decide, decide<br/>on huge goals"| REVIEW["flagged for<br/>human review"]
+  REVIEW -->|"human approves<br/>the closer"| B
+  REVIEW -->|"human rejects"| REJ
   SCAN -->|"clean"| B{"sorry-free +<br/>kernel accepts?"}
   B -->|"no"| P2{"usable checked<br/>skeleton?"}
   P2 -->|"yes"| PART["<b>partially formalized</b><br/>skeleton kept, holes listed"]
