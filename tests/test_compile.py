@@ -1,4 +1,5 @@
 import sys
+import time
 from pathlib import Path
 
 from hardy.latex.compile import compile_tex
@@ -57,6 +58,22 @@ def test_timeout_enforced_after_output_closes(tmp_path):
     )
     assert not result.success
     assert any("timed out" in e.message for e in result.errors)
+
+
+def test_abort_kills_engine_child_process_group(tmp_path):
+    # On a timeout abort, helper processes the engine spawned must die too, or
+    # a delayed child could write into staging after compile_tex() returns.
+    marker = tmp_path / "leaked"
+    result = compile_tex(
+        SOURCE,
+        tmp_path / "staging",
+        engine=FAKE_ENGINE,
+        extra_env={"FAKE_TEX_MODE": "grouphang", "HARDY_CHILD_MARKER": str(marker)},
+        timeout=0.5,
+    )
+    assert not result.success
+    time.sleep(3)  # the child would write the marker at 2s if it had survived
+    assert not marker.exists()
 
 
 def test_environment_is_scrubbed(tmp_path, monkeypatch):
