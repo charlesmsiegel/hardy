@@ -41,3 +41,25 @@ async def test_lean_repl_wrapper_checks_a_proof():
         assert any(m.severity == "error" for m in bad.messages)
     finally:
         await repl.close()
+
+
+async def test_declarations_do_not_leak_between_runs():
+    from hardy.lean.pool import ReplPool
+
+    pool = ReplPool(
+        size=1,
+        argv=repl_argv(),
+        cwd=LEAN_PROJECT,
+        imports="import Mathlib.Tactic",  # lighter than full Mathlib; enough here
+        command_timeout=120,
+    )
+    await pool.start()
+    try:
+        v1 = await pool.check_proof("def leaky : Nat := 7\ntheorem t1 : leaky = 7 := rfl")
+        assert v1.complete
+        # `leaky` must be unknown in a fresh check — same worker, pristine env.
+        v2 = await pool.check_proof("theorem t2 : leaky = 7 := rfl")
+        assert not v2.complete
+        assert any("leaky" in e.data for e in v2.errors)
+    finally:
+        await pool.close()
