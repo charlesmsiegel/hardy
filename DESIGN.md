@@ -30,10 +30,11 @@ every result has a deterministic verdict:
 
 - *Formalization status*: verified / verified modulo assumed paper results (see
   Component 6) / partially formalized with `sorry`s remaining / not formalized.
-- *Informal completeness*: complete / known gaps — the critique–repair budget
-  expired with holes abandoned; those holes are listed in the document, never
-  hidden behind a reassuring grade — or *not assessed*, for runs made before the
-  critique–repair loop exists (pre-M6), which never default to *complete*.
+- *Informal completeness*: complete / known gaps — the run stopped with holes
+  abandoned, whether by budget expiry or a no-progress honest stop; those holes
+  are listed in the document, never hidden behind a reassuring grade — or *not
+  assessed*, for runs made before the critique–repair loop exists (pre-M6), which
+  never default to *complete*.
 
 A kernel-verified theorem whose writeup still has gaps, or a gap-free writeup with
 only a partial skeleton, each map to exactly one pair. When a Lean proof exists,
@@ -121,7 +122,7 @@ theorem-proving equivalents:
 | `hole_ledger` | Record, update, and list holes found in a proof (id, location, description, status); the persistent state handed between the Prove / Critique / Repair workflows |
 | `note` | Informal scratchpad — write natural-language reasoning/proof plans that persist in context across attempts |
 | `arxiv_search` | Query the arXiv API (title/abstract/author/category); returns metadata + abstracts |
-| `fetch_paper` | Download a paper (PDF, and LaTeX source when available) into the project paper store; auto-adds a BibTeX entry |
+| `fetch_paper` | Download a paper (PDF, and LaTeX source when available) into the project paper store; registers it in the bibliography by delegating to `cite`, the sole `.bib` writer |
 | `read_paper` | Extract text/sections from a stored paper for the agent to read |
 | `assume_paper` | Turn a stored paper's results into an axiomatized Lean library (see Component 6) that later proofs can import |
 | `list_assumptions` | Show the assumed-paper libraries in scope and, for any proved theorem, its axiom manifest (which paper results it actually used) |

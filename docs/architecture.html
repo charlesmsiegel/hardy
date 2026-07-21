@@ -921,7 +921,7 @@ sequenceDiagram
           <tr><td class="tool-name">note</td><td class="tool-desc">Informal scratchpad — natural-language reasoning and proof plans that persist across attempts</td></tr>
           <tr class="group-row"><td colspan="2">Literature</td></tr>
           <tr><td class="tool-name">arxiv_search</td><td class="tool-desc">Query the arXiv API (title/abstract/author/category); returns metadata + abstracts</td></tr>
-          <tr><td class="tool-name">fetch_paper</td><td class="tool-desc">Download PDF + LaTeX source (when available) into the paper store; auto-adds a BibTeX entry</td></tr>
+          <tr><td class="tool-name">fetch_paper</td><td class="tool-desc">Download PDF + LaTeX source (when available) into the paper store; registers the paper in the bibliography by delegating to <code>cite</code>, the sole <code>.bib</code> writer</td></tr>
           <tr><td class="tool-name">read_paper</td><td class="tool-desc">Serve stored papers back in digestible per-section chunks, math source intact</td></tr>
           <tr><td class="tool-name">assume_paper</td><td class="tool-desc">Turn a stored paper's results into an axiomatized Lean library later proofs can import (→ Frontier Math)</td></tr>
           <tr><td class="tool-name">list_assumptions</td><td class="tool-desc">Show assumed-paper libraries in scope; for any theorem, its axiom manifest — which paper results it actually used</td></tr>
@@ -1084,7 +1084,8 @@ flowchart LR
   <div class="callout" style="--i:5">
     <strong>Adopted: eager inventory, lazy minting</strong> — the full statement inventory is extracted
     up front (browsable), but an axiom is minted and faithfulness-reviewed only when a proof first
-    invokes that result, keeping the trusted surface minimal. Still open: chase transitive citations
+    invokes that result — except for standalone Assume requests, which have no invoking proof and
+    instead mint their named selection eagerly — keeping the trusted surface minimal. Still open: chase transitive citations
     (paper A depends on paper B)? — take A at face value first; the manifest records exactly what was
     taken on faith either way.
   </div>
@@ -1112,7 +1113,7 @@ flowchart LR
       <div class="verdict-row"><span class="pip pip--partial"></span><span><span class="what">Not formalized</span> <span class="how">— no usable Lean artifact; formalization not yet attempted or out of reach</span></span></div>
       <p style="font-family:var(--font-mono); font-size:10.5px; letter-spacing:1.2px; text-transform:uppercase; color:var(--text-dim); margin-top:6px">Informal completeness</p>
       <div class="verdict-row"><span class="pip pip--full"></span><span><span class="what">Complete</span> <span class="how">— the writeup's argument has no unresolved holes</span></span></div>
-      <div class="verdict-row"><span class="pip pip--danger"></span><span><span class="what">Known gaps</span> <span class="how">— critique–repair budget expired with holes abandoned; they're listed in the writeup, never hidden behind a clean grade</span></span></div>
+      <div class="verdict-row"><span class="pip pip--danger"></span><span><span class="what">Known gaps</span> <span class="how">— the run stopped with holes abandoned (budget expiry or a no-progress honest stop); they're listed in the writeup, never hidden behind a clean grade</span></span></div>
       <div class="verdict-row"><span class="pip" style="background:var(--slate)"></span><span><span class="what">Not assessed</span> <span class="how">— pre-M6 runs, before the hole ledger and critique loop exist; never defaulted to complete</span></span></div>
     </div>
     <p class="prose dim" style="font-size:12.5px; margin-top:12px">The dimensions are independent, so every
