@@ -64,7 +64,10 @@ hardy/agent/
   **enforced, not honor-system**: config load recursively scans
   `provider_params` and rejects it when a field path matches credential
   patterns (`*key*`, `*token*`, `*secret*`, `*password*`, `authorization`,
-  `cookie`, header maps) *or* a string value matches an **unambiguous** credential shape
+  `cookie` — header maps are classified **per header name**, not wholesale:
+  `Authorization`/`Cookie`/`Proxy-Authorization`/`X-Api-Key` are secret, while
+  a non-secret API-version, organization, or routing header is a behavioral
+  parameter that must stay in `provider_params` for the config hash) *or* a string value matches an **unambiguous** credential shape
   (`Bearer …` prefixes, `sk-…`, AWS `AKIA…` key ids — deliberately *not*
   generic high-entropy rejection, which would misclassify legitimate opaque
   deployment/model-revision/inference-profile identifiers that must stay in

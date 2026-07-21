@@ -119,9 +119,15 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   `cite`/`fetch_paper` would otherwise each load, mint, and rename, and the
   last rename would silently discard the other's entry.
 - `mint_key(meta) -> str`: `<first-author-surname><year><first-content-word>`
-  (ASCII-folded, lowercased). Collision with a *different* paper appends `a`, `b`,
-  …; a different *version of the same paper* gets the version-qualified key
-  (`author2023shortV3`) per DESIGN.
+  (ASCII-folded, lowercased). Collision with a *different* paper appends a
+  **deterministic fragment of the colliding paper's own arXiv id** — never an
+  ordinal (`a`, `b`, …), whose assignment would depend on insertion/lock order
+  and make cite keys (and the `Papers.*` namespaces derived from them)
+  irreproducible across fetch orderings. The bare base key belongs to whichever
+  paper is durably first in the committed bibliography — reproducible from the
+  artifact — and identity-derived fragments mean later arrivals' keys never
+  cascade or depend on one another. A different *version of the same paper*
+  gets the version-qualified key (`author2023shortV3`) per DESIGN.
 - `add_or_get(meta) -> str`: dedup by (arXiv id, version); the DOI fallback
   applies **only when the entry has no arXiv identity** — revisions of one arXiv
   paper share a DOI, and letting v3 resolve to v1's entry through it would
