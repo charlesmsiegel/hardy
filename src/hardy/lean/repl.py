@@ -57,6 +57,11 @@ class LeanRepl:
         self._cleanup_timeout = cleanup_timeout
         self._proc: asyncio.subprocess.Process | None = None
         self._started = False
+        self._closed = False
+        # Serializes start() and close() so a close() landing while start() is
+        # still spawning cannot observe _proc is None, run cleanup, and leave the
+        # process (or sandbox container) alive once start() finishes.
+        self._lifecycle = asyncio.Lock()
 
     async def start(self) -> None:
         # LeanRepl is single-use: start() may run exactly once. Restarting would
@@ -64,19 +69,22 @@ class LeanRepl:
         # cleanup_argv, leave a sandbox container un-killed on the second run.
         # The pool always retires a worker and spawns a fresh instance, so this
         # costs nothing; callers wanting a "restart" must build a new LeanRepl.
-        if self._started:
-            raise LeanReplError("LeanRepl is single-use; create a new instance")
-        self._started = True
-        # limit bounds a single response line; asyncio's 64 KB default is far
-        # too small for real goal states, and overflow raises ValueError.
-        self._proc = await asyncio.create_subprocess_exec(
-            *self._argv,
-            cwd=self._cwd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-            limit=self._stream_limit,
-        )
+        async with self._lifecycle:
+            if self._closed:
+                raise LeanReplError("LeanRepl is closed")
+            if self._started:
+                raise LeanReplError("LeanRepl is single-use; create a new instance")
+            self._started = True
+            # limit bounds a single response line; asyncio's 64 KB default is far
+            # too small for real goal states, and overflow raises ValueError.
+            self._proc = await asyncio.create_subprocess_exec(
+                *self._argv,
+                cwd=self._cwd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                limit=self._stream_limit,
+            )
 
     @property
     def alive(self) -> bool:
@@ -173,27 +181,34 @@ class LeanRepl:
         return await self._validate(TacticResponse, await self.send(request, timeout))
 
     async def close(self) -> None:
-        if self._proc is not None and self._proc.returncode is None:
-            self._proc.kill()
-            await self._proc.wait()
-        if self._cleanup_argv is not None:
-            cleanup_argv, self._cleanup_argv = self._cleanup_argv, None
-            try:
-                cleanup = await asyncio.create_subprocess_exec(
-                    *cleanup_argv,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-            except OSError:
-                return  # best-effort: close() must never raise over cleanup
-            # Bound the cleanup: timeout handling calls close() before raising
-            # ReplTimeout, so a cleanup helper that hangs (e.g. a stalled docker
-            # CLI) would otherwise stall the advertised per-command timeout.
-            try:
-                await asyncio.wait_for(cleanup.wait(), self._cleanup_timeout)
-            except TimeoutError:
-                cleanup.kill()
+        async with self._lifecycle:
+            self._closed = True
+            if self._proc is not None and self._proc.returncode is None:
+                self._proc.kill()
+                await self._proc.wait()
+            if self._cleanup_argv is not None:
                 try:
-                    await cleanup.wait()
+                    cleanup = await asyncio.create_subprocess_exec(
+                        *self._cleanup_argv,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
                 except OSError:
-                    pass
+                    self._cleanup_argv = None  # cannot launch it — give up
+                    return  # best-effort: close() must never raise over cleanup
+                # Bound the cleanup: timeout handling calls close() before raising
+                # ReplTimeout, so a cleanup helper that hangs (e.g. a stalled
+                # docker CLI) would otherwise stall the per-command timeout.
+                try:
+                    await asyncio.wait_for(cleanup.wait(), self._cleanup_timeout)
+                except TimeoutError:
+                    cleanup.kill()
+                    try:
+                        await cleanup.wait()
+                    except OSError:
+                        pass
+                # Clear only after the cleanup process has finished (or was
+                # killed): if a cancellation propagates out of the awaits above,
+                # _cleanup_argv stays set so a later close() can retry the
+                # container kill instead of leaking it.
+                self._cleanup_argv = None

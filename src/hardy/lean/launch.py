@@ -18,12 +18,21 @@ def repl_argv() -> list[str]:
 
 _RESET_SCRIPT = (
     # Kill every process except the pid-1 repl and this shell: untrusted
-    # elaboration (#eval IO) can fork background children that would
-    # otherwise survive into — and interfere with — later checks. Then wipe
-    # scratch. (No `ps` in the image; walk /proc directly.)
+    # elaboration (#eval IO) can fork background children that would otherwise
+    # survive into — and interfere with — later checks. A single /proc sweep
+    # races descendants forked after the glob expands, so loop until two
+    # consecutive scans find no survivors (bounded), then wipe scratch. (No `ps`
+    # in the image; walk /proc directly.)
+    #
+    # NOTE: this is best-effort hardening, not atomic. A child that keeps
+    # forking faster than we can reap could in theory outlast the loop; the
+    # robust fix (a cgroup-atomic kill of the worker's non-REPL processes) lands
+    # with the sandbox-image rework. A failed reset already recycles the worker.
+    "i=0; while [ $i -lt 20 ]; do left=0; "
     "for p in /proc/[0-9]*; do p=${p#/proc/}; "
     '[ "$p" = 1 ] && continue; [ "$p" = "$$" ] && continue; '
-    "kill -9 $p 2>/dev/null; done; "
+    "kill -9 $p 2>/dev/null && left=1; done; "
+    '[ "$left" = 0 ] && break; i=$((i+1)); done; '
     "find /scratch -mindepth 1 -delete"
 )
 

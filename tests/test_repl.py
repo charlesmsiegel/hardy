@@ -180,6 +180,22 @@ async def test_close_bounds_a_hanging_cleanup():
     await asyncio.wait_for(repl.close(), timeout=5)
 
 
+async def test_cancelled_close_retains_cleanup_for_retry():
+    # If close() is cancelled mid-cleanup, the cleanup command must be retained
+    # so a later close() can retry it (else a sandbox container would leak).
+    cleanup = [sys.executable, "-c", "import time; time.sleep(1)"]
+    repl = LeanRepl(FAKE, cleanup_argv=cleanup, cleanup_timeout=30)
+    await repl.start()
+    task = asyncio.create_task(repl.close())
+    await asyncio.sleep(0.2)  # close() has killed the repl and is awaiting cleanup
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert repl._cleanup_argv is not None  # retained, not consumed
+    repl._cleanup_argv = None  # avoid the 1s sleep on the final close
+    await repl.close()
+
+
 async def test_cleanup_argv_runs_on_close(tmp_path):
     marker = tmp_path / "marker"
     cleanup = [
