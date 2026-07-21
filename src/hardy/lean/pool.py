@@ -100,6 +100,10 @@ class ReplPool:
         spawn_retries: int = 3,
         spawn_retry_delay: float = 1.0,
     ):
+        if size < 1:
+            # A zero/negative pool spawns no workers, so check_proof would wait
+            # forever on an empty queue (e.g. an accidental --workers 0).
+            raise ValueError(f"pool size must be >= 1, got {size}")
         if spec_factory is None:
             if argv is None:
                 raise ValueError("pass argv (with optional cwd) or spec_factory")
@@ -115,6 +119,10 @@ class ReplPool:
         self._spawn_retries = spawn_retries
         self._spawn_retry_delay = spawn_retry_delay
         self._broken: Exception | None = None
+        self._closed = False
+        # Every worker that currently owns a process — idle OR checked out — so
+        # close() can terminate in-flight workers, not just the idle queue.
+        self._live: set[PoolWorker] = set()
         self._idle: asyncio.Queue = asyncio.Queue()
 
     async def start(self) -> None:
@@ -126,7 +134,7 @@ class ReplPool:
         if failures:
             # A partial start must not strand the workers that did spawn.
             for worker in workers:
-                await worker.repl.close()
+                await self._retire(worker)
             raise failures[0]
         for worker in workers:
             self._idle.put_nowait(worker)
@@ -146,7 +154,9 @@ class ReplPool:
         if not verdict(resp).complete:
             await repl.close()
             raise LeanReplError(f"worker imports failed: {resp}")
-        return PoolWorker(repl, base_env=resp.env, spec=spec)
+        worker = PoolWorker(repl, base_env=resp.env, spec=spec)
+        self._live.add(worker)
+        return worker
 
     def _should_recycle(self, worker: PoolWorker) -> bool:
         if worker.commands_run >= self._max_commands:
@@ -163,6 +173,8 @@ class ReplPool:
     async def check_proof(self, code: str, timeout: float | None = None) -> ProofVerdict:
         if self._broken is not None:
             raise LeanReplError(f"pool is broken: {self._broken}")
+        if self._closed:
+            raise LeanReplError("pool is closed")
         worker = await self._idle.get()
         if worker is _POISON:
             self._idle.put_nowait(_POISON)  # chain: wake the next waiter too
@@ -175,17 +187,38 @@ class ReplPool:
         except (ReplDied, LeanReplError):
             await self._replace(worker)
             return failure_verdict("crash")
+        except asyncio.CancelledError:
+            # The caller cancelled mid-check (e.g. an outer asyncio.wait_for).
+            # The worker's REPL state is now unknowable and it is still checked
+            # out, so a size-1 pool would deadlock forever if we just let the
+            # cancellation propagate — retire and refill it before re-raising.
+            try:
+                await self._replace(worker)
+            except LeanReplError:
+                pass  # refill failed and poisoned the pool; still re-raise cancel
+            raise
         dirty = self._should_recycle(worker)
         if not dirty and worker.spec.reset_argv is not None:
             dirty = not await _run_argv_ok(worker.spec.reset_argv)
         if dirty:
             await self._replace(worker)
+        elif self._closed:
+            # close() ran while this check was in flight; do not return the
+            # worker to a dead pool (it would leak the process/container).
+            await self._retire(worker)
         else:
             self._idle.put_nowait(worker)
         return verdict(resp)
 
-    async def _replace(self, worker: PoolWorker) -> None:
+    async def _retire(self, worker: PoolWorker) -> None:
+        """Permanently stop a worker: drop it from the live set and close it."""
+        self._live.discard(worker)
         await worker.repl.close()
+
+    async def _replace(self, worker: PoolWorker) -> None:
+        await self._retire(worker)
+        if self._closed:
+            return  # a closing pool must not spawn fresh workers
         last_error: Exception | None = None
         for attempt in range(self._spawn_retries):
             try:
@@ -201,7 +234,15 @@ class ReplPool:
         raise LeanReplError(f"could not replace worker: {last_error}")
 
     async def close(self) -> None:
+        # Mark closed first so any in-flight check retires its worker on return
+        # instead of re-queueing it into a pool that is shutting down.
+        self._closed = True
         while not self._idle.empty():
             worker = self._idle.get_nowait()
             if worker is not _POISON:
-                await worker.repl.close()
+                await self._retire(worker)
+        # Terminate every still-live worker — including ones checked out by an
+        # in-flight check_proof — so no REPL process or sandbox container leaks.
+        for worker in list(self._live):
+            await worker.repl.close()
+        self._live.clear()

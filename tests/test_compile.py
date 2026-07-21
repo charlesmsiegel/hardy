@@ -45,6 +45,20 @@ def test_timeout_reported_not_raised(tmp_path):
     assert any("timed out" in e.message for e in result.errors)
 
 
+def test_timeout_enforced_after_output_closes(tmp_path):
+    # Compiler closes stdout/stderr (EOF) but keeps running — the timeout must
+    # still fire instead of blocking forever on wait().
+    result = compile_tex(
+        SOURCE,
+        tmp_path / "staging",
+        engine=FAKE_ENGINE,
+        extra_env={"FAKE_TEX_MODE": "closehang"},
+        timeout=0.5,
+    )
+    assert not result.success
+    assert any("timed out" in e.message for e in result.errors)
+
+
 def test_environment_is_scrubbed(tmp_path, monkeypatch):
     monkeypatch.setenv("HARDY_SECRET_TOKEN", "hunter2")
     result = compile_tex(

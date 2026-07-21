@@ -39,6 +39,12 @@ def test_lean_file_underscores_escaped():
     assert r"sqrt2\_irrational.lean" in doc
 
 
+def test_lean_file_all_latex_specials_escaped():
+    # A path with LaTeX metacharacters must not break the compile.
+    doc = render(formalization_status="verified", lean_file=r"a#b%c&d{e}f$g.lean")
+    assert r"a\#b\%c\&d\{e\}f\$g.lean" in doc
+
+
 def test_no_lean_line_when_absent():
     assert r"\texttt{" not in render()
 

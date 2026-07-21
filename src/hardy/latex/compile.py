@@ -214,7 +214,15 @@ def _run_capped(
             time.sleep(0.05)
             continue
         if chunk == b"":  # EOF: all writers closed
-            code = proc.wait()
+            # A process can close its pipes yet keep running; keep enforcing the
+            # deadline so it can't hang the harness past the requested timeout.
+            remaining = deadline - time.monotonic()
+            try:
+                code = proc.wait(timeout=max(0.0, remaining))
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                return None, b"".join(chunks).decode(errors="replace"), False
             return code, b"".join(chunks).decode(errors="replace"), False
         total += len(chunk)
         chunks.append(chunk)

@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from pathlib import Path
 
@@ -13,6 +14,41 @@ def make_pool(**kwargs) -> ReplPool:
     kwargs.setdefault("size", 1)
     kwargs.setdefault("argv", FAKE)
     return ReplPool(**kwargs)
+
+
+def test_nonpositive_size_rejected():
+    # size=0 would spawn no workers and hang every check on an empty queue.
+    for bad in (0, -1):
+        with pytest.raises(ValueError):
+            ReplPool(size=bad, argv=FAKE)
+
+
+async def test_cancelled_check_recycles_worker_and_pool_recovers():
+    pool = make_pool(command_timeout=30)
+    await pool.start()
+    task = asyncio.create_task(pool.check_proof("HANG", timeout=30))
+    await asyncio.sleep(0.2)  # let the check check the worker out and block
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # size-1 pool must not deadlock: the worker was retired and refilled.
+    v = await asyncio.wait_for(
+        pool.check_proof("theorem t : True := trivial"), timeout=10
+    )
+    assert v.complete
+    await pool.close()
+
+
+async def test_close_terminates_in_flight_worker():
+    pool = make_pool(command_timeout=30)
+    await pool.start()
+    task = asyncio.create_task(pool.check_proof("HANG", timeout=30))
+    await asyncio.sleep(0.2)  # worker is checked out and hanging
+    assert pool._live  # a live worker exists
+    await pool.close()  # must terminate it, not just drain the idle queue
+    v = await asyncio.wait_for(task, timeout=10)  # in-flight check must unblock
+    assert not v.complete  # its worker was killed under it
+    assert pool._live == set()  # nothing leaked
 
 
 async def test_check_proof_returns_verdict():
