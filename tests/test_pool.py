@@ -75,6 +75,25 @@ async def test_double_start_rejected():
     await pool.close()
 
 
+async def test_check_before_start_raises_not_hangs():
+    # No worker or poison is queued yet; the call must fail fast, not block.
+    pool = make_pool()
+    with pytest.raises(LeanReplError):
+        await asyncio.wait_for(
+            pool.check_proof("theorem t : True := trivial"), timeout=5
+        )
+
+
+async def test_check_after_failed_start_raises(monkeypatch):
+    pool = make_pool(imports="ERROR")  # base import is not clean -> start fails
+    with pytest.raises(LeanReplError):
+        await pool.start()
+    with pytest.raises(LeanReplError):
+        await asyncio.wait_for(
+            pool.check_proof("theorem t : True := trivial"), timeout=5
+        )
+
+
 async def test_start_after_close_rejected():
     pool = make_pool()
     await pool.start()

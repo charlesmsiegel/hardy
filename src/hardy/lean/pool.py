@@ -124,6 +124,7 @@ class ReplPool:
         self._spawn_retry_delay = spawn_retry_delay
         self._broken: Exception | None = None
         self._started = False
+        self._ready = False
         self._closed = False
         # Every worker that currently owns a process — idle OR checked out — so
         # close() can terminate in-flight workers, not just the idle queue.
@@ -169,6 +170,10 @@ class ReplPool:
             return
         for worker in workers:
             self._idle.put_nowait(worker)
+        # Only now is the pool usable; check_proof gates on this so a call
+        # before startup finishes (or after it failed) raises instead of
+        # blocking forever on a queue that will never receive a worker.
+        self._ready = True
 
     async def _spawn(self) -> PoolWorker:
         spec = self._spec_factory()
@@ -206,6 +211,8 @@ class ReplPool:
             raise LeanReplError(f"pool is broken: {self._broken}")
         if self._closed:
             raise LeanReplError("pool is closed")
+        if not self._ready:
+            raise LeanReplError("pool has not completed startup")
         worker = await self._idle.get()
         if worker is _POISON:
             self._idle.put_nowait(_POISON)  # chain: wake the next waiter too

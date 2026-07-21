@@ -153,6 +153,14 @@ async def test_double_start_rejected():
     await repl.close()
 
 
+async def test_restart_after_close_rejected():
+    # LeanRepl is single-use; restarting after close would leak sandbox cleanup.
+    repl = await make_repl()
+    await repl.close()
+    with pytest.raises(LeanReplError):
+        await repl.start()
+
+
 async def test_explicit_zero_timeout_is_honored():
     # timeout=0.0 (budget exhausted) must not fall back to the default and let
     # the command run for another default window.
