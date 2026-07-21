@@ -75,7 +75,14 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   a configured model *name*, which can silently point at updated weights and
   leave a stale index matching a different vector space). Default: a local
   sentence-embedding model (config names it), so retrieval works offline and
-  adds no per-query API cost; an API-based embedder is a config swap. Queries
+  adds no per-query API cost; an API-based embedder is a config swap — and its
+  per-query usage is **charged to the run like any model call**: metered
+  through the shared reservation/accounting path (M7's `StrategyBudget`) and
+  emitted as usage events in the `Trajectory`, since spend that bypasses the
+  meter would let a retrieval-enabled run quietly exceed the budget its
+  disabled baseline is held to, invalidating exactly the comparison this
+  milestone exists to run. The exit-criterion comparisons default to the local
+  embedder so criterion 1 measures retrieval, not embedder spend. Queries
   embed the pretty-printed goal (hypotheses + target).
 - **Index:** built offline by `scripts/build_index.py`; loaded read-only at run
   time; refuses to load when its key doesn't match the running pin/embedder

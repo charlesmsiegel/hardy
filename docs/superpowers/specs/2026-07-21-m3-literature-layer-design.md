@@ -78,7 +78,11 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   user (upstream mutation of a published version is anomalous). For that check to
   survive a fresh clone (where no old store entry exists to compare against),
   digests are also recorded **durably in a committed ledger** —
-  `papers/DIGESTS.json`, tiny, append-only, written only through `admit` — and
+  `papers/DIGESTS.json`, tiny, append-only, written only through `admit`, and
+  updated under the same interprocess-lock discipline as the bibliography (a
+  `DIGESTS.json.lock` around the read-modify-write; concurrent fetches in two
+  runs would otherwise overwrite each other's newly admitted digests and
+  silently lose the very durability the ledger exists for) — and
   every refetch verifies against it; per-result manifests additionally record the
   digests of the papers they used, so a writeup's exact inputs are auditable even
   without the store.

@@ -138,7 +138,12 @@ violation:
   content digests), since a clean SHA alone cannot identify the code that
   actually ran; dirty entries are excluded from `--compare` baselines unless
   explicitly opted in), Lean toolchain + Mathlib
-  pin, model identifier, metrics blob, and paths to per-attempt results.
+  pin, **the content digests of the worker images actually used**
+  (`hardy-lean:dev`/`hardy-tex:dev` image IDs — source-level pins cannot detect
+  a stale or differently-rebuilt image, and two runs recording identical SHAs
+  and pins can still execute different worker bytes), model identifier, metrics
+  blob, and paths to per-attempt results. `--compare` surfaces image-digest
+  mismatches between the runs it diffs.
 - `scripts/run_eval.py --compare <run-id> <run-id>` renders a metrics diff — the
   regression check is *available* from day one; wiring it into CI is deferred
   until eval runs stop needing a live model.

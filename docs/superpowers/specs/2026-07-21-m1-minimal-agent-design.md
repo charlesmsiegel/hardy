@@ -186,8 +186,12 @@ runtimes and M6 can splice Critique/Repair in between:
    tokens) expires.
    Strategy is hardcoded iterative-repair in M1; the strategy interface is M7.
 4. **Audit** (`hardy.workflows.audit`). For a complete proof: run
-   `#print axioms <name>` in the same environment the proof checked in; parse the
-   axiom list; pass iff it is a subset of `{propext, Classical.choice, Quot.sound}`
+   `#print axioms <name>` **in the environment id returned by the successful
+   `check_proof`** — the theorem exists only there; `base_env` holds just the
+   imports, so an audit forked from it could never find the declaration and
+   every success would fail its own audit. The session retains the winning
+   command's env id for exactly this purpose (ordinary checks keep forking from
+   `base_env`). Parse the axiom list; pass iff it is a subset of `{propext, Classical.choice, Quot.sound}`
    and contains no `sorryAx`. Fail → the result is demoted to *partially
    formalized* and the discrepancy recorded in the manifest (the full anti-cheat
    suite — statement diffing, suspicious-closer scan — is M2).
