@@ -125,7 +125,13 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
    agent run seeded with the plan, the subgoal's goal state, and relevant
    lessons; subgoals may run on a cheaper model (`strategy_params.subgoal_model`)
    and in parallel up to pool size (degrades to sequential when the runtime/pool
-   can't parallelize).
+   can't parallelize). Parallelism applies to the *search*, not the
+   bookkeeping: M6's blast-radius logic assumes serial patches, so discharge
+   results are committed through a **single serialized applier** — proof
+   bodies are found concurrently, but patch application, ledger transitions,
+   and scoped re-critique run one at a time in a deterministic order;
+   concurrent commits from stale document snapshots could lose a patch or
+   grade the wrong ledger state.
 4. **Assemble & verify:** discharged bodies splice into the skeleton; final
    `check_proof` on the assembled source is the only success authority (subgoal
    proofs that don't compose — e.g. metavariable leakage — reopen their holes).
@@ -210,7 +216,13 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   harness commit (refuses a dirty tree), same model, same environment, same
   item set, same `StrategyBudget`; interleaves strategy runs across the item
   list rather than running strategies back-to-back, so environmental drift
-  (model updates mid-run, machine load) can't masquerade as a strategy effect.
+  (machine load) can't masquerade as a strategy effect. Interleaving cannot
+  defend against a provider repointing a mutable model alias mid-comparison,
+  so the harness checks the **resolved immutable model revision** (M2 records
+  it) across every linked run: a revision mismatch — or a provider that can't
+  establish one — **invalidates the comparison** rather than merely being
+  surfaced; a statistically significant "win" caused by a weights update is
+  exactly what the exit criterion must not record.
 - Emits one tracking entry per strategy plus a comparison record
   (`eval_results/comparisons.jsonl`) linking them: per-strategy solve rate,
   cost per solve, budget utilization — the logged per-strategy comparison the

@@ -86,7 +86,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   meter would let a retrieval-enabled run quietly exceed the budget its
   disabled baseline is held to, invalidating exactly the comparison this
   milestone exists to run. The exit-criterion comparisons default to the local
-  embedder so criterion 1 measures retrieval, not embedder spend. Queries
+  embedder so criterion 1 measures retrieval, not embedder spend — and local
+  retrieval compute is **not free either**: embedding and matrix-scan CPU is
+  measured per query and recorded as retrieval CPU in the trajectory, counted
+  into the comparison's cost side (M7's meter and M2's cost metric otherwise
+  cover only Lean CPU, and a retrieval win that omits its own main added
+  computation isn't a win). Queries
   embed the pretty-printed goal (hypotheses + target).
 - **Index:** built offline by `scripts/build_index.py`; loaded read-only at run
   time; its key is `(mathlib_rev, corpus content digest, embedder identity)` —
@@ -158,9 +163,13 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   Blocking benchmark *writes* doesn't stop read-side contamination: an
   ordinary run may already have distilled a proof whose statement matches a
   benchmark item, and a benchmark run reading that snapshot would receive the
-  answer whole. **Benchmark-mode recall therefore filters out any entry whose
-  statement matches the loaded benchmark corpus** (checked against the M2
-  corpus digest set); if a match nonetheless reaches an attempt, the attempt
+  answer whole. **Benchmark-mode recall therefore filters on source-theorem provenance, for
+  every entry kind**: any entry — `proved_lemma`, `tactic_pattern`, or
+  `domain_trick` — whose provenance traces to a theorem in the loaded
+  benchmark corpus is excluded (statement matching alone only covers lemmas;
+  a goal-specific tactic sequence or distilled lesson from a previously
+  solved benchmark item is the same contamination without a `statement`
+  field); if a match nonetheless reaches an attempt, the attempt
   is marked contaminated and excluded from headline solve metrics — a flag
   that still counts toward pass@k would just be contamination with a label.
 - **Held-out transfer protocol:** `compare_configs.py` gains a two-phase
