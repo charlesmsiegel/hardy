@@ -178,7 +178,12 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   (labels, or `all`), runs fetch (M3) → extract → mint (eager, selection only) →
   review → lint → build package → manifest. **Chained mode** — exposes
   `ensure_axiom(paper, label)` used by Prove/Repair: extract (cached) → mint that
-  item lazily → review → lint → rebuild. Prove sees assumed axioms only through
+  item lazily → review → lint → rebuild — with **the caller's shared run meter
+  passed through the whole chain**: extraction, minting, and review are agent
+  runs, and per-invocation caps that reset inside `ensure_axiom` would let an
+  assumed-paper proof spend multiples of its configured token/turn/cost/wall
+  budget through nested calls; every nested model call and Lean command
+  reserves from and settles against the caller's remaining allowance. Prove sees assumed axioms only through
   `ensure_axiom`, keeping the trusted surface limited to first use. The whole
   mint → review → lint → publish transaction is **serialized per namespace**
   (an interprocess lock on `Papers/<Key>.lock`, same discipline as the M3
@@ -200,8 +205,12 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   one rename at a time, and a crash mid-sequence would leave workers importing
   oleans inconsistent with the live source or a registry pointing at a
   half-published namespace: each publish materializes a complete versioned
-  generation directory (source, manifests, registry, oleans) and flips one
-  pointer (symlink or generation file) to it atomically; workers resolve the
+  generation directory (source, manifests, registry, oleans), **fsyncs the
+  generation tree and its parent directory, then** flips one pointer (symlink
+  or generation file) to it atomically and fsyncs the pointer's parent before
+  publication succeeds — an atomic flip alone doesn't order or persist the
+  staged data, and a crash around it could leave workers resolving a missing
+  or partially written generation; workers resolve the
   pointer at lease time and hold their generation for the lease's duration;
   stale generations are garbage-collected once unreferenced.
 - `assume_paper` tool wraps standalone mode; `list_assumptions` renders library
@@ -229,8 +238,15 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   with a copy-back allowlist is not enough, because elaborator-time IO in one
   generated module could overwrite a *different* module's already-built olean
   under an allowlisted filename — per-module isolation pins each elaboration's
-  blast radius to exactly the artifact it legitimately produces. On success
-  the staged copy is discarded. Workers then mount the updated package read-only.
+  blast radius to exactly the artifact it legitimately produces. Admission
+  goes one step further: the generated process necessarily has write access
+  to its *own* output directory, so a `run_tac` or spawned child could
+  rewrite the serialized olean *after* the checked elaboration — the host
+  therefore **verifies each admitted olean by re-importing it in a fresh
+  sandbox and diffing the resulting environment against the reviewed
+  allowlist** before publication; the artifact the workers import is the one
+  that passed that check, not merely the one the build left behind. On
+  success the staged copy is discarded. Workers then mount the updated package read-only.
   **Lazy minting also has an environment lifecycle, not just a filesystem
   one**: a worker's base environment fixed its imports at spawn, so a rebuilt
   package alone leaves `import Papers.<Key>` unavailable to the proving

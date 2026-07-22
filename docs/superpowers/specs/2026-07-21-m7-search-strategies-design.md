@@ -194,7 +194,11 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   to their environment — so each snapshot carries the **harness-owned
   declaration prefix** (the ordered commands that built its environment beyond
   base imports: skeleton `have`s, generated helper definitions, assumed-paper
-  imports) plus a hash of that prefix. Migration replays the prefix on the
+  imports) plus a hash of that prefix — **and the base package generation id**
+  (M4): replaying the prefix cannot recreate the environment if a destination
+  lease resolves a *newer* `Papers.*` generation than the one the pickle was
+  made under, so destination leases pin the snapshot's generation, and an
+  intentional mid-run generation upgrade restarts the frontier explicitly. Migration replays the prefix on the
   destination lease and verifies the hash *before* `unpickleProofStateFrom`;
   transferring the pickle alone would make nodes referencing skeleton helpers
   fail or silently behave differently on a pristine worker. A node whose

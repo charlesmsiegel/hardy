@@ -161,6 +161,11 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
 - `read(stored: StoredPaper, section: str | None, offset: int, limit: int) ->
   ReadResult` — when LaTeX source exists, serve it section-chunked (split on
   `\section`/`\subsection`, math source intact); otherwise extracted PDF text, page-chunked.
+  **LaTeX-source indexing runs under the same resource-limited subprocess
+  contract as PDF extraction** (rlimits, wall-clock kill, bounded input,
+  output through the hard byte quota): the source is admitted
+  untrusted-archive content, and a near-quota `.tex` file or pathological
+  section markers could otherwise exhaust the harness process during parsing.
   PDF parsing treats the file as untrusted input (it came from the network,
   chosen by the agent): extraction runs in a **resource-limited subprocess**
   (rss/cpu rlimits, wall-clock kill, bounded input size and page count) — a
