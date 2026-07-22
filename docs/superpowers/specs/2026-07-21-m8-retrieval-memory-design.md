@@ -73,10 +73,13 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   worker environment is not involved at query time.
 - **Embedding backend:** `Embedder` protocol (`embed_batch(texts) ->
   vectors`, plus an identity that keys the index — and the identity is
-  **immutable by construction**: a digest of the model weights (or the
-  provider's model revision id when weights aren't local) plus the
-  preprocessing/normalization parameters and embedder-code version, never just
-  a configured model *name*, which can silently point at updated weights and
+  **immutable by construction**: a content hash over **every
+  inference-relevant artifact** — model weights, tokenizer
+  vocabulary/merges, model and pooling configuration files (a tokenizer or
+  pooling change shifts the vector space with the weights file untouched) —
+  or the provider's model revision id when the model isn't local, plus the
+  preprocessing/normalization parameters and embedder-code version, never
+  just a configured model *name*, which can silently point at updated weights and
   leave a stale index matching a different vector space). Default: a local
   sentence-embedding model (config names it), so retrieval works offline and
   adds no per-query API cost; an API-based embedder is a config swap — offline builds with it
@@ -241,7 +244,13 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
 - Policy, not adapter magic: when a run's context (tracked per-adapter via
   `Trajectory` usage events) crosses a configured threshold, the oldest
   completed segments (attempt cycles, tool-call bursts) are replaced by a
-  structured summary produced by a cheap summarization call. Harness-owned
+  structured summary produced by a cheap summarization call — which is a model
+  call like any other: it reserves from the shared run meter (turns, tokens,
+  cost) before it starts and records its usage in the trajectory, and
+  framework-native compaction is charged the same way where its usage is
+  observable; an unmetered summarizer would hand the summarized arm extra
+  model work beyond the unsummarized arm's budget and manufacture a spurious
+  criterion-3 win. Harness-owned
   state — the goal statement, current open goals/hypotheses, active lesson
   list, and standing constraints (budgets, statement immutability) — is
   **never entrusted to the summary at all**: the harness holds those fields

@@ -207,10 +207,15 @@ Critique must accept "any proof", so both workflows operate on one structure:
   is appended first — carrying the expected **pre-image hash, post-image
   hash, and a durable copy of the patch (or post-image)**, since a patch hash
   alone can neither be compared against the resulting document nor recreate
-  the intended one — then the document publishes (temp-file + rename), then
-  the *commit* event; replay after a crash compares the on-disk document hash
-  against the intent's pre/post hashes to decide state, and completes the
-  transaction from the stored patch or rolls it back. Two separate files "committing
+  the intended one — then — **only after the intent is flushed and fsynced to
+  durable storage** — the document publishes (temp-file + rename, itself
+  fsynced with its directory), then the *commit* event, likewise fsynced.
+  Append *ordering* alone is not crash atomicity: a buffered intent lost in a
+  host crash after the rename would leave a patched document with no journal
+  record, and replay would grade the mutated proof under pre-patch statuses.
+  Replay compares the on-disk document hash against the intent's pre/post
+  hashes to decide state, and completes the transaction from the stored patch
+  or rolls it back. Two separate files "committing
   together" is otherwise wishful — a crash between the writes would leave
   document and ledger describing different repair states. Any change → nothing persists, and the run stops with outcome
   `revised_claim(new_claim)`: reported as such, re-entering the loop as a new

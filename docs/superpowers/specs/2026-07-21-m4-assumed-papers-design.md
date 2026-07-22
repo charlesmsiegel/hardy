@@ -103,8 +103,13 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   classified before publication**: only the requested `axiom` plus explicitly
   declared support definitions are allowed, and *every* `axiom`/`opaque` in
   the file — not just the requested one — must have its own review and
-  manifest entry. A clean `lake build` is no gate against a smuggled helper
-  axiom widening the importable trust surface unreviewed.
+  manifest entry. Classification is checked against the **elaborated
+  environment, not the surface syntax alone**: the build diffs the
+  environment after elaborating the file against the pre-build environment,
+  and every newly added declaration must match the reviewed allowlist —
+  elaboration-time metaprogramming (`run_tac` in an allowed definition) can
+  mint declarations no parser sees. A clean `lake build` is no gate against a
+  smuggled helper axiom widening the importable trust surface unreviewed.
 - Elaboration gate: the generated file must build (against Mathlib + previously
   minted items in the same namespace) via the pool before review; failures are
   retried bounded times, then the item is recorded `skipped(reason)` in the

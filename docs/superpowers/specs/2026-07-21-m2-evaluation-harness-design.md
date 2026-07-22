@@ -96,6 +96,12 @@ violation:
 - `EvalConfig(run_config: RunConfig, attempts_per_item: int, item_timeout_s: float,
   parallelism: int, benchmark: str, split: str)` — pydantic, fully serializable
   (its canonical-JSON SHA-256 is the config hash).
+- **The worker image is resolved to one immutable digest at run start** and
+  every worker — including replacements spawned mid-run by pool recycling —
+  launches by that digest, never by the mutable `hardy-lean:dev` tag: a tag
+  repointed mid-eval would mix worker generations inside one "baseline", and
+  recording the mixture afterward can't un-aggregate it. A run that
+  nonetheless observes multiple digests for one worker role is invalidated.
 - **Model-generated attempts run only on sandboxed workers**: the runner
   refuses a direct-worker pool for eval attempts (direct workers execute
   model-generated Lean as an ordinary host process, where elaborator-time IO
