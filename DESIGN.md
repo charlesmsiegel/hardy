@@ -434,7 +434,37 @@ same way. In order of preference:
   `pids.max` limit (and minimal capabilities), so spawned child processes cannot
   exhaust host PIDs and disrupt other workers before timeout cleanup.
 - **Docker image** with toolchain + Mathlib cache baked in, for CI and for anyone
-  reproducing results.
+  reproducing results. Images are **built by CI (Nix on Linux runners) and
+  published digest-pinned** to a container registry; users only ever
+  `docker pull`. Nix is a maintainer/CI tool, never a user-facing requirement —
+  it has no native Windows port, so requiring users to run `nix-build` would
+  silently reintroduce a WSL requirement (see platform support below). The
+  no-network discipline is about the image *contents* (pure Nix-store build, no
+  fetches at build time) and the container *runtime* (egress-locked); pulling a
+  digest-pinned image is a distribution channel and violates neither.
+- **Platform support — WSL is never required.** Much of the target audience
+  (working mathematicians) runs Windows without WSL, so Hardy supports Linux,
+  macOS, and **native Windows** as development and usage platforms, tiered:
+  - *Unit tier and the agent loop*: pure Python — all three platforms, enforced
+    by a Windows CI job alongside the Linux one.
+  - *Lean tier*: `elan`/`lake`/Mathlib and `leanprover-community/repl` all ship
+    native Windows support; setup scripts must be cross-platform (Python entry
+    points — `scripts/*.py`; a `.sh` may exist only as an optional convenience
+    wrapper, never the sole path).
+  - *Sandbox tier*: requires a Linux-container runtime. Any Docker backend
+    satisfies it — on Windows, Docker Desktop's Hyper-V backend suffices, so
+    Hardy itself never requires WSL; a user whose Docker happens to use the
+    WSL2 backend is equally fine, but that is their Docker's choice, not
+    Hardy's requirement. Where no container runtime exists, every sandbox
+    consumer must degrade explicitly (clearly labeled unsandboxed dev mode or
+    a skipped tier), never silently.
+  - *Known POSIX-only debts (M0 code)*, tracked to be paid down before native
+    Windows is claimed as validated rather than intended: the local-engine TeX
+    plumbing in `hardy/latex/compile.py` (`os.killpg`, `selectors` on pipes,
+    `os.set_blocking`) is POSIX-only; directory-fsync durability in results
+    publication is a POSIX property (Windows degrades to rename atomicity
+    without directory fsync, documented); `scripts/setup_lean.sh` needs its
+    Python port.
 
 ## Component 8: Evaluation Harness
 
