@@ -248,9 +248,13 @@ writeup). Phase budget splits are config, but the sum is the cap.
    proof exists), `manifest.json` (statement, grades, axiom audit result,
    faithfulness verdict, budgets spent, trajectory reference), and the trajectory
    itself as JSONL. The `.tex` and `.lean` cross-link by relative path.
-   Publication is **collision-free and atomic**: the run writes its complete
-   artifact set into a unique run-id-suffixed staging directory and publishes
-   it with one rename; two Prove requests deriving the same slug (or a crash
+   Publication is **collision-free, atomic, and durable**: the run writes its
+   complete artifact set into a unique run-id-suffixed staging directory,
+   fsyncs every staged file and the staging directory, publishes with one
+   rename, and fsyncs the parent results directory before publication counts
+   as complete — rename atomicity alone doesn't persist contents, and a host
+   crash could otherwise resurface a "successful" run with a truncated
+   manifest or lose it entirely; two Prove requests deriving the same slug (or a crash
    mid-persist) must never interleave files from different runs or leave a
    partial set under a shared path — a colliding slug publishes as
    `results/<slug>-<run-id>/` rather than overwriting.
