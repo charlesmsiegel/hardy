@@ -237,9 +237,13 @@ writeup). Phase budget splits are config, but the sum is the cap.
    its harness-owned status block exactly like a hostile model field —
    flagged as informally stated. Bounded compile-and-repair
    retries; on exhaustion, ship the minimal compile-checked failure report
-   (known-good template: status, errors, failing source attached) — LaTeX-always
-   holds even when the generated document never builds, and the run is graded
-   failed.
+   (known-good template: status, errors, failing source attached — the failing
+   source and the compiler errors derived from it are untrusted, so both
+   render through the same escape-proof character encoding as the
+   formal-statement listing; attached raw, an `\end{verbatim}` inside them
+   would escape the attachment and reproduce in the failure report the very
+   injection it exists to survive) — LaTeX-always holds even when the
+   generated document never builds, and the run is graded failed.
 6. **Persist.** `results/<slug>/`: `<slug>.tex`, `<slug>.lean` (when a checked
    proof exists), `manifest.json` (statement, grades, axiom audit result,
    faithfulness verdict, budgets spent, trajectory reference), and the trajectory

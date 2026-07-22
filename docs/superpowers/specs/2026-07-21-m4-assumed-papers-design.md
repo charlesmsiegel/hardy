@@ -117,8 +117,12 @@ papers_lean/     — the Lean package of assumed libraries (committed)
 
 - Reuses the M1 skeptic pattern: an independent agent run (own prompt
   `axiom_faithfulness_v1`; different model when config provides one) sees
-  **the original stored-paper excerpt** (the section/page the inventory item
-  points at, served via `read_paper`), the inventory's statement text, *and*
+  **the original stored-paper excerpt — located independently on the harness
+  side** (a trusted search for the numbered result label in the stored
+  source, with bounded surrounding context; *not* the `page_or_section`
+  pointer from the extraction output, which the extraction agent controls
+  and could aim at a narrower passage that hides the very hypothesis it
+  dropped), the inventory's statement text, *and*
   the minted Lean, and returns `faithful | flagged(reason)` per axiom —
   checking the chain at both links: inventory-vs-paper (the extraction agent
   can paraphrase or drop a hypothesis, and a review comparing Lean only
@@ -235,7 +239,12 @@ papers_lean/     — the Lean package of assumed libraries (committed)
 - Writeups: when the axiom manifest is non-empty, the template's status block
   reads *verified modulo assumed paper results* and a generated "Assumptions"
   paragraph states them in prose with `\cite` (M3): "assuming Theorem 3.2 of
-  [smith2023modular]".
+  [smith2023modular]". Inventory labels are model-controlled text: they are
+  validated against a strict grammar at storage time (`Theorem|Lemma|
+  Proposition|Corollary|Definition <number>`) *and* rendered through M1's
+  confined text representation — a label like `Theorem 3.2\end{document}`
+  would otherwise truncate a successfully proved writeup ahead of its
+  harness-owned content.
 
 ## Key decisions and rationale
 
