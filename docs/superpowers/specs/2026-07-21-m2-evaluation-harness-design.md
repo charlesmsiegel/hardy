@@ -166,8 +166,12 @@ violation:
   *plus the resolved immutable revision* (provider-reported model version /
   response system fingerprint) where the provider exposes one, since a mutable
   alias can re-point to new weights between two runs that record identical
-  code, images, and config; runs whose provider exposes no immutable identity
-  are marked as such so comparisons can segregate them — metrics blob,
+  code, images, and config. The revision is **accumulated per response, not
+  sampled once per run**: an alias can be repointed *mid-run*, and a single
+  run-level value could retain one fingerprint while attempts actually spanned
+  two sets of weights — a run whose responses carry more than one revision is
+  invalidated for baselines and comparisons; runs whose provider exposes no
+  immutable identity are marked as such so comparisons can segregate them — metrics blob,
   **a canonical digest of the loaded benchmark corpus** (item ids, headers,
   statements, domains, splits — `load_custom` files live outside the repo, so
   the harness SHA and config hash can stay identical across materially
