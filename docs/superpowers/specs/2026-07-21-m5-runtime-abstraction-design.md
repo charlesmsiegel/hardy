@@ -54,7 +54,12 @@ hardy/agent/
   contain **no URL userinfo and no credential-bearing query parameters**
   (`user:pass@host`, `?api_key=…`), since the endpoint sits outside the
   `provider_params` secret scan yet lands in the persisted `EvalConfig`;
-  endpoint credentials come from `provider_secrets` via `env:` references),
+  endpoint credentials come from `provider_secrets` via `env:` references —
+  and the same URL validation applies **recursively to every URL-valued field
+  inside `provider_params`**, since an untyped provider's nested endpoint
+  with userinfo or an `api_key` query parameter matches neither credential
+  field names nor token shapes yet would land verbatim in the persisted
+  record),
   two **typed, separated** provider fields (one dict would force a choice
   between leaking secrets and hashing away behavior): `provider_params: dict` —
   non-secret knobs (model/deployment ids, region, endpoint, temperature,
