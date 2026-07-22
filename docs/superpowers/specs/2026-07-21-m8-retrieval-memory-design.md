@@ -125,7 +125,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   provenance, and comparison runs refuse a mismatch (a local binary built
   against a different revision varies the candidate set across machines while
   every recorded pin looks identical); its hits pass the same pinned-corpus
-  validation as the public path. Falls back to the public API behind a
+  validation as the public path — and that validation **canonicalizes, not
+  just name-checks**: every accepted hit is re-resolved to the pinned
+  corpus's own signature and docstring before ranking (a name present in both
+  revisions can carry a changed signature, and showing the agent the rolling
+  service's type wastes proof budget on a term that cannot elaborate
+  locally). Falls back to the public API behind a
   `network` capability flag with the M3-style rate limiting. The public service indexes a rolling
   Mathlib revision, not our pin, so its hits are **validated against the
   pinned corpus before ranking** — a declaration name absent from the local
@@ -156,7 +161,13 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   it can never capture a torn prefix of a concurrent write — concurrent
   successful runs distilling together are the normal case, and an
   inconsistent snapshot would make recorded snapshot ids nondeterministic.
-  Every entry carries provenance (source run id, theorem, config hash) and entry kind:
+  Every entry carries provenance — **transitively**: an entry distilled from
+  a run that *consulted* other memory entries records those entries' lineage
+  too (equivalently, a benchmark-source taint propagates into every derived
+  entry), and the benchmark filter excludes an entry when *any ancestor*
+  traces to the corpus, not just its immediate source theorem — otherwise an
+  ordinary run on theorem C could recall a B-derived entry, distill a lesson
+  from it, and hand the laundered answer back to a benchmark run as clean — (source run id, theorem, config hash) and entry kind:
   - `proved_lemma` — statement + proof source of harness-proved auxiliary
     lemmas (M7 sketch subgoals are the main producers), **together with the
     environment it elaborates in**: required imports, transitive local
