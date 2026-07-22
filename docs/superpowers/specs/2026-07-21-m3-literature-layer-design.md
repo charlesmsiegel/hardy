@@ -78,11 +78,16 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   StoredPaper` — extraction and digesting happen in an isolated temp directory;
   the completed entry is `rename()`d into place (atomic admission); a partially
   admitted entry can never be observed. Admission and digest publication are
-  **jointly crash-safe**: holding the ledger lock, `admit` first appends a
-  *pending* ledger record (id, version, digest), then renames the entry into
-  place, then marks the record committed — recovery under the same lock
-  reconciles the two (pending + entry present → commit; pending + no entry →
-  drop). Rename-then-publish without the journal would let a crash strand an
+  **jointly crash-safe**, and the ledger itself is physically so: it is an
+  **event journal** — complete, individually fsynced JSONL appends (a
+  *pending* event, then a *committed* event), never an in-place rewrite,
+  which a crash could truncate into an unparsable file that loses the durable
+  history for every stored version (the lock serializes writers but protects
+  nothing against a crash mid-write). Holding the ledger lock, `admit` first
+  appends the pending event (id, version, digest), then renames the entry
+  into place, then appends the committed event — recovery under the same lock
+  reconciles journal state against the store (pending + entry present →
+  append committed; pending + no entry → superseded). Rename-then-publish without the journal would let a crash strand an
   admitted entry whose digest never becomes durable, and the no-refetch rule
   would preserve that hole forever; publish-then-rename would bless digests
   for entries that don't exist.

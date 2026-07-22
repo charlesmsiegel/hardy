@@ -222,8 +222,13 @@ writeup). Phase budget splits are config, but the sum is the cap.
    informal completeness *not assessed*). When a formal statement exists, the
    writeup's stated theorem is **rendered from the Lean statement** (single source
    of truth, DESIGN output contract) — concretely in M1: the template's theorem
-   block typesets the Lean statement verbatim in a listing alongside an informal
-   restatement the skeptic verified, and the manifest records the statement hash
+   block typesets the Lean statement in a listing rendered through an
+   **escape-proof representation** (each character emitted via text-mode
+   escaping, never raw inclusion in a verbatim environment) — the formalizer's
+   output stays untrusted even after elaboration and faithfulness review, and
+   a Lean comment or raw string containing `\end{lstlisting}` would otherwise
+   terminate the container and inject TeX ahead of the harness-owned status
+   block — alongside an informal restatement the skeptic verified, and the manifest records the statement hash
    so any later drift between artifacts is detectable; a not-formalized run
    preserves the user's claim verbatim *in content* but renders it through
    the same confined representation as model-authored fields — the user's
