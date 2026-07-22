@@ -60,18 +60,25 @@ version of the whole plan.
 
 ## Status
 
-**M0 (plumbing) complete.** A pinned Lean 4 + Mathlib project, a warm REPL
-session pool with base-environment isolation, a LaTeX template +
-compile-check pipeline, and the no-network/read-only sandbox around both —
-unit-tested (Python) and integration-tested against the real Lean toolchain.
+**M0 (plumbing) — code complete, exit criterion partly validated.** A pinned
+Lean 4 + Mathlib project, a warm REPL session pool with base-environment
+isolation, a LaTeX template + compile-check pipeline, and the
+no-network/read-only sandbox around both — unit-tested (Python) and
+integration-tested against the real Lean toolchain.
 
-M0 exit criterion **met**:
+Exit criterion progress (both halves must run **inside the sandbox** to close
+M0):
 
-- **Throughput:** 200/200 proofs verified in ~1 s against 8 warm sessions —
-  **~11,900 proofs/minute** (`scripts/bench_throughput.py`), far past the
-  100/minute bar.
-- **Writeup:** the sample writeup compile-checks to a real PDF, both directly
-  and **inside the sandbox** (`scripts/sample_writeup.py [--sandbox]`).
+- **Throughput — validated directly, sandboxed run pending.** 200/200 proofs
+  verified in ~1 s against 8 warm sessions — **~11,900 proofs/minute**
+  (`scripts/bench_throughput.py`), far past the 100/minute bar. The sandboxed
+  form (`--sandbox`) still needs the `hardy-lean:dev` image built (see below),
+  so this clause is **not yet closed**.
+- **Writeup — validated, including sandboxed.** The sample writeup
+  compile-checks to a real PDF both directly and **inside the sandbox**
+  (`scripts/sample_writeup.py [--sandbox]`).
+
+M0 is **not complete** until `bench_throughput.py --sandbox` also passes.
 
 ### Reproducing it
 
@@ -83,12 +90,14 @@ release downloads. Then:
 pip install -e .            # the scripts import `hardy` from src/
 scripts/setup_lean.sh       # build lean_project (Mathlib) + the repl
 pytest -m lean              # real-toolchain integration tests
-scripts/bench_throughput.py --imports "import Mathlib.Tactic"   # throughput
-nix-build nix/tex-image.nix && docker load < result            # hardy-tex:dev
-scripts/sample_writeup.py --sandbox                            # sandboxed writeup
+scripts/bench_throughput.py --imports "import Mathlib.Tactic"   # direct throughput
+nix-build nix/tex-image.nix  && docker load < result           # hardy-tex:dev
+nix-build nix/lean-image.nix && docker load < result           # hardy-lean:dev (large)
+scripts/bench_throughput.py --sandbox                          # sandboxed throughput
+scripts/sample_writeup.py    --sandbox                         # sandboxed writeup
 ```
 
 The sandbox images are built from the Nix store (`nix/`, no Docker Hub /
-GitHub releases). The sandboxed throughput run additionally needs
-`hardy-lean:dev` (`nix/lean-image.nix`), which bakes full Mathlib's oleans
-and so wants a host with generous disk. Next: **M1 (minimal agent)**.
+GitHub releases). `hardy-lean:dev` bakes full Mathlib's oleans, so it wants a
+host with generous disk; that is the last step to close M0's throughput
+clause. Then: **M1 (minimal agent)**.
