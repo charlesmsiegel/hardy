@@ -96,6 +96,13 @@ violation:
 - `EvalConfig(run_config: RunConfig, attempts_per_item: int, item_timeout_s: float,
   parallelism: int, benchmark: str, split: str)` — pydantic, fully serializable
   (its canonical-JSON SHA-256 is the config hash).
+- **Model-generated attempts run only on sandboxed workers**: the runner
+  refuses a direct-worker pool for eval attempts (direct workers execute
+  model-generated Lean as an ordinary host process, where elaborator-time IO
+  — `#eval`, `run_tac`, spawned children — can touch the repository,
+  credentials, and network; hashing the binary measures it, it doesn't
+  contain it). Direct workers remain for trusted tests and benchmarking
+  harness code only.
 - For each item × attempt: run the Prove workflow in **benchmark mode** — the
   formalize + faithfulness phases are *skipped* (the statement is given verbatim;
   formalizing it would violate immutability), the writeup phase is skipped, and

@@ -75,7 +75,12 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   lock wins; everyone else reads the elected inventory. The cache lives
   **outside the admitted paper entry**, in a derived-data layer
   (`papers/_derived/<id>v<N>/inventory.json`, keyed additionally by extractor
-  version): M3 defines admitted entries as immutable after atomic admission, so
+  version) — and each **namespace manifest pins the content hash of the one
+  inventory its declarations were minted from**: an extractor upgrade electing
+  a fresh inventory must not let new labels mint from it while live axioms
+  rest on the old one (a single namespace whose reviewed declarations don't
+  share a source inventory), so a namespace either keeps its pinned inventory
+  or is rebuilt and re-reviewed wholesale as a new generation: M3 defines admitted entries as immutable after atomic admission, so
   writing into one would break the store's digest guarantees (and read-only
   deployments). The inventory is *informal* (verbatim statement text); no Lean
   yet.

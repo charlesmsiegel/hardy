@@ -282,9 +282,12 @@ Critique must accept "any proof", so both workflows operate on one structure:
 - **Claim immutability enforced by diff, not by trust.** The repair prompt says
   "never change the claim," but the guard is mechanical — prompts are not
   guarantees (same philosophy as M2 anti-cheat).
-- **Dismissal requires a recorded justification.** DESIGN says dismissed =
-  *disproven*, and the blast-radius rule needs the justification text to decide
-  regression; making it a required field keeps both honest.
+- **Dismissal requires recorded justification and evidence — as audit
+  history only.** DESIGN says dismissed = *disproven*, so the disproof and
+  its verification evidence are required fields; they are never an
+  *invalidation input* (blast-radius regression reopens intersecting
+  dismissals unconditionally — a wording-based predicate was considered and
+  rejected as unsound).
 - **Deterministic hole selection.** The loop must converge or stop honestly;
   deterministic ordering makes runs reproducible and no-progress attributable.
 

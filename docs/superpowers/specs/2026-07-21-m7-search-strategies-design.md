@@ -203,9 +203,12 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
 - The first `check_proof` success makes its branch the **provisional** winner:
   other branches *pause* (no new calls launched) while the candidate runs the
   full downstream validation — axiom audit and, in eval, anti-cheat. Only a
-  fully validated winner cancels the rest; a rejected candidate (say, a
-  `native_decide` proof failing the audit) resumes the paused branches instead
-  of having already killed an honest proof still in flight. (Cancellation
+  fully validated, **unflagged** winner cancels the rest: a rejected candidate
+  resumes the paused branches, and a candidate that validates but carries
+  suspicious-closer flags (M2 classifies `native_decide` as a warning, not an
+  automatic failure) also resumes them — it is retained as the *fallback*
+  result if budget expires without an unflagged proof, so a flagged win never
+  discards an in-flight clean one. (Cancellation
   itself is safe: workers are recycled by the pool's existing discipline.) A cancelled branch's
   **in-flight model call keeps its full reservation** unless provider-confirmed
   final usage arrives — task cancellation doesn't necessarily stop provider-side
