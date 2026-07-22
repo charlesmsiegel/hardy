@@ -127,8 +127,12 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   benign formatting preserved; control sequences that define, redirect, or
   terminate structure rejected or escaped) — successful BibTeX *parsing* is
   not sanitization.
-- `Bibliography.load(path)` / `.save(path)` via `bibtexparser`; save is atomic
-  (temp file + rename) and normalizes formatting so diffs stay reviewable. The
+- `Bibliography.load(path)` / `.save(path)` via `bibtexparser`; save is atomic **and durable**
+  (temp file written complete, fsynced, renamed, parent directory fsynced
+  before `cite` reports success — results and manifests may already
+  reference the newly minted key, and a crash that loses the rename would
+  leave a canonical bibliography that can no longer rebuild their writeups)
+  and normalizes formatting so diffs stay reviewable. The
   whole load → dedup/mint → save transaction runs under an **interprocess file
   lock** (`references.bib.lock`): atomic rename protects readers from partial
   files but does not serialize concurrent writers — two parallel runs calling
