@@ -93,7 +93,10 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   `StrategyBudget`'s CPU allowance covers Lean *and* retrieval compute) —
   merely reporting it afterward would let the retrieval-on arm consume extra
   host CPU outside the supposedly equal budget and attribute the resulting
-  win to retrieval. It is likewise counted into the comparison's cost side. Queries
+  win to retrieval. Like M7's Lean CPU, the reservation is **enforced during
+  the query**: local embedding/scan work runs under a per-query allowance
+  (bounded worker with a kill at the allowance) — a query launched with 10 ms
+  remaining must not complete a full scan before the meter ever observes it. It is likewise counted into the comparison's cost side. Queries
   embed the pretty-printed goal (hypotheses + target).
 - **Index:** built offline by `scripts/build_index.py`; loaded read-only at run
   time; its key is `(mathlib_rev, corpus content digest, embedder identity)` —
@@ -152,7 +155,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
     pristine environment, wasting the attempt; recall validates the stored
     environment against the current one and skips incompatible entries;
   - `tactic_pattern` — goal-shape → tactic-sequence pairs mined from successful
-    trajectories;
+    trajectories, carrying the **same elaboration-environment metadata as
+    proved lemmas** for any sequence naming constants beyond base Mathlib —
+    distillation records the referenced helpers/paper axioms/notation, recall
+    validates compatibility, and sequences whose environment can't be
+    established are filtered at distillation (an executable pattern that
+    can't elaborate in a pristine environment just burns search budget);
   - `domain_trick` — distilled prose lessons (M7 `lessons.py` output promoted
     post-run when the run succeeded).
   Snapshots are the versioned artifact the exit criterion names: a run's
@@ -204,7 +212,11 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   Phase 2 — *comparison* — evaluates held-out set B from the same domain
   against that frozen snapshot, memory-on vs. memory-off, contemporaneously and
   strictly read-only. Set membership for both phases is recorded in the
-  comparison record so A∩B = ∅ is checkable, not asserted.
+  comparison record, and disjointness is enforced over **canonical statement
+  hashes as well as item ids** — two ids for the same Lean statement would
+  pass an id-only check while phase A distills the exact proof phase B then
+  replays; any exact-statement hit that still occurs is excluded from the
+  transfer headline as contamination.
 
 ### Context summarization (`hardy/agent/summarize.py`)
 
