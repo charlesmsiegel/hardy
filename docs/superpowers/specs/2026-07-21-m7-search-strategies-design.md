@@ -59,9 +59,14 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
 
 - `Strategy` protocol: `async prove(goal: ProveGoal, session_factory, runtime,
   config, budget: StrategyBudget, validate) -> StrategyResult`, where
-  `validate: async (candidate_source, session) -> Verdict` is a
+  `validate: async (candidate_source, session, events) -> Verdict` is a
   **harness-owned downstream validator** (M1 axiom audit, plus anti-cheat in
-  eval) injected into the seam: parallel strategies need it to hold sibling
+  eval) injected into the seam — `events` is the producing branch's event
+  stream, passed *at validation time*: the suspicious-closer scan covers the
+  tactic trajectory as well as the source (a `native_decide` invoked via
+  `run_tactic` may not appear literally in the final source), and strategy
+  events otherwise reach the run trajectory only in the returned
+  `StrategyResult`, after siblings were already cancelled: parallel strategies need it to hold sibling
   branches paused until a provisional winner passes validation, and without
   the callback they could only return the candidate (ending the invocation and
   killing the siblings) or hard-code the audit path themselves.

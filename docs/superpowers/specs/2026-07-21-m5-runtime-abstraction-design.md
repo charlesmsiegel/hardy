@@ -109,9 +109,14 @@ hardy/agent/
 
 - Maps `ToolRegistry` → Strands tool specs (name, description, JSON schema —
   pydantic already produces the schema; handlers are wrapped async callables).
-- Maps the Strands event stream → `Trajectory` events; enforces `max_turns` and
-  wall-clock exactly as the SDK adapter does (adapter-owned budget enforcement is
-  part of the protocol contract, tested by the shared conformance suite below).
+- Maps the Strands event stream → `Trajectory` events; enforces **all four
+  budget dimensions** exactly as the SDK adapter does — `max_turns`,
+  wall-clock, and `max_tokens_total`/`max_cost_usd` through the same pre-call
+  reservation and settlement path (adapter-owned budget enforcement is part
+  of the protocol contract, tested by the shared conformance suite below;
+  naming only two dimensions here would license a Strands implementation
+  that overspends tokens or money and invalidates the fixed-budget M2/M7/M8
+  comparisons).
 - Model selection flows through Strands' provider mechanism from the two
   typed fields defined above: the adapter passes `provider_params` verbatim
   and merges in `provider_secrets` **after resolving their `env:` references**
