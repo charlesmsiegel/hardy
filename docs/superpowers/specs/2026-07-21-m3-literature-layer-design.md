@@ -84,8 +84,12 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
   which a crash could truncate into an unparsable file that loses the durable
   history for every stored version (the lock serializes writers but protects
   nothing against a crash mid-write). Holding the ledger lock, `admit` first
-  appends the pending event (id, version, digest), then renames the entry
-  into place, then appends the committed event — recovery under the same lock
+  appends the pending event (id, version, digest), then **fsyncs the staged
+  entry tree, renames it into place, and fsyncs the parent directory — all
+  before** appending the committed event (a visible directory entry whose
+  file contents never reached durable storage would otherwise be blessed by
+  recovery as `pending + entry present → committed`, and the no-refetch rule
+  would preserve the incomplete entry forever) — recovery under the same lock
   reconciles journal state against the store (pending + entry present →
   append committed; pending + no entry → superseded). Rename-then-publish without the journal would let a crash strand an
   admitted entry whose digest never becomes durable, and the no-refetch rule
