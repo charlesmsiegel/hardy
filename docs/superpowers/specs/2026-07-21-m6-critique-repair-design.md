@@ -84,12 +84,15 @@ Critique must accept "any proof", so both workflows operate on one structure:
   true) while leaving the theorem line byte-identical.
 - `ProofStep(id, text, lean_ref: SorryRef | DeclRef | None)` — informal proofs
   are segmented into steps by a bounded agent pass at ingestion — and
-  segmentation is **lossless by construction**: every `ProofStep` records its
-  source span, and the harness verifies the spans jointly cover the complete
-  original text before critique begins (a segmenter that drops the sentence
-  containing the gap would otherwise leave a coverage plan that visits
-  everything *it kept* and grades clean without assessing the omission);
-  uncovered spans are themselves added to the coverage plan. The recorded
+  segmentation is **lossless by construction**: the agent proposes only an
+  ordered, non-overlapping span *partition* of the source, and each
+  `ProofStep.text` is **derived by the harness from its span's actual source
+  bytes** — never taken from the agent — with the check that concatenating
+  the spans reconstructs the original proof exactly. (Coverage of
+  agent-supplied spans alone is insufficient: a segmenter could assign a
+  step its original span while quietly rewriting the step *text* critique
+  then assesses, sanitizing the gap away.) Uncovered spans are themselves
+  added to the coverage plan. The recorded
   segmentation keeps re-runs stable; Lean-backed proofs get steps from their
   structure (`have`/`sorry` skeleton or declaration list).
 - Ingestion adapters: from a results manifest (Hardy draft), from user-pasted
@@ -203,10 +206,16 @@ Critique must accept "any proof", so both workflows operate on one structure:
   scoped). Success → `verified-closed`; failure → back to `open` with
   reopen_count incremented and the failed patch recorded.
 - **Claim guard:** the patch is applied to a **staged copy** of the document
-  and the claim diffed there — informal text, formal statement, **and the
-  `frozen_deps` content hashes** (a delta touching any declaration the
+  and the claim checked there — informal text, formal statement, the
+  `frozen_deps` content hashes (a delta touching any declaration the
   statement depends on is a claim change even when the theorem line is
-  untouched) — *before* anything persists — committing the edit and the `patched` transition first
+  untouched), **and a re-elaboration of the staged statement**, comparing its
+  canonical elaborated expression and freshly computed dependency closure
+  against the frozen originals — hash comparison of the *ingestion-time*
+  closure alone misses a delta that *inserts* a higher-priority instance,
+  notation, or macro ahead of the theorem, changing what the byte-identical
+  statement means without touching any frozen declaration — *before*
+  anything persists — committing the edit and the `patched` transition first
   would leave the run's document mutated and its ledger unresolved when the
   guard then stops the run, violating claim immutability on the way to
   enforcing it. Claim unchanged → the staged edit and ledger transition commit
@@ -238,7 +247,13 @@ Critique must accept "any proof", so both workflows operate on one structure:
   every inserted/edited step, revalidates acyclicity (a violation is itself a
   hole), and only then takes the radius: the edited steps, any step
   referencing them, and — for Lean deltas — any declaration whose elaboration
-  consumed a changed declaration. **Every** resolved
+  consumed a changed declaration. For **informal** steps the radius is
+  deliberately conservative: dependency edges come from an agent pass and can
+  under-approximate (an implicit use of an earlier step that the pass
+  missed), so the radius includes every informal step *after* the earliest
+  edited one — a trusted-graph radius would exempt exactly the downstream
+  reasoning an unrecorded dependency invalidates; Lean deltas keep the
+  precise elaboration-derived radius, which *is* mechanical. **Every** resolved
   hole whose location intersects the radius is re-checked: `verified-closed`
   re-verifies by its layer, and `dismissed` **reopens unconditionally** for
   fresh dismissal against the changed proof — whether a free-form

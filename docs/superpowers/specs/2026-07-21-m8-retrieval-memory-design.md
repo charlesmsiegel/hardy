@@ -107,7 +107,11 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   win to retrieval. Like M7's Lean CPU, the reservation is **enforced during
   the query**: local embedding/scan work runs under a per-query allowance
   (bounded worker with a kill at the allowance) — a query launched with 10 ms
-  remaining must not complete a full scan before the meter ever observes it. It is likewise counted into the comparison's cost side. Queries
+  remaining must not complete a full scan before the meter ever observes it.
+  The **local Loogle executable is retrieval compute too**: each search runs
+  under the same reserve, CPU-sampling, deadline, and kill/settlement path as
+  the embedding and scan workers — an unmetered Loogle process would hand the
+  retrieval arm free host CPU exactly like an unmetered scan. It is likewise counted into the comparison's cost side. Queries
   embed the pretty-printed goal (hypotheses + target).
 - **Index:** built offline by `scripts/build_index.py`; loaded read-only at run
   time; its key is `(mathlib_rev, corpus content digest, embedder identity)` —
@@ -161,6 +165,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   it can never capture a torn prefix of a concurrent write — concurrent
   successful runs distilling together are the normal case, and an
   inconsistent snapshot would make recorded snapshot ids nondeterministic.
+  The snapshot file itself publishes **crash-atomically**: written complete
+  to a temporary path, fsynced, content-validated against the journal cut,
+  renamed into place, parent directory fsynced — and only then is its id
+  recorded (the lock serializes writers; it does nothing for a host crash
+  mid-write, which could otherwise leave a truncated-but-parsable prefix
+  behind a published id).
   Every entry carries provenance — **transitively**: an entry distilled from
   a run that *consulted* other memory entries records those entries' lineage
   too (equivalently, a benchmark-source taint propagates into every derived
@@ -258,10 +268,13 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   structured summary produced by a cheap summarization call — which is a model
   call like any other: it reserves from the shared run meter (turns, tokens,
   cost) before it starts and records its usage in the trajectory, and
-  framework-native compaction is charged the same way where its usage is
-  observable; an unmetered summarizer would hand the summarized arm extra
-  model work beyond the unsummarized arm's budget and manufacture a spurious
-  criterion-3 win. Harness-owned
+  framework-native compaction is charged the same way — **when the framework
+  does not report compaction usage, the harness either charges a
+  conservative, non-refunded upper-bound reservation for it or disables
+  native compaction and uses its own metered summarizer instead**; "metered
+  where observable" alone would let an SDK compact for free, hand the
+  summarized arm extra model work beyond the unsummarized arm's budget, and
+  manufacture a spurious criterion-3 win. Harness-owned
   state — the goal statement, current open goals/hypotheses, active lesson
   list, and standing constraints (budgets, statement immutability) — is
   **never entrusted to the summary at all**: the harness holds those fields
