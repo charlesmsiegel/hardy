@@ -83,8 +83,14 @@ Critique must accept "any proof", so both workflows operate on one structure:
   could redefine a predicate the conclusion mentions (making it trivially
   true) while leaving the theorem line byte-identical.
 - `ProofStep(id, text, lean_ref: SorryRef | DeclRef | None)` — informal proofs
-  are segmented into steps by a bounded agent pass at ingestion (segmentation is
-  recorded so re-runs are stable); Lean-backed proofs get steps from their
+  are segmented into steps by a bounded agent pass at ingestion — and
+  segmentation is **lossless by construction**: every `ProofStep` records its
+  source span, and the harness verifies the spans jointly cover the complete
+  original text before critique begins (a segmenter that drops the sentence
+  containing the gap would otherwise leave a coverage plan that visits
+  everything *it kept* and grades clean without assessing the omission);
+  uncovered spans are themselves added to the coverage plan. The recorded
+  segmentation keeps re-runs stable; Lean-backed proofs get steps from their
   structure (`have`/`sorry` skeleton or declaration list).
 - Ingestion adapters: from a results manifest (Hardy draft), from user-pasted
   text/TeX, from a `.lean` file.
@@ -99,8 +105,9 @@ Critique must accept "any proof", so both workflows operate on one structure:
   `open → patched | dismissed | abandoned`; `patched → verified-closed | open`
   (rejected patch; reopen_count += 1); `verified-closed | dismissed → open`
   (regression via blast radius; reopen_count += 1); `open | patched → abandoned`
-  (budget exhaustion only — an unverified patch is reported as such, never
-  shipped closed).
+  (harness-owned, with a recorded reason: budget exhaustion or escalation
+  failure — the two honest-stop paths; an unverified patch is reported as
+  such, never shipped closed).
 - Persistence: JSONL event log per result (`results/<slug>/holes.jsonl`) — the
   ledger is replayed from events, so history is never lost and concurrent
   tooling can tail it. Resolved entries persist; the fixed-point test is "no
@@ -150,8 +157,11 @@ Critique must accept "any proof", so both workflows operate on one structure:
    claim *resists formalization* (with the resistance reason), and a step
    whose formalized claim *resists proof from its stated premises* (residual
    goals/`sorry`s recorded). Both are suspected holes (`layer="probing"`) —
-   failure to prove within budget is suspicion, not disproof, which is why
-   skeptic disproof can still `dismiss` them. This is the dual-output contract
+   failure to prove within budget is suspicion, not disproof. Skeptic
+   disproof can `dismiss` only the *resists-formalization* kind, which
+   carries no formal obligation; a hole whose faithfulness-checked lemma
+   exists but resisted proof closes **only when that lemma kernel-checks**
+   (per the ledger's evidence-strength rule). This is the dual-output contract
    paying off: formalization *is* hole detection.
 3. **Adversarial skeptics**: per-step agent runs prompted to *break* the step —
    seek counterexamples to intermediate claims (with Lean `decide`/`simp`
