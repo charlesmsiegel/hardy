@@ -82,9 +82,13 @@ M0 is **not complete** until `bench_throughput.py --sandbox` also passes.
 
 ### Reproducing it
 
-Requires Nix (`lean4` from a pinned nixpkgs), git access to the Lean/Mathlib
-repos, the Mathlib olean cache, and TeX Live — no Docker Hub, no GitHub
-release downloads. Then:
+Works on Linux, macOS, and native Windows — **WSL is never required** (much of
+the target audience doesn't use it). Requires `elan` (which provides `lake`),
+git access to the Lean/Mathlib repos, the Mathlib olean cache, and a TeX
+engine; the sandbox steps additionally need a Linux-container runtime (on
+Windows, Docker Desktop's Hyper-V backend is enough). Nix is needed only to
+*build* the sandbox images — a maintainer/CI concern on Linux/macOS; once CI
+publishes digest-pinned images, users just `docker pull` them. Then:
 
 ```sh
 pip install -e .            # the scripts import `hardy` from src/
@@ -97,7 +101,9 @@ scripts/bench_throughput.py --sandbox                          # sandboxed throu
 scripts/sample_writeup.py    --sandbox                         # sandboxed writeup
 ```
 
-The sandbox images are built from the Nix store (`nix/`, no Docker Hub /
-GitHub releases). `hardy-lean:dev` bakes full Mathlib's oleans, so it wants a
-host with generous disk; that is the last step to close M0's throughput
+The sandbox images are built from the Nix store (`nix/`) — the *contents*
+involve no Docker Hub base images or GitHub-release downloads, and CI is the
+intended builder/publisher so end users never run Nix (which has no native
+Windows port). `hardy-lean:dev` bakes full Mathlib's oleans, so it wants a
+build host with generous disk; that is the last step to close M0's throughput
 clause. Then: **M1 (minimal agent)**.

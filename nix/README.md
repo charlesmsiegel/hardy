@@ -11,6 +11,13 @@ Both images pin the same nixpkgs snapshot used to build the toolchain
 (`lean_project/lean-toolchain` ↔ the nixpkgs `lean4`), so the whole stack is
 reproducible from one revision.
 
+**Who runs Nix:** maintainers and CI only, on Linux/macOS. Nix has no native
+Windows port, and the project's platform policy (DESIGN.md Component 7) says
+WSL must never be required — so end users get these images by `docker pull`
+of the CI-published, digest-pinned builds, not by building them. Running the
+containers needs any Linux-container runtime (on Windows, Docker Desktop's
+Hyper-V backend suffices).
+
 ## `hardy-tex:dev` — untrusted-TeX compiler
 
 Self-contained TeX Live (`pdflatex`) + busybox. Contains nothing Lean- or
