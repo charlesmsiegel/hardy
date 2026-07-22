@@ -71,9 +71,14 @@ hardy/agent/
   parse as a reference is rejected before any run), resolved by the adapter at
   run time, and logged/hashed only as the reference strings. The split is
   **enforced, not honor-system**: config load recursively scans
-  `provider_params` and rejects it when a field path matches **known credential field names**
-  (`api_key`/`apikey`, `access_key`, `secret_key`, `private_key`, `token`,
-  `secret`, `password`, `authorization`, `cookie` — deliberately *not* every
+  `provider_params` and rejects it when a **normalized** field path (separators stripped,
+  case-folded) matches known credential names or credential-name *segments* —
+  `api_key`/`apikey`, `access_key`, `secret_key`, `private_key`,
+  `client_secret`, `refresh_token`, `session_token`, `credentials`, and any
+  path segment ending in `_secret`/`_token`/`_password`, plus `token`,
+  `secret`, `password`, `authorization`, `cookie` (segment matching catches
+  composite names without resurrecting the rejected generic `key`-substring
+  rule — deliberately *not* every
   path containing `key`, which would misclassify behavioral fields like
   `X-Routing-Key`, `Idempotency-Key`, or `prompt_cache_key` and force their
   values out of the config hash; header maps are classified **per header
@@ -107,8 +112,10 @@ hardy/agent/
 - Maps the Strands event stream → `Trajectory` events; enforces `max_turns` and
   wall-clock exactly as the SDK adapter does (adapter-owned budget enforcement is
   part of the protocol contract, tested by the shared conformance suite below).
-- Model selection flows through Strands' provider mechanism from
-  `provider_config` — this is where Bedrock/LiteLLM/etc. arrive for free; Hardy
+- Model selection flows through Strands' provider mechanism from the two
+  typed fields defined above: the adapter passes `provider_params` verbatim
+  and merges in `provider_secrets` **after resolving their `env:` references**
+  at run start — this is where Bedrock/LiteLLM/etc. arrive for free; Hardy
   code never names individual providers.
 
 ### Minimal loop (`minimal/`)

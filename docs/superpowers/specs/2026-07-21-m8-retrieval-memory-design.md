@@ -83,8 +83,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   **accumulate the provider revision from every embedding response and abort
   on more than one** (a mutable alias repointed mid-build would otherwise
   produce an index whose vectors span incompatible revisions behind a single
-  recorded identity), and its per-query usage is **charged to the run like
-  any model call**: metered
+  recorded identity), at query time **every embedding response's provider revision is
+  validated against the revision recorded in the loaded index identity**
+  (mismatch rejects the query path for the run — an alias repointed after the
+  build would otherwise compare a new-revision query vector against
+  old-revision corpus vectors, and every key check would still pass), and its
+  per-query usage is **charged to the run like any model call**: metered
   through the shared reservation/accounting path (M7's `StrategyBudget`) and
   emitted as usage events in the `Trajectory`, since spend that bypasses the
   meter would let a retrieval-enabled run quietly exceed the budget its
