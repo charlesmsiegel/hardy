@@ -110,7 +110,14 @@ scripts/validate_bib.py — CI check: parses, no duplicate keys, entries well-fo
 
 - Model: `BibEntry` (pydantic) covering the fields we emit (`@article`/`@misc`
   with `eprint`, `archivePrefix`, `primaryClass`, DOI/journal when known, and a
-  `note = {arXiv <id>v<N>}` recording the exact version).
+  `note = {arXiv <id>v<N>}` recording the exact version). Field values are
+  **confined before persistence**: arXiv metadata is network-controlled text
+  that the writeup pipeline will later execute as TeX when the bibliography
+  renders, so titles/authors/abstract-derived fields pass through the same
+  allowlisted representation as M1's model-authored fields (math-mode and
+  benign formatting preserved; control sequences that define, redirect, or
+  terminate structure rejected or escaped) — successful BibTeX *parsing* is
+  not sanitization.
 - `Bibliography.load(path)` / `.save(path)` via `bibtexparser`; save is atomic
   (temp file + rename) and normalizes formatting so diffs stay reviewable. The
   whole load → dedup/mint → save transaction runs under an **interprocess file

@@ -198,9 +198,14 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   dedicated population mode in which the normal write-path gates apply (run
   success + anti-cheat pass) and distilled entries are admitted; without this
   carve-out the read-only eval rule would leave the snapshot empty and B could
-  measure nothing. Population starts from a **recorded base snapshot** (empty
-  by default for the exit criterion), and what freezes is exactly **base + the
-  phase-A delta**: freezing whatever the shared store happens to contain would
+  measure nothing. Population starts from a **recorded base snapshot** — and
+  the exit-criterion headline **requires the empty base**: with a non-empty
+  base, the memory-on arm consults `base + A` while memory-off consults
+  nothing, so any benefit from pre-existing base entries (including a
+  B-derived pattern the delta-only audit never inspects) would be attributed
+  to transfer from A; a non-empty base is allowed only for secondary
+  experiments, and then demands a third, base-only memory arm to isolate the
+  A-delta effect. What freezes is exactly **base + the phase-A delta**: freezing whatever the shared store happens to contain would
   let pre-existing same-domain — or even B-derived — entries from ordinary
   prior runs masquerade as transfer, and `A∩B = ∅` alone cannot detect that.
   Every delta entry's provenance is audited at freeze time — **positively**:
