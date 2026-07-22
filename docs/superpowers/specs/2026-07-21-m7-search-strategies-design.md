@@ -126,7 +126,12 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   timeout via the existing `run_tactic` timeout plumbing.
 - Zero model tokens. Used three ways: standalone pre-pass before any strategy
   runs (config flag, default on); by sketch on every subgoal before spending
-  agent turns; by best-first as free frontier expansion.
+  agent turns; by best-first as free frontier expansion. **Strategy
+  comparisons disable the global pre-pass in every arm**: with it on, goals
+  the closers solve finish before strategy selection and the hybrid candidate
+  can only re-run work already charged to it, so the comparison would measure
+  nothing — the pre-pass *is* the hybrid strategy's implementation, and it
+  competes as a strategy, not as ambient plumbing.
 
 ### `sketch.py` — sketch-and-discharge
 

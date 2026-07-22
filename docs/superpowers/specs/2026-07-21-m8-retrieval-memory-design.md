@@ -79,8 +79,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   a configured model *name*, which can silently point at updated weights and
   leave a stale index matching a different vector space). Default: a local
   sentence-embedding model (config names it), so retrieval works offline and
-  adds no per-query API cost; an API-based embedder is a config swap — and its
-  per-query usage is **charged to the run like any model call**: metered
+  adds no per-query API cost; an API-based embedder is a config swap — offline builds with it
+  **accumulate the provider revision from every embedding response and abort
+  on more than one** (a mutable alias repointed mid-build would otherwise
+  produce an index whose vectors span incompatible revisions behind a single
+  recorded identity), and its per-query usage is **charged to the run like
+  any model call**: metered
   through the shared reservation/accounting path (M7's `StrategyBudget`) and
   emitted as usage events in the `Trajectory`, since spend that bypasses the
   meter would let a retrieval-enabled run quietly exceed the budget its
@@ -170,11 +174,12 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   context blocks injected alongside premises. Config-gated (`memory.enabled`).
 - **Distill (write path):** post-run, gated on run success + anti-cheat pass;
   dedup by statement/pattern hash **plus elaboration environment** for proved
-  lemmas — statement-only dedup would let an early non-portable proof (one
-  leaning on a paper import or source-run helper) permanently suppress a
-  later Mathlib-only proof of the same statement, leaving future recalls only
-  the entry they must skip; a new proof with a strictly more portable
-  dependency set replaces the less portable entry; **benchmark-mode runs never write** (memory
+  lemmas *and tactic patterns alike* — content-only dedup would let an early
+  non-portable entry (one leaning on a paper import or source-run helper)
+  permanently suppress a later Mathlib-only equivalent, leaving future
+  recalls only the entry they must skip and making memory effectiveness
+  depend on insertion order; a new entry with a strictly more portable
+  dependency set replaces the less portable one; **benchmark-mode runs never write** (memory
   must not become a benchmark-contamination channel) and eval runs consult
   read-only snapshots. Exact-repeat detection: recall of a `proved_lemma` whose
   statement equals the current goal is served as a cache hit and **flagged in
@@ -189,7 +194,11 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   benchmark corpus is excluded (statement matching alone only covers lemmas;
   a goal-specific tactic sequence or distilled lesson from a previously
   solved benchmark item is the same contamination without a `statement`
-  field); if a match nonetheless reaches an attempt, the attempt
+  field). The **transfer protocol is the deliberate exception**: when A and B
+  partition one corpus, a whole-corpus filter would strip every phase-A entry
+  and leave B measuring nothing — transfer-mode recall admits positively
+  audited phase-A provenance and filters against the *current held-out B
+  items* (plus exact-statement overlaps) instead; if a match nonetheless reaches an attempt, the attempt
   is marked contaminated and excluded from headline solve metrics — a flag
   that still counts toward pass@k would just be contamination with a label.
 - **Held-out transfer protocol:** `compare_configs.py` gains a two-phase
