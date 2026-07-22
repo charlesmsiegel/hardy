@@ -111,9 +111,14 @@ Critique must accept "any proof", so both workflows operate on one structure:
   particular counts as resolved and feeds the clean grade, so letting an agent
   write it would let the model close a genuine hole with a plausible
   justification string no verifier ever checked. The harness performs a
-  dismissal only on recorded verification evidence — a kernel check, or an
-  independent skeptic run (M1 pattern) that *confirms* the disproof — and
-  stores that evidence with the justification. `note` tool: the informal
+  dismissal only on recorded verification evidence — and the evidence must
+  match the hole's strength: a probing hole with a concrete faithfulness-
+  checked formal lemma closes **only when that lemma kernel-checks** (exact
+  verification is available, so a skeptic's prose judgment cannot stand in
+  for it — the unresolved formal obligation would vanish from the fixed point
+  without any proof); skeptic-confirmed disproof suffices only for informal
+  suspicions with no formal obligation attached. The evidence is stored with
+  the justification. `note` tool: the informal
   scratchpad from Component 2, persisted per-result and re-injected across
   attempts (context management for the loop).
 
@@ -132,7 +137,12 @@ Critique must accept "any proof", so both workflows operate on one structure:
    dependency on a later step would hand the lemma the very conclusion under
    assessment as a hypothesis, making it trivially dischargeable and the layer
    worthless); any cyclic or forward dependency is itself recorded as a
-   suspected hole (faithfulness-checked, reusing M1's skeptic) — and then **attempts to discharge it**: cheap closers plus a
+   suspected hole. **Every generated probing lemma is gated by an independent
+   faithfulness review against its source step** (M1's skeptic pattern)
+   *before* its proof result counts — a probing agent that mistranslates an
+   interchange-of-limits claim into a tautology would otherwise discharge the
+   weakened statement and mark the step visited with the original reasoning
+   never tested — and then **attempts to discharge it**: cheap closers plus a
    small-budget agent attempt. Elaboration alone is not probing — a false but
    well-typed intermediate claim (the usual shape of a subtle gap) elaborates
    exactly like a true one, and the layer would mark the step visited having

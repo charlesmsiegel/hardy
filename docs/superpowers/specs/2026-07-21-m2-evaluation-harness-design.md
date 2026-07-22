@@ -159,7 +159,10 @@ violation:
   pin, **the content digests of the worker images actually used**
   (`hardy-lean:dev`/`hardy-tex:dev` image IDs — source-level pins cannot detect
   a stale or differently-rebuilt image, and two runs recording identical SHAs
-  and pins can still execute different worker bytes), model identity — the configured identifier
+  and pins can still execute different worker bytes; **direct-worker runs**,
+  which have no image, record content hashes of the REPL binary and Lean
+  toolchain executables instead — the same byte-level guarantee — or are
+  marked non-reproducible and excluded from comparisons), model identity — the configured identifier
   *plus the resolved immutable revision* (provider-reported model version /
   response system fingerprint) where the provider exposes one, since a mutable
   alias can re-point to new weights between two runs that record identical

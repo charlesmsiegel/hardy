@@ -91,8 +91,12 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   advance the theorem's wall time by 10, not 30, and reserve-settle accounting
   on it would spuriously serialize parallel work and rig the equal-wall-budget
   comparison against parallel strategies. Only genuinely additive dimensions
-  (tokens, turns, cost, Lean CPU) go through reservations; every call and
-  launch simply checks the shared deadline; strategies read `budget.remaining` to degrade
+  (tokens, turns, cost, Lean CPU) go through reservations; the deadline is
+  enforced **on in-flight work, not just at launch** — every model call, Lean
+  command, and validator invocation runs wrapped in the remaining deadline
+  and is cancelled at expiry, since a slow call started one second before the
+  deadline would otherwise run its full provider timeout past the wall
+  budget; strategies read `budget.remaining` to degrade
   (e.g. parallel attempts stop launching new branches below a threshold; sketch
   stops decomposing and tries direct closure). Spending is **reservation-based
   and atomic**: before each model call or Lean command, the enforcement layer

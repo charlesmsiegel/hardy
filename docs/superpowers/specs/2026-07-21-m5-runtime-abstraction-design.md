@@ -130,8 +130,11 @@ hardy/agent/
   fields (or no tool call despite the forced choice) means prompted fallback.
   The real first task response is never used as the signal: a capable model can
   legitimately answer it with prose, and misreading that would silently switch
-  protocols and change budget use between otherwise identical runs. The probe's
-  cost is recorded in the trajectory.
+  protocols and change budget use between otherwise identical runs. The probe is a model call like any other: it goes through the **same
+  pre-call reservation path** as task requests (turns, tokens, cost) rather
+  than being accounted after the fact — a run with one turn remaining must
+  spend it on the probe *or* the task, not both, and a probe must not
+  overshoot an exhausted cap. Its cost is recorded in the trajectory.
 - `prompted_tools.py`: the fallback — tool schemas rendered into the system
   prompt with strict output instructions (one fenced ```json block per call:
   `{"tool": ..., "arguments": {...}}`); a tool call is recognized **only as a
