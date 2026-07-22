@@ -80,7 +80,13 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   a fresh inventory must not let new labels mint from it while live axioms
   rest on the old one (a single namespace whose reviewed declarations don't
   share a source inventory), so a namespace either keeps its pinned inventory
-  or is rebuilt and re-reviewed wholesale as a new generation: M3 defines admitted entries as immutable after atomic admission, so
+  or is rebuilt and re-reviewed wholesale as a new generation. The pinned
+  inventory's **content is persisted with the published generation itself**
+  (a content-addressed artifact alongside the namespace manifest, committed
+  with the package) — the derived cache lives under M3's gitignored `papers/`
+  tree, extraction is nondeterministic, and a fresh clone that could recover
+  only the hash would be unable to extend the namespace lazily and forced
+  into an unnecessary full rebuild-and-re-review: M3 defines admitted entries as immutable after atomic admission, so
   writing into one would break the store's digest guarantees (and read-only
   deployments). The inventory is *informal* (verbatim statement text); no Lean
   yet.

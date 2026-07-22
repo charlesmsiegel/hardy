@@ -197,7 +197,13 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   imports) plus a hash of that prefix — **and the base package generation id**
   (M4): replaying the prefix cannot recreate the environment if a destination
   lease resolves a *newer* `Papers.*` generation than the one the pickle was
-  made under, so destination leases pin the snapshot's generation, and an
+  made under, so destination leases pin the snapshot's generation — snapshots therefore
+  **register as generation references for M4's garbage collector** (a lease
+  alone is not a durable reference: the worker holding the old generation can
+  die after the snapshot is stored, and a concurrent publication could
+  collect the generation before the destination lease exists, leaving a
+  recorded id that resolves to nothing), and the pool supports
+  generation-specific leases, not only current-generation workers; an
   intentional mid-run generation upgrade restarts the frontier explicitly. Migration replays the prefix on the
   destination lease and verifies the hash *before* `unpickleProofStateFrom`;
   transferring the pickle alone would make nodes referencing skeleton helpers
