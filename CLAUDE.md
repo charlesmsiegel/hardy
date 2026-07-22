@@ -4,11 +4,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Hardy is in **design phase** — there is no code yet, only planning documents. There
-are no build, lint, or test commands to run. "Development" right now means editing
-`DESIGN.md`, `README.md`, and `docs/architecture.html`, or scaffolding the first
-(M0) code described below. Once M0 lands, update this file with the real build/test/
-lint commands — do not guess at them here.
+**M0 (plumbing) is code complete** — Python package (`src/hardy/`), pinned Lean 4 +
+Mathlib project (`lean_project/`), Nix-built sandbox images (`nix/`), tests, and CI
+(`.github/workflows/test.yml`). M0's exit criterion is half closed: the sample
+writeup compile-checks inside the sandbox, but the sandboxed throughput run still
+needs the `hardy-lean:dev` image built on a disk-generous host (see `README.md`
+"Status"). Next milestone: **M1 (minimal agent)** — its design spec lives in
+`docs/superpowers/specs/`, alongside specs for M2–M8.
+
+## Commands
+
+```bash
+pip install -e .[dev]        # install package + pytest
+pytest                       # all tests (markers below gate the heavy ones)
+pytest -m "not lean and not tex and not docker"   # unit tests only — what CI runs
+
+scripts/setup_lean.sh        # build lean_project (Mathlib) + the repl binary
+pytest -m lean               # integration tests against the real Lean toolchain
+pytest -m tex                # needs a TeX engine on PATH
+pytest -m docker             # needs hardy-lean:dev and hardy-tex:dev images
+
+scripts/bench_throughput.py --imports "import Mathlib.Tactic"   # direct throughput
+nix-build nix/tex-image.nix  && docker load < result   # build hardy-tex:dev
+nix-build nix/lean-image.nix && docker load < result   # build hardy-lean:dev (large)
+scripts/bench_throughput.py --sandbox                  # M0's remaining exit clause
+scripts/sample_writeup.py   --sandbox                  # sandboxed writeup check
+```
+
+There is no lint/format configuration yet — do not invent one ad hoc; propose it
+as its own change if needed.
 
 ## Key documents
 
@@ -21,6 +45,11 @@ lint commands — do not guess at them here.
 - `docs/architecture.html` — a self-contained, hand-authored interactive diagram of
   `DESIGN.md` (no build step). Update it alongside `DESIGN.md` so the two never
   drift apart.
+- `docs/superpowers/specs/` — one design spec per remaining milestone (M1–M8),
+  with a README covering cross-milestone dependencies. A milestone's spec must be
+  re-reviewed against reality before its implementation plan is written.
+- `docs/superpowers/plans/` — implementation plans (currently M0's). Each
+  milestone gets one, produced from its spec when the milestone starts.
 
 ## Architecture (from DESIGN.md)
 
@@ -122,11 +151,23 @@ the user's explicit sign-off — the fix-and-reloop cycle is pre-authorized by t
 file, but PR creation itself is a separate, visible action and still requires the
 user's go-ahead.
 
-**Enforcement (interim).** Until M0 lands CI, this gate is procedural, backed by
-an audit record rather than a status check: every PR description must include a
-"Review gates" section quoting both gates' final verdicts (or, past 10
-iterations, the user's explicit sign-off on the remaining findings). A PR
-without that section is not ready for merge. When M0's CI exists, replace this
-with an enforceable control — a required status check that verifies recorded
-gate results, plus branch protection on `main` — and define the user-sign-off
-path as an auditable override, then update this section.
+**Enforcement.** M0's CI exists, so the gate is now a status check, not just
+procedure. Every PR description must include a **"Review gates"** section quoting
+both gates' final verdicts. The `review-gates` workflow
+(`.github/workflows/review-gates.yml`) fails any PR whose description lacks that
+section.
+
+Branch protection on `main` (requiring the `review-gates` and `unit` checks)
+is **not yet enabled** — GitHub requires a public repo or a Pro plan for
+branch protection on this repo, and it is currently private on a free plan.
+Until then, a red `review-gates` check is procedurally merge-blocking: do not
+merge over it without the override below. If the repo goes public or the plan
+changes, enable branch protection with those two required checks and delete
+this paragraph.
+
+The user-sign-off path (needed past 10 loop iterations, or to ship over a
+`needs-attention`/`BLOCK` verdict) is an auditable override: the user — not
+Claude — applies the **`gates-override`** label to the PR, which satisfies the
+`review-gates` check while leaving the label event in the PR timeline as the
+audit record. The "Review gates" section must then quote the outstanding
+findings the user signed off on.
