@@ -282,8 +282,11 @@ Critique must accept "any proof", so both workflows operate on one structure:
 
 - **Unit:** ledger transitions (legal/illegal), event-log replay, reopen
   semantics (rejected patch vs. regression both increment), fixed-point test
-  with resolved-history present; blast-radius on fixture step graphs (dismissed
-  justification referencing changed vs. unchanged text); loop driver with
+  with resolved-history present; blast-radius on fixture step graphs, asserting **every dismissed
+  hole intersecting the rebuilt radius reopens unconditionally** and requires
+  fresh re-verification (never conditioned on justification wording — that
+  was the rejected predicate, and a test encoding it would bless the unsound
+  behavior); loop driver with
   `FakeRuntime` scripted critiques/repairs — convergence, critique-only exit,
   escalation trigger, escalated-failure honest stop, budget-exhaustion
   abandonment, claim-guard trip; segmentation stability; grading computation

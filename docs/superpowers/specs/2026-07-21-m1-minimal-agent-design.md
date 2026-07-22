@@ -225,7 +225,12 @@ writeup). Phase budget splits are config, but the sum is the cap.
    block typesets the Lean statement verbatim in a listing alongside an informal
    restatement the skeptic verified, and the manifest records the statement hash
    so any later drift between artifacts is detectable; a not-formalized run
-   preserves the user's claim verbatim, flagged as informally stated. Bounded compile-and-repair
+   preserves the user's claim verbatim *in content* but renders it through
+   the same confined representation as model-authored fields — the user's
+   request is untrusted input too, and an unescaped claim containing
+   `\end{theorem}\end{document}` would terminate a failure report ahead of
+   its harness-owned status block exactly like a hostile model field —
+   flagged as informally stated. Bounded compile-and-repair
    retries; on exhaustion, ship the minimal compile-checked failure report
    (known-good template: status, errors, failing source attached) — LaTeX-always
    holds even when the generated document never builds, and the run is graded

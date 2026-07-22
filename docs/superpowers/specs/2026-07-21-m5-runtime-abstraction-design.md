@@ -50,7 +50,11 @@ hardy/agent/
   Workflows already take the runtime as a parameter; after M5 they take only the
   config.
 - `RunConfig` grows the knobs DESIGN names, all optional with adapter-specific
-  interpretation: `endpoint: str | None` (base URL for minimal),
+  interpretation: `endpoint: str | None` (base URL for minimal — validated at config load to
+  contain **no URL userinfo and no credential-bearing query parameters**
+  (`user:pass@host`, `?api_key=…`), since the endpoint sits outside the
+  `provider_params` secret scan yet lands in the persisted `EvalConfig`;
+  endpoint credentials come from `provider_secrets` via `env:` references),
   two **typed, separated** provider fields (one dict would force a choice
   between leaking secrets and hashing away behavior): `provider_params: dict` —
   non-secret knobs (model/deployment ids, region, endpoint, temperature,
@@ -137,9 +141,12 @@ hardy/agent/
   fence alone is not an intent signal and executing an example quoted in a
   prose answer is precisely the accidental `cite`/`assume_paper` side effect
   this design must rule out. The parser validates envelope calls against the
-  pydantic input model; on validation failure — or when a response visibly
-  attempts a call outside the protocol (contains `"tool":` but isn't a valid
-  envelope) — it feeds a corrective message back, and **every corrective
+  pydantic input model; corrective feedback triggers **only for a
+  whole-response envelope that fails validation** — a prose answer merely
+  *containing* tool-JSON (quoting or explaining the documented format) is
+  final text, consistent with the envelope rule, not a malformed call to be
+  retried until budget burns. On a genuinely malformed envelope it feeds a
+  corrective message back, and **every corrective
   request is itself a model call charged against `max_turns` and the
   token/cost meters** (bounded retries, then the sequence ends as a no-op and
   the loop continues); charging only the nominal turn would let a

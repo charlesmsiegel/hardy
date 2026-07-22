@@ -58,7 +58,13 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
 ### `base.py` — the strategy seam
 
 - `Strategy` protocol: `async prove(goal: ProveGoal, session_factory, runtime,
-  config, budget: StrategyBudget) -> StrategyResult`.
+  config, budget: StrategyBudget, validate) -> StrategyResult`, where
+  `validate: async (candidate_source, session) -> Verdict` is a
+  **harness-owned downstream validator** (M1 axiom audit, plus anti-cheat in
+  eval) injected into the seam: parallel strategies need it to hold sibling
+  branches paused until a provisional winner passes validation, and without
+  the callback they could only return the candidate (ending the invocation and
+  killing the siblings) or hard-code the audit path themselves.
   - `ProveGoal`: the harness-owned statement + header (same operand Prove/eval
     already pass around).
   - `session_factory`: `() -> AsyncContextManager[ProofSession]` — the same
@@ -220,8 +226,11 @@ scripts/compare_strategies.py — the contemporaneous comparison harness
   `iterative` as baseline); runs all strategies **contemporaneously** — same
   harness commit (refuses a dirty tree), same model, same environment, same
   item set, same `StrategyBudget`; interleaves strategy runs across the item
-  list rather than running strategies back-to-back, so environmental drift
-  (machine load) can't masquerade as a strategy effect. Interleaving cannot
+  list rather than running strategies back-to-back, **with the per-item
+  strategy order randomized under a recorded seed** — a fixed round-robin
+  would run the baseline in the same position every item, letting provider
+  throttling, cache warmth, or drifting load correlate with strategy identity
+  — so environmental drift can't masquerade as a strategy effect. Interleaving cannot
   defend against a provider repointing a mutable model alias mid-comparison,
   so the harness checks the **resolved immutable model revision** (M2 records
   it) across every linked run: a revision mismatch — or a provider that can't
