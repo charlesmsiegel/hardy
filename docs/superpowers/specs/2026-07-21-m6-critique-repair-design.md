@@ -157,7 +157,14 @@ Critique must accept "any proof", so both workflows operate on one structure:
    claim *resists formalization* (with the resistance reason), and a step
    whose formalized claim *resists proof from its stated premises* (residual
    goals/`sorry`s recorded). Both are suspected holes (`layer="probing"`) —
-   failure to prove within budget is suspicion, not disproof. Skeptic
+   failure to prove within budget is suspicion, not disproof. The layer also
+   registers one **synthetic terminal node**: the frozen claim itself, probed
+   from the established terminal conclusions — per-step checks alone cannot
+   catch a proof whose steps are all individually valid but never actually
+   reach the theorem (the final inference is exactly where informal proofs
+   most often hand-wave), so the claim-from-steps obligation is a mandatory
+   coverage entry, kernel-gated like any other lemma-backed probing hole.
+   Skeptic
    disproof can `dismiss` only the *resists-formalization* kind, which
    carries no formal obligation; a hole whose faithfulness-checked lemma
    exists but resisted proof closes **only when that lemma kernel-checks**
