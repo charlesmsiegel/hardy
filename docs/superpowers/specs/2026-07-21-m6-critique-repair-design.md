@@ -91,8 +91,17 @@ Critique must accept "any proof", so both workflows operate on one structure:
   the spans reconstructs the original proof exactly. (Coverage of
   agent-supplied spans alone is insufficient: a segmenter could assign a
   step its original span while quietly rewriting the step *text* critique
-  then assesses, sanitizing the gap away.) Uncovered spans are themselves
-  added to the coverage plan. The recorded
+  then assesses, sanitizing the gap away.) **Granularity is validated, not
+  just losslessness**: a degenerate partition — one span swallowing the
+  whole proof — passes every reconstruction check while collapsing the
+  argument into a single obligation that probing could discharge by an
+  unrelated proof of the final claim, never testing the supplied inferences.
+  An independent granularity review (skeptic pattern) checks that no step
+  contains more than one nontrivial inferential move; steps that fail are
+  re-segmented (bounded), and steps still over-coarse after retries are
+  recorded as unassessable-at-granularity coverage entries — they can never
+  contribute to a clean grade. Uncovered spans are themselves added to the
+  coverage plan. The recorded
   segmentation keeps re-runs stable; Lean-backed proofs get steps from their
   structure (`have`/`sorry` skeleton or declaration list).
 - Ingestion adapters: from a results manifest (Hardy draft), from user-pasted

@@ -190,8 +190,12 @@ papers_lean/     — the Lean package of assumed libraries (committed)
   `papers_lean/lakefile.toml` target registry, which two first-time
   publications of different papers would race on without conflicting
   per-paper locks — registry mutation happens under an additional
-  **package-wide lock**, taken only for the registry edit and final package
-  build so per-paper minting still parallelizes. Publication is a **generation
+  **package-wide lock held from reading the current generation through
+  staging, build, and the atomic pointer switch** — releasing it between the
+  registry edit and the flip would let a concurrent publisher stage from the
+  still-old generation and later publish a complete generation that silently
+  omits the first namespace; per-paper *minting* (extraction, agent runs,
+  review) still parallelizes outside this lock, only publication serializes. Publication is a **generation
   switch, not per-file renames** — multiple files cannot be replaced atomically
   one rename at a time, and a crash mid-sequence would leave workers importing
   oleans inconsistent with the live source or a registry pointing at a

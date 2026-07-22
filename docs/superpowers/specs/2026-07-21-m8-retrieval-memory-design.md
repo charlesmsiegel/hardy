@@ -222,11 +222,19 @@ scripts/compare_configs.py — generalized contemporaneous comparison harness
   benchmark corpus is excluded (statement matching alone only covers lemmas;
   a goal-specific tactic sequence or distilled lesson from a previously
   solved benchmark item is the same contamination without a `statement`
-  field). The **transfer protocol is the deliberate exception**: when A and B
-  partition one corpus, a whole-corpus filter would strip every phase-A entry
-  and leave B measuring nothing — transfer-mode recall admits positively
-  audited phase-A provenance and filters against the *current held-out B
-  items* (plus exact-statement overlaps) instead; if a match nonetheless reaches an attempt, the attempt
+  field). Provenance alone is not sufficient either: **every derived entry
+  also stores the canonical statement hash(es) of its source theorem(s)**,
+  and benchmark recall rejects any entry — or any lineage ancestor — whose
+  statement hash matches a loaded benchmark item, with a match that
+  nonetheless reaches an attempt excluding that attempt from headline
+  metrics (an ordinary run can prove the *same statement* as a benchmark
+  item under a different theorem/run identity, and a provenance-only filter
+  would hand the benchmark run the complete cached proof). The **transfer
+  protocol is the deliberate exception**: when A and B partition one corpus,
+  a whole-corpus filter would strip every phase-A entry and leave B
+  measuring nothing — transfer-mode recall admits positively audited phase-A
+  provenance and filters against the *current held-out B items* (by
+  provenance and statement hash both) instead; if a match nonetheless reaches an attempt, the attempt
   is marked contaminated and excluded from headline solve metrics — a flag
   that still counts toward pass@k would just be contamination with a label.
 - **Held-out transfer protocol:** `compare_configs.py` gains a two-phase
