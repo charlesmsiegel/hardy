@@ -3,233 +3,241 @@
 **Milestone goal (DESIGN.md):** miniF2F runner, anti-cheat validation, metrics +
 regression tracking.
 
-**Exit criterion:** a reproducible baseline number for the M1 agent.
+**Exit criterion:** a finalized, reproducibility-complete baseline number for the
+M1 agent on the usable miniF2F `test` corpus. “Finalized” means the run is
+complete, every suspicious-closer result has been adjudicated, and the model,
+corpus, harness, configuration, and worker environment all have immutable
+identities.
 
 ## Context: what M2 builds on
 
-- M1's `AgentRuntime` + `RunConfig` + `Trajectory` (normalized event record with
-  token/turn/wall-clock totals) and the Prove workflow phases.
-- M0's `ReplPool`/`ProofVerdict` for verification, `sandboxed_worker_spec` for
-  isolation.
+- M1's `AgentRuntime` + `RunConfig` + `Trajectory` and the Prove workflow phases.
+- M0's `ReplPool`/`ProofVerdict` for verification and
+  `sandboxed_worker_spec` for isolation.
 - M1's minimal `#print axioms` audit (`hardy.workflows.audit`), which M2 extends
   into the full anti-cheat suite.
 
+## Decisions from the 2026-07-23 review
+
+1. Suspicious-closer attempts are **provisional**, not certified solves, until a
+   human adjudicates them.
+2. Adjudications are append-only events recording run, attempt, flag digest,
+   reviewer, timestamp, decision, and rationale. Corrections supersede earlier
+   events without erasing history.
+3. Pending and rejected attempts are excluded from headline pass@1/pass@k.
+   Provisional upper-bound metrics are reported separately.
+4. An official baseline requires a canonical, immutable model ID. An unpinned
+   run remains useful exploratory data but cannot satisfy M2's exit criterion.
+5. `valid` is for smoke tests and tuning; the full usable `test` split is the
+   official baseline.
+6. The corpus is the upstream Lean-4.15-compatible `minif2f_lean4.jsonl` export
+   at tag `v4.15.0`, commit
+   `638c70ed4dfb28cac2d5bbbb43b6fc1fd2f7a40f`, not mutable `HEAD` and not the
+   monolithic `Valid.lean`/`Test.lean` files. The export has one portable header
+   per record and an explicit `:= sorry` placeholder; at this pin it contains
+   229 usable `valid` and 225 usable `test` records. Commented error records are
+   excluded by an explicit manifest and never silently dropped.
+7. Every live `decide` or `native_decide` occurrence in submitted source or a
+   recorded tactic is flagged. Wall-clock time is too load-sensitive to decide
+   whether a goal is “huge”; legitimate small uses are approved through the
+   same adjudication path.
+8. Per-domain metrics use a versioned, complete annotation manifest. The
+   harness never guesses that a competition source such as IMO is a mathematical
+   domain.
+9. A partial run is retained for diagnosis but is ineligible as a baseline. M2
+   is complete only after every configured item × attempt has a terminal record.
+10. Run manifests survive interruption, and shared append-only logs use a
+    crash-safe interprocess lock with tested stale-owner recovery.
+
 ## Requirements (from DESIGN.md Component 8)
 
-- Benchmarks provide statements **verbatim — never modified**; anti-cheat enforces
-  this.
-- Anti-cheat on every "solved" theorem: `sorry`-free; compiles against the
-  *original* statement; `#print axioms` shows only the standard three (`propext`,
-  `Classical.choice`, `Quot.sound`) — benchmark runs allow *no* paper axioms;
-  suspicious closers (`native_decide`, `decide` on huge goals) flagged by scanning
-  submitted source **and** the recorded tactic trajectory.
-- Metrics: solve rate at fixed budget (pass@1, pass@k), cost per solved theorem
-  (tokens + Lean CPU), wall clock, per-domain breakdowns.
-- Regression tracking: every run logged with config hash *plus an immutable
-  source/build revision* — config alone is insufficient provenance.
-- Grading before M6: informal completeness is *not assessed*, never defaulted
-  upward. Benchmark mode produces no writeups at all (pure benchmark mode is
-  exempt from the output contract; DESIGN Component 8 requires the LaTeX check
-  only "outside pure benchmark mode").
+- Benchmark statements and headers are preserved byte-for-byte after removing
+  only the export's terminal `:= sorry` placeholder. Anti-cheat enforces this.
+- Anti-cheat runs on every kernel-complete attempt: statement reconstruction,
+  lexical `sorry`/`admit` scan, fail-closed axiom audit, and suspicious-closer
+  scan of submitted source and recorded tactics.
+- Benchmark runs permit only `propext`, `Classical.choice`, and `Quot.sound`;
+  they permit no `sorryAx`, unexpected axioms, or `Papers.*` axioms.
+- Metrics include certified pass@1/pass@k at fixed budget, provisional upper
+  bounds, tokens and Lean CPU per certified solved theorem, makespan,
+  utilization, failure kinds, and per-domain breakdowns.
+- Every run records a canonical config hash plus immutable code/build, worker,
+  model, toolchain, corpus, and annotation identities.
+- Pure benchmark mode skips formalization, faithfulness review, and writeup.
+  Informal completeness remains *not assessed* before M6.
 
 ## Architecture
 
 ```
 hardy/eval/
-  benchmark.py    — BenchmarkItem, loaders (miniF2F first), held-out set support
-  anticheat.py    — the full validation suite (extends M1 audit)
-  runner.py       — orchestrates: items × attempts → verified results
-  metrics.py      — pass@1/pass@k, cost, wall-clock, per-domain aggregation
-  tracking.py     — append-only JSONL result store with provenance
-scripts/run_eval.py — CLI entry point: config in, metrics + tracking entry out
-benchmarks/minif2f/ — vendored statement set (pinned upstream revision, documented)
+  benchmark.py      — BenchmarkItem and corpus/custom loaders
+  anticheat.py      — hard validation plus suspicious-closer flags
+  adjudication.py   — append-only decisions and effective attempt status
+  cpu.py            — in-flight Lean CPU sampling
+  runner.py         — item × attempt orchestration and durable run manifests
+  metrics.py        — certified/provisional metrics and cost aggregation
+  tracking.py       — append-only run index, provenance, and comparison
+scripts/
+  vendor_minif2f.py — exact-pin corpus vendoring and integrity manifest
+  run_eval.py       — run, adjudicate, finalize, and compare commands
+benchmarks/minif2f/
+  minif2f_lean4.jsonl
+  domains.json
+  EXCLUSIONS.json
+  LICENSE
+  SOURCE
 ```
 
 ### `benchmark.py`
 
-- `BenchmarkItem(id: str, statement: str, header: str, domain: str | None,
-  split: Literal["valid", "test"])` — `statement` is the Lean `theorem` line(s)
-  verbatim from the benchmark; `header` is the item's required imports/options
-  block, also verbatim.
-- `load_minif2f(path) -> list[BenchmarkItem]` — parses the vendored Lean 4 port of
-  miniF2F. The vendored copy is pinned (upstream repo + revision recorded in a
-  `SOURCE` file) so results are reproducible; updating the pin is an explicit,
-  reviewed change.
-- Held-out custom set: same loader contract (`load_custom(path)`), format is one
-  file per item with a small YAML/JSON header. Creating the set's *contents* is
-  ongoing work, not an M2 code deliverable; the loader and its tests are.
-- PutnamBench/ProofNet: out of scope for M2 (post-baseline additions); nothing in
-  the loader contract may assume miniF2F specifics.
+- `BenchmarkItem(id, declaration_name, statement, header, domain, split)` holds
+  the exact bodyless theorem declaration and exact portable header from one
+  active JSONL record.
+- `load_minif2f(path)` verifies `SOURCE` digests, parses every JSONL line,
+  includes only records whose `formal_statement` begins with a live `theorem`,
+  strips exactly one terminal `:= sorry`, and verifies the expected 229/225
+  usable counts plus the exact excluded-ID manifest. Any drift fails closed.
+- `domains.json` assigns every usable item one reviewed domain from a documented
+  taxonomy. Missing, duplicate, or unknown annotations are corpus errors for an
+  official run; custom loaders may use `unclassified` only for exploratory runs.
+- `corpus_digest` covers IDs, declaration names, headers, statements, domains,
+  splits, exclusions, and source revision. Corpus order does not affect it.
+- `load_custom(path)` uses the same `BenchmarkItem` contract. PutnamBench and
+  ProofNet remain out of scope, so consumers cannot assume miniF2F details.
 
-### `anticheat.py`
+### `anticheat.py` and `adjudication.py`
 
-`validate(item, submitted_source, trajectory, session) -> AntiCheatReport` — every
-check is independent and all run (no short-circuit), so the report lists every
-violation:
+`validate(item, submitted_source, trajectory, session, *, winning_env, pool_imports) -> AntiCheatReport` runs every independent check without
+short-circuiting:
 
-1. **Statement immutability.** M1's Prove splices the model's proof body into the
-   harness-owned statement, so benchmark runs construct the checked source as
-   `item.header + item.statement + body`. The check re-verifies the invariant
-   defensively by **reconstruction, not containment**: it independently rebuilds
-   the expected source from the benchmark item plus the recorded proof body and
-   requires the actually-checked source to equal it byte-for-byte. (Mere
-   containment would pass when the original statement survives in a comment,
-   string, or dead declaration while the graded declaration proves an easier
-   claim.) Belt-and-suspenders, cheap, and it protects against future workflow
-   drift.
-2. **`sorry`-free.** The final verdict has no sorries *and* the source contains no
-   `sorry`/`admit` token (comment/string-stripped lexical scan, not regex-in-place)
-   — the kernel result is authoritative but the lexical scan catches smuggling into
-   non-elaborated positions.
-3. **Axiom audit.** `#print axioms` in the same environment: subset of the standard
-   three, no `sorryAx`, and — benchmark mode — **zero** `Papers.*` axioms.
-   (Frontier runs report the manifest instead; that path activates in M4.)
-4. **Suspicious closers.** Lexical scan of source + scan of `run_tactic` calls in
-   the trajectory for `native_decide` (always flagged — it trusts the compiler,
-   not the kernel) and `decide` (flagged when the elaboration wall-clock for the
-   check exceeds a threshold, as a proxy for "huge goal"). Flags are warnings
-   attached to the result, not automatic failures; the runner surfaces them for
-   human review and the metrics report counts them separately.
+1. **Statement immutability.** Independently reconstruct the checked source from
+   the exact benchmark header/declaration plus a recorded proof body, and require
+   byte equality. Containment is insufficient.
+2. **`sorry`-free.** Require a complete kernel verdict and scan live Lean tokens
+   for `sorry`/`admit`; comments and strings do not count. Malformed lexical
+   input fails closed.
+3. **Axiom audit.** Run `#print axioms` in the winning environment. Missing audit
+   output or any non-standard/paper axiom fails the attempt.
+4. **Suspicious closers.** Flag each live `decide`/`native_decide` occurrence in
+   source and recorded `run_tactic` calls. Flags do not erase the hard-check
+   result, but they make the attempt provisional.
+
+Attempt status is one of `failed`, `provisional`, `certified`, or `rejected`.
+Hard-check failure yields `failed`; a hard-pass with flags yields `provisional`;
+a hard-pass without flags yields `certified`; adjudication promotes a
+provisional attempt to `certified` or demotes it to `rejected`.
+
+`eval_results/adjudications.jsonl` is append-only. Each event binds to the digest
+of the complete flag set, so changing an attempt or its flags invalidates old
+adjudications. The latest valid event per attempt is effective; history remains
+visible. Finalization refuses pending flags.
 
 ### `runner.py`
 
-- `EvalConfig(run_config: RunConfig, attempts_per_item: int, item_timeout_s: float,
-  parallelism: int, benchmark: str, split: str)` — pydantic, fully serializable
-  (its canonical-JSON SHA-256 is the config hash).
-- **The worker image is resolved to one immutable digest at run start** and
-  every worker — including replacements spawned mid-run by pool recycling —
-  launches by that digest, never by the mutable `hardy-lean:dev` tag: a tag
-  repointed mid-eval would mix worker generations inside one "baseline", and
-  recording the mixture afterward can't un-aggregate it. A run that
-  nonetheless observes multiple digests for one worker role is invalidated.
-- **Model-generated attempts run only on sandboxed workers**: the runner
-  refuses a direct-worker pool for eval attempts (direct workers execute
-  model-generated Lean as an ordinary host process, where elaborator-time IO
-  — `#eval`, `run_tac`, spawned children — can touch the repository,
-  credentials, and network; hashing the binary measures it, it doesn't
-  contain it). Direct workers remain for trusted tests and benchmarking
-  harness code only.
-- For each item × attempt: run the Prove workflow in **benchmark mode** — the
-  formalize + faithfulness phases are *skipped* (the statement is given verbatim;
-  formalizing it would violate immutability), the writeup phase is skipped, and
-  the proof phase runs with the item's budget. Each attempt gets a fresh
-  `ProofSession` (base-env isolation makes attempts independent by construction).
-- Attempts for pass@k are independent samples: same config except the attempt
-  index (recorded), no shared state, no cross-attempt context.
-- Failure handling: an attempt that dies (worker crash, runtime error) is recorded
-  as an unsolved attempt with its failure kind — never silently dropped, never
-  retried outside the configured attempt count.
-- Output: `EvalResult` per attempt (item id, solved, anti-cheat report, tokens,
-  Lean CPU seconds, Lean wall-clock, total wall-clock, trajectory path), streamed
-  to the tracking store as attempts finish (a crashed eval run keeps its completed
-  attempts). Lean CPU is measured, not inferred from wall time (parallel workers
-  and host load make the two incomparable): sandboxed workers read the container's
-  cgroup `cpuacct`/`cpu.stat` usage (the container name from
-  `sandboxed_worker_spec` makes it addressable); direct workers read the
-  process's `psutil` CPU-times. Sampling must survive worker teardown — on
-  timeout/crash/protocol error `LeanRepl` kills the container before the
-  failure propagates, so a read-after-command scheme would lose exactly the
-  most expensive failed attempts: a lightweight monitor samples the counter
-  *during* execution, the teardown path keeps the last sample, and when no
-  final sample exists the attempt is charged a conservative upper bound
-  (elapsed wall-clock × the sandbox's CPU cap), marked estimated. The session
-  accumulates per attempt.
+- `EvalConfig` is fully serializable and its canonical JSON SHA-256 is the config
+  hash. It includes the benchmark split, attempt count, all budgets, prompt/tool
+  versions, and normalized provider request parameters.
+- The worker image tag is resolved once to an immutable image digest; every
+  initial and replacement worker launches by that digest. Mixed digests
+  invalidate the run.
+- Model-generated Lean runs only in sandboxed workers. Direct workers are allowed
+  only for trusted model-free tests and are never baseline-eligible.
+- The runtime resolves the configured model through the provider. Official runs
+  require a canonical model ID the adapter knows to be immutable; the resolved
+  ID on every response must agree. Mutable aliases, missing identity, or mixed
+  identities make the run exploratory/ineligible.
+- Each item × attempt gets a fresh `ProofSession`. Formalization, faithfulness,
+  writeup, cross-attempt memory, and unconfigured retries are disabled.
+- Every configured attempt gets exactly one terminal result. A worker crash,
+  timeout, or runtime error is an unsolved terminal result, not a dropped sample.
+  An orchestrator/process interruption leaves the run manifest `incomplete` and
+  therefore ineligible.
+- A run-local manifest is written atomically at start and updated as attempt
+  files land. Completed attempts and trajectories survive interruption.
+- Lean CPU is sampled during execution. If teardown prevents a final sample, the
+  attempt uses the last sample or a conservative elapsed × CPU-cap upper bound,
+  marked estimated.
 
 ### `metrics.py`
 
-- pass@1 and pass@k (unbiased estimator when attempts ≥ k), overall and per-domain.
-- Cost per solved theorem: total tokens across *all* attempts (solved and not)
-  divided by **unique solved items** (item ids with at least one
-  anti-cheat-validated solve — with `attempts_per_item > 1`, counting solved
-  *attempts* would tally one theorem several times and understate cost); same
-  for Lean CPU seconds and wall clock — the denominator discipline is fixed
-  here so later strategy comparisons (M7) are apples-to-apples. Wall-clock
-  cost distinguishes **makespan from worker-seconds**: with `parallelism > 1`
-  attempts overlap, so summed per-attempt wall time overstates latency in
-  proportion to concurrency — the run and per-item elapsed makespan is the
-  latency metric, and summed attempt time is kept only under an explicit
-  *utilization* name. **Zero solves is a defined case, not a crash**: cost-per-solve is `null` with an explicit
-  zero-solve marker in the metrics blob (a weak local model or a hard subset
-  will produce it, and the baseline record must still be written); it's in the
-  metrics edge-case tests.
-- Anti-cheat summary: solves with flags reported as a separate line, never blended
-  into the headline number.
+- Certified pass@1/pass@k use only `certified` attempts. `provisional` and
+  `rejected` attempts are not solves. A separate provisional upper bound treats
+  pending attempts as solves so reviewers can see the possible range.
+- Per-solve costs divide resources spent across **all** configured attempts by
+  unique certified solved items. Zero certified solves yields `null` cost fields
+  plus an explicit marker, never a crash.
+- Makespan is the latency metric; summed attempt time is named utilization.
+- Per-domain metrics use `domains.json` annotations and include item counts so
+  tiny categories cannot be mistaken for robust estimates.
+- A report is `finalized` only when the run is complete and no provisional
+  attempts remain.
 
 ### `tracking.py`
 
-- Append-only JSONL at `eval_results/runs.jsonl`; each record append happens
-  under an interprocess lock with the complete line flushed and fsynced before
-  release — two eval processes finishing together would otherwise interleave
-  buffered writes and corrupt the stream, losing both records. One entry per
-  eval run:
-  timestamp, config hash, full `EvalConfig`, **git commit SHA of the harness**
-  (refusing to log from a dirty working tree unless `--allow-dirty` explicitly
-  overrides — in which case the entry additionally records a digest of the
-  uncommitted changes (`git diff HEAD` hashed, untracked files listed with
-  content digests), since a clean SHA alone cannot identify the code that
-  actually ran; dirty entries are excluded from `--compare` baselines unless
-  explicitly opted in), Lean toolchain + Mathlib
-  pin, **the content digests of the worker images actually used**
-  (`hardy-lean:dev`/`hardy-tex:dev` image IDs — source-level pins cannot detect
-  a stale or differently-rebuilt image, and two runs recording identical SHAs
-  and pins can still execute different worker bytes; **direct-worker runs**,
-  which have no image, record content hashes of the REPL binary and Lean
-  toolchain executables instead — the same byte-level guarantee — or are
-  marked non-reproducible and excluded from comparisons), model identity — the configured identifier
-  *plus the resolved immutable revision* (provider-reported model version /
-  response system fingerprint) where the provider exposes one, since a mutable
-  alias can re-point to new weights between two runs that record identical
-  code, images, and config. The revision is **accumulated per response, not
-  sampled once per run**: an alias can be repointed *mid-run*, and a single
-  run-level value could retain one fingerprint while attempts actually spanned
-  two sets of weights — a run whose responses carry more than one revision is
-  invalidated for baselines and comparisons; runs whose provider exposes no
-  immutable identity are marked as such so comparisons can segregate them — metrics blob,
-  **a canonical digest of the loaded benchmark corpus** (item ids, headers,
-  statements, domains, splits — `load_custom` files live outside the repo, so
-  the harness SHA and config hash can stay identical across materially
-  different statement sets), and paths to per-attempt results. `--compare`
-  surfaces image-digest and model-revision mismatches and **refuses** runs
-  whose corpus digests differ — that comparison would attribute a statement-set
-  change to the model or strategy.
-- `scripts/run_eval.py --compare <run-id> <run-id>` renders a metrics diff — the
-  regression check is *available* from day one; wiring it into CI is deferred
-  until eval runs stop needing a live model.
+- Each run has an atomic local manifest; finalized summaries append to
+  `eval_results/runs.jsonl`. Adjudications append separately. Both shared logs
+  flush and fsync complete lines under a crash-safe portable lock.
+- Provenance includes config hash/full config, clean Git SHA (or explicit dirty
+  digest for exploratory runs), Lean/Mathlib pins, worker image digest, canonical
+  model ID and observed response identities, corpus/annotation digests, metrics,
+  and attempt paths.
+- Finalized `RunRecord` exposes `baseline_eligible: bool` and
+  `eligibility_reasons: list[str]`.
+- Official-baseline eligibility is explicit and fail-closed: complete attempt
+  matrix, all flags adjudicated, clean tree, reproducible sandbox worker, one
+  immutable model identity, and matching pinned corpus/toolchain.
+- `--compare` refuses corpus or annotation mismatch, incomplete runs, and invalid
+  runs. It surfaces model, image, dirty-tree, and finalization differences.
+
+## Baseline protocol
+
+1. Run unit and Lean tiers and pin the exact worker image.
+2. Run a five-item `valid` smoke test; it is permanently labeled smoke data.
+3. Freeze and record the complete baseline config, including
+   `model="claude-sonnet-5"` (a canonical pinned model ID), budgets, prompt/tool
+   versions, and attempt count.
+4. Run the full 225-item usable `test` split without tuning on its outcomes.
+5. Adjudicate every flagged attempt with recorded rationale.
+6. Finalize only after eligibility checks pass; commit the run index,
+   adjudications, attempt records, config, and the headline certified pass@1.
+7. Verify self-comparison produces no warnings.
+
+“Reproducibility-complete” means another operator can reconstruct the protocol
+and environment. It does not promise bit-identical stochastic model samples;
+provider seed support or its absence is recorded in the config.
 
 ## Key decisions and rationale
 
-- **Benchmark mode skips formalization/faithfulness/writeup.** Alternative: run
-  the full pipeline for realism. Rejected: DESIGN is explicit that benchmarks
-  provide statements verbatim and that pure benchmark mode is exempt from the
-  output contract; running the formalizer on given statements would actively
-  violate anti-cheat.
-- **Vendor the benchmark, pin the revision.** Alternative: fetch at runtime.
-  Rejected: reproducibility is non-negotiable (Component 7), and upstream edits
-  would silently change the baseline.
-- **Suspicious closers flag, not fail.** `decide` is legitimate on small goals;
-  auto-failing would bias the benchmark against honest proofs. Flags + separate
-  reporting keep the headline number clean while preserving auditability.
-- **Config hash + git SHA both required.** Straight from DESIGN.md: code changes
-  behavior without changing configuration, so provenance needs both.
+- **Certified rather than optimistic headline.** Counting pending flags as solves
+  would publish a number before the required review had occurred.
+- **Append-only adjudication.** Mutating attempts would destroy the audit trail;
+  replacement attempts would change the configured sample.
+- **Pinned model required.** A mutable alias cannot support the milestone's
+  reproducibility claim. Unpinned runs remain visible but exploratory.
+- **Pinned JSONL export.** The monolithic upstream files contain completed proofs
+  and import an unvendored module; the tagged JSONL provides explicit portable
+  headers and placeholder statements matching Hardy's Lean 4.15 pin.
+- **Flag every `decide`.** Wall time is a host-load measurement, not a stable
+  measure of goal size. Human adjudication preserves legitimate small uses.
+- **Benchmark mode skips formalization/faithfulness/writeup.** The statement is
+  already authoritative, and DESIGN exempts pure benchmark mode from writeups.
 
 ## Testing strategy
 
-- **Unit:** loaders on fixture files; every anti-cheat check with hand-built
-  positive/negative cases (statement tampering, smuggled `sorry` in a string vs. a
-  comment vs. live code, `sorryAx` in axiom output, `native_decide` in trajectory
-  but not source); metrics math against known tables (pass@k estimator edge
-  cases); tracking round-trip + dirty-tree refusal (fake git via env/monkeypatch);
-  runner orchestration with `FakeRuntime` and `fake_repl` (crash-mid-eval keeps
-  completed attempts).
-- **`lean`:** axiom audit and suspicious-closer wall-clock proxy against the real
-  REPL; one real miniF2F item checked end-to-end with a canned correct proof body
-  (no model).
-- **`model`:** the actual baseline run (`scripts/run_eval.py`) — the exit
-  criterion; run manually, results committed to `eval_results/`.
+- **Unit:** exact-pin/count/exclusion/domain loader checks; statement and header
+  byte-preservation; every hard anti-cheat check; all closer locations;
+  append-only adjudication and supersession; certified/provisional metric tables;
+  complete/incomplete manifests; crash-safe lock recovery; provenance refusal
+  rules; comparison mismatch cases.
+- **`lean`:** real axiom audit, small legitimate `decide` becoming provisional,
+  and one pinned miniF2F item through the full model-free runner path.
+- **`model`:** five-item `valid` smoke run followed by the full `test` baseline,
+  adjudication, finalization, and self-comparison.
 
 ## Out of scope for M2
 
-- PutnamBench and ProofNet loaders; building the held-out set's contents; writeup
-  grading (benchmark mode has no writeups); paper-axiom manifests (M4); strategy
-  comparison tooling beyond `--compare` (M7); CI-run evals; distillation/telemetry
-  mining (Component 9 beyond what `Trajectory` already records).
+- PutnamBench and ProofNet loaders; creating the held-out custom set; writeup
+  grading; paper-axiom manifests; strategy comparison beyond run comparison;
+  CI model evals; automated suspicious-closer adjudication; telemetry mining;
+  resuming an interrupted model run in place (its completed attempts remain
+  diagnostic, but the official baseline is rerun from a new run ID).
