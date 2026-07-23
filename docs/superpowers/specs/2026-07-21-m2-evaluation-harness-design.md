@@ -54,6 +54,23 @@ identities.
     usable benchmark items.
 13. A stale adjudication event never masks an earlier event that still matches
     the attempt's current flag digest; the latest matching event is effective.
+14. The official corpus manifest and semantic digest are reviewed constants;
+    self-consistent replacement metadata is still noncanonical.
+15. Model immutability comes from an adapter-owned reviewed allowlist, not a
+    naming regex. `claude-sonnet-5` remains approved as a documented snapshot.
+16. Header imports and preamble retain exact bytes through reconstruction; no
+    whitespace normalization is permitted in the hard check.
+17. Matrix completion requires exact expected-key equality and uniqueness.
+18. Every flagged attempt requires adjudication before finalization, including
+    attempts that also fail a hard check.
+19. Official worker provenance requires a valid image digest, at least one
+    observed launch, and exact digest agreement for every launch.
+20. Lean, Mathlib, and REPL pins must equal the complete approved mapping.
+21. A lone CPU baseline without a follow-up sample uses the conservative bound.
+22. A torn trailing JSONL record is ignored on read and truncated under the next
+    exclusive append lock before new data is written.
+23. The runner/adjudication module boundary remains runtime-acyclic and is
+    covered by import-order regression tests.
 
 ## Requirements (from DESIGN.md Component 8)
 
@@ -146,6 +163,8 @@ visible. Finalization refuses pending flags.
 - The worker image tag is resolved once to an immutable image digest; every
   initial and replacement worker launches by that digest. Mixed digests
   invalidate the run.
+- Eligibility additionally requires at least one observed worker launch and
+  exact equality between every observed image and the approved image digest.
 - Model-generated Lean runs only in sandboxed workers. Direct workers are allowed
   only for trusted model-free tests and are never baseline-eligible.
 - The runtime resolves the configured model through the provider. Official runs
@@ -158,11 +177,15 @@ visible. Finalization refuses pending flags.
   timeout, or runtime error is an unsolved terminal result, not a dropped sample.
   An orchestrator/process interruption leaves the run manifest `incomplete` and
   therefore ineligible.
+- Result count alone is insufficient: the observed item-attempt keys must be
+  unique and equal the complete expected key set.
 - A run-local manifest is written atomically at start and updated as attempt
   files land. Completed attempts and trajectories survive interruption.
 - Lean CPU is sampled during execution. If teardown prevents a final sample, the
   attempt uses the last sample or a conservative elapsed × CPU-cap upper bound,
   marked estimated.
+- A successful baseline sample without any successful follow-up is not a CPU
+  measurement and uses the same conservative estimated upper bound.
 
 ### `metrics.py`
 
@@ -183,6 +206,8 @@ visible. Finalization refuses pending flags.
 - Each run has an atomic local manifest; finalized summaries append to
   `eval_results/runs.jsonl`. Adjudications append separately. Both shared logs
   flush and fsync complete lines under a crash-safe portable lock.
+- Readers recover all complete records before one torn trailing fragment; the
+  next exclusive append truncates that fragment before appending.
 - Provenance includes config hash/full config, clean Git SHA (or explicit dirty
   digest for exploratory runs), Lean/Mathlib pins, worker image digest, canonical
   model ID and observed response identities, corpus/annotation digests, metrics,
@@ -193,6 +218,8 @@ visible. Finalization refuses pending flags.
   matrix, all flags adjudicated, clean tree, reproducible sandbox worker, a
   response identity on every usage event with all responses reporting the same
   configured immutable model ID, and matching pinned corpus/toolchain.
+  Corpus, domain, Lean, Mathlib, and REPL identities must equal the reviewed M2
+  constants; nonempty arbitrary values are not sufficient.
 - `--compare` refuses corpus or annotation mismatch, incomplete runs, and invalid
   runs. It surfaces model, image, dirty-tree, and finalization differences.
 

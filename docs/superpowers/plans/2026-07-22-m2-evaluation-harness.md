@@ -83,6 +83,26 @@ against landed code before execution.
 12. Bind the canonical exclusion records into the corpus digest.
 13. Select the latest adjudication whose digest matches the current flags, so a
     stale later event cannot mask the latest valid decision.
+14. Compare `SOURCE` and its four file digests to the reviewed canonical
+    miniF2F manifest; eligibility also requires the approved semantic digest.
+15. Replace regex model classification with an adapter-owned reviewed allowlist;
+    Anthropic documents `claude-sonnet-5` as a pinned snapshot.
+16. Preserve header bytes in `split_header` and compare exact import/preamble
+    reconstruction without `strip()` normalization.
+17. Define completion by equality with the exact expected item-attempt key set,
+    rejecting duplicates even when the result count happens to match.
+18. Require matching adjudication for every flagged attempt, including hard
+    failures, before finalization.
+19. Require one valid 64-hex worker image digest, at least one observed launch,
+    and exact agreement across all observed launches.
+20. Compare the complete Lean, Mathlib, and REPL pin mapping to approved values;
+    empty or arbitrary mappings are ineligible.
+21. Treat a lone CPU baseline with no successful follow-up as an estimated
+    elapsed-times-cap upper bound, never measured zero.
+22. Ignore one torn trailing JSONL fragment when reading and truncate it under
+    the next exclusive append lock before writing a new durable record.
+23. Keep adjudication/runner imports acyclic with `TYPE_CHECKING` and forward
+    annotations, plus import-order regression coverage.
 
 ## Plan assumptions (re-validate before execution)
 
@@ -171,6 +191,8 @@ from pathlib import Path
 import pytest
 
 from hardy.eval.benchmark import (
+    CANONICAL_MINIF2F_CORPUS_DIGEST,
+    CANONICAL_MINIF2F_SOURCE,
     corpus_digest,
     load_minif2f,
     proof_prefix,
@@ -183,7 +205,7 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def write_fixture(root: Path) -> None:
+def write_fixture(root: Path) -> dict:
     records = [
         {"id": "mathd_algebra_1", "split": "valid",
          "formal_statement": "theorem alg (x : ℝ) : x = x := sorry",
@@ -208,16 +230,18 @@ def write_fixture(root: Path) -> None:
     }), encoding="utf-8")
     files = ["minif2f_lean4.jsonl", "LICENSE", "EXCLUSIONS.json",
              "domains.json"]
-    (root / "SOURCE").write_text(json.dumps({
+    source = {
         "repo": "fixture", "revision": "a" * 40,
         "usable_counts": {"valid": 1, "test": 1},
         "files": {name: f"sha256:{sha(root / name)}" for name in files},
-    }), encoding="utf-8")
+    }
+    (root / "SOURCE").write_text(json.dumps(source), encoding="utf-8")
+    return source
 
 
 def test_loads_exact_active_records_and_preserves_bytes(tmp_path):
-    write_fixture(tmp_path)
-    items = load_minif2f(tmp_path)
+    expected = write_fixture(tmp_path)
+    items = load_minif2f(tmp_path, expected_source=expected)
     assert [(i.id, i.split, i.domain) for i in items] == [
         ("mathd_algebra_1", "valid", "algebra"),
         ("imo_1", "test", "mixed"),
@@ -226,13 +250,22 @@ def test_loads_exact_active_records_and_preserves_bytes(tmp_path):
     assert items[0].header == "import Mathlib\n\nopen Real"
     assert items[0].declaration_name == "alg"
     assert statement_name(items[1].statement) == "imo_one"
-    assert split_header(items[0].header) == ("import Mathlib", "open Real")
+    imports, preamble = split_header(items[0].header)
+    assert imports == "import Mathlib\n\n"
+    assert preamble == "open Real"
+    assert imports + preamble == items[0].header
     assert proof_prefix(items[0]) == "open Real\n\ntheorem alg (x : ℝ) : x = x"
+
+
+def test_default_loader_rejects_self_consistent_noncanonical_manifest(tmp_path):
+    write_fixture(tmp_path)
+    with pytest.raises(ValueError, match="noncanonical miniF2F SOURCE"):
+        load_minif2f(tmp_path)
 
 
 @pytest.mark.parametrize("mutate", ["digest", "domain", "exclusion", "count"])
 def test_metadata_drift_fails_closed(tmp_path, mutate):
-    write_fixture(tmp_path)
+    expected = write_fixture(tmp_path)
     if mutate == "digest":
         (tmp_path / "LICENSE").write_text("changed", encoding="utf-8")
     elif mutate == "domain":
@@ -245,7 +278,7 @@ def test_metadata_drift_fails_closed(tmp_path, mutate):
         source["usable_counts"]["test"] = 2
         (tmp_path / "SOURCE").write_text(json.dumps(source), encoding="utf-8")
     with pytest.raises(ValueError):
-        load_minif2f(tmp_path)
+        load_minif2f(tmp_path, expected_source=expected)
 
 
 def test_rejects_non_placeholder_body(tmp_path):
@@ -258,12 +291,12 @@ def test_rejects_non_placeholder_body(tmp_path):
     source["files"]["minif2f_lean4.jsonl"] = f"sha256:{sha(corpus)}"
     (tmp_path / "SOURCE").write_text(json.dumps(source))
     with pytest.raises(ValueError, match="terminal `:= sorry`"):
-        load_minif2f(tmp_path)
+        load_minif2f(tmp_path, expected_source=source)
 
 
 def test_corpus_digest_binds_items_revision_and_exclusions(tmp_path):
-    write_fixture(tmp_path)
-    items = load_minif2f(tmp_path)
+    expected = write_fixture(tmp_path)
+    items = load_minif2f(tmp_path, expected_source=expected)
     exclusions = json.loads(
         (tmp_path / "EXCLUSIONS.json").read_text(encoding="utf-8")
     )["records"]
@@ -294,6 +327,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'hardy.eval'`.
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -305,6 +339,21 @@ _NAME = re.compile(r"\Atheorem\s+([A-Za-z_][A-Za-z0-9_'.]*)")
 _PLACEHOLDER = re.compile(r"\s*:=\s*sorry\s*\Z")
 _ALLOWED_DOMAINS = {"algebra", "number_theory", "geometry", "analysis",
                     "combinatorics", "mixed"}
+CANONICAL_MINIF2F_CORPUS_DIGEST = (
+    "sha256:2b3093c2bbbc90e8186f693a1a102b61c722db241a91e666499c01e24d8976fc"
+)
+CANONICAL_MINIF2F_SOURCE = {
+    "repo": "https://github.com/yangky11/miniF2F-lean4",
+    "tag": "v4.15.0",
+    "revision": "638c70ed4dfb28cac2d5bbbb43b6fc1fd2f7a40f",
+    "usable_counts": {"valid": 229, "test": 225},
+    "files": {
+        "minif2f_lean4.jsonl": "sha256:29c76cd4f7164e9396edea9f1eb57dbb7c1577429bfdc35599c5c52f5386a5b2",
+        "LICENSE": "sha256:63e8210e6bf3e8c032dc0c69b1d1d2e3ab72c14b02cabcc0dada2618bb188b97",
+        "EXCLUSIONS.json": "sha256:7f647ff47d6153c89b10d9f35d88a83bf3bf2778f4005041d3240f5b94951b1a",
+        "domains.json": "sha256:f78b41ffa678aa1b36afd07c96e295d26867c17f5d95f5b76ac96b67add44a36",
+    },
+}
 
 
 class BenchmarkItem(BaseModel):
@@ -338,10 +387,19 @@ def _bodyless(formal_statement: str) -> str:
 
 
 def split_header(header: str) -> tuple[str, str]:
-    imports, preamble = [], []
-    for line in header.splitlines():
-        (imports if line.lstrip().startswith("import ") else preamble).append(line)
-    return "\n".join(imports).strip(), "\n".join(preamble).strip()
+    lines = header.splitlines(keepends=True)
+    cut = 0
+    while cut < len(lines) and lines[cut].lstrip().startswith("import "):
+        cut += 1
+    while cut < len(lines) and not lines[cut].strip():
+        cut += 1
+    imports, preamble = "".join(lines[:cut]), "".join(lines[cut:])
+    if any(line.lstrip().startswith("import ")
+           for line in preamble.splitlines(keepends=True)):
+        raise ValueError("imports must form one leading header block")
+    if imports + preamble != header:
+        raise AssertionError("header split changed bytes")
+    return imports, preamble
 
 
 def proof_prefix(item: BenchmarkItem) -> str:
@@ -360,8 +418,14 @@ def _verify_files(root: Path, source: dict) -> None:
             raise ValueError(f"digest mismatch for {name}: {actual} != {expected}")
 
 
-def load_minif2f(path: Path) -> list[BenchmarkItem]:
+def load_minif2f(
+    path: Path,
+    *,
+    expected_source: Mapping[str, object] = CANONICAL_MINIF2F_SOURCE,
+) -> list[BenchmarkItem]:
     source = _load_json(path / "SOURCE")
+    if source != dict(expected_source):
+        raise ValueError("noncanonical miniF2F SOURCE manifest")
     _verify_files(path, source)
     exclusions = {(r["split"], r["id"]) for r in
                   _load_json(path / "EXCLUSIONS.json")["records"]}
@@ -428,7 +492,7 @@ def corpus_digest(items: list[BenchmarkItem],
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"),
                      ensure_ascii=False).encode()
-    return hashlib.sha256(raw).hexdigest()
+    return f"sha256:{hashlib.sha256(raw).hexdigest()}"
 ```
 
 Create an empty `src/hardy/eval/__init__.py`.
@@ -476,6 +540,12 @@ from pathlib import Path
 REPO = "https://github.com/yangky11/miniF2F-lean4"
 REVISION = "638c70ed4dfb28cac2d5bbbb43b6fc1fd2f7a40f"
 EXPECTED = {"valid": 229, "test": 225}
+EXPECTED_FILES = {
+    "minif2f_lean4.jsonl": "sha256:29c76cd4f7164e9396edea9f1eb57dbb7c1577429bfdc35599c5c52f5386a5b2",
+    "LICENSE": "sha256:63e8210e6bf3e8c032dc0c69b1d1d2e3ab72c14b02cabcc0dada2618bb188b97",
+    "EXCLUSIONS.json": "sha256:7f647ff47d6153c89b10d9f35d88a83bf3bf2778f4005041d3240f5b94951b1a",
+    "domains.json": "sha256:f78b41ffa678aa1b36afd07c96e295d26867c17f5d95f5b76ac96b67add44a36",
+}
 DEST = Path(__file__).resolve().parents[1] / "benchmarks" / "minif2f"
 _FULL_SHA = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -494,7 +564,7 @@ def domain(item_id: str) -> str:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", default=REPO)
+
     parser.add_argument("--revision", default=REVISION)
     args = parser.parse_args(argv)
     if not _FULL_SHA.fullmatch(args.revision):
@@ -503,7 +573,7 @@ def main(argv=None) -> int:
         raise SystemExit("M2 is frozen to REVISION; update the reviewed constant and manifests together")
     with tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
-        subprocess.run(["git", "clone", "--no-checkout", args.repo, str(tmp)],
+        subprocess.run(["git", "clone", "--no-checkout", REPO, str(tmp)],
                        check=True)
         subprocess.run(["git", "-C", str(tmp), "checkout", "--detach",
                         args.revision], check=True)
@@ -536,9 +606,14 @@ def main(argv=None) -> int:
                    indent=2, sort_keys=True) + "\n", encoding="utf-8")
     names = ["minif2f_lean4.jsonl", "LICENSE", "EXCLUSIONS.json",
              "domains.json"]
-    source = {"repo": args.repo, "tag": "v4.15.0",
+    actual_files = {
+        name: f"sha256:{digest(DEST / name)}" for name in names
+    }
+    if actual_files != EXPECTED_FILES:
+        raise SystemExit(f"canonical file digest drift: {actual_files}")
+    source = {"repo": REPO, "tag": "v4.15.0",
               "revision": args.revision, "usable_counts": counts,
-              "files": {name: f"sha256:{digest(DEST / name)}" for name in names}}
+              "files": actual_files}
     (DEST / "SOURCE").write_text(
         json.dumps(source, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"vendored miniF2F {args.revision}: valid=229 test=225")
@@ -567,7 +642,11 @@ def test_vendored_pin_and_counts():
     assert sum(i.split == "valid" for i in items) == 229
     assert sum(i.split == "test" for i in items) == 225
     source = json.loads((VENDORED / "SOURCE").read_text(encoding="utf-8"))
-    assert source["revision"] == "638c70ed4dfb28cac2d5bbbb43b6fc1fd2f7a40f"
+    assert source == CANONICAL_MINIF2F_SOURCE
+    exclusions = json.loads(
+        (VENDORED / "EXCLUSIONS.json").read_text(encoding="utf-8")
+    )["records"]
+    assert corpus_digest(items, exclusions) == CANONICAL_MINIF2F_CORPUS_DIGEST
     assert (VENDORED / "LICENSE").read_text(encoding="utf-8").strip()
 ```
 
@@ -592,10 +671,12 @@ git commit -m "feat: vendor exact Lean-4.15 miniF2F export"
 
 **Interfaces:**
 - Adds `TrajectoryEvent.model_revision: str | None` and
-  `Trajectory.model_revisions() -> list[str]`.
-- Adds `model_identity(configured_id, observed_ids) -> Literal["pinned",
-  "unpinned", "mismatch"]`. M2's official configured ID is
-  `claude-sonnet-5`, which is a canonical immutable Anthropic model ID.
+  `Trajectory.model_revisions() -> list[str | None]`.
+- Adds `model_identity(configured_id, observed_ids, immutable_ids=...) ->
+  Literal["pinned", "unpinned", "mismatch"]`. The Claude adapter owns a
+  reviewed allowlist rather than inferring immutability from spelling. M2's
+  official `claude-sonnet-5` ID is a pinned snapshot under Anthropic's current
+  model-ID/versioning contract.
 
 - [ ] **Step 1: Write failing identity tests**
 
@@ -603,6 +684,7 @@ git commit -m "feat: vendor exact Lean-4.15 miniF2F export"
 # tests/test_runtime_revisions.py
 import pytest
 
+from hardy.agent.claude_sdk import IMMUTABLE_MODEL_IDS
 from hardy.agent.runtime import Trajectory, TrajectoryEvent, model_identity
 
 
@@ -627,14 +709,14 @@ def test_ordered_distinct_response_ids():
     ("claude-sonnet-5", [None], "unpinned"),
     ("claude-sonnet-5", ["claude-sonnet-5", None], "unpinned"),
     ("claude-sonnet-4-5-20250929", [], "unpinned"),
-    ("claude-sonnet-4-5-20250929", ["claude-sonnet-4-5-20250929"], "pinned"),
+    ("claude-sonnet-4-5-20250929", ["claude-sonnet-4-5-20250929"], "unpinned"),
     ("claude-sonnet-4-5", [], "unpinned"),
     ("latest", [], "unpinned"),
     ("claude-sonnet-5", ["other"], "mismatch"),
     ("claude-sonnet-5", ["claude-sonnet-5", "other"], "mismatch"),
 ])
 def test_model_identity(configured, observed, expected):
-    assert model_identity(configured, observed) == expected
+    assert model_identity(configured, observed, immutable_ids=IMMUTABLE_MODEL_IDS) == expected
 ```
 
 Add SDK and fake-runtime tests proving each usage event copies the response's
@@ -649,12 +731,8 @@ Expected: FAIL because `model_revision` and `model_identity` do not exist.
 
 ```python
 # additions to src/hardy/agent/runtime.py
-import re
+from collections.abc import Collection
 from typing import Literal
-
-_PINNED_CLAUDE = re.compile(
-    r"claude-[a-z]+-(?:[5-9]|[4-9]-[6-9]|\d+-\d+-\d{8})\Z"
-)
 
 # in TrajectoryEvent
 model_revision: str | None = None
@@ -667,14 +745,26 @@ def model_revisions(self) -> list[str | None]:
     ))
 
 
-def model_identity(configured_id: str,
-                   observed_ids: list[str | None]) -> Literal["pinned", "unpinned", "mismatch"]:
+def model_identity(
+    configured_id: str,
+    observed_ids: list[str | None],
+    *,
+    immutable_ids: Collection[str],
+) -> Literal["pinned", "unpinned", "mismatch"]:
     if not observed_ids or any(observed is None for observed in observed_ids):
         return "unpinned"
     distinct = list(dict.fromkeys(observed_ids))
     if len(distinct) != 1 or distinct[0] != configured_id:
         return "mismatch"
-    return "pinned" if _PINNED_CLAUDE.fullmatch(configured_id) else "unpinned"
+    return "pinned" if configured_id in immutable_ids else "unpinned"
+```
+
+In `claude_sdk.py`, define:
+
+```python
+# Provider-reviewed pinned IDs only. Source reviewed 2026-07-23:
+# https://platform.claude.com/docs/en/about-claude/models/model-ids-and-versions
+IMMUTABLE_MODEL_IDS = frozenset({"claude-sonnet-5"})
 ```
 
 When `ClaudeSdkRuntime` appends each usage event, set
@@ -722,6 +812,7 @@ git commit -m "feat: record and validate immutable model identity"
 # 7. either closer only in run_tactic arguments -> trajectory flag
 # 8. nested comments and escaped strings do not produce flags
 # 9. changing any flag field changes flag_digest; ordering does not
+# 10. any header comment, whitespace, or import-byte change fails reconstruction
 
 async def test_small_decide_is_provisional_not_silently_certified(session, item):
     report = await run_validate(session, item, "by decide")
@@ -751,7 +842,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from hardy.agent.runtime import Trajectory
-from hardy.eval.benchmark import BenchmarkItem, statement_name
+from hardy.eval.benchmark import BenchmarkItem, split_header, statement_name
 from hardy.lean.session import ProofSession
 from hardy.workflows.audit import audit_axioms
 
@@ -825,13 +916,11 @@ def proof_bodies(trajectory: Trajectory) -> list[str]:
 
 
 def _imports(header: str) -> str:
-    return "\n".join(line for line in header.splitlines()
-                     if line.lstrip().startswith("import ")).strip()
+    return split_header(header)[0]
 
 
 def rebuild(item: BenchmarkItem, body: str) -> str:
-    preamble = "\n".join(line for line in item.header.splitlines()
-                         if not line.lstrip().startswith("import ")).strip()
+    _, preamble = split_header(item.header)
     prefix = f"{preamble}\n\n{item.statement}" if preamble else item.statement
     return f"{prefix} := {body}"
 
@@ -858,7 +947,7 @@ async def validate(item: BenchmarkItem, submitted_source: str,
     bodies = proof_bodies(trajectory)
     matched = next((body for body in reversed(bodies)
                     if rebuild(item, body) == submitted_source), None)
-    statement = CheckStatus(ok=matched is not None and _imports(item.header) == pool_imports.strip())
+    statement = CheckStatus(ok=matched is not None and _imports(item.header) == pool_imports)
     if not statement.ok:
         statement.reason = "checked source/imports do not reconstruct from corpus + trajectory"
     try:
@@ -909,6 +998,8 @@ git commit -m "feat: add fail-closed eval anti-cheat and closer flags"
 
 **Interfaces:**
 - `append_jsonl`, `load_jsonl`, and `atomic_json` are shared by runner/tracking.
+  Readers ignore one unterminated trailing record, and the next exclusive append
+  truncates that torn tail before writing a new fsynced line.
 - `AdjudicationEvent` binds to `(run_id, item_id, attempt_index, flag_digest)`;
   `effective_decisions` uses the latest timestamped event whose flag digest
   matches the attempt's current flag digest; `attempt_status` returns
@@ -918,8 +1009,9 @@ git commit -m "feat: add fail-closed eval anti-cheat and closer flags"
 
 Add `"portalocker>=3.0"` to project dependencies. Test concurrent appends from
 two spawned processes, process exit while holding a lock followed by successful
-acquisition, atomic JSON replacement, superseding decisions, stale flag-digest
-rejection, and these status cases:
+acquisition, atomic JSON replacement, a crash-during-append file ending in a
+partial JSON fragment (prior lines load and the next append repairs the tail),
+superseding decisions, stale flag-digest rejection, and these status cases:
 
 ```python
 assert attempt_status(hard_pass=False, flags=[], decision=None) == "failed"
@@ -944,11 +1036,27 @@ from pathlib import Path
 import portalocker
 
 
+def _complete_end(data: bytes) -> int:
+    return data.rfind(b"\n") + 1
+
+
+def _load_complete(data: bytes) -> list[dict]:
+    complete = data[:_complete_end(data)]
+    return [json.loads(line) for line in complete.splitlines() if line.strip()]
+
+
 def append_jsonl(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
-    with portalocker.Lock(path, mode="a", timeout=30,
+    line = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    with portalocker.Lock(path, mode="a+b", timeout=30,
                            flags=portalocker.LOCK_EX | portalocker.LOCK_NB) as handle:
+        handle.seek(0)
+        data = handle.read()
+        end = _complete_end(data)
+        if end != len(data):
+            handle.seek(end)
+            handle.truncate()
+        handle.seek(0, os.SEEK_END)
         handle.write(line)
         handle.flush()
         os.fsync(handle.fileno())
@@ -957,9 +1065,9 @@ def append_jsonl(path: Path, value: dict) -> None:
 def load_jsonl(path: Path) -> list[dict]:
     if not path.exists():
         return []
-    with portalocker.Lock(path, mode="r", timeout=30,
+    with portalocker.Lock(path, mode="rb", timeout=30,
                            flags=portalocker.LOCK_SH | portalocker.LOCK_NB) as handle:
-        return [json.loads(line) for line in handle if line.strip()]
+        return _load_complete(handle.read())
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -1142,6 +1250,16 @@ async def test_monitor_without_any_sample_charges_conservative_bound():
     assert usage == CpuUsage(cpu_s=60.0, estimated=True)
 
 
+async def test_lone_baseline_then_sampling_loss_charges_bound():
+    monitor = CpuMonitor(
+        list_sampler([("w1", 10.0), None]), interval_s=0.001
+    )
+    await monitor.start()
+    await drain(monitor, 3)
+    usage = await monitor.stop(elapsed_s=30.0, cap_cpus=2.0)
+    assert usage == CpuUsage(cpu_s=60.0, estimated=True)
+
+
 async def test_monitor_sampler_exception_is_survived():
     async def exploding():
         raise RuntimeError("docker fell over")
@@ -1285,6 +1403,7 @@ class CpuMonitor:
         self._interval_s = interval_s
         # identity -> [first cumulative reading, last cumulative reading]
         self._segments: dict[str, list[float]] = {}
+        self._has_followup = False
         self._task: asyncio.Task | None = None
 
     async def _sample_once(self) -> None:
@@ -1300,6 +1419,7 @@ class CpuMonitor:
             self._segments[identity] = [cpu_s, cpu_s]
         else:
             segment[1] = cpu_s
+            self._has_followup = True
 
     async def _loop(self) -> None:
         while True:
@@ -1322,7 +1442,7 @@ class CpuMonitor:
             await asyncio.wait_for(self._sample_once(), timeout=2.0)
         except (TimeoutError, asyncio.TimeoutError):
             pass
-        if not self._segments:
+        if not self._segments or not self._has_followup:
             return CpuUsage(cpu_s=elapsed_s * cap_cpus, estimated=True)
         total = sum(last - first for first, last in self._segments.values())
         return CpuUsage(cpu_s=total, estimated=False)
@@ -1440,6 +1560,8 @@ from hardy.eval.runner import (
     shared_imports,
 )
 
+IMAGE_DIGEST = "sha256:" + "a" * 64
+
 
 def run_config(**kw) -> RunConfig:
     defaults = dict(model="m", max_turns=10, wall_clock_s=60.0,
@@ -1477,10 +1599,10 @@ def test_resolve_image_digest_parses_and_validates():
 
     def fake_run(argv):
         calls.append(argv)
-        return "sha256:abc123\n"
+        return f"{IMAGE_DIGEST}\n"
 
     digest = resolve_image_digest("hardy-lean:dev", run=fake_run)
-    assert digest == "sha256:abc123"
+    assert digest == IMAGE_DIGEST
     assert calls == [["docker", "image", "inspect", "--format", "{{.Id}}",
                       "hardy-lean:dev"]]
     with pytest.raises(RuntimeError, match="unexpected image id"):
@@ -1489,14 +1611,14 @@ def test_resolve_image_digest_parses_and_validates():
 
 def test_eval_spec_factory_launches_by_digest_and_records_observations():
     provenance = WorkerProvenance(kind="sandboxed",
-                                  image_digest="sha256:abc", reproducible=True)
-    factory = eval_spec_factory("sha256:abc", provenance)
+                                  image_digest=IMAGE_DIGEST, reproducible=True)
+    factory = eval_spec_factory(IMAGE_DIGEST, provenance)
     spec1, spec2 = factory(), factory()
-    assert "sha256:abc" in spec1.argv          # digest, never the tag
+    assert IMAGE_DIGEST in spec1.argv          # digest, never the tag
     assert not any("hardy-lean:dev" in part for part in spec1.argv)
     assert spec1.cleanup_argv[:2] == ["docker", "kill"]
     assert spec1.cleanup_argv[2] != spec2.cleanup_argv[2]   # unique names
-    assert provenance.observed_images == ["sha256:abc", "sha256:abc"]
+    assert provenance.observed_images == [IMAGE_DIGEST, IMAGE_DIGEST]
 
 
 def test_sandboxed_eval_pool_resolves_once():
@@ -1504,14 +1626,14 @@ def test_sandboxed_eval_pool_resolves_once():
 
     def resolve(image):
         resolutions.append(image)
-        return "sha256:pinned"
+        return IMAGE_DIGEST
 
     pool, provenance = sandboxed_eval_pool(
         size=2, imports="import Mathlib", resolve=resolve
     )
     assert resolutions == ["hardy-lean:dev"]   # once at run start
     assert provenance == WorkerProvenance(
-        kind="sandboxed", image_digest="sha256:pinned", reproducible=True,
+        kind="sandboxed", image_digest=IMAGE_DIGEST, reproducible=True,
         observed_images=[],
     )
 
@@ -1546,7 +1668,7 @@ def item_with(header: str, name: str) -> BenchmarkItem:
 def test_shared_imports_uniform_and_mixed():
     uniform = [item_with("import Mathlib\nimport Aesop\n\nopen Nat", "a"),
                item_with("import Mathlib\nimport Aesop\n\nopen Real", "b")]
-    assert shared_imports(uniform) == "import Mathlib\nimport Aesop"
+    assert shared_imports(uniform) == "import Mathlib\nimport Aesop\n\n"
     mixed = uniform + [item_with("import Std", "c")]
     with pytest.raises(ValueError, match="share one import block"):
         shared_imports(mixed)
@@ -1578,6 +1700,7 @@ including mid-run replacements — launches by that digest.
 import asyncio
 import hashlib
 import json
+import re
 import subprocess
 import time
 from collections.abc import Callable
@@ -1646,7 +1769,7 @@ def resolve_image_digest(
     digest = run(
         ["docker", "image", "inspect", "--format", "{{.Id}}", image]
     ).strip()
-    if not digest.startswith("sha256:"):
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
         raise RuntimeError(f"unexpected image id for {image!r}: {digest!r}")
     return digest
 
@@ -1768,11 +1891,14 @@ async def test_interruption_keeps_incomplete_manifest(eval_fixture, tmp_path):
     assert not manifest["complete"]
     assert 0 < len(manifest["results"]) < (
         manifest["items_expected"] * manifest["attempts_per_item"]
-    )```
+    )
+```
 
 Also retain the existing tests for sandbox refusal, import mismatch, fresh session
 per attempt, configured concurrency, attempt/trajectory streaming, in-flight CPU
-accounting, mixed image invalidation, and response-model mismatch.
+accounting, mixed image invalidation, and response-model mismatch. Add a result
+matrix with one duplicated `(item_id, attempt_index)` and one missing expected key;
+assert that equal result count does not mark the manifest complete.
 
 Run: `pytest tests/test_runner.py -v`
 Expected: FAIL on missing `status`, manifest, and finalization fields.
@@ -1784,6 +1910,7 @@ Expected: FAIL on missing `status`, manifest, and finalization fields.
 from typing import Literal
 from pydantic import BaseModel, Field
 
+from hardy.agent.claude_sdk import IMMUTABLE_MODEL_IDS
 from hardy.agent.runtime import model_identity
 from hardy.eval.adjudication import attempt_status
 from hardy.eval.anticheat import AntiCheatReport
@@ -1820,6 +1947,7 @@ class EvalRun(BaseModel):
     model_identity: Literal["pinned", "unpinned", "mismatch"]
     model_revisions: list[str | None]
     complete: bool
+    pending_adjudications: int = 0
     finalized: bool = False
     invalidated: str | None = None
 
@@ -1862,14 +1990,26 @@ At run start, atomically write an `EvalRun` with `results=[]`,
 result in memory and atomically rewrite the manifest. In `finally`, compute:
 
 ```python
-expected = len(items) * config.attempts_per_item
-complete = len(results) == expected
+expected_keys = {
+    (item.id, attempt_index)
+    for item in items
+    for attempt_index in range(config.attempts_per_item)
+}
+result_keys = [(result.item_id, result.attempt_index) for result in results]
+complete = (
+    len(result_keys) == len(set(result_keys))
+    and set(result_keys) == expected_keys
+)
 observed = list(dict.fromkeys(
     revision for result in results for revision in result.model_revisions
 ))
-identity = model_identity(config.run_config.model, observed)
+identity = model_identity(
+    config.run_config.model, observed, immutable_ids=IMMUTABLE_MODEL_IDS
+)
 invalidated = None
-if len(set(provenance.observed_images)) > 1:
+if len(result_keys) != len(set(result_keys)):
+    invalidated = "duplicate item-attempt keys"
+elif len(set(provenance.observed_images)) > 1:
     invalidated = "multiple worker image digests"
 elif identity == "mismatch":
     invalidated = "response model identity disagrees with configured model"
@@ -1878,7 +2018,11 @@ run = EvalRun(
     items_expected=len(items), attempts_per_item=config.attempts_per_item,
     makespan_s=clock() - started, pool_imports=pool_imports,
     model_identity=identity, model_revisions=observed,
-    complete=complete, invalidated=invalidated,
+    complete=complete,
+    pending_adjudications=sum(
+        bool(result.anticheat and result.anticheat.flags) for result in results
+    ),
+    invalidated=invalidated,
 )
 write_run_manifest(out_dir, run)
 ```
@@ -1923,6 +2067,7 @@ assert pending_report.provisional_pass_at_1 == 0.50
 assert not pending_report.finalized
 assert finalized_report.finalized
 assert finalized_report.pending_attempts == 0
+assert a flagged hard failure without a matching decision prevents finalization
 assert rejected attempts never increase pass_at_k
 assert cost denominators use unique certified solved items
 assert zero certified solves yields None per-solve costs
@@ -1936,11 +2081,14 @@ Expected: FAIL because the finalization/metrics functions do not exist.
 
 ```python
 # addition to src/hardy/eval/adjudication.py
-from hardy.eval.runner import EvalRun
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from hardy.eval.runner import EvalRun
 
 
-def apply_adjudications(run: EvalRun,
-                        events: list[AdjudicationEvent]) -> EvalRun:
+def apply_adjudications(run: "EvalRun",
+                        events: list[AdjudicationEvent]) -> "EvalRun":
     current_flag_digests = {}
     for result in run.results:
         flags = [] if result.anticheat is None else result.anticheat.flags
@@ -1949,25 +2097,31 @@ def apply_adjudications(run: EvalRun,
         ] = flag_digest(flags)
     effective = effective_decisions(events, current_flag_digests)
     updated = []
+    pending = 0
     for result in run.results:
         report = result.anticheat
         flags = [] if report is None else report.flags
         event = effective.get((run.run_id, result.item_id, result.attempt_index))
         decision = decision_for(event, flags)
+        if flags and decision is None:
+            pending += 1
         updated.append(result.model_copy(update={
             "status": attempt_status(
                 hard_pass=bool(report and report.passed),
                 flags=flags, decision=decision,
             )
         }))
-    finalized = run.complete and not run.invalidated and all(
-        result.status != "provisional" for result in updated
-    )
-    return run.model_copy(update={"results": updated, "finalized": finalized})
+    finalized = run.complete and not run.invalidated and pending == 0
+    return run.model_copy(update={
+        "results": updated,
+        "pending_adjudications": pending,
+        "finalized": finalized,
+    })
 ```
 
-Avoid the runtime import cycle by placing `TYPE_CHECKING` imports behind the
-standard guard and importing `EvalRun` locally inside the function.
+The shown `TYPE_CHECKING` guard and forward annotation avoid importing
+`runner.py` at runtime; keep a regression test that imports both modules in
+both orders.
 
 - [ ] **Step 3: Implement metrics**
 
@@ -2045,7 +2199,7 @@ def compute_metrics(run: EvalRun, items: list[BenchmarkItem], *, k: int) -> Metr
         provisional_pass_at_1=_rate(groups, 1, upper),
         provisional_pass_at_k=_rate(groups, k, upper),
         unique_certified_solved=denom,
-        pending_attempts=sum(r.status == "provisional" for r in run.results),
+        pending_attempts=run.pending_adjudications,
         finalized=run.finalized, zero_solves=denom == 0,
         tokens_total=tokens, tokens_per_solve=tokens / denom if denom else None,
         lean_cpu_s_total=cpu, lean_cpu_per_solve=cpu / denom if denom else None,
@@ -2098,12 +2252,16 @@ parameterized test that flips each official gate independently:
     ("complete", "incomplete attempt matrix"),
     ("finalized", "pending adjudications"),
     ("dirty", "dirty Git tree"),
-    ("worker", "non-reproducible worker"),
+    ("worker", "worker image provenance is not pinned"),
+    ("worker_digest", "worker image provenance is not pinned"),
+    ("worker_observations", "worker image provenance is not pinned"),
     ("model_identity", "model identity is not pinned"),
     ("invalidated", "run invalidated"),
     ("split", "official baseline requires test split"),
     ("item_count", "official baseline requires 225 items"),
     ("model_id", "official baseline requires claude-sonnet-5"),
+    ("corpus", "corpus identity does not match approved M2 corpus"),
+    ("pins", "toolchain pins do not match approved M2 toolchain"),
 ])
 def test_each_gate_blocks_baseline(field, reason, eligible_record):
     record = eligible_record.with_gate_disabled(field)
@@ -2121,6 +2279,35 @@ Expected: FAIL because tracking does not exist.
 
 ```python
 # core models/helpers in src/hardy/eval/tracking.py
+APPROVED_TOOLCHAIN_PINS = {
+    "lean_toolchain": "leanprover/lean4:v4.15.0",
+    "mathlib_revision": "9837ca9d65d9de6fad1ef4381750ca688774e608",
+    "repl_revision": "21966799da3691a0912b5a15193585bd2dd7165d",
+}
+APPROVED_CORPUS_DIGEST = (
+    "sha256:2b3093c2bbbc90e8186f693a1a102b61c722db241a91e666499c01e24d8976fc"
+)
+APPROVED_DOMAIN_DIGEST = (
+    "sha256:f78b41ffa678aa1b36afd07c96e295d26867c17f5d95f5b76ac96b67add44a36"
+)
+
+
+def _sha256_digest(value: str | None) -> bool:
+    if value is None or not value.startswith("sha256:") or len(value) != 71:
+        return False
+    return all(char in "0123456789abcdef" for char in value[7:])
+
+
+def _pinned_worker(worker: WorkerProvenance) -> bool:
+    return (
+        worker.kind == "sandboxed"
+        and worker.reproducible
+        and _sha256_digest(worker.image_digest)
+        and bool(worker.observed_images)
+        and all(image == worker.image_digest for image in worker.observed_images)
+    )
+
+
 class RunRecord(BaseModel):
     run_id: str
     timestamp: str
@@ -2150,17 +2337,19 @@ def eligibility(*, run: EvalRun, config: EvalConfig, git: GitProvenance,
     if not run.complete: reasons.append("incomplete attempt matrix")
     if not run.finalized: reasons.append("pending adjudications")
     if git.dirty: reasons.append("dirty Git tree")
-    if not worker.reproducible or worker.kind != "sandboxed":
-        reasons.append("non-reproducible worker")
+    if not _pinned_worker(worker):
+        reasons.append("worker image provenance is not pinned")
     if run.model_identity != "pinned": reasons.append("model identity is not pinned")
     if run.invalidated: reasons.append("run invalidated")
     if config.split != "test": reasons.append("official baseline requires test split")
     if run.items_expected != 225: reasons.append("official baseline requires 225 items")
     if config.run_config.model != "claude-sonnet-5":
         reasons.append("official baseline requires claude-sonnet-5")
-    if not corpus_digest or not domain_digest: reasons.append("missing corpus identity")
-    if any(value == "unavailable" for value in pins.values()):
-        reasons.append("missing toolchain pin")
+    if (corpus_digest != APPROVED_CORPUS_DIGEST
+            or domain_digest != APPROVED_DOMAIN_DIGEST):
+        reasons.append("corpus identity does not match approved M2 corpus")
+    if pins != APPROVED_TOOLCHAIN_PINS:
+        reasons.append("toolchain pins do not match approved M2 toolchain")
     return reasons
 
 
@@ -2173,7 +2362,9 @@ def load_runs(path: Path) -> list[RunRecord]:
 ```
 
 Implement `GitProvenance`, `collect_git_provenance`, `read_pins`, and
-`compare_runs` exactly as already described in the spec: dirty override records
+`compare_runs` exactly as already described in the spec. `read_pins` resolves
+Mathlib and REPL tags to commits and must reproduce `APPROVED_TOOLCHAIN_PINS`;
+an empty or merely non-`unavailable` mapping is never sufficient. Dirty override records
 content digests but never becomes official; comparison raises on differing
 corpus/domain digests, invalid/incomplete/unfinalized records, and renders
 certified metrics plus explicit provenance warnings. Use `journal.py`; do not
