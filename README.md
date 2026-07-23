@@ -1,109 +1,42 @@
 # Hardy
 
-An agentic harness for automated theorem proving — plug in any LLM and make it good
-at proving mathematical theorems.
+Hardy is an experimental, model-agnostic harness for theorem proving in Lean 4.
+It puts a language model in a tight loop with the Lean kernel, giving the model
+useful proof tools while keeping verification and honest reporting under the
+harness's control.
 
-## The name
+The name recalls G. H. Hardy's response to Ramanujan: recognize the insight, then
+demand the proof. Hardy aims to turn a model's mathematical ideas into artifacts
+that people and machines can inspect.
 
-In 1913, G.H. Hardy received a letter from Srinivasa Ramanujan: pages of
-extraordinary mathematical claims, stated without proof. Hardy's response defined
-the collaboration — recognize the brilliance, then *demand the proof*. That is
-precisely this harness's relationship to the model plugged into it: the LLM supplies
-the flashes of insight; Hardy supplies the rigor, the verification, and the
-insistence that nothing ships until it's proved. Hardy also wrote
-*A Mathematician's Apology* — the writeup matters as much as the proof, which is why
-every result here comes with one.
+## Starting over
 
-## What it does
+This repository is intentionally at a **documentation-only reset**. The previous
+prototype, sandbox, implementation plans, and milestone specs have been removed so
+the shortest possible experimental implementation can be built without preserving
+premature machinery. There is currently no runnable code.
 
-Ask it to prove that the square root of 2 is irrational and it produces a
-compile-checked LaTeX writeup with citations into the project bibliography **and**,
-whenever formalization succeeds, a kernel-checked Lean 4 proof. LaTeX always; Lean
-wherever formalization is within reach — and when it falls short, it says so:
-every result ships with two explicit grades, one per dimension — formalization
-status (fully verified / verified modulo assumed papers / partially formalized /
-not formalized) and informal completeness (no gaps detected / known gaps listed /
-not assessed) — never a silent overclaim.
+The first experiment should prove one small theorem end to end with:
 
-Three composable workflows, which hand a problem back and forth iteratively:
+1. a model-driven proof loop;
+2. direct Lean feedback;
+3. a kernel-checked `.lean` artifact; and
+4. a human-readable writeup whose verification limits are explicit.
 
-- **Prove** — *"find a proof of X"*: search for a proof, produce the artifact pair.
-- **Critique** — *"find holes in this proof"*: take any proof — yours, the
-  literature's, or Hardy's own draft — and produce a structured ledger of gaps:
-  unjustified steps, missing cases, quantifier slips, misapplied citations.
-- **Repair** — *"this proof has a hole; propose a fix"*: patch one hole locally and
-  verify the patch.
+Isolation and production hardening remain planned, but they are deliberately not
+prerequisites for initial local experiments. Until isolation returns, only run
+trusted model output in a disposable development environment.
 
-Prove drafts, Critique finds the holes, Repair closes them one at a time, Critique
-re-checks — around the loop until every hole is verified closed or the remaining
-ones are honestly reported.
+## Documentation
 
-## How
+- [DESIGN.md](DESIGN.md) defines the architecture, trust boundary, and design
+  principles.
+- [FEATURES.md](FEATURES.md) is the consolidated feature inventory and rough
+  sequencing guide extracted from the former specs and plans.
+- [ARCHITECTURE.html](ARCHITECTURE.html) is a self-contained visual map of the
+  design and planned feature areas.
+- [AGENTS.md](AGENTS.md) gives Codex and other coding agents the repository's
+  startup context.
 
-The idea: Claude Code and Codex showed that the *harness* around a model (tight
-feedback loops, well-designed tools, context management) is as important as the model
-itself. Theorem proving is the ideal domain for this approach because the Lean kernel
-provides perfect, free verification of every attempt. Built first on the Claude Agent
-SDK, behind an abstraction layer that also admits Strands, Ollama, and other
-runtimes; with arXiv search/download and a machine-maintained BibTeX bibliography as
-first-class tools.
-
-Beyond Mathlib's frontier, "assume this paper" turns a paper's results into an
-axiomatized Lean library (`Papers.*` namespaces of `axiom` declarations), so new
-theorems can be proved *modulo* the literature — with every result carrying an
-explicit axiom manifest of exactly which paper results it relied on.
-
-See [DESIGN.md](DESIGN.md) for the full project outline: architecture, components,
-milestones, and open questions — or open the interactive design map at
-[docs/architecture.html](docs/architecture.html) for a browsable, diagrammed
-version of the whole plan.
-
-## Status
-
-**M0 (plumbing) — code complete, exit criterion partly validated.** A pinned
-Lean 4 + Mathlib project, a warm REPL session pool with base-environment
-isolation, a LaTeX template + compile-check pipeline, and the
-no-network/read-only sandbox around both — unit-tested (Python) and
-integration-tested against the real Lean toolchain.
-
-Exit criterion progress (both halves must run **inside the sandbox** to close
-M0):
-
-- **Throughput — validated directly, sandboxed run pending.** 200/200 proofs
-  verified in ~1 s against 8 warm sessions — **~11,900 proofs/minute**
-  (`scripts/bench_throughput.py`), far past the 100/minute bar. The sandboxed
-  form (`--sandbox`) still needs the `hardy-lean:dev` image built (see below),
-  so this clause is **not yet closed**.
-- **Writeup — validated, including sandboxed.** The sample writeup
-  compile-checks to a real PDF both directly and **inside the sandbox**
-  (`scripts/sample_writeup.py [--sandbox]`).
-
-M0 is **not complete** until `bench_throughput.py --sandbox` also passes.
-
-### Reproducing it
-
-Works on Linux, macOS, and native Windows — **WSL is never required** (much of
-the target audience doesn't use it). Requires `elan` (which provides `lake`),
-git access to the Lean/Mathlib repos, the Mathlib olean cache, and a TeX
-engine; the sandbox steps additionally need a Linux-container runtime (on
-Windows, Docker Desktop's Hyper-V backend is enough). Nix is needed only to
-*build* the sandbox images — a maintainer/CI concern on Linux/macOS; once CI
-publishes digest-pinned images, users just `docker pull` them. Then:
-
-```sh
-pip install -e .            # the scripts import `hardy` from src/
-scripts/setup_lean.sh       # build lean_project (Mathlib) + the repl
-pytest -m lean              # real-toolchain integration tests
-scripts/bench_throughput.py --imports "import Mathlib.Tactic"   # direct throughput
-nix-build nix/tex-image.nix  && docker load < result           # hardy-tex:dev
-nix-build nix/lean-image.nix && docker load < result           # hardy-lean:dev (large)
-scripts/bench_throughput.py --sandbox                          # sandboxed throughput
-scripts/sample_writeup.py    --sandbox                         # sandboxed writeup
-```
-
-The sandbox images are built from the Nix store (`nix/`) — the *contents*
-involve no Docker Hub base images or GitHub-release downloads, and CI is the
-intended builder/publisher so end users never run Nix (which has no native
-Windows port). `hardy-lean:dev` bakes full Mathlib's oleans, so it wants a
-build host with generous disk; that is the last step to close M0's throughput
-clause. Then: **M1 (minimal agent)**.
+Keep these four descriptions consistent. When the direction changes, update all
+documents whose claims are affected in the same change.

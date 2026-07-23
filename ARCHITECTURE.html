@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hardy — architecture map</title>
+<style>
+:root{--ink:#18211d;--muted:#5c6962;--paper:#f4f0e6;--card:#fffdf7;--green:#184f3c;--gold:#c9882b;--line:#cfc7b6;--blue:#325d76}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,sans-serif}main{max-width:1180px;margin:auto;padding:56px 24px 80px}h1,h2,h3{font-family:Georgia,serif;line-height:1.1}h1{font-size:clamp(2.8rem,7vw,6rem);margin:.1em 0}h2{font-size:2rem;margin-top:2.4em}.eyebrow{color:var(--gold);font-weight:800;letter-spacing:.15em;text-transform:uppercase}.lede{max-width:780px;font-size:1.3rem;color:var(--muted)}.notice{margin:32px 0;padding:20px;border-left:5px solid var(--gold);background:#fff5db}.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:30px 0}.step,.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:0 5px 20px #2f3a3310}.step{position:relative;border-top:5px solid var(--green)}.step:not(:last-child):after{content:'→';position:absolute;right:-17px;top:42%;z-index:2;color:var(--gold);font-size:1.7rem;font-weight:bold}.step b{display:block;color:var(--green);font-family:Georgia,serif;font-size:1.2rem}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card h3{color:var(--green);margin:.2em 0}.tag{display:inline-block;padding:3px 9px;margin:2px;border-radius:99px;background:#e3eee8;color:var(--green);font-size:.8rem;font-weight:700}.tag.next{background:#e4edf2;color:var(--blue)}.tag.later{background:#f3e6d1;color:#7c4e10}.contract{display:grid;grid-template-columns:1fr 1fr;gap:18px}.contract>div{padding:24px;background:var(--green);color:white;border-radius:14px}.contract h3{color:#f5ca81}.trust{border:2px dashed var(--gold);padding:24px;border-radius:14px;background:#fff8e9}footer{margin-top:70px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted)}a{color:var(--green)}@media(max-width:800px){.flow,.grid,.contract{grid-template-columns:1fr}.step:not(:last-child):after{content:'↓';right:50%;top:auto;bottom:-23px}.grid{gap:12px}}
+</style>
+</head>
+<body><main>
+<p class="eyebrow">The complete design map</p>
+<h1>Hardy</h1>
+<p class="lede">A model-agnostic theorem-proving harness where language models propose, Lean verifies, and the harness preserves an honest account of what succeeded.</p>
+<div class="notice"><strong>Documentation-only reset.</strong> There is no implementation today. The old prototype and sandbox were removed to make room for a thin experimental path. Isolation remains required before untrusted or shared use.</div>
+
+<h2>The core loop</h2>
+<div class="flow">
+ <div class="step"><b>1 · Request</b>An informal claim, Lean theorem, or proof to inspect.</div>
+ <div class="step"><b>2 · Orchestrate</b>Choose a workflow and strategy; enforce budgets and stopping rules.</div>
+ <div class="step"><b>3 · Experiment</b>The model calls narrow tools and revises from structured Lean feedback.</div>
+ <div class="step"><b>4 · Verify & report</b>The kernel checks formal work; Hardy saves artifacts, grades, and trajectory.</div>
+</div>
+
+<h2>Three composable workflows</h2>
+<div class="grid">
+ <article class="card"><h3>Prove</h3><p>Formalize faithfully, search for a proof, and produce linked Lean and human artifacts.</p><span class="tag">Now</span></article>
+ <article class="card"><h3>Critique</h3><p>Use kernel errors, formalization probes, and adversarial skeptics to build a persistent hole ledger.</p><span class="tag next">Next</span></article>
+ <article class="card"><h3>Repair</h3><p>Patch one hole without changing the claim, then recheck the affected blast radius.</p><span class="tag next">Next</span></article>
+</div>
+
+<h2>System layers</h2>
+<div class="grid">
+ <article class="card"><h3>Workflow & strategy</h3><p>Phases, retries, budgets, fixed points, and pluggable search from iterative repair to parallel attempts.</p></article>
+ <article class="card"><h3>Model runtime</h3><p>A minimal loop first; provider adapters and capability flags after the seam is demonstrated.</p></article>
+ <article class="card"><h3>Tool layer</h3><p>Bounded verbs for Lean, goals, lemmas, holes, papers, citations, and writeups.</p></article>
+ <article class="card"><h3>Lean interaction</h3><p>Direct invocation first; later persistent sessions, pools, snapshots, and cheap automation.</p></article>
+ <article class="card"><h3>Knowledge</h3><p>Versioned literature, premise retrieval, assumed-paper libraries, and contamination-aware memory.</p></article>
+ <article class="card"><h3>Evidence</h3><p>Trajectories, anti-cheat audits, immutable provenance, fixed benchmarks, and equal-budget comparisons.</p></article>
+</div>
+
+<h2>Artifact contract</h2>
+<div class="contract">
+ <div><h3>Formal dimension</h3><p>Kernel verified · verified modulo explicit paper assumptions · partially formalized · not formalized.</p></div>
+ <div><h3>Informal dimension</h3><p>No gaps detected, with assessment provenance · known gaps listed · not assessed.</p></div>
+</div>
+<p>Lean acceptance is evidence for the formal claim. A compiled document is not. The statement connects the artifacts, and Hardy reports partial work rather than silently changing the theorem.</p>
+
+<h2>Feature horizon</h2>
+<div class="grid">
+ <article class="card"><h3><span class="tag">Now</span> Thin slice</h3><p>One model loop, direct Lean feedback, core proof tools, a saved trajectory, checked Lean, and a plain graded writeup.</p></article>
+ <article class="card"><h3><span class="tag next">Next</span> Honest experiments</h3><p>Faithfulness and axiom audits, budgets, evaluation provenance, critique/repair, and literature-backed citations.</p></article>
+ <article class="card"><h3><span class="tag later">Later</span> Breadth & hardening</h3><p>Alternative runtimes, advanced search, assumed papers, retrieval, memory, warm workers, and restored isolation.</p></article>
+</div>
+
+<h2>Trust boundary</h2>
+<div class="trust"><strong>The kernel is the formal authority, subject to its audited axiom set.</strong> Faithfulness review protects informal-to-formal translation. Paper axioms are visible additions to trust. Until confinement is restored, generated Lean and TeX and downloaded archives must be treated as unsafe and run only in disposable environments.</div>
+
+<footer>This self-contained map summarizes <a href="DESIGN.md">DESIGN.md</a> and <a href="FEATURES.md">FEATURES.md</a>. Update all three together when architecture or scope changes.</footer>
+</main></body></html>
