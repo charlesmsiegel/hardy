@@ -103,6 +103,16 @@ against landed code before execution.
     the next exclusive append lock before writing a new durable record.
 23. Keep adjudication/runner imports acyclic with `TYPE_CHECKING` and forward
     annotations, plus import-order regression coverage.
+24. Require the worker digest to equal a committed approved image lock and
+    attest the complete approved Lean/Mathlib/REPL pins inside that image.
+25. Migrate the repository's current Lean 4.30 project and Nix image to the
+    exact approved Lean 4.15, Mathlib, and REPL revisions before evaluation.
+26. Capture clean source Git provenance before creating run output; finalization
+    reuses that immutable snapshot rather than inspecting generated artifacts.
+27. Require a baseline and follow-up sample for every CPU identity segment; a
+    singleton replacement-worker segment forces the conservative estimate.
+28. Emit one closer flag per live occurrence with stable location evidence so
+    adding or moving a closer changes the full flag-set digest.
 
 ## Plan assumptions (re-validate before execution)
 
@@ -661,6 +671,66 @@ git commit -m "feat: vendor exact Lean-4.15 miniF2F export"
 ```
 
 ---
+
+### Task 2B: Migrate and attest the official Lean 4.15 worker image
+
+**Files:**
+- Modify: `lean_project/lean-toolchain`
+- Modify: `lean_project/lakefile.toml`
+- Regenerate: `lean_project/lake-manifest.json`
+- Modify: `scripts/setup_lean.sh`
+- Modify: `nix/lean-image.nix`
+- Create: `nix/lean-image.lock.json`
+- Test: `tests/test_toolchain_image.py`
+
+**Interfaces:**
+- Replace the repository's current Lean 4.30 project/image configuration with
+  `leanprover/lean4:v4.15.0`, Mathlib commit
+  `9837ca9d65d9de6fad1ef4381750ca688774e608`, and REPL commit
+  `21966799da3691a0912b5a15193585bd2dd7165d`.
+- `nix/lean-image.lock.json` is committed after the image build and records the
+  actual `sha256:<64-hex>` image ID plus that exact three-entry pin mapping.
+- A model run starts only after an in-container attestation reads Lean, Mathlib,
+  and REPL identities and proves they equal the committed lock. A merely
+  self-consistent runtime image digest is never approved provenance.
+
+- [ ] **Step 1: Write the failing migration and attestation tests**
+
+Assert that the toolchain file, lake configuration/manifest, setup script, and
+Nix image contain no Lean 4.30 references; require the exact approved revisions;
+and reject a missing lock, digest mismatch, or in-container pin mismatch.
+
+Run: `pytest tests/test_toolchain_image.py -v`
+Expected: FAIL while the repository still targets Lean 4.30.
+
+- [ ] **Step 2: Migrate the project and image**
+
+Update the five toolchain/build files, run `lake update` under Lean 4.15 to
+regenerate `lake-manifest.json`, rebuild the REPL and Nix worker image, and run
+the existing Lean tests against that image. Do not begin Task 3 while any
+repository or generated manifest still resolves Lean 4.30.
+
+- [ ] **Step 3: Lock and attest the built image**
+
+Inspect the built image ID, write it with the approved pin mapping to
+`nix/lean-image.lock.json`, then execute the attestation probe inside that exact
+digest. The probe output is compared byte-for-byte with the committed mapping.
+
+Run: `pytest tests/test_toolchain_image.py -v`
+Expected: all PASS, including an actual in-container attestation when Docker is
+available.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add lean_project/lean-toolchain lean_project/lakefile.toml \
+  lean_project/lake-manifest.json scripts/setup_lean.sh nix/lean-image.nix \
+  nix/lean-image.lock.json tests/test_toolchain_image.py
+git commit -m "build: pin and attest the M2 Lean 4.15 worker image"
+```
+
+---
+
 ### Task 3: Immutable model identity on trajectories
 
 **Files:**
@@ -813,6 +883,7 @@ git commit -m "feat: record and validate immutable model identity"
 # 8. nested comments and escaped strings do not produce flags
 # 9. changing any flag field changes flag_digest; ordering does not
 # 10. any header comment, whitespace, or import-byte change fails reconstruction
+# 11. a second live closer emits a second located flag and changes flag_digest
 
 async def test_small_decide_is_provisional_not_silently_certified(session, item):
     report = await run_validate(session, item, "by decide")
@@ -898,8 +969,13 @@ def strip_comments_and_strings(source: str) -> str:
     return "".join(out)
 
 
+def token_offsets(text: str, token: str) -> list[int]:
+    pattern = rf"(?<!{_IDENT}){re.escape(token)}(?!{_IDENT})"
+    return [match.start() for match in re.finditer(pattern, text)]
+
+
 def contains_token(text: str, token: str) -> bool:
-    return re.search(rf"(?<!{_IDENT}){re.escape(token)}(?!{_IDENT})", text) is not None
+    return bool(token_offsets(text, token))
 
 
 def flag_digest(flags: list[Flag]) -> str:
@@ -928,16 +1004,26 @@ def rebuild(item: BenchmarkItem, body: str) -> str:
 def _flags(source: str, trajectory: Trajectory) -> list[Flag]:
     flags = []
     stripped = strip_comments_and_strings(source)
+    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
     for closer in ("native_decide", "decide"):
-        if contains_token(stripped, closer):
-            flags.append(Flag(closer=closer, where="source", detail=closer))
-    for event in trajectory.events:
+        for offset in token_offsets(stripped, closer):
+            flags.append(Flag(
+                closer=closer, where="source",
+                detail=f"source-sha256:{source_digest}:live-offset:{offset}",
+            ))
+    for event_index, event in enumerate(trajectory.events):
         if event.kind != "tool_call" or event.tool_name != "run_tactic" or not event.arguments:
             continue
-        tactic = strip_comments_and_strings(str(event.arguments.get("tactic", "")))
+        tactic_source = str(event.arguments.get("tactic", ""))
+        tactic = strip_comments_and_strings(tactic_source)
+        tactic_digest = hashlib.sha256(tactic_source.encode("utf-8")).hexdigest()
         for closer in ("native_decide", "decide"):
-            if contains_token(tactic, closer):
-                flags.append(Flag(closer=closer, where="trajectory", detail=tactic))
+            for offset in token_offsets(tactic, closer):
+                flags.append(Flag(
+                    closer=closer, where="trajectory",
+                    detail=(f"event:{event_index}:tactic-sha256:{tactic_digest}:"
+                            f"live-offset:{offset}"),
+                ))
     return flags
 
 
@@ -1158,7 +1244,7 @@ git commit -m "feat: add durable journals and closer adjudication"
   - `ProofSession.worker_spec() -> WorkerSpec | None`, `ProofSession.worker_pid() -> int | None` — current leased worker's spec/pid, `None` after a death.
   - `ProofSession.retire_worker() -> None` (async) — discard the current worker as unusable (pool replaces it; next call re-acquires). Task 7 calls it after an `item_timeout_s` cancellation leaves the worker mid-command.
   - `CpuUsage(cpu_s: float | None, estimated: bool)` (pydantic).
-  - `CpuMonitor(sampler, *, interval_s: float = 1.0)` with `async start()` (baseline sample + background loop) and `async stop(*, elapsed_s: float, cap_cpus: float) -> CpuUsage`. `sampler: Callable[[], Awaitable[tuple[str, float] | None]]` returns `(worker identity, cumulative cpu seconds)` or `None` when unsampleable. Usage sums per-identity deltas (worker replacement mid-attempt starts a new segment); teardown keeps the last in-flight sample; **no successful sample at all → `CpuUsage(cpu_s=elapsed_s * cap_cpus, estimated=True)`** — the conservative upper bound, so the most expensive failed attempts are charged, not lost.
+  - `CpuMonitor(sampler, *, interval_s: float = 1.0)` with `async start()` (baseline sample + background loop) and `async stop(*, elapsed_s: float, cap_cpus: float) -> CpuUsage`. `sampler: Callable[[], Awaitable[tuple[str, float] | None]]` returns `(worker identity, cumulative cpu seconds)` or `None` when unsampleable. Usage sums per-identity deltas only when **every** identity segment has at least two successful samples (worker replacement starts a new segment); teardown keeps the last in-flight sample. No sample or any singleton segment returns `CpuUsage(cpu_s=elapsed_s * cap_cpus, estimated=True)` — the conservative upper bound, so replacement-worker work is never silently measured as zero.
   - `async sample_container(name: str) -> tuple[str, float] | None` — reads the container's cgroup CPU counter via `docker exec` (`cpu.stat usage_usec`, v1 `cpuacct.usage` fallback).
   - `sample_process(pid: int) -> tuple[str, float] | None` — `psutil` user+system CPU-times (direct workers).
   - `container_name(spec: WorkerSpec) -> str | None` — from `cleanup_argv == ["docker", "kill", name]` (how `sandboxed_worker_spec` makes the container addressable).
@@ -1227,6 +1313,17 @@ async def test_monitor_sums_segments_across_worker_replacement():
     # (7.0 - 5.0) + (101.5 - 100.0): counters never conflated across workers
     assert usage.cpu_s == pytest.approx(3.5)
     assert usage.estimated is False
+
+
+async def test_replacement_singleton_segment_charges_bound():
+    monitor = CpuMonitor(
+        list_sampler([("w1", 5.0), ("w1", 7.0), ("w2", 100.0), None]),
+        interval_s=0.001,
+    )
+    await monitor.start()
+    await drain(monitor, 6)
+    usage = await monitor.stop(elapsed_s=30.0, cap_cpus=2.0)
+    assert usage == CpuUsage(cpu_s=60.0, estimated=True)
 
 
 async def test_monitor_keeps_last_inflight_sample_after_worker_death():
@@ -1401,9 +1498,8 @@ class CpuMonitor:
     def __init__(self, sampler: Sampler, *, interval_s: float = 1.0):
         self._sampler = sampler
         self._interval_s = interval_s
-        # identity -> [first cumulative reading, last cumulative reading]
+        # identity -> [first cumulative reading, last cumulative reading, count]
         self._segments: dict[str, list[float]] = {}
-        self._has_followup = False
         self._task: asyncio.Task | None = None
 
     async def _sample_once(self) -> None:
@@ -1416,10 +1512,10 @@ class CpuMonitor:
         identity, cpu_s = out
         segment = self._segments.get(identity)
         if segment is None:
-            self._segments[identity] = [cpu_s, cpu_s]
+            self._segments[identity] = [cpu_s, cpu_s, 1]
         else:
             segment[1] = cpu_s
-            self._has_followup = True
+            segment[2] += 1
 
     async def _loop(self) -> None:
         while True:
@@ -1442,9 +1538,10 @@ class CpuMonitor:
             await asyncio.wait_for(self._sample_once(), timeout=2.0)
         except (TimeoutError, asyncio.TimeoutError):
             pass
-        if not self._segments or not self._has_followup:
+        if (not self._segments
+                or any(samples < 2 for _, _, samples in self._segments.values())):
             return CpuUsage(cpu_s=elapsed_s * cap_cpus, estimated=True)
-        total = sum(last - first for first, last in self._segments.values())
+        total = sum(last - first for first, last, _ in self._segments.values())
         return CpuUsage(cpu_s=total, estimated=False)
 
 
@@ -1531,10 +1628,10 @@ git commit -m "feat: in-flight Lean CPU monitor + public session worker accessor
 - Produces (Tasks 7, 9, 10 rely on these exact signatures):
   - `EvalConfig(run_config: RunConfig, attempts_per_item: int = 1, item_timeout_s: float = 600.0, parallelism: int = 4, benchmark: str = "minif2f", split: str = "valid")` (pydantic, fully serializable).
   - `config_hash(config: EvalConfig) -> str` — SHA-256 of the canonical JSON (sorted keys, compact separators).
-  - `WorkerProvenance(kind: Literal["sandboxed", "direct"], image_digest: str | None = None, binary_hashes: dict[str, str] = {}, reproducible: bool, observed_images: list[str] = [])` (pydantic).
+  - `WorkerProvenance(kind: Literal["sandboxed", "direct"], image_digest: str | None = None, approved_image_digest: str | None = None, attested_pins: dict[str, str] = {}, binary_hashes: dict[str, str] = {}, reproducible: bool, observed_images: list[str] = [])` (pydantic).
   - `resolve_image_digest(image: str, *, run: Callable[[list[str]], str] = _docker_out) -> str` — `docker image inspect --format {{.Id}}`, must return `sha256:…`.
   - `eval_spec_factory(digest: str, provenance: WorkerProvenance) -> Callable[[], WorkerSpec]` — every minted spec launches **by the digest** and appends it to `provenance.observed_images` (the multiple-digest invariant is observable, not assumed).
-  - `sandboxed_eval_pool(*, size: int, imports: str, image: str = "hardy-lean:dev", resolve: Callable[[str], str] | None = None) -> tuple[ReplPool, WorkerProvenance]` — resolves the digest **once at run start**; every worker, including mid-run pool replacements, is spawned from that digest, never the mutable tag.
+  - `sandboxed_eval_pool(*, size: int, imports: str, image: str = "hardy-lean:dev", image_lock: WorkerImageLock | None = None, resolve: Callable[[str], str] | None = None, attest: Callable[[str], dict[str, str]] | None = None) -> tuple[ReplPool, WorkerProvenance]` — loads the committed Task-2B lock, resolves the digest **once at run start**, requires exact lock equality, attests the complete pins inside that digest, and spawns every initial or replacement worker from the digest rather than the mutable tag.
   - `direct_worker_provenance(binaries: dict[str, Path] | None = None) -> WorkerProvenance` — content hashes of the REPL binary + `lean` executable (`reproducible=True` only when both hash); default binaries come from M0's `launch.py`.
   - `shared_imports(items: list[BenchmarkItem]) -> str` — the corpus's single import block; `ValueError` when items disagree (mixed-import corpora cannot share one pool base env).
 
@@ -1551,6 +1648,7 @@ from hardy.agent.runtime import RunConfig
 from hardy.eval.benchmark import BenchmarkItem
 from hardy.eval.runner import (
     EvalConfig,
+    WorkerImageLock,
     WorkerProvenance,
     config_hash,
     direct_worker_provenance,
@@ -1628,14 +1726,34 @@ def test_sandboxed_eval_pool_resolves_once():
         resolutions.append(image)
         return IMAGE_DIGEST
 
+    lock = WorkerImageLock(image_digest=IMAGE_DIGEST, pins={"lean": "pinned"})
     pool, provenance = sandboxed_eval_pool(
-        size=2, imports="import Mathlib", resolve=resolve
+        size=2, imports="import Mathlib", image_lock=lock, resolve=resolve,
+        attest=lambda digest: {"lean": "pinned"},
     )
     assert resolutions == ["hardy-lean:dev"]   # once at run start
     assert provenance == WorkerProvenance(
-        kind="sandboxed", image_digest=IMAGE_DIGEST, reproducible=True,
+        kind="sandboxed", image_digest=IMAGE_DIGEST,
+        approved_image_digest=IMAGE_DIGEST,
+        attested_pins={"lean": "pinned"}, reproducible=True,
         observed_images=[],
     )
+
+
+def test_sandboxed_eval_pool_rejects_digest_or_attestation_mismatch():
+    lock = WorkerImageLock(image_digest=IMAGE_DIGEST, pins={"lean": "pinned"})
+    with pytest.raises(RuntimeError, match="approved lock"):
+        sandboxed_eval_pool(
+            size=1, imports="import Mathlib", image_lock=lock,
+            resolve=lambda image: "sha256:" + "b" * 64,
+            attest=lambda digest: {"lean": "pinned"},
+        )
+    with pytest.raises(RuntimeError, match="attestation"):
+        sandboxed_eval_pool(
+            size=1, imports="import Mathlib", image_lock=lock,
+            resolve=lambda image: IMAGE_DIGEST,
+            attest=lambda digest: {"lean": "wrong"},
+        )
 
 
 def test_direct_worker_provenance_hashes_binaries(tmp_path):
@@ -1746,9 +1864,16 @@ def config_hash(config: EvalConfig) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+class WorkerImageLock(BaseModel):
+    image_digest: str
+    pins: dict[str, str]
+
+
 class WorkerProvenance(BaseModel):
     kind: Literal["sandboxed", "direct"]
     image_digest: str | None = None
+    approved_image_digest: str | None = None
+    attested_pins: dict[str, str] = Field(default_factory=dict)
     binary_hashes: dict[str, str] = Field(default_factory=dict)
     reproducible: bool
     # every image reference actually used to mint a worker spec — the
@@ -1784,16 +1909,40 @@ def eval_spec_factory(
     return factory
 
 
+def load_worker_image_lock(
+    path: Path = Path("nix/lean-image.lock.json"),
+) -> WorkerImageLock:
+    return WorkerImageLock.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def attest_worker_pins(digest: str) -> dict[str, str]:
+    raw = _docker_out([
+        "docker", "run", "--rm", digest, "/opt/hardy/attest-toolchain",
+    ])
+    return dict(json.loads(raw))
+
+
 def sandboxed_eval_pool(
     *,
     size: int,
     imports: str,
     image: str = "hardy-lean:dev",
+    image_lock: WorkerImageLock | None = None,
     resolve: Callable[[str], str] | None = None,
+    attest: Callable[[str], dict[str, str]] | None = None,
 ) -> tuple[ReplPool, WorkerProvenance]:
+    lock = image_lock or load_worker_image_lock()
     digest = (resolve or resolve_image_digest)(image)
-    provenance = WorkerProvenance(kind="sandboxed", image_digest=digest,
-                                  reproducible=True)
+    if digest != lock.image_digest:
+        raise RuntimeError("resolved worker image does not match approved lock")
+    attested_pins = (attest or attest_worker_pins)(digest)
+    if attested_pins != lock.pins:
+        raise RuntimeError("worker toolchain attestation does not match approved lock")
+    provenance = WorkerProvenance(
+        kind="sandboxed", image_digest=digest,
+        approved_image_digest=lock.image_digest,
+        attested_pins=attested_pins, reproducible=True,
+    )
     pool = ReplPool(size=size, spec_factory=eval_spec_factory(digest, provenance),
                     imports=imports)
     return pool, provenance
@@ -2234,8 +2383,12 @@ git commit -m "feat: certified metrics with adjudicated provisional results"
 - Test: `tests/test_tracking.py`
 
 **Interfaces:**
+- The `run` CLI captures `GitProvenance` before it creates `eval_results` or any
+  run directory, passes that snapshot into `run_eval`, and stores it as
+  `EvalRun.source_git`.
 - `RunRecord` embeds full config/provenance/finalized metrics and
-  `baseline_eligible` plus exact refusal reasons.
+  `baseline_eligible` plus exact refusal reasons; its `git` field is copied from
+  `EvalRun.source_git`, never recomputed after output exists.
 - `finalize_record` refuses incomplete, pending, dirty, direct/nonreproducible,
   unpinned/mismatched, invalidated, or corpus/toolchain-unidentified runs.
 - `append_run` uses Task 4B's journal; `compare_runs` refuses corpus/domain
@@ -2245,6 +2398,9 @@ git commit -m "feat: certified metrics with adjudicated provisional results"
 
 Retain tests for Git SHA + dirty diff/untracked digests, toolchain pins, canonical
 config/corpus digests, append/load round trip, and concurrent appends. Add a
+sequence proving a clean pre-run snapshot remains eligible after the CLI creates
+tracked or untracked run artifacts, while a pre-run dirty snapshot remains
+ineligible. Finalization must not call `collect_git_provenance` again. Add a
 parameterized test that flips each official gate independently:
 
 ```python
@@ -2255,6 +2411,8 @@ parameterized test that flips each official gate independently:
     ("worker", "worker image provenance is not pinned"),
     ("worker_digest", "worker image provenance is not pinned"),
     ("worker_observations", "worker image provenance is not pinned"),
+    ("worker_approval", "worker image provenance is not pinned"),
+    ("worker_attestation", "worker image provenance is not pinned"),
     ("model_identity", "model identity is not pinned"),
     ("invalidated", "run invalidated"),
     ("split", "official baseline requires test split"),
@@ -2298,11 +2456,17 @@ def _sha256_digest(value: str | None) -> bool:
     return all(char in "0123456789abcdef" for char in value[7:])
 
 
-def _pinned_worker(worker: WorkerProvenance) -> bool:
+def _pinned_worker(
+    worker: WorkerProvenance, approved_worker: WorkerImageLock,
+) -> bool:
     return (
         worker.kind == "sandboxed"
         and worker.reproducible
         and _sha256_digest(worker.image_digest)
+        and approved_worker.pins == APPROVED_TOOLCHAIN_PINS
+        and worker.image_digest == approved_worker.image_digest
+        and worker.approved_image_digest == approved_worker.image_digest
+        and worker.attested_pins == APPROVED_TOOLCHAIN_PINS
         and bool(worker.observed_images)
         and all(image == worker.image_digest for image in worker.observed_images)
     )
@@ -2330,14 +2494,15 @@ class RunRecord(BaseModel):
     invalidated: str | None = None
 
 
-def eligibility(*, run: EvalRun, config: EvalConfig, git: GitProvenance,
-                worker: WorkerProvenance, corpus_digest: str,
-                domain_digest: str, pins: dict[str, str]) -> list[str]:
+def eligibility(*, run: EvalRun, config: EvalConfig,
+                worker: WorkerProvenance, approved_worker: WorkerImageLock,
+                corpus_digest: str, domain_digest: str,
+                pins: dict[str, str]) -> list[str]:
     reasons = []
     if not run.complete: reasons.append("incomplete attempt matrix")
     if not run.finalized: reasons.append("pending adjudications")
-    if git.dirty: reasons.append("dirty Git tree")
-    if not _pinned_worker(worker):
+    if run.source_git.dirty: reasons.append("dirty Git tree")
+    if not _pinned_worker(worker, approved_worker):
         reasons.append("worker image provenance is not pinned")
     if run.model_identity != "pinned": reasons.append("model identity is not pinned")
     if run.invalidated: reasons.append("run invalidated")
@@ -2362,7 +2527,12 @@ def load_runs(path: Path) -> list[RunRecord]:
 ```
 
 Implement `GitProvenance`, `collect_git_provenance`, `read_pins`, and
-`compare_runs` exactly as already described in the spec. `read_pins` resolves
+`compare_runs` exactly as already described in the spec. Extend `EvalRun` with
+`source_git: GitProvenance` using `TYPE_CHECKING` plus a forward annotation, make
+`run_eval` require that pre-output snapshot, and make `finalize_record` copy it
+into `RunRecord.git`. Finalization loads the committed `WorkerImageLock` and
+passes it to eligibility; it never trusts `worker.approved_image_digest` alone.
+`read_pins` resolves
 Mathlib and REPL tags to commits and must reproduce `APPROVED_TOOLCHAIN_PINS`;
 an empty or merely non-`unavailable` mapping is never sufficient. Dirty override records
 content digests but never becomes official; comparison raises on differing
@@ -2409,8 +2579,11 @@ assert parse("finalize --run-id r1").run_id == "r1"
 assert parse("compare r1 r2").run_ids == ["r1", "r2"]
 ```
 
-Test that adjudication requires nonempty reviewer/rationale and exact flag digest;
-finalization refuses incomplete/pending/unpinned runs; an approved flag produces
+Test that `run` captures clean Git provenance before creating its output path and
+passes the serialized snapshot into the manifest; generated artifacts do not
+change it, while a dirty pre-run tree stays ineligible. Test that adjudication
+requires nonempty reviewer/rationale and exact flag digest; finalization refuses
+incomplete/pending/unpinned runs; an approved flag produces
 a finalized eligible record; and compare self emits no warnings.
 
 Run: `pytest tests/test_run_eval_cli.py -v`
@@ -2439,7 +2612,11 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 The implementation must pass concrete dependencies rather than duplicate their
-logic. `run_command` never enables direct workers. `adjudicate_command` records
+logic. `run_command` calls `collect_git_provenance` before creating the output
+root or run directory, refuses a dirty tree unless exploratory mode is explicit,
+and passes that immutable snapshot to `run_eval`. `finalize_command` reads the
+stored `EvalRun.source_git` and never re-inspects the now-output-bearing tree.
+`run_command` never enables direct workers. `adjudicate_command` records
 UTC timestamp and refuses a decision whose supplied digest does not match the
 attempt. `finalize_command` is idempotent by `run_id`: an identical existing
 record is success; a different second record is an error.
@@ -2564,7 +2741,7 @@ python scripts/run_eval.py compare <run-id> <run-id> --out eval_results
 Expected: `baseline_eligible: true`, `finalized: true`, zero pending attempts,
 no comparison warnings, corpus revision
 `638c70ed4dfb28cac2d5bbbb43b6fc1fd2f7a40f`, test item count 225, clean Git
-SHA, image digest, `model_id: claude-sonnet-5`, and certified pass@1.
+SHA captured before run output, approved image digest plus matching in-container toolchain attestation, `model_id: claude-sonnet-5`, and certified pass@1.
 
 - [ ] **Step 6: Commit the baseline**
 

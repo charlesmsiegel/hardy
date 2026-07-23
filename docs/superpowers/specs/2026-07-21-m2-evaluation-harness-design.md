@@ -71,6 +71,16 @@ identities.
     exclusive append lock before new data is written.
 23. The runner/adjudication module boundary remains runtime-acyclic and is
     covered by import-order regression tests.
+24. The official worker digest must match a committed approved image lock, and
+    in-container attestation must match the complete approved toolchain pins.
+25. The repository's current Lean 4.30 project and Nix image are migrated to the
+    exact M2 Lean 4.15, Mathlib, and REPL revisions before evaluation work.
+26. Clean source Git provenance is captured before any output is created and is
+    reused during finalization; generated run artifacts cannot dirty that fact.
+27. Every CPU identity segment needs a baseline and follow-up sample; any
+    singleton segment makes the attempt use the conservative estimate.
+28. Closer evidence is one flag per live occurrence and includes a stable source
+    or trajectory location, so occurrence changes invalidate adjudication.
 
 ## Requirements (from DESIGN.md Component 8)
 
@@ -142,8 +152,11 @@ short-circuiting:
 3. **Axiom audit.** Run `#print axioms` in the winning environment. Missing audit
    output or any non-standard/paper axiom fails the attempt.
 4. **Suspicious closers.** Flag each live `decide`/`native_decide` occurrence in
-   source and recorded `run_tactic` calls. Flags do not erase the hard-check
-   result, but they make the attempt provisional.
+   source and recorded `run_tactic` calls. Each flag records a stable live-token
+   offset, the SHA-256 of its complete source/tactic text, and, for tactics, the
+   event index; adding, removing, or moving an occurrence changes the full
+   flag-set digest. Flags do not erase the hard-check result,
+   but they make the attempt provisional.
 
 Attempt status is one of `failed`, `provisional`, `certified`, or `rejected`.
 Hard-check failure yields `failed`; a hard-pass with flags yields `provisional`;
@@ -163,8 +176,11 @@ visible. Finalization refuses pending flags.
 - The worker image tag is resolved once to an immutable image digest; every
   initial and replacement worker launches by that digest. Mixed digests
   invalidate the run.
-- Eligibility additionally requires at least one observed worker launch and
-  exact equality between every observed image and the approved image digest.
+- Eligibility additionally requires at least one observed worker launch, exact
+  equality between every observed image and the committed approved image
+  digest, and in-container attestation of the complete Lean/Mathlib/REPL mapping.
+- Before runner work, the repository's Lean 4.30 project, lake manifest, setup
+  script, and Nix image are migrated to the exact approved Lean 4.15 toolchain.
 - Model-generated Lean runs only in sandboxed workers. Direct workers are allowed
   only for trusted model-free tests and are never baseline-eligible.
 - The runtime resolves the configured model through the provider. Official runs
@@ -184,8 +200,9 @@ visible. Finalization refuses pending flags.
 - Lean CPU is sampled during execution. If teardown prevents a final sample, the
   attempt uses the last sample or a conservative elapsed × CPU-cap upper bound,
   marked estimated.
-- A successful baseline sample without any successful follow-up is not a CPU
-  measurement and uses the same conservative estimated upper bound.
+- Each worker-identity segment needs both a successful baseline and a follow-up.
+  A singleton initial or replacement segment is not a CPU measurement and makes
+  the whole attempt use the conservative estimated upper bound.
 
 ### `metrics.py`
 
@@ -208,10 +225,14 @@ visible. Finalization refuses pending flags.
   flush and fsync complete lines under a crash-safe portable lock.
 - Readers recover all complete records before one torn trailing fragment; the
   next exclusive append truncates that fragment before appending.
-- Provenance includes config hash/full config, clean Git SHA (or explicit dirty
-  digest for exploratory runs), Lean/Mathlib pins, worker image digest, canonical
-  model ID and observed response identities, corpus/annotation digests, metrics,
-  and attempt paths.
+- The CLI captures clean Git SHA (or an explicit dirty digest for exploratory
+  runs) before it creates the output directory. The immutable snapshot is stored
+  in the run manifest and reused by finalization; generated artifacts are never
+  mistaken for pre-run dirtiness.
+- Provenance includes config hash/full config, that stored source Git snapshot,
+  Lean/Mathlib pins, worker image digest and attestation, canonical model ID and
+  observed response identities, corpus/annotation digests, metrics, and attempt
+  paths.
 - Finalized `RunRecord` exposes `baseline_eligible: bool` and
   `eligibility_reasons: list[str]`.
 - Official-baseline eligibility is explicit and fail-closed: complete attempt
