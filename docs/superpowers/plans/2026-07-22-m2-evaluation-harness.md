@@ -78,6 +78,11 @@ against landed code before execution.
 9. Keep interrupted manifests and use crash-safe OS locking.
 10. Bundle this spec refresh and plan update in the existing M2 PR by explicit
     user instruction.
+11. Treat any missing response-level model revision as unpinned, including a
+    partial omission within an otherwise consistent attempt matrix.
+12. Bind the canonical exclusion records into the corpus digest.
+13. Select the latest adjudication whose digest matches the current flags, so a
+    stale later event cannot mask the latest valid decision.
 
 ## Plan assumptions (re-validate before execution)
 
@@ -256,12 +261,25 @@ def test_rejects_non_placeholder_body(tmp_path):
         load_minif2f(tmp_path)
 
 
-def test_corpus_digest_is_order_independent_and_revision_sensitive(tmp_path):
+def test_corpus_digest_binds_items_revision_and_exclusions(tmp_path):
     write_fixture(tmp_path)
     items = load_minif2f(tmp_path)
-    assert corpus_digest(items) == corpus_digest(list(reversed(items)))
+    exclusions = json.loads(
+        (tmp_path / "EXCLUSIONS.json").read_text(encoding="utf-8")
+    )["records"]
+    assert corpus_digest(items, exclusions) == corpus_digest(
+        list(reversed(items)), list(reversed(exclusions))
+    )
     changed = items[0].model_copy(update={"source_revision": "b" * 40})
-    assert corpus_digest(items) != corpus_digest([changed, items[1]])
+    assert corpus_digest(items, exclusions) != corpus_digest(
+        [changed, items[1]], exclusions
+    )
+    changed_exclusions = [
+        {**exclusions[0], "reason": "different reviewed exclusion reason"}
+    ]
+    assert corpus_digest(items, exclusions) != corpus_digest(
+        items, changed_exclusions
+    )
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -396,8 +414,18 @@ def load_custom(path: Path) -> list[BenchmarkItem]:
     return items
 
 
-def corpus_digest(items: list[BenchmarkItem]) -> str:
-    payload = [i.model_dump() for i in sorted(items, key=lambda i: (i.split, i.id))]
+def corpus_digest(items: list[BenchmarkItem],
+                  exclusions: list[dict]) -> str:
+    payload = {
+        "items": [
+            i.model_dump()
+            for i in sorted(items, key=lambda i: (i.split, i.id))
+        ],
+        "exclusions": sorted(
+            exclusions,
+            key=lambda record: (record["split"], record["id"]),
+        ),
+    }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"),
                      ensure_ascii=False).encode()
     return hashlib.sha256(raw).hexdigest()
@@ -590,13 +618,16 @@ def trajectory(*events):
 
 def test_ordered_distinct_response_ids():
     assert trajectory(event("claude-sonnet-5"), event("claude-sonnet-5"),
-                      event(None)).model_revisions() == ["claude-sonnet-5"]
+                      event(None)).model_revisions() == ["claude-sonnet-5", None]
 
 
 @pytest.mark.parametrize("configured,observed,expected", [
-    ("claude-sonnet-5", [], "pinned"),
+    ("claude-sonnet-5", [], "unpinned"),
     ("claude-sonnet-5", ["claude-sonnet-5"], "pinned"),
-    ("claude-sonnet-4-5-20250929", [], "pinned"),
+    ("claude-sonnet-5", [None], "unpinned"),
+    ("claude-sonnet-5", ["claude-sonnet-5", None], "unpinned"),
+    ("claude-sonnet-4-5-20250929", [], "unpinned"),
+    ("claude-sonnet-4-5-20250929", ["claude-sonnet-4-5-20250929"], "pinned"),
     ("claude-sonnet-4-5", [], "unpinned"),
     ("latest", [], "unpinned"),
     ("claude-sonnet-5", ["other"], "mismatch"),
@@ -629,17 +660,19 @@ _PINNED_CLAUDE = re.compile(
 model_revision: str | None = None
 
 # on Trajectory
-def model_revisions(self) -> list[str]:
+def model_revisions(self) -> list[str | None]:
     return list(dict.fromkeys(
         event.model_revision for event in self.events
-        if event.kind == "usage" and event.model_revision
+        if event.kind == "usage"
     ))
 
 
 def model_identity(configured_id: str,
-                   observed_ids: list[str]) -> Literal["pinned", "unpinned", "mismatch"]:
+                   observed_ids: list[str | None]) -> Literal["pinned", "unpinned", "mismatch"]:
+    if not observed_ids or any(observed is None for observed in observed_ids):
+        return "unpinned"
     distinct = list(dict.fromkeys(observed_ids))
-    if distinct and (len(distinct) != 1 or distinct[0] != configured_id):
+    if len(distinct) != 1 or distinct[0] != configured_id:
         return "mismatch"
     return "pinned" if _PINNED_CLAUDE.fullmatch(configured_id) else "unpinned"
 ```
@@ -877,8 +910,9 @@ git commit -m "feat: add fail-closed eval anti-cheat and closer flags"
 **Interfaces:**
 - `append_jsonl`, `load_jsonl`, and `atomic_json` are shared by runner/tracking.
 - `AdjudicationEvent` binds to `(run_id, item_id, attempt_index, flag_digest)`;
-  `effective_decisions` uses the latest timestamped event; `attempt_status`
-  returns `failed|provisional|certified|rejected`.
+  `effective_decisions` uses the latest timestamped event whose flag digest
+  matches the attempt's current flag digest; `attempt_status` returns
+  `failed|provisional|certified|rejected`.
 
 - [ ] **Step 1: Add the dependency and failing tests**
 
@@ -966,10 +1000,16 @@ class AdjudicationEvent(BaseModel):
     rationale: str = Field(min_length=1)
 
 
-def effective_decisions(events: list[AdjudicationEvent]):
+AttemptKey = tuple[str, str, int]
+
+
+def effective_decisions(events: list[AdjudicationEvent],
+                        current_flag_digests: dict[AttemptKey, str]):
     effective = {}
     for event in sorted(events, key=lambda event: event.timestamp):
-        effective[(event.run_id, event.item_id, event.attempt_index)] = event
+        key = (event.run_id, event.item_id, event.attempt_index)
+        if current_flag_digests.get(key) == event.flag_digest:
+            effective[key] = event
     return effective
 
 
@@ -1767,7 +1807,7 @@ class EvalResult(BaseModel):
     finished_at: float = 0.0
     trajectory_path: str | None = None
     checked_source: str | None = None
-    model_revisions: list[str] = Field(default_factory=list)
+    model_revisions: list[str | None] = Field(default_factory=list)
 
 
 class EvalRun(BaseModel):
@@ -1778,7 +1818,7 @@ class EvalRun(BaseModel):
     makespan_s: float
     pool_imports: str
     model_identity: Literal["pinned", "unpinned", "mismatch"]
-    model_revisions: list[str]
+    model_revisions: list[str | None]
     complete: bool
     finalized: bool = False
     invalidated: str | None = None
@@ -1901,7 +1941,13 @@ from hardy.eval.runner import EvalRun
 
 def apply_adjudications(run: EvalRun,
                         events: list[AdjudicationEvent]) -> EvalRun:
-    effective = effective_decisions(events)
+    current_flag_digests = {}
+    for result in run.results:
+        flags = [] if result.anticheat is None else result.anticheat.flags
+        current_flag_digests[
+            (run.run_id, result.item_id, result.attempt_index)
+        ] = flag_digest(flags)
+    effective = effective_decisions(events, current_flag_digests)
     updated = []
     for result in run.results:
         report = result.anticheat
@@ -2085,7 +2131,7 @@ class RunRecord(BaseModel):
     worker: WorkerProvenance
     model_id: str
     model_identity: Literal["pinned", "unpinned", "mismatch"]
-    model_revisions: list[str]
+    model_revisions: list[str | None]
     corpus_digest: str
     domain_digest: str
     metrics: MetricsReport

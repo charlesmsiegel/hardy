@@ -48,6 +48,12 @@ identities.
    is complete only after every configured item × attempt has a terminal record.
 10. Run manifests survive interruption, and shared append-only logs use a
     crash-safe interprocess lock with tested stale-owner recovery.
+11. Every response usage event must report the configured immutable model ID;
+    a missing identity on any response makes the run unpinned.
+12. Corpus identity includes the canonical exclusion records, not only the
+    usable benchmark items.
+13. A stale adjudication event never masks an earlier event that still matches
+    the attempt's current flag digest; the latest matching event is effective.
 
 ## Requirements (from DESIGN.md Component 8)
 
@@ -184,8 +190,9 @@ visible. Finalization refuses pending flags.
 - Finalized `RunRecord` exposes `baseline_eligible: bool` and
   `eligibility_reasons: list[str]`.
 - Official-baseline eligibility is explicit and fail-closed: complete attempt
-  matrix, all flags adjudicated, clean tree, reproducible sandbox worker, one
-  immutable model identity, and matching pinned corpus/toolchain.
+  matrix, all flags adjudicated, clean tree, reproducible sandbox worker, a
+  response identity on every usage event with all responses reporting the same
+  configured immutable model ID, and matching pinned corpus/toolchain.
 - `--compare` refuses corpus or annotation mismatch, incomplete runs, and invalid
   runs. It surfaces model, image, dirty-tree, and finalization differences.
 
