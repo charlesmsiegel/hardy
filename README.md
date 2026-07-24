@@ -34,27 +34,48 @@ Isolation and production hardening remain planned. **Generated Lean and LaTeX ar
 executed directly: only run trusted model output in a disposable development
 environment.**
 
-## Run the experiment
+## Install
 
-Hardy requires Python 3.11+, an OpenAI-compatible chat-completions endpoint with
-native tool calling, a local Lean 4 + Mathlib project, and `pdflatex`. Install it,
-configure a model, enter the Lean project whose imports you want available, and
-start chatting:
+One command takes a clean machine — no Python, no Lean, no LaTeX — to a working
+`hardy`. Each installer installs what is missing and skips what is not: Python
+3.11+, `lake` (via elan), a shared Mathlib project, `pdflatex`, and Hardy itself.
 
 ```sh
-uv tool install -e /path/to/hardy
-export OPENAI_API_KEY=...
-export HARDY_MODEL=provider/model-version
+git clone https://github.com/charlesmsiegel/hardy
+cd hardy
+scripts/install.sh          # or scripts/install-linux.sh, scripts/install-macos.sh
 hardy
 ```
+
+On Windows, run `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1`.
+WSL is not required. Expect the Mathlib step to download several gigabytes and
+take 10–30 minutes; `--skip-mathlib` omits it if you have your own Lake project.
+
+The installer asks for a model identity and API key and stores them in
+`~/.config/hardy/config.toml` (`%APPDATA%\hardy\config.toml` on Windows). Every
+setting can be overridden by a `HARDY_*` environment variable or a flag, so an
+unattended install is:
+
+```sh
+HARDY_MODEL=provider/model-version OPENAI_API_KEY=... scripts/install.sh --yes
+```
+
+`hardy doctor` reports whether Lean, LaTeX, and the model are usable, and
+`hardy doctor --deep` additionally compiles a Mathlib probe file.
+[docs/INSTALL.md](docs/INSTALL.md) documents every option, path, and failure
+mode.
+
+## Use
 
 The default `.hardy/` workspace contains `Main.lean`, `writeup.tex`, compiled
 `writeup.pdf`, `session.json`, and an append-only `transcript.jsonl`. The manifest
 links Lean declaration names to LaTeX labels and records every user-approved
 assumption, exact Lean statement, informal rendering, reason, and source. Hardy
 must ask before adding an assumption; declining it does not widen the formal trust
-base. Imports in `Main.lean` resolve through the Lake project from which Hardy was
-launched, so existing local Lean modules can be used normally.
+base. Imports in `Main.lean` resolve through the configured `lean_project`, which
+the installer points at the shared Mathlib project; set it to your own Lake
+project — in the config file or with `--lean-project` — to import your own Lean
+modules. Without it, Lean runs in the current directory as before.
 
 Use `hardy chat --workspace path` to select a workspace. The retained batch check
 is `hardy prove examples/true.json --output hardy-output`. Global options such as
@@ -70,6 +91,8 @@ Lean, and LaTeX processes and does not establish a real Mathlib installation.
   sequencing guide extracted from the former specs and plans.
 - [ARCHITECTURE.html](ARCHITECTURE.html) is a self-contained visual map of the
   design and planned feature areas.
+- [docs/INSTALL.md](docs/INSTALL.md) covers the per-OS installers, configuration,
+  and installation troubleshooting.
 - [AGENTS.md](AGENTS.md) gives Codex and other coding agents the repository's
   startup context.
 

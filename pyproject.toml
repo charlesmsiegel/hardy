@@ -15,5 +15,10 @@ test = ["pytest>=8,<9"]
 [project.scripts]
 hardy = "hardy.cli:main"
 
+# The distribution is `hardy-prover` but the package is `hardy`, so the build
+# backend cannot find it by name alone.
+[tool.hatch.build.targets.wheel]
+packages = ["src/hardy"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

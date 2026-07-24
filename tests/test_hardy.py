@@ -77,3 +77,19 @@ def test_failed_loop_leaves_honest_result_and_trajectory(tmp_path: Path, proof_r
     assert not (tmp_path / "proof.lean").exists()
     assert json.loads((tmp_path / "result.json").read_text())["formalization"] == "not formalized"
     assert "No completed artifact" in (tmp_path / "writeup.md").read_text()
+
+
+def test_lean_runs_inside_the_configured_lake_project(tmp_path: Path, proof_request: Request):
+    """`lake env lean` resolves imports from its working directory, not the user's."""
+    project = tmp_path / "lean-project"
+    project.mkdir()
+    reporter = (sys.executable, "-c", "import os; print(os.getcwd())")
+    tools = LeanTools(proof_request, reporter, project=project)
+    assert str(project.resolve()) in tools.run_source("import Mathlib\n").output
+
+
+def test_a_missing_lean_project_is_reported_clearly(tmp_path: Path, proof_request: Request):
+    tools = LeanTools(proof_request, (sys.executable, "-c", "pass"), project=tmp_path / "absent")
+    result = tools.run_source("import Mathlib\n")
+    assert not result.ok
+    assert "Lean project directory not found" in result.output
