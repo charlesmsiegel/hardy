@@ -162,3 +162,17 @@ def test_a_remote_custom_endpoint_still_needs_a_key(tmp_path: Path):
 ])
 def test_local_endpoints_are_recognised(url: str, local: bool):
     assert catalog.is_local_endpoint(url) is local
+
+
+def test_a_requested_config_path_survives_the_file_not_existing_yet(tmp_path: Path):
+    """`/model` saves here, and falling back to the platform default would write
+    someone's choice into an unrelated file."""
+    requested = tmp_path / "new" / "config.toml"
+    settings = config.load(requested)
+    assert settings.path is None
+    assert settings.config_path == requested
+
+
+def test_an_existing_config_path_is_still_reported(tmp_path: Path):
+    path = write(tmp_path / "config.toml", 'model = "x"\n')
+    assert config.load(path).config_path == path

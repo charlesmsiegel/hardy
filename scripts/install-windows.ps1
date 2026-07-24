@@ -330,6 +330,7 @@ function Write-Config {
     $key = if ($env:OPENAI_API_KEY) { $env:OPENAI_API_KEY } else { '' }
     $anthropicKey = if ($env:ANTHROPIC_API_KEY) { $env:ANTHROPIC_API_KEY } else { '' }
     $baseUrl = if ($env:HARDY_BASE_URL) { $env:HARDY_BASE_URL } else { '' }
+    $backend = if ($env:HARDY_BACKEND) { $env:HARDY_BACKEND } else { '' }
     if (-not $model -and -not $Yes -and [Environment]::UserInteractive) {
         Write-Host "`nHardy talks to Claude through the Anthropic Messages API, and to any"
         Write-Host 'OpenAI-compatible endpoint with native tool calling. The backend follows'
@@ -352,6 +353,9 @@ function Write-Config {
         '# HARDY_* environment variable or a command-line flag.'
     )
     if ($model) { $lines += 'model = "{0}"' -f (ConvertTo-TomlString $model) }
+    # An explicit pin must outlive the installer: without it Hardy infers the
+    # backend from the identity, which is the case the pin exists to correct.
+    if ($backend) { $lines += 'backend = "{0}"' -f (ConvertTo-TomlString $backend) }
     if ($baseUrl) { $lines += 'base_url = "{0}"' -f (ConvertTo-TomlString $baseUrl) }
     if ($key) { $lines += 'api_key = "{0}"' -f (ConvertTo-TomlString $key) }
     if ($anthropicKey) { $lines += 'anthropic_api_key = "{0}"' -f (ConvertTo-TomlString $anthropicKey) }

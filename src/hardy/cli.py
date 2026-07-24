@@ -55,10 +55,10 @@ def _build_runtime(config: configuration.Config) -> Any:
 
 def _runtime(config: configuration.Config, parser: argparse.ArgumentParser) -> Any:
     if not config.model:
-        parser.error(f"no model configured: set model in {config.path or configuration.default_config_path()}, export HARDY_MODEL, or pass --model")
+        parser.error(f"no model configured: set model in {config.config_path}, export HARDY_MODEL, or pass --model")
     backend = config.active_backend()
     if config.requires_api_key(backend) and not config.resolved_api_key(backend):
-        parser.error(f"no API key for the {backend} backend: set it in {config.path or configuration.default_config_path()} or export {config.key_source(backend).lstrip('$')}")
+        parser.error(f"no API key for the {backend} backend: set it in {config.config_path} or export {config.key_source(backend).lstrip('$')}")
     try:
         return _build_runtime(config)
     except RuntimeError as error:
@@ -149,7 +149,7 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
         out(f"No API key configured; assuming {config.base_url_for(backend)} needs none.")
     out(f"Model: {entry.identifier}  (backend: {backend})")
 
-    destination = config.path or configuration.default_config_path()
+    destination = config.config_path
     try:
         if ask(f"Save this as the default in {destination}? [y/N] ").strip().lower() in {"y", "yes"}:
             configuration.write_setting(destination, "model", entry.identifier)

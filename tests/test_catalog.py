@@ -81,3 +81,24 @@ def test_hosted_and_anthropic_discovery_still_need_a_key(monkeypatch: pytest.Mon
     monkeypatch.setattr(catalog.urllib.request, "urlopen", lambda *a, **k: pytest.fail("probed without a key"))
     assert catalog.discover(catalog.OPENAI, "", "https://api.openai.com/v1") == []
     assert catalog.discover(catalog.ANTHROPIC, "", "http://localhost:8000/v1") == []
+
+
+@pytest.mark.parametrize("identifier", [
+    "text-embedding-3-small", "nomic-embed-text", "bge-reranker-v2", "whisper-1",
+    "tts-1-hd", "dall-e-3", "gpt-image-1", "omni-moderation-latest", "llama-guard-3-8b",
+])
+def test_non_chat_models_are_not_offered(identifier: str):
+    """Selecting one would announce success, then end the session on the next
+    turn when /chat/completions rejects it."""
+    assert not catalog.is_chat_capable(identifier)
+
+
+@pytest.mark.parametrize("identifier", ["gpt-5.1", "claude-opus-5", "qwen3-coder-30b", "llama-3.3-70b", "mistral-large"])
+def test_chat_models_are_offered(identifier: str):
+    assert catalog.is_chat_capable(identifier)
+
+
+def test_discovery_drops_non_chat_models_from_the_listing(monkeypatch: pytest.MonkeyPatch):
+    payload = {"data": [{"id": "gpt-5.1"}, {"id": "text-embedding-3-small"}, {"id": "whisper-1"}]}
+    monkeypatch.setattr(catalog.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(json.dumps(payload).encode()))
+    assert catalog.discover(catalog.OPENAI, "key", "https://api.openai.com/v1") == ["gpt-5.1"]
