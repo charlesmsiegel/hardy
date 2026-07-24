@@ -184,18 +184,27 @@ create_environment() {
 }
 
 ensure_path_entry() {
-	local directory="$1" file line
+	local directory="$1" file line candidate
+	local -a targets=("$HOME/.profile")
 	line="export PATH=\"$directory:\$PATH\"  # added by the Hardy installer"
 	case ":$PATH:" in *":$directory:"*) return 0 ;; esac
 	export PATH="$directory:$PATH"
-	for file in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
-		[ -e "$file" ] || [ "$file" = "$HOME/.profile" ] || continue
+	# zsh — the macOS default — never reads ~/.profile, so create its rc file
+	# when zsh is the login shell. Other startup files are only appended to.
+	case "${SHELL:-}" in *zsh) targets+=("$HOME/.zshrc") ;; esac
+	for candidate in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.bash_profile"; do
+		if [ -e "$candidate" ] && [[ ! " ${targets[*]} " == *" $candidate "* ]]; then
+			targets+=("$candidate")
+		fi
+	done
+	for file in "${targets[@]}"; do
 		if ! grep -Fq "$directory" "$file" 2>/dev/null; then
 			printf '\n%s\n' "$line" >>"$file"
 			say "added $directory to PATH in $file"
 		fi
 	done
 	warn "open a new shell (or 'export PATH=\"$directory:\$PATH\"') before running hardy"
+	return 0
 }
 
 link_command() {

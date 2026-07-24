@@ -48,7 +48,8 @@ hardy
 ```
 
 On Windows, run `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1`.
-WSL is not required. Expect the Mathlib step to download several gigabytes and
+WSL is not required. Without a clone, an installer run on its own fetches the
+repository itself, so `curl -fsSL .../scripts/install.sh | sh` also works. Expect the Mathlib step to download several gigabytes and
 take 10–30 minutes; `--skip-mathlib` omits it if you have your own Lake project.
 
 The installer asks for a model identity and API key and stores them in

@@ -47,7 +47,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { '' }
 $Venv = Join-Path $Prefix 'venv'
 $LeanProject = Join-Path $Prefix 'lean'
 $LeanPackage = 'hardymath'
@@ -102,6 +102,42 @@ function Get-Python {
         if ($LASTEXITCODE -eq 0) { return $command.Source }
     }
     return $null
+}
+
+# Installing Hardy means installing this source tree, so a copy of the script
+# downloaded on its own (or run through `iex`) fetches the repository and
+# re-execs from there.
+function Initialize-Repository {
+    if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot 'pyproject.toml'))) { return $false }
+    $url = if ($env:HARDY_REPO_URL) { $env:HARDY_REPO_URL } else { 'https://github.com/charlesmsiegel/hardy' }
+    $reference = if ($env:HARDY_REPO_REF) { $env:HARDY_REPO_REF } else { 'main' }
+    $source = Join-Path $Prefix 'src'
+    if (-not (Test-Path (Join-Path $source 'pyproject.toml'))) {
+        Write-Step "Fetching Hardy into $source"
+        Remove-Item -Recurse -Force $source -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $source | Out-Null
+        if (Test-Command 'git') {
+            & git clone --depth 1 --branch $reference $url $source
+            if ($LASTEXITCODE -ne 0) { Stop-Install "git clone of $url failed" }
+        }
+        else {
+            $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("hardy-src-" + [System.Guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Force -Path $staging | Out-Null
+            try {
+                $archive = Join-Path $staging 'hardy.zip'
+                Invoke-WebRequest -Uri "$url/archive/refs/heads/$reference.zip" -OutFile $archive -UseBasicParsing
+                Expand-Archive -Path $archive -DestinationPath $staging -Force
+                # GitHub archives wrap everything in a <repo>-<ref> directory.
+                $extracted = Get-ChildItem -Directory $staging | Select-Object -First 1
+                if (-not $extracted) { Stop-Install "the downloaded archive from $url was empty" }
+                Copy-Item -Path (Join-Path $extracted.FullName '*') -Destination $source -Recurse -Force
+            }
+            finally { Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue }
+        }
+    }
+    if (-not (Test-Path (Join-Path $source 'pyproject.toml'))) { Stop-Install "$source does not look like the Hardy repository" }
+    $script:RepoRoot = $source
+    return $true
 }
 
 # Sets $script:Python rather than returning it: every command a PowerShell
@@ -357,6 +393,7 @@ Open a new terminal first, so that $BinDir is on your PATH.
 }
 
 Write-Step "Installing Hardy on Windows ($([Environment]::OSVersion.Version))"
+Initialize-Repository | Out-Null
 Write-Detail "repository: $RepoRoot"
 Install-Prerequisites
 New-Environment
