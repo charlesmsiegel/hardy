@@ -81,7 +81,10 @@ def run(request: Request, runtime: Runtime, lean: LeanTools, output_dir: Path, *
             if final:
                 break
     except Exception as error:
-        reason = "runtime_error"
+        # A call capped to the remaining budget fails as an ordinary timeout, but
+        # running out of time is not a provider fault and must not be recorded as
+        # one: the terminal reason is what an experiment is read by.
+        reason = "wall_clock_limit" if time.monotonic() - start >= wall_seconds else "runtime_error"
         events.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
 
     formal = "kernel verified" if final else "not formalized"

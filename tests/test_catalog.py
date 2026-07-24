@@ -59,3 +59,25 @@ def test_merge_adds_unlisted_models_without_duplicating_catalog_entries():
     # Claude first, so the two providers are visually separable in the listing.
     backends = [entry.backend for entry in merged]
     assert backends == sorted(backends, key=lambda name: catalog.BACKENDS.index(name))
+
+
+def test_a_local_server_is_probed_without_credentials(monkeypatch: pytest.MonkeyPatch):
+    """A keyless local endpoint is the one case where its catalog is otherwise
+    unknowable, and it is exactly the case that needs no Authorization header."""
+    seen: dict[str, object] = {}
+
+    def fake_urlopen(request, timeout=None):
+        seen["url"] = request.full_url
+        seen["auth"] = request.headers.get("Authorization")
+        return io.BytesIO(json.dumps({"data": [{"id": "local-7b"}]}).encode())
+
+    monkeypatch.setattr(catalog.urllib.request, "urlopen", fake_urlopen)
+    assert catalog.discover(catalog.OPENAI, "", "http://localhost:8000/v1") == ["local-7b"]
+    assert seen["url"] == "http://localhost:8000/v1/models"
+    assert seen["auth"] is None
+
+
+def test_hosted_and_anthropic_discovery_still_need_a_key(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(catalog.urllib.request, "urlopen", lambda *a, **k: pytest.fail("probed without a key"))
+    assert catalog.discover(catalog.OPENAI, "", "https://api.openai.com/v1") == []
+    assert catalog.discover(catalog.ANTHROPIC, "", "http://localhost:8000/v1") == []

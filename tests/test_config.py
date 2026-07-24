@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy import config
+from hardy import catalog, config
 
 
 @pytest.fixture(autouse=True)
@@ -161,4 +161,4 @@ def test_a_remote_custom_endpoint_still_needs_a_key(tmp_path: Path):
     ("", False),
 ])
 def test_local_endpoints_are_recognised(url: str, local: bool):
-    assert config.is_local_endpoint(url) is local
+    assert catalog.is_local_endpoint(url) is local
