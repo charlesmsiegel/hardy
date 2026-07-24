@@ -154,3 +154,57 @@ def test_the_per_request_timeout_tracks_the_runtime_attribute():
     runtime.timeout = 12.5
     runtime.complete([{"role": "user", "content": "Hi"}])
     assert client.request["timeout"] == 12.5
+
+
+def test_a_lower_output_ceiling_is_taken_from_the_provider_and_remembered():
+    """An identity typed in by hand may be an older model; the rejection names
+    the real ceiling, so there is no table to keep in step."""
+
+    class _Rejecting(_FakeClient):
+        def __init__(self, reply):
+            super().__init__(reply)
+            self.attempts = []
+
+        class _Messages(_FakeMessages):
+            def stream(self, **request):
+                self.client.attempts.append(request["max_tokens"])
+                if len(self.client.attempts) == 1:
+                    raise ValueError("max_tokens: 32000 > 8192, which is the maximum allowed number of output tokens for claude-3-5-sonnet-20240620")
+                return super().stream(**request)
+
+        def _install(self):
+            self.messages = self._Messages(self)
+            return self
+
+    runtime = backend.AnthropicRuntime("key", MODEL)
+    runtime._client = _Rejecting(_FakeReply([_FakeBlock({"type": "text", "text": "ok"})]))._install()
+    answer = runtime.complete([{"role": "user", "content": "Hi"}])
+    assert answer["content"] == "ok"
+    assert runtime._client.attempts == [backend.DEFAULT_MAX_TOKENS, 8192]
+    assert runtime.max_tokens == 8192, "later turns must not repeat the round trip"
+
+
+def test_an_unrelated_failure_is_not_retried():
+    class _Failing(_FakeClient):
+        def __init__(self):
+            super().__init__(_FakeReply([]))
+            self.calls = 0
+
+        class _Messages(_FakeMessages):
+            def stream(self, **request):
+                self.client.calls += 1
+                raise ValueError("overloaded_error")
+
+        def _install(self):
+            self.messages = self._Messages(self)
+            return self
+
+    runtime = backend.AnthropicRuntime("key", MODEL)
+    runtime._client = _Failing()._install()
+    try:
+        runtime.complete([{"role": "user", "content": "Hi"}])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("the error should propagate")
+    assert runtime._client.calls == 1

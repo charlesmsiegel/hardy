@@ -29,6 +29,7 @@ SETTINGS = {
     "api_key_env": "HARDY_API_KEY_ENV",
     "anthropic_api_key": "HARDY_ANTHROPIC_API_KEY",
     "anthropic_api_key_env": "HARDY_ANTHROPIC_API_KEY_ENV",
+    "max_tokens": "HARDY_MAX_TOKENS",
     "lean_command": "HARDY_LEAN_COMMAND",
     "lean_project": "HARDY_LEAN_PROJECT",
     "lean_timeout": "HARDY_LEAN_TIMEOUT",
@@ -66,6 +67,7 @@ class Config:
     backend: str | None = None
     anthropic_api_key: str = ""
     anthropic_api_key_env: str = DEFAULT_ANTHROPIC_API_KEY_ENV
+    max_tokens: int | None = None
     path: Path | None = None
     requested_path: Path | None = None
     selected_backend: str | None = None
@@ -159,6 +161,11 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
     except (TypeError, ValueError):
         raise ValueError(f"lean_timeout must be a number of seconds, not {values['lean_timeout']!r}") from None
 
+    try:
+        max_tokens = int(values["max_tokens"]) if values.get("max_tokens") else None
+    except (TypeError, ValueError):
+        raise ValueError(f"max_tokens must be a whole number of tokens, not {values['max_tokens']!r}") from None
+
     backend = str(values["backend"]).strip().lower() if values.get("backend") else None
     if backend is not None and backend not in catalog.BACKENDS:
         raise ValueError(f"backend must be one of {list(catalog.BACKENDS)}, not {backend!r}")
@@ -176,6 +183,7 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
         backend=backend,
         anthropic_api_key=text("anthropic_api_key", ""),
         anthropic_api_key_env=text("anthropic_api_key_env", DEFAULT_ANTHROPIC_API_KEY_ENV),
+        max_tokens=max_tokens,
         path=path if path.exists() else None,
         requested_path=path,
     )

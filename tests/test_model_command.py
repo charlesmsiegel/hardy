@@ -318,3 +318,14 @@ def test_saving_an_anthropic_choice_leaves_the_openai_endpoint_alone(tmp_path: P
     path.write_text('model = "gpt-5.1"\n', encoding="utf-8")
     cli.model_command("claude-opus-5", settings(tmp_path, path=path), Recorder(), ask=answers("y"), out=lambda line: None)
     assert "base_url" not in path.read_text(encoding="utf-8")
+
+
+def test_saving_the_default_endpoint_retracts_a_custom_one(tmp_path: Path):
+    """Written and retracted on the same terms: a URL left from an earlier save
+    would outlive the choice that set it."""
+    path = tmp_path / "config.toml"
+    path.write_text('model = "local-7b"\nbase_url = "http://localhost:8000/v1"\n', encoding="utf-8")
+    start = settings(tmp_path, model="local-7b", base_url=configuration.DEFAULT_BASE_URL, path=path)
+    cli.model_command("gpt-5.1", start, Recorder(), ask=answers("y"), out=lambda line: None)
+    assert "base_url" not in path.read_text(encoding="utf-8")
+    assert configuration.load(path).base_url == configuration.DEFAULT_BASE_URL
