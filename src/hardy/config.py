@@ -10,9 +10,7 @@ from typing import Any
 
 from . import catalog
 
-DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
-DEFAULT_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
+DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_LEAN_COMMAND = "lake env lean"
 # Importing Mathlib costs tens of seconds on a cold machine, so the default is
 # generous; a fast environment simply never reaches it.
@@ -23,13 +21,6 @@ DEFAULT_WORKSPACE = ".hardy"
 # Every setting, and the environment variable that overrides the config file.
 SETTINGS = {
     "model": "HARDY_MODEL",
-    "backend": "HARDY_BACKEND",
-    "base_url": "HARDY_BASE_URL",
-    "api_key": "HARDY_API_KEY",
-    "api_key_env": "HARDY_API_KEY_ENV",
-    "anthropic_api_key": "HARDY_ANTHROPIC_API_KEY",
-    "anthropic_api_key_env": "HARDY_ANTHROPIC_API_KEY_ENV",
-    "max_tokens": "HARDY_MAX_TOKENS",
     "lean_command": "HARDY_LEAN_COMMAND",
     "lean_project": "HARDY_LEAN_PROJECT",
     "lean_timeout": "HARDY_LEAN_TIMEOUT",
@@ -56,26 +47,13 @@ class Config:
     """Resolved settings. Later sources win: file, then environment, then flags."""
 
     model: str | None
-    base_url: str
-    api_key: str
-    api_key_env: str
     lean_command: tuple[str, ...]
     lean_project: Path | None
     lean_timeout: float
     latex_command: tuple[str, ...]
     workspace: Path
-    backend: str | None = None
-    anthropic_api_key: str = ""
-    anthropic_api_key_env: str = DEFAULT_ANTHROPIC_API_KEY_ENV
-    max_tokens: int | None = None
     path: Path | None = None
     requested_path: Path | None = None
-    selected_backend: str | None = None
-    """The provider chosen for this model in this session, when inference would
-    not arrive at it — picking a gateway's own `claude-*` row, say. Distinct from
-    `backend`, which is a standing pin from the file, environment, or flags: a
-    transient choice must not silently become one, or the next choice inherits a
-    provider the user never pinned and cannot escape without restarting."""
 
     @property
     def config_path(self) -> Path:
@@ -86,44 +64,6 @@ class Config:
         to the platform default instead of the file the user asked for.
         """
         return self.requested_path or self.path or default_config_path()
-
-    def active_backend(self) -> str:
-        """Which provider to call: a standing pin, then this session's choice, then the identity."""
-        return self.backend or self.selected_backend or catalog.backend_for(self.model)
-
-    def _credentials(self, backend: str) -> tuple[str, str]:
-        if backend == catalog.ANTHROPIC:
-            return self.anthropic_api_key, self.anthropic_api_key_env
-        return self.api_key, self.api_key_env
-
-    def resolved_api_key(self, backend: str | None = None) -> str:
-        literal, variable = self._credentials(backend or self.active_backend())
-        return literal or os.environ.get(variable, "")
-
-    def key_source(self, backend: str | None = None) -> str:
-        literal, variable = self._credentials(backend or self.active_backend())
-        return "config file" if literal else f"${variable}"
-
-    def requires_api_key(self, backend: str | None = None) -> bool:
-        """Whether a missing key for this backend is certainly fatal.
-
-        Anthropic always authenticates, and so does anything reached over the
-        network — a custom `base_url` is far more often a hosted gateway that
-        needs a key than one that does not. Only a self-hosted endpoint gets the
-        benefit of the doubt, because llama.cpp and vLLM ship with no auth at
-        all and demanding a key there is a false alarm.
-        """
-        backend = backend or self.active_backend()
-        return backend == catalog.ANTHROPIC or not catalog.is_local_endpoint(self.base_url)
-
-    def base_url_for(self, backend: str | None = None) -> str:
-        """`base_url` configures the OpenAI-compatible endpoint only.
-
-        The Anthropic SDK resolves its own endpoint, so pointing `base_url` at a
-        local server must not accidentally redirect Claude traffic there.
-        """
-        backend = backend or self.active_backend()
-        return "" if backend == catalog.ANTHROPIC else self.base_url
 
 
 def read_file(path: Path) -> dict[str, Any]:
@@ -161,29 +101,13 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
     except (TypeError, ValueError):
         raise ValueError(f"lean_timeout must be a number of seconds, not {values['lean_timeout']!r}") from None
 
-    try:
-        max_tokens = int(values["max_tokens"]) if values.get("max_tokens") else None
-    except (TypeError, ValueError):
-        raise ValueError(f"max_tokens must be a whole number of tokens, not {values['max_tokens']!r}") from None
-
-    backend = str(values["backend"]).strip().lower() if values.get("backend") else None
-    if backend is not None and backend not in catalog.BACKENDS:
-        raise ValueError(f"backend must be one of {list(catalog.BACKENDS)}, not {backend!r}")
-
     return Config(
-        model=str(values["model"]) if values.get("model") else None,
-        base_url=text("base_url", DEFAULT_BASE_URL),
-        api_key=text("api_key", ""),
-        api_key_env=text("api_key_env", DEFAULT_API_KEY_ENV),
+        model=str(values["model"]) if values.get("model") else DEFAULT_MODEL,
         lean_command=tuple(shlex.split(text("lean_command", DEFAULT_LEAN_COMMAND))),
         lean_project=location("lean_project"),
         lean_timeout=lean_timeout,
         latex_command=tuple(shlex.split(text("latex_command", DEFAULT_LATEX_COMMAND))),
         workspace=location("workspace") or Path(DEFAULT_WORKSPACE),
-        backend=backend,
-        anthropic_api_key=text("anthropic_api_key", ""),
-        anthropic_api_key_env=text("anthropic_api_key_env", DEFAULT_ANTHROPIC_API_KEY_ENV),
-        max_tokens=max_tokens,
         path=path if path.exists() else None,
         requested_path=path,
     )

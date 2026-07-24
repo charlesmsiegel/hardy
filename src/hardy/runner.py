@@ -4,7 +4,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .chat import provenance
 from .lean import LeanTools
@@ -13,9 +13,17 @@ from .models import Request, RunResult, ToolResult
 WARNING = "Generated Lean is not sandboxed. Run Hardy only with trusted output in a disposable development environment."
 
 
+TOOLS = [
+    {"type": "function", "function": {"name": "check_proof", "description": "Elaborate a complete candidate proof against the unchanged theorem statement.", "parameters": {"type": "object", "properties": {"proof": {"type": "string"}}, "required": ["proof"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "inspect_goal", "description": "Show the goal state after an optional tactic prefix.", "parameters": {"type": "object", "properties": {"tactic": {"type": "string"}}, "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "search_declaration", "description": "Check whether a declaration name exists in the current environment.", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "submit_proof", "description": "Submit the final proof for a strict, hole-free check.", "parameters": {"type": "object", "properties": {"proof": {"type": "string"}}, "required": ["proof"], "additionalProperties": False}}},
+]
+
+
 class Runtime(Protocol):
     model: str
-    def complete(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> dict[str, Any]: ...
+    def ask(self, text: str) -> str: ...
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -24,68 +32,49 @@ def _write_json(path: Path, value: Any) -> None:
     os.replace(temporary, path)
 
 
-def run(request: Request, runtime: Runtime, lean: LeanTools, output_dir: Path, *, max_turns: int = 8, wall_seconds: float = 300) -> RunResult:
+def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools, output_dir: Path, *, max_turns: int = 8, wall_seconds: float = 300) -> RunResult:
     output_dir.mkdir(parents=True, exist_ok=True)
-    start = time.monotonic()
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": "Prove the exact Lean statement. Use the tools for kernel feedback. Never change the statement. Submit a sorry-free proof when ready."},
-        {"role": "user", "content": f"Informal claim: {request.informal_claim}\nExact Lean declaration: {request.declaration}\nImports: {', '.join(request.imports)}"},
-    ]
     events: list[dict[str, Any]] = []
-    final: ToolResult | None = None
-    proof: str | None = None
-    reason = "turn_limit"
-    turns = 0
-    # A request in flight cannot be interrupted, so the only way to keep the
-    # declared wall-clock bound honest is to hand each call no more time than
-    # the run has left.
-    configured_timeout = getattr(runtime, "timeout", None)
+    found: dict[str, Any] = {"result": None, "proof": None}
+
+    def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
+        """Hardy runs every proof check, whoever decided to ask for one."""
+        try:
+            if name == "check_proof":
+                result = lean.check_proof(str(arguments["proof"]))
+            elif name == "inspect_goal":
+                result = lean.inspect_goal(str(arguments.get("tactic", "")))
+            elif name == "search_declaration":
+                result = lean.search_declaration(str(arguments["name"]))
+            elif name == "submit_proof":
+                proof = str(arguments["proof"])
+                result = lean.check_proof(proof, final=True)
+                if result.ok:
+                    found["result"], found["proof"] = result, proof
+            else:
+                result = ToolResult(False, f"unknown tool: {name}")
+        except (KeyError, TypeError, ValueError) as error:
+            result = ToolResult(False, f"invalid tool arguments: {error}")
+        events.append({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
+        return result
+
+    system = "Prove the exact Lean statement. Use the tools for kernel feedback. Never change the statement. Submit a sorry-free proof when ready."
+    task = f"Informal claim: {request.informal_claim}\nExact Lean declaration: {request.declaration}\nImports: {', '.join(request.imports)}"
+    start = time.monotonic()
+    reason = "completed"
+    runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=events.append)
     try:
-        for turn in range(1, max_turns + 1):
-            turns = turn
-            remaining = wall_seconds - (time.monotonic() - start)
-            if remaining <= 0:
-                reason = "wall_clock_limit"
-                break
-            if configured_timeout is not None:
-                runtime.timeout = min(configured_timeout, remaining)
-            before = time.monotonic()
-            response = runtime.complete(messages)
-            events.append({"type": "model", "turn": turn, "elapsed_seconds": time.monotonic() - before, "message": response})
-            messages.append(response)
-            calls = response.get("tool_calls", [])
-            if not calls:
-                messages.append({"role": "user", "content": "Call a proof tool or submit_proof; prose alone cannot finish the run."})
-                continue
-            for call in calls:
-                name = call["function"]["name"]
-                arguments: dict[str, Any] = {}
-                try:
-                    arguments = json.loads(call["function"].get("arguments", "{}"))
-                    if name == "check_proof": result = lean.check_proof(str(arguments["proof"]))
-                    elif name == "inspect_goal": result = lean.inspect_goal(str(arguments.get("tactic", "")))
-                    elif name == "search_declaration": result = lean.search_declaration(str(arguments["name"]))
-                    elif name == "submit_proof":
-                        proof = str(arguments["proof"])
-                        result = lean.check_proof(proof, final=True)
-                        if result.ok:
-                            final, reason = result, "verified"
-                    else: result = ToolResult(False, f"unknown tool: {name}")
-                except (KeyError, TypeError, json.JSONDecodeError) as error:
-                    result = ToolResult(False, f"invalid tool arguments: {error}")
-                event = {"type": "tool", "turn": turn, "tool_call_id": call.get("id"), "name": name, "arguments": arguments, "result": result.as_dict()}
-                events.append(event)
-                messages.append({"role": "tool", "tool_call_id": call.get("id", "missing"), "content": json.dumps(result.as_dict())})
-                if final:
-                    break
-            if final:
-                break
+        runtime.ask(task)
     except Exception as error:
-        # A call capped to the remaining budget fails as an ordinary timeout, but
-        # running out of time is not a provider fault and must not be recorded as
-        # one: the terminal reason is what an experiment is read by.
-        reason = "wall_clock_limit" if time.monotonic() - start >= wall_seconds else "runtime_error"
+        reason = "runtime_error"
         events.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
+    elapsed = time.monotonic() - start
+    final, proof = found["result"], found["proof"]
+    if final:
+        reason = "verified"
+    elif reason == "completed":
+        reason = "no_proof_submitted"
+    turns = sum(1 for event in events if event.get("type") == "tool")
 
     formal = "kernel verified" if final else "not formalized"
     informal = "not assessed"
@@ -95,6 +84,6 @@ def run(request: Request, runtime: Runtime, lean: LeanTools, output_dir: Path, *
     writeup = f"# Hardy proof result\n\n## Claim\n\n{request.informal_claim}\n\n## Exact Lean statement\n\n```lean\n{request.declaration}\n```\n\n## Grades\n\n- Formalization: **{formal}**\n- Informal completeness: **{informal}**\n\n## Limits\n\n{WARNING}\n"
     if not final: writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
-    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds}, "events": events, "terminal_reason": reason})
+    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"requested_max_turns": max_turns, "requested_wall_seconds": wall_seconds, "enforced_by": "provider sdk", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "events": events, "terminal_reason": reason})
     _write_json(output_dir / "result.json", result.as_dict())
     return result

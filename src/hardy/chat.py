@@ -32,7 +32,7 @@ Generated Lean and LaTeX are not sandboxed. Keep tool use focused. Explain progr
 
 class ChatRuntime(Protocol):
     model: str
-    def complete(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> dict[str, Any]: ...
+    def ask(self, text: str) -> str: ...
 
 
 def provenance(runtime: Any) -> dict[str, Any]:
@@ -52,9 +52,8 @@ def _atomic_json(path: Path, value: Any) -> None:
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, runtime: ChatRuntime, lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0):
         self.workspace = workspace
-        self.runtime = runtime
         self.confirm = confirm
         self.workspace.mkdir(parents=True, exist_ok=True)
         placeholder = Request("example : True", "interactive workspace", ("Mathlib",))
@@ -62,56 +61,63 @@ class MathematicsSession:
         self.latex = LatexTools(latex_command)
         self.state_path = workspace / "session.json"
         self.transcript_path = workspace / "transcript.jsonl"
-        self.state = self._load_state()
-        self.messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT + self._context()},
-            *self._load_messages(),
-        ]
+        self._make_runtime = make_runtime
+        # State first: the runtime is built from the system prompt, which embeds
+        # the manifest, and it resumes the provider thread the state remembers.
+        self.state = self._read_state()
+        # The runtime needs a way to reach the tools, and the tools need the
+        # workspace, so it is built here rather than handed in ready-made.
+        self.runtime = self._build(session_id=self.state.get("provider_session"))
+        self._sync_provenance()
 
-    def set_runtime(self, runtime: ChatRuntime) -> None:
+    def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
+        return self._make_runtime(
+            model=model,
+            system_prompt=SYSTEM_PROMPT + self._context(),
+            specs=CHAT_TOOLS,
+            dispatch=self._dispatch,
+            cwd=self.workspace,
+            session_id=session_id,
+            observe=self._record,
+        )
+
+    def switch_model(self, model: str) -> None:
         """Continue this conversation on a different model.
 
         The transcript records the change because which model produced which
-        turn is part of the experiment's identity, not a UI detail.
+        turn is part of the experiment's identity, not a UI detail. The provider
+        thread is carried over, so the new model inherits the conversation.
         """
         previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint")}
-        self.runtime = runtime
-        self.state.update(provenance(runtime))
+        self.runtime = self._build(model=model, session_id=self.state.get("provider_session"))
+        self.state.update(provenance(self.runtime))
         _atomic_json(self.state_path, self.state)
-        self._record({"type": "model", "previous": previous, **provenance(runtime)})
+        self._record({"type": "model", "reason": "switched", "previous": previous, **provenance(self.runtime)})
 
-    def _load_state(self) -> dict[str, Any]:
+    def _read_state(self) -> dict[str, Any]:
         if self.state_path.exists():
-            state = json.loads(self.state_path.read_text(encoding="utf-8"))
-            current = provenance(self.runtime)
-            if any(state.get(key) != value for key, value in current.items()):
-                # Reopening a workspace under a different --model or --backend is
-                # a change of experimental condition like any other. Without this
-                # the resumed turns would be attributed to the previous provider.
-                previous = {key: state.get(key) for key in current}
-                state.update(current)
-                _atomic_json(self.state_path, state)
-                self._record({"type": "model", "reason": "session_resumed", "previous": previous, **current})
-            return state
-        state = {"schema_version": 1, **provenance(self.runtime), "names": [], "assumptions": []}
-        _atomic_json(self.state_path, state)
-        return state
+            return json.loads(self.state_path.read_text(encoding="utf-8"))
+        return {"schema_version": 1, "names": [], "assumptions": []}
+
+    def _sync_provenance(self) -> None:
+        """Make the record agree with what is actually about to answer.
+
+        Reopening a workspace under a different model is a change of
+        experimental condition like any other, and resumed turns must not be
+        attributed to the model that produced the earlier ones.
+        """
+        current = provenance(self.runtime)
+        if all(self.state.get(key) == value for key, value in current.items()):
+            return
+        previous = {key: self.state.get(key) for key in current}
+        started = any(previous.values())
+        self.state.update(current)
+        _atomic_json(self.state_path, self.state)
+        if started:
+            self._record({"type": "model", "reason": "session_resumed", "previous": previous, **current})
 
     def _context(self) -> str:
         return f"\n\nWorkspace: {self.workspace}\nExisting manifest:\n{json.dumps(self.state, ensure_ascii=False)}"
-
-    def _load_messages(self) -> list[dict[str, Any]]:
-        if not self.transcript_path.exists():
-            return []
-        messages: list[dict[str, Any]] = []
-        for line in self.transcript_path.read_text(encoding="utf-8").splitlines():
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if event.get("type") in {"user", "assistant", "tool"} and isinstance(event.get("message"), dict):
-                messages.append(event["message"])
-        return messages
 
     def _record(self, event: dict[str, Any]) -> None:
         event = {"timestamp": time.time(), **event}
@@ -181,26 +187,26 @@ class MathematicsSession:
             return ToolResult(True, f"User approved. Declare exactly `{declaration}` and disclose source `{proposal['source']}` in the writeup.")
         return ToolResult(False, f"unknown tool: {name}")
 
-    def send(self, text: str, *, max_tool_rounds: int = 12) -> str:
-        message = {"role": "user", "content": text}
-        self.messages.append(message)
-        self._record({"type": "user", "message": message})
-        for _ in range(max_tool_rounds):
-            response = self.runtime.complete(self.messages, tools=CHAT_TOOLS)
-            self.messages.append(response)
-            self._record({"type": "assistant", "message": response})
-            calls = response.get("tool_calls") or []
-            if not calls:
-                return str(response.get("content") or "")
-            for call in calls:
-                try:
-                    arguments = json.loads(call["function"].get("arguments", "{}"))
-                    result = self._tool(call["function"]["name"], arguments)
-                except (KeyError, TypeError, json.JSONDecodeError) as error:
-                    result = ToolResult(False, f"invalid tool call: {error}")
-                tool_message = {"role": "tool", "tool_call_id": call.get("id", "missing"), "content": json.dumps(result.as_dict())}
-                self.messages.append(tool_message)
-                self._record({"type": "tool", "name": call.get("function", {}).get("name"), "message": tool_message})
-        warning = "Tool-round limit reached; work is partial."
-        self._record({"type": "limit", "message": warning})
-        return warning
+    def send(self, text: str) -> str:
+        """One exchange. The provider's SDK decides how many tools to call.
+
+        Hardy no longer counts the turns — see issue #23. What it still does is
+        run every tool the model asks for, and write down what happened.
+        """
+        self._record({"type": "user", "message": {"role": "user", "content": text}})
+        answer = self.runtime.ask(text)
+        self._remember_thread()
+        return answer
+
+    def _dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        """The single door every tool call goes through, whoever asked for it."""
+        try:
+            return self._tool(name, arguments)
+        except (KeyError, TypeError, ValueError) as error:
+            return ToolResult(False, f"invalid tool call: {error}")
+
+    def _remember_thread(self) -> None:
+        thread = getattr(self.runtime, "session_id", None)
+        if thread and self.state.get("provider_session") != thread:
+            self.state["provider_session"] = thread
+            _atomic_json(self.state_path, self.state)

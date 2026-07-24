@@ -52,12 +52,37 @@ def _lean_project_check(config: Config) -> Check:
     return Check("lean project", True, str(project))
 
 
-def _anthropic_package_check() -> Check:
+def _subscription_checks() -> list[Check]:
+    """Hardy authenticates as Claude Code does, so this is what it needs.
+
+    No API key is involved: the credentials belong to the signed-in CLI, which
+    is the whole point of running against a subscription.
+    """
+    checks = []
     try:
-        import anthropic
+        import claude_agent_sdk
     except ImportError:
-        return Check("anthropic sdk", False, "not installed; the Claude backend needs it: pip install anthropic")
-    return Check("anthropic sdk", True, f"anthropic {getattr(anthropic, '__version__', 'unknown')}")
+        checks.append(Check("claude sdk", False, "not installed; pip install claude-agent-sdk"))
+    else:
+        checks.append(Check("claude sdk", True, f"claude-agent-sdk {getattr(claude_agent_sdk, '__version__', 'unknown')}"))
+    cli = shutil.which("claude")
+    if not cli:
+        checks.append(Check("claude cli", False, "not on PATH; npm install -g @anthropic-ai/claude-code"))
+        return checks
+    checks.append(Check("claude cli", True, cli))
+    checks.append(_login_check(cli))
+    return checks
+
+
+def _login_check(cli: str) -> Check:
+    """Whether the CLI can actually answer, which is the only real proof of login."""
+    try:
+        finished = subprocess.run([cli, "--version"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
+        return Check("claude login", False, f"could not run {cli}: {error}")
+    if finished.returncode != 0:
+        return Check("claude login", False, f"{cli} failed; run `claude login` to sign in with your subscription")
+    return Check("claude login", True, f"{finished.stdout.strip() or 'signed in'}", required=False)
 
 
 def _mathlib_check(config: Config) -> Check:
@@ -89,19 +114,8 @@ def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
         ok, detail = _probe([latex_executable, "--version"], timeout=60)
         checks.append(Check("latex", ok, detail))
 
-    backend = config.active_backend()
     checks.append(Check("model", bool(config.model), config.model or "unset; set model in the config file or HARDY_MODEL"))
-    checks.append(Check("backend", True, f"{backend} ({'Anthropic Messages API' if backend == catalog.ANTHROPIC else config.base_url})", required=False))
-    key = config.resolved_api_key(backend)
-    if key:
-        checks.append(Check("api key", True, f"present via {config.key_source(backend)}"))
-    elif config.requires_api_key(backend):
-        checks.append(Check("api key", False, f"unset for the {backend} backend; set it in the config file or export {config.key_source(backend).lstrip('$')}"))
-    else:
-        # A custom base_url is a deliberate choice, and local servers want no key.
-        checks.append(Check("api key", True, f"unset; assuming {config.base_url} needs none", required=False))
-    if backend == catalog.ANTHROPIC:
-        checks.append(_anthropic_package_check())
+    checks.extend(_subscription_checks())
 
     if deep:
         checks.append(_mathlib_check(config))
