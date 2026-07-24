@@ -68,6 +68,12 @@ class Config:
     anthropic_api_key_env: str = DEFAULT_ANTHROPIC_API_KEY_ENV
     path: Path | None = None
     requested_path: Path | None = None
+    selected_backend: str | None = None
+    """The provider chosen for this model in this session, when inference would
+    not arrive at it — picking a gateway's own `claude-*` row, say. Distinct from
+    `backend`, which is a standing pin from the file, environment, or flags: a
+    transient choice must not silently become one, or the next choice inherits a
+    provider the user never pinned and cannot escape without restarting."""
 
     @property
     def config_path(self) -> Path:
@@ -80,8 +86,8 @@ class Config:
         return self.requested_path or self.path or default_config_path()
 
     def active_backend(self) -> str:
-        """Which provider the configured model implies, unless one is pinned."""
-        return self.backend or catalog.backend_for(self.model)
+        """Which provider to call: a standing pin, then this session's choice, then the identity."""
+        return self.backend or self.selected_backend or catalog.backend_for(self.model)
 
     def _credentials(self, backend: str) -> tuple[str, str]:
         if backend == catalog.ANTHROPIC:
