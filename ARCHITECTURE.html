@@ -12,7 +12,7 @@
 <p class="eyebrow">The complete design map</p>
 <h1>Hardy</h1>
 <p class="lede">A model-agnostic theorem-proving harness where language models propose, Lean verifies, and the harness preserves an honest account of what succeeded.</p>
-<div class="notice"><strong>Documentation-only reset.</strong> There is no implementation today. The old prototype and sandbox were removed to make room for a thin experimental path. Isolation remains required before untrusted or shared use.</div>
+<div class="notice"><strong>Interactive experiment implemented.</strong> Running <code>hardy</code> opens a durable mathematical conversation backed by direct Lean and LaTeX tools, a linked naming manifest, and explicit human approval for assumptions. The old sandbox remains absent; use only trusted output in a disposable environment. A real model + pinned toolchain acceptance run is still outstanding.</div>
 
 <h2>The core loop</h2>
 <div class="flow">
@@ -22,8 +22,9 @@
  <div class="step"><b>4 · Verify & report</b>The kernel checks formal work; Hardy saves artifacts, grades, and trajectory.</div>
 </div>
 
-<h2>Three composable workflows</h2>
+<h2>Composable workflows</h2>
 <div class="grid">
+ <article class="card"><h3>Explore</h3><p>Talk through mathematics while the agent checks Lean, maintains LaTeX, links names, and asks before introducing assumptions.</p><span class="tag">Now</span></article>
  <article class="card"><h3>Prove</h3><p>Formalize faithfully, search for a proof, and produce linked Lean and human artifacts.</p><span class="tag">Now</span></article>
  <article class="card"><h3>Critique</h3><p>Use kernel errors, formalization probes, and adversarial skeptics to build a persistent hole ledger.</p><span class="tag next">Next</span></article>
  <article class="card"><h3>Repair</h3><p>Patch one hole without changing the claim, then recheck the affected blast radius.</p><span class="tag next">Next</span></article>
@@ -48,13 +49,13 @@
 
 <h2>Feature horizon</h2>
 <div class="grid">
- <article class="card"><h3><span class="tag">Now</span> Thin slice</h3><p>One model loop, direct Lean feedback, core proof tools, a saved trajectory, checked Lean, and a plain graded writeup.</p></article>
+ <article class="card"><h3><span class="tag">Now · implemented</span> Interactive slice</h3><p>A durable chat, direct Lean and LaTeX feedback, linked names, approved assumptions, and saved artifacts. The one-shot proof loop remains a smoke path. Next, record a real acceptance run and pin its toolchains.</p></article>
  <article class="card"><h3><span class="tag next">Next</span> Honest experiments</h3><p>Faithfulness and axiom audits, budgets, evaluation provenance, critique/repair, and literature-backed citations.</p></article>
  <article class="card"><h3><span class="tag later">Later</span> Breadth & hardening</h3><p>Alternative runtimes, advanced search, assumed papers, retrieval, memory, warm workers, and restored isolation.</p></article>
 </div>
 
 <h2>Trust boundary</h2>
-<div class="trust"><strong>The kernel is the formal authority, subject to its audited axiom set.</strong> Faithfulness review protects informal-to-formal translation. Paper axioms are visible additions to trust. Until confinement is restored, generated Lean and TeX and downloaded archives must be treated as unsafe and run only in disposable environments.</div>
+<div class="trust"><strong>The kernel is the formal authority, subject to its audited axiom set.</strong> The naming manifest connects Lean and LaTeX for later review but does not prove faithfulness. User-approved axioms are visible additions to trust. Until confinement is restored, generated Lean and TeX and downloaded archives must be treated as unsafe and run only in disposable environments.</div>
 
 <footer>This self-contained map summarizes <a href="DESIGN.md">DESIGN.md</a> and <a href="FEATURES.md">FEATURES.md</a>. Update all three together when architecture or scope changes.</footer>
 </main></body></html>

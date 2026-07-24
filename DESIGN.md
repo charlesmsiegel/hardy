@@ -7,9 +7,12 @@ harness—not the model—owns verification, budgets, artifacts, and the distinc
 between a promising argument and a checked proof. Lean supplies an unambiguous
 kernel signal; Hardy turns that signal into a useful model feedback loop.
 
-The project is restarting from documents rather than carrying forward its original
-prototype. Optimize the first implementation for learning and iteration. Add
-abstraction only after an experiment exposes a real seam.
+The project restarted from documents rather than carrying forward its original
+prototype. Its first implementation is a deliberately thin interactive CLI: one
+OpenAI-compatible conversational loop, direct Lean and LaTeX subprocesses, a
+durable transcript, explicit assumption approval, and a manifest linking formal
+names to LaTeX labels. Continue optimizing for learning and add abstraction only
+after an experiment exposes a real seam.
 
 ## Output contract
 
@@ -31,6 +34,9 @@ return useful partial artifacts and state their limits rather than overclaim.
 
 ## Core workflows
 
+- **Explore** is the primary interactive shell: the human and model develop ideas
+  conversationally while Hardy maintains Lean, LaTeX, naming, assumptions, and a
+  durable transcript.
 - **Prove** formalizes a claim, checks that the formal statement is faithful,
   searches for a proof, and produces the artifact pair.
 - **Critique** accepts a formal or informal proof and records suspected defects in
@@ -79,9 +85,14 @@ check a candidate, run a tactic, inspect goals, search lemmas, manage holes, rea
 papers, cite sources, and write the result. Tool results should be structured,
 bounded, and useful as the next model observation.
 
+The current interactive tools check and save complete Lean and LaTeX sources, read
+the managed workspace, record formal-to-document names, and pause for explicit
+human approval before admitting an assumption. The naming manifest is bookkeeping
+for a later translation audit, not evidence that the formalization is faithful.
+
 ### 4. Lean interaction
 
-The initial path may invoke Lean directly. Persistent sessions, warm pools,
+The initial path invokes Lean directly in a temporary directory. Persistent sessions, warm pools,
 incremental state, and proof-state snapshots are optimizations to add when measured
 latency warrants them. Each run begins from a known environment, preserves the
 original statement, rejects `sorry` in completed proofs, and audits dependencies.
@@ -122,8 +133,11 @@ and hostile-input tests.
 
 ## Build order
 
-1. **Thin vertical slice:** one model, direct Lean invocation, a few structured
-   tools, one theorem, saved trajectory, Lean artifact, and plain writeup.
+1. **Interactive vertical slice (implemented):** one conversational model, direct
+   Lean and LaTeX invocation, linked names, explicitly approved assumptions,
+   durable transcript, and saved artifacts. The older one-shot proof loop remains
+   as a dependency smoke path. A real model/Mathlib acceptance run remains to be
+   recorded.
 2. **Honest experiment harness:** faithfulness and axiom checks, budgets, fixed
    evaluation inputs, reproducible identities, and useful failure reports.
 3. **Broaden capability:** literature, critique/repair, alternative runtimes and

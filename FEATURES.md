@@ -1,8 +1,21 @@
 # Hardy feature inventory
 
 This is the consolidated backlog extracted from the former milestone specs and
-implementation plans. It describes desired behavior, not current implementation:
-after the repository reset, **none of these features is implemented**.
+implementation plans. It describes desired behavior and current sequencing. The
+interactive CLI slice covers the items marked **Now (implemented)**; a real model,
+Mathlib, and LaTeX acceptance run is still needed before it is validated.
+
+## Interactive exploration
+
+- **Now (implemented):** running `hardy` starts a persistent terminal conversation
+  rather than requiring a prewritten theorem request.
+- **Now (implemented):** the agent can check and save Lean, compile and save LaTeX,
+  read its workspace, and resume from a durable manifest and transcript.
+- **Now (implemented):** a naming registry links Lean declarations to LaTeX labels
+  for later translation review; this link is not itself a faithfulness grade.
+- **Now (implemented):** introducing an axiom pauses for human approval and records
+  its exact formal/informal statements, reason, and source identity. Existing local
+  Lean modules remain available through ordinary imports in the launch project.
 
 Priority labels are sequencing hints:
 
@@ -12,12 +25,12 @@ Priority labels are sequencing hints:
 
 ## End-to-end product behavior
 
-- **Now — Prove workflow:** accept an informal or Lean theorem, obtain a candidate
+- **Now (implemented) — Prove workflow:** accept an informal claim paired with an exact Lean theorem, obtain a candidate
   proof from a model, feed Lean errors back, and stop with a checked proof or an
   explicit partial/failure result.
-- **Now — Linked artifacts:** save the exact Lean statement and proof plus a
+- **Now (implemented) — Linked artifacts:** save the exact Lean statement and proof plus a
   human-readable writeup about the same claim.
-- **Now — Honest grades:** independently report formalization status and informal
+- **Now (implemented) — Honest grades:** independently report formalization status and informal
   completeness; never infer mathematical validity from compiled prose.
 - **Next — Statement faithfulness gate:** use an independent prompt or model to
   compare the user's claim with its Lean formalization before proof search.
@@ -28,11 +41,11 @@ Priority labels are sequencing hints:
 
 ## Lean interaction and proof tools
 
-- **Now:** invoke a pinned Lean 4 + Mathlib environment and return structured
+- **Now (partial):** invoke a caller-supplied Lean 4 + Mathlib environment and return structured
   elaboration errors and goals.
-- **Now:** tools to check a complete proof, try a tactic, inspect goal state, and
+- **Now (implemented):** tools to check a complete proof, inspect a goal after a tactic prefix, and
   search available declarations.
-- **Now:** preserve the original statement and reject completed artifacts that use
+- **Now (implemented):** preserve the original statement and reject completed artifacts that use
   `sorry` or `admit`.
 - **Next:** audit `#print axioms`; distinguish standard axioms, forbidden
   `sorryAx`, and explicitly declared paper assumptions.
@@ -45,9 +58,9 @@ Priority labels are sequencing hints:
 
 ## Agent runtime and context
 
-- **Now:** one minimal turn loop with typed tool definitions, bounded tool output,
+- **Now (implemented):** one minimal turn loop with typed tool definitions, bounded tool output,
   configurable model identity, turn limit, and wall-clock limit.
-- **Now:** structured trajectories containing prompts, responses, tool calls,
+- **Now (implemented):** structured trajectories containing prompts, responses, tool calls,
   tool results, Lean feedback, timing, usage, and terminal reason.
 - **Next:** token and cost budgets with reserve/settle accounting.
 - **Next:** a runtime interface selected by configuration rather than workflow
@@ -60,7 +73,7 @@ Priority labels are sequencing hints:
 
 ## Search and orchestration
 
-- **Now:** iterative repair—submit, observe Lean feedback, revise, repeat.
+- **Now (implemented):** iterative repair—submit, observe Lean feedback, revise, repeat.
 - **Next:** a pluggable strategy seam with shared token, wall-clock, and Lean-CPU
   budgets.
 - **Later — Sketch and discharge:** create an informal plan and Lean skeleton,
@@ -86,7 +99,7 @@ Priority labels are sequencing hints:
 
 ## Writeups, papers, and bibliography
 
-- **Now:** generate a plain human-readable writeup and label its verification
+- **Now (implemented):** generate a plain human-readable writeup and label its verification
   status clearly.
 - **Next:** compile-check LaTeX and fail on missing references.
 - **Next:** fetch arXiv metadata and content politely with rate limiting and query
@@ -142,7 +155,7 @@ Priority labels are sequencing hints:
 
 ## Safety and operations
 
-- **Now:** prominently warn that the experimental path executes only trusted model
+- **Now (implemented):** prominently warn that the experimental path executes only trusted model
   output in a disposable local environment.
 - **Next:** deterministic timeouts, bounded outputs, durable/atomic result writes,
   and redaction of secrets from provider configuration and trajectories.
@@ -157,3 +170,9 @@ use structured Lean feedback to produce a `sorry`-free source file accepted by t
 kernel, save a complete trajectory, and generate a clearly graded writeup about the
 same statement. A failed attempt still leaves an intelligible trajectory and an
 honest partial result.
+
+The retained one-shot harness and its fake-process tests exercise this contract on
+a trivial theorem. The primary interactive shell additionally has fake-process
+coverage for linked Lean/LaTeX artifacts and assumption approval. What remains is
+an actual, recorded model + pinned Mathlib/LaTeX run on a nontrivial exploration,
+plus pinning toolchain identities rather than accepting caller-provided commands.

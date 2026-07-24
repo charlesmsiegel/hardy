@@ -1,0 +1,5 @@
+{
+  "informal_claim": "True is true.",
+  "declaration": "theorem HardyTarget : True",
+  "imports": ["Mathlib"]
+}
