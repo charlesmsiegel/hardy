@@ -36,17 +36,24 @@ def test_the_executable_installers_are_executable():
         assert os.access(SCRIPTS / name, os.X_OK), f"{name} is not executable"
 
 
-def test_help_describes_the_installer_without_touching_the_system():
-    """--help must work on a clean machine, before anything is installed."""
-    script = "install-macos.sh" if sys.platform == "darwin" else "install-linux.sh"
+@pytest.mark.parametrize("script", ["install-linux.sh", "install-macos.sh"])
+def test_help_describes_the_installer_without_touching_the_system(script: str):
+    """--help must work on a clean machine, before anything is installed.
+
+    Both installers are checked on whichever host runs the tests: reaching
+    --help means the script's top-level code survived a machine with none of
+    its tools present, which is the state it is written for. A `set -e` exit
+    before the argument parser is silent and looks like nothing happened.
+    """
     result = subprocess.run([str(SCRIPTS / script), "--help"], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, f"{script} exited {result.returncode}: {result.stdout}{result.stderr}"
+    assert result.stdout.strip(), f"{script} --help printed nothing"
     for flag in ("--yes", "--skip-mathlib", "--skip-latex", "--full-latex", "--no-config", "--prefix"):
         assert flag in result.stdout
 
 
-def test_unknown_options_are_refused():
-    script = "install-macos.sh" if sys.platform == "darwin" else "install-linux.sh"
+@pytest.mark.parametrize("script", ["install-linux.sh", "install-macos.sh"])
+def test_unknown_options_are_refused(script: str):
     result = subprocess.run([str(SCRIPTS / script), "--definitely-not-a-flag"], capture_output=True, text=True)
     assert result.returncode != 0
     assert "unknown option" in result.stderr

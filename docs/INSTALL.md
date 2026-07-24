@@ -21,6 +21,26 @@ hardy
 Windows needs no WSL: the PowerShell installer uses winget and elan's official
 Windows release directly.
 
+## Without cloning first
+
+Installing Hardy means installing its source tree, so an installer run on its
+own fetches the repository into `~/.local/share/hardy/src` (or
+`%LOCALAPPDATA%\hardy\src`) and continues from there. Both of these work:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/charlesmsiegel/hardy/main/scripts/install.sh | sh
+bash ~/Downloads/install-macos.sh          # a copy saved from the browser
+```
+
+Run a downloaded script with `bash` or `sh` as shown. A browser strips the
+executable bit, so double-clicking it in Finder or a file manager opens it in a
+text editor instead of running it — one common way for an install to appear to
+do nothing at all.
+
+`HARDY_REPO_URL` and `HARDY_REPO_REF` choose what gets fetched, which is how to
+install from a fork or a branch. Delete `~/.local/share/hardy/src` to force a
+fresh copy; an existing one is reused as it is.
+
 ## What the installers do
 
 Each step is skipped when the machine already satisfies it, so re-running the
@@ -116,9 +136,18 @@ hardy doctor --deep   # also compiles `import Mathlib` + `norm_num`, which is sl
 
 ## Troubleshooting
 
+**The installer printed nothing and exited** — you likely double-clicked it
+instead of running it from a terminal (see [Without cloning
+first](#without-cloning-first)). Run `bash path/to/install-macos.sh` and read
+the output; every failure path prints a reason before exiting.
+
 **`hardy: command not found`** — the command directory was added to your shell
 profile, but the current shell predates it. Open a new terminal, or
-`export PATH="$HOME/.local/bin:$PATH"`.
+`export PATH="$HOME/.local/bin:$PATH"`. The installer writes the PATH line to
+`~/.profile`, and to `~/.zshrc` when zsh is your login shell — the macOS default,
+where `~/.profile` is never read. If you use a shell that reads neither, add the
+line to its startup file yourself; the installer prints exactly which files it
+touched.
 
 **`lake: command not found`** after installing elan — same cause; elan adds
 `~/.elan/bin` to your profile. Open a new terminal.
