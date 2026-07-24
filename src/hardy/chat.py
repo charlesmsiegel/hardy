@@ -42,13 +42,13 @@ def _atomic_json(path: Path, value: Any) -> None:
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, runtime: ChatRuntime, lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool]):
+    def __init__(self, workspace: Path, runtime: ChatRuntime, lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0):
         self.workspace = workspace
         self.runtime = runtime
         self.confirm = confirm
         self.workspace.mkdir(parents=True, exist_ok=True)
         placeholder = Request("example : True", "interactive workspace", ("Mathlib",))
-        self.lean = LeanTools(placeholder, lean_command)
+        self.lean = LeanTools(placeholder, lean_command, timeout=lean_timeout, project=lean_project)
         self.latex = LatexTools(latex_command)
         self.state_path = workspace / "session.json"
         self.transcript_path = workspace / "transcript.jsonl"

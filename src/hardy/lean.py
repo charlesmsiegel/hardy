@@ -14,11 +14,14 @@ HOLE = re.compile(r"\b(sorry|admit)\b")
 class LeanTools:
     """Direct Lean subprocess tools. Only use with trusted output."""
 
-    def __init__(self, request: Request, lean_command: tuple[str, ...], timeout: float = 30, output_limit: int = 12_000):
+    def __init__(self, request: Request, lean_command: tuple[str, ...], timeout: float = 30, output_limit: int = 12_000, project: Path | None = None):
         self.request = request
         self.lean_command = lean_command
         self.timeout = timeout
         self.output_limit = output_limit
+        # `lake env lean` resolves imports through the Lake project it runs in, so
+        # Hardy runs Lean there rather than in whatever directory the user started in.
+        self.project = project
 
     def source(self, proof: str, *, audit: bool = False) -> str:
         imports = "\n".join(f"import {name}" for name in self.request.imports)
@@ -30,6 +33,8 @@ class LeanTools:
 
     def _run(self, source: str) -> ToolResult:
         started = time.monotonic()
+        if self.project is not None and not self.project.is_dir():
+            return ToolResult(False, f"Lean project directory not found: {self.project}", source)
         with tempfile.TemporaryDirectory(prefix="hardy-lean-") as directory:
             path = Path(directory) / "Main.lean"
             path.write_text(source, encoding="utf-8")
@@ -37,6 +42,7 @@ class LeanTools:
                 process = subprocess.run(
                     [*self.lean_command, str(path)], capture_output=True, text=True,
                     timeout=self.timeout, check=False,
+                    cwd=str(self.project) if self.project is not None else None,
                 )
                 output = (process.stdout + process.stderr).strip()
                 output = output[-self.output_limit :]

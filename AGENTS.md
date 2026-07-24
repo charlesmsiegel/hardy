@@ -2,10 +2,15 @@
 
 ## Read first
 
-Hardy is in a documentation-only reset. There is no runnable implementation and no
-promise of compatibility with the deleted prototype. Before designing or coding,
-read `README.md`, `DESIGN.md`, and `FEATURES.md`; use `ARCHITECTURE.html` as the
-visual overview.
+Hardy restarted from a documentation-only reset and now carries one thin
+interactive slice; nothing promises compatibility with the deleted prototype.
+Before designing or coding, read `README.md`, `DESIGN.md`, and `FEATURES.md`; use
+`ARCHITECTURE.html` as the visual overview and `docs/INSTALL.md` for how a machine
+is brought up.
+
+To work on the code: `scripts/install.sh` sets up a full environment,
+`uv run --extra test pytest` runs the hermetic suite, and `hardy doctor` reports
+what a machine is still missing.
 
 ## Repository rules
 

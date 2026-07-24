@@ -153,6 +153,26 @@ Priority labels are sequencing hints:
 - **Later:** contamination-aware recall; benchmark transfer only on held-out
   theorems and report exact-repeat cache savings separately.
 
+## Installation and environment
+
+- **Now (implemented):** one installer per OS (`scripts/install-linux.sh`,
+  `scripts/install-macos.sh`, `scripts/install-windows.ps1`, dispatched by
+  `scripts/install.sh`) takes a machine with no prerequisites to a working
+  `hardy` in a single run. WSL is never required.
+- **Now (implemented):** the installers add what is missing and skip what is
+  present: Python 3.11+, `lake` through elan, a shared Lake project with
+  Mathlib's prebuilt cache, `pdflatex`, and Hardy in its own virtual environment.
+- **Now (implemented):** settings resolve from a TOML config file, then `HARDY_*`
+  environment variables, then flags; the installer writes the file with the model
+  and key and never overwrites an existing one.
+- **Now (implemented):** a configured `lean_project` lets `hardy` run from any
+  directory, and `hardy doctor` checks Lean, Mathlib, LaTeX, and model
+  configuration without disclosing the API key.
+- **Next:** pin the Lean toolchain, Mathlib revision, and TeX package set by
+  identity so an installation is reproducible and can be recorded in results.
+- **Later:** publish a released package so installation does not require a clone,
+  and cover each installer on real Linux, macOS, and Windows runners in CI.
+
 ## Safety and operations
 
 - **Now (implemented):** prominently warn that the experimental path executes only trusted model

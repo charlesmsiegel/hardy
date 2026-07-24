@@ -118,6 +118,23 @@ feedback, timings, token usage, identities, and terminal status. Evaluation uses
 fixed benchmark statements, strict anti-cheat checks, immutable provenance, and
 contemporaneous comparisons at equal budgets.
 
+### 8. Installation and configuration
+
+Hardy is only useful when Lean, LaTeX, and a model are all reachable, so getting
+a machine into that state is part of the design rather than an afterthought. One
+installer per operating system — Linux, macOS, and Windows, with WSL never
+required — installs whatever is missing and skips whatever is present: Python,
+`lake` through elan, a shared Lake project carrying Mathlib, a TeX distribution,
+and Hardy itself. Platform-specific work is confined to package installation;
+the environment, Lean project, config file, and verification step are shared.
+
+Settings resolve from a TOML config file, then `HARDY_*` environment variables,
+then command-line flags. `lean_project` is what makes `hardy` runnable from any
+directory: Lean elaborates in that Lake project, so imports resolve the same way
+wherever the conversation starts. `hardy doctor` reports each prerequisite
+separately, distinguishing a missing tool from a broken one, and never prints the
+API key it found.
+
 ## Trust boundary and safety
 
 The Lean kernel is the authority for formal proof, subject to an audited axiom
