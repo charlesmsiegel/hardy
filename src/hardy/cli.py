@@ -50,7 +50,7 @@ def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> config
 
 def _build_runtime(config: configuration.Config) -> Any:
     backend = config.active_backend()
-    return runtimes.build(str(config.model), backend, config.resolved_api_key(backend), config.base_url_for(backend))
+    return runtimes.build(str(config.model), backend, config.resolved_api_key(backend), config.base_url_for(backend), config.max_tokens)
 
 
 def _runtime(config: configuration.Config, parser: argparse.ArgumentParser) -> Any:
@@ -176,9 +176,15 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
                 configuration.remove_setting(destination, "backend")
             # The endpoint is part of the condition, not incidental to it: a
             # saved local model is unusable if the next launch resolves base_url
-            # somewhere else, and a gateway identity would reach the wrong service.
-            if backend == catalog.OPENAI and updated.base_url != configuration.DEFAULT_BASE_URL:
-                configuration.write_setting(destination, "base_url", updated.base_url)
+            # somewhere else, and a gateway identity would reach the wrong
+            # service. Retracted on the same terms it is written, since a URL
+            # left from an earlier save would outlive the choice that set it.
+            # A Claude choice touches neither: base_url does not configure it.
+            if backend == catalog.OPENAI:
+                if updated.base_url != configuration.DEFAULT_BASE_URL:
+                    configuration.write_setting(destination, "base_url", updated.base_url)
+                else:
+                    configuration.remove_setting(destination, "base_url")
             out(f"Saved to {destination}.")
             updated = dataclasses.replace(updated, path=destination)
     except (EOFError, KeyboardInterrupt):

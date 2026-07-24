@@ -42,10 +42,10 @@ class OpenAICompatibleRuntime:
         return answer["choices"][0]["message"]
 
 
-def build(model: str, backend: str, api_key: str, base_url: str) -> Any:
+def build(model: str, backend: str, api_key: str, base_url: str, max_tokens: int | None = None) -> Any:
     """The runtime for one model. The backend decides which provider is called."""
     if backend == catalog.ANTHROPIC:
-        from .anthropic_runtime import AnthropicRuntime
+        from .anthropic_runtime import DEFAULT_MAX_TOKENS, AnthropicRuntime
 
-        return AnthropicRuntime(api_key, model)
+        return AnthropicRuntime(api_key, model, max_tokens=max_tokens or DEFAULT_MAX_TOKENS)
     return OpenAICompatibleRuntime(base_url, api_key, model)

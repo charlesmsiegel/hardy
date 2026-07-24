@@ -19,6 +19,7 @@ Two details are load-bearing:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .catalog import ANTHROPIC_BASE_URL
@@ -28,9 +29,22 @@ RAW_CONTENT = "_anthropic_content"
 RAW_MODEL = "_anthropic_model"
 
 # Thinking counts against max_tokens, and a Lean proof plus commentary is not
-# short. Streaming keeps a budget this size clear of request timeouts.
+# short. Streaming keeps a budget this size clear of request timeouts. Models
+# with a lower ceiling are handled by asking rather than by a table: see
+# `_stated_limit`.
 DEFAULT_MAX_TOKENS = 32000
 DEFAULT_TIMEOUT = 600.0
+
+# "max_tokens: 32000 > 8192, which is the maximum allowed number of output
+# tokens for claude-3-5-sonnet-20240620" — the provider names the real ceiling,
+# so there is no need to guess it or to keep a per-model table in step.
+_LIMIT = re.compile(r"(\d+),?\s*which is the maximum allowed number of output tokens", re.IGNORECASE)
+
+
+def _stated_limit(error: Exception) -> int | None:
+    """The output ceiling a rejection names, if it named one."""
+    found = _LIMIT.search(str(error))
+    return int(found.group(1)) if found else None
 
 REFUSAL_NOTICE = "The provider's safety classifier declined this request. Rephrase it, or use /model to switch models."
 TRUNCATION_NOTICE = "\n\n[Hardy: the reply hit the output token limit and is incomplete.]"
@@ -154,6 +168,10 @@ class AnthropicRuntime:
             self._client = anthropic.Anthropic(**options)
         return self._client
 
+    def _send(self, request: dict[str, Any]):
+        with self._connect().messages.stream(**request) as stream:
+            return stream.get_final_message()
+
     def complete(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         system, converted = to_messages(messages, self.model)
         # Per-request rather than per-client, so a caller with a wall-clock
@@ -166,8 +184,17 @@ class AnthropicRuntime:
             # The system prompt and tool schemas are the stable prefix of every
             # turn, so they are the cheap thing to cache.
             request["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
-        with self._connect().messages.stream(**request) as stream:
-            reply = stream.get_final_message()
+        try:
+            reply = self._send(request)
+        except Exception as error:
+            # An identity typed in by hand may be an older model whose ceiling is
+            # far below the default. Take the provider's word for it and retry
+            # once, remembering it so later turns cost no extra round trip.
+            limit = _stated_limit(error)
+            if limit is None or limit >= request["max_tokens"]:
+                raise
+            self.max_tokens = request["max_tokens"] = limit
+            reply = self._send(request)
         if reply.stop_reason == "refusal":
             return {"role": "assistant", "content": REFUSAL_NOTICE}
         message = from_blocks([block.model_dump(mode="json") for block in reply.content], self.model)
