@@ -35,6 +35,16 @@ class ChatRuntime(Protocol):
     def complete(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> dict[str, Any]: ...
 
 
+def provenance(runtime: Any) -> dict[str, Any]:
+    """What produced a turn: the model alone does not identify the provider.
+
+    The same `claude-opus-5` answered by Anthropic and by an OpenAI-compatible
+    gateway are different experimental conditions, and a transcript that records
+    only the identity cannot tell them apart afterwards.
+    """
+    return {"model": runtime.model, "backend": getattr(runtime, "backend", None), "endpoint": getattr(runtime, "endpoint", None)}
+
+
 def _atomic_json(path: Path, value: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -64,16 +74,16 @@ class MathematicsSession:
         The transcript records the change because which model produced which
         turn is part of the experiment's identity, not a UI detail.
         """
-        previous = self.state.get("model")
+        previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint")}
         self.runtime = runtime
-        self.state["model"] = runtime.model
+        self.state.update(provenance(runtime))
         _atomic_json(self.state_path, self.state)
-        self._record({"type": "model", "previous": previous, "model": runtime.model})
+        self._record({"type": "model", "previous": previous, **provenance(runtime)})
 
     def _load_state(self) -> dict[str, Any]:
         if self.state_path.exists():
             return json.loads(self.state_path.read_text(encoding="utf-8"))
-        state = {"schema_version": 1, "model": self.runtime.model, "names": [], "assumptions": []}
+        state = {"schema_version": 1, **provenance(self.runtime), "names": [], "assumptions": []}
         _atomic_json(self.state_path, state)
         return state
 

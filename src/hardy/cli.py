@@ -56,6 +56,9 @@ def _build_runtime(config: configuration.Config) -> Any:
 def _runtime(config: configuration.Config, parser: argparse.ArgumentParser) -> Any:
     if not config.model:
         parser.error(f"no model configured: set model in {config.path or configuration.default_config_path()}, export HARDY_MODEL, or pass --model")
+    backend = config.active_backend()
+    if config.requires_api_key(backend) and not config.resolved_api_key(backend):
+        parser.error(f"no API key for the {backend} backend: set it in {config.path or configuration.default_config_path()} or export {config.key_source(backend).lstrip('$')}")
     try:
         return _build_runtime(config)
     except RuntimeError as error:
@@ -125,8 +128,8 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
     # An explicit pin outranks the identity, because that is what it is for:
     # a Claude model behind an OpenAI-compatible gateway is still that gateway.
     backend = config.backend or entry.backend
-    if backend == catalog.ANTHROPIC and not config.resolved_api_key(backend):
-        out(f"No credentials for the anthropic backend; set {config.key_source(backend)} first. Model unchanged.")
+    if config.requires_api_key(backend) and not config.resolved_api_key(backend):
+        out(f"No credentials for the {backend} backend at {config.base_url_for(backend) or catalog.ANTHROPIC_BASE_URL}; set {config.key_source(backend)} first. Model unchanged.")
         return config
 
     # Only the model moves. Recording the inferred backend here would harden a
@@ -148,6 +151,11 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
     try:
         if ask(f"Save this as the default in {destination}? [y/N] ").strip().lower() in {"y", "yes"}:
             configuration.write_setting(destination, "model", entry.identifier)
+            # An inferred backend stays unwritten, but a pin must persist: it may
+            # have come from --backend or HARDY_BACKEND, and without it the saved
+            # identity would route to the wrong provider on the next launch.
+            if config.backend:
+                configuration.write_setting(destination, "backend", config.backend)
             out(f"Saved to {destination}.")
             updated = dataclasses.replace(updated, path=destination)
     except (EOFError, KeyboardInterrupt):

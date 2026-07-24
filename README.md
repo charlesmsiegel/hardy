@@ -43,20 +43,24 @@ Hardy speaks two protocols and picks one from the model identity:
 whatever each provider reports for the keys you hold — and switches models and
 backends together. The conversation carries across the switch: Hardy stores one
 canonical transcript and translates at the provider boundary, so the new model
-sees the whole history and the trajectory records which model produced which
-turn. Anything not in the catalog can be typed in directly, which is how a local
+sees the whole history, and the transcript records the model, backend, and
+endpoint behind each turn — the same identity answered by Anthropic and by a
+gateway are different conditions. Anything not in the catalog can be typed in directly, which is how a local
 llama.cpp or vLLM server behind `base_url` is selected.
 
 `--backend anthropic|openai` and the `backend` setting pin the choice when a
 model identity is ambiguous — for example a Claude model served through an
 OpenAI-compatible gateway. A pin outranks the identity everywhere, including
-`/model`, so switching models inside a gateway session stays on the gateway.
-Saving from `/model` writes only `model`, never the inferred backend: recording
+`/model`, so switching models inside a gateway session stays on the gateway, and
+saving carries the pin with it. An *inferred* backend is never written: recording
 a guess as a pin would misroute a later `--model` or `HARDY_MODEL`.
 
-Credentials are required for Anthropic, where a missing key is a certain
-failure, but not for OpenAI-compatible endpoints, since a local llama.cpp or
-vLLM server needs none.
+A missing API key is refused up front — at startup and at `/model` — rather than
+surfacing as an authentication error mid-conversation. The one exception is a
+self-hosted `base_url` (loopback, a private address, `*.local`), because
+llama.cpp and vLLM ship with no auth at all; there a missing key is a warning.
+A remote custom endpoint is treated like any other hosted gateway and still
+needs one.
 
 Isolation and production hardening remain planned. **Generated Lean and LaTeX are
 executed directly: only run trusted model output in a disposable development

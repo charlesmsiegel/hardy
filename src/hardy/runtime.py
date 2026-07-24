@@ -26,8 +26,11 @@ def portable(message: dict[str, Any]) -> dict[str, Any]:
 
 
 class OpenAICompatibleRuntime:
+    backend = catalog.OPENAI
+
     def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 60):
         self.url = base_url.rstrip("/") + "/chat/completions"
+        self.endpoint = base_url.rstrip("/")
         self.api_key, self.model, self.timeout = api_key, model, timeout
 
     def complete(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:

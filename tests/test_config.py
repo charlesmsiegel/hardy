@@ -125,3 +125,40 @@ def test_writing_a_setting_upserts_one_line(tmp_path: Path):
 def test_writing_an_unknown_setting_is_rejected(tmp_path: Path):
     with pytest.raises(ValueError, match="unknown setting"):
         config.write_setting(tmp_path / "config.toml", "nonsense", "x")
+
+
+def test_a_key_is_required_for_anthropic_and_for_the_hosted_openai_endpoint(tmp_path: Path):
+    hosted = config.load(write(tmp_path / "a.toml", 'model = "gpt-5.1"\n'))
+    assert hosted.requires_api_key() is True
+    claude = config.load(write(tmp_path / "b.toml", 'model = "claude-opus-5"\n'))
+    assert claude.requires_api_key() is True
+
+
+def test_a_self_hosted_endpoint_may_be_keyless(tmp_path: Path):
+    """llama.cpp and vLLM ship with no auth, so demanding a key is a false alarm."""
+    local = config.load(write(tmp_path / "c.toml", 'model = "local-7b"\nbase_url = "http://localhost:8000/v1"\n'))
+    assert local.requires_api_key() is False
+    # A Claude model behind that same gateway still authenticates upstream.
+    assert local.requires_api_key("anthropic") is True
+
+
+def test_a_remote_custom_endpoint_still_needs_a_key(tmp_path: Path):
+    """A hosted gateway is the common case for a custom base_url, and it
+    authenticates; treating every non-default URL as keyless would hide that."""
+    remote = config.load(write(tmp_path / "d.toml", 'model = "x"\nbase_url = "https://openrouter.ai/api/v1"\n'))
+    assert remote.requires_api_key() is True
+
+
+@pytest.mark.parametrize("url,local", [
+    ("http://localhost:8000/v1", True),
+    ("http://127.0.0.1:11434/v1", True),
+    ("http://[::1]:8000/v1", True),
+    ("http://192.168.1.50:8000/v1", True),
+    ("http://box.local:8000/v1", True),
+    ("http://host.docker.internal:8000/v1", True),
+    ("https://api.openai.com/v1", False),
+    ("https://openrouter.ai/api/v1", False),
+    ("", False),
+])
+def test_local_endpoints_are_recognised(url: str, local: bool):
+    assert config.is_local_endpoint(url) is local

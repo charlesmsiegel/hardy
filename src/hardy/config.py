@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import shlex
 import tomllib
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,24 @@ SETTINGS = {
     "latex_command": "HARDY_LATEX_COMMAND",
     "workspace": "HARDY_WORKSPACE",
 }
+
+
+def is_local_endpoint(base_url: str) -> bool:
+    """Whether a URL names a machine the user is running themselves.
+
+    Self-hosted inference servers are the one place a missing API key is normal
+    rather than a misconfiguration.
+    """
+    host = (urllib.parse.urlsplit(base_url).hostname or "").lower()
+    if not host:
+        return False
+    if host in {"localhost", "host.docker.internal"} or host.endswith((".local", ".localhost")):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private
 
 
 def default_config_path() -> Path:
@@ -84,6 +104,18 @@ class Config:
     def key_source(self, backend: str | None = None) -> str:
         literal, variable = self._credentials(backend or self.active_backend())
         return "config file" if literal else f"${variable}"
+
+    def requires_api_key(self, backend: str | None = None) -> bool:
+        """Whether a missing key for this backend is certainly fatal.
+
+        Anthropic always authenticates, and so does anything reached over the
+        network — a custom `base_url` is far more often a hosted gateway that
+        needs a key than one that does not. Only a self-hosted endpoint gets the
+        benefit of the doubt, because llama.cpp and vLLM ship with no auth at
+        all and demanding a key there is a false alarm.
+        """
+        backend = backend or self.active_backend()
+        return backend == catalog.ANTHROPIC or not is_local_endpoint(self.base_url)
 
     def base_url_for(self, backend: str | None = None) -> str:
         """`base_url` configures the OpenAI-compatible endpoint only.

@@ -70,6 +70,9 @@ Priority labels are sequencing hints:
   each provider reports, switches model and backend together mid-conversation
   without losing history, records the switch in the transcript, and can save the
   choice back to the config file.
+- **Now (implemented):** model, backend, and endpoint recorded together in the
+  session state, the switch event, and the `prove` trajectory, so a run against
+  a gateway is distinguishable from the same identity against its own provider.
 - **Next:** token and cost budgets with reserve/settle accounting.
 - **Next:** capability flags for optional provider behavior (thinking budgets,
   prompt-cache breakpoints, streaming) instead of the current lowest common
