@@ -62,9 +62,15 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     task = f"Informal claim: {request.informal_claim}\nExact Lean declaration: {request.declaration}\nImports: {', '.join(request.imports)}"
     start = time.monotonic()
     reason = "completed"
-    runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=events.append)
+    runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=events.append,
+                           max_turns=max_turns, wall_seconds=wall_seconds)
     try:
         runtime.ask(task)
+    except TimeoutError as error:
+        # Running out of time is not a provider fault, and the terminal reason is
+        # what an experiment is read by.
+        reason = "wall_clock_limit"
+        events.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
     except Exception as error:
         reason = "runtime_error"
         events.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
@@ -86,6 +92,6 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     writeup = f"# Hardy proof result\n\n## Claim\n\n{request.informal_claim}\n\n## Exact Lean statement\n\n```lean\n{request.declaration}\n```\n\n## Grades\n\n- Formalization: **{formal}**\n- Informal completeness: **{informal}**\n\n## Limits\n\n{WARNING}\n"
     if not final: writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
-    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"requested_max_turns": max_turns, "requested_wall_seconds": wall_seconds, "enforced_by": "provider sdk", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "events": events, "terminal_reason": reason})
+    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds, "turns_enforced_by": "provider sdk", "wall_clock_enforced_by": "hardy", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "events": events, "terminal_reason": reason})
     _write_json(output_dir / "result.json", result.as_dict())
     return result

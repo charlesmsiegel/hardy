@@ -87,8 +87,9 @@ def test_successful_loop_saves_checked_linked_artifacts(tmp_path: Path, proof_re
     assert trajectory["terminal_reason"] == "verified"
     assert [event["name"] for event in trajectory["events"] if event["type"] == "tool"] == ["check_proof", "submit_proof"]
     # The harness no longer enforces the limits it was asked for; see issue #23.
-    assert trajectory["limits"]["enforced_by"] == "provider sdk"
-    assert trajectory["limits"]["requested_max_turns"] == 3
+    assert trajectory["limits"]["max_turns"] == 3
+    assert trajectory["limits"]["turns_enforced_by"] == "provider sdk"
+    assert trajectory["limits"]["wall_clock_enforced_by"] == "hardy"
     assert "Informal completeness: **not assessed**" in (tmp_path / "writeup.md").read_text()
 
 
@@ -132,3 +133,25 @@ def test_the_trajectory_records_the_providers_turn_count(proof_request: Request,
 
     result = run(proof_request, make, lean, tmp_path, max_turns=9)
     assert result.turns == 5
+
+
+def test_the_requested_limits_reach_the_runtime(proof_request: Request, lean: LeanTools, tmp_path: Path):
+    """A declared bound has to reach the thing that owns the loop, or the
+    trajectory records a limit that nothing applied."""
+    seen = {}
+
+    def make(model=None, **context):
+        seen.update(context)
+        return FakeRuntime([{"role": "assistant", "content": "thinking"}], **context)
+
+    run(proof_request, make, lean, tmp_path, max_turns=4, wall_seconds=11)
+    assert seen["max_turns"] == 4 and seen["wall_seconds"] == 11
+
+
+def test_running_out_of_wall_clock_is_not_a_provider_failure(proof_request: Request, lean: LeanTools, tmp_path: Path):
+    class Stalling(FakeRuntime):
+        def ask(self, text: str) -> str:
+            raise TimeoutError("the run exceeded its 1s wall-clock budget")
+
+    result = run(proof_request, lambda model=None, **c: Stalling([], **c), lean, tmp_path, wall_seconds=1)
+    assert result.terminal_reason == "wall_clock_limit"

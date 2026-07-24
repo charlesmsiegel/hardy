@@ -8,10 +8,10 @@ between a promising argument and a checked proof. Lean supplies an unambiguous
 kernel signal; Hardy turns that signal into a useful model feedback loop.
 
 The project restarted from documents rather than carrying forward its original
-prototype. Its first implementation is a deliberately thin interactive CLI: one
-conversational loop over either Claude or an OpenAI-compatible endpoint, direct
-Lean and LaTeX subprocesses, a durable transcript, explicit assumption approval,
-and a manifest linking formal names to LaTeX labels. Continue optimizing for
+prototype. Its first implementation is a deliberately thin interactive CLI: a
+conversation with Claude carried by its agent SDK, direct Lean and LaTeX
+subprocesses, a durable transcript, explicit assumption approval, and a manifest
+linking formal names to LaTeX labels. Continue optimizing for
 learning and add abstraction only after an experiment exposes a real seam.
 
 ## Output contract
@@ -73,21 +73,23 @@ small strategy interface and are compared at equal budgets.
 
 ### 2. Model runtime
 
-Start with the smallest viable model loop. The runtime boundary now carries two
-providers — Anthropic's Messages API and any OpenAI-compatible endpoint,
-including local servers — selected by the model identity rather than by workflow
-code. Runtime, model, context window, cost limits, and parallelism are
-configuration. Provider-specific behavior is exposed through capabilities rather
-than assumed everywhere.
+Hardy authenticates through Claude Code's agent SDK, so it runs on a Claude Max
+subscription rather than a metered API key. That is a deliberate trade, and the
+part traded away is the agent loop: the SDK decides when a model call happens,
+not Hardy.
 
-The harness keeps one canonical conversation format and translates at that
-boundary, rather than letting each provider's wire format leak into the session,
-the transcript, or the tool layer. The consequence is worth the adapter code: a
-conversation can change model mid-flight and keep its history, an old transcript
-replays under a new provider, and the trajectory records which model produced
-which turn. Where a provider needs state the canonical format cannot express —
-Anthropic requires thinking blocks echoed back unmodified — the adapter stashes
-it on the message under a private key and drops it when the model changes.
+What is *not* traded away is the trust boundary. Hardy's Lean and LaTeX tools are
+registered as in-process SDK tools, so the harness still performs every proof
+check and every file write, and the CLI's own Bash/Read/Write/Edit tools are
+refused. Anything that is not a Hardy tool is denied by default rather than by an
+enumerated list, because a list has to anticipate every tool the CLI grows.
+
+Losing the loop costs real things, and they are recorded rather than glossed:
+turn limits become the SDK's to enforce, cheap Lean closers cannot run before a
+model turn is spent, and token budgets have no decision point. The wall clock is
+kept by Hardy, because nothing in the SDK bounds a stalled request, and the
+trajectory states which of the two enforced what. Issue #23 tracks reclaiming
+the loop without giving up subscription authentication.
 
 ### 3. Tool layer
 
@@ -143,8 +145,8 @@ Settings resolve from a TOML config file, then `HARDY_*` environment variables,
 then command-line flags. `lean_project` is what makes `hardy` runnable from any
 directory: Lean elaborates in that Lake project, so imports resolve the same way
 wherever the conversation starts. `hardy doctor` reports each prerequisite
-separately, distinguishing a missing tool from a broken one, and never prints the
-API key it found.
+separately, distinguishing a missing tool from a broken one, and checks that the
+Claude Code CLI is not merely installed but actually signed in.
 
 ## Trust boundary and safety
 

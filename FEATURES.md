@@ -58,27 +58,28 @@ Priority labels are sequencing hints:
 
 ## Agent runtime and context
 
-- **Now (implemented):** one minimal turn loop with typed tool definitions, bounded tool output,
-  configurable model identity, turn limit, and wall-clock limit.
+- **Now (implemented):** typed tool definitions, bounded tool output, configurable
+  model identity, and a wall-clock limit Hardy keeps itself.
 - **Now (implemented):** structured trajectories containing prompts, responses, tool calls,
   tool results, Lean feedback, timing, usage, and terminal reason.
-- **Now (implemented):** two runtimes behind one interface — Anthropic's Messages
-  API and any OpenAI-compatible endpoint — chosen by the model identity rather
-  than by workflow code, with one canonical transcript translated at the provider
-  boundary.
-- **Now (implemented):** `/model` lists the built-in catalog merged with whatever
-  each provider reports, switches model and backend together mid-conversation
-  without losing history, records the switch in the transcript, and can save the
-  choice back to the config file.
+- **Now (implemented):** a Claude backend carried by the Claude Code agent SDK,
+  authenticated by subscription with no API key, exposing Hardy's Lean and LaTeX
+  tools as in-process SDK tools so the harness still performs every check and
+  write. Built-in CLI tools are refused by default rather than by enumeration.
+- **Now (implemented):** `/model` lists the catalogued Claude models, switches
+  mid-conversation without losing the provider thread, records the switch, and
+  can save the choice.
 - **Now (implemented):** model, backend, and endpoint recorded together in the
-  session state, the switch event, and the `prove` trajectory, so a run against
-  a gateway is distinguishable from the same identity against its own provider.
+  session state, the switch event, and the `prove` trajectory; a workspace from
+  before the SDK backend carries a bounded tail of its conversation forward.
+- **Known gap:** the SDK owns the turn loop, so turn limits are enforced by the
+  provider and only the wall clock is Hardy's. Tracked in issue #23.
+- **Next:** a Codex backend for ChatGPT subscriptions, on the same shape.
 - **Next:** token and cost budgets with reserve/settle accounting.
-- **Next:** capability flags for optional provider behavior (thinking budgets,
-  prompt-cache breakpoints, streaming) instead of the current lowest common
-  denominator.
-- **Later:** adapters for hosted agent SDKs and Strands, and prompted JSON tool
-  calling for endpoints without native tools.
+- **Next:** reclaim enough of the loop to enforce Hardy's own bounds and run
+  cheap Lean closers before spending a model turn (issue #23).
+- **Later:** adapters for other agent SDKs, and an API-key path for users who
+  prefer one to a subscription.
 - **Later:** summarize failed attempts into compact lessons rather than replaying
   entire transcripts; measure whether summarization loses needed context.
 
@@ -178,7 +179,7 @@ Priority labels are sequencing hints:
   and key and never overwrites an existing one.
 - **Now (implemented):** a configured `lean_project` lets `hardy` run from any
   directory, and `hardy doctor` checks Lean, Mathlib, LaTeX, and model
-  configuration without disclosing the API key.
+  configuration, and reports whether the Claude Code CLI is signed in rather than merely present.
 - **Next:** pin the Lean toolchain, Mathlib revision, and TeX package set by
   identity so an installation is reproducible and can be recorded in results.
 - **Later:** publish a released package so installation does not require a clone,
