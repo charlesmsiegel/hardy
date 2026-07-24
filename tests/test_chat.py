@@ -288,3 +288,18 @@ def test_migration_keeps_the_newest_context_when_truncating(tmp_path: Path):
     (tmp_path / "transcript.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     chat = session(tmp_path, FakeChatRuntime([]))
     assert "THE LATEST WORD" in chat.runtime.context["system_prompt"]
+
+
+def test_migration_ignores_events_that_carry_no_message(tmp_path: Path):
+    """A `limit` event from the runtime this migration exists to leave behind
+    carries a bare string, and reaching into it would stop the workspace
+    reopening at all."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "transcript.jsonl").write_text(
+        json.dumps({"type": "user", "message": {"role": "user", "content": "Earlier question."}}) + "\n"
+        + json.dumps({"type": "limit", "message": "Tool-round limit reached; work is partial."}) + "\n"
+        + json.dumps({"type": "tool", "name": "check_lean", "result": {"ok": True}}) + "\n",
+        encoding="utf-8",
+    )
+    chat = session(tmp_path, FakeChatRuntime([]))
+    assert "Earlier question." in chat.runtime.context["system_prompt"]
