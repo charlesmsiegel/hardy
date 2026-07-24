@@ -199,11 +199,18 @@ class MathematicsSession:
         return answer
 
     def _dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        """The single door every tool call goes through, whoever asked for it."""
+        """The single door every tool call goes through, whoever asked for it.
+
+        Recorded here rather than by the caller: the SDK reports that it *asked*
+        for a tool, but only Hardy knows what running it produced, and a
+        trajectory without the results is not an account of what happened.
+        """
         try:
-            return self._tool(name, arguments)
+            result = self._tool(name, arguments)
         except (KeyError, TypeError, ValueError) as error:
-            return ToolResult(False, f"invalid tool call: {error}")
+            result = ToolResult(False, f"invalid tool call: {error}")
+        self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
+        return result
 
     def _remember_thread(self) -> None:
         thread = getattr(self.runtime, "session_id", None)

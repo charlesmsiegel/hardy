@@ -13,17 +13,36 @@ from hardy.runner import run
 
 
 class FakeRuntime:
+    """Stands in for the agent SDK: it owns the loop, Hardy owns the tools."""
+
     model = "fake-model@test"
+    backend = "claude"
+    endpoint = "fake"
 
-    def __init__(self, responses):
-        self.responses = iter(responses)
+    def __init__(self, script, **context):
+        self.script, self.context = list(script), context
 
-    def complete(self, messages, *, tools=None):
-        return next(self.responses)
+    def ask(self, text: str) -> str:
+        dispatch = self.context["dispatch"]
+        spoken = []
+        for step in self.script:
+            if isinstance(step, tuple):
+                dispatch(*step)
+            else:
+                spoken.append(str(step.get("content") or "") if isinstance(step, dict) else str(step))
+        return "\n\n".join(spoken)
 
 
-def call(name: str, arguments: dict, identifier: str = "call-1") -> dict:
-    return {"role": "assistant", "content": None, "tool_calls": [{"id": identifier, "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]}
+def factory(script):
+    def make(model=None, **context):
+        return FakeRuntime(script, **context)
+
+    return make
+
+
+def call(name: str, arguments: dict, _identifier: str = "") -> tuple:
+    """A scripted tool call. The SDK asks; Hardy runs it."""
+    return (name, arguments)
 
 
 @pytest.fixture
@@ -54,11 +73,10 @@ def test_structured_goal_and_declaration_tools(lean: LeanTools):
 
 
 def test_successful_loop_saves_checked_linked_artifacts(tmp_path: Path, proof_request: Request, lean: LeanTools):
-    runtime = FakeRuntime([
+    result = run(proof_request, factory([
         call("check_proof", {"proof": "by exact False.elim (by contradiction)"}),
         call("submit_proof", {"proof": "by exact True.intro"}, "call-2"),
-    ])
-    result = run(proof_request, runtime, lean, tmp_path, max_turns=3)
+    ]), lean, tmp_path, max_turns=3)
     assert result.terminal_reason == "verified"
     assert result.formalization == "kernel verified"
     source = (tmp_path / "proof.lean").read_text()
@@ -67,13 +85,16 @@ def test_successful_loop_saves_checked_linked_artifacts(tmp_path: Path, proof_re
     trajectory = json.loads((tmp_path / "trajectory.json").read_text())
     assert trajectory["model"] == "fake-model@test"
     assert trajectory["terminal_reason"] == "verified"
-    assert len(trajectory["events"]) == 4
+    assert [event["name"] for event in trajectory["events"] if event["type"] == "tool"] == ["check_proof", "submit_proof"]
+    # The harness no longer enforces the limits it was asked for; see issue #23.
+    assert trajectory["limits"]["enforced_by"] == "provider sdk"
+    assert trajectory["limits"]["requested_max_turns"] == 3
     assert "Informal completeness: **not assessed**" in (tmp_path / "writeup.md").read_text()
 
 
 def test_failed_loop_leaves_honest_result_and_trajectory(tmp_path: Path, proof_request: Request, lean: LeanTools):
-    result = run(proof_request, FakeRuntime([{"role": "assistant", "content": "I think it works."}]), lean, tmp_path, max_turns=1)
-    assert result.terminal_reason == "turn_limit"
+    result = run(proof_request, factory([{"role": "assistant", "content": "I think it works."}]), lean, tmp_path, max_turns=1)
+    assert result.terminal_reason == "no_proof_submitted"
     assert result.proof is None
     assert not (tmp_path / "proof.lean").exists()
     assert json.loads((tmp_path / "result.json").read_text())["formalization"] == "not formalized"
