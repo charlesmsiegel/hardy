@@ -93,7 +93,13 @@ def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
     checks.append(Check("model", bool(config.model), config.model or "unset; set model in the config file or HARDY_MODEL"))
     checks.append(Check("backend", True, f"{backend} ({'Anthropic Messages API' if backend == catalog.ANTHROPIC else config.base_url})", required=False))
     key = config.resolved_api_key(backend)
-    checks.append(Check("api key", bool(key), f"present via {config.key_source(backend)}" if key else f"unset for the {backend} backend; set it in the config file or export {config.key_source(backend).lstrip('$')}"))
+    if key:
+        checks.append(Check("api key", True, f"present via {config.key_source(backend)}"))
+    elif config.requires_api_key(backend):
+        checks.append(Check("api key", False, f"unset for the {backend} backend; set it in the config file or export {config.key_source(backend).lstrip('$')}"))
+    else:
+        # A custom base_url is a deliberate choice, and local servers want no key.
+        checks.append(Check("api key", True, f"unset; assuming {config.base_url} needs none", required=False))
     if backend == catalog.ANTHROPIC:
         checks.append(_anthropic_package_check())
 

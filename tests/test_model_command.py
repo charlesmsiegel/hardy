@@ -91,6 +91,27 @@ def test_a_keyless_local_endpoint_can_still_switch_models(tmp_path: Path):
     assert any("needs none" in line for line in printed)
 
 
+def test_the_hosted_openai_endpoint_still_demands_a_key(tmp_path: Path):
+    """The keyless exception is for local servers, not for api.openai.com."""
+    session, printed = Recorder(), []
+    start = settings(tmp_path, model="claude-opus-5", api_key="", base_url=configuration.DEFAULT_BASE_URL)
+    updated = cli.model_command("gpt-5.1", start, session, ask=answers(), out=printed.append)
+    assert updated.model == "claude-opus-5"
+    assert session.runtimes == []
+    assert any("No credentials" in line for line in printed)
+
+
+def test_a_pin_from_a_flag_or_environment_is_persisted_on_save(tmp_path: Path):
+    """Without the pin the saved Claude identity would route to Anthropic on the
+    next launch instead of back to the gateway."""
+    path = tmp_path / "config.toml"
+    path.write_text('model = "claude-opus-5"\n', encoding="utf-8")
+    start = settings(tmp_path, model="claude-opus-5", backend=catalog.OPENAI, base_url="http://gateway.invalid/v1", path=path)
+    cli.model_command("claude-sonnet-5", start, Recorder(), ask=answers("y"), out=lambda line: None)
+    assert 'backend = "openai"' in path.read_text(encoding="utf-8")
+    assert configuration.load(path).active_backend() == catalog.OPENAI
+
+
 def test_an_unlisted_identity_is_accepted_as_typed(tmp_path: Path):
     session = Recorder()
     updated = cli.model_command("meta-llama/Llama-3.3-70B", settings(tmp_path), session, ask=answers("n"), out=lambda line: None)

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .catalog import ANTHROPIC_BASE_URL
 from .runtime import TOOLS
 
 RAW_CONTENT = "_anthropic_content"
@@ -131,8 +132,11 @@ def from_blocks(blocks: list[dict[str, Any]], model: str) -> dict[str, Any]:
 class AnthropicRuntime:
     """Speaks Hardy's runtime protocol; talks to Claude through the official SDK."""
 
+    backend = "anthropic"
+
     def __init__(self, api_key: str, model: str, *, base_url: str | None = None, max_tokens: int = DEFAULT_MAX_TOKENS, timeout: float = DEFAULT_TIMEOUT):
         self.model, self.max_tokens, self.timeout = model, max_tokens, timeout
+        self.endpoint = (base_url or ANTHROPIC_BASE_URL).rstrip("/")
         self._api_key, self._base_url, self._client = api_key, base_url, None
         # Connect eagerly: a missing SDK must fail where the caller can still
         # recover, not on the next message with the switch already announced.

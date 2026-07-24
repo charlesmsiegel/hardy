@@ -104,3 +104,13 @@ def test_the_deep_check_compiles_a_mathlib_probe(tmp_path: Path, project: Path):
     checks = doctor.run_checks(configuration(tmp_path, lean_command=lean), deep=True)
     assert named(checks, "mathlib").ok is True
     assert "import Mathlib" in recorder.read_text(encoding="utf-8")
+
+
+def test_a_self_hosted_endpoint_without_a_key_is_reported_but_not_a_failure(tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch):
+    """llama.cpp and vLLM need no credentials, so `hardy doctor` must not fail
+    the install for the keyless local flow."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    checks = doctor.run_checks(configuration(tmp_path, api_key="", base_url="http://localhost:8000/v1"))
+    check = named(checks, "api key")
+    assert check.ok and not check.required
+    assert "localhost:8000" in check.detail

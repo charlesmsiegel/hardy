@@ -123,6 +123,25 @@ def test_switching_models_keeps_the_conversation_and_records_the_change(tmp_path
     assert json.loads((tmp_path / "session.json").read_text())["model"] == "second-model@test"
     events = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
     switch = next(event for event in events if event["type"] == "model")
-    assert switch["previous"] == "chat-model@test" and switch["model"] == "second-model@test"
+    assert switch["previous"]["model"] == "chat-model@test" and switch["model"] == "second-model@test"
     # The new model sees the whole prior conversation, not a fresh context.
     assert chat.messages[1]["content"] == "Remember this."
+
+
+def test_the_transcript_records_the_provider_not_only_the_model(tmp_path: Path):
+    """The same identity answered by Anthropic and by a gateway are different
+    experimental conditions; the model name alone cannot tell them apart."""
+
+    class GatewayRuntime(FakeChatRuntime):
+        model = "claude-opus-5"
+        backend = "openai"
+        endpoint = "http://gateway.invalid/v1"
+
+    chat = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "First."}]))
+    chat.set_runtime(GatewayRuntime([]))
+    state = json.loads((tmp_path / "session.json").read_text())
+    assert state["backend"] == "openai" and state["endpoint"] == "http://gateway.invalid/v1"
+    events = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
+    switch = next(event for event in events if event["type"] == "model")
+    assert switch["model"] == "claude-opus-5" and switch["backend"] == "openai"
+    assert switch["endpoint"] == "http://gateway.invalid/v1"
