@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import catalog
 from .config import Config
 from .lean import LeanTools
 from .models import Request
@@ -51,6 +52,14 @@ def _lean_project_check(config: Config) -> Check:
     return Check("lean project", True, str(project))
 
 
+def _anthropic_package_check() -> Check:
+    try:
+        import anthropic
+    except ImportError:
+        return Check("anthropic sdk", False, "not installed; the Claude backend needs it: pip install anthropic")
+    return Check("anthropic sdk", True, f"anthropic {getattr(anthropic, '__version__', 'unknown')}")
+
+
 def _mathlib_check(config: Config) -> Check:
     request = Request("example : True", "doctor probe", ("Mathlib",))
     lean = LeanTools(request, config.lean_command, timeout=max(config.lean_timeout, 900), project=config.lean_project)
@@ -80,9 +89,13 @@ def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
         ok, detail = _probe([latex_executable, "--version"], timeout=60)
         checks.append(Check("latex", ok, detail))
 
+    backend = config.active_backend()
     checks.append(Check("model", bool(config.model), config.model or "unset; set model in the config file or HARDY_MODEL"))
-    key_source = "config file" if config.api_key else f"${config.api_key_env}"
-    checks.append(Check("api key", bool(config.resolved_api_key()), f"present via {key_source}" if config.resolved_api_key() else f"unset; set api_key in the config file or ${config.api_key_env}"))
+    checks.append(Check("backend", True, f"{backend} ({'Anthropic Messages API' if backend == catalog.ANTHROPIC else config.base_url})", required=False))
+    key = config.resolved_api_key(backend)
+    checks.append(Check("api key", bool(key), f"present via {config.key_source(backend)}" if key else f"unset for the {backend} backend; set it in the config file or export {config.key_source(backend).lstrip('$')}"))
+    if backend == catalog.ANTHROPIC:
+        checks.append(_anthropic_package_check())
 
     if deep:
         checks.append(_mathlib_check(config))

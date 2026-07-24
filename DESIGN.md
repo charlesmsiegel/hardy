@@ -9,10 +9,10 @@ kernel signal; Hardy turns that signal into a useful model feedback loop.
 
 The project restarted from documents rather than carrying forward its original
 prototype. Its first implementation is a deliberately thin interactive CLI: one
-OpenAI-compatible conversational loop, direct Lean and LaTeX subprocesses, a
-durable transcript, explicit assumption approval, and a manifest linking formal
-names to LaTeX labels. Continue optimizing for learning and add abstraction only
-after an experiment exposes a real seam.
+conversational loop over either Claude or an OpenAI-compatible endpoint, direct
+Lean and LaTeX subprocesses, a durable transcript, explicit assumption approval,
+and a manifest linking formal names to LaTeX labels. Continue optimizing for
+learning and add abstraction only after an experiment exposes a real seam.
 
 ## Output contract
 
@@ -73,10 +73,21 @@ small strategy interface and are compared at equal budgets.
 
 ### 2. Model runtime
 
-Start with the smallest viable model loop. The eventual runtime boundary supports
-multiple providers and local OpenAI-compatible servers. Runtime, model, context
-window, cost limits, and parallelism are configuration. Provider-specific behavior
-is exposed through capabilities rather than assumed everywhere.
+Start with the smallest viable model loop. The runtime boundary now carries two
+providers — Anthropic's Messages API and any OpenAI-compatible endpoint,
+including local servers — selected by the model identity rather than by workflow
+code. Runtime, model, context window, cost limits, and parallelism are
+configuration. Provider-specific behavior is exposed through capabilities rather
+than assumed everywhere.
+
+The harness keeps one canonical conversation format and translates at that
+boundary, rather than letting each provider's wire format leak into the session,
+the transcript, or the tool layer. The consequence is worth the adapter code: a
+conversation can change model mid-flight and keep its history, an old transcript
+replays under a new provider, and the trajectory records which model produced
+which turn. Where a provider needs state the canonical format cannot express —
+Anthropic requires thinking blocks echoed back unmodified — the adapter stashes
+it on the message under a private key and drops it when the model changes.
 
 ### 3. Tool layer
 

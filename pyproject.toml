@@ -7,7 +7,10 @@ name = "hardy-prover"
 version = "0.1.0"
 description = "A thin experimental model-to-Lean proof loop"
 requires-python = ">=3.11"
-dependencies = []
+# The OpenAI-compatible backend is stdlib urllib; the Claude backend uses
+# Anthropic's official SDK and is imported lazily, so an install without it
+# still runs everything else.
+dependencies = ["anthropic>=0.40"]
 
 [project.optional-dependencies]
 test = ["pytest>=8,<9"]

@@ -78,3 +78,50 @@ def test_lean_timeout_is_a_number_of_seconds(tmp_path: Path):
     assert config.load(write(tmp_path / "a.toml", "lean_timeout = 45\n")).lean_timeout == 45.0
     with pytest.raises(ValueError, match="number of seconds"):
         config.load(write(tmp_path / "b.toml", 'lean_timeout = "soon"\n'))
+
+
+def test_backend_is_inferred_from_the_model_identity(tmp_path: Path):
+    assert config.load(write(tmp_path / "a.toml", 'model = "claude-opus-5"\n')).active_backend() == "anthropic"
+    assert config.load(write(tmp_path / "b.toml", 'model = "gpt-5.1"\n')).active_backend() == "openai"
+    assert config.load(tmp_path / "missing.toml").active_backend() == "openai"
+
+
+def test_an_explicit_backend_overrides_the_inference(tmp_path: Path):
+    path = write(tmp_path / "config.toml", 'model = "claude-opus-5"\nbackend = "openai"\n')
+    assert config.load(path).active_backend() == "openai"
+
+
+def test_an_unknown_backend_is_rejected(tmp_path: Path):
+    path = write(tmp_path / "config.toml", 'backend = "gemini"\n')
+    with pytest.raises(ValueError, match="backend must be one of"):
+        config.load(path)
+
+
+def test_each_backend_reads_its_own_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    path = write(tmp_path / "config.toml", 'model = "claude-opus-5"\napi_key = "openai-literal"\n')
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-from-environment")
+    settings = config.load(path)
+    assert settings.resolved_api_key() == "anthropic-from-environment"
+    assert settings.resolved_api_key("openai") == "openai-literal"
+    assert settings.key_source() == "$ANTHROPIC_API_KEY"
+
+
+def test_base_url_configures_the_openai_endpoint_only(tmp_path: Path):
+    path = write(tmp_path / "config.toml", 'model = "claude-opus-5"\nbase_url = "http://localhost:8000/v1"\n')
+    settings = config.load(path)
+    assert settings.base_url_for("openai") == "http://localhost:8000/v1"
+    assert settings.base_url_for("anthropic") == ""
+
+
+def test_writing_a_setting_upserts_one_line(tmp_path: Path):
+    path = tmp_path / "config.toml"
+    path.write_text('# comment\nmodel = "old"\nlean_timeout = 90\n', encoding="utf-8")
+    config.write_setting(path, "model", "new")
+    config.write_setting(path, "backend", "anthropic")
+    assert path.read_text(encoding="utf-8") == '# comment\nmodel = "new"\nlean_timeout = 90\nbackend = "anthropic"\n'
+    assert config.load(path).model == "new"
+
+
+def test_writing_an_unknown_setting_is_rejected(tmp_path: Path):
+    with pytest.raises(ValueError, match="unknown setting"):
+        config.write_setting(tmp_path / "config.toml", "nonsense", "x")
