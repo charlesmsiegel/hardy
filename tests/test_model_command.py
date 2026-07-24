@@ -249,3 +249,32 @@ def test_an_ambiguous_identity_asks_for_a_number_rather_than_guessing(tmp_path: 
     assert updated.model == "gpt-5.1"
     assert session.runtimes == []
     assert any("choose it by number" in line for line in printed)
+
+
+def test_a_gateway_choice_does_not_trap_the_session_on_that_provider(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Choosing a gateway row records a selection, not a pin: the next /model
+    must still be able to reach Anthropic."""
+    monkeypatch.setattr(catalog, "discover", lambda backend, key, base, **kw: ["claude-opus-5"] if backend == catalog.OPENAI else [])
+    start = settings(tmp_path, base_url="http://localhost:8000/v1")
+    session, printed = Recorder(), []
+
+    models = cli._available_models(start)
+    gateway = next(index for index, entry in enumerate(models, start=1) if entry.identifier == "claude-opus-5" and entry.backend == catalog.OPENAI)
+    after_gateway = cli.model_command("", start, session, ask=answers(str(gateway), "n"), out=printed.append)
+    assert after_gateway.active_backend() == catalog.OPENAI
+    assert after_gateway.backend is None, "a transient choice must not become a standing pin"
+
+    anthropic_row = next(index for index, entry in enumerate(models, start=1) if entry.identifier == "claude-opus-5" and entry.backend == catalog.ANTHROPIC)
+    after_anthropic = cli.model_command("", after_gateway, session, ask=answers(str(anthropic_row), "n"), out=printed.append)
+    assert after_anthropic.active_backend() == catalog.ANTHROPIC
+    assert type(session.runtimes[-1]).__name__ == "AnthropicRuntime"
+
+
+def test_a_standing_pin_still_governs_every_later_switch(tmp_path: Path):
+    """The pin is policy, so unlike a selection it does carry forward."""
+    start = settings(tmp_path, model="claude-opus-5", backend=catalog.OPENAI, anthropic_api_key="")
+    session = Recorder()
+    once = cli.model_command("claude-sonnet-5", start, session, ask=answers("n"), out=lambda line: None)
+    twice = cli.model_command("claude-haiku-4-5", once, session, ask=answers("n"), out=lambda line: None)
+    assert twice.active_backend() == catalog.OPENAI
+    assert all(type(runtime).__name__ == "OpenAICompatibleRuntime" for runtime in session.runtimes)

@@ -141,12 +141,13 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
         out(f"No credentials for the {backend} backend at {config.base_url_for(backend) or catalog.ANTHROPIC_BASE_URL}; set {config.key_source(backend)} first. Model unchanged.")
         return config
 
-    # Pin only when inference would not reproduce this choice: an existing pin,
-    # or a discovered identity the catalog would route elsewhere, such as a
-    # gateway serving its own claude-* name. Pinning an agreeing inference would
-    # harden a guess, and a later --model or HARDY_MODEL would inherit it.
-    pin = config.backend or (backend if backend != catalog.backend_for(entry.identifier) else None)
-    updated = dataclasses.replace(config, model=entry.identifier, backend=pin)
+    # Record the choice only when inference would not reproduce it — a gateway
+    # serving its own claude-* name, say — and record it as this session's
+    # selection rather than as a pin. Writing it to `backend` would make the next
+    # /model treat it as standing policy, so choosing an Anthropic row would
+    # still build a gateway runtime and there would be no way back.
+    selection = None if config.backend or backend == catalog.backend_for(entry.identifier) else backend
+    updated = dataclasses.replace(config, model=entry.identifier, selected_backend=selection)
     try:
         runtime = _build_runtime(updated)
     except RuntimeError as error:
@@ -162,11 +163,13 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
     try:
         if ask(f"Save this as the default in {destination}? [y/N] ").strip().lower() in {"y", "yes"}:
             configuration.write_setting(destination, "model", entry.identifier)
-            # An agreeing inference stays unwritten, but a pin must persist: it
-            # may have come from --backend or HARDY_BACKEND, and without it the
-            # saved identity would route elsewhere on the next launch.
-            if updated.backend:
-                configuration.write_setting(destination, "backend", updated.backend)
+            # An agreeing inference stays unwritten. A standing pin must persist,
+            # since it may have come from --backend or HARDY_BACKEND; so must a
+            # divergent selection, since the identity alone would not find it
+            # again. Saving is the point at which either becomes policy.
+            policy = updated.backend or updated.selected_backend
+            if policy:
+                configuration.write_setting(destination, "backend", policy)
             out(f"Saved to {destination}.")
             updated = dataclasses.replace(updated, path=destination)
     except (EOFError, KeyboardInterrupt):

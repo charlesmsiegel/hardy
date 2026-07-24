@@ -57,6 +57,11 @@ OpenAI-compatible gateway. A pin outranks the identity everywhere, including
 saving carries the pin with it. An *inferred* backend is never written: recording
 a guess as a pin would misroute a later `--model` or `HARDY_MODEL`.
 
+Picking a provider inside `/model` — a gateway's own `claude-*` row, say — is a
+selection for that model, not a new pin. It governs the call being made and is
+written if you save, but it does not carry into the next `/model`, so the choice
+after it is free to go elsewhere.
+
 A missing API key is refused up front — at startup and at `/model` — rather than
 surfacing as an authentication error mid-conversation. The one exception is a
 self-hosted `base_url` (loopback, a private address, `*.local`), because
