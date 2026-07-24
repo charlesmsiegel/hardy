@@ -56,7 +56,10 @@ def _build_runtime(config: configuration.Config) -> Any:
 def _runtime(config: configuration.Config, parser: argparse.ArgumentParser) -> Any:
     if not config.model:
         parser.error(f"no model configured: set model in {config.path or configuration.default_config_path()}, export HARDY_MODEL, or pass --model")
-    return _build_runtime(config)
+    try:
+        return _build_runtime(config)
+    except RuntimeError as error:
+        parser.error(str(error))
 
 
 def _available_models(config: configuration.Config) -> list[catalog.ModelInfo]:
@@ -86,7 +89,10 @@ def _show_models(models: list[catalog.ModelInfo], config: configuration.Config, 
         note = f"  {entry.note}" if entry.note else ""
         out(f"  {mark} {number:>3}  {entry.identifier}{note}")
     out("")
-    out("  * = current. Choosing a Claude model switches to the Anthropic backend; anything else uses the OpenAI-compatible endpoint.")
+    if config.backend:
+        out(f"  * = current. backend is pinned to {config.backend}, so every choice below uses it.")
+    else:
+        out("  * = current. Choosing a Claude model switches to the Anthropic backend; anything else uses the OpenAI-compatible endpoint.")
 
 
 def model_command(argument: str, config: configuration.Config, session: MathematicsSession | None, *, ask: Callable[[str], str] = input, out: Callable[[str], None] = print) -> configuration.Config:
@@ -116,25 +122,32 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
         choice = models[index - 1].identifier
 
     entry = next((item for item in models if item.identifier.lower() == choice.lower()), None) or catalog.describe(choice)
-    if not config.resolved_api_key(entry.backend):
-        out(f"No credentials for the {entry.backend} backend; set {config.key_source(entry.backend)} first. Model unchanged.")
+    # An explicit pin outranks the identity, because that is what it is for:
+    # a Claude model behind an OpenAI-compatible gateway is still that gateway.
+    backend = config.backend or entry.backend
+    if backend == catalog.ANTHROPIC and not config.resolved_api_key(backend):
+        out(f"No credentials for the anthropic backend; set {config.key_source(backend)} first. Model unchanged.")
         return config
 
-    updated = dataclasses.replace(config, model=entry.identifier, backend=entry.backend)
+    # Only the model moves. Recording the inferred backend here would harden a
+    # guess into a pin, and a later --model or HARDY_MODEL would then be routed
+    # to whichever provider happened to be in use when this was written.
+    updated = dataclasses.replace(config, model=entry.identifier)
     try:
         runtime = _build_runtime(updated)
     except RuntimeError as error:
-        out(f"{error}. Model unchanged.")
+        out(f"{error} Model unchanged.")
         return config
     if session is not None:
         session.set_runtime(runtime)
-    out(f"Model: {entry.identifier}  (backend: {entry.backend})")
+    if not config.resolved_api_key(backend):
+        out(f"No API key configured; assuming {config.base_url_for(backend)} needs none.")
+    out(f"Model: {entry.identifier}  (backend: {backend})")
 
     destination = config.path or configuration.default_config_path()
     try:
         if ask(f"Save this as the default in {destination}? [y/N] ").strip().lower() in {"y", "yes"}:
             configuration.write_setting(destination, "model", entry.identifier)
-            configuration.write_setting(destination, "backend", entry.backend)
             out(f"Saved to {destination}.")
             updated = dataclasses.replace(updated, path=destination)
     except (EOFError, KeyboardInterrupt):

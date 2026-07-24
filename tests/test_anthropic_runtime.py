@@ -143,3 +143,14 @@ class _FakeClient:
     def __init__(self, reply: _FakeReply):
         self.reply, self.request = reply, {}
         self.messages = _FakeMessages(self)
+
+
+def test_the_per_request_timeout_tracks_the_runtime_attribute():
+    """`hardy prove` shrinks `timeout` between turns to keep its wall-clock
+    bound honest, so the value must be read per call, not per client."""
+    runtime = backend.AnthropicRuntime("key", MODEL)
+    client = _FakeClient(_FakeReply([_FakeBlock({"type": "text", "text": "ok"})]))
+    runtime._client = client
+    runtime.timeout = 12.5
+    runtime.complete([{"role": "user", "content": "Hi"}])
+    assert client.request["timeout"] == 12.5

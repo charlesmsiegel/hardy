@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -62,10 +63,32 @@ def test_choosing_a_claude_model_switches_the_backend_implicitly(tmp_path: Path)
 
 def test_choosing_a_gpt_model_switches_back_to_the_openai_runtime(tmp_path: Path):
     session, printed = Recorder(), []
-    start = settings(tmp_path, model="claude-opus-5", backend=catalog.ANTHROPIC)
+    start = settings(tmp_path, model="claude-opus-5")
     updated = cli.model_command("gpt-5.1", start, session, ask=answers("n"), out=printed.append)
     assert updated.active_backend() == catalog.OPENAI
     assert type(session.runtimes[0]).__name__ == "OpenAICompatibleRuntime"
+
+
+def test_an_explicitly_pinned_backend_survives_the_switch(tmp_path: Path):
+    """The pin exists for Claude behind an OpenAI-compatible gateway; choosing
+    another Claude model there must not redirect to Anthropic."""
+    session, printed = Recorder(), []
+    start = settings(tmp_path, model="claude-opus-5", backend=catalog.OPENAI, anthropic_api_key="")
+    updated = cli.model_command("claude-sonnet-5", start, session, ask=answers("n"), out=printed.append)
+    assert updated.model == "claude-sonnet-5"
+    assert updated.active_backend() == catalog.OPENAI
+    assert type(session.runtimes[0]).__name__ == "OpenAICompatibleRuntime"
+
+
+def test_a_keyless_local_endpoint_can_still_switch_models(tmp_path: Path):
+    """A local llama.cpp or vLLM server needs no credentials, and the
+    direct-entry flow exists precisely for those."""
+    session, printed = Recorder(), []
+    start = settings(tmp_path, api_key="", base_url="http://localhost:8000/v1", anthropic_api_key="")
+    updated = cli.model_command("local-7b", start, session, ask=answers("n"), out=printed.append)
+    assert updated.model == "local-7b"
+    assert session.runtimes[0].url == "http://localhost:8000/v1/chat/completions"
+    assert any("needs none" in line for line in printed)
 
 
 def test_an_unlisted_identity_is_accepted_as_typed(tmp_path: Path):
@@ -114,17 +137,26 @@ def test_a_blank_answer_keeps_the_current_model(tmp_path: Path):
     assert session.runtimes == []
 
 
-def test_saving_writes_model_and_backend_without_losing_other_settings(tmp_path: Path):
+def test_saving_writes_the_model_without_losing_other_settings(tmp_path: Path):
     path = tmp_path / "config.toml"
     path.write_text('# hand written\nmodel = "gpt-5.1"\nlean_project = "~/lean"\n', encoding="utf-8")
     session = Recorder()
     cli.model_command("claude-opus-5", settings(tmp_path, path=path), session, ask=answers("y"), out=lambda line: None)
     text = path.read_text(encoding="utf-8")
     assert 'model = "claude-opus-5"' in text
-    assert 'backend = "anthropic"' in text
     assert 'lean_project = "~/lean"' in text
     assert "# hand written" in text
     assert configuration.load(path).active_backend() == catalog.ANTHROPIC
+
+
+def test_saving_never_hardens_an_inferred_backend_into_a_pin(tmp_path: Path):
+    """A saved `backend` would outrank a later --model or HARDY_MODEL and send
+    that identity to the wrong provider."""
+    path = tmp_path / "config.toml"
+    path.write_text('model = "gpt-5.1"\n', encoding="utf-8")
+    cli.model_command("claude-opus-5", settings(tmp_path, path=path), Recorder(), ask=answers("y"), out=lambda line: None)
+    assert "backend" not in path.read_text(encoding="utf-8")
+    assert configuration.load(path, model="gpt-5.1").active_backend() == catalog.OPENAI
 
 
 def test_declining_to_save_leaves_the_config_file_untouched(tmp_path: Path):
@@ -132,3 +164,14 @@ def test_declining_to_save_leaves_the_config_file_untouched(tmp_path: Path):
     path.write_text('model = "gpt-5.1"\n', encoding="utf-8")
     cli.model_command("claude-opus-5", settings(tmp_path, path=path), Recorder(), ask=answers("n"), out=lambda line: None)
     assert path.read_text(encoding="utf-8") == 'model = "gpt-5.1"\n'
+
+
+def test_a_missing_anthropic_sdk_is_caught_at_switch_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The adapter imports the SDK lazily, so without an eager check `/model`
+    would announce success and the next message would kill the session."""
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    session, printed = Recorder(), []
+    updated = cli.model_command("claude-opus-5", settings(tmp_path), session, ask=answers(), out=printed.append)
+    assert updated.model == "gpt-5.1"
+    assert session.runtimes == []
+    assert any("pip install anthropic" in line for line in printed)

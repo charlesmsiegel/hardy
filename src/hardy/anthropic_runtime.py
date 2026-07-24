@@ -134,6 +134,9 @@ class AnthropicRuntime:
     def __init__(self, api_key: str, model: str, *, base_url: str | None = None, max_tokens: int = DEFAULT_MAX_TOKENS, timeout: float = DEFAULT_TIMEOUT):
         self.model, self.max_tokens, self.timeout = model, max_tokens, timeout
         self._api_key, self._base_url, self._client = api_key, base_url, None
+        # Connect eagerly: a missing SDK must fail where the caller can still
+        # recover, not on the next message with the switch already announced.
+        self._connect()
 
     def _connect(self):
         if self._client is None:
@@ -149,7 +152,9 @@ class AnthropicRuntime:
 
     def complete(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         system, converted = to_messages(messages, self.model)
-        request: dict[str, Any] = {"model": self.model, "max_tokens": self.max_tokens, "messages": converted}
+        # Per-request rather than per-client, so a caller with a wall-clock
+        # budget can shrink `timeout` between turns and have it take effect.
+        request: dict[str, Any] = {"model": self.model, "max_tokens": self.max_tokens, "messages": converted, "timeout": self.timeout}
         converted_tools = to_tools(tools if tools is not None else TOOLS)
         if converted_tools:
             request["tools"] = converted_tools
