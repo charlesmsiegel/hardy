@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from .chat import provenance
+from .claude_runtime import TurnLimitReached
 from .lean import LeanTools
 from .models import Request, RunResult, ToolResult
 
@@ -36,9 +38,17 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     output_dir.mkdir(parents=True, exist_ok=True)
     events: list[dict[str, Any]] = []
     found: dict[str, Any] = {"result": None, "proof": None}
+    # Cancelling the exchange does not stop a Lean check already running on a
+    # worker thread, and that thread is waited on during shutdown — so late work
+    # can land before the timeout is even caught. The deadline itself decides
+    # what counts, not a flag set after the fact.
+    closed = threading.Event()
+    deadline: dict[str, float] = {}
 
     def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
         """Hardy runs every proof check, whoever decided to ask for one."""
+        if closed.is_set():
+            return ToolResult(False, "the run's budget expired before this tool call was made")
         try:
             if name == "check_proof":
                 result = lean.check_proof(str(arguments["proof"]))
@@ -49,8 +59,14 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             elif name == "submit_proof":
                 proof = str(arguments["proof"])
                 result = lean.check_proof(proof, final=True)
-                if result.ok:
+                # Judged against the clock rather than a flag: a check that was
+                # still running when the budget expired cannot count, and one
+                # that finished before it can.
+                late = closed.is_set() or time.monotonic() > deadline.get("at", float("inf"))
+                if result.ok and not late:
                     found["result"], found["proof"] = result, proof
+                elif result.ok:
+                    events.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
             else:
                 result = ToolResult(False, f"unknown tool: {name}")
         except (KeyError, TypeError, ValueError) as error:
@@ -61,21 +77,31 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     system = "Prove the exact Lean statement. Use the tools for kernel feedback. Never change the statement. Submit a sorry-free proof when ready."
     task = f"Informal claim: {request.informal_claim}\nExact Lean declaration: {request.declaration}\nImports: {', '.join(request.imports)}"
     start = time.monotonic()
+    deadline["at"] = start + wall_seconds
     reason = "completed"
     runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=events.append,
                            max_turns=max_turns, wall_seconds=wall_seconds)
     try:
         runtime.ask(task)
+    except TurnLimitReached as error:
+        # The bound the caller asked for, reached as asked. Recording it as a
+        # provider failure would misreport an expected partial result.
+        reason = "turn_limit"
+        events.append({"type": "limit", "limit": "max_turns", "detail": str(error)})
     except TimeoutError as error:
         # Running out of time is not a provider fault, and the terminal reason is
         # what an experiment is read by.
+        closed.set()
         reason = "wall_clock_limit"
         events.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
     except Exception as error:
         reason = "runtime_error"
         events.append({"type": "error", "error": f"{type(error).__name__}: {error}"})
+    closed.set()
     elapsed = time.monotonic() - start
     final, proof = found["result"], found["proof"]
+    # A proof accepted inside the budget is verified even if the exchange then
+    # ran out of time; one accepted outside it was never recorded above.
     if final:
         reason = "verified"
     elif reason == "completed":

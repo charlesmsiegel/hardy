@@ -155,3 +155,46 @@ def test_running_out_of_wall_clock_is_not_a_provider_failure(proof_request: Requ
 
     result = run(proof_request, lambda model=None, **c: Stalling([], **c), lean, tmp_path, wall_seconds=1)
     assert result.terminal_reason == "wall_clock_limit"
+
+
+def test_a_proof_accepted_after_the_deadline_does_not_count(proof_request: Request, lean: LeanTools, tmp_path: Path):
+    """Cancelling the exchange does not stop a Lean check already running, so a
+    late success must not turn an expired run into a verified one."""
+
+    class LateRuntime(FakeRuntime):
+        def ask(self, text: str) -> str:
+            time.sleep(0.25)  # the budget expires while "Lean" is working
+            self.context["dispatch"]("submit_proof", {"proof": "by exact True.intro"})
+            raise TimeoutError("the run exceeded its 0.1s wall-clock budget")
+
+    result = run(proof_request, lambda model=None, **c: LateRuntime([], **c), lean, tmp_path, wall_seconds=0.1)
+    assert result.terminal_reason == "wall_clock_limit"
+    assert result.proof is None
+    assert not (tmp_path / "proof.lean").exists()
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text())
+    assert any(event["type"] == "discarded" for event in trajectory["events"])
+
+
+def test_a_proof_accepted_inside_the_budget_still_counts(proof_request: Request, lean: LeanTools, tmp_path: Path):
+    """The guard must not suppress a genuine success that merely preceded a
+    slow shutdown."""
+
+    class PromptRuntime(FakeRuntime):
+        def ask(self, text: str) -> str:
+            self.context["dispatch"]("submit_proof", {"proof": "by exact True.intro"})
+            return "done"
+
+    result = run(proof_request, lambda model=None, **c: PromptRuntime([], **c), lean, tmp_path, wall_seconds=60)
+    assert result.terminal_reason == "verified"
+
+
+def test_reaching_the_turn_bound_is_a_limit_not_a_provider_failure(proof_request: Request, lean: LeanTools, tmp_path: Path):
+    """`--max-turns N` arriving as requested is an expected partial result."""
+    from hardy.claude_runtime import TurnLimitReached
+
+    class Bounded(FakeRuntime):
+        def ask(self, text: str) -> str:
+            raise TurnLimitReached("the exchange reached its 2-turn bound")
+
+    result = run(proof_request, lambda model=None, **c: Bounded([], **c), lean, tmp_path, max_turns=2)
+    assert result.terminal_reason == "turn_limit"

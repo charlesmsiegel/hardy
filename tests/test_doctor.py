@@ -38,6 +38,18 @@ def named(checks: list[doctor.Check], name: str) -> doctor.Check:
     return next(check for check in checks if check.name == name)
 
 
+@pytest.fixture(autouse=True)
+def hermetic_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A signed-in Claude CLI that belongs to the test, not to the machine.
+
+    Without this the suite passes on a developer's laptop and fails on a clean
+    worker, which is the opposite of what a hermetic suite is for.
+    """
+    binaries = tmp_path / "subscription-bin"
+    fake_tool(binaries, "claude", message='{"loggedIn": true, "authMethod": "oauth_token"}')
+    monkeypatch.setenv("PATH", str(binaries), prepend=os.pathsep)
+
+
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     path = tmp_path / "lean"
@@ -107,3 +119,12 @@ def test_a_signed_in_cli_reports_how(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, '{"loggedIn": true, "authMethod": "oauth_token"}', ""))
     check = doctor._login_check("claude")
     assert check.ok and "oauth_token" in check.detail
+
+
+def test_the_suite_does_not_depend_on_a_claude_cli_being_installed(tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch):
+    """A clean worker has no global `claude`, so the checks must fail rather than
+    quietly pass on whatever the developer happens to have signed in."""
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    checks = doctor.run_checks(configuration(tmp_path))
+    assert named(checks, "claude cli").ok is False
+    assert "npm install" in named(checks, "claude cli").detail

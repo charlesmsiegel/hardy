@@ -25,6 +25,14 @@ from .models import ToolResult
 
 SERVER = "hardy"
 
+# The SDK reports its own turn bound being reached as an error result. It is not
+# one: it is the limit the caller asked for, arriving as requested.
+TURN_LIMIT = "error_max_turns"
+
+
+class TurnLimitReached(RuntimeError):
+    """The provider stopped because the requested turn bound was reached."""
+
 SDK_MISSING = (
     "the Claude backend needs claude-agent-sdk and the Claude Code CLI: "
     "pip install claude-agent-sdk, npm install -g @anthropic-ai/claude-code, then `claude login`"
@@ -160,6 +168,8 @@ class ClaudeAgentRuntime:
             await client.query(text)
             async for message in client.receive_response():
                 self._note(message, spoken)
+        if self.failure == TURN_LIMIT:
+            raise TurnLimitReached(f"the exchange reached its {self.max_turns}-turn bound")
         if self.failure:
             # Returning the text would let a provider failure read as a finished
             # answer, and a batch run would record it as "no proof submitted"

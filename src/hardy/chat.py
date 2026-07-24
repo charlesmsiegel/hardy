@@ -119,8 +119,14 @@ class MathematicsSession:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            content = (event.get("message") or {}).get("content")
-            if event.get("type") in {"user", "assistant"} and content:
+            # Not every event carries a message object: a `limit` event from the
+            # runtime this migration exists to leave behind carries a bare
+            # string, and reaching into it would stop the workspace reopening.
+            if event.get("type") not in {"user", "assistant"}:
+                continue
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if content:
                 said.append(f"{event['type']}: {content}")
         if not said:
             return ""
