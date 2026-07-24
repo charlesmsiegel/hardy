@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import ipaddress
 import os
 import re
 import shlex
 import tomllib
-import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,24 +35,6 @@ SETTINGS = {
     "latex_command": "HARDY_LATEX_COMMAND",
     "workspace": "HARDY_WORKSPACE",
 }
-
-
-def is_local_endpoint(base_url: str) -> bool:
-    """Whether a URL names a machine the user is running themselves.
-
-    Self-hosted inference servers are the one place a missing API key is normal
-    rather than a misconfiguration.
-    """
-    host = (urllib.parse.urlsplit(base_url).hostname or "").lower()
-    if not host:
-        return False
-    if host in {"localhost", "host.docker.internal"} or host.endswith((".local", ".localhost")):
-        return True
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return address.is_loopback or address.is_private
 
 
 def default_config_path() -> Path:
@@ -115,7 +95,7 @@ class Config:
         all and demanding a key there is a false alarm.
         """
         backend = backend or self.active_backend()
-        return backend == catalog.ANTHROPIC or not is_local_endpoint(self.base_url)
+        return backend == catalog.ANTHROPIC or not catalog.is_local_endpoint(self.base_url)
 
     def base_url_for(self, backend: str | None = None) -> str:
         """`base_url` configures the OpenAI-compatible endpoint only.

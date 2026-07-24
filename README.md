@@ -40,7 +40,9 @@ Hardy speaks two protocols and picks one from the model identity:
 | anything else | OpenAI-compatible `/chat/completions` | `api_key` / `$OPENAI_API_KEY` |
 
 `/model` inside a session lists what is available — the built-in catalog plus
-whatever each provider reports for the keys you hold — and switches models and
+whatever each provider reports for the keys you hold, and a self-hosted
+`base_url` is probed without credentials, since its catalog is otherwise
+unknowable — and switches models and
 backends together. The conversation carries across the switch: Hardy stores one
 canonical transcript and translates at the provider boundary, so the new model
 sees the whole history, and the transcript records the model, backend, and

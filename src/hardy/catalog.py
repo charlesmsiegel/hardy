@@ -10,8 +10,10 @@ a correctness one, and a local OpenAI-compatible server still shows up.
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
@@ -71,6 +73,24 @@ def describe(identifier: str) -> ModelInfo:
     return find(identifier) or ModelInfo(identifier.strip(), backend_for(identifier), "not in the catalog")
 
 
+def is_local_endpoint(base_url: str) -> bool:
+    """Whether a URL names a machine the user is running themselves.
+
+    Self-hosted inference servers are the one place a missing API key is normal
+    rather than a misconfiguration.
+    """
+    host = (urllib.parse.urlsplit(base_url).hostname or "").lower()
+    if not host:
+        return False
+    if host in {"localhost", "host.docker.internal"} or host.endswith((".local", ".localhost")):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private
+
+
 def _get_json(url: str, headers: dict[str, str], timeout: float) -> dict:
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -81,14 +101,17 @@ def discover(backend: str, api_key: str, base_url: str, *, timeout: float = 10.0
     """Ask one provider which models it serves. Returns [] rather than raising.
 
     A missing key, an offline machine, or an endpoint without /models is an
-    ordinary outcome here: the caller falls back to the static catalog.
+    ordinary outcome here: the caller falls back to the static catalog. A local
+    OpenAI-compatible server is probed without credentials, since that is the one
+    endpoint that genuinely has none and its catalog is unknowable otherwise.
     """
-    if not api_key:
+    if not api_key and not (backend == OPENAI and is_local_endpoint(base_url)):
         return []
     if backend == ANTHROPIC:
         url, headers = base_url.rstrip("/") + "/models", {"x-api-key": api_key, "anthropic-version": ANTHROPIC_VERSION}
     else:
-        url, headers = base_url.rstrip("/") + "/models", {"Authorization": f"Bearer {api_key}"}
+        url = base_url.rstrip("/") + "/models"
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
         payload = _get_json(url, headers, timeout)
     except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError, KeyError):

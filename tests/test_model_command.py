@@ -196,3 +196,20 @@ def test_a_missing_anthropic_sdk_is_caught_at_switch_time(tmp_path: Path, monkey
     assert updated.model == "gpt-5.1"
     assert session.runtimes == []
     assert any("pip install anthropic" in line for line in printed)
+
+
+def test_a_discovered_identity_keeps_the_backend_that_reported_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A gateway may serve its own claude-* name; the catalog would route that
+    to Anthropic, so the reporting backend has to win."""
+    monkeypatch.setattr(catalog, "discover", lambda backend, key, base, **kw: ["claude-gateway-1"] if backend == catalog.OPENAI else [])
+    path = tmp_path / "config.toml"
+    path.write_text('model = "gpt-5.1"\n', encoding="utf-8")
+    start = settings(tmp_path, base_url="http://localhost:8000/v1", anthropic_api_key="", path=path)
+    session, printed = Recorder(), []
+    updated = cli.model_command("", start, session, ask=answers("claude-gateway-1", "y"), out=printed.append)
+    assert updated.model == "claude-gateway-1"
+    assert updated.active_backend() == catalog.OPENAI
+    assert type(session.runtimes[0]).__name__ == "OpenAICompatibleRuntime"
+    # The pin has to persist, since inference alone would send it to Anthropic.
+    assert 'backend = "openai"' in path.read_text(encoding="utf-8")
+    assert configuration.load(path).active_backend() == catalog.OPENAI

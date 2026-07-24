@@ -145,3 +145,23 @@ def test_the_transcript_records_the_provider_not_only_the_model(tmp_path: Path):
     switch = next(event for event in events if event["type"] == "model")
     assert switch["model"] == "claude-opus-5" and switch["backend"] == "openai"
     assert switch["endpoint"] == "http://gateway.invalid/v1"
+
+
+def test_resuming_under_a_different_model_records_the_change(tmp_path: Path):
+    """Reopening a workspace after changing --model is a change of experimental
+    condition, and the resumed turns must not be attributed to the old one."""
+    session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "First."}])).send("Hello.")
+    resumed = session(tmp_path, SecondRuntime([{"role": "assistant", "content": "Back."}]))
+    assert json.loads((tmp_path / "session.json").read_text())["model"] == "second-model@test"
+    events = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
+    restart = next(event for event in events if event["type"] == "model")
+    assert restart["reason"] == "session_resumed"
+    assert restart["previous"]["model"] == "chat-model@test" and restart["model"] == "second-model@test"
+    assert resumed.send("And now?") == "Back."
+
+
+def test_resuming_on_the_same_model_records_nothing(tmp_path: Path):
+    session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "First."}])).send("Hello.")
+    session(tmp_path, FakeChatRuntime([]))
+    events = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
+    assert not [event for event in events if event["type"] == "model"]

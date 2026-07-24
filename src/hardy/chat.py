@@ -82,7 +82,17 @@ class MathematicsSession:
 
     def _load_state(self) -> dict[str, Any]:
         if self.state_path.exists():
-            return json.loads(self.state_path.read_text(encoding="utf-8"))
+            state = json.loads(self.state_path.read_text(encoding="utf-8"))
+            current = provenance(self.runtime)
+            if any(state.get(key) != value for key, value in current.items()):
+                # Reopening a workspace under a different --model or --backend is
+                # a change of experimental condition like any other. Without this
+                # the resumed turns would be attributed to the previous provider.
+                previous = {key: state.get(key) for key in current}
+                state.update(current)
+                _atomic_json(self.state_path, state)
+                self._record({"type": "model", "reason": "session_resumed", "previous": previous, **current})
+            return state
         state = {"schema_version": 1, **provenance(self.runtime), "names": [], "assumptions": []}
         _atomic_json(self.state_path, state)
         return state

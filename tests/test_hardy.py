@@ -122,3 +122,23 @@ def test_a_provider_call_may_not_outlast_the_wall_clock_budget(proof_request: Re
 def test_a_runtime_without_a_timeout_attribute_still_runs(proof_request: Request, lean: LeanTools, tmp_path: Path):
     result = run(proof_request, FakeRuntime([{"role": "assistant", "content": "no tools"}]), lean, tmp_path, max_turns=1)
     assert result.terminal_reason == "turn_limit"
+
+
+def test_running_out_of_time_is_not_recorded_as_a_provider_failure(proof_request: Request, lean: LeanTools, tmp_path: Path):
+    """A call capped to the remaining budget fails as an ordinary timeout, but
+    the terminal reason is what an experiment is read by."""
+
+    class StallingRuntime:
+        model = "stalling-model@test"
+        timeout = 600.0
+
+        def complete(self, messages, *, tools=None):
+            time.sleep(self.timeout)
+            raise TimeoutError("the read timed out")
+
+    result = run(proof_request, StallingRuntime(), lean, tmp_path, max_turns=2, wall_seconds=0.2)
+    assert result.terminal_reason == "wall_clock_limit"
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text())
+    assert trajectory["terminal_reason"] == "wall_clock_limit"
+    # The underlying failure is still recorded rather than swallowed.
+    assert any(event["type"] == "error" for event in trajectory["events"])
