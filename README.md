@@ -49,7 +49,14 @@ llama.cpp or vLLM server behind `base_url` is selected.
 
 `--backend anthropic|openai` and the `backend` setting pin the choice when a
 model identity is ambiguous — for example a Claude model served through an
-OpenAI-compatible gateway.
+OpenAI-compatible gateway. A pin outranks the identity everywhere, including
+`/model`, so switching models inside a gateway session stays on the gateway.
+Saving from `/model` writes only `model`, never the inferred backend: recording
+a guess as a pin would misroute a later `--model` or `HARDY_MODEL`.
+
+Credentials are required for Anthropic, where a missing key is a certain
+failure, but not for OpenAI-compatible endpoints, since a local llama.cpp or
+vLLM server needs none.
 
 Isolation and production hardening remain planned. **Generated Lean and LaTeX are
 executed directly: only run trusted model output in a disposable development

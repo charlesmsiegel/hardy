@@ -35,12 +35,19 @@ def run(request: Request, runtime: Runtime, lean: LeanTools, output_dir: Path, *
     proof: str | None = None
     reason = "turn_limit"
     turns = 0
+    # A request in flight cannot be interrupted, so the only way to keep the
+    # declared wall-clock bound honest is to hand each call no more time than
+    # the run has left.
+    configured_timeout = getattr(runtime, "timeout", None)
     try:
         for turn in range(1, max_turns + 1):
             turns = turn
-            if time.monotonic() - start >= wall_seconds:
+            remaining = wall_seconds - (time.monotonic() - start)
+            if remaining <= 0:
                 reason = "wall_clock_limit"
                 break
+            if configured_timeout is not None:
+                runtime.timeout = min(configured_timeout, remaining)
             before = time.monotonic()
             response = runtime.complete(messages)
             events.append({"type": "model", "turn": turn, "elapsed_seconds": time.monotonic() - before, "message": response})

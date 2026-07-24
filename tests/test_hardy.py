@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -93,3 +94,31 @@ def test_a_missing_lean_project_is_reported_clearly(tmp_path: Path, proof_reques
     result = tools.run_source("import Mathlib\n")
     assert not result.ok
     assert "Lean project directory not found" in result.output
+
+
+def test_a_provider_call_may_not_outlast_the_wall_clock_budget(proof_request: Request, lean: LeanTools, tmp_path: Path):
+    """The runner cannot interrupt a request in flight, so the only way to keep
+    the declared bound honest is to hand each call the time that is left."""
+
+    class SlowRuntime:
+        model = "slow-model@test"
+        timeout = 600.0
+
+        def __init__(self):
+            self.timeouts: list[float] = []
+
+        def complete(self, messages, *, tools=None):
+            self.timeouts.append(self.timeout)
+            time.sleep(0.05)
+            return {"role": "assistant", "content": "still thinking"}
+
+    runtime = SlowRuntime()
+    run(proof_request, runtime, lean, tmp_path, max_turns=4, wall_seconds=0.4)
+    assert runtime.timeouts, "the runtime was never called"
+    assert all(value <= 0.4 for value in runtime.timeouts)
+    assert runtime.timeouts == sorted(runtime.timeouts, reverse=True)
+
+
+def test_a_runtime_without_a_timeout_attribute_still_runs(proof_request: Request, lean: LeanTools, tmp_path: Path):
+    result = run(proof_request, FakeRuntime([{"role": "assistant", "content": "no tools"}]), lean, tmp_path, max_turns=1)
+    assert result.terminal_reason == "turn_limit"
