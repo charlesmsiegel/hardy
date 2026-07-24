@@ -163,13 +163,22 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
     try:
         if ask(f"Save this as the default in {destination}? [y/N] ").strip().lower() in {"y", "yes"}:
             configuration.write_setting(destination, "model", entry.identifier)
-            # An agreeing inference stays unwritten. A standing pin must persist,
-            # since it may have come from --backend or HARDY_BACKEND; so must a
-            # divergent selection, since the identity alone would not find it
-            # again. Saving is the point at which either becomes policy.
+            # A standing pin must persist, since it may have come from --backend
+            # or HARDY_BACKEND; so must a divergent selection, since the identity
+            # alone would not find that provider again. Saving is the point at
+            # which either becomes policy — and where an agreeing inference has
+            # to clear any policy left by an earlier save, rather than leave a
+            # line that would outrank the identity on the next launch.
             policy = updated.backend or updated.selected_backend
             if policy:
                 configuration.write_setting(destination, "backend", policy)
+            else:
+                configuration.remove_setting(destination, "backend")
+            # The endpoint is part of the condition, not incidental to it: a
+            # saved local model is unusable if the next launch resolves base_url
+            # somewhere else, and a gateway identity would reach the wrong service.
+            if backend == catalog.OPENAI and updated.base_url != configuration.DEFAULT_BASE_URL:
+                configuration.write_setting(destination, "base_url", updated.base_url)
             out(f"Saved to {destination}.")
             updated = dataclasses.replace(updated, path=destination)
     except (EOFError, KeyboardInterrupt):

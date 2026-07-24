@@ -176,3 +176,22 @@ def test_a_requested_config_path_survives_the_file_not_existing_yet(tmp_path: Pa
 def test_an_existing_config_path_is_still_reported(tmp_path: Path):
     path = write(tmp_path / "config.toml", 'model = "x"\n')
     assert config.load(path).config_path == path
+
+
+def test_removing_a_setting_leaves_every_other_line_alone(tmp_path: Path):
+    path = write(tmp_path / "config.toml", '# comment\nmodel = "x"\nbackend = "openai"\nlean_timeout = 90\n')
+    config.remove_setting(path, "backend")
+    assert path.read_text(encoding="utf-8") == '# comment\nmodel = "x"\nlean_timeout = 90\n'
+    assert config.load(path).backend is None
+
+
+def test_removing_an_absent_setting_or_file_is_a_no_op(tmp_path: Path):
+    path = write(tmp_path / "config.toml", 'model = "x"\n')
+    config.remove_setting(path, "backend")
+    assert path.read_text(encoding="utf-8") == 'model = "x"\n'
+    config.remove_setting(tmp_path / "missing.toml", "backend")
+
+
+def test_removing_an_unknown_setting_is_rejected(tmp_path: Path):
+    with pytest.raises(ValueError, match="unknown setting"):
+        config.remove_setting(tmp_path / "config.toml", "nonsense")
