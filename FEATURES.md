@@ -62,12 +62,20 @@ Priority labels are sequencing hints:
   configurable model identity, turn limit, and wall-clock limit.
 - **Now (implemented):** structured trajectories containing prompts, responses, tool calls,
   tool results, Lean feedback, timing, usage, and terminal reason.
+- **Now (implemented):** two runtimes behind one interface — Anthropic's Messages
+  API and any OpenAI-compatible endpoint — chosen by the model identity rather
+  than by workflow code, with one canonical transcript translated at the provider
+  boundary.
+- **Now (implemented):** `/model` lists the built-in catalog merged with whatever
+  each provider reports, switches model and backend together mid-conversation
+  without losing history, records the switch in the transcript, and can save the
+  choice back to the config file.
 - **Next:** token and cost budgets with reserve/settle accounting.
-- **Next:** a runtime interface selected by configuration rather than workflow
-  code; capability flags for optional provider behavior.
-- **Later:** adapters for hosted agent SDKs, Strands, and bare
-  Ollama/vLLM/OpenAI-compatible endpoints, including prompted JSON tool calling
-  when native tools are unavailable.
+- **Next:** capability flags for optional provider behavior (thinking budgets,
+  prompt-cache breakpoints, streaming) instead of the current lowest common
+  denominator.
+- **Later:** adapters for hosted agent SDKs and Strands, and prompted JSON tool
+  calling for endpoints without native tools.
 - **Later:** summarize failed attempts into compact lessons rather than replaying
   entire transcripts; measure whether summarization loses needed context.
 

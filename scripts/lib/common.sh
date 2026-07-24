@@ -75,8 +75,8 @@ Options:
   --bin-dir DIR     where the \`hardy\` command is linked (default $HARDY_BIN_DIR)
   -h, --help        show this message
 
-Environment: HARDY_MODEL and OPENAI_API_KEY, when set, are written to the config
-file without prompting.
+Environment: HARDY_MODEL, OPENAI_API_KEY, and ANTHROPIC_API_KEY, when set, are
+written to the config file without prompting.
 EOF
 }
 
@@ -309,6 +309,7 @@ write_config() {
 	fi
 	step "Writing $HARDY_CONFIG"
 	local model="${HARDY_MODEL:-}" key="${OPENAI_API_KEY:-}" base_url="${HARDY_BASE_URL:-}"
+	local anthropic_key="${ANTHROPIC_API_KEY:-}"
 	if [ -e "$HARDY_CONFIG" ]; then
 		say "config already exists; leaving your model and key untouched"
 		if [ "$SKIP_MATHLIB" = 0 ] && ! grep -q '^[[:space:]]*lean_project' "$HARDY_CONFIG"; then
@@ -318,13 +319,21 @@ write_config() {
 		return
 	fi
 	if [ -z "$model" ] && [ "$ASSUME_YES" = 0 ] && [ -t 0 ]; then
-		printf '\nHardy talks to any OpenAI-compatible endpoint with native tool calling.\n'
-		read -r -p "Model identity (e.g. gpt-5.1, or provider/model; blank to skip): " model
-		if [ -n "$model" ]; then
+		printf '\nHardy talks to Claude through the Anthropic Messages API, and to any\n'
+		printf 'OpenAI-compatible endpoint with native tool calling. The backend follows\n'
+		printf 'the model identity, and /model switches between them later.\n'
+		read -r -p "Model identity (e.g. claude-opus-5 or gpt-5.1; blank to skip): " model
+		case "$model" in
+		claude-*)
+			read -r -s -p "Anthropic API key (blank to read \$ANTHROPIC_API_KEY at run time): " anthropic_key
+			printf '\n'
+			;;
+		?*)
 			read -r -p "API base URL [https://api.openai.com/v1]: " base_url
 			read -r -s -p "API key (blank to read \$OPENAI_API_KEY at run time): " key
 			printf '\n'
-		fi
+			;;
+		esac
 	fi
 	mkdir -p "$(dirname "$HARDY_CONFIG")"
 	# Create the file empty and lock it down before the key is written to it.
@@ -336,6 +345,7 @@ write_config() {
 		[ -n "$model" ] && printf 'model = "%s"\n' "$(toml_escape "$model")"
 		[ -n "$base_url" ] && printf 'base_url = "%s"\n' "$(toml_escape "$base_url")"
 		[ -n "$key" ] && printf 'api_key = "%s"\n' "$(toml_escape "$key")"
+		[ -n "$anthropic_key" ] && printf 'anthropic_api_key = "%s"\n' "$(toml_escape "$anthropic_key")"
 		[ "$SKIP_MATHLIB" = 0 ] && printf 'lean_project = "%s"\n' "$(toml_escape "$LEAN_PROJECT")"
 		true
 	} >>"$HARDY_CONFIG"

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import catalog
+
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_API_KEY_ENV = "OPENAI_API_KEY"
+DEFAULT_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
 DEFAULT_LEAN_COMMAND = "lake env lean"
 # Importing Mathlib costs tens of seconds on a cold machine, so the default is
 # generous; a fast environment simply never reaches it.
@@ -19,9 +23,12 @@ DEFAULT_WORKSPACE = ".hardy"
 # Every setting, and the environment variable that overrides the config file.
 SETTINGS = {
     "model": "HARDY_MODEL",
+    "backend": "HARDY_BACKEND",
     "base_url": "HARDY_BASE_URL",
     "api_key": "HARDY_API_KEY",
     "api_key_env": "HARDY_API_KEY_ENV",
+    "anthropic_api_key": "HARDY_ANTHROPIC_API_KEY",
+    "anthropic_api_key_env": "HARDY_ANTHROPIC_API_KEY_ENV",
     "lean_command": "HARDY_LEAN_COMMAND",
     "lean_project": "HARDY_LEAN_PROJECT",
     "lean_timeout": "HARDY_LEAN_TIMEOUT",
@@ -56,10 +63,36 @@ class Config:
     lean_timeout: float
     latex_command: tuple[str, ...]
     workspace: Path
+    backend: str | None = None
+    anthropic_api_key: str = ""
+    anthropic_api_key_env: str = DEFAULT_ANTHROPIC_API_KEY_ENV
     path: Path | None = None
 
-    def resolved_api_key(self) -> str:
-        return self.api_key or os.environ.get(self.api_key_env, "")
+    def active_backend(self) -> str:
+        """Which provider the configured model implies, unless one is pinned."""
+        return self.backend or catalog.backend_for(self.model)
+
+    def _credentials(self, backend: str) -> tuple[str, str]:
+        if backend == catalog.ANTHROPIC:
+            return self.anthropic_api_key, self.anthropic_api_key_env
+        return self.api_key, self.api_key_env
+
+    def resolved_api_key(self, backend: str | None = None) -> str:
+        literal, variable = self._credentials(backend or self.active_backend())
+        return literal or os.environ.get(variable, "")
+
+    def key_source(self, backend: str | None = None) -> str:
+        literal, variable = self._credentials(backend or self.active_backend())
+        return "config file" if literal else f"${variable}"
+
+    def base_url_for(self, backend: str | None = None) -> str:
+        """`base_url` configures the OpenAI-compatible endpoint only.
+
+        The Anthropic SDK resolves its own endpoint, so pointing `base_url` at a
+        local server must not accidentally redirect Claude traffic there.
+        """
+        backend = backend or self.active_backend()
+        return "" if backend == catalog.ANTHROPIC else self.base_url
 
 
 def read_file(path: Path) -> dict[str, Any]:
@@ -97,6 +130,10 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
     except (TypeError, ValueError):
         raise ValueError(f"lean_timeout must be a number of seconds, not {values['lean_timeout']!r}") from None
 
+    backend = str(values["backend"]).strip().lower() if values.get("backend") else None
+    if backend is not None and backend not in catalog.BACKENDS:
+        raise ValueError(f"backend must be one of {list(catalog.BACKENDS)}, not {backend!r}")
+
     return Config(
         model=str(values["model"]) if values.get("model") else None,
         base_url=text("base_url", DEFAULT_BASE_URL),
@@ -107,5 +144,34 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
         lean_timeout=lean_timeout,
         latex_command=tuple(shlex.split(text("latex_command", DEFAULT_LATEX_COMMAND))),
         workspace=location("workspace") or Path(DEFAULT_WORKSPACE),
+        backend=backend,
+        anthropic_api_key=text("anthropic_api_key", ""),
+        anthropic_api_key_env=text("anthropic_api_key_env", DEFAULT_ANTHROPIC_API_KEY_ENV),
         path=path if path.exists() else None,
     )
+
+
+def write_setting(path: Path, key: str, value: str) -> None:
+    """Upsert one setting in a config file, leaving every other line alone.
+
+    Line-based rather than a parse-and-rewrite so the installer's comments and
+    any hand-written ordering survive; the file is often edited by a human.
+    """
+    if key not in SETTINGS:
+        raise ValueError(f"unknown setting {key!r}; known settings are {sorted(SETTINGS)}")
+    header = ["# Written by Hardy. Every value can be overridden by a", "# HARDY_* environment variable or a command-line flag."]
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else list(header)
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    rendered = f'{key} = "{escaped}"'
+    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
+    for index, line in enumerate(lines):
+        if pattern.match(line):
+            lines[index] = rendered
+            break
+    else:
+        lines.append(rendered)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    temporary.chmod(0o600)
+    os.replace(temporary, path)

@@ -4,6 +4,8 @@ import json
 import urllib.request
 from typing import Any
 
+from . import catalog
+
 
 TOOLS = [
     {"type": "function", "function": {"name": "check_proof", "description": "Elaborate a complete candidate proof against the unchanged theorem statement.", "parameters": {"type": "object", "properties": {"proof": {"type": "string"}}, "required": ["proof"], "additionalProperties": False}}},
@@ -13,14 +15,34 @@ TOOLS = [
 ]
 
 
+def portable(message: dict[str, Any]) -> dict[str, Any]:
+    """One message without the private keys a backend stashed on it.
+
+    A conversation can change provider mid-flight, so every message may carry
+    another backend's bookkeeping. Providers reject request fields they do not
+    recognise, so strip anything underscored before sending.
+    """
+    return {key: value for key, value in message.items() if not key.startswith("_")}
+
+
 class OpenAICompatibleRuntime:
     def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 60):
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.api_key, self.model, self.timeout = api_key, model, timeout
 
     def complete(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        body = json.dumps({"model": self.model, "messages": messages, "tools": tools or TOOLS, "tool_choice": "auto"}).encode()
+        payload = [portable(message) for message in messages]
+        body = json.dumps({"model": self.model, "messages": payload, "tools": tools or TOOLS, "tool_choice": "auto"}).encode()
         request = urllib.request.Request(self.url, data=body, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            payload = json.load(response)
-        return payload["choices"][0]["message"]
+            answer = json.load(response)
+        return answer["choices"][0]["message"]
+
+
+def build(model: str, backend: str, api_key: str, base_url: str) -> Any:
+    """The runtime for one model. The backend decides which provider is called."""
+    if backend == catalog.ANTHROPIC:
+        from .anthropic_runtime import AnthropicRuntime
+
+        return AnthropicRuntime(api_key, model)
+    return OpenAICompatibleRuntime(base_url, api_key, model)

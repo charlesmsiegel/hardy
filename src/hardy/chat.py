@@ -58,6 +58,18 @@ class MathematicsSession:
             *self._load_messages(),
         ]
 
+    def set_runtime(self, runtime: ChatRuntime) -> None:
+        """Continue this conversation on a different model.
+
+        The transcript records the change because which model produced which
+        turn is part of the experiment's identity, not a UI detail.
+        """
+        previous = self.state.get("model")
+        self.runtime = runtime
+        self.state["model"] = runtime.model
+        _atomic_json(self.state_path, self.state)
+        self._record({"type": "model", "previous": previous, "model": runtime.model})
+
     def _load_state(self) -> dict[str, Any]:
         if self.state_path.exists():
             return json.loads(self.state_path.read_text(encoding="utf-8"))

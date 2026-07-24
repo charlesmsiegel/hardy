@@ -328,11 +328,18 @@ function Write-Config {
     }
     $model = if ($env:HARDY_MODEL) { $env:HARDY_MODEL } else { '' }
     $key = if ($env:OPENAI_API_KEY) { $env:OPENAI_API_KEY } else { '' }
+    $anthropicKey = if ($env:ANTHROPIC_API_KEY) { $env:ANTHROPIC_API_KEY } else { '' }
     $baseUrl = if ($env:HARDY_BASE_URL) { $env:HARDY_BASE_URL } else { '' }
     if (-not $model -and -not $Yes -and [Environment]::UserInteractive) {
-        Write-Host "`nHardy talks to any OpenAI-compatible endpoint with native tool calling."
-        $model = Read-Host 'Model identity (e.g. gpt-5.1, or provider/model; blank to skip)'
-        if ($model) {
+        Write-Host "`nHardy talks to Claude through the Anthropic Messages API, and to any"
+        Write-Host 'OpenAI-compatible endpoint with native tool calling. The backend follows'
+        Write-Host 'the model identity, and /model switches between them later.'
+        $model = Read-Host 'Model identity (e.g. claude-opus-5 or gpt-5.1; blank to skip)'
+        if ($model -like 'claude-*') {
+            $secret = Read-Host 'Anthropic API key (blank to read $ANTHROPIC_API_KEY at run time)' -AsSecureString
+            $anthropicKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret))
+        } elseif ($model) {
             $baseUrl = Read-Host 'API base URL [https://api.openai.com/v1]'
             $secret = Read-Host 'API key (blank to read $OPENAI_API_KEY at run time)' -AsSecureString
             $key = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
@@ -347,6 +354,7 @@ function Write-Config {
     if ($model) { $lines += 'model = "{0}"' -f (ConvertTo-TomlString $model) }
     if ($baseUrl) { $lines += 'base_url = "{0}"' -f (ConvertTo-TomlString $baseUrl) }
     if ($key) { $lines += 'api_key = "{0}"' -f (ConvertTo-TomlString $key) }
+    if ($anthropicKey) { $lines += 'anthropic_api_key = "{0}"' -f (ConvertTo-TomlString $anthropicKey) }
     if (-not $SkipMathlib) { $lines += 'lean_project = "{0}"' -f (ConvertTo-TomlString $LeanProject) }
     Set-Content -Path $ConfigPath -Value $lines -Encoding UTF8
     $script:ConfiguredModel = $model

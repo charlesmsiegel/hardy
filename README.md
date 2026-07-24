@@ -24,11 +24,32 @@ The first experiment should prove one small theorem end to end with:
 3. a kernel-checked `.lean` artifact; and
 4. a human-readable writeup whose verification limits are explicit.
 
-The primary slice gives one OpenAI-compatible model bounded tools to check and save
+The primary slice gives one model bounded tools to check and save
 Lean, compile and save LaTeX, inspect the workspace, maintain a formal-to-LaTeX
 naming registry, and request explicit permission for assumptions with provenance.
 It saves the conversation and artifacts after every change. The earlier one-shot
 proof experiment remains available as `hardy prove`, but is secondary.
+
+## Models and backends
+
+Hardy speaks two protocols and picks one from the model identity:
+
+| Model identity | Backend | Credential |
+| --- | --- | --- |
+| `claude-*` | Anthropic Messages API (official SDK) | `anthropic_api_key` / `$ANTHROPIC_API_KEY` |
+| anything else | OpenAI-compatible `/chat/completions` | `api_key` / `$OPENAI_API_KEY` |
+
+`/model` inside a session lists what is available — the built-in catalog plus
+whatever each provider reports for the keys you hold — and switches models and
+backends together. The conversation carries across the switch: Hardy stores one
+canonical transcript and translates at the provider boundary, so the new model
+sees the whole history and the trajectory records which model produced which
+turn. Anything not in the catalog can be typed in directly, which is how a local
+llama.cpp or vLLM server behind `base_url` is selected.
+
+`--backend anthropic|openai` and the `backend` setting pin the choice when a
+model identity is ambiguous — for example a Claude model served through an
+OpenAI-compatible gateway.
 
 Isolation and production hardening remain planned. **Generated Lean and LaTeX are
 executed directly: only run trusted model output in a disposable development
@@ -52,12 +73,13 @@ WSL is not required. Without a clone, an installer run on its own fetches the
 repository itself, so `curl -fsSL .../scripts/install.sh | sh` also works. Expect the Mathlib step to download several gigabytes and
 take 10–30 minutes; `--skip-mathlib` omits it if you have your own Lake project.
 
-The installer asks for a model identity and API key and stores them in
-`~/.config/hardy/config.toml` (`%APPDATA%\hardy\config.toml` on Windows). Every
+The installer asks for a model identity and the matching API key and stores them
+in `~/.config/hardy/config.toml` (`%APPDATA%\hardy\config.toml` on Windows). Every
 setting can be overridden by a `HARDY_*` environment variable or a flag, so an
 unattended install is:
 
 ```sh
+HARDY_MODEL=claude-opus-5 ANTHROPIC_API_KEY=... scripts/install.sh --yes
 HARDY_MODEL=provider/model-version OPENAI_API_KEY=... scripts/install.sh --yes
 ```
 
