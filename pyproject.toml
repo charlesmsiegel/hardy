@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hardy-prover"
+version = "0.1.0"
+description = "A thin experimental model-to-Lean proof loop"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+
+[project.scripts]
+hardy = "hardy.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
