@@ -85,9 +85,12 @@ class ClaudeAgentRuntime:
         cwd: Path | None = None,
         session_id: str | None = None,
         observe: Callable[[dict[str, Any]], None] | None = None,
+        max_turns: int | None = None,
+        wall_seconds: float | None = None,
     ):
         self.model = model
         self.session_id = session_id
+        self.max_turns, self.wall_seconds = max_turns, wall_seconds
         self.turns: int | None = None
         self.failure: str | None = None
         self._system_prompt, self._specs, self._dispatch = system_prompt, specs, dispatch
@@ -115,6 +118,9 @@ class ClaudeAgentRuntime:
             setting_sources=[],
             cwd=str(self._cwd) if self._cwd else None,
             resume=self.session_id,
+            # A declared bound has to reach the thing that owns the loop, or the
+            # trajectory records a limit that nothing applied.
+            max_turns=self.max_turns,
         )
 
     async def _permit(self, name: str, arguments: dict[str, Any], context: Any) -> Any:
@@ -131,7 +137,21 @@ class ClaudeAgentRuntime:
 
     def ask(self, text: str) -> str:
         """One exchange. The SDK may call Hardy's tools any number of times."""
-        return asyncio.run(self._ask(text))
+        return asyncio.run(self._ask_within_budget(text))
+
+    async def _ask_within_budget(self, text: str) -> str:
+        """The wall clock is Hardy's to keep even when the loop is not.
+
+        `max_turns` is the SDK's to enforce, but nothing bounds a stalled
+        request, so the deadline is imposed here rather than trusted to it.
+        """
+        if not self.wall_seconds:
+            return await self._ask(text)
+        try:
+            return await asyncio.wait_for(self._ask(text), timeout=self.wall_seconds)
+        except asyncio.TimeoutError:
+            self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds})
+            raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget") from None
 
     async def _ask(self, text: str) -> str:
         spoken: list[str] = []

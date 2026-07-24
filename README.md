@@ -30,48 +30,59 @@ naming registry, and request explicit permission for assumptions with provenance
 It saves the conversation and artifacts after every change. The earlier one-shot
 proof experiment remains available as `hardy prove`, but is secondary.
 
-## Models and backends
+## Models and authentication
 
-Hardy speaks two protocols and picks one from the model identity:
+Hardy talks to Claude through the Claude Code agent SDK, so it runs on your
+**Claude Max subscription**. There is no API key to configure and no endpoint to
+point at: the credentials belong to the signed-in CLI.
 
-| Model identity | Backend | Credential |
-| --- | --- | --- |
-| `claude-*` | Anthropic Messages API (official SDK) | `anthropic_api_key` / `$ANTHROPIC_API_KEY` |
-| anything else | OpenAI-compatible `/chat/completions` | `api_key` / `$OPENAI_API_KEY` |
+```sh
+pip install claude-agent-sdk
+npm install -g @anthropic-ai/claude-code
+claude login
+```
 
-`/model` inside a session lists what is available — the built-in catalog plus
-whatever each provider reports for the keys you hold, and a self-hosted
-`base_url` is probed without credentials, since its catalog is otherwise
-unknowable — and switches models and
-backends together. The conversation carries across the switch: Hardy stores one
-canonical transcript and translates at the provider boundary, so the new model
-sees the whole history, and the transcript records the model, backend, and
-endpoint behind each turn — the same identity answered by Anthropic and by a
-gateway are different conditions. Anything not in the catalog can be typed in directly, which is how a local
-llama.cpp or vLLM server behind `base_url` is selected.
+`/model` inside a session lists the catalogued Claude models, switches the live
+session, records the change in the transcript, and can save the choice as your
+default. The conversation carries across a switch through the provider's own
+session thread, which also survives closing and reopening the workspace. A model
+not in the catalog can be typed in directly — that is the escape hatch for a
+release this list has not caught up with.
 
-`--backend anthropic|openai` and the `backend` setting pin the choice when a
-model identity is ambiguous — for example a Claude model served through an
-OpenAI-compatible gateway. A pin outranks the identity everywhere, including
-`/model`, so switching models inside a gateway session stays on the gateway, and
-saving carries the pin with it. An *inferred* backend is never written: recording
-a guess as a pin would misroute a later `--model` or `HARDY_MODEL`.
+`hardy doctor` reports whether the SDK, the CLI, and the login are actually
+usable, asking `claude auth status` rather than assuming an installed binary
+means a signed-in one.
 
-Picking a provider inside `/model` — a gateway's own `claude-*` row, say — is a
-selection for that model, not a new pin. It governs the call being made and is
-written if you save, but it does not carry into the next `/model`, so the choice
-after it is free to go elsewhere.
+### What the SDK does not get to do
 
-A missing API key is refused up front — at startup and at `/model` — rather than
-surfacing as an authentication error mid-conversation. The one exception is a
-self-hosted `base_url` (loopback, a private address, `*.local`), because
-llama.cpp and vLLM ship with no auth at all; there a missing key is a warning.
-A remote custom endpoint is treated like any other hosted gateway and still
-needs one.
+The SDK decides *when* to call Hardy's tools. It never runs them. Every Lean
+check, every LaTeX compile, and every file write happens inside this harness,
+because Hardy's tools are registered as in-process SDK tools rather than handed
+over to the CLI. Claude Code's own `Bash`, `Read`, `Write` and `Edit` tools are
+refused — anything that is not one of Hardy's tools is denied by default, not by
+a list that would have to anticipate every tool the CLI grows. Your own Claude
+Code settings and `CLAUDE.md` files are not inherited either, so a run is the run
+its record claims.
 
-Isolation and production hardening remain planned. **Generated Lean and LaTeX are
-executed directly: only run trusted model output in a disposable development
-environment.**
+### What it does get to do, and why that matters
+
+**The SDK owns the turn loop.** Hardy no longer decides when a model call
+happens, so `--max-turns` is passed to the SDK and enforced there. The wall clock
+stays Hardy's, because nothing in the SDK bounds a stalled request. The
+trajectory says which of the two applied rather than implying the harness did
+both:
+
+```json
+"limits": {
+  "max_turns": 8, "wall_seconds": 300,
+  "turns_enforced_by": "provider sdk", "wall_clock_enforced_by": "hardy",
+  "note": "the SDK owns the loop; see issue #23"
+}
+```
+
+Issue #23 records why this is worth reversing: bounded experiments, trajectory
+fidelity, cheap Lean closers before model tokens, and token budgets all live in
+the loop, and Hardy cannot make those decisions while it does not run one.
 
 ## Install
 
@@ -91,14 +102,14 @@ WSL is not required. Without a clone, an installer run on its own fetches the
 repository itself, so `curl -fsSL .../scripts/install.sh | sh` also works. Expect the Mathlib step to download several gigabytes and
 take 10–30 minutes; `--skip-mathlib` omits it if you have your own Lake project.
 
-The installer asks for a model identity and the matching API key and stores them
-in `~/.config/hardy/config.toml` (`%APPDATA%\hardy\config.toml` on Windows). Every
-setting can be overridden by a `HARDY_*` environment variable or a flag, so an
-unattended install is:
+The installer asks for a model identity and stores it in
+`~/.config/hardy/config.toml` (`%APPDATA%\hardy\config.toml` on Windows). It also
+installs the Claude Code CLI when npm is available. There is no key to supply;
+sign in once with `claude login`. Every setting can be overridden by a `HARDY_*`
+environment variable or a flag, so an unattended install is:
 
 ```sh
-HARDY_MODEL=claude-opus-5 ANTHROPIC_API_KEY=... scripts/install.sh --yes
-HARDY_MODEL=provider/model-version OPENAI_API_KEY=... scripts/install.sh --yes
+HARDY_MODEL=claude-opus-5 scripts/install.sh --yes
 ```
 
 `hardy doctor` reports whether Lean, LaTeX, and the model are usable, and

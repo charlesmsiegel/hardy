@@ -61,3 +61,22 @@ def test_the_permission_callback_is_not_shadowed_by_an_allowlist():
     assert getattr(options, "permission_mode", None) != "bypassPermissions"
     assert options.can_use_tool is not None
     assert options.setting_sources == []
+
+
+def test_a_stalled_exchange_is_cut_off_at_the_wall_clock_budget():
+    """`max_turns` is the SDK's to enforce, but nothing there bounds a stalled
+    request, so the deadline is Hardy's to keep."""
+    seen: list[dict] = []
+    live = runtime(wall_seconds=0.05, observe=seen.append)
+
+    async def forever(text):
+        await asyncio.sleep(30)
+
+    live._ask = forever
+    with pytest.raises(TimeoutError):
+        live.ask("hello")
+    assert seen == [{"type": "wall_clock_limit", "seconds": 0.05}]
+
+
+def test_the_turn_bound_is_handed_to_the_sdk():
+    assert runtime(max_turns=6)._options().max_turns == 6

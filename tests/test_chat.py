@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sys
+
+import pytest
 from pathlib import Path
 
 from hardy.chat import MathematicsSession
@@ -261,3 +263,28 @@ def test_a_workspace_with_a_provider_thread_carries_nothing_extra(tmp_path: Path
     first.send("Hello.")
     resumed = session(tmp_path, FakeChatRuntime([]))
     assert "predates the current provider session" not in resumed.runtime.context["system_prompt"]
+
+
+def test_the_provider_thread_survives_a_failed_exchange(tmp_path: Path):
+    """That turn and its tool calls are only reachable again by resuming it."""
+
+    class Failing(FakeChatRuntime):
+        def ask(self, text: str) -> str:
+            self.session_id = "thread-after-error"
+            raise RuntimeError("the provider ended the exchange with an error: overloaded")
+
+    chat = session(tmp_path, Failing([]))
+    with pytest.raises(RuntimeError):
+        chat.send("go")
+    assert json.loads((tmp_path / "session.json").read_text())["provider_session"] == "thread-after-error"
+
+
+def test_migration_keeps_the_newest_context_when_truncating(tmp_path: Path):
+    """A long older message must not displace the exchange the conversation
+    actually left off in."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({"type": "user", "message": {"role": "user", "content": "x" * 9000}}),
+             json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "THE LATEST WORD"}})]
+    (tmp_path / "transcript.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    chat = session(tmp_path, FakeChatRuntime([]))
+    assert "THE LATEST WORD" in chat.runtime.context["system_prompt"]

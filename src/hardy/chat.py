@@ -124,7 +124,9 @@ class MathematicsSession:
                 said.append(f"{event['type']}: {content}")
         if not said:
             return ""
-        carried = "\n".join(said[-MIGRATED_TURNS:])[:MIGRATED_CHARACTERS]
+        # From the end: a long older message must not displace the exchange
+        # the conversation actually left off in.
+        carried = "\n".join(said[-MIGRATED_TURNS:])[-MIGRATED_CHARACTERS:]
         self._record({"type": "migration", "carried_turns": min(len(said), MIGRATED_TURNS)})
         return f"\n\nThis workspace predates the current provider session. Earlier conversation, for context only:\n{carried}"
 
@@ -228,9 +230,12 @@ class MathematicsSession:
         run every tool the model asks for, and write down what happened.
         """
         self._record({"type": "user", "message": {"role": "user", "content": text}})
-        answer = self.runtime.ask(text)
-        self._remember_thread()
-        return answer
+        try:
+            return self.runtime.ask(text)
+        finally:
+            # Even a failed exchange belongs to a provider thread, and that turn
+            # and its tool calls are only reachable again by resuming it.
+            self._remember_thread()
 
     def _dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """The single door every tool call goes through, whoever asked for it.

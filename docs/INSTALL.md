@@ -62,11 +62,13 @@ installer is cheap and safe.
 5. **`pdflatex`** — a LaTeX subset large enough for Hardy's writeups
    (`amsmath`, `amsthm`, `amssymb`, `geometry`, `hyperref`). Use `--full-latex`
    for the distribution's complete TeX instead.
-6. **Configuration** — the installer asks for a model identity and the API key
-   that identity implies (a `claude-*` model needs an Anthropic key, anything
-   else an OpenAI-compatible one) and writes them to the config file below
-   (mode 600). An existing config file is never overwritten.
-7. **Verification** — `hardy doctor` runs last and reports anything still
+6. **The Claude Code CLI** — installed with npm when npm is available, since
+   Hardy authenticates through it. Node itself is not installed for you; if npm
+   is missing the installer says so rather than guessing a package manager.
+7. **Configuration** — the installer asks for a model identity and writes it to
+   the config file below (mode 600). There is no API key: sign in once with
+   `claude login`. An existing config file is never overwritten.
+8. **Verification** — `hardy doctor` runs last and reports anything still
    missing.
 
 ### Where things go
@@ -94,27 +96,22 @@ curl, TeX), which are the only steps that use `sudo`.
 | `--prefix DIR` | `-Prefix DIR` | Where the virtual environment and Lean project live |
 | `--bin-dir DIR` | `-BinDir DIR` | Where the `hardy` command is placed |
 
-`HARDY_MODEL`, `HARDY_BASE_URL`, `OPENAI_API_KEY`, and `ANTHROPIC_API_KEY` are
-used without prompting when they are already set, which is how to configure an
-unattended install:
+`HARDY_MODEL` is used without prompting when it is already set, which is how to
+configure an unattended install:
 
 ```sh
-HARDY_MODEL=claude-opus-5 ANTHROPIC_API_KEY=sk-ant-... scripts/install.sh --yes
-HARDY_MODEL=provider/model OPENAI_API_KEY=sk-... scripts/install.sh --yes
+HARDY_MODEL=claude-opus-5 scripts/install.sh --yes
 ```
+
+Authentication is separate from installation: run `claude login` once, and every
+Hardy session on that machine uses your subscription.
 
 ## Configuration
 
 The config file is TOML and every key is optional:
 
 ```toml
-model = "claude-opus-5"         # or gpt-5.1, or provider/model-version
-backend = "anthropic"           # optional; inferred from the model identity
-base_url = "https://api.openai.com/v1"   # the OpenAI-compatible backend only
-api_key = "sk-..."              # or leave unset and export OPENAI_API_KEY
-api_key_env = "OPENAI_API_KEY"  # read the key from a different variable
-anthropic_api_key = "sk-ant-..."           # or export ANTHROPIC_API_KEY
-anthropic_api_key_env = "ANTHROPIC_API_KEY"
+model = "claude-opus-5"         # any Claude model your subscription can reach
 lean_project = "/home/you/.local/share/hardy/lean"
 lean_command = "lake env lean"
 lean_timeout = 180                # seconds per Lean invocation
@@ -134,11 +131,12 @@ importable, or launch Hardy with `--lean-project /path/to/project`.
 ## Checking an installation
 
 ```sh
-hardy doctor          # Python, lake, the Lean project, pdflatex, model, backend, API key
+hardy doctor          # Python, lake, the Lean project, pdflatex, model, SDK, CLI, login
 hardy doctor --deep   # also compiles `import Mathlib` + `norm_num`, which is slow
 ```
 
-`doctor` never prints your API key — only where it was found.
+`doctor` checks that the Claude Code CLI is signed in, not merely installed: a
+logged-out machine fails here rather than on your first question.
 
 ## Troubleshooting
 
