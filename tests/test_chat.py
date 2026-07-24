@@ -27,18 +27,21 @@ class FakeChatRuntime:
 
     def ask(self, text: str) -> str:
         spoken = []
+        observe = self.context.get("observe") or (lambda event: None)
         for step in self.script:
             if isinstance(step, tuple):
+                observe({"type": "tool_use", "name": step[0], "input": step[1]})
                 self.results.append(self.dispatch(*step))
-            elif isinstance(step, dict):
-                spoken.append(str(step.get("content") or ""))
             else:
-                spoken.append(str(step))
+                said = str(step.get("content") or "") if isinstance(step, dict) else str(step)
+                spoken.append(said)
+                observe({"type": "assistant", "message": {"role": "assistant", "content": said}})
         self.session_id = "thread-1"
         return "\n\n".join(spoken)
 
 
-def call(name: str, arguments: dict) -> tuple:
+def call(name: str, arguments: dict, _identifier: str = "") -> tuple:
+    """A scripted tool call. The SDK asks; Hardy runs it."""
     return (name, arguments)
 
 
@@ -80,8 +83,10 @@ def test_chat_checks_and_saves_linked_artifacts(tmp_path: Path):
     assert (tmp_path / "writeup.pdf").read_bytes() == b"%PDF-fake"
     state = json.loads((tmp_path / "session.json").read_text())
     assert state["names"][0]["formal_name"] == "HardyTarget"
-    assert len((tmp_path / "transcript.jsonl").read_text().splitlines()) == 8
-    assert runtime.seen_tools
+    events = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
+    # Every tool the SDK asked for, and what Hardy's execution of it produced.
+    assert [event["name"] for event in events if event["type"] == "tool"] == ["save_lean", "record_name", "save_latex"]
+    assert all(event["result"]["ok"] for event in events if event["type"] == "tool")
 
 
 def test_assumption_requires_explicit_approval_and_records_provenance(tmp_path: Path):
@@ -130,13 +135,15 @@ def test_unapproved_axiom_cannot_bypass_confirmation(tmp_path: Path):
     assert "unapproved or altered assumption" in transcript
 
 
-def test_session_resumes_conversation_from_transcript(tmp_path: Path):
+def test_session_resumes_the_provider_thread(tmp_path: Path):
+    """Continuity is the provider's own conversation now, so reopening a
+    workspace must hand the SDK the thread it left off in."""
     first = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "First answer."}]))
     first.send("Remember this question.")
-    resumed_runtime = FakeChatRuntime([{"role": "assistant", "content": "I remember."}])
-    resumed = session(tmp_path, resumed_runtime)
-    assert resumed.messages[1]["content"] == "Remember this question."
-    assert resumed.messages[2]["content"] == "First answer."
+    assert json.loads((tmp_path / "session.json").read_text())["provider_session"] == "thread-1"
+
+    resumed = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "I remember."}]))
+    assert resumed.runtime.context["session_id"] == "thread-1"
     assert resumed.send("What did I ask?") == "I remember."
 
 
@@ -144,36 +151,32 @@ class SecondRuntime(FakeChatRuntime):
     model = "second-model@test"
 
 
-def test_switching_models_keeps_the_conversation_and_records_the_change(tmp_path: Path):
+def test_switching_models_carries_the_thread_and_records_the_change(tmp_path: Path):
     chat = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "First."}]))
     chat.send("Remember this.")
-    chat.set_runtime(SecondRuntime([{"role": "assistant", "content": "Still here."}]))
-    assert chat.send("And now?") == "Still here."
-    assert json.loads((tmp_path / "session.json").read_text())["model"] == "second-model@test"
+    chat.switch_model("claude-haiku-4-5")
+    assert json.loads((tmp_path / "session.json").read_text())["model"] == "claude-haiku-4-5"
     events = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
-    switch = next(event for event in events if event["type"] == "model")
-    assert switch["previous"]["model"] == "chat-model@test" and switch["model"] == "second-model@test"
-    # The new model sees the whole prior conversation, not a fresh context.
-    assert chat.messages[1]["content"] == "Remember this."
+    switch = next(event for event in events if event["type"] == "model" and event.get("reason") == "switched")
+    assert switch["previous"]["model"] == "chat-model@test" and switch["model"] == "claude-haiku-4-5"
+    # The new model inherits the conversation rather than starting fresh.
+    assert chat.runtime.context["session_id"] == "thread-1"
 
 
 def test_the_transcript_records_the_provider_not_only_the_model(tmp_path: Path):
-    """The same identity answered by Anthropic and by a gateway are different
-    experimental conditions; the model name alone cannot tell them apart."""
-
-    class GatewayRuntime(FakeChatRuntime):
-        model = "claude-opus-5"
-        backend = "openai"
-        endpoint = "http://gateway.invalid/v1"
+    """Which model answered is only half of it: the provider and endpoint are
+    part of the condition, and a record naming the model alone cannot say."""
 
     chat = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "First."}]))
-    chat.set_runtime(GatewayRuntime([]))
     state = json.loads((tmp_path / "session.json").read_text())
-    assert state["backend"] == "openai" and state["endpoint"] == "http://gateway.invalid/v1"
+    assert state["model"] == "chat-model@test"
+    assert state["backend"] == "claude" and state["endpoint"] == "fake"
+
+    chat.switch_model("claude-sonnet-5")
     events = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
     switch = next(event for event in events if event["type"] == "model")
-    assert switch["model"] == "claude-opus-5" and switch["backend"] == "openai"
-    assert switch["endpoint"] == "http://gateway.invalid/v1"
+    assert switch["model"] == "claude-sonnet-5"
+    assert switch["backend"] == "claude" and switch["endpoint"] == "fake"
 
 
 def test_resuming_under_a_different_model_records_the_change(tmp_path: Path):
