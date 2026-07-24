@@ -223,3 +223,29 @@ def test_saving_targets_the_requested_config_even_when_absent(tmp_path: Path):
     cli.model_command("claude-opus-5", start, Recorder(), ask=answers("y"), out=lambda line: None)
     assert requested.exists()
     assert 'model = "claude-opus-5"' in requested.read_text(encoding="utf-8")
+
+
+def test_selecting_a_duplicated_identity_by_number_keeps_that_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """One identity can appear under two providers, so the number must decide
+    which; looking it back up by name would discard the choice."""
+    monkeypatch.setattr(catalog, "discover", lambda backend, key, base, **kw: ["claude-opus-5"] if backend == catalog.OPENAI else [])
+    start = settings(tmp_path, base_url="http://localhost:8000/v1", anthropic_api_key="")
+    session, printed = Recorder(), []
+    models = cli._available_models(start)
+    gateway = next(index for index, entry in enumerate(models, start=1) if entry.identifier == "claude-opus-5" and entry.backend == catalog.OPENAI)
+    updated = cli.model_command("", start, session, ask=answers(str(gateway), "n"), out=printed.append)
+    assert updated.model == "claude-opus-5"
+    assert updated.active_backend() == catalog.OPENAI
+    assert type(session.runtimes[0]).__name__ == "OpenAICompatibleRuntime"
+
+
+def test_an_ambiguous_identity_asks_for_a_number_rather_than_guessing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Once one name can mean two providers, silently taking the first picks a
+    provider the user never named."""
+    monkeypatch.setattr(catalog, "discover", lambda backend, key, base, **kw: ["claude-opus-5"] if backend == catalog.OPENAI else [])
+    start = settings(tmp_path, base_url="http://localhost:8000/v1")
+    session, printed = Recorder(), []
+    updated = cli.model_command("", start, session, ask=answers("claude-opus-5"), out=printed.append)
+    assert updated.model == "gpt-5.1"
+    assert session.runtimes == []
+    assert any("choose it by number" in line for line in printed)

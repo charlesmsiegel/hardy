@@ -117,14 +117,23 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
             return config
     if not choice:
         return config
+    entry: catalog.ModelInfo | None = None
     if choice.isdigit() and models:
         index = int(choice)
         if not 1 <= index <= len(models):
             out(f"No model number {index}.")
             return config
-        choice = models[index - 1].identifier
-
-    entry = next((item for item in models if item.identifier.lower() == choice.lower()), None) or catalog.describe(choice)
+        # Keep the row itself: one identity can appear under two providers, so
+        # looking it back up by name would discard the choice just made.
+        entry = models[index - 1]
+    if entry is None:
+        matches = [item for item in models if item.identifier.lower() == choice.lower()]
+        if len(matches) > 1:
+            # Silently taking the first would pick a provider the user did not
+            # name, which is the confusion listing both was meant to remove.
+            out(f"{choice} is offered by {' and '.join(sorted(item.backend for item in matches))}; choose it by number. Model unchanged.")
+            return config
+        entry = matches[0] if matches else catalog.describe(choice)
     # An explicit pin outranks the identity, because that is what it is for:
     # a Claude model behind an OpenAI-compatible gateway is still that gateway.
     backend = config.backend or entry.backend
