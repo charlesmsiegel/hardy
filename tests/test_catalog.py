@@ -102,3 +102,14 @@ def test_discovery_drops_non_chat_models_from_the_listing(monkeypatch: pytest.Mo
     payload = {"data": [{"id": "gpt-5.1"}, {"id": "text-embedding-3-small"}, {"id": "whisper-1"}]}
     monkeypatch.setattr(catalog.urllib.request, "urlopen", lambda *a, **k: io.BytesIO(json.dumps(payload).encode()))
     assert catalog.discover(catalog.OPENAI, "key", "https://api.openai.com/v1") == ["gpt-5.1"]
+
+
+def test_a_gateway_serving_a_catalog_model_stays_selectable():
+    """A gateway reporting its own claude-opus-5 is a different condition from
+    Anthropic's, and folding them together hides the one just discovered."""
+    merged = catalog.merge({catalog.OPENAI: ["claude-opus-5"], catalog.ANTHROPIC: ["claude-opus-5"]})
+    rows = [entry for entry in merged if entry.identifier == "claude-opus-5"]
+    assert {entry.backend for entry in rows} == {catalog.ANTHROPIC, catalog.OPENAI}
+    # Anthropic's own row keeps its catalog note rather than being replaced.
+    anthropic_row = next(entry for entry in rows if entry.backend == catalog.ANTHROPIC)
+    assert "1M context" in anthropic_row.note

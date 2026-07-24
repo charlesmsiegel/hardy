@@ -323,12 +323,22 @@ write_config() {
 		printf 'OpenAI-compatible endpoint with native tool calling. The backend follows\n'
 		printf 'the model identity, and /model switches between them later.\n'
 		read -r -p "Model identity (e.g. claude-opus-5 or gpt-5.1; blank to skip): " model
-		case "$model" in
-		claude-*)
+		# An explicit pin decides which credentials are wanted. The identity only
+		# guesses, and guessing against the pin asks for a key the run cannot use.
+		local wants="$backend"
+		if [ -z "$wants" ]; then
+			case "$model" in
+			claude-*) wants=anthropic ;;
+			?*) wants=openai ;;
+			esac
+		fi
+		[ -z "$model" ] && wants=""
+		case "$wants" in
+		anthropic)
 			read -r -s -p "Anthropic API key (blank to read \$ANTHROPIC_API_KEY at run time): " anthropic_key
 			printf '\n'
 			;;
-		?*)
+		openai)
 			read -r -p "API base URL [https://api.openai.com/v1]: " base_url
 			read -r -s -p "API key (blank to read \$OPENAI_API_KEY at run time): " key
 			printf '\n'

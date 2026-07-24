@@ -336,11 +336,16 @@ function Write-Config {
         Write-Host 'OpenAI-compatible endpoint with native tool calling. The backend follows'
         Write-Host 'the model identity, and /model switches between them later.'
         $model = Read-Host 'Model identity (e.g. claude-opus-5 or gpt-5.1; blank to skip)'
-        if ($model -like 'claude-*') {
+        # An explicit pin decides which credentials are wanted. The identity only
+        # guesses, and guessing against the pin asks for a key the run cannot use.
+        $wants = $backend
+        if (-not $wants -and $model) { $wants = if ($model -like 'claude-*') { 'anthropic' } else { 'openai' } }
+        if (-not $model) { $wants = '' }
+        if ($wants -eq 'anthropic') {
             $secret = Read-Host 'Anthropic API key (blank to read $ANTHROPIC_API_KEY at run time)' -AsSecureString
             $anthropicKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
                 [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret))
-        } elseif ($model) {
+        } elseif ($wants -eq 'openai') {
             $baseUrl = Read-Host 'API base URL [https://api.openai.com/v1]'
             $secret = Read-Host 'API key (blank to read $OPENAI_API_KEY at run time)' -AsSecureString
             $key = [Runtime.InteropServices.Marshal]::PtrToStringAuto(

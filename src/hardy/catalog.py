@@ -143,13 +143,18 @@ def discover(backend: str, api_key: str, base_url: str, *, timeout: float = 10.0
 
 
 def merge(discovered: dict[str, list[str]]) -> list[ModelInfo]:
-    """The catalog, plus anything a provider reported that the catalog omits."""
+    """The catalog, plus anything a provider reported that the catalog omits.
+
+    Deduplicated per backend rather than per name: a gateway reporting its own
+    `claude-opus-5` is a genuinely different choice from Anthropic's, and folding
+    the two together would hide the one discovery just proved is reachable.
+    """
     models = list(CATALOG)
-    known = {entry.identifier.lower() for entry in models}
+    known = {(entry.backend, entry.identifier.lower()) for entry in models}
     for backend, identifiers in discovered.items():
         for identifier in identifiers:
-            if identifier.lower() not in known:
-                known.add(identifier.lower())
+            if (backend, identifier.lower()) not in known:
+                known.add((backend, identifier.lower()))
                 models.append(ModelInfo(identifier, backend, "reported by the provider"))
     order = {backend: index for index, backend in enumerate(BACKENDS)}
     return sorted(models, key=lambda entry: (order.get(entry.backend, len(BACKENDS)), entry.identifier))

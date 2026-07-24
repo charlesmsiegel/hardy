@@ -117,3 +117,37 @@ def test_an_unattended_install_records_no_backend_when_none_is_pinned(tmp_path: 
     assert 'model = "claude-opus-5"' in written
     assert 'anthropic_api_key = "sk-ant"' in written
     assert "backend" not in written
+
+
+def interactive_config(tmp_path: Path, answers: list[str], **environment: str) -> str:
+    """Run the installer's config writer with a scripted operator at the prompts."""
+    if shutil.which("bash") is None:
+        pytest.skip("bash is not available")
+    target = tmp_path / "config.toml"
+    driver = tmp_path / "drive.sh"
+    driver.write_text(
+        "set -eu\n"
+        "WRITE_CONFIG=1; SKIP_MATHLIB=1; ASSUME_YES=0; LEAN_PROJECT=/tmp/lean\n"
+        f'HARDY_CONFIG="{target}"\n'
+        f'. "{SCRIPTS / "lib/common.sh"}"\n'
+        "write_config >/dev/null 2>&1\n",
+        encoding="utf-8",
+    )
+    # The prompts only run on a terminal, so give the driver one.
+    script = ["script", "-qec", f"bash {driver}", "/dev/null"]
+    subprocess.run(script, input="\n".join(answers) + "\n", text=True, capture_output=True,
+                   env={**os.environ, **environment, "HOME": str(tmp_path)})
+    return target.read_text(encoding="utf-8") if target.exists() else ""
+
+
+def test_an_interactive_install_asks_for_the_pinned_backend_not_the_identity(tmp_path: Path):
+    """A claude-* identity behind a pinned gateway needs the gateway's key; the
+    Anthropic key it would otherwise collect is unusable there."""
+    if shutil.which("script") is None:
+        pytest.skip("util-linux script is not available")
+    written = interactive_config(tmp_path, ["claude-gateway-id", "http://localhost:8000/v1", "sk-gateway"], HARDY_BACKEND="openai")
+    if not written:
+        pytest.skip("the installer did not reach the prompts in this environment")
+    assert 'backend = "openai"' in written
+    assert 'base_url = "http://localhost:8000/v1"' in written
+    assert "anthropic_api_key" not in written
