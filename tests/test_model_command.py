@@ -278,3 +278,43 @@ def test_a_standing_pin_still_governs_every_later_switch(tmp_path: Path):
     twice = cli.model_command("claude-haiku-4-5", once, session, ask=answers("n"), out=lambda line: None)
     assert twice.active_backend() == catalog.OPENAI
     assert all(type(runtime).__name__ == "OpenAICompatibleRuntime" for runtime in session.runtimes)
+
+
+def test_a_second_save_clears_backend_policy_the_first_one_wrote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Saving a gateway row writes a backend line; saving an ordinary Anthropic
+    row afterwards must retract it, or the next launch reroutes that model."""
+    monkeypatch.setattr(catalog, "discover", lambda backend, key, base, **kw: ["claude-opus-5"] if backend == catalog.OPENAI else [])
+    path = tmp_path / "config.toml"
+    path.write_text('model = "gpt-5.1"\n', encoding="utf-8")
+    start = settings(tmp_path, base_url="http://localhost:8000/v1", path=path)
+    models = cli._available_models(start)
+
+    gateway = next(index for index, entry in enumerate(models, start=1) if entry.identifier == "claude-opus-5" and entry.backend == catalog.OPENAI)
+    after = cli.model_command("", start, Recorder(), ask=answers(str(gateway), "y"), out=lambda line: None)
+    assert 'backend = "openai"' in path.read_text(encoding="utf-8")
+
+    anthropic_row = next(index for index, entry in enumerate(models, start=1) if entry.identifier == "claude-opus-5" and entry.backend == catalog.ANTHROPIC)
+    cli.model_command("", after, Recorder(), ask=answers(str(anthropic_row), "y"), out=lambda line: None)
+    assert "backend" not in path.read_text(encoding="utf-8")
+    assert configuration.load(path).active_backend() == catalog.ANTHROPIC
+
+
+def test_saving_records_the_endpoint_that_serves_the_model(tmp_path: Path):
+    """A base_url from --base-url or HARDY_BASE_URL is part of the condition;
+    without it the next launch resolves a saved local model somewhere else."""
+    path = tmp_path / "config.toml"
+    path.write_text('model = "gpt-5.1"\n', encoding="utf-8")
+    start = settings(tmp_path, api_key="", base_url="http://localhost:8000/v1", path=path)
+    cli.model_command("local-7b", start, Recorder(), ask=answers("y"), out=lambda line: None)
+    reloaded = configuration.load(path)
+    assert reloaded.model == "local-7b"
+    assert reloaded.base_url == "http://localhost:8000/v1"
+
+
+def test_saving_an_anthropic_choice_leaves_the_openai_endpoint_alone(tmp_path: Path):
+    """base_url configures the OpenAI-compatible backend only, so a Claude save
+    must not start asserting one."""
+    path = tmp_path / "config.toml"
+    path.write_text('model = "gpt-5.1"\n', encoding="utf-8")
+    cli.model_command("claude-opus-5", settings(tmp_path, path=path), Recorder(), ask=answers("y"), out=lambda line: None)
+    assert "base_url" not in path.read_text(encoding="utf-8")

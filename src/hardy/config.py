@@ -200,6 +200,28 @@ def write_setting(path: Path, key: str, value: str) -> None:
             break
     else:
         lines.append(rendered)
+    _rewrite(path, lines)
+
+
+def remove_setting(path: Path, key: str) -> None:
+    """Delete one setting, leaving every other line alone.
+
+    The counterpart to `write_setting`: saving has to be able to say a setting
+    no longer applies, not only what it is now. A line left behind from an
+    earlier save would go on outranking the value it was replaced by.
+    """
+    if key not in SETTINGS:
+        raise ValueError(f"unknown setting {key!r}; known settings are {sorted(SETTINGS)}")
+    if not path.exists():
+        return
+    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    kept = [line for line in lines if not pattern.match(line)]
+    if len(kept) != len(lines):
+        _rewrite(path, kept)
+
+
+def _rewrite(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
