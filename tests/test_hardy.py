@@ -119,3 +119,16 @@ def test_a_missing_lean_project_is_reported_clearly(tmp_path: Path, proof_reques
 
 
 
+
+
+def test_the_trajectory_records_the_providers_turn_count(proof_request: Request, lean: LeanTools, tmp_path: Path):
+    """Counting tool calls here would be a different number wearing the name."""
+
+    class CountingRuntime(FakeRuntime):
+        turns = 5
+
+    def make(model=None, **context):
+        return CountingRuntime([call("check_proof", {"proof": "by exact True.intro"})], **context)
+
+    result = run(proof_request, make, lean, tmp_path, max_turns=9)
+    assert result.turns == 5

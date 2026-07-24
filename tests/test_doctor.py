@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -92,3 +93,17 @@ def test_the_deep_check_compiles_a_mathlib_probe(tmp_path: Path, project: Path):
     assert "import Mathlib" in recorder.read_text(encoding="utf-8")
 
 
+
+
+def test_a_logged_out_cli_is_reported_as_a_failure(monkeypatch: pytest.MonkeyPatch):
+    """`claude --version` would succeed while logged out, letting doctor call a
+    machine ready when the first model call is going to fail authentication."""
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, '{"loggedIn": false}', ""))
+    check = doctor._login_check("claude")
+    assert check.ok is False and "claude login" in check.detail
+
+
+def test_a_signed_in_cli_reports_how(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, '{"loggedIn": true, "authMethod": "oauth_token"}', ""))
+    check = doctor._login_check("claude")
+    assert check.ok and "oauth_token" in check.detail

@@ -31,8 +31,10 @@ SDK_MISSING = (
 )
 
 # The CLI's built-in tools would read and write the workspace without Hardy
-# seeing it, which is the one thing the harness cannot allow.
-REFUSED = ("Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Glob", "Grep")
+# seeing it, which is the one thing the harness cannot allow. The list is a
+# belt-and-braces measure; `_permit` below is the part that actually holds,
+# because it refuses by default rather than by enumeration.
+REFUSED = ("Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Glob", "Grep", "ToolSearch")
 
 
 def qualified(name: str) -> str:
@@ -86,6 +88,8 @@ class ClaudeAgentRuntime:
     ):
         self.model = model
         self.session_id = session_id
+        self.turns: int | None = None
+        self.failure: str | None = None
         self._system_prompt, self._specs, self._dispatch = system_prompt, specs, dispatch
         self._cwd = cwd
         self._observe = observe or (lambda event: None)
@@ -97,11 +101,15 @@ class ClaudeAgentRuntime:
             model=self.model,
             system_prompt=self._system_prompt,
             mcp_servers={SERVER: self._server},
-            allowed_tools=[qualified(spec["function"]["name"]) for spec in self._specs],
+            # Deliberately no `allowed_tools`: an entry there auto-approves
+            # before `can_use_tool` is consulted, which would leave the callback
+            # gating only the tools it was never the point of gating.
             disallowed_tools=list(REFUSED),
-            # Only Hardy's tools are reachable, so there is nothing left to
-            # prompt about, and Hardy has no permission UI to prompt with.
-            permission_mode="bypassPermissions",
+            # Not `bypassPermissions`: that maps to --dangerously-skip-permissions,
+            # which the CLI refuses to run as root, so it would break Hardy in
+            # every container. Approving Hardy's own tools and refusing the rest
+            # is both narrower and works everywhere.
+            can_use_tool=self._permit,
             # Ignore the user's own Claude Code settings and CLAUDE.md files: a
             # run that silently inherits them is not the run its record claims.
             setting_sources=[],
@@ -109,16 +117,34 @@ class ClaudeAgentRuntime:
             resume=self.session_id,
         )
 
+    async def _permit(self, name: str, arguments: dict[str, Any], context: Any) -> Any:
+        """Allow Hardy's own tools; refuse everything else by default.
+
+        A denylist has to anticipate every built-in the CLI might grow. This
+        cannot: anything that is not one of the tools Hardy registered is
+        refused, whatever it is called.
+        """
+        if name.startswith(f"mcp__{SERVER}__"):
+            return self._sdk.PermissionResultAllow(behavior="allow")
+        self._observe({"type": "refused_tool", "name": name})
+        return self._sdk.PermissionResultDeny(behavior="deny", message="Hardy runs its own tools only.")
+
     def ask(self, text: str) -> str:
         """One exchange. The SDK may call Hardy's tools any number of times."""
         return asyncio.run(self._ask(text))
 
     async def _ask(self, text: str) -> str:
         spoken: list[str] = []
+        self.failure = None
         async with self._sdk.ClaudeSDKClient(options=self._options()) as client:
             await client.query(text)
             async for message in client.receive_response():
                 self._note(message, spoken)
+        if self.failure:
+            # Returning the text would let a provider failure read as a finished
+            # answer, and a batch run would record it as "no proof submitted"
+            # rather than as the error it was.
+            raise RuntimeError(f"the provider ended the exchange with an error: {self.failure}")
         return "\n\n".join(spoken).strip()
 
     def _note(self, message: Any, spoken: list[str]) -> None:
@@ -138,10 +164,16 @@ class ClaudeAgentRuntime:
             elif kind == "ThinkingBlock":
                 self._observe({"type": "thinking"})
         if type(message).__name__ == "ResultMessage":
+            # The SDK ran the loop, so it is the only thing that knows how many
+            # turns that took. Hardy counting tool calls would be a different
+            # number wearing the same name.
+            self.turns = getattr(message, "num_turns", None)
+            if getattr(message, "is_error", False):
+                self.failure = getattr(message, "subtype", None) or getattr(message, "result", None) or "unknown"
             self._observe({
                 "type": "result",
                 "session_id": self.session_id,
-                "turns": getattr(message, "num_turns", None),
+                "turns": self.turns,
                 "cost_usd": getattr(message, "total_cost_usd", None),
                 "is_error": getattr(message, "is_error", None),
             })

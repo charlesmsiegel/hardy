@@ -74,7 +74,9 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         reason = "verified"
     elif reason == "completed":
         reason = "no_proof_submitted"
-    turns = sum(1 for event in events if event.get("type") == "tool")
+    # The SDK ran the loop, so its own count is the only honest one; counting
+    # tool calls here would be a different number wearing the same name.
+    turns = getattr(runtime, "turns", None) or 0
 
     formal = "kernel verified" if final else "not formalized"
     informal = "not assessed"

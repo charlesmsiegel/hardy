@@ -327,47 +327,42 @@ function Write-Config {
         return
     }
     $model = if ($env:HARDY_MODEL) { $env:HARDY_MODEL } else { '' }
-    $key = if ($env:OPENAI_API_KEY) { $env:OPENAI_API_KEY } else { '' }
-    $anthropicKey = if ($env:ANTHROPIC_API_KEY) { $env:ANTHROPIC_API_KEY } else { '' }
-    $baseUrl = if ($env:HARDY_BASE_URL) { $env:HARDY_BASE_URL } else { '' }
-    $backend = if ($env:HARDY_BACKEND) { $env:HARDY_BACKEND } else { '' }
     if (-not $model -and -not $Yes -and [Environment]::UserInteractive) {
-        Write-Host "`nHardy talks to Claude through the Anthropic Messages API, and to any"
-        Write-Host 'OpenAI-compatible endpoint with native tool calling. The backend follows'
-        Write-Host 'the model identity, and /model switches between them later.'
-        $model = Read-Host 'Model identity (e.g. claude-opus-5 or gpt-5.1; blank to skip)'
-        # An explicit pin decides which credentials are wanted. The identity only
-        # guesses, and guessing against the pin asks for a key the run cannot use.
-        $wants = $backend
-        if (-not $wants -and $model) { $wants = if ($model -like 'claude-*') { 'anthropic' } else { 'openai' } }
-        if (-not $model) { $wants = '' }
-        if ($wants -eq 'anthropic') {
-            $secret = Read-Host 'Anthropic API key (blank to read $ANTHROPIC_API_KEY at run time)' -AsSecureString
-            $anthropicKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret))
-        } elseif ($wants -eq 'openai') {
-            $baseUrl = Read-Host 'API base URL [https://api.openai.com/v1]'
-            $secret = Read-Host 'API key (blank to read $OPENAI_API_KEY at run time)' -AsSecureString
-            $key = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret))
-        }
+        Write-Host "`nHardy talks to Claude through your Claude Code subscription."
+        Write-Host 'There is no API key to supply; sign in once with `claude login`.'
+        $model = Read-Host 'Model identity [claude-opus-5]'
     }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ConfigPath) | Out-Null
     $lines = @(
         '# Written by the Hardy installer. Every value can be overridden by a',
         '# HARDY_* environment variable or a command-line flag.'
     )
+    # Only settings the parser accepts: anything else makes every later Hardy
+    # invocation fail with "unknown settings".
     if ($model) { $lines += 'model = "{0}"' -f (ConvertTo-TomlString $model) }
-    # An explicit pin must outlive the installer: without it Hardy infers the
-    # backend from the identity, which is the case the pin exists to correct.
-    if ($backend) { $lines += 'backend = "{0}"' -f (ConvertTo-TomlString $backend) }
-    if ($baseUrl) { $lines += 'base_url = "{0}"' -f (ConvertTo-TomlString $baseUrl) }
-    if ($key) { $lines += 'api_key = "{0}"' -f (ConvertTo-TomlString $key) }
-    if ($anthropicKey) { $lines += 'anthropic_api_key = "{0}"' -f (ConvertTo-TomlString $anthropicKey) }
     if (-not $SkipMathlib) { $lines += 'lean_project = "{0}"' -f (ConvertTo-TomlString $LeanProject) }
     Set-Content -Path $ConfigPath -Value $lines -Encoding UTF8
     $script:ConfiguredModel = $model
     Write-Detail "wrote $ConfigPath"
+}
+
+function Install-ClaudeCli {
+    Write-Step 'Checking the Claude Code CLI'
+    if (Get-Command claude -ErrorAction SilentlyContinue) {
+        Write-Detail 'claude already installed'
+    } elseif (Get-Command npm -ErrorAction SilentlyContinue) {
+        Write-Detail 'installing @anthropic-ai/claude-code'
+        npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Warn "npm could not install @anthropic-ai/claude-code; install it yourself" }
+    } else {
+        # Node is not Hardy's to install, and guessing a package manager here
+        # would be worse than saying plainly what is missing.
+        Write-Warn "Node.js/npm not found: install Node, then 'npm install -g @anthropic-ai/claude-code'"
+    }
+    if (Get-Command claude -ErrorAction SilentlyContinue) {
+        $status = (claude auth status 2>$null) -join ''
+        if ($status -notmatch '"loggedIn"\s*:\s*true') { Write-Detail "run 'claude login' to sign in with your subscription" }
+    }
 }
 
 function Test-Installation {
@@ -419,5 +414,6 @@ Install-Elan
 Install-LeanProject
 Install-Latex
 Write-Config
+Install-ClaudeCli
 Test-Installation
 Write-Summary
