@@ -1,0 +1,147 @@
+"""The Claude backend: Claude Code's agent SDK, authenticated by subscription.
+
+Hardy talks to Claude through `claude-agent-sdk`, which drives the Claude Code
+CLI. That is what makes a Claude Max subscription usable: the credentials belong
+to the agent product, and there is no API key to supply. The cost is that the
+SDK owns the turn loop rather than Hardy — see issue #23, which records why that
+is worth reversing and what it would take.
+
+What the SDK does *not* take is the part that matters most here. Hardy's Lean and
+LaTeX tools are registered as in-process SDK tools, so every proof check, every
+compile, and every file write still runs inside this harness under its own rules.
+The SDK decides when to call them; it never performs them. The CLI's own
+Bash/Read/Write/Edit tools are refused for exactly that reason — they would route
+around the verification this project exists to guarantee.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+from typing import Any, Callable
+
+from .models import ToolResult
+
+SERVER = "hardy"
+
+SDK_MISSING = (
+    "the Claude backend needs claude-agent-sdk and the Claude Code CLI: "
+    "pip install claude-agent-sdk, npm install -g @anthropic-ai/claude-code, then `claude login`"
+)
+
+# The CLI's built-in tools would read and write the workspace without Hardy
+# seeing it, which is the one thing the harness cannot allow.
+REFUSED = ("Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Glob", "Grep")
+
+
+def qualified(name: str) -> str:
+    """An SDK MCP tool is addressed by its server-qualified name."""
+    return f"mcp__{SERVER}__{name}"
+
+
+def load_sdk():
+    try:
+        import claude_agent_sdk
+    except ImportError as error:  # pragma: no cover - depends on the install
+        raise RuntimeError(SDK_MISSING) from error
+    return claude_agent_sdk
+
+
+def build_server(sdk: Any, specs: list[dict[str, Any]], dispatch: Callable[[str, dict[str, Any]], ToolResult]) -> Any:
+    """Expose Hardy's tools to the SDK, each one still executed by Hardy."""
+    return sdk.create_sdk_mcp_server(name=SERVER, tools=[_wrap(sdk, spec["function"], dispatch) for spec in specs])
+
+
+def _wrap(sdk: Any, function: dict[str, Any], dispatch: Callable[[str, dict[str, Any]], ToolResult]) -> Any:
+    name = function["name"]
+    schema = function.get("parameters") or {"type": "object", "properties": {}}
+
+    @sdk.tool(name, function.get("description", ""), schema)
+    async def run(arguments: dict[str, Any]) -> dict[str, Any]:
+        # Off the event loop: these run Lean and LaTeX as subprocesses, and one
+        # of them stops to ask a human for approval.
+        result = await asyncio.to_thread(dispatch, name, dict(arguments or {}))
+        return {"content": [{"type": "text", "text": json.dumps(result.as_dict())}], "is_error": not result.ok}
+
+    return run
+
+
+class ClaudeAgentRuntime:
+    """Hardy's conversation with Claude, carried by the agent SDK."""
+
+    backend = "claude"
+    endpoint = "claude-code (subscription)"
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        system_prompt: str,
+        specs: list[dict[str, Any]],
+        dispatch: Callable[[str, dict[str, Any]], ToolResult],
+        cwd: Path | None = None,
+        session_id: str | None = None,
+        observe: Callable[[dict[str, Any]], None] | None = None,
+    ):
+        self.model = model
+        self.session_id = session_id
+        self._system_prompt, self._specs, self._dispatch = system_prompt, specs, dispatch
+        self._cwd = cwd
+        self._observe = observe or (lambda event: None)
+        self._sdk = load_sdk()
+        self._server = build_server(self._sdk, specs, dispatch)
+
+    def _options(self) -> Any:
+        return self._sdk.ClaudeAgentOptions(
+            model=self.model,
+            system_prompt=self._system_prompt,
+            mcp_servers={SERVER: self._server},
+            allowed_tools=[qualified(spec["function"]["name"]) for spec in self._specs],
+            disallowed_tools=list(REFUSED),
+            # Only Hardy's tools are reachable, so there is nothing left to
+            # prompt about, and Hardy has no permission UI to prompt with.
+            permission_mode="bypassPermissions",
+            # Ignore the user's own Claude Code settings and CLAUDE.md files: a
+            # run that silently inherits them is not the run its record claims.
+            setting_sources=[],
+            cwd=str(self._cwd) if self._cwd else None,
+            resume=self.session_id,
+        )
+
+    def ask(self, text: str) -> str:
+        """One exchange. The SDK may call Hardy's tools any number of times."""
+        return asyncio.run(self._ask(text))
+
+    async def _ask(self, text: str) -> str:
+        spoken: list[str] = []
+        async with self._sdk.ClaudeSDKClient(options=self._options()) as client:
+            await client.query(text)
+            async for message in client.receive_response():
+                self._note(message, spoken)
+        return "\n\n".join(spoken).strip()
+
+    def _note(self, message: Any, spoken: list[str]) -> None:
+        """Record what the SDK reports, and keep the thread it belongs to."""
+        # Resuming by session id is how a conversation survives both the next
+        # exchange and the next process.
+        session = getattr(message, "session_id", None)
+        if session:
+            self.session_id = session
+        for block in getattr(message, "content", None) or []:
+            kind = type(block).__name__
+            if kind == "TextBlock" and getattr(block, "text", ""):
+                spoken.append(block.text)
+                self._observe({"type": "assistant", "message": {"role": "assistant", "content": block.text}})
+            elif kind == "ToolUseBlock":
+                self._observe({"type": "tool_use", "name": getattr(block, "name", ""), "input": getattr(block, "input", {})})
+            elif kind == "ThinkingBlock":
+                self._observe({"type": "thinking"})
+        if type(message).__name__ == "ResultMessage":
+            self._observe({
+                "type": "result",
+                "session_id": self.session_id,
+                "turns": getattr(message, "num_turns", None),
+                "cost_usd": getattr(message, "total_cost_usd", None),
+                "is_error": getattr(message, "is_error", None),
+            })

@@ -1,66 +1,33 @@
-"""Which models Hardy knows about, and which backend each one needs.
+"""Which Claude models Hardy knows about.
 
-The catalog is the offline answer to "what can I pick?". It is deliberately
-short and hand-maintained: it names models Hardy has been pointed at, not every
-model a provider sells. `discover` asks the provider for the authoritative list
-when a key is available, so a stale entry here is a cosmetic problem rather than
-a correctness one, and a local OpenAI-compatible server still shows up.
+Hardy reaches Claude through the Claude Code agent SDK, so a model is usable
+when the subscription behind that CLI can reach it. There is no key to probe a
+provider with and no `/models` endpoint in play, which is why this list is
+hand-maintained and why an identifier not on it is still accepted: typing one in
+is the escape hatch for a release this file has not caught up with.
 """
 
 from __future__ import annotations
 
-import http.client
-import ipaddress
-import json
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 
-ANTHROPIC = "anthropic"
-OPENAI = "openai"
-BACKENDS = (ANTHROPIC, OPENAI)
-
-ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
-ANTHROPIC_VERSION = "2023-06-01"
+CLAUDE = "claude"
 
 
 @dataclass(frozen=True)
 class ModelInfo:
     identifier: str
-    backend: str
     note: str = ""
-
-    @property
-    def provider(self) -> str:
-        return "Claude (Anthropic Messages API)" if self.backend == ANTHROPIC else "GPT / OpenAI-compatible"
+    backend: str = CLAUDE
 
 
 # Claude identifiers are exact and complete as written: never append a date suffix.
 CATALOG: tuple[ModelInfo, ...] = (
-    ModelInfo("claude-opus-5", ANTHROPIC, "strongest reasoning and long-horizon agentic work; 1M context"),
-    ModelInfo("claude-opus-4-8", ANTHROPIC, "previous Opus; 1M context"),
-    ModelInfo("claude-sonnet-5", ANTHROPIC, "near-Opus quality at lower cost; 1M context"),
-    ModelInfo("claude-haiku-4-5", ANTHROPIC, "fastest and cheapest; 200K context"),
-    ModelInfo("gpt-5.1", OPENAI, "OpenAI flagship"),
-    ModelInfo("gpt-5", OPENAI, ""),
-    ModelInfo("gpt-5-mini", OPENAI, "cheaper and faster"),
-    ModelInfo("gpt-4.1", OPENAI, ""),
+    ModelInfo("claude-opus-5", "strongest reasoning and long-horizon agentic work; 1M context"),
+    ModelInfo("claude-opus-4-8", "previous Opus; 1M context"),
+    ModelInfo("claude-sonnet-5", "near-Opus quality at lower cost; 1M context"),
+    ModelInfo("claude-haiku-4-5", "fastest and cheapest; 200K context"),
 )
-
-
-def backend_for(identifier: str | None) -> str:
-    """The backend a model identity implies. Unknown identities are OpenAI-compatible.
-
-    That default is what keeps `base_url` useful: anything served by a local
-    llama.cpp, vLLM, or router endpoint speaks the OpenAI wire format.
-    """
-    if not identifier:
-        return OPENAI
-    known = find(identifier)
-    if known:
-        return known.backend
-    return ANTHROPIC if identifier.strip().lower().startswith("claude-") else OPENAI
 
 
 def find(identifier: str) -> ModelInfo | None:
@@ -70,91 +37,8 @@ def find(identifier: str) -> ModelInfo | None:
 
 def describe(identifier: str) -> ModelInfo:
     """The catalog entry for a model, inventing one for identities we do not list."""
-    return find(identifier) or ModelInfo(identifier.strip(), backend_for(identifier), "not in the catalog")
+    return find(identifier) or ModelInfo(identifier.strip(), "not in the catalog")
 
 
-def is_local_endpoint(base_url: str) -> bool:
-    """Whether a URL names a machine the user is running themselves.
-
-    Self-hosted inference servers are the one place a missing API key is normal
-    rather than a misconfiguration.
-    """
-    host = (urllib.parse.urlsplit(base_url).hostname or "").lower()
-    if not host:
-        return False
-    if host in {"localhost", "host.docker.internal"} or host.endswith((".local", ".localhost")):
-        return True
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return address.is_loopback or address.is_private
-
-
-# A /models listing says nothing about what a model can do, so these are matched
-# by name. Hardy needs chat with native tool calling; an embedding or audio model
-# accepted here would fail at the next turn and end the session.
-NOT_CHAT = (
-    "embed", "rerank", "moderation", "whisper", "tts", "audio", "transcribe",
-    "dall-e", "image", "sora", "video", "clip", "guard", "vision-encoder",
-)
-
-
-def is_chat_capable(identifier: str) -> bool:
-    """Whether an identifier is plausibly a chat model.
-
-    A guess, and deliberately a permissive one: this only decides what `/model`
-    offers, and any identifier can still be typed in by hand.
-    """
-    name = identifier.lower()
-    return not any(marker in name for marker in NOT_CHAT)
-
-
-def _get_json(url: str, headers: dict[str, str], timeout: float) -> dict:
-    request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.load(response)
-
-
-def discover(backend: str, api_key: str, base_url: str, *, timeout: float = 10.0) -> list[str]:
-    """Ask one provider which models it serves. Returns [] rather than raising.
-
-    A missing key, an offline machine, or an endpoint without /models is an
-    ordinary outcome here: the caller falls back to the static catalog. A local
-    OpenAI-compatible server is probed without credentials, since that is the one
-    endpoint that genuinely has none and its catalog is unknowable otherwise.
-    """
-    if not api_key and not (backend == OPENAI and is_local_endpoint(base_url)):
-        return []
-    if backend == ANTHROPIC:
-        url, headers = base_url.rstrip("/") + "/models", {"x-api-key": api_key, "anthropic-version": ANTHROPIC_VERSION}
-    else:
-        url = base_url.rstrip("/") + "/models"
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    try:
-        payload = _get_json(url, headers, timeout)
-    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError, KeyError):
-        return []
-    entries = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(entries, list):
-        return []
-    identifiers = {str(item["id"]) for item in entries if isinstance(item, dict) and item.get("id")}
-    return sorted(identifier for identifier in identifiers if is_chat_capable(identifier))
-
-
-def merge(discovered: dict[str, list[str]]) -> list[ModelInfo]:
-    """The catalog, plus anything a provider reported that the catalog omits.
-
-    Deduplicated per backend rather than per name: a gateway reporting its own
-    `claude-opus-5` is a genuinely different choice from Anthropic's, and folding
-    the two together would hide the one discovery just proved is reachable.
-    """
-    models = list(CATALOG)
-    known = {(entry.backend, entry.identifier.lower()) for entry in models}
-    for backend, identifiers in discovered.items():
-        for identifier in identifiers:
-            if (backend, identifier.lower()) not in known:
-                known.add((backend, identifier.lower()))
-                models.append(ModelInfo(identifier, backend, "reported by the provider"))
-    order = {backend: index for index, backend in enumerate(BACKENDS)}
-    return sorted(models, key=lambda entry: (order.get(entry.backend, len(BACKENDS)), entry.identifier))
+def available() -> list[ModelInfo]:
+    return list(CATALOG)

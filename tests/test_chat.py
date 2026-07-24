@@ -8,26 +8,55 @@ from hardy.chat import MathematicsSession
 
 
 class FakeChatRuntime:
+    """Stands in for the agent SDK: it owns the loop, Hardy owns the tools.
+
+    Each scripted step is either a tool call Hardy must execute or text to say,
+    which is exactly the contract the real SDK has with the session.
+    """
+
     model = "chat-model@test"
+    backend = "claude"
+    endpoint = "fake"
 
-    def __init__(self, responses):
-        self.responses = iter(responses)
-        self.seen_tools = None
+    def __init__(self, script, **context):
+        self.script = list(script)
+        self.context = context
+        self.session_id = context.get("session_id")
+        self.dispatch = context.get("dispatch")
+        self.results = []
 
-    def complete(self, messages, *, tools=None):
-        self.seen_tools = tools
-        return next(self.responses)
+    def ask(self, text: str) -> str:
+        spoken = []
+        for step in self.script:
+            if isinstance(step, tuple):
+                self.results.append(self.dispatch(*step))
+            elif isinstance(step, dict):
+                spoken.append(str(step.get("content") or ""))
+            else:
+                spoken.append(str(step))
+        self.session_id = "thread-1"
+        return "\n\n".join(spoken)
 
 
-def call(name: str, arguments: dict, identifier: str = "call") -> dict:
-    return {"role": "assistant", "content": None, "tool_calls": [{"id": identifier, "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]}
+def call(name: str, arguments: dict) -> tuple:
+    return (name, arguments)
+
+
+def factory(runtime_class, script):
+    def make(model=None, **context):
+        runtime = runtime_class(script, **context)
+        if model:
+            runtime.model = model
+        return runtime
+
+    return make
 
 
 def session(tmp_path: Path, runtime: FakeChatRuntime, approvals=()) -> MathematicsSession:
     answers = iter(approvals)
     return MathematicsSession(
         tmp_path,
-        runtime,
+        factory(type(runtime), runtime.script),
         (sys.executable, str(Path(__file__).with_name("fake_lean.py"))),
         (sys.executable, str(Path(__file__).with_name("fake_latex.py"))),
         lambda proposal: next(answers),

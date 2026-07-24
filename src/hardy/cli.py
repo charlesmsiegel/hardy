@@ -9,7 +9,7 @@ from typing import Any, Callable
 from . import catalog
 from . import config as configuration
 from . import doctor
-from . import runtime as runtimes
+from . import claude_runtime
 from .chat import MathematicsSession
 from .lean import LeanTools
 from .models import Request
@@ -36,9 +36,6 @@ def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> config
         return configuration.load(
             args.config,
             model=args.model,
-            backend=args.backend,
-            base_url=args.base_url,
-            api_key_env=args.api_key_env,
             lean_command=args.lean_command,
             lean_project=args.lean_project,
             latex_command=args.latex_command,
@@ -48,143 +45,64 @@ def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> config
         parser.error(str(error))
 
 
-def _build_runtime(config: configuration.Config) -> Any:
-    backend = config.active_backend()
-    return runtimes.build(str(config.model), backend, config.resolved_api_key(backend), config.base_url_for(backend), config.max_tokens)
+def runtime_factory(default_model: str) -> Callable[..., Any]:
+    """A way for the session to build its runtime once it can offer the tools."""
+
+    def make(model: str | None = None, **context: Any) -> Any:
+        return claude_runtime.ClaudeAgentRuntime(model or default_model, **context)
+
+    return make
 
 
-def _runtime(config: configuration.Config, parser: argparse.ArgumentParser) -> Any:
-    if not config.model:
-        parser.error(f"no model configured: set model in {config.config_path}, export HARDY_MODEL, or pass --model")
-    backend = config.active_backend()
-    if config.requires_api_key(backend) and not config.resolved_api_key(backend):
-        parser.error(f"no API key for the {backend} backend: set it in {config.config_path} or export {config.key_source(backend).lstrip('$')}")
-    try:
-        return _build_runtime(config)
-    except RuntimeError as error:
-        parser.error(str(error))
-
-
-def _available_models(config: configuration.Config) -> list[catalog.ModelInfo]:
-    """The catalog, refreshed from whichever providers we hold a key for.
-
-    Short timeouts: this runs while someone waits at a prompt, and the catalog is
-    a perfectly good answer when a provider is slow or unreachable.
-    """
-    discovered = {}
-    for backend in catalog.BACKENDS:
-        key = config.resolved_api_key(backend)
-        base = catalog.ANTHROPIC_BASE_URL if backend == catalog.ANTHROPIC else config.base_url
-        discovered[backend] = catalog.discover(backend, key, base, timeout=5.0)
-    return catalog.merge(discovered)
-
-
-def _show_models(models: list[catalog.ModelInfo], config: configuration.Config, out: Callable[[str], None]) -> None:
+def _show_models(config: configuration.Config, out: Callable[[str], None]) -> None:
     current = (config.model or "").lower()
     out("")
-    provider = None
-    for number, entry in enumerate(models, start=1):
-        if entry.provider != provider:
-            provider = entry.provider
-            credentials = "key present" if config.resolved_api_key(entry.backend) else "NO KEY"
-            out(f"  {provider}  [{credentials}]")
+    for number, entry in enumerate(catalog.available(), start=1):
         mark = "*" if entry.identifier.lower() == current else " "
         note = f"  {entry.note}" if entry.note else ""
         out(f"  {mark} {number:>3}  {entry.identifier}{note}")
     out("")
-    if config.backend:
-        out(f"  * = current. backend is pinned to {config.backend}, so every choice below uses it.")
-    else:
-        out("  * = current. Choosing a Claude model switches to the Anthropic backend; anything else uses the OpenAI-compatible endpoint.")
+    out("  * = current. All models run through your Claude Code subscription; any other identity can be typed in.")
 
 
 def model_command(argument: str, config: configuration.Config, session: MathematicsSession | None, *, ask: Callable[[str], str] = input, out: Callable[[str], None] = print) -> configuration.Config:
     """Handle `/model`, returning the configuration to use from here on.
 
-    Returns the configuration unchanged when the user backs out or the choice is
-    unusable, so a failed switch never leaves the session half-moved.
+    Returns the configuration unchanged when the user backs out, so a failed
+    switch never leaves the session half-moved.
     """
     choice = argument.strip()
-    models: list[catalog.ModelInfo] = []
+    models = catalog.available()
     if not choice:
-        out("Looking up available models...")
-        models = _available_models(config)
-        _show_models(models, config, out)
+        _show_models(config, out)
         try:
-            choice = ask(f"Model (number, identity, or blank to keep {config.model or 'nothing'}): ").strip()
+            choice = ask(f"Model (number, identity, or blank to keep {config.model}): ").strip()
         except (EOFError, KeyboardInterrupt):
             out("")
             return config
     if not choice:
         return config
-    entry: catalog.ModelInfo | None = None
-    if choice.isdigit() and models:
+    if choice.isdigit():
         index = int(choice)
         if not 1 <= index <= len(models):
             out(f"No model number {index}.")
             return config
-        # Keep the row itself: one identity can appear under two providers, so
-        # looking it back up by name would discard the choice just made.
-        entry = models[index - 1]
-    if entry is None:
-        matches = [item for item in models if item.identifier.lower() == choice.lower()]
-        if len(matches) > 1:
-            # Silently taking the first would pick a provider the user did not
-            # name, which is the confusion listing both was meant to remove.
-            out(f"{choice} is offered by {' and '.join(sorted(item.backend for item in matches))}; choose it by number. Model unchanged.")
-            return config
-        entry = matches[0] if matches else catalog.describe(choice)
-    # An explicit pin outranks the identity, because that is what it is for:
-    # a Claude model behind an OpenAI-compatible gateway is still that gateway.
-    backend = config.backend or entry.backend
-    if config.requires_api_key(backend) and not config.resolved_api_key(backend):
-        out(f"No credentials for the {backend} backend at {config.base_url_for(backend) or catalog.ANTHROPIC_BASE_URL}; set {config.key_source(backend)} first. Model unchanged.")
-        return config
+        choice = models[index - 1].identifier
 
-    # Record the choice only when inference would not reproduce it — a gateway
-    # serving its own claude-* name, say — and record it as this session's
-    # selection rather than as a pin. Writing it to `backend` would make the next
-    # /model treat it as standing policy, so choosing an Anthropic row would
-    # still build a gateway runtime and there would be no way back.
-    selection = None if config.backend or backend == catalog.backend_for(entry.identifier) else backend
-    updated = dataclasses.replace(config, model=entry.identifier, selected_backend=selection)
-    try:
-        runtime = _build_runtime(updated)
-    except RuntimeError as error:
-        out(f"{error} Model unchanged.")
-        return config
+    entry = catalog.describe(choice)
     if session is not None:
-        session.set_runtime(runtime)
-    if not config.resolved_api_key(backend):
-        out(f"No API key configured; assuming {config.base_url_for(backend)} needs none.")
-    out(f"Model: {entry.identifier}  (backend: {backend})")
+        try:
+            session.switch_model(entry.identifier)
+        except RuntimeError as error:
+            out(f"{error} Model unchanged.")
+            return config
+    out(f"Model: {entry.identifier}")
 
+    updated = dataclasses.replace(config, model=entry.identifier)
     destination = config.config_path
     try:
         if ask(f"Save this as the default in {destination}? [y/N] ").strip().lower() in {"y", "yes"}:
             configuration.write_setting(destination, "model", entry.identifier)
-            # A standing pin must persist, since it may have come from --backend
-            # or HARDY_BACKEND; so must a divergent selection, since the identity
-            # alone would not find that provider again. Saving is the point at
-            # which either becomes policy — and where an agreeing inference has
-            # to clear any policy left by an earlier save, rather than leave a
-            # line that would outrank the identity on the next launch.
-            policy = updated.backend or updated.selected_backend
-            if policy:
-                configuration.write_setting(destination, "backend", policy)
-            else:
-                configuration.remove_setting(destination, "backend")
-            # The endpoint is part of the condition, not incidental to it: a
-            # saved local model is unusable if the next launch resolves base_url
-            # somewhere else, and a gateway identity would reach the wrong
-            # service. Retracted on the same terms it is written, since a URL
-            # left from an earlier save would outlive the choice that set it.
-            # A Claude choice touches neither: base_url does not configure it.
-            if backend == catalog.OPENAI:
-                if updated.base_url != configuration.DEFAULT_BASE_URL:
-                    configuration.write_setting(destination, "base_url", updated.base_url)
-                else:
-                    configuration.remove_setting(destination, "base_url")
             out(f"Saved to {destination}.")
             updated = dataclasses.replace(updated, path=destination)
     except (EOFError, KeyboardInterrupt):
@@ -195,10 +113,9 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
 
 
 def _chat(config: configuration.Config, parser: argparse.ArgumentParser) -> int:
-    runtime = _runtime(config, parser)
-    session = MathematicsSession(config.workspace, runtime, config.lean_command, config.latex_command, _confirm_assumption, lean_project=config.lean_project, lean_timeout=config.lean_timeout)
+    session = MathematicsSession(config.workspace, runtime_factory(str(config.model)), config.lean_command, config.latex_command, _confirm_assumption, lean_project=config.lean_project, lean_timeout=config.lean_timeout)
     print("Hardy — interactive mathematics workspace")
-    print(f"Workspace: {config.workspace}    Model: {config.model}  (backend: {config.active_backend()})")
+    print(f"Workspace: {config.workspace}    Model: {config.model}  (Claude Code subscription)")
     print(f"Lean project: {config.lean_project or 'current directory'}")
     print(f"WARNING: {WARNING} LaTeX is also executed without isolation.")
     print("Type /model to change models and /exit to leave. Your transcript and artifacts are saved as you work.\n")
@@ -220,10 +137,9 @@ def _chat(config: configuration.Config, parser: argparse.ArgumentParser) -> int:
 
 
 def _batch(args: argparse.Namespace, config: configuration.Config, parser: argparse.ArgumentParser) -> int:
-    runtime = _runtime(config, parser)
     request = Request.from_dict(json.loads(args.request.read_text(encoding="utf-8")))
     lean = LeanTools(request, config.lean_command, timeout=config.lean_timeout, project=config.lean_project)
-    result = run(request, runtime, lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds)
+    result = run(request, runtime_factory(str(config.model)), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds)
     print(json.dumps(result.as_dict(), indent=2))
     return 0 if result.terminal_reason == "verified" else 1
 
@@ -232,9 +148,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Hardy interactive mathematical research agent")
     parser.add_argument("--config", type=Path, help=f"settings file (default {configuration.default_config_path()})")
     parser.add_argument("--model", help="model identity (or set model in the config file, or HARDY_MODEL)")
-    parser.add_argument("--backend", choices=catalog.BACKENDS, help="provider to call (default: inferred from the model identity)")
-    parser.add_argument("--base-url", help=f"OpenAI-compatible endpoint (default {configuration.DEFAULT_BASE_URL}); the Claude backend ignores it")
-    parser.add_argument("--api-key-env", help=f"environment variable holding the OpenAI-compatible API key (default {configuration.DEFAULT_API_KEY_ENV}; Claude reads {configuration.DEFAULT_ANTHROPIC_API_KEY_ENV})")
     parser.add_argument("--lean-command", help=f"command that elaborates a Lean file (default {configuration.DEFAULT_LEAN_COMMAND!r})")
     parser.add_argument("--lean-project", type=Path, help="Lake project whose imports Lean should resolve")
     parser.add_argument("--latex-command", help=f"command that compiles a LaTeX file (default {configuration.DEFAULT_LATEX_COMMAND!r})")

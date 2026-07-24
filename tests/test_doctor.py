@@ -22,10 +22,7 @@ def fake_tool(directory: Path, name: str, *, exit_code: int = 0, message: str = 
 
 def configuration(tmp_path: Path, **overrides) -> Config:
     settings = {
-        "model": "provider/model-1",
-        "base_url": "https://example.invalid/v1",
-        "api_key": "secret",
-        "api_key_env": "OPENAI_API_KEY",
+        "model": "claude-opus-5",
         "lean_command": ("lake", "env", "lean"),
         "lean_project": tmp_path / "lean",
         "lean_timeout": 180.0,
@@ -85,17 +82,6 @@ def test_an_unconfigured_lean_project_warns_without_failing(tmp_path: Path):
     assert check.ok and not check.required
 
 
-def test_a_missing_model_and_key_fail_without_disclosing_the_key(tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    checks = doctor.run_checks(configuration(tmp_path, model=None, api_key=""))
-    assert named(checks, "model").ok is False
-    assert named(checks, "api key").ok is False
-    assert "secret" not in named(checks, "api key").detail
-
-
-def test_the_api_key_check_never_prints_the_key(tmp_path: Path, project: Path):
-    check = named(doctor.run_checks(configuration(tmp_path)), "api key")
-    assert check.ok and check.detail == "present via config file" and "secret" not in check.detail
 
 
 def test_the_deep_check_compiles_a_mathlib_probe(tmp_path: Path, project: Path):
@@ -106,11 +92,3 @@ def test_the_deep_check_compiles_a_mathlib_probe(tmp_path: Path, project: Path):
     assert "import Mathlib" in recorder.read_text(encoding="utf-8")
 
 
-def test_a_self_hosted_endpoint_without_a_key_is_reported_but_not_a_failure(tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch):
-    """llama.cpp and vLLM need no credentials, so `hardy doctor` must not fail
-    the install for the keyless local flow."""
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    checks = doctor.run_checks(configuration(tmp_path, api_key="", base_url="http://localhost:8000/v1"))
-    check = named(checks, "api key")
-    assert check.ok and not check.required
-    assert "localhost:8000" in check.detail
