@@ -197,3 +197,67 @@ def test_resuming_on_the_same_model_records_nothing(tmp_path: Path):
     session(tmp_path, FakeChatRuntime([]))
     events = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
     assert not [event for event in events if event["type"] == "model"]
+
+
+def test_tool_calls_are_serialized(tmp_path: Path):
+    """The SDK may call several tools at once, each on its own thread, but these
+    run Lean, rewrite session.json, and stop to ask a human."""
+    import threading
+
+    overlaps, inside, guard = [], [], threading.Lock()
+
+    class ConcurrentRuntime(FakeChatRuntime):
+        def ask(self, text: str) -> str:
+            def one(index: int) -> None:
+                self.dispatch("record_name", {"formal_name": f"N{index}", "latex_name": f"l{index}", "description": "d"})
+
+            threads = [threading.Thread(target=one, args=(index,)) for index in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            return "done"
+
+    chat = session(tmp_path, ConcurrentRuntime([]))
+    original = chat._tool
+
+    def watched(name, arguments):
+        with guard:
+            inside.append(name)
+            if len(inside) > 1:
+                overlaps.append(tuple(inside))
+        try:
+            return original(name, arguments)
+        finally:
+            with guard:
+                inside.remove(name)
+
+    chat._tool = watched
+    chat.send("go")
+    assert not overlaps, "tool executions overlapped"
+    # Every concurrent write survived rather than clobbering the others.
+    assert len(json.loads((tmp_path / "session.json").read_text())["names"]) == 8
+
+
+def test_a_workspace_from_before_the_sdk_carries_its_conversation(tmp_path: Path):
+    """Its transcript belongs to no provider thread, so without this the first
+    exchange after upgrading starts from nothing."""
+    transcript = tmp_path / "transcript.jsonl"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"role": "user", "content": "Prove Fermat."}}) + "\n"
+        + json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "Working on it."}}) + "\n",
+        encoding="utf-8",
+    )
+    chat = session(tmp_path, FakeChatRuntime([]))
+    carried = chat.runtime.context["system_prompt"]
+    assert "Prove Fermat." in carried and "Working on it." in carried
+    events = [json.loads(line) for line in transcript.read_text().splitlines()]
+    assert any(event["type"] == "migration" for event in events)
+
+
+def test_a_workspace_with_a_provider_thread_carries_nothing_extra(tmp_path: Path):
+    first = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "Hi."}]))
+    first.send("Hello.")
+    resumed = session(tmp_path, FakeChatRuntime([]))
+    assert "predates the current provider session" not in resumed.runtime.context["system_prompt"]

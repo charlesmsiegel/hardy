@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -75,14 +76,23 @@ def _subscription_checks() -> list[Check]:
 
 
 def _login_check(cli: str) -> Check:
-    """Whether the CLI can actually answer, which is the only real proof of login."""
+    """Whether the subscription is actually signed in.
+
+    `--version` would prove only that the executable exists, and reporting that
+    as authentication would let doctor call a logged-out machine ready — the
+    failure would then arrive on the first model call instead of here.
+    """
     try:
-        finished = subprocess.run([cli, "--version"], capture_output=True, text=True, timeout=30)
+        finished = subprocess.run([cli, "auth", "status"], capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError) as error:
         return Check("claude login", False, f"could not run {cli}: {error}")
-    if finished.returncode != 0:
-        return Check("claude login", False, f"{cli} failed; run `claude login` to sign in with your subscription")
-    return Check("claude login", True, f"{finished.stdout.strip() or 'signed in'}", required=False)
+    try:
+        status = json.loads(finished.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return Check("claude login", False, "could not read `claude auth status`; run `claude login`")
+    if not status.get("loggedIn"):
+        return Check("claude login", False, "not signed in; run `claude login` to use your subscription")
+    return Check("claude login", True, f"signed in via {status.get('authMethod', 'unknown method')}")
 
 
 def _mathlib_check(config: Config) -> Check:

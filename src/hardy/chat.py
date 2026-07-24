@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -20,6 +21,11 @@ CHAT_TOOLS = [
     {"type": "function", "function": {"name": "record_name", "description": "Record the durable correspondence between a Lean declaration and its LaTeX label/name.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "latex_name": {"type": "string"}, "description": {"type": "string"}}, "required": ["formal_name", "latex_name", "description"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "request_assumption", "description": "Ask the human for permission to introduce an axiom when a result is unavailable. Never assume approval.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "lean_statement": {"type": "string"}, "latex_name": {"type": "string"}, "informal_statement": {"type": "string"}, "source": {"type": "string"}, "reason": {"type": "string"}}, "required": ["formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason"], "additionalProperties": False}}},
 ]
+
+# A migrated workspace carries a bounded tail of its old conversation, enough to
+# resume sensibly without pretending the whole history is still in context.
+MIGRATED_TURNS = 20
+MIGRATED_CHARACTERS = 8000
 
 SYSTEM_PROMPT = """You are Hardy, an interactive mathematical research agent. Explore mathematics with the user while maintaining linked formal and human artifacts.
 
@@ -62,6 +68,10 @@ class MathematicsSession:
         self.state_path = workspace / "session.json"
         self.transcript_path = workspace / "transcript.jsonl"
         self._make_runtime = make_runtime
+        # The SDK may call several tools at once, each on its own thread, but
+        # these run Lean, rewrite session.json, and stop to ask a human for
+        # approval. None of that is safe to interleave.
+        self._gate = threading.Lock()
         # State first: the runtime is built from the system prompt, which embeds
         # the manifest, and it resumes the provider thread the state remembers.
         self.state = self._read_state()
@@ -73,7 +83,7 @@ class MathematicsSession:
     def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
         return self._make_runtime(
             model=model,
-            system_prompt=SYSTEM_PROMPT + self._context(),
+            system_prompt=SYSTEM_PROMPT + self._context() + self._carried(session_id),
             specs=CHAT_TOOLS,
             dispatch=self._dispatch,
             cwd=self.workspace,
@@ -93,6 +103,30 @@ class MathematicsSession:
         self.state.update(provenance(self.runtime))
         _atomic_json(self.state_path, self.state)
         self._record({"type": "model", "reason": "switched", "previous": previous, **provenance(self.runtime)})
+
+    def _carried(self, session_id: str | None) -> str:
+        """What a workspace from before the SDK backend brings with it.
+
+        Its transcript is on disk but belongs to no provider thread, so without
+        this the first exchange after upgrading would start from nothing while
+        the artifacts on disk implied a conversation that had already happened.
+        """
+        if session_id or not self.transcript_path.exists():
+            return ""
+        said = []
+        for line in self.transcript_path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            content = (event.get("message") or {}).get("content")
+            if event.get("type") in {"user", "assistant"} and content:
+                said.append(f"{event['type']}: {content}")
+        if not said:
+            return ""
+        carried = "\n".join(said[-MIGRATED_TURNS:])[:MIGRATED_CHARACTERS]
+        self._record({"type": "migration", "carried_turns": min(len(said), MIGRATED_TURNS)})
+        return f"\n\nThis workspace predates the current provider session. Earlier conversation, for context only:\n{carried}"
 
     def _read_state(self) -> dict[str, Any]:
         if self.state_path.exists():
@@ -205,12 +239,13 @@ class MathematicsSession:
         for a tool, but only Hardy knows what running it produced, and a
         trajectory without the results is not an account of what happened.
         """
-        try:
-            result = self._tool(name, arguments)
-        except (KeyError, TypeError, ValueError) as error:
-            result = ToolResult(False, f"invalid tool call: {error}")
-        self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
-        return result
+        with self._gate:
+            try:
+                result = self._tool(name, arguments)
+            except (KeyError, TypeError, ValueError) as error:
+                result = ToolResult(False, f"invalid tool call: {error}")
+            self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
+            return result
 
     def _remember_thread(self) -> None:
         thread = getattr(self.runtime, "session_id", None)

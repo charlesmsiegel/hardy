@@ -75,8 +75,8 @@ Options:
   --bin-dir DIR     where the \`hardy\` command is linked (default $HARDY_BIN_DIR)
   -h, --help        show this message
 
-Environment: HARDY_MODEL, OPENAI_API_KEY, and ANTHROPIC_API_KEY, when set, are
-written to the config file without prompting.
+Environment: HARDY_MODEL, when set, is written to the config file without
+prompting. Authentication is your Claude Code login, not an API key.
 EOF
 }
 
@@ -298,6 +298,24 @@ ensure_latex() {
 	say "installed $(pdflatex --version 2>&1 | head -1)"
 }
 
+ensure_claude_cli() {
+	step "Checking the Claude Code CLI"
+	if command -v claude >/dev/null 2>&1; then
+		say "claude already installed: $(command -v claude)"
+	elif command -v npm >/dev/null 2>&1; then
+		say "installing @anthropic-ai/claude-code"
+		npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 ||
+			warn "npm could not install @anthropic-ai/claude-code; install it yourself"
+	else
+		# Node is not Hardy's to install, and guessing a package manager here
+		# would be worse than saying plainly what is missing.
+		warn "Node.js/npm not found: install Node, then 'npm install -g @anthropic-ai/claude-code'"
+	fi
+	command -v claude >/dev/null 2>&1 &&
+		{ claude auth status 2>/dev/null | grep -q '"loggedIn": *true' || say "run 'claude login' to sign in with your subscription"; }
+	true
+}
+
 # --- configuration ----------------------------------------------------------
 
 toml_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
@@ -308,8 +326,7 @@ write_config() {
 		return
 	fi
 	step "Writing $HARDY_CONFIG"
-	local model="${HARDY_MODEL:-}" key="${OPENAI_API_KEY:-}" base_url="${HARDY_BASE_URL:-}"
-	local anthropic_key="${ANTHROPIC_API_KEY:-}" backend="${HARDY_BACKEND:-}"
+	local model="${HARDY_MODEL:-}"
 	if [ -e "$HARDY_CONFIG" ]; then
 		say "config already exists; leaving your model and key untouched"
 		if [ "$SKIP_MATHLIB" = 0 ] && ! grep -q '^[[:space:]]*lean_project' "$HARDY_CONFIG"; then
@@ -319,31 +336,9 @@ write_config() {
 		return
 	fi
 	if [ -z "$model" ] && [ "$ASSUME_YES" = 0 ] && [ -t 0 ]; then
-		printf '\nHardy talks to Claude through the Anthropic Messages API, and to any\n'
-		printf 'OpenAI-compatible endpoint with native tool calling. The backend follows\n'
-		printf 'the model identity, and /model switches between them later.\n'
-		read -r -p "Model identity (e.g. claude-opus-5 or gpt-5.1; blank to skip): " model
-		# An explicit pin decides which credentials are wanted. The identity only
-		# guesses, and guessing against the pin asks for a key the run cannot use.
-		local wants="$backend"
-		if [ -z "$wants" ]; then
-			case "$model" in
-			claude-*) wants=anthropic ;;
-			?*) wants=openai ;;
-			esac
-		fi
-		[ -z "$model" ] && wants=""
-		case "$wants" in
-		anthropic)
-			read -r -s -p "Anthropic API key (blank to read \$ANTHROPIC_API_KEY at run time): " anthropic_key
-			printf '\n'
-			;;
-		openai)
-			read -r -p "API base URL [https://api.openai.com/v1]: " base_url
-			read -r -s -p "API key (blank to read \$OPENAI_API_KEY at run time): " key
-			printf '\n'
-			;;
-		esac
+		printf '\nHardy talks to Claude through your Claude Code subscription.\n'
+		printf 'There is no API key to supply; sign in once with `claude login`.\n'
+		read -r -p "Model identity [claude-opus-5]: " model
 	fi
 	mkdir -p "$(dirname "$HARDY_CONFIG")"
 	# Create the file empty and lock it down before the key is written to it.
@@ -352,13 +347,9 @@ write_config() {
 	{
 		printf '# Written by the Hardy installer. Every value can be overridden by a\n'
 		printf '# HARDY_* environment variable or a command-line flag.\n'
+		# Only settings the parser accepts: anything else makes every later
+		# Hardy invocation fail with "unknown settings".
 		[ -n "$model" ] && printf 'model = "%s"\n' "$(toml_escape "$model")"
-		# An explicit pin must outlive the installer: without it Hardy infers the
-		# backend from the identity, which is the case the pin exists to correct.
-		[ -n "$backend" ] && printf 'backend = "%s"\n' "$(toml_escape "$backend")"
-		[ -n "$base_url" ] && printf 'base_url = "%s"\n' "$(toml_escape "$base_url")"
-		[ -n "$key" ] && printf 'api_key = "%s"\n' "$(toml_escape "$key")"
-		[ -n "$anthropic_key" ] && printf 'anthropic_api_key = "%s"\n' "$(toml_escape "$anthropic_key")"
 		[ "$SKIP_MATHLIB" = 0 ] && printf 'lean_project = "%s"\n' "$(toml_escape "$LEAN_PROJECT")"
 		true
 	} >>"$HARDY_CONFIG"
@@ -423,6 +414,7 @@ hardy_install_main() {
 	ensure_elan
 	ensure_lean_project
 	ensure_latex
+	ensure_claude_cli
 	write_config
 	verify
 	summary

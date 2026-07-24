@@ -104,19 +104,8 @@ def written_config(tmp_path: Path, **environment: str) -> str:
     return target.read_text(encoding="utf-8")
 
 
-def test_an_unattended_install_persists_an_explicit_backend_pin(tmp_path: Path):
-    """Without the pin, Hardy infers the backend from the saved identity once the
-    installer environment is gone — the case the pin exists to correct."""
-    written = written_config(tmp_path, HARDY_MODEL="claude-gateway-id", HARDY_BACKEND="openai", OPENAI_API_KEY="sk-test")
-    assert 'model = "claude-gateway-id"' in written
-    assert 'backend = "openai"' in written
 
 
-def test_an_unattended_install_records_no_backend_when_none_is_pinned(tmp_path: Path):
-    written = written_config(tmp_path, HARDY_MODEL="claude-opus-5", ANTHROPIC_API_KEY="sk-ant")
-    assert 'model = "claude-opus-5"' in written
-    assert 'anthropic_api_key = "sk-ant"' in written
-    assert "backend" not in written
 
 
 def interactive_config(tmp_path: Path, answers: list[str], **environment: str) -> str:
@@ -140,14 +129,28 @@ def interactive_config(tmp_path: Path, answers: list[str], **environment: str) -
     return target.read_text(encoding="utf-8") if target.exists() else ""
 
 
-def test_an_interactive_install_asks_for_the_pinned_backend_not_the_identity(tmp_path: Path):
-    """A claude-* identity behind a pinned gateway needs the gateway's key; the
-    Anthropic key it would otherwise collect is unusable there."""
-    if shutil.which("script") is None:
-        pytest.skip("util-linux script is not available")
-    written = interactive_config(tmp_path, ["claude-gateway-id", "http://localhost:8000/v1", "sk-gateway"], HARDY_BACKEND="openai")
-    if not written:
-        pytest.skip("the installer did not reach the prompts in this environment")
-    assert 'backend = "openai"' in written
-    assert 'base_url = "http://localhost:8000/v1"' in written
-    assert "anthropic_api_key" not in written
+
+
+def test_an_unattended_install_writes_only_settings_the_parser_accepts(tmp_path: Path):
+    """A generated config with an unknown key makes every later Hardy
+    invocation fail with "unknown settings" — including the install-time doctor."""
+    from hardy import config as configuration
+
+    written = written_config(tmp_path, HARDY_MODEL="claude-opus-5", ANTHROPIC_API_KEY="sk-ant", OPENAI_API_KEY="sk-oai")
+    assert 'model = "claude-opus-5"' in written
+    assert "api_key" not in written and "base_url" not in written
+
+    target = tmp_path / "written.toml"
+    target.write_text(written, encoding="utf-8")
+    assert configuration.load(target).model == "claude-opus-5"
+
+
+def test_the_installer_installs_the_cli_the_runtime_needs(tmp_path: Path):
+    """`hardy doctor` requires the Claude Code CLI, so a full install that never
+    installs it would complete and then fail its own verification."""
+    source = (SCRIPTS / "lib/common.sh").read_text(encoding="utf-8")
+    assert "ensure_claude_cli" in source
+    assert "@anthropic-ai/claude-code" in source
+    assert source.index("ensure_claude_cli") < source.index("\n\tverify")
+    windows = POWERSHELL_SCRIPT.read_text(encoding="utf-8")
+    assert "Install-ClaudeCli" in windows and "@anthropic-ai/claude-code" in windows
