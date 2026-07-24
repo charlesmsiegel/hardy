@@ -67,6 +67,17 @@ class Config:
     anthropic_api_key: str = ""
     anthropic_api_key_env: str = DEFAULT_ANTHROPIC_API_KEY_ENV
     path: Path | None = None
+    requested_path: Path | None = None
+
+    @property
+    def config_path(self) -> Path:
+        """Where settings are read from and written to, existing or not.
+
+        `path` is None until the file exists, so it cannot answer this: a
+        `--config` naming a file yet to be created would otherwise send a write
+        to the platform default instead of the file the user asked for.
+        """
+        return self.requested_path or self.path or default_config_path()
 
     def active_backend(self) -> str:
         """Which provider the configured model implies, unless one is pinned."""
@@ -160,6 +171,7 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
         anthropic_api_key=text("anthropic_api_key", ""),
         anthropic_api_key_env=text("anthropic_api_key_env", DEFAULT_ANTHROPIC_API_KEY_ENV),
         path=path if path.exists() else None,
+        requested_path=path,
     )
 
 

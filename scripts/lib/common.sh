@@ -309,7 +309,7 @@ write_config() {
 	fi
 	step "Writing $HARDY_CONFIG"
 	local model="${HARDY_MODEL:-}" key="${OPENAI_API_KEY:-}" base_url="${HARDY_BASE_URL:-}"
-	local anthropic_key="${ANTHROPIC_API_KEY:-}"
+	local anthropic_key="${ANTHROPIC_API_KEY:-}" backend="${HARDY_BACKEND:-}"
 	if [ -e "$HARDY_CONFIG" ]; then
 		say "config already exists; leaving your model and key untouched"
 		if [ "$SKIP_MATHLIB" = 0 ] && ! grep -q '^[[:space:]]*lean_project' "$HARDY_CONFIG"; then
@@ -343,6 +343,9 @@ write_config() {
 		printf '# Written by the Hardy installer. Every value can be overridden by a\n'
 		printf '# HARDY_* environment variable or a command-line flag.\n'
 		[ -n "$model" ] && printf 'model = "%s"\n' "$(toml_escape "$model")"
+		# An explicit pin must outlive the installer: without it Hardy infers the
+		# backend from the identity, which is the case the pin exists to correct.
+		[ -n "$backend" ] && printf 'backend = "%s"\n' "$(toml_escape "$backend")"
 		[ -n "$base_url" ] && printf 'base_url = "%s"\n' "$(toml_escape "$base_url")"
 		[ -n "$key" ] && printf 'api_key = "%s"\n' "$(toml_escape "$key")"
 		[ -n "$anthropic_key" ] && printf 'anthropic_api_key = "%s"\n' "$(toml_escape "$anthropic_key")"

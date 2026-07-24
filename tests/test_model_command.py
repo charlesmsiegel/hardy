@@ -213,3 +213,13 @@ def test_a_discovered_identity_keeps_the_backend_that_reported_it(tmp_path: Path
     # The pin has to persist, since inference alone would send it to Anthropic.
     assert 'backend = "openai"' in path.read_text(encoding="utf-8")
     assert configuration.load(path).active_backend() == catalog.OPENAI
+
+
+def test_saving_targets_the_requested_config_even_when_absent(tmp_path: Path):
+    """A --config naming a file yet to be created must not send the write to the
+    platform default."""
+    requested = tmp_path / "fresh" / "config.toml"
+    start = configuration.load(requested, model="gpt-5.1", api_key="secret", anthropic_api_key="ant-secret")
+    cli.model_command("claude-opus-5", start, Recorder(), ask=answers("y"), out=lambda line: None)
+    assert requested.exists()
+    assert 'model = "claude-opus-5"' in requested.read_text(encoding="utf-8")

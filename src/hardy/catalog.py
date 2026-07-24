@@ -91,6 +91,25 @@ def is_local_endpoint(base_url: str) -> bool:
     return address.is_loopback or address.is_private
 
 
+# A /models listing says nothing about what a model can do, so these are matched
+# by name. Hardy needs chat with native tool calling; an embedding or audio model
+# accepted here would fail at the next turn and end the session.
+NOT_CHAT = (
+    "embed", "rerank", "moderation", "whisper", "tts", "audio", "transcribe",
+    "dall-e", "image", "sora", "video", "clip", "guard", "vision-encoder",
+)
+
+
+def is_chat_capable(identifier: str) -> bool:
+    """Whether an identifier is plausibly a chat model.
+
+    A guess, and deliberately a permissive one: this only decides what `/model`
+    offers, and any identifier can still be typed in by hand.
+    """
+    name = identifier.lower()
+    return not any(marker in name for marker in NOT_CHAT)
+
+
 def _get_json(url: str, headers: dict[str, str], timeout: float) -> dict:
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -119,7 +138,8 @@ def discover(backend: str, api_key: str, base_url: str, *, timeout: float = 10.0
     entries = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(entries, list):
         return []
-    return sorted({str(item["id"]) for item in entries if isinstance(item, dict) and item.get("id")})
+    identifiers = {str(item["id"]) for item in entries if isinstance(item, dict) and item.get("id")}
+    return sorted(identifier for identifier in identifiers if is_chat_capable(identifier))
 
 
 def merge(discovered: dict[str, list[str]]) -> list[ModelInfo]:

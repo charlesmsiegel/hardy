@@ -84,3 +84,36 @@ def test_every_supported_platform_has_an_installer():
     assert POWERSHELL_SCRIPT.exists()
     for name in SHELL_SCRIPTS:
         assert (SCRIPTS / name).exists()
+
+
+def written_config(tmp_path: Path, **environment: str) -> str:
+    """Run the installer's config writer alone and return the file it produced."""
+    if shutil.which("bash") is None:
+        pytest.skip("bash is not available")
+    target = tmp_path / "config.toml"
+    driver = tmp_path / "drive.sh"
+    driver.write_text(
+        "set -eu\n"
+        "WRITE_CONFIG=1; SKIP_MATHLIB=1; ASSUME_YES=1; LEAN_PROJECT=/tmp/lean\n"
+        f'HARDY_CONFIG="{target}"\n'
+        f'. "{SCRIPTS / "lib/common.sh"}"\n'
+        "write_config >/dev/null 2>&1\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["bash", str(driver)], check=True, env={**os.environ, **environment, "HOME": str(tmp_path)})
+    return target.read_text(encoding="utf-8")
+
+
+def test_an_unattended_install_persists_an_explicit_backend_pin(tmp_path: Path):
+    """Without the pin, Hardy infers the backend from the saved identity once the
+    installer environment is gone — the case the pin exists to correct."""
+    written = written_config(tmp_path, HARDY_MODEL="claude-gateway-id", HARDY_BACKEND="openai", OPENAI_API_KEY="sk-test")
+    assert 'model = "claude-gateway-id"' in written
+    assert 'backend = "openai"' in written
+
+
+def test_an_unattended_install_records_no_backend_when_none_is_pinned(tmp_path: Path):
+    written = written_config(tmp_path, HARDY_MODEL="claude-opus-5", ANTHROPIC_API_KEY="sk-ant")
+    assert 'model = "claude-opus-5"' in written
+    assert 'anthropic_api_key = "sk-ant"' in written
+    assert "backend" not in written
