@@ -218,7 +218,11 @@ class ClaudeStagedRuntime:
         pass
 
     def close(self) -> None:
-        pass
+        # The workflow calls this in a `finally`; without it every staged run
+        # leaks the CAS kernel subprocess, its pipes, and its drain threads
+        # until the whole Hardy process exits.
+        if self._cas is not None:
+            self._cas.session.close()
 
 
 def _json_object(text: str) -> str | None:
