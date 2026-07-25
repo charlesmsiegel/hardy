@@ -82,6 +82,43 @@ def test_an_exported_session_reproduces(name, executable, source, tmp_path) -> N
         session.close()
 
 
+def test_macaulay2_exports_cleanly_once_the_output_counter_reaches_two_digits(
+    tmp_path,
+) -> None:
+    """A wider counter must not become a wider indent.
+
+    M2 prints a value as a net and pads every row after the first to the width
+    of the `oN = ` prefix -- five columns at `o4`, six at `o12`. `sanitize`
+    blanked the digits and left that padding alone, so the identical
+    polynomial compared unequal as soon as the two sides' counters differed in
+    digit count. They differ by construction: a live kernel spends two extra
+    statements per cell on its own sentinel markers and the exported script
+    spends none, so the session is roughly three counters per cell ahead of the
+    file it publishes. Somewhere past the ninth counter one side is still one
+    digit wide while the other is two, the alignment row differs by a single
+    space, and the export is reported `diverged` over a cell that reproduced
+    exactly -- and `_restore` poisons the live session on the same comparison.
+
+    Twelve cells, each printing a polynomial with an exponent row above it, is
+    enough to walk both counters past nine at their different rates.
+    """
+    session = session_for("macaulay2", "M2", tmp_path)
+    try:
+        session.probe_version()
+        assert session.execute("R = QQ[x, y]").status == "ok"
+        for power in range(2, 14):
+            record = session.execute(f"x^{power} + y^{power}")
+            assert record.status == "ok", record.model_dump_json(indent=2)
+            # The exponent row is the whole point: a value printed on one line
+            # has no padding to get wrong.
+            assert record.stdout.count("\n") >= 2, record.model_dump_json(indent=2)
+        report = export_session(session, tmp_path / "cas")
+        assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+        assert report.reproduces, report.model_dump_json(indent=2)
+    finally:
+        session.close()
+
+
 @pytest.mark.parametrize(("name", "executable", "source"), BACKENDS)
 def test_a_truncated_capture_is_not_accepted(name, executable, source, tmp_path) -> None:
     """A real interpreter, a real overflow, and no claim of success.
