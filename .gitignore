@@ -11,3 +11,7 @@ lean_project/
 # belong to their own branches, never to this checkout.
 .worktrees/
 .claude/worktrees/
+
+# Subagent-driven development scratch: ledgers, briefs, and review packages.
+# The git history is the record; this is the working area that produces it.
+.superpowers/
