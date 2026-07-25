@@ -224,7 +224,14 @@ class Macaulay2Backend(_SentinelBackend):
     # a `:[N]:` interpreter-depth marker between the `(FRAME)` and `error:`
     # that the original guess did not have, and both landed on stderr, not
     # stdout -- see `classify`/`sanitize` below for how that is handled.
-    error_pattern = re.compile(r"(?m)^stdio:\d+:\d+:\(\d+\):\[\d+\]: error:")
+    #
+    # The `:[N]:` segment is made optional, not required: both samples came
+    # from one M2 build, and a build (or error path) that omits it -- the
+    # form the pre-verification guess used -- must still classify as
+    # "error". A false negative here is accepted into replayable state and
+    # the session rebuilds from a cell that never worked, which is strictly
+    # worse than a false positive; there is no cost to the wider pattern.
+    error_pattern = re.compile(r"(?m)^stdio:\d+:\d+:\(\d+\)(?::\[\d+\])?: error:")
     # M2 echoes each `iN : ` input prompt (and the source line behind it) even
     # when stdin is not a tty, and prints an `oN` counter before every
     # non-suppressed statement's value. Observed verbatim in the same run: a
@@ -243,7 +250,10 @@ class Macaulay2Backend(_SentinelBackend):
     # brief.
     _prompt_line = re.compile(r"(?m)^i\d+ : .*\n")
     _output_counter = re.compile(r"(?m)^o\d+(?=[ :=])")
-    _value_marker = re.compile(r"(?m)^o\s*=\s*")
+    # `[ \t]`, not `\s`: `\s` matches newlines too, which would let this
+    # cross onto whatever comes after the marker's own line instead of
+    # stopping at it.
+    _value_marker = re.compile(r"(?m)^o[ \t]*=[ \t]*")
 
     def sanitize(self, stdout: str) -> str:
         stdout = self._prompt_line.sub("", stdout)
@@ -255,7 +265,18 @@ class Macaulay2Backend(_SentinelBackend):
         # 'o = 1.26.06' -- the `o = ` value marker `sanitize` leaves in place
         # is exactly right for an ordinary cell but wrong for a version
         # string quoted into an exported script's header comment.
-        return self._value_marker.sub("", sanitized_stdout, count=1)
+        value = self._value_marker.sub("", sanitized_stdout, count=1).strip()
+        # `version#"VERSION"` is a plain string, and the one probe transcript
+        # captured directly (CI run 30168174637) showed no further lines --
+        # but M2 prints an `o : ClassName` annotation after some result
+        # types (confirmed for a ring element: `o4 : R`), and `sanitize`
+        # would leave that as `o : String` rather than strip it, same as it
+        # leaves `o = ` for an ordinary cell. Taking only the first line is
+        # correct either way: the version string itself never contains a
+        # newline, so this is a no-op when the annotation line is absent
+        # and the fix when it is not.
+        first_line, _, _ = value.partition("\n")
+        return first_line
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         # `-s` was a guess and is obsolete in Macaulay2 1.26.06 (CI run
@@ -423,18 +444,32 @@ class _Kernel:
         together. Reading stderr the instant the stdout marker is found (as
         this used to do) can win a race against the drain thread that has not
         yet appended bytes already sitting in the OS pipe, silently reading a
-        broken M2 cell as clean. Waiting for two consecutive checks to see no
-        growth is cheap when stderr was already complete (one `quiet` tick)
-        and correct when it was still landing.
+        broken M2 cell as clean.
+
+        `quiet` seconds have to pass with no growth in `self.err`, measured
+        against the wall clock -- not "the next wakeup shows no growth",
+        which the stdout drain thread's `notify_all()` on every chunk
+        defeats: it wakes this wait long before `quiet` has actually
+        elapsed, so a between-wakeups check would report "settled" on a
+        stdout-driven spurious wakeup microseconds in, never having waited
+        at all.
         """
         with self._changed:
             deadline = time.monotonic() + timeout
-            previous = -1
-            current = len(self.err)
-            while current != previous and time.monotonic() < deadline:
-                previous = current
-                self._changed.wait(quiet)
-                current = len(self.err)
+            last_growth = time.monotonic()
+            last_len = len(self.err)
+            while True:
+                now = time.monotonic()
+                if now - last_growth >= quiet:
+                    break
+                remaining = deadline - now
+                if remaining <= 0:
+                    break
+                self._changed.wait(min(quiet - (now - last_growth), remaining))
+                current_len = len(self.err)
+                if current_len != last_len:
+                    last_len = current_len
+                    last_growth = time.monotonic()
             return bytes(self.err).decode("utf-8", errors="replace")
 
     def kill(self) -> None:

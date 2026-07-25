@@ -1,2 +1,3 @@
 stdio:2:1:(3):[1]: error: division by zero
 stdio:2:16:(3):[1]: error: no method for adjacent objects:
+stdio:1:1:(3): error: expected a ring
