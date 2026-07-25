@@ -27,8 +27,18 @@ The first experiment should prove one small theorem end to end with:
 The primary slice gives one model bounded tools to check and save
 Lean, compile and save LaTeX, inspect the workspace, maintain a formal-to-LaTeX
 naming registry, and request explicit permission for assumptions with provenance.
-It saves the conversation and artifacts after every change. The earlier one-shot
-proof experiment remains available as `hardy prove`, but is secondary.
+It saves the conversation and artifacts after every change.
+
+Alongside it, `hardy prove` stages a single claim explicitly: Hardy proposes a
+formalization, you approve or revise it, the approved statement is frozen under
+a hash, a proof is sought against that frozen statement, and an independent
+verifier rebuilds and rechecks the result before anything is graded. That
+verifier reads `#print axioms`, so a proof standing on `sorryAx` or on an
+undeclared axiom is reported as such rather than as a theorem. `hardy accept`
+runs the checked-in acceptance problems and cross-checks the artifacts they
+produce; with `--force-budget-exhaustion-test` it exercises the whole pipeline
+with no model, no network, and no toolchain. The earlier one-shot proof
+experiment remains available as `hardy batch`, but is secondary.
 
 ## Models and authentication
 
@@ -129,8 +139,13 @@ the installer points at the shared Mathlib project; set it to your own Lake
 project — in the config file or with `--lean-project` — to import your own Lean
 modules. Without it, Lean runs in the current directory as before.
 
-Use `hardy chat --workspace path` to select a workspace. The retained batch check
-is `hardy prove examples/true.json --output hardy-output`. Global options such as
+Use `hardy chat --workspace path` to select a workspace. A staged run is
+`hardy prove "every prime above two is odd"`, and its artifacts — request,
+frozen claim, trajectory, Lean source, verification, paper, and manifest — are
+written under `runs_root`. The retained batch check is
+`hardy batch examples/true.json --output hardy-output`. `hardy setup` finds and
+records the pinned toolchain, verifying the Tectonic download against its
+recorded digest before installing it. Global options such as
 `--model`, `--lean-command`, and `--latex-command` go before the subcommand. Use
 `uv run --extra test pytest` for the hermetic suite, which substitutes fake model,
 Lean, and LaTeX processes and does not establish a real Mathlib installation.

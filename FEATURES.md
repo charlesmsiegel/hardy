@@ -41,14 +41,16 @@ Priority labels are sequencing hints:
 
 ## Lean interaction and proof tools
 
-- **Now (partial):** invoke a caller-supplied Lean 4 + Mathlib environment and return structured
-  elaboration errors and goals.
+- **Now (implemented):** invoke a caller-supplied Lean 4 + Mathlib environment and return structured
+  elaboration errors and goals. Lean is asked for `--json`, so severities,
+  positions and unsolved goals are parsed values rather than matched text.
 - **Now (implemented):** tools to check a complete proof, inspect a goal after a tactic prefix, and
   search available declarations.
 - **Now (implemented):** preserve the original statement and reject completed artifacts that use
   `sorry` or `admit`.
-- **Next:** audit `#print axioms`; distinguish standard axioms, forbidden
-  `sorryAx`, and explicitly declared paper assumptions.
+- **Now (implemented):** audit `#print axioms`; distinguish standard axioms,
+  forbidden `sorryAx`, and explicitly declared paper assumptions. A missing
+  axiom report fails the run rather than reading as an absence of axioms.
 - **Next:** incremental proving with `sorry`-backed sketches while ensuring only
   the final grade requires a hole-free proof.
 - **Later:** persistent REPL sessions, warm worker pools, pristine reset per run,
@@ -74,7 +76,8 @@ Priority labels are sequencing hints:
   before the SDK backend carries a bounded tail of its conversation forward.
 - **Known gap:** the SDK owns the turn loop, so turn limits are enforced by the
   provider and only the wall clock is Hardy's. Tracked in issue #23.
-- **Next:** a Codex backend for ChatGPT subscriptions, on the same shape.
+- **Now (implemented):** a Codex backend for ChatGPT subscriptions, on the same
+  shape, shipped as the optional `codex` extra.
 - **Next:** token and cost budgets with reserve/settle accounting.
 - **Next:** reclaim enough of the loop to enforce Hardy's own bounds and run
   cheap Lean closers before spending a model turn (issue #23).
@@ -208,3 +211,23 @@ a trivial theorem. The primary interactive shell additionally has fake-process
 coverage for linked Lean/LaTeX artifacts and assumption approval. What remains is
 an actual, recorded model + pinned Mathlib/LaTeX run on a nontrivial exploration,
 plus pinning toolchain identities rather than accepting caller-provided commands.
+
+## Staged proving, verification, and acceptance
+
+- **Now (implemented) — Frozen claims:** an approved formalization is hashed with
+  its verifier environment, persisted, and read back before it is proved against.
+- **Now (implemented) — Independent final verification:** the theorem is rebuilt
+  from the frozen claim and rechecked by a fresh Lean; nothing the model reported
+  is trusted. A changed signature or a forbidden token ends the run.
+- **Now (implemented) — Controlled documents:** the model supplies prose and Hardy
+  writes the LaTeX, escaping every field into a fixed template and compiling with
+  a checksum-pinned Tectonic bundle. A failed compile is stored saying so.
+- **Now (implemented) — Durable runs:** artifacts are written whole or not at all,
+  the trajectory is sequenced and flushed, and the manifest records the hash of
+  every artifact alongside the prompt-set hash and the budgets in force.
+- **Now (implemented) — Bounded Lean tools over MCP:** the same tool runtime the
+  agent uses in process is served over stdio, so the official proof-check budget
+  costs the same whichever transport reached it.
+- **Now (implemented) — Acceptance:** `hardy accept` cross-checks a run's manifest,
+  trajectory, Lean source and document against each other, and its deterministic
+  path needs no model, network, or toolchain.
