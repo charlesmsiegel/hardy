@@ -41,7 +41,13 @@ from .domain import FrozenModel, RunLimits
 from .process import child_environment
 
 HEADER_BYTES = 10
-SENTINEL = "«hardy-end:{nonce}»"
+# A cell is bracketed by two markers, not trailed by one. A pipe preserves
+# write order, so whatever the interpreter printed for the *previous* cell is
+# necessarily before this cell's begin marker in the stream, however late it
+# happens to arrive -- which is what lets the extractor exclude it without
+# ever having to guess whether it has fully arrived yet.
+SENTINEL_BEGIN = "«hardy-begin:{nonce}»"
+SENTINEL_END = "«hardy-end:{nonce}»"
 BackendName = Literal["sympy", "singular", "macaulay2"]
 
 # Distinguishable non-answers from a read: the deadline passed, or the stream
@@ -149,8 +155,16 @@ class _SentinelBackend:
         raise NotImplementedError
 
     def frame(self, source: str, nonce: str) -> bytes:
-        marker = SENTINEL.format(nonce=nonce)
-        return (source.rstrip() + "\n" + self.echo.format(marker=marker) + "\n").encode("utf-8")
+        begin = SENTINEL_BEGIN.format(nonce=nonce)
+        end = SENTINEL_END.format(nonce=nonce)
+        return (
+            self.echo.format(marker=begin)
+            + "\n"
+            + source.rstrip()
+            + "\n"
+            + self.echo.format(marker=end)
+            + "\n"
+        ).encode("utf-8")
 
     def classify(self, text: str) -> Literal["ok", "error"]:
         return "error" if self.error_pattern.search(text) else "ok"
@@ -215,12 +229,6 @@ class _Kernel:
         self._marker = b""
         self.marker_seen = False
         self._tail = b""
-        # Where the cell currently being scanned for starts in `out`. A
-        # sentinel cell's trailing prompt can still be arriving when the next
-        # cell is armed; `floor` lets the extractor ignore whatever is already
-        # sitting there instead of deleting it (and racing whatever hasn't
-        # arrived yet, as a wholesale clear would).
-        self.floor = 0
         self._changed = threading.Condition()
         cwd.mkdir(parents=True, exist_ok=True)
         self.process = subprocess.Popen(
@@ -273,14 +281,15 @@ class _Kernel:
             self._marker = marker
             self.marker_seen = False
             self._tail = b""
-            self.floor = 0
 
     def consume(self, upto: int) -> None:
         """Drop the bytes belonging to the cell just answered, keep the rest.
 
-        Clearing the whole buffer instead would discard a prompt that has
-        already arrived but race with one still in flight, so the next cell
-        would sometimes open with the previous cell's trailing output.
+        A prompt printed after the end marker belongs to no cell. It is not
+        deleted here on the theory that it might not have arrived yet -- it
+        might not have -- but that no longer matters: the *next* cell's begin
+        marker, once found, is proof that everything before it, arrived or
+        not at the time this runs, is behind it in the stream.
         """
         with self._changed:
             del self.out[:upto]
@@ -288,18 +297,13 @@ class _Kernel:
             self._marker = b""
             self.marker_seen = False
             self._tail = b""
-            self.floor = 0
 
     def rearm(self, marker: bytes) -> None:
-        """Scan fresh for `marker` without discarding what is already in `out`.
+        """Scan fresh for the end `marker` without discarding what is in `out`.
 
-        `consume()` already trimmed the previous cell's own frame away, so
-        whatever remains here belongs to no cell -- a prompt printed after its
-        marker. Deleting it now would still race whatever hasn't arrived yet
-        (the same bug a wholesale `clear()` had), so it is left in place and
-        `floor` records where it ends instead: the extractor only looks at
-        bytes that stream in from here on, so residue already sitting in `out`
-        cannot be mistaken for this cell's own output.
+        Nothing here needs to guess whether the previous cell's trailing
+        prompt has fully arrived: the begin marker this cell is about to send
+        settles that by pipe order alone, once the extractor finds it.
         """
         with self._changed:
             self.err.clear()
@@ -307,7 +311,6 @@ class _Kernel:
             self._marker = marker
             self.marker_seen = False
             self._tail = b""
-            self.floor = len(self.out)
 
     def send(self, payload: bytes) -> bool:
         stdin = self.process.stdin
@@ -493,27 +496,38 @@ class CasSession:
 
             return extract_length
 
-        marker = SENTINEL.format(nonce=nonce).encode("utf-8")
+        begin = SENTINEL_BEGIN.format(nonce=nonce).encode("utf-8")
+        end = SENTINEL_END.format(nonce=nonce).encode("utf-8")
 
         def extract_sentinel(raw: bytes) -> Any:
             kernel = self._kernel
-            # Bytes before `floor` are residue from the previous cell's
-            # prompt, retained by `rearm()` rather than raced away by a
-            # wholesale clear. Only what streams in after it can belong to
-            # this cell, so the window -- not the raw buffer -- is scanned.
-            window = raw[kernel.floor :] if kernel is not None else raw
-            marker_seen = kernel is not None and kernel.marker_seen
-            if marker not in window and not marker_seen:
+            # A pipe preserves write order, so whatever the previous cell
+            # printed -- including a prompt still arriving when this cell was
+            # armed -- is necessarily before this cell's begin marker in the
+            # stream, however late it happens to show up. Waiting for the
+            # begin marker before looking at anything excludes it without
+            # ever having to guess whether it has fully arrived.
+            begin_at = raw.find(begin)
+            if begin_at == -1:
                 return None
-            body = window.split(marker)[0].decode("utf-8", errors="replace")
+            start = begin_at + len(begin)
+            marker_seen = kernel is not None and kernel.marker_seen
+            end_at = raw.find(end, start)
+            if end_at == -1 and not marker_seen:
+                return None
+            if end_at != -1:
+                body = raw[start:end_at].decode("utf-8", errors="replace")
+                consumed = end_at + len(end)
+            else:
+                # Retention stopped before the end marker; scanning continued
+                # via `marker_seen`, but the bytes themselves are gone.
+                body = raw[start:].decode("utf-8", errors="replace")
+                consumed = len(raw)
             outcome = CellOutcome(
                 status=self.backend.classify(body),
                 stdout=body,
                 capture_truncated=bool(kernel and kernel.truncated),
             )
-            floor = kernel.floor if kernel is not None else 0
-            found = window.find(marker)
-            consumed = floor + (found + len(marker) if found != -1 else len(window))
             return outcome, consumed
 
         return extract_sentinel
@@ -526,8 +540,8 @@ class CasSession:
         if self.backend.framing == "length":
             kernel.clear()
         else:
-            marker = SENTINEL.format(nonce=nonce).encode()
-            kernel.rearm(marker)
+            end = SENTINEL_END.format(nonce=nonce).encode()
+            kernel.rearm(end)
         if not kernel.send(self.backend.frame(source, nonce)):
             return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
         deadline = time.monotonic() + self.limits.cas_cell_seconds
