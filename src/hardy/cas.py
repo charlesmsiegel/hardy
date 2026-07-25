@@ -263,6 +263,20 @@ class _Kernel:
             self.marker_seen = False
             self._tail = b""
 
+    def consume(self, upto: int) -> None:
+        """Drop the bytes belonging to the cell just answered, keep the rest.
+
+        Clearing the whole buffer instead would discard a prompt that has
+        already arrived but race with one still in flight, so the next cell
+        would sometimes open with the previous cell's trailing output.
+        """
+        with self._changed:
+            del self.out[:upto]
+            self.truncated = False
+            self._marker = b""
+            self.marker_seen = False
+            self._tail = b""
+
     def send(self, payload: bytes) -> bool:
         stdin = self.process.stdin
         if stdin is None:
@@ -436,13 +450,14 @@ class CasSession:
                     payload = json.loads(body.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     return DESYNCHRONISED
-                return CellOutcome(
+                outcome = CellOutcome(
                     status=payload.get("status", "ok"),
                     stdout=payload.get("stdout", ""),
                     stderr=payload.get("stderr", ""),
                     value_repr=payload.get("value_repr", ""),
                     capture_truncated=bool(payload.get("capture_truncated")),
                 )
+                return outcome, HEADER_BYTES + length
 
             return extract_length
 
@@ -450,14 +465,18 @@ class CasSession:
 
         def extract_sentinel(raw: bytes) -> Any:
             kernel = self._kernel
-            if marker not in raw and not (kernel is not None and kernel.marker_seen):
+            marker_seen = kernel is not None and kernel.marker_seen
+            if marker not in raw and not marker_seen:
                 return None
             body = raw.split(marker)[0].decode("utf-8", errors="replace")
-            return CellOutcome(
+            outcome = CellOutcome(
                 status=self.backend.classify(body),
                 stdout=body,
                 capture_truncated=bool(kernel and kernel.truncated),
             )
+            found = raw.find(marker)
+            consumed = found + len(marker) if found != -1 else len(raw)
+            return outcome, consumed
 
         return extract_sentinel
 
@@ -481,9 +500,11 @@ class CasSession:
             # A stream that desynchronised cannot be trusted to be answering
             # the cell we sent, so it is a death rather than a bad answer.
             return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
+        outcome, consumed = reply
         if self.backend.framing == "sentinel":
-            reply = reply.model_copy(update={"stderr": kernel.stderr_text()})
-        return reply
+            kernel.consume(consumed)
+            outcome = outcome.model_copy(update={"stderr": kernel.stderr_text()})
+        return outcome
 
     # ------------------------------------------------------------- execute
 
