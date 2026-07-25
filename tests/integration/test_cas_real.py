@@ -155,46 +155,52 @@ def test_a_truncated_capture_is_not_accepted(name, executable, source, tmp_path)
         session.close()
 
 
-def test_debug_macaulay2_script_transcript(tmp_path) -> None:
-    """TEMPORARY: raw transcript, and what M2 offers for suppressing its echo."""
+def test_debug_macaulay2_echo_options(tmp_path) -> None:
+    """TEMPORARY: which flags stop M2 echoing, and does output ever abut it."""
+    import shutil
     import subprocess
 
-    from hardy.cas import run_exported_script
+    if shutil.which("M2") is None:
+        pytest.skip("M2 is not installed on this machine")
 
-    print("=== M2 HELP ===")
-    print(subprocess.run(["M2", "--help"], capture_output=True, text=True).stdout)
-    print(subprocess.run(["M2", "--help"], capture_output=True, text=True).stderr)
-
-    session = session_for("macaulay2", "M2", tmp_path)
-    try:
-        session.probe_version()
-        session.execute("R = QQ[x, y]")
-        for power in range(2, 4):
-            session.execute(f"x^{power} + y^{power}")
-        export_session(session, tmp_path / "cas")
-        script = tmp_path / "cas" / "session.m2"
-        print("=== SCRIPT FILE ===")
-        print(repr(script.read_text(encoding="utf-8")))
-        run = run_exported_script(
-            backend=session.backend,
-            command=None,
-            script=script,
-            cwd=tmp_path / "dbg",
-            timeout=120,
-            max_output_bytes=256 * 1024,
+    script = tmp_path / "probe.m2"
+    script.write_text(
+        "-- header comment
+"
+        "-- second header line
+"
+        "
+"
+        "-- --- cell 0 (model)
+"
+        "R = QQ[x, y]
+"
+        "
+"
+        "-- --- cell 1 (model)
+"
+        "print \"     indented output\"
+"
+        "
+"
+        "-- --- cell 2 (model)
+"
+        "x^12 + y^12
+"
+        "
+",
+        encoding="utf-8",
+    )
+    for flags in (
+        ["--no-readline", "-q"],
+        ["--no-readline", "-q", "--no-prompts"],
+        ["--no-readline", "-q", "--no-tty"],
+        ["--no-readline", "-q", "--no-prompts", "--no-tty"],
+    ):
+        probe = subprocess.run(
+            ["M2", *flags], input=script.read_bytes(), capture_output=True, timeout=120
         )
-        print("=== RAW SCRIPT STDOUT ===")
-        print(repr(run.stdout))
-        for flags in (["--no-readline", "-q", "--silent"], ["--no-readline", "-q", "--print-width", "0"]):
-            probe = subprocess.run(
-                ["M2", *flags],
-                input=script.read_bytes(),
-                capture_output=True,
-                timeout=120,
-            )
-            print(f"=== FLAGS {flags} rc={probe.returncode} ===")
-            print(repr(probe.stdout.decode("utf-8", "replace")))
-            print(repr(probe.stderr.decode("utf-8", "replace")[:500]))
-    finally:
-        session.close()
+        print(f"=== FLAGS {' '.join(flags)} rc={probe.returncode} ===")
+        print(repr(probe.stdout.decode("utf-8", "replace")))
+        print("STDERR " + repr(probe.stderr.decode("utf-8", "replace")[:300]))
     raise AssertionError("temporary debug dump")
