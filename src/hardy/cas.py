@@ -222,7 +222,13 @@ class SympyBackend:
             return source
         trailing = parsed.body[-1]
         start = _source_offset(source, trailing.lineno, trailing.col_offset)
-        end = _source_offset(source, trailing.end_lineno or trailing.lineno, trailing.end_col_offset or 0)
+        end = _source_offset(
+            source,
+            trailing.end_lineno or trailing.lineno,
+            trailing.end_col_offset or 0,
+        )
+        # Wrapping in a call also parenthesises it, so an expression spread
+        # over several lines stays one expression in the script.
         return f"{source[:start]}sys.displayhook({source[start:end]}){source[end:]}"
 
     def parse_version(self, sanitized_stdout: str) -> str:
