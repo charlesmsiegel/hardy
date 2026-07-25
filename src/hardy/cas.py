@@ -138,6 +138,9 @@ class SympyBackend:
         payload = json.dumps({"source": source}, ensure_ascii=False).encode("utf-8")
         return f"{len(payload):0{HEADER_BYTES}d}".encode("ascii") + payload
 
+    def parse_version(self, sanitized_stdout: str) -> str:
+        return sanitized_stdout
+
 
 class _SentinelBackend:
     """An interpreter reading stdin, framed by a nonce it is asked to echo.
@@ -174,6 +177,15 @@ class _SentinelBackend:
         """Backend-specific stdout cleanup, applied to a cell's captured body
         before it is recorded. Identity by default; Macaulay2 overrides it."""
         return stdout
+
+    def parse_version(self, sanitized_stdout: str) -> str:
+        """Pull the bare version string out of an already-`sanitize`d reply.
+
+        Identity by default. Macaulay2 overrides it: `sanitize` deliberately
+        leaves an `o = ` value marker in place for ordinary cells (it is
+        meaningful context there), but `probe_version` wants just the value.
+        """
+        return sanitized_stdout
 
 
 class SingularBackend(_SentinelBackend):
@@ -231,10 +243,19 @@ class Macaulay2Backend(_SentinelBackend):
     # brief.
     _prompt_line = re.compile(r"(?m)^i\d+ : .*\n")
     _output_counter = re.compile(r"(?m)^o\d+(?=[ :=])")
+    _value_marker = re.compile(r"(?m)^o\s*=\s*")
 
     def sanitize(self, stdout: str) -> str:
         stdout = self._prompt_line.sub("", stdout)
         return self._output_counter.sub("o", stdout)
+
+    def parse_version(self, sanitized_stdout: str) -> str:
+        # Confirmed of CI run 30168046413's "Debug sanitized M2 stdout" step:
+        # without this, session.version came back as the literal string
+        # 'o = 1.26.06' -- the `o = ` value marker `sanitize` leaves in place
+        # is exactly right for an ordinary cell but wrong for a version
+        # string quoted into an exported script's header comment.
+        return self._value_marker.sub("", sanitized_stdout, count=1)
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         # `-s` was a guess and is obsolete in Macaulay2 1.26.06 (CI run
@@ -535,7 +556,8 @@ class CasSession:
                     f"{self.backend.name} kernel did not answer a version query: "
                     f"{(outcome.stderr or outcome.stdout).strip()[:200]}"
                 )
-            self.version = (outcome.value_repr or outcome.stdout).strip().strip("'\"") or "unknown"
+            raw = self.backend.parse_version(outcome.value_repr or outcome.stdout)
+            self.version = raw.strip().strip("'\"") or "unknown"
             return self.version
 
     def _extractor(self, nonce: str) -> Callable[[bytes], Any]:
