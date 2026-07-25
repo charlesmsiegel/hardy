@@ -1,0 +1,2 @@
+   ? `thisIsNotDefined` is not defined
+   ? error occurred in or before STDIN line 1: `thisIsNotDefined;`

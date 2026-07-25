@@ -1,0 +1,4 @@
+o1 = R
+o1 : PolynomialRing
+     2    2
+o2 = x  + y
