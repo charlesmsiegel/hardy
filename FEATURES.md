@@ -108,9 +108,10 @@ Priority labels are sequencing hints:
   rather than advertising calls that can only fail.
 - **Known gap:** no interrupt. A runaway cell is stopped only by its timeout,
   which kills the kernel and costs the accumulated state. Tracked in issue #33.
-- **Later:** Singular and Macaulay2 adapters are written against the sentinel
-  protocol but unverified until CI runs somewhere those binaries exist; their
-  tests carry the `real_toolchain` marker.
+- **Now (implemented):** Singular and Macaulay2 adapters, verified on Linux CI
+  against the real binaries. They remain unavailable natively on Windows —
+  Macaulay2 has no Windows build and Singular arrives through Cygwin — which is
+  why SymPy is the default.
 - **Later:** a bounded artifact reader, if binding the last value to `_` proves
   insufficient for reaching an over-large result.
 
