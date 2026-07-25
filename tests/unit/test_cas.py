@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 import time
 
 import pytest
@@ -239,6 +241,34 @@ def test_an_interrupted_final_append_does_not_destroy_the_log(tmp_path, cas_sess
     reopened.close()
     again = cas_session()
     assert [record.source for record in again.accepted()] == ["a", "b", "c"]
+
+
+def test_a_torn_log_that_cannot_be_repaired_still_opens(tmp_path, cas_session) -> None:
+    """The repair must not become the failure it was written to prevent.
+
+    Removing the partial bytes is a write, and it happens inside the
+    constructor. On a read-only or full workspace an `OSError` escaping there
+    takes chat startup down for the same torn record the repair exists to
+    survive — the same failure, arriving by a different route. A log that can
+    be read but not mended still opens; the fragment is skipped in memory, and
+    the next append fails loudly on its own account.
+    """
+    session = cas_session()
+    session.execute("a")
+    session.execute("b")
+    session.close()
+
+    log = tmp_path / "cells.jsonl"
+    with log.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write('{"seq": 2, "segment": 0, "author": "mod')
+    log.chmod(stat.S_IREAD)
+    try:
+        if os.access(log, os.W_OK):  # pragma: no cover - root, or a filesystem
+            pytest.skip("this filesystem does not honour the read-only bit")
+        reopened = cas_session()
+        assert [record.source for record in reopened.accepted()] == ["a", "b"]
+    finally:
+        log.chmod(stat.S_IREAD | stat.S_IWRITE)
 
 
 def test_corruption_before_the_final_record_is_still_refused(tmp_path, cas_session) -> None:
