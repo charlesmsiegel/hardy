@@ -1,0 +1,5 @@
+This result was too large to return, so only a prefix is shown above.
+{%- if artifact %} The whole captured output was written to `{{ artifact }}`.{% endif %}
+{%- if capture_truncated %} Capture itself reached its byte limit, so even that copy is missing this cell's tail.{% endif %}
+
+The value is still bound to `_` in the live session. Inspect it with a further cell — `len(_)`, `_[0]`, `_.args[:3]` — rather than trying to read the artifact, which you cannot open.

@@ -20,7 +20,7 @@ from .process import ProcessResult, ProcessSpec, run_process
 
 
 class ToolStatus(FrozenModel):
-    name: Literal["backend", "elan", "lean", "lake", "tectonic"]
+    name: Literal["backend", "elan", "lean", "lake", "tectonic", "cas"]
     path: Path | None
     version: str | None
     healthy: bool
@@ -148,13 +148,42 @@ def discover_environment(
         runner,
     )
     mathlib_ready = _smoke_mathlib(config, lake, runner)
+    cas_status = _cas_status(config)
     tools = (backend_status, elan_status, lean_status, lake_status, tectonic_status)
     healthy = authenticated and mathlib_ready and all(tool.healthy for tool in tools)
+    # A run is healthy without computer algebra. The status is reported so a
+    # result records which kernel was reachable, not to gate the run on one.
+    tools = tools + (cas_status,)
     return EnvironmentReport(
         tools=tools,
         authenticated=authenticated,
         mathlib_ready=mathlib_ready,
         healthy=healthy,
+    )
+
+
+def _cas_status(config: Config) -> ToolStatus:
+    """Start the kernel and ask its version: found is not the same as working."""
+    from .cas_tools import build_runtime
+
+    with tempfile.TemporaryDirectory(prefix="hardy-cas-") as directory:
+        runtime, detail = build_runtime(
+            backend_name=config.cas_backend,
+            command=config.cas_command,
+            limits=config.limits,
+            log_path=Path(directory) / "cells.jsonl",
+            cwd=Path(directory),
+        )
+        version = None
+        if runtime is not None:
+            version = runtime.session.version
+            runtime.session.close()
+    return ToolStatus(
+        name="cas",
+        path=config.cas_command,
+        version=version,
+        healthy=runtime is not None,
+        detail=detail if runtime is None else "smoke test passed",
     )
 
 

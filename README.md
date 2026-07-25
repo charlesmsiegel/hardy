@@ -29,6 +29,16 @@ Lean, compile and save LaTeX, inspect the workspace, maintain a formal-to-LaTeX
 naming registry, and request explicit permission for assumptions with provenance.
 It saves the conversation and artifacts after every change.
 
+A persistent computer algebra session sits alongside them, so the question of
+what is worth proving can be answered by computing rather than by guessing.
+State carries between cells, `/cas` lets you drive the same kernel yourself, and
+`cas_export` writes a script and a notebook after replaying every cell in a
+fresh kernel to check they reproduce. SymPy is the default because it is a
+Python dependency and works everywhere; Singular and Macaulay2 are far stronger
+for algebraic geometry and are used when configured. No computation is
+evidence — only Lean's kernel verifies anything, and the verifier never reads a
+CAS result.
+
 Alongside it, `hardy prove` stages a single claim explicitly: Hardy proposes a
 formalization, you approve or revise it, the approved statement is frozen under
 a hash, a proof is sought against that frozen statement, and an independent
@@ -138,6 +148,18 @@ base. Imports in `Main.lean` resolve through the configured `lean_project`, whic
 the installer points at the shared Mathlib project; set it to your own Lake
 project — in the config file or with `--lean-project` — to import your own Lean
 modules. Without it, Lean runs in the current directory as before.
+
+Computer algebra artifacts live under `.hardy/cas/`: an append-only
+`cells.jsonl` recording every cell and who ran it, and, once exported,
+`session.py` (or `.sing`/`.m2`), `session.ipynb`, and an `export.json` naming
+both files by digest and recording which cells reproduced. In a session, `/cas
+<source>` runs one cell, a bare `/cas` opens a block ended by `/end`, and `/cas
+state`, `/cas reset`, and `/cas export` do the obvious things. Select a backend
+with `cas_backend` (`sympy`, `singular`, or `macaulay2`) and point `cas_command`
+at the executable when it is not on `PATH`; `hardy doctor` starts the kernel and
+reports its version, treating a named non-default backend as required and the
+built-in SymPy as advisory. Cells are executed without isolation, like Lean and
+LaTeX.
 
 Use `hardy chat --workspace path` to select a workspace. A staged run is
 `hardy prove "every prime above two is odd"`, and its artifacts — request,

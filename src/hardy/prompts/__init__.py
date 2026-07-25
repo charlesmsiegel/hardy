@@ -86,6 +86,17 @@ FORMALIZATION_PROMPT = render("staged/formalization")
 WRITEUP_PROMPT = render("staged/writeup")
 STRUCTURE_INSTRUCTION = "\n\n" + render("staged/structure") + "\n"
 CHAT_SYSTEM_PROMPT = render("chat")
+# Appended only when a CAS backend was actually discovered, so a session with
+# no kernel never describes tools it does not have.
+def chat_cas_prompt(backend: str) -> str:
+    return render("chat_cas", backend=backend)
+
+
+def cas_spill_note(*, artifact: str | None, capture_truncated: bool) -> str:
+    """What the model is told when an answer was too big to hand back."""
+    return render("cas_spill", artifact=artifact, capture_truncated=capture_truncated)
+
+
 BATCH_SYSTEM_PROMPT = render("batch/system")
 
 

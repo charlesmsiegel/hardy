@@ -21,6 +21,8 @@ from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 
+from .cas_export import ExportReport, export_session
+from .cas_tools import CasCellResult, CasStateResult, CasToolRuntime, build_runtime
 from .config import load as load_config
 from .domain import FrozenClaim, freeze_claim
 from .lean import DeclarationInspection, DeclarationSearch, LeanCheckResult, LeanService
@@ -128,11 +130,56 @@ class LeanToolRuntime:
 
 
 _runtime: LeanToolRuntime | None = None
+_cas: CasToolRuntime | None = None
+_cas_directory: Path | None = None
 
 
 def configure_runtime(runtime: LeanToolRuntime) -> None:
     global _runtime
     _runtime = runtime
+
+
+def _configured_cas() -> CasToolRuntime:
+    if _cas is None:
+        raise RuntimeError("no computer algebra backend is configured")
+    return _cas
+
+
+def register_cas_tools(runtime: CasToolRuntime, directory: Path) -> None:
+    """Advertise the CAS tools only once a backend has actually answered.
+
+    Registration cannot be a module-level decorator here. Those run at import,
+    long before `load_runtime` has discovered whether a kernel exists, and a
+    tool that can only fail is worse than an absent one — a client spends a
+    call learning what Hardy already knew.
+    """
+    global _cas, _cas_directory
+    _cas, _cas_directory = runtime, directory
+
+    @mcp.tool()
+    def cas_run(source: str) -> CasCellResult:
+        """Execute one cell in the persistent computer algebra session.
+
+        State carries over between cells. A trailing expression's value is
+        reported and bound to `_`. Cells are executed without any sandbox.
+        """
+        return _configured_cas().run(source)
+
+    @mcp.tool()
+    def cas_state() -> CasStateResult:
+        """List the accepted cells that built the current session state."""
+        return _configured_cas().state()
+
+    @mcp.tool()
+    def cas_reset() -> CasStateResult:
+        """Discard the session state and start a clean kernel."""
+        return _configured_cas().reset()
+
+    @mcp.tool()
+    def cas_export() -> ExportReport:
+        """Export the session, replaying it in a fresh kernel to check it reproduces."""
+        assert _cas_directory is not None
+        return export_session(_configured_cas().session, _cas_directory)
 
 
 def load_runtime(environ: Mapping[str, str]) -> LeanToolRuntime:
@@ -174,6 +221,23 @@ def load_runtime(environ: Mapping[str, str]) -> LeanToolRuntime:
         observation_bytes=config.limits.model_observation_bytes,
     )
     configure_runtime(runtime)
+
+    # Discovery before advertisement: an absent or broken backend leaves this
+    # server with Lean tools only, which is the honest description of it.
+    store = RunStore(run_dir, UUID(int=0))
+    cas_directory = run_dir / "cas"
+    cas_runtime, _ = build_runtime(
+        backend_name=config.cas_backend,
+        command=config.cas_command,
+        limits=config.limits,
+        log_path=cas_directory / "cells.jsonl",
+        cwd=cas_directory,
+        spill=lambda name, text: store.write_text(
+            PurePosixPath(f"process/{name}"), text
+        ).relative_path,
+    )
+    if cas_runtime is not None:
+        register_cas_tools(cas_runtime, cas_directory)
     return runtime
 
 

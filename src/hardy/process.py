@@ -68,7 +68,7 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
     child = subprocess.Popen(
         spec.argv,
         cwd=spec.cwd,
-        env=_child_environment(spec.env),
+        env=child_environment(spec.env),
         shell=False,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
@@ -144,7 +144,7 @@ def _decode_output(value: bytes | str | None) -> str:
     return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _child_environment(explicit: dict[str, str]) -> dict[str, str]:
+def child_environment(explicit: dict[str, str]) -> dict[str, str]:
     environment = {
         key: value for key, value in os.environ.items() if key.upper() in RUNTIME_ENVIRONMENT_KEYS
     }

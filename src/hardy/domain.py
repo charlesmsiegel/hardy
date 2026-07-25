@@ -34,6 +34,12 @@ class RunLimits(FrozenModel):
     formalization_proposals: int = 5
     model_observation_bytes: int = 32 * 1024
     process_output_bytes: int = 4 * 1024 * 1024
+    # A CAS cell is bounded twice: `cas_output_bytes` caps what Hardy captures
+    # from the kernel at all, while `model_observation_bytes` caps what is
+    # handed back. A cell can be fully recorded and still answered in summary.
+    cas_cell_seconds: int = 60
+    cas_session_seconds: int = 900
+    cas_output_bytes: int = 256 * 1024
 
 
 class FormalizationProposal(FrozenModel):
