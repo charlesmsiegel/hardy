@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 import time
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -257,6 +259,61 @@ def test_the_exported_script_run_is_captured_within_the_output_cap(tmp_path) -> 
     assert run.timed_out is False
     assert run.capture_truncated is True
     assert len(run.stdout.encode("utf-8")) <= 4_096
+
+
+class _SlowReaderBackend:
+    """A `script_stdin` backend whose interpreter stops reading almost at once.
+
+    Only the two attributes `run_exported_script` actually consults. Singular
+    and Macaulay2 are fed exactly this way, and either can stop consuming
+    stdin -- a cell that computes for a while does it every time.
+    """
+
+    script_stdin = True
+
+    def __init__(self, child: Path) -> None:
+        self.child = child
+
+    def script_argv(self, command, script) -> tuple[str, ...]:
+        return (sys.executable, "-u", str(self.child))
+
+
+def test_a_script_that_stops_reading_its_input_still_hits_the_deadline(tmp_path) -> None:
+    """The deadline has to hold while the payload is still being written.
+
+    `subprocess.run(input=...)` multiplexes the writes and the reads inside
+    `communicate()`. Bounding the capture by hand lost that: the payload was
+    written straight through on the calling thread, *before* the deadline loop
+    was reached, so once it passed the OS pipe buffer and the child stopped
+    draining, the write blocked with no timeout in force and nothing left able
+    to kill the child. Verified as an unbounded hang, not a slow return.
+
+    The payload is 8 MiB because a small one fits the pipe buffer and never
+    blocks -- a test written against a short script cannot fail here.
+    """
+    child = tmp_path / "slow_reader.py"
+    child.write_text(
+        "import sys, time\nsys.stdin.buffer.read(1024)\ntime.sleep(300)\n",
+        encoding="utf-8",
+    )
+    script = tmp_path / "session.sing"
+    script.write_bytes(b"x" * (8 * 1024 * 1024))
+
+    started = time.monotonic()
+    run = run_exported_script(
+        backend=_SlowReaderBackend(child),
+        command=None,
+        script=script,
+        cwd=tmp_path / "run",
+        timeout=3.0,
+        max_output_bytes=4_096,
+    )
+    elapsed = time.monotonic() - started
+
+    assert run.timed_out is True
+    assert run.returncode is None
+    # Near the deadline, not near the child's own 300s sleep.
+    assert elapsed < 60, f"took {elapsed:g}s for a 3s deadline"
 
 
 def test_unknown_backends_are_rejected_by_name() -> None:
