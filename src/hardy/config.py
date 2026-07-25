@@ -42,7 +42,15 @@ SETTINGS = {
     "tectonic": "HARDY_TECTONIC",
     "tectonic_bundle": "HARDY_TECTONIC_BUNDLE",
     "tectonic_bundle_sha256": "HARDY_TECTONIC_BUNDLE_SHA256",
+    "cas_backend": "HARDY_CAS_BACKEND",
+    "cas_command": "HARDY_CAS_COMMAND",
 }
+
+# SymPy is the default because it is a Python dependency and therefore always
+# present. Singular and Macaulay2 are far better at algebraic geometry and far
+# worse at Windows, so they are opt-in rather than assumed.
+CAS_BACKENDS = ("sympy", "singular", "macaulay2")
+DEFAULT_CAS_BACKEND = "sympy"
 
 
 def default_config_path() -> Path:
@@ -76,6 +84,10 @@ class Config:
     tectonic: Path = Path(DEFAULT_TECTONIC)
     tectonic_bundle: str = DEFAULT_TECTONIC_BUNDLE
     tectonic_bundle_sha256: str = DEFAULT_TECTONIC_BUNDLE_SHA256
+    # The computer algebra kernel. `cas_command` is unset for SymPy, which runs
+    # on Hardy's own interpreter; the other backends need an executable.
+    cas_backend: str = DEFAULT_CAS_BACKEND
+    cas_command: Path | None = None
     limits: RunLimits = field(default_factory=RunLimits)
     path: Path | None = None
     requested_path: Path | None = None
@@ -132,6 +144,12 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
     except (TypeError, ValueError):
         raise ValueError(f"lean_timeout must be a number of seconds, not {values['lean_timeout']!r}") from None
 
+    cas_backend = text("cas_backend", DEFAULT_CAS_BACKEND)
+    # Rejected here rather than at first use: an unknown backend is a typo in a
+    # config file, and the place to say so is where the file is read.
+    if cas_backend not in CAS_BACKENDS:
+        raise ValueError(f"cas_backend must be one of {list(CAS_BACKENDS)}, not {cas_backend!r}")
+
     return Config(
         model=str(values["model"]) if values.get("model") else DEFAULT_MODEL,
         lean_command=tuple(shlex.split(text("lean_command", DEFAULT_LEAN_COMMAND))),
@@ -145,6 +163,8 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
         tectonic=location("tectonic") or Path(DEFAULT_TECTONIC),
         tectonic_bundle=text("tectonic_bundle", DEFAULT_TECTONIC_BUNDLE),
         tectonic_bundle_sha256=text("tectonic_bundle_sha256", DEFAULT_TECTONIC_BUNDLE_SHA256),
+        cas_backend=cas_backend,
+        cas_command=location("cas_command"),
         path=path if path.exists() else None,
         requested_path=path,
     )

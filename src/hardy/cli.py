@@ -10,12 +10,14 @@ import shutil
 from collections.abc import Callable
 from importlib import metadata
 from importlib.resources import files
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
-from . import catalog, claude_runtime, doctor
+from . import cas_tools, catalog, claude_runtime, doctor
 from . import config as configuration
+from .cas import CasError
+from .cas_export import export_session
 from .chat import MathematicsSession
 from .lean import LeanTools
 from .models import Request
@@ -118,28 +120,109 @@ def model_command(argument: str, config: configuration.Config, session: Mathemat
     return updated
 
 
+def _read_block(ask: Callable[[str], str] = input) -> str:
+    """Read a multi-line cell, terminated by a line reading `/end`.
+
+    Deliberately not the chat loop's `input().strip()`: stripping a cell would
+    destroy Python's indentation and silently change what the user wrote.
+    """
+    lines: list[str] = []
+    while True:
+        try:
+            line = ask("cas| ")
+        except (EOFError, KeyboardInterrupt):
+            return ""
+        if line.strip() == "/end":
+            return "\n".join(lines)
+        lines.append(line)
+
+
+def cas_command(
+    argument: str,
+    session: MathematicsSession,
+    *,
+    ask: Callable[[str], str] = input,
+    out: Callable[[str], Any] = print,
+) -> None:
+    """The human's own way into the same kernel the model is using."""
+    if session.cas is None:
+        out("No computer algebra backend is available. `hardy doctor` says why.")
+        return
+    argument = argument.strip()
+    try:
+        if argument == "state":
+            state = session.cas.state()
+            out(f"{state.backend} {state.version or '?'} — kernel {state.kernel}, "
+                f"segment {state.segment}, {state.seconds_remaining}s left")
+            for line in state.accepted:
+                out(f"  {line}")
+            return
+        if argument == "reset":
+            session.cas.reset()
+            out("CAS session reset; the next cell starts a clean kernel.")
+            return
+        if argument == "export":
+            report = export_session(session.cas.session, session.workspace / "cas")
+            out(f"Wrote {report.script_path} and {report.notebook_path}")
+            out(f"Replay: {report.verified} verified, {report.diverged} diverged, "
+                f"{report.failed} failed, {report.unverified} unverified")
+            return
+        source = argument or _read_block(ask)
+        if not source.strip():
+            return
+        # Human cells go into the same log, under the same lock, and are
+        # replayed and exported exactly like the model's.
+        result = session.cas.run(source, author="human")
+        for stream in (result.stdout, result.stderr):
+            if stream.strip():
+                out(stream.rstrip())
+        if result.value_repr:
+            out(result.value_repr)
+        if result.note:
+            out(f"({result.note})")
+    except CasError as error:
+        out(f"CAS: {error}")
+
+
 def _chat(config: configuration.Config, parser: argparse.ArgumentParser) -> int:
-    session = MathematicsSession(config.workspace, runtime_factory(str(config.model)), config.lean_command, config.latex_command, _confirm_assumption, lean_project=config.lean_project, lean_timeout=config.lean_timeout)
+    cas, cas_detail = cas_tools.build_runtime(
+        backend_name=config.cas_backend,
+        command=config.cas_command,
+        limits=config.limits,
+        log_path=config.workspace / "cas" / "cells.jsonl",
+        cwd=config.workspace / "cas",
+    )
+    session = MathematicsSession(config.workspace, runtime_factory(str(config.model)), config.lean_command, config.latex_command, _confirm_assumption, lean_project=config.lean_project, lean_timeout=config.lean_timeout, cas=cas)
     print("Hardy — interactive mathematics workspace")
     print(f"Workspace: {config.workspace}    Model: {config.model}  (Claude Code subscription)")
     print(f"Lean project: {config.lean_project or 'current directory'}")
-    print(f"WARNING: {WARNING} LaTeX is also executed without isolation.")
-    print("Type /model to change models and /exit to leave. Your transcript and artifacts are saved as you work.\n")
-    while True:
-        try:
-            text = input("you> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return 0
-        if text in {"/exit", "/quit"}:
-            return 0
-        if text == "/model" or text.startswith("/model "):
-            config = model_command(text[len("/model"):], config, session)
-            print()
-            continue
-        if not text:
-            continue
-        print(f"hardy> {session.send(text)}\n")
+    print(f"Computer algebra: {cas_detail if cas else 'unavailable — ' + cas_detail}")
+    warning = f"WARNING: {WARNING} LaTeX is also executed without isolation."
+    print(warning + (" So are computer algebra cells." if cas else ""))
+    print("Type /model to change models, /cas to compute, and /exit to leave. Your transcript and artifacts are saved as you work.\n")
+    try:
+        while True:
+            try:
+                text = input("you> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return 0
+            if text in {"/exit", "/quit"}:
+                return 0
+            if text == "/model" or text.startswith("/model "):
+                config = model_command(text[len("/model"):], config, session)
+                print()
+                continue
+            if text == "/cas" or text.startswith("/cas "):
+                cas_command(text[len("/cas"):], session)
+                print()
+                continue
+            if not text:
+                continue
+            print(f"hardy> {session.send(text)}\n")
+    finally:
+        if cas is not None:
+            cas.session.close()
 
 
 def _batch(args: argparse.Namespace, config: configuration.Config, parser: argparse.ArgumentParser) -> int:
@@ -165,7 +248,13 @@ class ConsoleTerminal:
     def acknowledge_unsafe_execution(self) -> bool:
         # A typed acknowledgement rather than a keystroke: running unsandboxed
         # generated code is worth one deliberate sentence.
-        self._output(f"WARNING: {WARNING} LaTeX is also executed without isolation.")
+        # Every kind of generated code this run can execute is named. A staged
+        # run has no chat banner, so this sentence is the only place a user
+        # learns that computer algebra cells run here too.
+        self._output(
+            f"WARNING: {WARNING} LaTeX and computer algebra cells are also "
+            "executed without isolation."
+        )
         return self._input("Type I UNDERSTAND to continue: ").strip() == "I UNDERSTAND"
 
     def show_formalization(self, proposal: Any, elaboration: Any) -> None:
@@ -367,6 +456,17 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
             return CodexRuntime(client=Codex(), store=store, config_path=config_path)
         from .staged import ClaudeStagedRuntime
 
+        cas_directory = store.path / "cas"
+        cas_runtime, _ = cas_tools.build_runtime(
+            backend_name=config.cas_backend,
+            command=config.cas_command,
+            limits=config.limits,
+            log_path=cas_directory / "cells.jsonl",
+            cwd=cas_directory,
+            spill=lambda name, text: store.write_text(
+                PurePosixPath(f"process/{name}"), text
+            ).relative_path,
+        )
         return ClaudeStagedRuntime(
             store=store,
             lean_runtime_factory=lambda claim: LeanToolRuntime(
@@ -376,6 +476,8 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
                 official_checks=config.limits.official_checks,
                 observation_bytes=config.limits.model_observation_bytes,
             ),
+            cas_runtime=cas_runtime,
+            cas_directory=cas_directory,
         )
 
     def staged_doctor(value: configuration.Config) -> Any:

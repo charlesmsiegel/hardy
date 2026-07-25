@@ -86,6 +86,34 @@ Priority labels are sequencing hints:
 - **Later:** summarize failed attempts into compact lessons rather than replaying
   entire transcripts; measure whether summarization loses needed context.
 
+## Computer algebra
+
+- **Now (implemented):** a persistent CAS kernel, shared by the interactive
+  chat, staged runs, and the MCP server through one bounded runtime, so a cell
+  costs the same budget whichever transport asked for it. SymPy by default;
+  Singular and Macaulay2 when `cas_backend` names them.
+- **Now (implemented):** state carries between cells. Replay is recovery and
+  verification rather than the execution path, because recomputing a Gröbner
+  basis every turn is not affordable.
+- **Now (implemented):** a rebuild after a kernel death compares every replayed
+  cell against its record and poisons the session on divergence. Running
+  without error is not the same as recovering.
+- **Now (implemented):** export writes a backend-native script and an `.ipynb`,
+  replays them in a fresh kernel, compares stdout, stderr, and value repr, and
+  records a per-cell verdict in both artifacts plus an `export.json` naming both
+  files by digest. A diverged export is written and marked, not withheld.
+- **Now (implemented):** the human drives the same kernel through `/cas`, and
+  those cells enter the same log, replay, and export as the model's.
+- **Now (implemented):** an absent backend registers no tools on any binding,
+  rather than advertising calls that can only fail.
+- **Known gap:** no interrupt. A runaway cell is stopped only by its timeout,
+  which kills the kernel and costs the accumulated state. Tracked in issue #33.
+- **Later:** Singular and Macaulay2 adapters are written against the sentinel
+  protocol but unverified until CI runs somewhere those binaries exist; their
+  tests carry the `real_toolchain` marker.
+- **Later:** a bounded artifact reader, if binding the last value to `_` proves
+  insufficient for reaching an over-large result.
+
 ## Search and orchestration
 
 - **Now (implemented):** iterative repair—submit, observe Lean feedback, revise, repeat.

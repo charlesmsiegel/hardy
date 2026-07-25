@@ -9,10 +9,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from .cas import CasError
+from .cas_export import export_session
+from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .latex import LatexTools
 from .lean import LeanTools
 from .models import Request, ToolResult
-from .prompts import CHAT_SYSTEM_PROMPT
+from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
 
 CHAT_TOOLS = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file. This does not save it.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -56,9 +59,12 @@ def _atomic_json(path: Path, value: Any) -> None:
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None):
         self.workspace = workspace
         self.confirm = confirm
+        # None when no backend was discovered. Nothing downstream advertises a
+        # cas_* tool in that case, rather than offering one that always fails.
+        self.cas = cas
         self.workspace.mkdir(parents=True, exist_ok=True)
         placeholder = Request("example : True", "interactive workspace", ("Mathlib",))
         self.lean = LeanTools(placeholder, lean_command, timeout=lean_timeout, project=lean_project)
@@ -79,10 +85,13 @@ class MathematicsSession:
         self._sync_provenance()
 
     def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
+        prompt = SYSTEM_PROMPT
+        if self.cas is not None:
+            prompt += "\n\n" + chat_cas_prompt(self.cas.session.backend.name)
         return self._make_runtime(
             model=model,
-            system_prompt=SYSTEM_PROMPT + self._context() + self._carried(session_id),
-            specs=CHAT_TOOLS,
+            system_prompt=prompt + self._context() + self._carried(session_id),
+            specs=CHAT_TOOLS + (CAS_TOOLS if self.cas is not None else []),
             dispatch=self._dispatch,
             cwd=self.workspace,
             session_id=session_id,
@@ -198,6 +207,8 @@ class MathematicsSession:
             if result.ok:
                 (self.workspace / "writeup.tex").write_text(source.rstrip() + "\n", encoding="utf-8")
             return result
+        if name in CAS_TOOL_NAMES:
+            return self._cas_tool(name, arguments)
         if name == "read_workspace":
             payload = {"manifest": self.state}
             for filename in ("Main.lean", "writeup.tex"):
@@ -225,6 +236,36 @@ class MathematicsSession:
                 _atomic_json(self.state_path, self.state)
             declaration = f"axiom {proposal['formal_name']} : {proposal['lean_statement']}"
             return ToolResult(True, f"User approved. Declare exactly `{declaration}` and disclose source `{proposal['source']}` in the writeup.")
+        return ToolResult(False, f"unknown tool: {name}")
+
+    def _cas_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        """The computer algebra tools. Errors are answers, not exceptions.
+
+        A model that asked for a cell and got a traceback learns nothing it can
+        act on; a model told the budget is gone, or the session is poisoned and
+        needs a reset, can do something about it.
+        """
+        if self.cas is None:
+            return ToolResult(False, "no computer algebra backend is configured")
+        try:
+            if name == "cas_run":
+                result = self.cas.run(str(arguments["source"]))
+                return ToolResult(result.status == "ok", result.model_dump_json())
+            if name == "cas_state":
+                return ToolResult(True, self.cas.state().model_dump_json())
+            if name == "cas_reset":
+                return ToolResult(True, self.cas.reset().model_dump_json())
+            if name == "cas_export":
+                report = export_session(self.cas.session, self.workspace / "cas")
+                self.state["cas_export"] = {
+                    "script": report.script_path,
+                    "notebook": report.notebook_path,
+                    "reproduces": report.reproduces,
+                }
+                _atomic_json(self.state_path, self.state)
+                return ToolResult(True, report.model_dump_json())
+        except CasError as error:
+            return ToolResult(False, str(error))
         return ToolResult(False, f"unknown tool: {name}")
 
     def send(self, text: str) -> str:

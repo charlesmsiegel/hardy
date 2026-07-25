@@ -19,6 +19,9 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from .cas import CasError
+from .cas_export import export_session
+from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .claude_runtime import ClaudeAgentRuntime
 from .codex_runtime import ProofSubmission
 from .domain import FrozenClaim
@@ -101,17 +104,26 @@ class ClaudeStagedRuntime:
         store: RunStore,
         lean_runtime_factory: Any,
         runtime_class: type = ClaudeAgentRuntime,
+        cas_runtime: CasToolRuntime | None = None,
+        cas_directory: Path | None = None,
     ) -> None:
         self._store = store
         self._lean_runtime_factory = lean_runtime_factory
         self._runtime_class = runtime_class
+        # Offered in every stage, including formalization: computing an example
+        # is often how you find out what the statement should say. It carries no
+        # authority — the verifier never reads any of it.
+        self._cas = cas_runtime
+        self._cas_directory = cas_directory
         self._threads: list[StagedThread] = []
 
     def start(self, *, model: str, run_dir: Path, claim: FrozenClaim | None) -> StagedThread:
         # Before a claim is approved there is nothing to check a proof against,
         # so the formalizing stage is given no Lean tools at all.
         lean_runtime = self._lean_runtime_factory(claim) if claim is not None else None
-        specs = TOOLS if lean_runtime is not None else []
+        specs = list(TOOLS) if lean_runtime is not None else []
+        if self._cas is not None:
+            specs = specs + CAS_TOOLS
         runtime = self._runtime_class(
             model,
             system_prompt=BASE_INSTRUCTIONS + "\n\n" + DEVELOPER_INSTRUCTIONS,
@@ -129,8 +141,30 @@ class ClaudeStagedRuntime:
 
         self._store.append("claude." + str(event.get("type", "event")), event, phase=RunPhase.PROVING)
 
+    def _cas_dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        if self._cas is None:
+            return ToolResult(False, "no computer algebra backend is configured")
+        try:
+            if name == "cas_run":
+                result = self._cas.run(str(arguments["source"]))
+                return ToolResult(result.status == "ok", result.model_dump_json())
+            if name == "cas_state":
+                return ToolResult(True, self._cas.state().model_dump_json())
+            if name == "cas_reset":
+                return ToolResult(True, self._cas.reset().model_dump_json())
+            if name == "cas_export":
+                if self._cas_directory is None:
+                    return ToolResult(False, "this run has nowhere to write a CAS export")
+                report = export_session(self._cas.session, self._cas_directory)
+                return ToolResult(True, report.model_dump_json())
+        except (CasError, KeyError, TypeError, ValueError) as error:
+            return ToolResult(False, f"CAS: {error}")
+        return ToolResult(False, f"unknown tool: {name}")
+
     def _dispatcher(self, lean_runtime: Any):
         def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
+            if name in CAS_TOOL_NAMES:
+                return self._cas_dispatch(name, arguments)
             if lean_runtime is None:
                 return ToolResult(False, "no Lean tools are available in this stage")
             try:

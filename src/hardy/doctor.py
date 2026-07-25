@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Config
+from .config import DEFAULT_CAS_BACKEND, Config
 from .lean import LeanTools
 from .models import Request
 
@@ -102,6 +102,31 @@ def _mathlib_check(config: Config) -> Check:
     return Check("mathlib", result.ok, detail)
 
 
+def _cas_check(config: Config) -> Check:
+    """Start the configured kernel and ask it what it is.
+
+    Required only when a non-default backend was named. Asking for Singular and
+    not having it is a broken machine; not having installed anything is the
+    ordinary case, and SymPy is a dependency, so its absence is a warning.
+    """
+    import tempfile
+
+    from .cas_tools import build_runtime
+
+    required = config.cas_backend != DEFAULT_CAS_BACKEND
+    with tempfile.TemporaryDirectory(prefix="hardy-cas-") as directory:
+        runtime, detail = build_runtime(
+            backend_name=config.cas_backend,
+            command=config.cas_command,
+            limits=config.limits,
+            log_path=Path(directory) / "cells.jsonl",
+            cwd=Path(directory),
+        )
+        if runtime is not None:
+            runtime.session.close()
+    return Check("cas", runtime is not None, detail, required=required)
+
+
 def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
     """Report whether this machine can actually run an interactive Hardy session."""
     checks = [
@@ -123,6 +148,7 @@ def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
         ok, detail = _probe([latex_executable, "--version"], timeout=60)
         checks.append(Check("latex", ok, detail))
 
+    checks.append(_cas_check(config))
     checks.append(Check("model", bool(config.model), config.model or "unset; set model in the config file or HARDY_MODEL"))
     checks.extend(_subscription_checks())
 
