@@ -38,19 +38,3 @@ jobs:
           M2 --version
       - name: Real-backend tests
         run: uv run --extra test pytest tests/integration/test_cas_real.py -v -m real_toolchain
-      - name: Debug sanitized M2 stdout (temporary, task-4 confirmation)
-        run: |
-          uv run python -c "
-          from pathlib import Path
-          import tempfile
-          from hardy.cas import CasSession, backend_for
-          from hardy.domain import RunLimits
-          with tempfile.TemporaryDirectory() as d:
-              session = CasSession(backend=backend_for('macaulay2'), command=None,
-                  log_path=Path(d) / 'cells.jsonl', limits=RunLimits(cas_cell_seconds=60), cwd=Path(d))
-              print('version:', repr(session.probe_version()))
-              record = session.execute('R = QQ[x, y]; f = x^2 + y^2; f')
-              print('status:', record.status)
-              print('stdout:', repr(record.stdout))
-              session.close()
-          "
