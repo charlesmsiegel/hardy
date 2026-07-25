@@ -215,6 +215,12 @@ class _Kernel:
         self._marker = b""
         self.marker_seen = False
         self._tail = b""
+        # Where the cell currently being scanned for starts in `out`. A
+        # sentinel cell's trailing prompt can still be arriving when the next
+        # cell is armed; `floor` lets the extractor ignore whatever is already
+        # sitting there instead of deleting it (and racing whatever hasn't
+        # arrived yet, as a wholesale clear would).
+        self.floor = 0
         self._changed = threading.Condition()
         cwd.mkdir(parents=True, exist_ok=True)
         self.process = subprocess.Popen(
@@ -255,6 +261,11 @@ class _Kernel:
                 self._changed.notify_all()
 
     def clear(self, marker: bytes = b"") -> None:
+        """Discard everything read so far and scan fresh for `marker`.
+
+        Only for the length path: the driver emits exactly one frame and
+        nothing else, so there is never anything worth keeping behind it.
+        """
         with self._changed:
             self.out.clear()
             self.err.clear()
@@ -262,6 +273,7 @@ class _Kernel:
             self._marker = marker
             self.marker_seen = False
             self._tail = b""
+            self.floor = 0
 
     def consume(self, upto: int) -> None:
         """Drop the bytes belonging to the cell just answered, keep the rest.
@@ -276,6 +288,26 @@ class _Kernel:
             self._marker = b""
             self.marker_seen = False
             self._tail = b""
+            self.floor = 0
+
+    def rearm(self, marker: bytes) -> None:
+        """Scan fresh for `marker` without discarding what is already in `out`.
+
+        `consume()` already trimmed the previous cell's own frame away, so
+        whatever remains here belongs to no cell -- a prompt printed after its
+        marker. Deleting it now would still race whatever hasn't arrived yet
+        (the same bug a wholesale `clear()` had), so it is left in place and
+        `floor` records where it ends instead: the extractor only looks at
+        bytes that stream in from here on, so residue already sitting in `out`
+        cannot be mistaken for this cell's own output.
+        """
+        with self._changed:
+            self.err.clear()
+            self.truncated = False
+            self._marker = marker
+            self.marker_seen = False
+            self._tail = b""
+            self.floor = len(self.out)
 
     def send(self, payload: bytes) -> bool:
         stdin = self.process.stdin
@@ -465,17 +497,23 @@ class CasSession:
 
         def extract_sentinel(raw: bytes) -> Any:
             kernel = self._kernel
+            # Bytes before `floor` are residue from the previous cell's
+            # prompt, retained by `rearm()` rather than raced away by a
+            # wholesale clear. Only what streams in after it can belong to
+            # this cell, so the window -- not the raw buffer -- is scanned.
+            window = raw[kernel.floor :] if kernel is not None else raw
             marker_seen = kernel is not None and kernel.marker_seen
-            if marker not in raw and not marker_seen:
+            if marker not in window and not marker_seen:
                 return None
-            body = raw.split(marker)[0].decode("utf-8", errors="replace")
+            body = window.split(marker)[0].decode("utf-8", errors="replace")
             outcome = CellOutcome(
                 status=self.backend.classify(body),
                 stdout=body,
                 capture_truncated=bool(kernel and kernel.truncated),
             )
-            found = raw.find(marker)
-            consumed = found + len(marker) if found != -1 else len(raw)
+            floor = kernel.floor if kernel is not None else 0
+            found = window.find(marker)
+            consumed = floor + (found + len(marker) if found != -1 else len(window))
             return outcome, consumed
 
         return extract_sentinel
@@ -485,8 +523,11 @@ class CasSession:
         kernel = self._kernel
         assert kernel is not None
         nonce = f"{time.monotonic_ns():x}"
-        marker = b"" if self.backend.framing == "length" else SENTINEL.format(nonce=nonce).encode()
-        kernel.clear(marker)
+        if self.backend.framing == "length":
+            kernel.clear()
+        else:
+            marker = SENTINEL.format(nonce=nonce).encode()
+            kernel.rearm(marker)
         if not kernel.send(self.backend.frame(source, nonce)):
             return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
         deadline = time.monotonic() + self.limits.cas_cell_seconds
