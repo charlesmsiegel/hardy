@@ -5,15 +5,21 @@ build-backend = "hatchling.build"
 [project]
 name = "hardy-prover"
 version = "0.1.0"
-description = "A thin experimental model-to-Lean proof loop"
+description = "An experimental agentic harness for mathematics in Lean 4"
 requires-python = ">=3.11"
 # Hardy authenticates as Claude Code does, through its agent SDK, so a Claude
 # Max subscription works with no API key. The SDK drives the Claude Code CLI,
 # which is a separate install (npm install -g @anthropic-ai/claude-code).
-dependencies = ["claude-agent-sdk>=0.2"]
+# Pydantic carries the frozen run values Hardy writes to disk, and `mcp` serves
+# the bounded Lean tools to clients other than the in-process agent SDK.
+dependencies = [
+    "claude-agent-sdk>=0.2",
+    "pydantic>=2.9",
+    "mcp>=1.28",
+]
 
 [project.optional-dependencies]
-test = ["pytest>=8,<9"]
+test = ["pytest>=8"]
 
 [project.scripts]
 hardy = "hardy.cli:main"
@@ -25,3 +31,14 @@ packages = ["src/hardy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_toolchain: invokes pinned Lean or Tectonic",
+    "live: invokes a billable model or installer",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
