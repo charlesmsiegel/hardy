@@ -390,6 +390,32 @@ class _Kernel:
         with self._changed:
             return bytes(self.err).decode("utf-8", errors="replace")
 
+    def stderr_settled(self, timeout: float = 0.2, quiet: float = 0.02) -> str:
+        """Stderr once it has stopped growing, not just whatever is in yet.
+
+        A sentinel cell's own interpreter is single-threaded: an error for
+        the cell is necessarily written to stderr before the interpreter goes
+        on to process the end-marker echo that shows up on stdout, which is
+        what `read_reply` waits for. But that ordering is *inside the child*
+        -- stdout and stderr are two independent pipes drained by two
+        independent threads here, and nothing ties their delivery to Hardy
+        together. Reading stderr the instant the stdout marker is found (as
+        this used to do) can win a race against the drain thread that has not
+        yet appended bytes already sitting in the OS pipe, silently reading a
+        broken M2 cell as clean. Waiting for two consecutive checks to see no
+        growth is cheap when stderr was already complete (one `quiet` tick)
+        and correct when it was still landing.
+        """
+        with self._changed:
+            deadline = time.monotonic() + timeout
+            previous = -1
+            current = len(self.err)
+            while current != previous and time.monotonic() < deadline:
+                previous = current
+                self._changed.wait(quiet)
+                current = len(self.err)
+            return bytes(self.err).decode("utf-8", errors="replace")
+
     def kill(self) -> None:
         if self.process.poll() is None:
             self.process.terminate()
@@ -635,7 +661,7 @@ class CasSession:
         outcome, consumed = reply
         if self.backend.framing == "sentinel":
             kernel.consume(consumed)
-            stderr_text = kernel.stderr_text()
+            stderr_text = kernel.stderr_settled()
             # `extract_sentinel` classified on stdout alone, before stderr for
             # this cell was necessarily complete. Reclassify now that both
             # streams are in: confirmed of Macaulay2 (CI run 30167266358),
