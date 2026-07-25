@@ -173,6 +173,10 @@ def cas_command(
         # Human cells go into the same log, under the same lock, and are
         # replayed and exported exactly like the model's.
         result = session.cas.run(source, author="human")
+        # Hardy's own commentary, ahead of the kernel's: the cell below ran in
+        # a rebuilt kernel, which the human should know before reading it.
+        if result.restart_note:
+            out(result.restart_note)
         for stream in (result.stdout, result.stderr):
             if stream.strip():
                 out(stream.rstrip())

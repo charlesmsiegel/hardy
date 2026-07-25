@@ -49,10 +49,43 @@ def clip(text: str, limit: int) -> tuple[str, bool]:
     could never assemble the frame it was promised — it would wait out the cell
     timeout and lose the kernel over an answer that was merely large. Clipping
     before serialising keeps every envelope parseable.
+
+    `limit` is a count of bytes, because that is what the parent reserves
+    retention for and what `cas_output_bytes` promises. Counting characters
+    instead let a cell of astral-plane text carry four times the budget past a
+    reader sized for one. The cut lands on a UTF-8 boundary: a truncated
+    trailing character is dropped rather than emitted as a replacement.
     """
-    if len(text) <= limit:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
         return text, False
-    return text[:limit], True
+    return encoded[:limit].decode("utf-8", errors="ignore"), True
+
+
+def clip_jointly(fields: dict[str, str], limit: int) -> tuple[dict[str, str], bool]:
+    """Fit stdout, stderr and value_repr into one shared byte budget.
+
+    One budget rather than three, because the parent reserves retention for one
+    and the frame carries all three. A per-field cap of `limit` each meant a
+    cell writing that much to every field built a payload three times the size
+    the reader was sized for — a legal cell whose frame could never assemble,
+    which reads as a timeout and costs the whole session's state.
+
+    The share is max-min fair: smallest field first, each allowed an equal cut
+    of what is left, and whatever a small field does not use passes to the
+    others. So a lone large value still gets nearly the whole budget, and three
+    large ones each get a third instead of one starving the rest.
+    """
+    truncated = False
+    clipped: dict[str, str] = {}
+    remaining = limit
+    ordered = sorted(fields.items(), key=lambda item: len(item[1].encode("utf-8")))
+    for index, (name, text) in enumerate(ordered):
+        share = remaining // (len(ordered) - index)
+        clipped[name], cut = clip(text, share)
+        truncated = truncated or cut
+        remaining -= len(clipped[name].encode("utf-8"))
+    return clipped, truncated
 
 
 def run_cell(source: str, namespace: dict, limit: int) -> dict:
@@ -60,11 +93,15 @@ def run_cell(source: str, namespace: dict, limit: int) -> dict:
     try:
         parsed = ast.parse(source, filename=CELL_FILENAME)
     except SyntaxError:
+        # Clipped like any other reply: a syntax error quotes the offending
+        # source back, and the source is allowed to be 64 KiB.
+        stderr, truncated = clip(traceback.format_exc(), limit)
         return {
             "status": "error",
             "stdout": "",
-            "stderr": traceback.format_exc(),
+            "stderr": stderr,
             "value_repr": "",
+            "capture_truncated": truncated,
         }
 
     # The trailing expression is evaluated rather than executed so its value
@@ -90,16 +127,15 @@ def run_cell(source: str, namespace: dict, limit: int) -> dict:
         except BaseException:
             status = "error"
             traceback.print_exc()
-    out, out_clipped = clip(captured_out.getvalue(), limit)
-    err, err_clipped = clip(captured_err.getvalue(), limit)
-    value, value_clipped = clip(value_repr, limit)
-    return {
-        "status": status,
-        "stdout": out,
-        "stderr": err,
-        "value_repr": value,
-        "capture_truncated": out_clipped or err_clipped or value_clipped,
-    }
+    fields, truncated = clip_jointly(
+        {
+            "stdout": captured_out.getvalue(),
+            "stderr": captured_err.getvalue(),
+            "value_repr": value_repr,
+        },
+        limit,
+    )
+    return {"status": status, **fields, "capture_truncated": truncated}
 
 
 def _refuse_to_quit(*_args, **_kwargs):

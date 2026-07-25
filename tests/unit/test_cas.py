@@ -65,7 +65,38 @@ def test_a_timeout_kills_the_kernel_and_the_next_cell_rebuilds(tmp_path, cas_ses
         recovered = session.execute("d")
         assert recovered.status == "ok"
         assert recovered.value_repr == "3"
-        assert "replayed 2 cell(s)" in recovered.stdout
+        # The restart is reported, and reported beside the output rather than
+        # inside it: `stdout` is the kernel's, and a note mixed into it would
+        # be compared against a clean replay by the next rebuild.
+        assert "replayed 2 cell(s)" in recovered.restart_note
+        assert recovered.stdout == ""
+    finally:
+        session.close()
+
+
+def test_a_restart_note_does_not_poison_the_next_rebuild(tmp_path, cas_session) -> None:
+    """Two deaths in one session, which is one more than the note survives.
+
+    The note used to be prepended to the recorded `stdout`. The cell that
+    carried it then could not reproduce itself: the second rebuild replayed it
+    in a clean kernel, got the output without the note, and declared the
+    divergence a poisoning -- for a session in which nothing had actually
+    drifted.
+    """
+    session = cas_session(cas_cell_seconds=1)
+    try:
+        session.execute("a")
+        session.execute("hang")
+        after_first = session.execute("b")
+        assert after_first.restart_note
+        assert after_first.status == "ok"
+
+        session.execute("hang")
+        after_second = session.execute("c")
+        assert after_second.status == "ok"
+        assert after_second.value_repr == "3"
+        assert session.state == "live"
+        assert [record.source for record in session.accepted()] == ["a", "b", "c"]
     finally:
         session.close()
 

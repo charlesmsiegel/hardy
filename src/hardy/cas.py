@@ -86,6 +86,13 @@ class CellRecord(FrozenModel):
     duration_ms: int = 0
     capture_truncated: bool = False
     output_artifact: str | None = None
+    # Hardy's own commentary on the cell -- currently only that the kernel was
+    # rebuilt before it ran. Deliberately its own field rather than a line
+    # prepended to `stdout`: `stdout` is what the kernel produced, and it is
+    # what `reproduces` compares and what the export replays. A note mixed into
+    # it makes the record unreproducible by construction, which poisons the
+    # next rebuild and marks every post-restart cell `diverged` on export.
+    restart_note: str = ""
 
 
 class RebuildReport(FrozenModel):
@@ -486,9 +493,6 @@ class _Kernel:
                     stream.close()
 
 
-TIMED_OUT = object()
-
-
 class CasSession:
     """A durable cell log and the kernel that its accepted cells describe."""
 
@@ -568,7 +572,16 @@ class CasSession:
         # keeps headroom: tripping the retention limit there would mean a frame
         # that can never be assembled, and is treated as a broken kernel rather
         # than as a large answer.
-        retain = cap if self.backend.framing == "sentinel" else cap * 2 + 65_536
+        #
+        # The factor is six, and it is not slack. `cas_driver.run_cell`
+        # budgets stdout, stderr and value_repr *jointly* against `cap`, so a
+        # payload carries at most `cap` bytes of captured text -- but it
+        # carries them JSON-escaped, and a control byte becomes a six-byte
+        # backslash-u escape. A cell printing NUL bytes is legal, so anything
+        # smaller is a cap a legal cell can walk past, and walking past it
+        # means a frame that never assembles, a cell that waits out the whole
+        # timeout, and a kernel dropped with all its state.
+        retain = cap if self.backend.framing == "sentinel" else cap * 6 + 65_536
         try:
             self._kernel = _Kernel(argv, self.cwd, retain)
         except (OSError, ValueError) as error:
@@ -670,9 +683,21 @@ class CasSession:
             if begin_at == -1:
                 return None
             start = begin_at + len(begin)
-            marker_seen = kernel is not None and kernel.marker_seen
+            # `marker_seen` is the *scanner's* answer, and the scanner is a
+            # bare `in` test over a rolling tail: it cannot tell a marker the
+            # interpreter printed from a marker the interpreter echoed off its
+            # own stdin. Macaulay2 echoes, and it flushes the echoed end-marker
+            # statement a statement before it runs it -- so trusting
+            # `marker_seen` on its own ends a cell at the echo and drops
+            # whatever the cell was still writing. It exists for exactly one
+            # case, where the real end marker's bytes were dropped at the
+            # retention cap and only the scan could have seen them, so it is
+            # only consulted when retention actually overflowed.
+            truncated_past_the_marker = (
+                kernel is not None and kernel.truncated and kernel.marker_seen
+            )
             end_at = _find_marker(raw, end, start)
-            if end_at == -1 and not marker_seen:
+            if end_at == -1 and not truncated_past_the_marker:
                 return None
             if end_at != -1:
                 body = raw[start:end_at].decode("utf-8", errors="replace")
@@ -684,7 +709,12 @@ class CasSession:
                 consumed = len(raw)
             body = self.backend.sanitize(body)
             outcome = CellOutcome(
-                status=self.backend.classify(body),
+                # Provisional, and never read: `_send` reclassifies every
+                # sentinel reply once stderr has settled, because a Macaulay2
+                # error leaves nothing error-shaped on stdout at all.
+                # Classifying here as well would only be a second answer to a
+                # question that already has one.
+                status="ok",
                 stdout=body,
                 capture_truncated=bool(kernel and kernel.truncated),
             )
@@ -752,7 +782,7 @@ class CasSession:
             if self._kernel is None or self.state == "dead":
                 report = self._restore()
                 if report.replayed:
-                    notes = f"[kernel restarted; replayed {report.replayed} cell(s)]\n"
+                    notes = f"[kernel restarted; replayed {report.replayed} cell(s)]"
 
             started = time.monotonic()
             outcome = self._send(source)
@@ -770,11 +800,12 @@ class CasSession:
                 source=source,
                 status=status,  # type: ignore[arg-type]
                 accepted=status == "ok",
-                stdout=notes + outcome.stdout,
+                stdout=outcome.stdout,
                 stderr=outcome.stderr,
                 value_repr=outcome.value_repr,
                 duration_ms=round(elapsed * 1_000),
                 capture_truncated=truncated,
+                restart_note=notes,
             )
             return self._append(record)
 
