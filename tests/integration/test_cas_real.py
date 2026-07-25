@@ -156,33 +156,45 @@ def test_a_truncated_capture_is_not_accepted(name, executable, source, tmp_path)
 
 
 def test_debug_macaulay2_script_transcript(tmp_path) -> None:
-    """TEMPORARY: dump both transcripts so the divergence can be read."""
+    """TEMPORARY: raw transcript, and what M2 offers for suppressing its echo."""
+    import subprocess
+
     from hardy.cas import run_exported_script
-    from hardy.cas_export import _content_lines, _expected_transcript
+
+    print("=== M2 HELP ===")
+    print(subprocess.run(["M2", "--help"], capture_output=True, text=True).stdout)
+    print(subprocess.run(["M2", "--help"], capture_output=True, text=True).stderr)
 
     session = session_for("macaulay2", "M2", tmp_path)
     try:
         session.probe_version()
         session.execute("R = QQ[x, y]")
-        for power in range(2, 14):
+        for power in range(2, 4):
             session.execute(f"x^{power} + y^{power}")
-        cells = session.accepted()
         export_session(session, tmp_path / "cas")
+        script = tmp_path / "cas" / "session.m2"
+        print("=== SCRIPT FILE ===")
+        print(repr(script.read_text(encoding="utf-8")))
         run = run_exported_script(
             backend=session.backend,
             command=None,
-            script=tmp_path / "cas" / "session.m2",
+            script=script,
             cwd=tmp_path / "dbg",
             timeout=120,
             max_output_bytes=256 * 1024,
         )
-        expected_out, _ = _expected_transcript(cells)
-        print("=== SCRIPT SANITIZED ===")
-        for index, line in enumerate(_content_lines(session.backend.sanitize(run.stdout))):
-            print(f"{index:3d}|{line}|")
-        print("=== EXPECTED ===")
-        for index, line in enumerate(_content_lines(expected_out)):
-            print(f"{index:3d}|{line}|")
+        print("=== RAW SCRIPT STDOUT ===")
+        print(repr(run.stdout))
+        for flags in (["--no-readline", "-q", "--silent"], ["--no-readline", "-q", "--print-width", "0"]):
+            probe = subprocess.run(
+                ["M2", *flags],
+                input=script.read_bytes(),
+                capture_output=True,
+                timeout=120,
+            )
+            print(f"=== FLAGS {flags} rc={probe.returncode} ===")
+            print(repr(probe.stdout.decode("utf-8", "replace")))
+            print(repr(probe.stderr.decode("utf-8", "replace")[:500]))
     finally:
         session.close()
     raise AssertionError("temporary debug dump")
