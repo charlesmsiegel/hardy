@@ -108,13 +108,19 @@ Priority labels are sequencing hints:
   rather than advertising calls that can only fail.
 - **Known gap:** no interrupt. A runaway cell is stopped only by its timeout,
   which kills the kernel and costs the accumulated state. Tracked in issue #33.
-- **Now (implemented):** `cas_session_seconds` bounds total CAS wall clock, not
-  only the cells a caller asked for. A rebuild after a kernel death and the
-  fresh-kernel replay an export verifies itself with are both charged; a cell's
-  deadline is the smaller of `cas_cell_seconds` and what is left of the
-  session, so a session with one second remaining cannot run a sleeping cell
-  for a minute; and `cas_reset` — a tool the model can call itself — clears the
-  namespace and opens a new segment without refunding time already spent.
+- **Now (implemented):** within one Hardy process, `cas_session_seconds` bounds
+  total CAS wall clock rather than only the cells a caller asked for. A rebuild
+  after a kernel death and the fresh-kernel replay an export verifies itself
+  with are both charged; a cell's deadline is the smaller of `cas_cell_seconds`
+  and what is left of the session, so a session with one second remaining
+  cannot run a sleeping cell for a minute; and `cas_reset` — a tool the model
+  can call itself — clears the namespace and opens a new segment without
+  refunding time already spent.
+- **Known gap:** the CAS budget bounds a process, not a workspace. The spend is
+  held in memory and is not written to the cell log, so reopening a saved
+  session starts `cas_session_seconds` again even though the cells it replays
+  to rebuild that session are charged. A long-running run is bounded; a
+  workspace reopened all day is not.
 - **Now (implemented):** every cell record carries the backend and probed
   version that produced it, so a saved-but-never-exported trajectory still
   names its toolchain. A log whose live segment was written by another backend

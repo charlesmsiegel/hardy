@@ -569,19 +569,40 @@ class CasSession:
             CellRecord.model_validate_json(tail)
         except ValidationError:
             kept = head + separator
-            with self.log_path.open("r+b") as stream:
-                stream.truncate(len(kept))
-                stream.flush()
-                os.fsync(stream.fileno())
+            self._mend_log(truncate_to=len(kept))
             return kept
         # The record itself arrived; only its terminator was lost. Nothing is
         # discarded -- the newline is supplied so the next append starts on its
         # own line.
-        with self.log_path.open("ab") as stream:
-            stream.write(b"\n")
-            stream.flush()
-            os.fsync(stream.fileno())
+        self._mend_log(truncate_to=None)
         return raw + b"\n"
+
+    def _mend_log(self, *, truncate_to: int | None) -> None:
+        """Write the repair to disk, or leave the file alone if it will not take it.
+
+        Best effort on purpose. This runs from `_load`, which runs from
+        `__init__`, so an `OSError` escaping here -- a read-only workspace, a
+        full disk -- would stop the session being constructed at all. That is
+        the same startup failure a torn record used to cause, arriving by a
+        different route, and this method exists to fix that failure rather than
+        to relocate it.
+
+        A log that can be read but not repaired still opens: the fragment is
+        skipped in memory, and the next append will fail loudly and poison the
+        session rather than being glued onto it, because `_append` cannot
+        succeed on a filesystem that refused this either.
+        """
+        with contextlib.suppress(OSError):
+            if truncate_to is None:
+                with self.log_path.open("ab") as stream:
+                    stream.write(b"\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                return
+            with self.log_path.open("r+b") as stream:
+                stream.truncate(truncate_to)
+                stream.flush()
+                os.fsync(stream.fileno())
 
     def _append(self, record: CellRecord) -> CellRecord:
         """Publish a record, durably first and only then in memory.
@@ -925,9 +946,19 @@ class CasSession:
             # this false, so a reopened workspace listed its accepted cells and
             # then answered the next one from an empty namespace.
             if self._kernel is None or self.state == "dead":
+                # A death and an ordinary reopen both rebuild, and they are not
+                # the same news. Reading "kernel restarted" on the first cell of
+                # a session nobody had run yet turns opening a saved workspace
+                # into an incident report.
+                died = self.state == "dead"
                 report = self._restore()
-                if report.replayed:
+                if report.replayed and died:
                     notes = f"[kernel restarted; replayed {report.replayed} cell(s)]"
+                elif report.replayed:
+                    notes = (
+                        f"[saved session reopened; replayed {report.replayed} cell(s) "
+                        "to rebuild its state]"
+                    )
                 # The rebuild is billed, so it can be what exhausts the budget.
                 self._guard()
 

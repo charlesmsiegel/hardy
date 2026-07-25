@@ -151,6 +151,11 @@ def test_reopening_a_workspace_restores_the_state_it_lists(tmp_path) -> None:
         result = runtime.run("x + 1")
         assert result.status == "ok", result.stderr
         assert result.value_repr == "42"
+        # Rebuilt, and said so as a reopen rather than as an incident: nothing
+        # died here, and "kernel restarted" on the first cell of a session
+        # nobody had run yet reads as a fault report.
+        assert "reopened" in result.restart_note
+        assert "restarted" not in result.restart_note
     finally:
         runtime.session.close()
 
