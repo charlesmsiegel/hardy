@@ -9,8 +9,14 @@ this reproduces them without needing either binary.
 """
 
 import sys
+import time
 
 PROMPT = "fake> "
+# The interpreter's own "ready for more" prompt lags behind its answer --
+# long enough, in a hermetic test, that a cell relying on timing rather than
+# pipe order to exclude it would already have armed and dispatched the next
+# cell before this prompt is even written.
+PROMPT_DELAY = 0.15
 
 
 def main() -> None:
@@ -34,8 +40,18 @@ def main() -> None:
         if line and not line.endswith((";", "»")):
             swallowed = True
             continue
-        if "«hardy-end:" in line:
+        # Both the begin and the end marker are just an echoed statement, so
+        # both are recognised and extracted the same way. Only the end marker
+        # is followed by a prompt -- the begin marker is mid-cell, not the
+        # interpreter going idle -- and that prompt is what is delayed.
+        if "«hardy-" in line:
             sys.stdout.write(line.split('"')[1] if '"' in line else line)
+            if "«hardy-end:" not in line:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                continue
+            sys.stdout.flush()
+            time.sleep(PROMPT_DELAY)
             sys.stdout.write("\n" + PROMPT)
             sys.stdout.flush()
             continue
