@@ -58,7 +58,10 @@ Bring the interactive session to that standard on three axes:
 | Unlisted model identities | An `Other…` row prompts for a literal identity, preserving today's escape hatch (`catalog.py:38`). An unlisted *current* model also gets its own row |
 | Newline in the input box | Alt+Enter always; Shift+Enter where the terminal reports it; a trailing `\` also continues |
 | Not a TTY | Fall back to today's `input()`/`print()` loop, same command registry |
-| Prompts raised from tool threads | Marshalled onto the UI event loop by `Ui.from_thread`; the calling tool thread blocks for the answer |
+| Asking the human anything | `Ui`'s prompting methods are coroutines; command handlers are `async` and await them on the live event loop |
+| Prompts raised from tool threads | `Ui.from_thread` is a sync facade using `run_coroutine_threadsafe`; the calling tool thread blocks for the answer |
+| Command aliases | No alias field. `/quit` is its own registry entry with `alias_of="exit"`, so completion never has to bridge a name mismatch |
+| The unsandboxed-execution warning | Printed unconditionally at startup on both paths, asserted by a test |
 | Ctrl+C during a turn | First press refuses and explains; second press force-exits with a warning that artifacts may be incomplete |
 | Test seam | A `ScriptedUi` double replaces `model_command`'s `ask=`/`out=` parameters |
 
@@ -77,27 +80,47 @@ class Choice:
     note: str = ""
 
 class Ui(Protocol):
+    """Every prompting method is a coroutine. See Concurrency for why."""
+
     def write(self, text: str, *, style: str = "system") -> None: ...
-    def choose(self, title: str, rows: Sequence[Choice], *, current: int = 0,
-               subtitle: str = "") -> Choice | None: ...   # None = cancelled
-    def ask_line(self, prompt: str) -> str | None: ...     # None = cancelled
-    def confirm(self, question: str) -> bool: ...
+
+    async def choose(self, title: str, rows: Sequence[Choice], *, current: int = 0,
+                     subtitle: str = "") -> Choice | None: ...   # None = cancelled
+    async def ask_line(self, prompt: str) -> str | None: ...     # None = cancelled
+    async def confirm(self, question: str) -> bool: ...
 
     @property
-    def from_thread(self) -> Ui: ...   # same surface, safe off the UI thread
+    def from_thread(self) -> BlockingUi: ...   # sync facade for foreign threads
+
+class BlockingUi(Protocol):
+    """The same operations, synchronous, callable only off the UI thread."""
+
+    def write(self, text: str, *, style: str = "system") -> None: ...
+    def choose(self, title: str, rows: Sequence[Choice], *, current: int = 0,
+               subtitle: str = "") -> Choice | None: ...
+    def ask_line(self, prompt: str) -> str | None: ...
+    def confirm(self, question: str) -> bool: ...
 ```
 
 Three implementations: `PromptToolkitUi` (in `tui/shell.py`), `PlainUi` (in
 `tui/plain.py`), and `ScriptedUi` (in `tests/`).
 
-`from_thread` returns an object with the same `Ui` surface whose calls are
-marshalled onto the application's event loop (`loop.call_soon_threadsafe` plus a
-`concurrent.futures.Future`), blocking the calling thread until the human
-answers. Because the surface is identical, a caller that may run on either
-thread — such as the axiom approval callback — is handed a `Ui` and never has to
-know which. See *Concurrency*. Calling `from_thread` *from* the UI thread is a
-programming error and raises rather than deadlocking; `PlainUi`'s and
-`ScriptedUi`'s `from_thread` simply return `self`.
+**The prompting methods are coroutines, and that is a load-bearing choice rather
+than a stylistic one.** A selector has to read arrow keys, which arrive on the
+application's event loop; anything that blocks that loop while waiting for them
+deadlocks by construction. Awaiting a nested `Application.run_async()` on the
+same loop is the only shape that works for a caller already running there — which
+every command handler is. *Concurrency* works through the failure this avoids.
+
+`from_thread` is the **sync facade over that async core**, for callers on a
+foreign thread that cannot await: it schedules the coroutine with
+`asyncio.run_coroutine_threadsafe` and blocks the calling thread on the returned
+future. The SDK's tool threads need exactly this. It raises if called from the UI
+thread, where `await` is both available and required; `PlainUi` and `ScriptedUi`,
+having no event loop, return a facade that simply calls through.
+
+`write` stays synchronous in both surfaces. It never waits on a human, so it has
+nothing to await.
 
 ### Module split
 
@@ -119,16 +142,28 @@ pure functions, independently of whether dim text renders.
 ```python
 @dataclass(frozen=True)
 class Command:
-    name: str                       # canonical, without the slash
-    summary: str                    # shown in the menu and by /help
-    handler: Callable[[Ui, str, State], State]
-    argument_hint: str = ""         # e.g. "[identity]"
-    aliases: tuple[str, ...] = ()   # e.g. ("quit",) on the exit command
+    name: str                        # without the slash
+    summary: str                     # shown in the menu and by /help
+    handler: Callable[[Ui, str, State], Awaitable[State]]
+    argument_hint: str = ""          # e.g. "[identity]"
+    alias_of: str | None = None      # e.g. "exit" on the quit entry
 ```
 
-Aliases are resolvable and completable, but only the canonical name is ever
-offered as ghost text — suggesting `/quit` for `/q` while `/exit` is the name
-shown by `/help` would teach the wrong vocabulary.
+**Handlers are coroutines**, because an interactive handler must await
+`ui.choose()` on the event loop it was called from. See *Concurrency*.
+
+**Every name is a real registry entry — there is no alias-matching.** `/quit` is
+its own `Command` carrying `alias_of="exit"` and sharing `/exit`'s handler.
+`/help` lists canonical entries and mentions their aliases alongside, rather than
+listing both as peers.
+
+That is deliberate, and it exists to kill a bug rather than to save a field. If
+aliases were a `tuple[str, ...]` on the canonical command, a prefix matching only
+an alias would have nothing coherent to complete: `/q` matches `exit` through
+`quit`, but `exit` does not start with `q`, so appending the canonical tail
+renders `/qxit` and returning nothing contradicts aliases being completable.
+Making each name its own entry means every string `suggest()` can match is a
+string the user is literally typing, so the whole mismatch cannot arise.
 
 `State` carries the mutable session context a handler may replace — the
 `Config`, the `MathematicsSession`, and a `done: bool` for `/exit`. Handlers
@@ -139,13 +174,14 @@ Pure query functions over the registry. All three take the raw buffer text
 **including the leading slash**, so the caller never has to strip it:
 
 - `resolve(text) -> tuple[Command, str] | None` — splits `/name rest`, matches
-  name or alias case-insensitively, returns the command and the remaining
-  argument text; `None` for an unknown name.
-- `complete(text) -> list[Command]` — every command whose name or alias starts
-  with the typed prefix, in registry order, deduplicated by command.
+  case-insensitively, returns the command and the remaining argument text; `None`
+  for an unknown name.
+- `complete(text) -> list[Command]` — every entry whose name starts with the
+  typed prefix, in registry order.
 - `suggest(text) -> str` — the characters to render as ghost text: the tail of
-  the single canonical name that matches, otherwise `""`. `suggest("/mo")` is
-  `"del"`; `suggest("/")` and `suggest("/x")` are both `""`.
+  the single matching name, otherwise `""`. `suggest("/mo")` is `"del"`;
+  `suggest("/q")` is `"uit"`; `suggest("/")` and `suggest("/x")` are both `""`.
+  It only ever *appends*, never rewrites what was typed.
 
 ### The command set
 
@@ -159,7 +195,7 @@ features.
 | `/status` | Workspace, model, Lean project, config path, transcript location |
 | `/doctor` | Runs `doctor.run_checks(config)` and writes the report inline |
 | `/clear` | Scrolls the conversation out of view. Deletes nothing — see below |
-| `/exit`, `/quit` | Leaves the session |
+| `/exit` | Leaves the session. `/quit` is a separate entry with `alias_of="exit"` |
 
 `/clear` deserves care, because the native-scrollback decision means Hardy does
 not own the lines it has printed. It cannot delete only the conversation:
@@ -173,6 +209,39 @@ the command's own summary must say so, because a `/clear` that silently implied
 a reset of any of those three would be the dishonest kind of convenience.
 
 ## Behaviour
+
+### Startup
+
+`_chat` prints five lines before its loop today (`cli.py:123-127`), and one of
+them is not decoration:
+
+```
+WARNING: Generated Lean is not sandboxed. Run Hardy only with trusted output in
+a disposable development environment. LaTeX is also executed without isolation.
+```
+
+`AGENTS.md:21-23` makes the missing sandbox a standing disclosure — generated
+Lean, TeX, and helper processes must never be described as safe — and this is the
+only in-session notice a user gets before the model executes code on their
+machine. A rework that describes `_chat` as "becoming wiring" could silently drop
+it, which is why the banner is specified here rather than left to the
+implementer.
+
+`run_session` emits, in both the TTY and plain paths, before the first prompt:
+
+| Line | Content | Style |
+|---|---|---|
+| 1 | `Hardy — interactive mathematics workspace` | Normal |
+| 2 | Workspace, active model, and that it runs on the Claude Code subscription | Dim |
+| 3 | Lean project, or `current directory` | Dim |
+| 4 | **The unsandboxed-execution warning, in full** | Warning style, never dim |
+| 5 | `/help` for commands · `/exit` to leave · transcript and artifacts are saved as you work | Dim |
+
+Line 4 is not conditional on anything: not on `--plain`, not on terminal width,
+not on a quiet flag, and it is never abbreviated to fit. If the terminal is too
+narrow it wraps. A test asserts its presence on **both** startup paths, so
+deleting it fails the suite rather than merely reading badly. Line 5 replaces
+today's `/model`-centric hint now that a registry exists to point at.
 
 ### The input box
 
@@ -205,10 +274,16 @@ a reset of any of those three would be the dishonest kind of convenience.
 Typing `/mo` renders `/mo` followed by a dim `del`, completing to `/model`. Tab,
 Right, or End accepts it, leaving `/model` in the buffer for Enter to run.
 
-`/` alone opens the full command menu. A prefix matching several commands shows
-no ghost text — guessing would be worse than silence — and Tab opens a menu over
-the matches. Once a command name is complete and followed by a space, the hint
-line shows its `argument_hint`.
+`/` alone opens the full command menu, which lists canonical entries only —
+alias entries would double its length while teaching nothing. A prefix matching
+several commands shows no ghost text — guessing would be worse than silence — and
+Tab opens a menu over the matches. Once a command name is complete and followed
+by a space, the hint line shows its `argument_hint`.
+
+Alias entries do ghost-complete, because they are ordinary registry entries:
+`/q` renders a dim `uit`, giving `/quit`. The suggestion always continues what
+was typed rather than replacing it, so no keystroke ever appears to be
+retroactively rewritten.
 
 ### The `/model` selector
 
@@ -316,16 +391,46 @@ Ctrl+C during an in-flight turn is covered under *Concurrency*.
 
 ## Concurrency
 
-Three kinds of thread are live at once, and only one of them may touch the
-terminal.
+A human can be asked a question from two very different places — a command
+handler and an SDK tool thread — and the two need opposite mechanisms. Getting
+this wrong deadlocks the terminal, so it is specified before the behaviour that
+depends on it.
 
-| Thread | Runs | May touch the terminal |
+| Context | Runs | Reaches the human by |
 |---|---|---|
-| Main / UI | The `prompt_toolkit` event loop and every `Ui` method | Yes — exclusively |
-| Turn worker | One `session.send(text)` per turn | No |
-| SDK tool threads | `MathematicsSession._dispatch` → `_tool`, serialised by `self._gate` (`chat.py:72`) | No |
+| Main / UI | The `prompt_toolkit` event loop, command handlers, every `Ui` coroutine | `await ui.choose(...)` |
+| Turn worker | One `session.send(text)` per turn | Does not prompt |
+| SDK tool threads | `_dispatch` → `_tool`, serialised by `self._gate` (`chat.py:72`) | `ui.from_thread.choose(...)` |
 
-### Axiom approval crosses a thread boundary
+Only the UI thread may touch the terminal. Everything else marshals.
+
+### Command handlers run *on* the event loop, so they must await
+
+The registry's handlers are reached from a key binding — that is, from the event
+loop itself. A synchronous handler that called a blocking `ui.choose()` would be
+waiting, on the event loop, for arrow keys that only that same loop can deliver.
+It would hang on the first keystroke. `from_thread` is no escape either: it
+raises on the UI thread precisely because using it there would deadlock instead.
+
+This is why `Ui`'s prompting methods are coroutines and
+`Command.handler` returns an `Awaitable[State]`. A handler awaits
+`ui.choose(...)`, which runs a nested `Application.run_async()` on the live loop;
+the loop keeps delivering keys, the nested application consumes them, and the
+outer input box resumes when it returns. No thread is involved, and none should
+be: dispatching an interactive handler to a worker only to marshal each of its
+prompts back would be strictly more machinery for the same result.
+
+Two consequences worth stating, since they are easy to get wrong:
+
+- **`/model` is the case that proves it.** Bare `/model` awaits `ui.choose()` for
+  the row, then awaits `ui.ask_line()` if `Other…` was picked, then awaits
+  `ui.confirm()` for the save. Three nested prompts from one handler, all on one
+  loop.
+- **A handler must not block the loop for non-UI work either.** `/doctor` calls
+  `doctor.run_checks(config)`, which runs subprocesses. That goes to a thread via
+  `asyncio.to_thread` so the box stays responsive, and the handler awaits it.
+
+### Axiom approval arrives from a foreign thread
 
 The dangerous case is not `session.send` — it is the approval gate inside it.
 `chat.py:216-219` calls `self.confirm(proposal)` synchronously from within
@@ -342,22 +447,25 @@ moment explicit axiom approval is required. That is the worst possible place for
 this class of bug: `AGENTS.md` makes auditing assumptions a first-order guarantee,
 not a convenience.
 
-So `_confirm_assumption` is rebuilt as a `Ui` consumer and wired with
-`ui.from_thread`:
+So `_confirm_assumption` is rebuilt as a `BlockingUi` consumer:
 
 1. `_tool` calls `confirm(proposal)` on a tool thread, as it does today.
 2. The callback calls `ui.from_thread.choose(...)`, which schedules the selector
-   on the UI event loop and blocks the tool thread on a `Future`.
+   coroutine on the UI event loop with `asyncio.run_coroutine_threadsafe` and
+   blocks the tool thread on the returned future.
 3. The human answers; the result crosses back; the tool call resumes and returns
    its `ToolResult`.
 
 The tool thread blocking is correct and intended — `self._gate` already
 serialises tool calls, and a pending axiom question *should* stop the turn. What
-must not happen is the UI thread blocking on the tool thread, which is why
-`from_thread` raises if called from the UI thread rather than deadlocking.
+must never happen is the reverse: the UI thread blocking on anything, which is
+what both `from_thread` raising on the UI thread and the async handler contract
+above exist to prevent.
 
-`PlainUi` needs none of this: it has no event loop, and `from_thread` returns
-`self`.
+Note that this is the same underlying selector the command handlers await. One
+implementation, reached two ways: awaited directly on the loop, or scheduled onto
+it and waited on from outside. `PlainUi` needs neither, having no loop; its
+`from_thread` calls straight through.
 
 ### Shutdown with a turn in flight
 
@@ -408,12 +516,14 @@ hermetic.
 
 | Target | Method |
 |---|---|
-| `commands.py` | Pure unit tests: unique match, ambiguous prefix, unknown command, case-insensitivity, argument splitting |
+| `commands.py` | Pure unit tests: unique match, ambiguous prefix, unknown command, case-insensitivity, argument splitting, and that `suggest()` only ever appends — `suggest("/q")` is `"uit"`, never a rewrite to `/exit` |
 | `transcript.py` | Pure unit tests: both prefixes, continuation indent, wrapping at a given width |
-| `model_command` and each handler | `ScriptedUi` — canned choices and confirmations, recorded writes |
+| `model_command` and each handler | `ScriptedUi` — canned choices and confirmations, recorded writes. Handlers are coroutines, so these are `async` tests |
 | `select.py`, `shell.py` — buffer state and actions | `create_pipe_input()` + `DummyOutput()` + `AppSession` |
 | `select.py`, `shell.py` — **rendered appearance** | `create_pipe_input()` + `Vt100_Output` over a `StringIO` with a fixed `Size`, then assert on the escape sequences written |
+| **Nested prompting on the loop** | Drive bare `/model` end to end through piped keystrokes — row, then `Other…` line, then save confirmation — and assert all three prompts complete. This is the test that would have caught a synchronous handler |
 | Approval marshalling | Call the rebuilt `_confirm_assumption` from a worker thread against a running `AppSession`; assert the answer crosses back and neither thread deadlocks |
+| **The startup warning** | Assert the unsandboxed-execution text appears on **both** the TTY and plain startup paths |
 | Plain mode | Piped stdin; assert the old behaviour and that `/model` still switches |
 
 The split in that table matters. `DummyOutput` discards every write, so it can
@@ -444,21 +554,32 @@ fallback within `prompt_toolkit` is a `PromptSession` with a `bottom_toolbar` an
 a rule instead of a border — the `Ui` port and every headless module survive that
 change unaltered.
 
-**2. Prompting from a tool thread.** That `ui.from_thread` can drive a selector
-on a running `Application`'s event loop from an SDK tool thread and return the
-answer without deadlocking either side. This is the axiom approval path, so it
-has to be proven rather than assumed. If marshalling proves unreliable, the
-fallback is to suspend the `Application` for the duration of the approval
-(`run_in_terminal`) and prompt against the raw terminal — uglier, and it
-interrupts the box, but it is single-reader and safe. What is *not* acceptable is
-leaving `_confirm_assumption` as a bare `input()` competing with the application
-for stdin.
+**2. Prompting while an `Application` is already running**, from both directions:
+
+- *On the loop* — that a nested `Application.run_async()` can be awaited from a
+  key binding of the outer application, consume keys, and return cleanly with the
+  input box restored. This is every interactive command, `/model` included.
+- *From off the loop* — that `ui.from_thread` can schedule that same selector
+  from an SDK tool thread and return the answer without deadlocking either side.
+  This is the axiom approval path.
+
+Both are the same primitive reached two ways, so one spike covers them, and it
+must exercise them together: an approval arriving from a tool thread *while* a
+nested selector is open is the case most likely to break. If nesting proves
+unreliable, the fallback is to suspend the outer application for the duration of
+the prompt (`run_in_terminal`) and prompt against the raw terminal — uglier, and
+it interrupts the box, but single-reader and safe. What is *not* acceptable is
+either a synchronous handler blocking the loop or `_confirm_assumption` left as a
+bare `input()` competing with the application for stdin.
 
 ## Companion changes
 
 - `pyproject.toml`: add `prompt-toolkit>=3.0.50` to `dependencies`; refresh
   `uv.lock`.
-- `cli.py`: `_chat` becomes wiring; add the global `--plain` flag.
+- `cli.py`: `_chat` becomes wiring; add the global `--plain` flag. The five
+  startup lines it prints today (`cli.py:123-127`) move into `run_session` — see
+  *Startup*, and note that the unsandboxed-execution warning among them is a
+  standing disclosure, not boilerplate to be tidied away.
 - `cli.py:25-37`: `_confirm_assumption` is rebuilt as a `Ui` consumer reached
   through `ui.from_thread`, and shows the proposal as a two-row selector instead
   of a `[y/N]` loop. Its refusal semantics are unchanged — a decline still
