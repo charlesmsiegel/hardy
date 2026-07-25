@@ -62,6 +62,9 @@ Bring the interactive session to that standard on three axes:
 | Prompts raised from tool threads | `Ui.from_thread` is a sync facade using `run_coroutine_threadsafe`; the calling tool thread blocks for the answer |
 | Command aliases | No alias field. `/quit` is its own registry entry with `alias_of="exit"`, so completion never has to bridge a name mismatch |
 | The unsandboxed-execution warning | Printed unconditionally at startup on both paths, asserted by a test |
+| A `/command` that does not resolve | An inline error. Never sent to the model; a leading space escapes command interpretation |
+| Commands during an in-flight turn | Each `Command` declares whether it is safe in flight; undeclared defaults to refused. `/model` and `/doctor` are refused |
+| Forcing an exit past a stalled turn | `record_abandonment` then `os._exit(130)`, with the orphaned-subprocess cost stated to the user first |
 | Ctrl+C during a turn | First press refuses and explains; second press force-exits with a warning that artifacts may be incomplete |
 | Test seam | A `ScriptedUi` double replaces `model_command`'s `ask=`/`out=` parameters |
 
@@ -147,7 +150,12 @@ class Command:
     handler: Callable[[Ui, str, State], Awaitable[State]]
     argument_hint: str = ""          # e.g. "[identity]"
     alias_of: str | None = None      # e.g. "exit" on the quit entry
+    safe_in_flight: bool = False     # may run while a turn is still running
 ```
+
+`safe_in_flight` defaults to `False` so that a command added later is refused
+during an in-flight turn until someone has thought about it. See *What is
+permitted while a turn is in flight* for why the default matters.
 
 **Handlers are coroutines**, because an interactive handler must await
 `ui.choose()` on the event loop it was called from. See *Concurrency*.
@@ -354,6 +362,30 @@ two-space continuation indent. Lines already committed to scrollback are never
 reflowed on resize — that is the terminal's business, and rewriting scrollback is
 what would break copy-paste.
 
+### Dispatch on submit
+
+What Enter does depends on the first character, and the unresolved case is the
+one that matters — it is the defect this document opens with.
+
+| Submitted text | Result |
+|---|---|
+| Does not begin with `/` | Sent to the model as a turn |
+| Begins with `/` and resolves | The command's handler is awaited |
+| **Begins with `/` and does not resolve** | **An error notice. Never sent to the model** |
+
+`resolve()` returning `None` is an error, not a fall-through. Typing `/mo` and
+pressing Enter without accepting the suggestion writes `unknown command /mo —
+press Tab to complete, or /help for the list` and leaves the text in the buffer to
+be corrected. Sending it onward is the exact behaviour the Problem section
+identifies: an incomplete command silently reinterpreted as a mathematical claim.
+The registry test for unknown names is not enough to guarantee this, since it only
+exercises the pure resolver — so an end-to-end test asserts that slash-prefixed
+input which does not resolve never reaches `session.send`.
+
+A leading `/` is therefore reserved. Ordinary mathematical text has no reason to
+start with one — LaTeX uses a backslash — but text that genuinely must can be
+submitted with a leading space, which suppresses command interpretation.
+
 ### Turn lifecycle
 
 1. Enter submits. The user's text is echoed above the box through
@@ -384,8 +416,42 @@ the shell calls it when Esc is pressed. This is the one place the rework reaches
 past the terminal layer into `chat.py`, and it earns that reach: the TUI is what
 introduces the abandonable turn, so the TUI owns keeping the record true.
 
-Only one turn is in flight at a time; submitting during a turn is refused with a
-dim notice rather than queued.
+### What is permitted while a turn is in flight
+
+Abandoning a turn hands the prompt back while the worker is still running, so the
+shell is briefly interactive over a session that is being mutated by another
+thread. Refusing further *mathematical* submissions is not sufficient — the
+dangerous input is a command.
+
+`/model` is the case that must be refused. `switch_model` replaces
+`self.runtime` (`chat.py:100`), but the abandoned `send()` still holds a `finally`
+that calls `_remember_thread()` (`chat.py:239-242`), which reads
+`self.runtime.session_id` and writes it into `state["provider_session"]`
+(`chat.py:259-263`). Switch mid-turn and that `finally` stamps the **new** model's
+provider session onto the turn the **old** model answered, while the transcript
+already carries the switch event. Replay would then attribute one model's work to
+another — precisely the identity confusion `AGENTS.md:29-31` exists to prevent.
+There is a second hazard in the same window: `switch_model` mutates `self.state`
+and rewrites `session.json` without taking `self._gate`, which serialises tool
+calls against each other but not against a model switch, so it can interleave
+with a tool call doing the same.
+
+So an in-flight turn narrows the shell to what cannot touch session state:
+
+| Input | While a turn is in flight |
+|---|---|
+| A mathematical submission | Refused with a dim notice; never queued |
+| `/status`, `/help`, `/clear` | Allowed — read-only or display-only |
+| `/model` | **Refused** with a notice naming the turn as the reason |
+| `/doctor` | Refused — it spawns subprocesses and competes for the toolchain |
+| `/exit` | Allowed; waits for the boundary and reports that it is waiting |
+
+Two obligations follow, and the implementation plan must carry both. Every
+`Command` declares whether it is safe in flight, so the gate is a property of the
+registry rather than a list maintained somewhere else — a command added later
+without that declaration defaults to **refused**, failing safe. And a test
+asserts that a turn in flight refuses `/model`, because this failure is silent:
+nothing crashes, the transcript simply becomes a false account.
 
 Ctrl+C during an in-flight turn is covered under *Concurrency*.
 
@@ -480,16 +546,37 @@ The policy is therefore explicit, and modelled on the double-tap users already
 know:
 
 - **First Ctrl+C during a turn** does not exit. It writes `a turn is still
-  running — Ctrl+C again to leave anyway; its Lean or LaTeX artifacts may be left
-  incomplete` and keeps the UI alive.
-- **Second Ctrl+C** exits immediately, having said what the cost is.
+  running — Ctrl+C again to leave anyway; Lean or LaTeX processes it started may
+  be left orphaned and its artifacts incomplete` and keeps the UI alive.
+- **Second Ctrl+C** records the abandonment and then hard-exits — see below.
 - **Ctrl+C with no turn in flight** leaves the session at once, as today.
 - The worker is **non-daemon**, so an ordinary `/exit` waits for a safe boundary
   rather than truncating a write. `/exit` during a turn reports that it is
   waiting and for how long.
 
-A forced exit also calls `record_abandonment("forced_exit")` before leaving, so
-the durable transcript says what happened even when the user did not wait.
+**The forced exit needs a named mechanism, because the obvious ones do not
+work.** A non-daemon worker is joined by the interpreter at shutdown, so neither
+`SystemExit` nor returning from the application can leave while `session.send` is
+stalled — which is the only situation the second Ctrl+C exists for. Making the
+worker a daemon instead would trade this away for the truncation hazard the
+non-daemon choice was made to avoid.
+
+The forced path is therefore:
+
+1. `record_abandonment("forced_exit")` — a synchronous append through `_record`,
+   so it completes before anything else happens.
+2. `os._exit(130)` — bypassing interpreter shutdown entirely.
+
+`os._exit` is chosen deliberately and its costs are part of the specification,
+not an implementation detail to discover later: the worker is **not** joined,
+`atexit` handlers do **not** run, buffered writes elsewhere are **not** flushed,
+and any Lean or Tectonic child process the SDK started may be left **orphaned**.
+This is why the first Ctrl+C states that cost before the user commits to it — a
+forced exit is a deliberate choice to accept a mess, and Hardy should say so
+rather than imply a clean stop. `130` is the conventional SIGINT status.
+
+The two properties are then consistent: non-daemon keeps the *ordinary* exit
+honest, and `os._exit` makes the *forced* exit actually immediate.
 
 ## Degradation and error handling
 
@@ -524,6 +611,8 @@ hermetic.
 | **Nested prompting on the loop** | Drive bare `/model` end to end through piped keystrokes — row, then `Other…` line, then save confirmation — and assert all three prompts complete. This is the test that would have caught a synchronous handler |
 | Approval marshalling | Call the rebuilt `_confirm_assumption` from a worker thread against a running `AppSession`; assert the answer crosses back and neither thread deadlocks |
 | **The startup warning** | Assert the unsandboxed-execution text appears on **both** the TTY and plain startup paths |
+| **Unresolved commands never reach the model** | End-to-end: submit `/mo`, assert an error notice and that `session.send` was not called. A leading space must still send literal text |
+| **`/model` refused in flight** | With a turn in flight, submit `/model` and assert the runtime is unchanged. Silent failure otherwise — nothing crashes, the transcript just becomes false |
 | Plain mode | Piped stdin; assert the old behaviour and that `/model` still switches |
 
 The split in that table matters. `DummyOutput` discards every write, so it can
