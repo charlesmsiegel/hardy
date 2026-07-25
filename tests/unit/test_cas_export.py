@@ -62,6 +62,38 @@ def test_a_cell_that_will_not_reproduce_is_marked_not_hidden(tmp_path, cas_sessi
     assert "diverged" in (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
 
 
+def test_a_session_that_survived_a_restart_still_exports_as_verified(
+    tmp_path, cas_session
+) -> None:
+    """The export's whole claim is that the artifacts reproduce the session.
+
+    A cell run after a kernel death is an ordinary cell: it ran, the kernel
+    recorded what it produced, and a fresh kernel replaying the accepted cells
+    in order produces the same thing. Hardy's own note that the kernel had been
+    rebuilt used to be recorded as part of that cell's output, so the replay --
+    which has no restart to report -- necessarily disagreed with it, and every
+    post-restart cell was published as `diverged`.
+    """
+    session = cas_session(cas_cell_seconds=1)
+    try:
+        session.execute("a")
+        session.execute("hang")  # kills the kernel; never accepted
+        restarted = session.execute("b")
+        assert restarted.restart_note
+        report = export_session(session, tmp_path / "cas")
+    finally:
+        session.close()
+
+    assert [verdict.verdict for verdict in report.verdicts] == ["verified", "verified"]
+    assert report.reproduces
+    assert report.diverged == 0
+
+    # And the note is nowhere in the published artifacts either: the notebook
+    # is a record of what the kernel printed.
+    notebook = json.loads((tmp_path / "cas" / "session.ipynb").read_text(encoding="utf-8"))
+    assert "kernel restarted" not in json.dumps(notebook)
+
+
 def test_failed_cells_are_distinguished_from_diverged_ones(tmp_path, cas_session) -> None:
     session = cas_session()
     try:

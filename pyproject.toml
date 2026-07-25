@@ -38,7 +38,7 @@ packages = ["src/hardy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "real_toolchain: invokes pinned Lean or Tectonic",
+    "real_toolchain: invokes a real installed binary — pinned Lean, Tectonic, Singular, or Macaulay2",
     "live: invokes a billable model or installer",
 ]
 

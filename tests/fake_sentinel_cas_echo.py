@@ -13,12 +13,24 @@ notices a regression in either.
 """
 
 import sys
+import time
 
 ECHO_PREFIX = 'ECHO "'
 ECHO_TAIL = '";'
+# How far a deferred statement's output lags behind the echo of the line that
+# follows it. Long enough that the parent is certainly woken by the echo
+# first, so a reader that ends the cell on the echoed end marker ends it
+# before this output exists.
+DEFER_DELAY = 0.05
 
 
 def main() -> None:
+    # Output an interpreter has not caught up with yet. Macaulay2 echoes a
+    # line when it *reads* it, not when it finishes running the line before,
+    # so a statement's own output can legitimately arrive after the echo of
+    # the statement that follows it -- including after the echo of the end
+    # marker, which is what makes trusting that echo cut a cell short.
+    pending: list[str] = []
     for counter, line in enumerate(sys.stdin, start=1):
         line = line.rstrip("\n")
         # Echo the prompt and the exact source line, unconditionally -- this
@@ -29,6 +41,14 @@ def main() -> None:
         # its own line below.
         sys.stdout.write(f"i{counter} : {line}\n")
         sys.stdout.flush()
+        if pending:
+            time.sleep(DEFER_DELAY)
+            sys.stdout.write("".join(pending))
+            pending.clear()
+            sys.stdout.flush()
+        if line == "defer;":
+            pending.append("deferred-output\n")
+            continue
         if line.startswith(ECHO_PREFIX) and line.endswith(ECHO_TAIL):
             marker = line[len(ECHO_PREFIX) : -len(ECHO_TAIL)]
             sys.stdout.write(marker + "\n")

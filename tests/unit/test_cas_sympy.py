@@ -75,6 +75,64 @@ def test_a_cell_calling_exit_does_not_end_the_session(sympy_session) -> None:
     assert sympy_session.execute("3 + 4").value_repr == "7"
 
 
+def test_a_cell_that_fills_every_field_is_answered_rather_than_fatal(tmp_path) -> None:
+    """A large answer must cost an answer, not the session.
+
+    The driver clips before serialising precisely so the parent can size its
+    retention for the frame it will be sent. Clipping each of stdout, stderr and
+    value_repr to the cap *separately* while the parent reserved two caps meant a
+    cell filling all three built a frame the parent stopped reading in the middle
+    of. It never assembled, the cell waited out its whole timeout, and the kernel
+    was dropped with every value in it -- for output that broke no limit anyone
+    had stated.
+    """
+    session = CasSession(
+        backend=backend_for("sympy"),
+        command=None,
+        log_path=tmp_path / "cells.jsonl",
+        limits=RunLimits(cas_output_bytes=100_000, cas_cell_seconds=60),
+        cwd=tmp_path,
+    )
+    try:
+        record = session.execute(
+            "import sys\n"
+            "sys.stdout.write('o' * 120_000)\n"
+            "sys.stderr.write('e' * 120_000)\n"
+            "'v' * 120_000"
+        )
+        assert record.status == "ok"
+        assert record.capture_truncated is True
+        captured = record.stdout + record.stderr + record.value_repr
+        # One budget for the three fields, which is what the parent reserves for.
+        assert len(captured.encode("utf-8")) <= 100_000
+        # And each field still carries something: a fair share, not a race.
+        assert record.stdout and record.stderr and record.value_repr
+        # The kernel outlived it, which is the whole point.
+        assert session.execute("1 + 1").value_repr == "2"
+    finally:
+        session.close()
+
+
+def test_the_output_cap_counts_bytes_not_characters(tmp_path) -> None:
+    """`cas_output_bytes` is a byte budget, and the parent's retention is sized
+    in bytes. Counting characters let one cell of astral-plane text carry four
+    times the budget past a reader sized for one."""
+    session = CasSession(
+        backend=backend_for("sympy"),
+        command=None,
+        log_path=tmp_path / "cells.jsonl",
+        limits=RunLimits(cas_output_bytes=4_096, cas_cell_seconds=60),
+        cwd=tmp_path,
+    )
+    try:
+        record = session.execute("'\\U0001f600' * 4_000")
+        assert record.status == "ok"
+        assert record.capture_truncated is True
+        assert len(record.value_repr.encode("utf-8")) <= 4_096
+    finally:
+        session.close()
+
+
 def test_an_exported_sympy_session_reproduces(sympy_session, tmp_path) -> None:
     sympy_session.probe_version()
     sympy_session.execute("x, y = symbols('x y')")

@@ -108,6 +108,13 @@ Priority labels are sequencing hints:
   rather than advertising calls that can only fail.
 - **Known gap:** no interrupt. A runaway cell is stopped only by its timeout,
   which kills the kernel and costs the accumulated state. Tracked in issue #33.
+- **Known gap:** total CAS time is not bounded. `cas_session_seconds` charges
+  only the cells a caller executes: rebuilding state after a kernel death, and
+  the fresh-kernel replay an export runs to check its own artifacts, are both
+  unbilled, and `cas_reset` — a tool the model can call itself — returns the
+  budget to zero. So the per-cell timeout is the only hard ceiling that always
+  applies, and a session can spend more wall clock than `cas_session_seconds`
+  names.
 - **Now (implemented):** Singular and Macaulay2 adapters, verified on Linux CI
   against the real binaries. They remain unavailable natively on Windows —
   Macaulay2 has no Windows build and Singular arrives through Cygwin — which is

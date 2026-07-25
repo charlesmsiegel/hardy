@@ -129,6 +129,9 @@ class CasCellResult(FrozenModel):
     observation_truncated: bool = False
     output_artifact: str | None = None
     note: str | None = None
+    # Kept out of `stdout` so the record stays exactly what the kernel wrote,
+    # and carried here so the caller still learns the kernel was rebuilt.
+    restart_note: str = ""
 
 
 class CasStateResult(FrozenModel):
@@ -191,6 +194,7 @@ class CasToolRuntime:
             value_repr=record.value_repr,
             duration_ms=record.duration_ms,
             capture_truncated=record.capture_truncated,
+            restart_note=record.restart_note,
         )
         if len(result.model_dump_json().encode("utf-8")) <= self.observation_bytes:
             return result

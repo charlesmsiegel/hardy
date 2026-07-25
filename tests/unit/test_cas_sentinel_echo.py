@@ -55,6 +55,30 @@ def test_an_error_written_only_to_stderr_is_classified_as_an_error(
     assert "error:" in record.stderr
 
 
+def test_a_cell_is_not_cut_short_by_its_own_echoed_end_marker(
+    echoing_sentinel_session,
+) -> None:
+    """The end marker's echo is not the end marker.
+
+    An interpreter that echoes stdin writes the end-marker statement's text
+    when it *reads* the line, which is a statement early: output the cell was
+    still producing arrives after that echo and before the marker the
+    interpreter actually prints. The kernel's rolling scanner cannot tell the
+    two apart -- it is a substring test -- so a reader that ends the cell as
+    soon as the scanner has seen "a" marker ends it at the echo and loses the
+    trailing output. `defer;` in the fake produces exactly that shape.
+
+    The scan-based fallback exists only for the case where the real marker's
+    bytes were dropped at the retention cap, so it must be reached only when
+    retention actually overflowed, which here it does not.
+    """
+    session = echoing_sentinel_session()
+    record = session.execute("defer;")
+    assert record.status == "ok"
+    assert "deferred-output" in record.stdout
+    assert record.capture_truncated is False
+
+
 def test_state_still_persists_across_cells_despite_the_echo(
     echoing_sentinel_session,
 ) -> None:
