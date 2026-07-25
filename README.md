@@ -32,8 +32,9 @@ It saves the conversation and artifacts after every change.
 A persistent computer algebra session sits alongside them, so the question of
 what is worth proving can be answered by computing rather than by guessing.
 State carries between cells, `/cas` lets you drive the same kernel yourself, and
-`cas_export` writes a script and a notebook after replaying every cell in a
-fresh kernel to check they reproduce. SymPy is the default because it is a
+`cas_export` writes a script and a notebook, replays every cell in a fresh
+kernel to check the cells reproduce, and then runs the script it just wrote to
+check the file itself does. SymPy is the default because it is a
 Python dependency and works everywhere; Singular and Macaulay2 are far stronger
 for algebraic geometry and are used when configured. No computation is
 evidence — only Lean's kernel verifies anything, and the verifier never reads a
@@ -152,7 +153,8 @@ modules. Without it, Lean runs in the current directory as before.
 Computer algebra artifacts live under `.hardy/cas/`: an append-only
 `cells.jsonl` recording every cell and who ran it, and, once exported,
 `session.py` (or `.sing`/`.m2`), `session.ipynb`, and an `export.json` naming
-both files by digest and recording which cells reproduced. In a session, `/cas
+both files by digest, recording which cells reproduced, and carrying a
+`script_verdict` for running the exported script as a whole. In a session, `/cas
 <source>` runs one cell, a bare `/cas` opens a block ended by `/end`, and `/cas
 state`, `/cas reset`, and `/cas export` do the obvious things. Select a backend
 with `cas_backend` (`sympy`, `singular`, or `macaulay2`) and point `cas_command`

@@ -6,23 +6,44 @@ mutated the namespace, and it is recorded but never accepted, so it will not
 appear in the script. From that moment the running session and the exportable
 script can disagree without anything saying so.
 
-Hardy cannot prevent that. What it can do is refuse to pretend. Export replays
-every accepted cell in a fresh kernel and compares stdout, stderr, and the
-value repr against what the live session recorded, then writes the verdict into
-both artifacts. A diverged export is still written — a notebook marked
-`diverged` is more useful than no notebook, and `DESIGN.md` asks for useful
-partial artifacts over silence.
+Hardy cannot prevent that. What it can do is refuse to pretend. Export does two
+independent checks and publishes both.
+
+The first replays every accepted cell in a fresh kernel and compares stdout,
+stderr, and the value repr against what the live session recorded. That is a
+statement about the *cells*.
+
+The second runs the rendered script — the actual published file, as a
+subprocess, exactly as a reader would — and compares its transcript against the
+same record. That is a statement about the *artifact*, and it is not implied by
+the first: a kernel evaluates a trailing expression and reports its value where
+a script discards it, and a construct that is legal at the head of a cell can be
+illegal in the middle of a file. Until the file has been run there is no
+evidence about what running the file does, so `reproduces` requires both.
+
+A diverged or unverified export is still written — a notebook marked `diverged`
+is more useful than no notebook, and `DESIGN.md` asks for useful partial
+artifacts over silence.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from .cas import CasError, CasSession, CellRecord, replay_in_fresh_kernel, reproduces
+from .cas import (
+    CasError,
+    CasSession,
+    CellRecord,
+    replay_in_fresh_kernel,
+    reproduces,
+    run_exported_script,
+)
 from .domain import FrozenModel
 from .storage import atomic_write_bytes
 
@@ -50,10 +71,20 @@ class ExportReport(FrozenModel):
     failed: int = 0
     unverified: int = 0
     verdicts: tuple[CellVerdict, ...] = ()
+    # The rendered script, executed. Separate from the per-cell counts because
+    # it answers a different question, and because a reader who only sees "2
+    # verified" would otherwise take it for an answer to this one.
+    script_verdict: Verdict = "unverified"
+    script_detail: str = ""
 
     @property
     def reproduces(self) -> bool:
-        return self.diverged == 0 and self.failed == 0 and self.unverified == 0
+        return (
+            self.diverged == 0
+            and self.failed == 0
+            and self.unverified == 0
+            and self.script_verdict == "verified"
+        )
 
 
 def _verdicts(cells: tuple[CellRecord, ...], outcomes: list[Any]) -> list[CellVerdict]:
@@ -71,9 +102,7 @@ def _verdicts(cells: tuple[CellRecord, ...], outcomes: list[Any]) -> list[CellVe
                     detail=f"replay {outcome.status}: {(outcome.stderr or outcome.stdout).strip()[:160]}",
                 )
             )
-        elif reproduces(record, outcome):
-            verdicts.append(CellVerdict(seq=record.seq, verdict="verified"))
-        else:
+        elif not reproduces(record, outcome):
             verdicts.append(
                 CellVerdict(
                     seq=record.seq,
@@ -81,7 +110,134 @@ def _verdicts(cells: tuple[CellRecord, ...], outcomes: list[Any]) -> list[CellVe
                     detail="replay produced different output",
                 )
             )
+        elif record.capture_truncated or outcome.capture_truncated:
+            # The prefixes match and nothing is known about the rest. Calling
+            # that "verified" would let `reproduces` claim complete reproduction
+            # on evidence that stops at `cas_output_bytes`; AGENTS.md asks for a
+            # partial result to state its limits rather than round itself up.
+            verdicts.append(
+                CellVerdict(
+                    seq=record.seq,
+                    verdict="unverified",
+                    detail=(
+                        "capture truncated at cas_output_bytes: the retained prefixes "
+                        "match, and the discarded tails could not be compared"
+                    ),
+                )
+            )
+        else:
+            verdicts.append(CellVerdict(seq=record.seq, verdict="verified"))
     return verdicts
+
+
+def _content_lines(text: str) -> list[str]:
+    """The lines carrying content, with trailing whitespace removed.
+
+    Leading whitespace is kept. `normalise` stopped discarding it because the
+    notebook preserves it and indentation is content in every language Hardy
+    drives; this must not put that hole back on the script's side.
+
+    Blank lines are dropped, and that is the one thing this comparison gives
+    up. A recorded capture starts and ends at a cell's own markers, while the
+    script has no cell boundaries in it at all, so the interpreter lays the
+    vertical space between one cell and the next out differently by
+    construction. What survives is every content line, in order.
+    """
+    return [line.rstrip() for line in text.splitlines() if line.strip()]
+
+
+def _appears_in_order(actual: list[str], expected: list[str]) -> bool:
+    """Whether `expected` occurs inside `actual` as one uninterrupted run.
+
+    Not equality. An interpreter fed a whole file writes its own chrome around
+    the transcript — a startup banner in front of it, a final prompt behind it —
+    which says nothing about whether the session reproduced. Nothing is
+    tolerated *between* the expected lines, so a missing, extra, or reordered
+    line anywhere inside the session's own output still fails.
+    """
+    if not expected:
+        return True
+    width = len(expected)
+    return any(actual[at : at + width] == expected for at in range(len(actual) - width + 1))
+
+
+def _expected_transcript(cells: tuple[CellRecord, ...]) -> tuple[str, str]:
+    """What a faithful run of the script prints, assembled from the record.
+
+    A cell's value is part of its stdout here because that is where a script
+    puts it: the driver reports `value_repr` in its own field, and
+    `SympyBackend.render_cell` emits the `sys.displayhook` call that turns it
+    into a printed line. Sentinel backends print values themselves and record
+    nothing in `value_repr`, so the same assembly is right for them too.
+    """
+    out: list[str] = []
+    err: list[str] = []
+    for record in cells:
+        out.append(record.stdout)
+        if record.value_repr:
+            out.append(record.value_repr + "\n")
+        err.append(record.stderr)
+    return "".join(out), "".join(err)
+
+
+def _verify_script(
+    session: CasSession, cells: tuple[CellRecord, ...], script: Path, directory: Path
+) -> tuple[Verdict, str]:
+    """Run the published file and say whether it reproduced the session.
+
+    Billed to the session budget like every other kernel an export starts, and
+    bounded by what is left of it: an export must not be a way to buy time the
+    session no longer has.
+    """
+    remaining = session.remaining_seconds
+    if remaining <= 0:
+        return "unverified", "the session budget ran out before the script could be run"
+
+    run_directory = directory / "script-run"
+    # Fresh every time: a script that writes a file must be seen to create it,
+    # not to find it left behind by the previous export.
+    shutil.rmtree(run_directory, ignore_errors=True)
+    started = time.monotonic()
+    try:
+        run = run_exported_script(
+            backend=session.backend,
+            command=session.command,
+            script=script,
+            cwd=run_directory,
+            timeout=remaining,
+        )
+    except CasError as error:
+        session.charge(time.monotonic() - started)
+        return "failed", str(error)
+    session.charge(time.monotonic() - started)
+
+    if run.timed_out:
+        return "failed", f"the script did not finish within {remaining:g}s"
+    if run.returncode:
+        return "failed", f"the script exited {run.returncode}: {run.stderr.strip()[-200:]}"
+
+    stdout = session.backend.sanitize(run.stdout)
+    pattern = getattr(session.backend, "error_pattern", None)
+    if pattern is not None and (pattern.search(stdout) or pattern.search(run.stderr)):
+        # A sentinel interpreter reports an error and carries on with the next
+        # line, so a broken script still exits 0. The banner is the exit code.
+        return "failed", "the script printed an error banner"
+
+    expected_out, expected_err = _expected_transcript(cells)
+    for stream, actual, expected in (
+        ("output", stdout, expected_out),
+        ("stderr", run.stderr, expected_err),
+    ):
+        got, want = _content_lines(actual), _content_lines(expected)
+        if not _appears_in_order(got, want):
+            # The excerpts are here so a reader — or a CI log — can see *what*
+            # differed without re-running anything. A verdict of "diverged" with
+            # no evidence attached is another thing taken on trust.
+            return "diverged", (
+                f"the script's {stream} is not the {stream} the session recorded; "
+                f"recorded {want[:6]!r}, script printed {got[:6]!r}"
+            )
+    return "verified", ""
 
 
 def render_script(
@@ -89,14 +245,26 @@ def render_script(
     cells: tuple[CellRecord, ...],
     verdicts: list[CellVerdict],
 ) -> str:
+    """Write the accepted cells out as a file that behaves the way they did.
+
+    The header says what was checked and stops there. It cannot report the
+    verdict on running this file, because the verdict is obtained by running
+    exactly these bytes: a header that named its own result would describe a
+    file that no longer existed by the time it was written. `export.json` and
+    the notebook carry it instead, and the header points at them.
+    """
     backend = session.backend
     mark = backend.comment
+    replayed = sum(1 for verdict in verdicts if verdict.verdict == "verified")
     lines = [
         f"{mark} {WARNING}",
         f"{mark} backend: {backend.name} {session.version or 'unknown version'}",
         f"{mark} exported: {datetime.now(UTC).isoformat(timespec='seconds')}",
-        f"{mark} cells: {len(cells)}"
-        f" ({sum(1 for v in verdicts if v.verdict == 'verified')} verified on replay)",
+        f"{mark} cells: {len(cells)}; {replayed} of them reproduced when replayed"
+        " one at a time in a fresh kernel.",
+        f"{mark} Whether this file as a whole reproduces the session is a separate"
+        " question: Hardy runs it and records the answer as `script_verdict` in"
+        " export.json.",
         "",
     ]
     if backend.preamble:
@@ -104,7 +272,7 @@ def render_script(
     for record, verdict in zip(cells, verdicts, strict=True):
         note = "" if verdict.verdict == "verified" else f"  [{verdict.verdict}: {verdict.detail}]"
         lines.append(f"{mark} --- cell {record.seq} ({record.author}){note}")
-        lines.append(record.source.rstrip())
+        lines.append(backend.render_cell(record.source).rstrip())
         lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -113,6 +281,7 @@ def render_notebook(
     session: CasSession,
     cells: tuple[CellRecord, ...],
     verdicts: list[CellVerdict],
+    script_verdict: tuple[Verdict, str] = ("unverified", "not run"),
 ) -> str:
     """nbformat v4, written directly.
 
@@ -166,6 +335,14 @@ def render_notebook(
                 "warning": WARNING,
                 "backend": backend.name,
                 "version": session.version,
+                # About the sibling script, not this notebook: the notebook
+                # carries the recorded outputs and is honest by construction,
+                # and a reader holding both should not have to open export.json
+                # to find out which of the two was checked by execution.
+                "script_verification": {
+                    "verdict": script_verdict[0],
+                    "detail": script_verdict[1],
+                },
             },
             "kernelspec": {
                 "display_name": backend.name,
@@ -206,8 +383,11 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
     script_path = directory / f"session{session.backend.script_suffix}"
     notebook_path = directory / "session.ipynb"
     script = render_script(session, cells, verdicts).encode("utf-8")
-    notebook = render_notebook(session, cells, verdicts).encode("utf-8")
+    # The script is published before it is checked, because the thing checked
+    # has to be the thing published: these exact bytes are what gets run.
     atomic_write_bytes(script_path, script)
+    script_verdict = _verify_script(session, cells, script_path, directory)
+    notebook = render_notebook(session, cells, verdicts, script_verdict).encode("utf-8")
     atomic_write_bytes(notebook_path, notebook)
 
     counts = {name: 0 for name in ("verified", "diverged", "failed", "unverified")}
@@ -219,6 +399,8 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
         manifest_path=(directory / "export.json").as_posix(),
         backend=session.backend.name,
         verdicts=tuple(verdicts),
+        script_verdict=script_verdict[0],
+        script_detail=script_verdict[1],
         **counts,
     )
     # Written last, and recording both digests. Two atomic writes are not one
@@ -229,6 +411,8 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
         "backend": session.backend.name,
         "version": session.version,
         "counts": counts,
+        "script_verdict": script_verdict[0],
+        "script_detail": script_verdict[1],
         "files": {
             script_path.name: hashlib.sha256(script).hexdigest(),
             notebook_path.name: hashlib.sha256(notebook).hexdigest(),

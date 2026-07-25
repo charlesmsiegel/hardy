@@ -12,6 +12,7 @@ from hardy.cas import CasSession, SympyBackend, _SentinelBackend
 from hardy.domain import RunLimits
 
 FAKE_CAS = Path(__file__).parents[1] / "fake_cas.py"
+FAKE_CAS_SCRIPT = Path(__file__).parents[1] / "fake_cas_script.py"
 
 
 class FakeBackend(SympyBackend):
@@ -20,10 +21,24 @@ class FakeBackend(SympyBackend):
     Deliberately not a mock: the framing, the pipes, the deadline, and the
     process teardown are the parts most likely to be wrong, so tests exercise
     them rather than replacing them.
+
+    The fake kernel answers a language of its own rather than Python, so its
+    cells go into an export verbatim and are run back by the matching fake
+    script interpreter -- the export's script check is a real subprocess here
+    too. `SympyBackend.render_cell` and a genuine `python session.py` run are
+    exercised against real SymPy in `test_cas_sympy.py`.
     """
+
+    preamble = ""
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         return (sys.executable, "-u", str(FAKE_CAS), str(max_output_bytes))
+
+    def script_argv(self, command: Path | None, script: Path) -> tuple[str, ...]:
+        return (sys.executable, "-u", str(FAKE_CAS_SCRIPT), str(script))
+
+    def render_cell(self, source: str) -> str:
+        return source
 
 
 @pytest.fixture

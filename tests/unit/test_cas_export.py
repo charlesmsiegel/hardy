@@ -115,6 +115,37 @@ def test_export_refuses_a_session_with_nothing_in_it(tmp_path, cas_session) -> N
         session.close()
 
 
+def test_a_truncated_capture_is_not_reported_as_verified(tmp_path, cas_session) -> None:
+    """Matching prefixes are not a reproduction of the whole output.
+
+    `flood` writes far more than `cas_output_bytes`, so both the live capture
+    and the replay stop at the cap. The retained prefixes match, and nothing at
+    all is known about the tails -- yet this used to be published as `verified`,
+    and `ExportReport.reproduces` then claimed a complete reproduction on
+    evidence that ran out partway through. AGENTS.md asks a partial result to
+    state its limits.
+    """
+    session = cas_session(cas_output_bytes=4_096, cas_cell_seconds=30)
+    try:
+        record = session.execute("flood")
+        assert record.capture_truncated is True
+        assert record.accepted is True  # the driver knows it did not fail
+        report = export_session(session, tmp_path / "cas")
+    finally:
+        session.close()
+
+    assert [verdict.verdict for verdict in report.verdicts] == ["unverified"]
+    assert "truncated" in report.verdicts[0].detail
+    assert report.verified == 0 and report.unverified == 1
+    assert not report.reproduces
+
+    # And the notebook says so on the cell itself, not only in the manifest.
+    notebook = json.loads((tmp_path / "cas" / "session.ipynb").read_text(encoding="utf-8"))
+    metadata = notebook["cells"][0]["metadata"]["hardy"]
+    assert metadata["verification"] == "unverified"
+    assert metadata["capture_truncated"] is True
+
+
 def test_only_accepted_cells_reach_the_script(tmp_path, cas_session) -> None:
     session = cas_session()
     try:

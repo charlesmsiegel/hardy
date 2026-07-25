@@ -166,6 +166,8 @@ def cas_command(
             out(f"Wrote {report.script_path} and {report.notebook_path}")
             out(f"Replay: {report.verified} verified, {report.diverged} diverged, "
                 f"{report.failed} failed, {report.unverified} unverified")
+            out(f"Script, run as a whole: {report.script_verdict}"
+                + (f" — {report.script_detail}" if report.script_detail else ""))
             return
         source = argument or _read_block(ask)
         if not source.strip():

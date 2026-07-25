@@ -14,6 +14,7 @@ from hardy.cas import (
     CasSession,
     CellOutcome,
     backend_for,
+    normalise,
     replay_in_fresh_kernel,
     reproduces,
 )
@@ -202,6 +203,31 @@ def test_comparison_covers_stderr(tmp_path, cas_session) -> None:
         outcome = CellOutcome(status="ok", stdout="out", stderr="warning: noisy", value_repr="1")
         assert reproduces(record, outcome)
         assert not reproduces(quiet, outcome)
+    finally:
+        session.close()
+
+
+def test_comparison_does_not_ignore_leading_whitespace(tmp_path, cas_session) -> None:
+    """`normalise` promises tolerance of *trailing* whitespace, and only that.
+
+    It used to call `text.strip()`, which takes the front off too, so a replay
+    printing `x` was declared to have reproduced a session that printed `  x` --
+    a difference the notebook stores verbatim and shows the reader. Indentation
+    is content in every language Hardy drives; in Macaulay2's pretty-printed
+    matrices it carries the shape of the answer.
+    """
+    assert normalise("  x") != normalise("x")
+    assert normalise("\n  x") != normalise("x")
+    # Still tolerant at the end, which is what it was ever for.
+    assert normalise("x  \n\n") == normalise("x")
+
+    session = cas_session()
+    try:
+        record = session.execute("noisy")
+        indented = record.model_copy(update={"stdout": "  out"})
+        outcome = CellOutcome(status="ok", stdout="out", stderr="warning: noisy", value_repr="1")
+        assert reproduces(record, outcome)
+        assert not reproduces(indented, outcome)
     finally:
         session.close()
 
