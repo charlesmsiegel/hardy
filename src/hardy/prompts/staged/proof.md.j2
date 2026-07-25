@@ -1,0 +1,16 @@
+Prove the immutable Frozen Claim {{ claim_hash }}.
+
+Exact Lean signature:
+{{ signature }}
+
+Do not change the theorem name, binders, proposition, or imports.
+Use the four Hardy tools as needed:
+- lean_check_proof for official candidates against the Frozen Claim;
+- lean_check_scratch for bounded exploration;
+- lean_inspect_declarations for exact known names; and
+- lean_search_declarations for discovery.
+
+Return proof_body as the complete Lean term placed after :=, normally beginning
+with by; never include a theorem or lemma declaration. Also return an informal
+proof, clearly understood to be not independently assessed. A tool success is
+feedback only: only Hardy's FinalVerifier can accept the solution.

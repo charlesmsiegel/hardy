@@ -23,7 +23,7 @@ from .claude_runtime import ClaudeAgentRuntime
 from .codex_runtime import ProofSubmission
 from .domain import FrozenClaim
 from .models import ToolResult
-from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS
+from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS, STRUCTURE_INSTRUCTION
 from .storage import RunStore
 
 T = TypeVar("T", bound=BaseModel)
@@ -82,11 +82,6 @@ TOOLS = [
         },
     },
 ]
-
-STRUCTURE_INSTRUCTION = (
-    "\n\nReply with one JSON object and nothing else — no prose, no code fence, "
-    "no explanation. It must validate against this JSON Schema:\n"
-)
 
 
 @dataclass

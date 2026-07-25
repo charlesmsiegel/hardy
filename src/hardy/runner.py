@@ -12,6 +12,7 @@ from .chat import provenance
 from .claude_runtime import TurnLimitReached
 from .lean import LeanTools
 from .models import Request, RunResult, ToolResult
+from .prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
 
 WARNING = "Generated Lean is not sandboxed. Run Hardy only with trusted output in a disposable development environment."
 
@@ -75,8 +76,8 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         events.append({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
         return result
 
-    system = "Prove the exact Lean statement. Use the tools for kernel feedback. Never change the statement. Submit a sorry-free proof when ready."
-    task = f"Informal claim: {request.informal_claim}\nExact Lean declaration: {request.declaration}\nImports: {', '.join(request.imports)}"
+    system = BATCH_SYSTEM_PROMPT
+    task = batch_task_prompt(request.informal_claim, request.declaration, tuple(request.imports))
     start = time.monotonic()
     deadline["at"] = start + wall_seconds
     reason = "completed"

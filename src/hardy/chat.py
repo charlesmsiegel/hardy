@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from .latex import LatexTools
 from .lean import LeanTools
 from .models import Request, ToolResult
+from .prompts import CHAT_SYSTEM_PROMPT
 
 CHAT_TOOLS = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file. This does not save it.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -28,13 +29,9 @@ CHAT_TOOLS = [
 MIGRATED_TURNS = 20
 MIGRATED_CHARACTERS = 8000
 
-SYSTEM_PROMPT = """You are Hardy, an interactive mathematical research agent. Explore mathematics with the user while maintaining linked formal and human artifacts.
-
-Use Lean for every formal claim you report as verified. Distinguish speculation, heuristic review, LaTeX compilation, and kernel verification. Never change a claim silently to make a proof pass. Keep Main.lean and writeup.tex aligned through the naming registry: record each important declaration with record_name and use its latex_name as a LaTeX label. Check artifacts before saving them. A LaTeX compile is not mathematical verification.
-
-If a needed theorem is not in Mathlib or the user's imports, search/check first. If it must be assumed, call request_assumption with the exact Lean statement, informal statement, source identity, and reason. Only use the axiom after explicit human approval, and make the assumption visible in both artifacts. Partial work is welcome when holes and assumptions are explicit.
-
-Generated Lean and LaTeX are not sandboxed. Keep tool use focused. Explain progress conversationally after tool calls."""
+# The text lives in prompts/chat.md.j2. Kept under the old name because it is
+# what a reader of _build expects to see, and what the tests reach for.
+SYSTEM_PROMPT = CHAT_SYSTEM_PROMPT
 
 
 class ChatRuntime(Protocol):

@@ -10,12 +10,14 @@ requires-python = ">=3.11"
 # Hardy authenticates as Claude Code does, through its agent SDK, so a Claude
 # Max subscription works with no API key. The SDK drives the Claude Code CLI,
 # which is a separate install (npm install -g @anthropic-ai/claude-code).
-# Pydantic carries the frozen run values Hardy writes to disk, and `mcp` serves
-# the bounded Lean tools to clients other than the in-process agent SDK.
+# Pydantic carries the frozen run values Hardy writes to disk, `mcp` serves
+# the bounded Lean tools to clients other than the in-process agent SDK, and
+# Jinja renders the prompt templates in hardy/prompts.
 dependencies = [
     "claude-agent-sdk>=0.2",
     "pydantic>=2.9",
     "mcp>=1.28",
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]

@@ -1,5 +1,11 @@
+import ast
 import importlib
 from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+SOURCE = Path(__file__).resolve().parents[2] / "src" / "hardy"
 
 
 def _claim(domain):
@@ -50,3 +56,103 @@ def test_versioned_proof_prompt_freezes_the_statement_and_names_every_tool() -> 
     assert 'not independently assessed' in text
     assert prompts.PROMPT_SET_VERSION
     assert len(prompts.PROMPT_SET_SHA256) == 64
+
+
+def test_no_prompt_text_is_left_behind_in_the_code():
+    """One home for prompts, or there are two and only one gets maintained.
+
+    Long string constants are how every prompt here started life, so a new one
+    appearing in a module is the thing to catch.
+    """
+    stragglers = []
+    for path in sorted(SOURCE.rglob("*.py")):
+        if path.parent.name == "prompts":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Constant):
+                continue
+            if isinstance(node.value.value, str) and len(node.value.value) > 200:
+                names = ", ".join(t.id for t in node.targets if isinstance(t, ast.Name))
+                stragglers.append(f"{path.name}:{node.lineno} {names}")
+    assert not stragglers, f"prompt-sized strings outside hardy/prompts: {stragglers}"
+
+
+def test_a_template_missing_a_variable_fails_instead_of_rendering_a_hole():
+    """Jinja's default would render an absent variable as the empty string.
+
+    A proof prompt that lost its signature would ask the model to prove nothing
+    at all, and would look like an ordinary prompt while doing it.
+    """
+    prompts = importlib.import_module("hardy.prompts")
+    with pytest.raises(prompts.PromptError):
+        prompts.render("staged/proof", claim_hash="abc")
+
+
+def test_unknown_templates_are_named_in_the_error():
+    prompts = importlib.import_module("hardy.prompts")
+    with pytest.raises(prompts.PromptError, match="staged/nonexistent"):
+        prompts.render("staged/nonexistent")
+
+
+def test_the_chat_prompt_introduces_hardy_and_holds_it_back():
+    """The interactive prompt has two jobs the staged prompts do not: say what
+    this thing is, and stop it from deciding for the user what happens next."""
+    prompts = importlib.import_module("hardy.prompts")
+    text = prompts.render("chat")
+
+    assert "Hardy" in text
+    for capability in ("Lean", "Mathlib", "LaTeX"):
+        assert capability in text, f"the prompt never mentions {capability}"
+    lowered = text.lower()
+    assert "ask" in lowered
+    # The instruction the user asked for, however it ends up worded.
+    assert any(phrase in lowered for phrase in ("run ahead", "ahead of", "do not assume what")), text
+
+
+def test_the_recorded_prompt_set_is_the_one_that_was_reviewed():
+    """A change detector, on purpose.
+
+    The hash is written into every run manifest, so editing a staged prompt
+    silently would make old and new runs incomparable while both claimed the
+    same provenance. Changing a template must mean changing the version and
+    this pin in the same commit — a deliberate act, not a side effect.
+    """
+    prompts = importlib.import_module("hardy.prompts")
+    assert prompts.PROMPT_SET_VERSION == "2026-07-24.2"
+    assert prompts.PROMPT_SET_SHA256 == "39982211d71d9e7f1151db5af90cc8b8e94777636e9257d06241efe611d3ed32"
+
+
+def test_each_entry_point_sends_the_template_rather_than_its_own_copy():
+    prompts = importlib.import_module("hardy.prompts")
+    chat = importlib.import_module("hardy.chat")
+    staged = importlib.import_module("hardy.staged")
+
+    assert prompts.render("chat") == chat.SYSTEM_PROMPT
+    assert prompts.render("staged/structure") in staged.STRUCTURE_INSTRUCTION
+
+
+def test_line_endings_do_not_change_the_recorded_hash(tmp_path: Path):
+    """Git hands Windows checkouts CRLF. The hash goes into run manifests, so
+    if it followed line endings the same prompts would identify differently on
+    different machines, and no two runs would be comparable across platforms."""
+    prompts = importlib.import_module("hardy.prompts")
+    template = SOURCE / "prompts" / "staged" / "base.md.j2"
+    original = template.read_bytes()
+    try:
+        template.write_bytes(original.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        prompts.source.cache_clear()
+        assert "\r" not in prompts.source("staged/base")
+        assert prompts._prompt_set_hash() == prompts.PROMPT_SET_SHA256
+    finally:
+        template.write_bytes(original)
+        prompts.source.cache_clear()
+
+
+def test_the_prompt_set_hash_covers_the_template_files():
+    """The hash goes into every run manifest, so it must follow the text that
+    is actually sent — which now lives in files, not in this module."""
+    prompts = importlib.import_module("hardy.prompts")
+    assert prompts._prompt_set_hash() == prompts.PROMPT_SET_SHA256
+    payload = prompts._prompt_set_payload()
+    assert payload["proof"] == prompts.source("staged/proof")
+    assert payload["version"] == prompts.PROMPT_SET_VERSION
