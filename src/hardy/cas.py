@@ -201,7 +201,11 @@ class Macaulay2Backend(_SentinelBackend):
     error_pattern = re.compile(r"(?m)^stdio:\d+:\d+:\(\d+\): error:")
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
-        return (str(command) if command else "M2", "--no-readline", "-q", "-s")
+        # `-s` was a guess and is obsolete in Macaulay2 1.26.06 (CI run
+        # 30166702246: "error: command line option -s is obsolete." killed the
+        # kernel before it could answer the version probe). Dropped, not
+        # replaced -- there is no confirmed silent-mode equivalent yet.
+        return (str(command) if command else "M2", "--no-readline", "-q")
 
 
 BACKENDS: dict[str, Any] = {
