@@ -222,11 +222,30 @@ artifact modulo an approval that no longer describes it. That is a silent
 strengthening of an approved assumption, so the match runs to the next top-level
 declaration rather than to end of line.
 
+An approval is checked against what Lean resolves *now*, not reused on the
+strength of a matching name. The same audit run re-prints every approved
+assumption, and its statement is compared with the one recorded when it was
+approved; a mismatch — after a Mathlib or project upgrade, say — refuses the
+save and asks for the approval again. A name is not an identity.
+
 A successful audit is **persisted**, not merely reported. `state["audit"]`
 records the verdict for the `Main.lean` that was saved, stamped with the
-declarations it covered. `record_name` drops it, because registering a
+declarations it covered and with a digest of the source actually written.
+It is published *after* that write, not before: a verdict stored first would
+survive a failed write or a crash and describe a `Main.lean` that never
+existed, and the digest also catches a `Main.lean` edited out of band. `record_name` drops it, because registering a
 declaration widens the registry without re-auditing, and `save_latex` refuses
 to grade against a verdict that no longer describes the current registry.
+
+Two bookkeeping rules keep the workspace usable rather than merely safe. The
+audited set is deduplicated, and `request_assumption` does not add a second
+mapping for a name already registered: two mappings would emit two
+`#print axioms` lines for one name, which the parser reads as an unestablished
+audit, leaving a workspace that can never be saved again. And an explicit
+`request_assumption` for a name the audit discovered *upgrades* that record
+rather than being skipped as already known — otherwise its empty declared
+statement would be compared against the newly declared one and refuse every
+later save, with no way to correct it.
 Disclosure is checked outside TeX comments: `% Papers.Smith.main` discloses
 nothing to a reader of the compiled document. Without it the grade
 lives only in a transient `ToolResult`, `session.json` cannot say whether the
