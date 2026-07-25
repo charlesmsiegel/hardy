@@ -109,8 +109,11 @@ class CasBackend(Protocol):
     script_suffix: str                                  # .py / .sing / .m2
     framing: Literal["length", "sentinel"]
     preamble: str                                       # emitted into the export
+    script_stdin: bool                                  # is the script piped in?
     def argv(self, command: Path | None, max_output_bytes: int) -> tuple[str, ...]: ...
     def frame(self, source: str, nonce: str) -> bytes: ...
+    def render_cell(self, source: str) -> str: ...      # a cell, as a script line
+    def script_argv(self, command: Path | None, script: Path) -> tuple[str, ...]: ...
 
 
 class CasSession:
@@ -173,6 +176,13 @@ because a desynchronised stream cannot be trusted to belong to the cell that
 was sent. A misclassified error is caught later by export verification rather
 than never.
 
+One case is not left to be caught later, because Hardy already knows about it
+at the time: when the capture hit `cas_output_bytes`, the scan ran over a
+prefix and the banner can be in the tail that retention discarded. Such a cell
+is recorded and reported in full — with a note saying why — and is *not*
+accepted, so recovery never replays it and export never publishes it. Hardy
+must not assert a success it knows it could not have read.
+
 This adapter boundary is the fragile part of the design. It exists to keep the
 fragility in one file with one shape, which the fake backend in tests can
 imitate exactly.
@@ -215,10 +225,43 @@ them in a fresh kernel, and compares.
 Per-cell verdicts: `verified`, `diverged`, `failed`, `unverified`.
 
 Comparison covers stdout, stderr, and value repr, each normalised for trailing
-whitespace. stderr is included because the notebook preserves it: excluding it
-would let a cell whose warnings did not reproduce still be labelled `verified`.
-Legitimate nondeterminism therefore reports as divergence; that is the
-conservative direction and is left as-is.
+whitespace — trailing only, at the end of each line and of the whole capture.
+Leading whitespace is content: indentation is meaningful in every language
+Hardy drives, and the notebook stores it verbatim. stderr is included because
+the notebook preserves it: excluding it would let a cell whose warnings did not
+reproduce still be labelled `verified`. Legitimate nondeterminism therefore
+reports as divergence; that is the conservative direction and is left as-is.
+
+A cell whose capture hit `cas_output_bytes` is `unverified`, not `verified`,
+however well the retained prefixes match: nothing is known about the tails, and
+`reproduces` would otherwise claim a complete reproduction on partial evidence.
+
+**The script is executed, not only rendered.** Replaying cells through a kernel
+is a claim about the cells; the artifact Hardy publishes is a file, and until
+that file has been run there is no evidence about what running it does. Two
+things make the difference real rather than pedantic: the driver evaluates a
+trailing expression and reports its value, which `exec` in a script discards
+(`2 + 2` exported as "verified" and printed nothing); and a construct legal at
+the head of a cell — a `__future__` import, say — is a syntax error partway
+down a file. So `SympyBackend.render_cell` hands a trailing expression to
+`sys.displayhook`, which is exactly what the driver does with it, and the
+published script is then run as a subprocess and its transcript compared
+against the record. Sentinel backends print statement values themselves, so
+their cells are rendered verbatim and the file is fed to the interpreter on
+stdin, the same argv and input mode the session uses.
+
+`script_verdict` is one of the same four words, and `ExportReport.reproduces`
+requires it to be `verified` alongside every cell. The comparison drops blank
+lines and tolerates interpreter chrome around the transcript — a startup
+banner, a trailing prompt — but nothing between the recorded lines: a script
+has no cell boundaries in it, so the vertical space between one cell and the
+next is not reconstructible, while the content and its order are.
+
+The script's own header states what was checked before the file existed and
+points at `export.json` for the verdict on running it. It cannot name that
+verdict itself: these bytes are what gets run, so a header reporting its own
+result would describe a file that stopped existing the moment the result was
+known.
 
 The script carries a header naming backend, version, and the no-isolation
 warning. The notebook is nbformat v4 written directly, live outputs preserved,
@@ -292,10 +335,15 @@ without error is not the same as recovering.
 1. Render the script from accepted cells.
 2. Start a fresh kernel and run each accepted cell, capturing output.
 3. Compare per cell; assign `verified`, `diverged`, or `failed`.
-4. Cells not reached before the session budget ran out are `unverified`.
-5. Write `workspace/cas/session.<suffix>` and `workspace/cas/session.ipynb`,
-   then `export.json` last, recording both hashes and the verdict counts.
-6. Return the verdict counts and both paths.
+4. Cells not reached before the session budget ran out are `unverified`; so are
+   cells whose capture was truncated at `cas_output_bytes`.
+5. Write `workspace/cas/session.<suffix>`, then run it as a subprocess in a
+   directory created fresh for the purpose and compare its transcript against
+   the record, giving `script_verdict`. Bounded by, and billed to, what is left
+   of the session budget, like every other kernel an export starts.
+6. Write `workspace/cas/session.ipynb`, then `export.json` last, recording both
+   hashes, the verdict counts, and `script_verdict`.
+7. Return the verdict counts, `script_verdict`, and both paths.
 
 A diverged export is still written. `DESIGN.md` requires returning useful
 partial artifacts and stating their limits rather than overclaiming, and a
@@ -327,8 +375,9 @@ disagree.
 Nothing prevents this. It is inherent in wanting both a stateful session and a
 clean artifact. What Hardy can do is refuse to pretend, which is why both
 export *and* rebuild replay into a fresh kernel and compare outputs rather than
-merely checking that the script runs. The same mechanism catches a sentinel
-backend's error banner being misread as success.
+merely checking that the script runs — and why export additionally runs the
+script, because comparing replayed cells says nothing about the file. The same
+mechanism catches a sentinel backend's error banner being misread as success.
 
 ## Known limit: no interrupt
 

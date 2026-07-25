@@ -74,6 +74,45 @@ def test_an_exported_session_reproduces(name, executable, source, tmp_path) -> N
         session.probe_version()
         session.execute(source)
         report = export_session(session, tmp_path / "cas")
-        assert report.reproduces
+        # Dumped on failure: these two interpreters exist only in CI, so a bare
+        # assertion here costs a round trip to find out what the script printed.
+        assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+        assert report.reproduces, report.model_dump_json(indent=2)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize(("name", "executable", "source"), BACKENDS)
+def test_a_truncated_capture_is_not_accepted(name, executable, source, tmp_path) -> None:
+    """A real interpreter, a real overflow, and no claim of success.
+
+    The banner for a cell that fails after printing more than
+    `cas_output_bytes` is in the tail Hardy threw away, so the retained prefix
+    is clean and the scan that classifies sentinel cells cannot see it. Hardy
+    knows the capture was cut and must not then accept the cell into the state
+    that recovery replays and export publishes.
+    """
+    found = shutil.which(executable)
+    if found is None:
+        pytest.skip(f"{executable} is not installed on this machine")
+    session = CasSession(
+        backend=backend_for(name),
+        command=None,
+        log_path=tmp_path / "cells.jsonl",
+        limits=RunLimits(cas_cell_seconds=120, cas_output_bytes=4_096),
+        cwd=tmp_path,
+    )
+    # Both failures are the ones already confirmed against these binaries by
+    # `test_an_error_is_classified_and_not_accepted`, behind more output than
+    # `cas_output_bytes` retains.
+    flood = (
+        'for (int i = 1; i <= 5000; i++) { print("xxxxxxxxxx"); } thisIsNotDefined;'
+        if name == "singular"
+        else 'scan(5000, i -> print "xxxxxxxxxx"); 1/0'
+    )
+    try:
+        record = session.execute(flood)
+        assert record.capture_truncated is True, record.model_dump_json(indent=2)
+        assert record.accepted is False, record.model_dump_json(indent=2)
     finally:
         session.close()

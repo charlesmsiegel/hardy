@@ -128,6 +128,13 @@ mutated the namespace, so a live session and a clean script can disagree
 without anything saying so. A rebuild that reconstructs different values
 poisons the session rather than reporting success.
 
+Replaying the cells is not the same claim as the script working, so export also
+runs the file it just published, as a subprocess, and compares that transcript
+against the record too. A kernel evaluates a trailing expression and reports its
+value where a plain script discards it, and a construct that is legal at the
+head of a cell can be illegal partway down a file. Both verdicts are published;
+an export reproduces only when both hold.
+
 The same bounded runtime serves the interactive chat, staged runs, and the MCP
 server, so a cell costs the same budget whichever transport asked for it.
 Nothing computed here is evidence. The verifier never reads a CAS result, and

@@ -24,6 +24,12 @@ def main() -> None:
     swallowed = False
     for line in sys.stdin:
         line = line.rstrip("\n")
+        # A comment is not a statement: it neither terminates nor swallows one.
+        # Hardy's exported scripts carry a header and a per-cell comment, and
+        # this interpreter is fed one of those whole when an export checks that
+        # the script it published reproduces the session.
+        if line.lstrip().startswith("//"):
+            continue
         # An unterminated statement means the interpreter is still waiting, so
         # the marker line that follows is swallowed as part of it -- exactly
         # what a missing semicolon does in Singular. The combined, malformed
@@ -55,7 +61,14 @@ def main() -> None:
             sys.stdout.write("\n" + PROMPT)
             sys.stdout.flush()
             continue
-        if line.startswith("error"):
+        if line.startswith("errorflood"):
+            # An error banner *behind* more output than Hardy retains. A real
+            # interpreter does this every time a long computation fails at the
+            # end, and the banner is the only evidence the cell failed at all:
+            # a sentinel backend has no status of its own.
+            sys.stdout.write("z" * min(400_000, limit * 4) + "\n")
+            sys.stdout.write("   ? this is an error\n")
+        elif line.startswith("error"):
             sys.stdout.write("   ? this is an error\n")
         elif line.startswith("flood"):
             sys.stdout.write("z" * min(400_000, limit * 4) + "\n")

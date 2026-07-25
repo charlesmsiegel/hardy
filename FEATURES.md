@@ -99,9 +99,20 @@ Priority labels are sequencing hints:
   cell against its record and poisons the session on divergence. Running
   without error is not the same as recovering.
 - **Now (implemented):** export writes a backend-native script and an `.ipynb`,
-  replays them in a fresh kernel, compares stdout, stderr, and value repr, and
-  records a per-cell verdict in both artifacts plus an `export.json` naming both
-  files by digest. A diverged export is written and marked, not withheld.
+  replays the cells in a fresh kernel, compares stdout, stderr, and value repr,
+  and records a per-cell verdict in both artifacts plus an `export.json` naming
+  both files by digest. A diverged export is written and marked, not withheld.
+- **Now (implemented):** export then runs the script it published and compares
+  that transcript against the record, because replaying cells says nothing
+  about whether the file works: the script renders a trailing expression so it
+  prints the value the kernel reported, and a cell-boundary construct that
+  breaks the file is caught here rather than by the reader. `script_verdict`
+  travels in `export.json` and the notebook, and an export reproduces only when
+  the cells and the script both do.
+- **Now (implemented):** a capture that hit `cas_output_bytes` is never called
+  verified — a sentinel backend's cell is not accepted at all, since its error
+  banner may be in the discarded tail, and an export marks a truncated cell
+  `unverified` rather than claiming matching prefixes are a reproduction.
 - **Now (implemented):** the human drives the same kernel through `/cas`, and
   those cells enter the same log, replay, and export as the model's.
 - **Now (implemented):** an absent backend registers no tools on any binding,

@@ -25,6 +25,7 @@ environment.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import json
 import os
@@ -114,8 +115,18 @@ class RebuildReport(FrozenModel):
 
 
 def normalise(text: str) -> str:
-    """Compare outputs without being defeated by trailing whitespace."""
-    return "\n".join(line.rstrip() for line in text.strip().splitlines())
+    """Compare outputs without being defeated by trailing whitespace.
+
+    Trailing only, in both senses: whitespace at the end of each line, and
+    whitespace at the end of the whole capture. Leading whitespace is content.
+    `text.strip()` used to take it off the front as well, so a replay that
+    printed `x` matched a session that had printed `  x` -- and the notebook,
+    which stores the original bytes, showed the difference this function had
+    just declared not to exist. Indentation is meaningful in every language
+    Hardy drives, and in Macaulay2's pretty-printed matrices it is most of the
+    value.
+    """
+    return "\n".join(line.rstrip() for line in text.rstrip().splitlines())
 
 
 def reproduces(record: CellRecord, outcome: CellOutcome) -> bool:
@@ -131,6 +142,21 @@ def reproduces(record: CellRecord, outcome: CellOutcome) -> bool:
     )
 
 
+def _source_offset(source: str, lineno: int, col_offset: int) -> int:
+    """A character index into `source` for one of `ast`'s positions.
+
+    `col_offset` is a count of UTF-8 bytes, not characters, so a cell holding
+    any non-ASCII text ahead of the position would be spliced in the wrong
+    place by naive arithmetic.
+    """
+    lines = source.splitlines(keepends=True)
+    if lineno - 1 >= len(lines):
+        return len(source)
+    prefix = sum(len(line) for line in lines[: lineno - 1])
+    within = lines[lineno - 1].encode("utf-8")[:col_offset].decode("utf-8", errors="ignore")
+    return prefix + len(within)
+
+
 class SympyBackend:
     """The default backend: Hardy's own interpreter, driven over a byte protocol."""
 
@@ -140,8 +166,14 @@ class SympyBackend:
     kernel_name = "python3"
     framing = "length"
     comment = "#"
-    preamble = "from sympy import *"
+    # `import sys` is here for `render_cell` below, which needs `displayhook`
+    # to make a trailing expression visible in the script. It goes after the
+    # star import so nothing sympy exports can shadow the module.
+    preamble = "from sympy import *\nimport sys"
     version_source = '__import__("sympy").__version__'
+    # The exported script is run as an ordinary Python program, not through the
+    # driver: the artifact under test is the file a reader would run.
+    script_stdin = False
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         return (
@@ -152,9 +184,46 @@ class SympyBackend:
             str(max_output_bytes),
         )
 
+    def script_argv(self, command: Path | None, script: Path) -> tuple[str, ...]:
+        return (str(command) if command else sys.executable, "-u", str(script))
+
     def frame(self, source: str, nonce: str) -> bytes:
         payload = json.dumps({"source": source}, ensure_ascii=False).encode("utf-8")
         return f"{len(payload):0{HEADER_BYTES}d}".encode("ascii") + payload
+
+    def sanitize(self, stdout: str) -> str:
+        """No cleanup: the driver hands back exactly what the cell captured."""
+        return stdout
+
+    def render_cell(self, source: str) -> str:
+        """Emit a cell that shows in a script what it showed in the session.
+
+        This is the difference between a script and a kernel. `cas_driver`
+        splits off a trailing expression and evaluates it, so `2 + 2` is
+        recorded with `value_repr="4"`; `exec` in a plain script discards that
+        value and prints nothing. Writing the raw source out and then calling
+        the pair verified was a claim about an artifact that did not behave
+        the way the record said, so the trailing expression is handed to
+        `sys.displayhook` instead -- which is precisely what the driver does
+        with it: nothing when the value is None, otherwise bind `_` and print
+        the repr.
+
+        Only the trailing expression is touched, and it is spliced by source
+        offsets rather than re-unparsed, so the rest of the cell reaches the
+        reader exactly as it was written -- comments, spacing and all.
+        """
+        try:
+            parsed = ast.parse(source)
+        except SyntaxError:
+            # Unreachable for an accepted cell, and not this function's business
+            # to diagnose: the script keeps the source and the run will say so.
+            return source
+        if not parsed.body or not isinstance(parsed.body[-1], ast.Expr):
+            return source
+        trailing = parsed.body[-1]
+        start = _source_offset(source, trailing.lineno, trailing.col_offset)
+        end = _source_offset(source, trailing.end_lineno or trailing.lineno, trailing.end_col_offset or 0)
+        return f"{source[:start]}sys.displayhook({source[start:end]}){source[end:]}"
 
     def parse_version(self, sanitized_stdout: str) -> str:
         return sanitized_stdout
@@ -171,9 +240,23 @@ class _SentinelBackend:
     framing = "sentinel"
     error_pattern: re.Pattern[str]
     echo: str
+    # The exported script is fed to the interpreter on stdin, which is how the
+    # session itself runs cells: same argv, same input mode, so the transcript
+    # the check compares against the record is produced the same way the record
+    # was. A file named on the command line is a different execution mode in
+    # both Singular and Macaulay2, and verifying one while shipping the other
+    # would be the defect this check exists to catch.
+    script_stdin = True
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         raise NotImplementedError
+
+    def script_argv(self, command: Path | None, script: Path) -> tuple[str, ...]:
+        return self.argv(command)
+
+    def render_cell(self, source: str) -> str:
+        """Verbatim. These interpreters print a statement's value themselves."""
+        return source
 
     def frame(self, source: str, nonce: str) -> bytes:
         begin = SENTINEL_BEGIN.format(nonce=nonce)
@@ -969,6 +1052,31 @@ class CasSession:
 
             status = outcome.status
             truncated = outcome.capture_truncated
+            # A sentinel backend has no status of its own: Hardy decides whether
+            # the cell failed by looking for an error banner in what it printed.
+            # When the capture hit `cas_output_bytes` that decision was made
+            # from a prefix, and Singular's `? ` banner or Macaulay2's
+            # `stdio:...: error:` can be sitting in the tail that was thrown
+            # away. Hardy knows the capture was cut, so it must not then assert
+            # success: the cell is recorded and reported in full, and kept out
+            # of the accepted set that recovery replays and export publishes,
+            # where a wrong "ok" would be repeated as fact forever after.
+            #
+            # The driver protocol is untouched. There the child reports its own
+            # status and clips afterwards, so truncation cannot hide a failure
+            # -- what it can still hide is a differing tail, which is export's
+            # problem and is answered there with an `unverified` verdict.
+            unverifiable = (
+                truncated and status == "ok" and self.backend.framing == "sentinel"
+            )
+            if unverifiable:
+                notes = (notes + " " if notes else "") + (
+                    "[output exceeded cas_output_bytes, so this cell was classified "
+                    "from a prefix and an error banner could be in the discarded "
+                    "tail. It ran, and its output is recorded, but it was not "
+                    "accepted into the state replay and export rebuild from. Print "
+                    "less, or raise cas_output_bytes, to have it accepted.]"
+                )
             if status in {"timeout", "kernel_died"}:
                 self._drop_kernel()
             record = CellRecord(
@@ -977,7 +1085,7 @@ class CasSession:
                 author=author,  # type: ignore[arg-type]
                 source=source,
                 status=status,  # type: ignore[arg-type]
-                accepted=status == "ok",
+                accepted=status == "ok" and not unverifiable,
                 stdout=outcome.stdout,
                 stderr=outcome.stderr,
                 value_repr=outcome.value_repr,
@@ -1083,6 +1191,72 @@ class CasSession:
             if self._kernel is not None:
                 self._kernel.kill()
             self._kernel = None
+
+
+class ScriptRun(FrozenModel):
+    """What running an exported script produced. `returncode` is None on timeout."""
+
+    returncode: int | None = None
+    stdout: str = ""
+    stderr: str = ""
+    timed_out: bool = False
+
+
+def run_exported_script(
+    *,
+    backend: Any,
+    command: Path | None,
+    script: Path,
+    cwd: Path,
+    timeout: float,
+) -> ScriptRun:
+    """Execute a rendered script the way a reader would, and capture it.
+
+    Not a kernel and not a replay: one process, the whole file, no framing.
+    That is the point -- the artifact Hardy publishes is a file somebody runs,
+    and until it has been run there is no evidence about what it does.
+    """
+    cwd.mkdir(parents=True, exist_ok=True)
+    argv = backend.script_argv(command, script)
+    # A line-oriented interpreter is fed the file on stdin, as the session
+    # feeds it cells. Everything else gets an immediately closed stdin, so a
+    # program that reads it sees EOF instead of blocking until the deadline.
+    payload = script.read_bytes() if getattr(backend, "script_stdin", False) else b""
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=str(cwd),
+            env=child_environment({}),
+            shell=False,
+            input=payload,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except subprocess.TimeoutExpired as expired:
+        return ScriptRun(
+            stdout=_decode(expired.stdout),
+            stderr=_decode(expired.stderr),
+            timed_out=True,
+        )
+    except (OSError, ValueError) as error:
+        raise CasError(
+            f"could not run the exported script ({' '.join(argv)}): {error}"
+        ) from None
+    return ScriptRun(
+        returncode=completed.returncode,
+        stdout=_decode(completed.stdout),
+        stderr=_decode(completed.stderr),
+    )
+
+
+def _decode(raw: bytes | str | None) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    return raw.decode("utf-8", errors="replace")
 
 
 def replay_in_fresh_kernel(

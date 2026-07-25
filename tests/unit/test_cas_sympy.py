@@ -7,6 +7,10 @@ actually ship with computes, keeps state, and reports values — the behaviours
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+
 import pytest
 
 from hardy.cas import CasSession, backend_for
@@ -151,6 +155,101 @@ def test_an_exported_sympy_session_reproduces(sympy_session, tmp_path) -> None:
     report = export_session(sympy_session, tmp_path / "cas")
     assert report.reproduces
     assert report.verified == 2
+    assert report.script_verdict == "verified"
     script = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
     # The preamble the driver preloads is emitted, so the script stands alone.
     assert "from sympy import *" in script
+
+
+def test_running_the_exported_script_prints_what_the_session_recorded(
+    sympy_session, tmp_path
+) -> None:
+    """The claim, checked by running the thing the claim is about.
+
+    Export used to verify cells *through the driver* -- which evaluates a
+    trailing expression and reports its value -- and then write the raw source
+    into `session.py`, where `exec` discards that value. A session whose only
+    cell was `2 + 2` exported as "1 verified" and printed nothing at all when
+    run. The notebook was honest, because it carries the recorded outputs; the
+    script's verdict was not.
+    """
+    sympy_session.execute("x = symbols('x')")
+    sympy_session.execute("print('computing'); factor(x**2 - 1)")
+    last = sympy_session.execute("2 + 2")
+    assert last.value_repr == "4"
+
+    report = export_session(sympy_session, tmp_path / "cas")
+    script = tmp_path / "cas" / "session.py"
+
+    finished = subprocess.run(
+        [sys.executable, "-u", str(script)],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert finished.returncode == 0, finished.stderr
+    # Not "it ran": every recorded output, in order, is what it printed.
+    assert finished.stdout.splitlines() == ["computing", "(x - 1)*(x + 1)", "4"]
+    assert [record.value_repr for record in sympy_session.accepted()] == [
+        "",
+        "(x - 1)*(x + 1)",
+        "4",
+    ]
+    assert report.script_verdict == "verified"
+    assert report.reproduces
+
+
+def test_a_script_that_cannot_run_is_not_reported_as_reproducing(
+    sympy_session, tmp_path
+) -> None:
+    """Cell boundaries are not file boundaries, and only running the file finds it.
+
+    The driver compiles each cell as its own module, so a `__future__` import
+    is legal at the head of one and the cell is accepted and replays cleanly.
+    Concatenated into a script it lands partway down a file, where it is a
+    syntax error -- so every per-cell verdict says `verified` while the
+    published artifact cannot be run at all.
+    """
+    sympy_session.execute("x = symbols('x')")
+    boundary = sympy_session.execute("from __future__ import annotations")
+    assert boundary.status == "ok" and boundary.accepted
+
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.verified == 2  # replayed cell by cell, both reproduce
+    assert report.script_verdict == "failed"
+    assert not report.reproduces
+
+    finished = subprocess.run(
+        [sys.executable, str(tmp_path / "cas" / "session.py")],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert finished.returncode != 0
+    assert "__future__" in finished.stderr
+
+    # Written and marked, never withheld: both artifacts exist and both say so.
+    notebook = json.loads((tmp_path / "cas" / "session.ipynb").read_text(encoding="utf-8"))
+    assert notebook["metadata"]["hardy"]["script_verification"]["verdict"] == "failed"
+    manifest = json.loads((tmp_path / "cas" / "export.json").read_text(encoding="utf-8"))
+    assert manifest["script_verdict"] == "failed"
+
+
+def test_the_script_header_does_not_claim_a_verification_it_cannot_have(
+    sympy_session, tmp_path
+) -> None:
+    """The header is written before the file is run, so it cannot report that run.
+
+    Its own bytes are what gets executed; a header naming its own verdict would
+    describe a file that stopped existing the moment the verdict was known.
+    """
+    sympy_session.execute("2 + 2")
+    export_session(sympy_session, tmp_path / "cas")
+    header = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8").split("\n\n")[0]
+    assert "replayed" in header  # what was checked before this file existed
+    assert "export.json" in header  # where the verdict on this file lives
+    assert "verified on replay)" not in header
