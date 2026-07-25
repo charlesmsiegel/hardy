@@ -460,7 +460,14 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
             from .codex_runtime import CodexRuntime
 
             return CodexRuntime(client=Codex(), store=store, config_path=config_path)
+        from .domain import RunPhase
         from .staged import ClaudeStagedRuntime
+
+        def observe_cas(event: dict[str, Any]) -> None:
+            # `cas_run` (and `cas_reset`) publish a completed cell record here;
+            # without this the trajectory shows the tool was *requested* but
+            # never what the kernel actually returned.
+            store.append("cas." + str(event.get("type", "event")), event, phase=RunPhase.PROVING)
 
         cas_directory = store.path / "cas"
         cas_runtime, _ = cas_tools.build_runtime(
@@ -472,6 +479,7 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
             spill=lambda name, text: store.write_text(
                 PurePosixPath(f"process/{name}"), text
             ).relative_path,
+            observe=observe_cas,
         )
         return ClaudeStagedRuntime(
             store=store,
@@ -489,7 +497,7 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
     def staged_doctor(value: configuration.Config) -> Any:
         checks = doctor.run_checks(value)
         return SimpleNamespace(
-            healthy=all(check.ok for check in checks),
+            healthy=all(check.ok for check in checks if check.required),
             authenticated=all(check.ok for check in checks if "login" in check.name.lower()),
         )
 
