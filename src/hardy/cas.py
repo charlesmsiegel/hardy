@@ -1238,6 +1238,29 @@ def _drain_capped(pipe: Any, into: bytearray, cap: int, overflowed: list[bool]) 
         overflowed[0] = True
 
 
+def _feed(process: subprocess.Popen, payload: bytes) -> None:
+    """Write the script to the child's stdin, then close it.
+
+    Closing is not optional and is not only for the payload's sake: an
+    interpreter reading stdin runs until EOF, so a handle left open keeps a
+    child alive that has already done everything asked of it.
+    """
+    stdin = process.stdin
+    if stdin is None:
+        return
+    try:
+        if payload:
+            stdin.write(payload)
+            stdin.flush()
+    except (OSError, ValueError):
+        # The child exited, or was killed at the deadline, with the payload
+        # part-written. Its own status is the answer; this thread just stops.
+        pass
+    finally:
+        with contextlib.suppress(OSError, ValueError):
+            stdin.close()
+
+
 def run_exported_script(
     *,
     backend: Any,
@@ -1284,34 +1307,43 @@ def run_exported_script(
             f"could not run the exported script ({' '.join(argv)}): {error}"
         ) from None
 
-    readers = [
+    workers = [
         threading.Thread(target=_drain_capped, args=(pipe, buffer, cap, overflowed), daemon=True)
         for pipe, buffer in ((process.stdout, out), (process.stderr, err))
     ]
-    for reader in readers:
-        reader.start()
+    # Feeding stdin is a third concurrent job, not a preamble to the other two.
+    # `subprocess.run(input=...)` multiplexes all three inside `communicate()`;
+    # writing the payload straight through on this thread instead re-created
+    # the deadlock `communicate` exists to avoid. Once the payload passes the
+    # OS pipe buffer and the child is not draining it fast enough, the write
+    # blocks -- and it blocks *before* the deadline loop below is ever reached,
+    # so no timeout applies and nothing can kill the child. That is not a
+    # corner: `script_stdin` is how Singular and Macaulay2 are fed, and with a
+    # 64 KiB per-cell source cap a handful of cells passes any pipe buffer.
+    workers.append(threading.Thread(target=_feed, args=(process, payload), daemon=True))
+    for worker in workers:
+        worker.start()
     timed_out = False
     try:
-        if process.stdin is not None:
-            with contextlib.suppress(OSError, ValueError):
-                process.stdin.write(payload)
-                process.stdin.flush()
-            with contextlib.suppress(OSError, ValueError):
-                process.stdin.close()
-        try:
-            process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
     finally:
+        # Killed first, and only then joined. A writer still blocked on a full
+        # pipe is released by the child's death -- the write fails and the
+        # thread unwinds -- whereas closing the handle from here would queue
+        # behind the very write that is stuck. Every worker is a daemon and
+        # every join is bounded, so a wedged one costs a thread, never the
+        # export.
         if process.poll() is None:
             process.kill()
             with contextlib.suppress(subprocess.TimeoutExpired):
                 process.wait(timeout=5)
-        for reader in readers:
-            reader.join(timeout=5)
-        for stream in (process.stdout, process.stderr):
+        for worker in workers:
+            worker.join(timeout=5)
+        for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
-                with contextlib.suppress(OSError):
+                with contextlib.suppress(OSError, ValueError):
                     stream.close()
     return ScriptRun(
         returncode=None if timed_out else process.returncode,
