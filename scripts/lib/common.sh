@@ -382,13 +382,15 @@ verify() {
 }
 
 summary() {
+	local skipped_suffix=""
+	[ "$SKIP_MATHLIB" = 1 ] && skipped_suffix=" (skipped)"
 	cat <<EOF
 
 $(printf '\033[1mHardy is installed.\033[0m')
 
   command      $HARDY_BIN_DIR/hardy
   environment  $VENV
-  lean project ${LEAN_PROJECT}$([ "$SKIP_MATHLIB" = 1 ] && printf ' (skipped)' || true)
+  lean project ${LEAN_PROJECT}${skipped_suffix}
   config       $HARDY_CONFIG
 
 Start doing mathematics with an agent:

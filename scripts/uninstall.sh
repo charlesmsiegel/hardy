@@ -188,7 +188,9 @@ hardy_uninstall_main() {
 	fi
 
 	# Only when empty: --prefix may point at a directory that was not ours alone.
-	rmdir "$HARDY_HOME" 2>/dev/null && say "removed $HARDY_HOME" || true
+	if rmdir "$HARDY_HOME" 2>/dev/null; then
+		say "removed $HARDY_HOME"
+	fi
 
 	printf '\n'
 	if [ "$removed" = 0 ] && [ "$kept" = 0 ]; then
