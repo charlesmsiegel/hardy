@@ -1,2 +1,3 @@
    ? `thisIsNotDefined` is not defined
    ? error occurred in or before STDIN line 1: `thisIsNotDefined;`
+      ? nested procedure call failed: undefined symbol
