@@ -110,10 +110,15 @@ declaration on `(`, `{`, and `:` turns `theorem Foo.{u} (a : Sort u) : True`
 into `Foo.`, so a universe-polymorphic request could never verify; and the
 existing identifier pattern `[A-Za-z_][A-Za-z0-9_'.]*` accepts `Foo..bar` and
 `Foo.`, which `record_name` would persist and every later save would then fail
-on. Both are replaced by one pattern that validates namespace components rather
-than allowing dots anywhere:
-`[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*`. Matching it against the
-declaration head yields `Foo` for `Foo.{u}` without special-casing universes.
+on. It is also ASCII-only, and Lean identifiers are not: `theorem α : True` is a
+valid request that pattern rejects outright.
+
+Both are replaced by one Unicode-aware pattern validating namespace components
+rather than allowing dots anywhere — `[^\W\d][\w']*` joined by dots — which
+accepts `α`, `x₁`, and `Nat.add_comm'` while still refusing `Foo..bar` and
+`Foo.`. Matching it against the declaration head yields `Foo` for `Foo.{u}`
+without special-casing universes. It approximates Lean's identifier grammar
+rather than reimplementing it; French-quoted «escaped identifiers» are refused.
 
 ### Call sites
 
@@ -204,8 +209,26 @@ before `record_name`, so this is the common path rather than a corner, and that
 ordering changes: register the declarations, then save. `check_lean` is
 unaffected and remains the tool for scratch work.
 
+The statement lookup runs under **the audited source's own imports**, not the
+interactive session's placeholder request, which carries only `Mathlib`
+(`chat.py:65`). An axiom supplied by the source's `import Papers.Smith` would
+otherwise come back unavailable, and the human would be asked to approve a bare
+name — precisely the outcome the lookup exists to prevent.
+
+The existing check that a declared axiom matches its approved statement is
+line-oriented, so `axiom Foo :\n  False` matches nothing and the comparison never
+runs, while the audit sees the already-approved bare name `Foo` and grades the
+artifact modulo an approval that no longer describes it. That is a silent
+strengthening of an approved assumption, so the match runs to the next top-level
+declaration rather than to end of line.
+
 A successful audit is **persisted**, not merely reported. `state["audit"]`
-records the verdict for the `Main.lean` that was saved. Without it the grade
+records the verdict for the `Main.lean` that was saved, stamped with the
+declarations it covered. `record_name` drops it, because registering a
+declaration widens the registry without re-auditing, and `save_latex` refuses
+to grade against a verdict that no longer describes the current registry.
+Disclosure is checked outside TeX comments: `% Papers.Smith.main` discloses
+nothing to a reader of the compiled document. Without it the grade
 lives only in a transient `ToolResult`, `session.json` cannot say whether the
 saved artifact is clean or verified-modulo, and `save_latex` — which checks only
 labels — would happily accept a writeup claiming plain kernel verification for a
@@ -238,10 +261,17 @@ continue to take precedence as they do today.
 
 `RunResult.axioms` stops being the raw Lean output blob and becomes the
 structured verdict — including on a rejected run. A run that ends
-`axioms_rejected` must record the verdict that rejected it, naming the `sorryAx`
-or unapproved assumption responsible; reporting `not audited` there would say an
-audit never ran when one ran and refused. `not audited` is reserved for runs
-where no submission ever reached the audit. `RunResult.formalization` is derived
+`axioms_rejected` must record what rejected it, and the record distinguishes
+three different facts rather than collapsing them:
+
+- **a verdict** — the audit ran and found `sorryAx` or an unapproved assumption,
+  named in the record;
+- **`not established`** — the audit was attempted and could not be completed,
+  because the report was missing, duplicated, or the declaration was an
+  anonymous `example`, with the reason carried alongside;
+- **`not audited`** — no submission ever reached the audit at all.
+
+Reporting the second as the third would say no audit was attempted when one was. `RunResult.formalization` is derived
 from the verdict rather than from the exit code.
 
 ## Known limit: the audit runs inside the environment it is auditing
