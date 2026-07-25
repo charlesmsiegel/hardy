@@ -27,6 +27,16 @@ def test_state_is_not_polluted_by_the_previous_cells_prompt(sentinel_session) ->
     """
     session = sentinel_session()
     session.execute("first;")
+    # `consume()` trims exactly through the marker it just answered and no
+    # further: the cell's own frame ("first;") is gone, but the trailing
+    # prompt -- belonging to no cell -- is still sitting in the kernel's
+    # buffer. If `consume()` were a no-op (or never called), "first;" would
+    # still be there too; if it were a wholesale wipe, "fake>" would already
+    # be gone. Without this assertion, the two checks below pass whether or
+    # not the residue they depend on ever actually survived to be excluded.
+    leftover = bytes(session._kernel.out)
+    assert b"fake>" in leftover
+    assert b"first;" not in leftover
     second = session.execute("second;")
     assert "fake>" not in second.stdout
     assert second.stdout.strip() == "second;"

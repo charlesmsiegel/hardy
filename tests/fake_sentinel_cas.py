@@ -19,12 +19,17 @@ def main() -> None:
     for line in sys.stdin:
         line = line.rstrip("\n")
         # An unterminated statement means the interpreter is still waiting, so
-        # the marker line that follows -- and everything after it -- is
-        # swallowed as part of it, exactly what a missing semicolon does in
-        # Singular: nothing completes the statement, so nothing is ever
-        # written back for it, including a marker that would otherwise be
-        # lexically present in the swallowed text.
+        # the marker line that follows is swallowed as part of it -- exactly
+        # what a missing semicolon does in Singular. The combined, malformed
+        # statement is never executed, so no marker it happens to contain is
+        # ever echoed -- but real interpreters recover at the next terminator
+        # rather than hanging forever, so this does too: it reports an error
+        # for the swallowed statement and goes back to answering normally.
         if swallowed:
+            if line.endswith(";"):
+                swallowed = False
+                sys.stdout.write("   ? this is an error\n")
+                sys.stdout.flush()
             continue
         if line and not line.endswith((";", "»")):
             swallowed = True
