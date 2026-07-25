@@ -183,6 +183,13 @@ is recorded and reported in full — with a note saying why — and is *not*
 accepted, so recovery never replays it and export never publishes it. Hardy
 must not assert a success it knows it could not have read.
 
+That refusal has a cost, and the note names it: the cell did change the live
+namespace, and that change is now outside the accepted set, so a later cell
+depending on it diverges on export and fails to rebuild after a restart —
+exactly as one depending on an errored cell does. This is the known limit
+below, reached by a second route. The remedy is to rerun the cell printing
+less, or to raise `cas_output_bytes` and rerun it, before building on it.
+
 This adapter boundary is the fragile part of the design. It exists to keep the
 fragility in one file with one shape, which the fake backend in tests can
 imitate exactly.

@@ -146,6 +146,111 @@ def test_a_truncated_capture_is_not_reported_as_verified(tmp_path, cas_session) 
     assert metadata["capture_truncated"] is True
 
 
+def test_a_truncated_capture_leaves_the_script_unverified_not_diverged(
+    tmp_path, cas_session
+) -> None:
+    """`diverged` is an affirmative claim, and there is nothing to base it on.
+
+    When a cell's capture stopped at `cas_output_bytes`, the record is a prefix
+    and no complete transcript exists to compare a script run against. Saying
+    "the script printed something different" about a tail Hardy never read is
+    the same rounding-up that a truncated cell verdict refuses, pointed the
+    other way.
+    """
+    session = cas_session(cas_output_bytes=4_096, cas_cell_seconds=30)
+    try:
+        session.execute("flood")
+        report = export_session(session, tmp_path / "cas")
+    finally:
+        session.close()
+
+    assert report.script_verdict == "unverified", report.script_detail
+    assert "cas_output_bytes" in report.script_detail
+    assert not report.reproduces
+    manifest = json.loads((tmp_path / "cas" / "export.json").read_text(encoding="utf-8"))
+    assert manifest["script_verdict"] == "unverified"
+
+
+def test_a_truncated_record_is_unverifiable_even_when_the_script_runs_clean(
+    tmp_path, cas_session
+) -> None:
+    """The other half of the same rule, where the script itself behaves.
+
+    A short, clean script run says nothing when the thing it is being compared
+    against is a prefix: the recorded transcript is incomplete, so agreement
+    over what survives is not agreement.
+    """
+    session = cas_session()
+    try:
+        session.execute("a")
+        # Exactly what a cell that overran the cap leaves behind, without
+        # needing a cell large enough to also overrun the script run's capture.
+        session._records[-1] = session._records[-1].model_copy(
+            update={"capture_truncated": True}
+        )
+        report = export_session(session, tmp_path / "cas")
+    finally:
+        session.close()
+
+    assert report.script_verdict == "unverified", report.script_detail
+    assert "truncated capture" in report.script_detail
+    assert [verdict.verdict for verdict in report.verdicts] == ["unverified"]
+    assert not report.reproduces
+
+
+def test_the_script_detail_is_small_enough_to_publish(tmp_path, cas_session) -> None:
+    """`script_detail` is copied into export.json, the notebook, and tool results.
+
+    A recorded line may be `cas_output_bytes` long, so quoting a handful of them
+    verbatim can make the explanation larger than either artifact it explains.
+    """
+    session = cas_session(cas_cell_seconds=30)
+    try:
+        # A 5 KiB line that differs in every process: the divergence is real,
+        # and quoting the lines behind it verbatim is what has to be avoided.
+        session.execute("longdrift")
+        report = export_session(session, tmp_path / "cas")
+    finally:
+        session.close()
+
+    assert report.script_verdict == "diverged", report.script_detail
+    assert len(report.script_detail) <= 600
+    notebook = (tmp_path / "cas" / "session.ipynb").read_text(encoding="utf-8")
+    assert len(json.loads(notebook)["metadata"]["hardy"]["script_verification"]["detail"]) <= 600
+
+
+def test_a_check_that_blows_up_costs_the_verdict_not_the_artifacts(
+    tmp_path, cas_session, monkeypatch
+) -> None:
+    """DESIGN.md asks for a partial artifact over silence, and this is the last
+    step that could take one away: the script is written before it is run, so an
+    exception escaping the check left a script with no notebook and no manifest
+    beside it -- the exact half-written pair `export.json` exists to make
+    detectable. A `MemoryError` from an unbounded capture was the live route in.
+    """
+
+    def explode(**_kwargs):
+        raise MemoryError("out of memory reading the script's output")
+
+    monkeypatch.setattr("hardy.cas_export.run_exported_script", explode)
+    session = cas_session()
+    try:
+        session.execute("a")
+        report = export_session(session, tmp_path / "cas")
+    finally:
+        session.close()
+
+    assert report.script_verdict == "unverified"
+    assert "MemoryError" in report.script_detail
+    assert not report.reproduces
+    # Both artifacts and the manifest exist, and the manifest's digests match.
+    for name in ("session.py", "session.ipynb", "export.json"):
+        assert (tmp_path / "cas" / name).exists()
+    manifest = json.loads((tmp_path / "cas" / "export.json").read_text(encoding="utf-8"))
+    for name, digest in manifest["files"].items():
+        assert hashlib.sha256((tmp_path / "cas" / name).read_bytes()).hexdigest() == digest
+
+
 def test_only_accepted_cells_reach_the_script(tmp_path, cas_session) -> None:
     session = cas_session()
     try:

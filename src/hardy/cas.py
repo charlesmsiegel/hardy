@@ -227,9 +227,15 @@ class SympyBackend:
             trailing.end_lineno or trailing.lineno,
             trailing.end_col_offset or 0,
         )
-        # Wrapping in a call also parenthesises it, so an expression spread
-        # over several lines stays one expression in the script.
-        return f"{source[:start]}sys.displayhook({source[start:end]}){source[end:]}"
+        # The inner parentheses are load-bearing and are not the call's. A
+        # trailing expression may have a top-level comma -- `x, y` is ordinary
+        # CAS usage -- and an argument list splits on exactly that: `x, y`
+        # became two arguments and the published script died with "displayhook()
+        # takes exactly one argument", while `x,` became one argument and
+        # printed `x` where the record said `(x,)`. Parenthesised first, the
+        # comma builds the tuple the driver evaluated. They also make an
+        # expression spread over several lines stay one expression.
+        return f"{source[:start]}sys.displayhook(({source[start:end]})){source[end:]}"
 
     def parse_version(self, sanitized_stdout: str) -> str:
         return sanitized_stdout
@@ -1080,8 +1086,11 @@ class CasSession:
                     "[output exceeded cas_output_bytes, so this cell was classified "
                     "from a prefix and an error banner could be in the discarded "
                     "tail. It ran, and its output is recorded, but it was not "
-                    "accepted into the state replay and export rebuild from. Print "
-                    "less, or raise cas_output_bytes, to have it accepted.]"
+                    "accepted into the state replay and export rebuild from. It did "
+                    "change the live namespace, and that change is now outside the "
+                    "accepted set: any later cell that depends on it will diverge on "
+                    "export and after a kernel restart. Rerun it printing less, or "
+                    "raise cas_output_bytes and rerun it, before building on it.]"
                 )
             if status in {"timeout", "kernel_died"}:
                 self._drop_kernel()
@@ -1206,6 +1215,27 @@ class ScriptRun(FrozenModel):
     stdout: str = ""
     stderr: str = ""
     timed_out: bool = False
+    # Retention stopped at `cas_output_bytes`, so what is above is a prefix.
+    # Any verdict drawn from it can only be `unverified`: an unread tail is not
+    # evidence of agreement and is not evidence of disagreement either.
+    capture_truncated: bool = False
+
+
+def _drain_capped(pipe: Any, into: bytearray, cap: int, overflowed: list[bool]) -> None:
+    """Read a pipe to its end while keeping at most `cap` bytes.
+
+    Reading has to continue past the cap even though retaining does not: a
+    child whose pipe stops being read blocks on its next write and never
+    reaches the deadline, and the wait for it never returns.
+    """
+    try:
+        while chunk := pipe.read1(65_536):
+            room = max(0, cap - len(into))
+            into.extend(chunk[:room])
+            if len(chunk) > room:
+                overflowed[0] = True
+    except (OSError, ValueError):
+        overflowed[0] = True
 
 
 def run_exported_script(
@@ -1215,12 +1245,19 @@ def run_exported_script(
     script: Path,
     cwd: Path,
     timeout: float,
+    max_output_bytes: int,
 ) -> ScriptRun:
     """Execute a rendered script the way a reader would, and capture it.
 
     Not a kernel and not a replay: one process, the whole file, no framing.
     That is the point -- the artifact Hardy publishes is a file somebody runs,
     and until it has been run there is no evidence about what it does.
+
+    Bounded like every other capture Hardy takes. `subprocess.run` with
+    `capture_output` grows a buffer until the child stops writing, so a script
+    of cells that print heavily would hold its whole transcript in Hardy's
+    memory -- and a `MemoryError` raised there would take the export's
+    artifacts with it, which is exactly what an export is supposed to survive.
     """
     cwd.mkdir(parents=True, exist_ok=True)
     argv = backend.script_argv(command, script)
@@ -1228,32 +1265,60 @@ def run_exported_script(
     # feeds it cells. Everything else gets an immediately closed stdin, so a
     # program that reads it sees EOF instead of blocking until the deadline.
     payload = script.read_bytes() if getattr(backend, "script_stdin", False) else b""
+    cap = max(1, max_output_bytes)
+    out, err = bytearray(), bytearray()
+    overflowed = [False]
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             argv,
             cwd=str(cwd),
             env=child_environment({}),
             shell=False,
-            input=payload,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except subprocess.TimeoutExpired as expired:
-        return ScriptRun(
-            stdout=_decode(expired.stdout),
-            stderr=_decode(expired.stderr),
-            timed_out=True,
         )
     except (OSError, ValueError) as error:
         raise CasError(
             f"could not run the exported script ({' '.join(argv)}): {error}"
         ) from None
+
+    readers = [
+        threading.Thread(target=_drain_capped, args=(pipe, buffer, cap, overflowed), daemon=True)
+        for pipe, buffer in ((process.stdout, out), (process.stderr, err))
+    ]
+    for reader in readers:
+        reader.start()
+    timed_out = False
+    try:
+        if process.stdin is not None:
+            with contextlib.suppress(OSError, ValueError):
+                process.stdin.write(payload)
+                process.stdin.flush()
+            with contextlib.suppress(OSError, ValueError):
+                process.stdin.close()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+    finally:
+        if process.poll() is None:
+            process.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=5)
+        for reader in readers:
+            reader.join(timeout=5)
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                with contextlib.suppress(OSError):
+                    stream.close()
     return ScriptRun(
-        returncode=completed.returncode,
-        stdout=_decode(completed.stdout),
-        stderr=_decode(completed.stderr),
+        returncode=None if timed_out else process.returncode,
+        stdout=_decode(bytes(out)),
+        stderr=_decode(bytes(err)),
+        timed_out=timed_out,
+        capture_truncated=overflowed[0],
     )
 
 
