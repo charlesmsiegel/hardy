@@ -56,7 +56,11 @@ def test_the_kernel_answers_and_keeps_state(name, executable, source, tmp_path) 
 def test_an_error_is_classified_and_not_accepted(name, executable, source, tmp_path) -> None:
     session = session_for(name, executable, tmp_path)
     try:
-        broken = session.execute("thisIsNotDefined;" if name == "singular" else "thisIsNotDefined")
+        # `thisIsNotDefined` alone is not an M2 error: an undefined bare
+        # identifier evaluates to a `Symbol` (confirmed in CI run
+        # 30167127782 -- status came back "ok", not "error"). `1/0` is a
+        # genuine runtime error in both interpreters.
+        broken = session.execute("thisIsNotDefined;" if name == "singular" else "1/0")
         assert broken.status == "error"
         assert broken.accepted is False
     finally:

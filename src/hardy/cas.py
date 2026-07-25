@@ -166,8 +166,14 @@ class _SentinelBackend:
             + "\n"
         ).encode("utf-8")
 
-    def classify(self, text: str) -> Literal["ok", "error"]:
-        return "error" if self.error_pattern.search(text) else "ok"
+    def classify(self, stdout: str, stderr: str = "") -> Literal["ok", "error"]:
+        found = self.error_pattern.search(stdout) or self.error_pattern.search(stderr)
+        return "error" if found else "ok"
+
+    def sanitize(self, stdout: str) -> str:
+        """Backend-specific stdout cleanup, applied to a cell's captured body
+        before it is recorded. Identity by default; Macaulay2 overrides it."""
+        return stdout
 
 
 class SingularBackend(_SentinelBackend):
@@ -198,7 +204,37 @@ class Macaulay2Backend(_SentinelBackend):
     preamble = ""
     version_source = 'version#"VERSION"'
     echo = '<< "{marker}" << endl;'
-    error_pattern = re.compile(r"(?m)^stdio:\d+:\d+:\(\d+\): error:")
+    # Observed verbatim from M2 1.26.06 (CI run 30167266358, "Debug M2 raw
+    # transcript"): a division-by-zero cell wrote
+    # `stdio:2:1:(3):[1]: error: division by zero` to *stderr*, and a call on
+    # an undefined symbol wrote
+    # `stdio:2:16:(3):[1]: error: no method for adjacent objects:`. Both carry
+    # a `:[N]:` interpreter-depth marker between the `(FRAME)` and `error:`
+    # that the original guess did not have, and both landed on stderr, not
+    # stdout -- see `classify`/`sanitize` below for how that is handled.
+    error_pattern = re.compile(r"(?m)^stdio:\d+:\d+:\(\d+\):\[\d+\]: error:")
+    # M2 echoes each `iN : ` input prompt (and the source line behind it) even
+    # when stdin is not a tty, and prints an `oN` counter before every
+    # non-suppressed statement's value. Observed verbatim in the same run: a
+    # cell containing `R = QQ[x, y]; f = x^2 + y^2; f` came back as
+    # `i2 : R = QQ[x, y]; f = x^2 + y^2; f\n\n      2    2\no4 = x  + y\n\no4 : R`.
+    # The `iN :` lines are pure noise -- an echo of source Hardy already has on
+    # the `CellRecord` -- and the `oN` counter drifts with how many statements
+    # ran before it, which is different for a live session (that has already
+    # run a version probe) than for the fresh kernel `replay_in_fresh_kernel`
+    # starts for export verification. Left unstripped, a cell that reproduces
+    # exactly is still reported `diverged` on the counter alone (confirmed:
+    # CI run 30167033381 marked the one cell in
+    # `test_an_exported_session_reproduces[macaulay2]` diverged on precisely
+    # this transcript). Stripping the prompt lines and blanking the counter
+    # digits is the fix for the prompt-noise defect flagged in this task's
+    # brief.
+    _prompt_line = re.compile(r"(?m)^i\d+ : .*\n")
+    _output_counter = re.compile(r"(?m)^o\d+(?=[ :=])")
+
+    def sanitize(self, stdout: str) -> str:
+        stdout = self._prompt_line.sub("", stdout)
+        return self._output_counter.sub("o", stdout)
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         # `-s` was a guess and is obsolete in Macaulay2 1.26.06 (CI run
@@ -506,6 +542,38 @@ class CasSession:
 
         begin = SENTINEL_BEGIN.format(nonce=nonce).encode("utf-8")
         end = SENTINEL_END.format(nonce=nonce).encode("utf-8")
+        # A backend that echoes stdin (confirmed of Macaulay2: it prints
+        # `iN : ` followed by the exact line it was fed, tty or not) writes
+        # the marker text a *second* time before the real one: once inside
+        # its own echoed source line (`iN : << "«marker»" << endl;`), and
+        # only afterwards as the bare line the `<<` statement actually
+        # prints. A bare `raw.find(marker)` matches the first, embedded
+        # occurrence, and every cell's captured body ends up carrying a
+        # fragment of that echoed statement.
+        #
+        # The two occurrences are told apart by what immediately follows
+        # them, not by what precedes them -- a preceding newline is not a
+        # reliable signal, since an in-flight prompt from the *previous* cell
+        # can legitimately sit directly in front of the real marker too (see
+        # `test_state_is_not_polluted_by_the_previous_cells_prompt`, which
+        # exists precisely to pin that down). The embedded copy is always
+        # immediately followed by the fixed tail of the echo template itself
+        # (`" << endl;` for Macaulay2, `");` for Singular) because that is
+        # what is on the rest of the line we sent; the real, bare-printed
+        # copy never is. Skipping any occurrence with that tail right after
+        # it, and continuing the search past it, finds the real one
+        # regardless of what backend-specific noise precedes either.
+        tail = self.backend.echo.rsplit("{marker}", 1)[1].encode("utf-8")
+
+        def _find_marker(raw: bytes, marker: bytes, after: int) -> int:
+            pos = after
+            while (hit := raw.find(marker, pos)) != -1:
+                echoed_end = hit + len(marker)
+                if raw[echoed_end : echoed_end + len(tail)] == tail:
+                    pos = echoed_end
+                    continue
+                return hit
+            return -1
 
         def extract_sentinel(raw: bytes) -> Any:
             kernel = self._kernel
@@ -515,12 +583,12 @@ class CasSession:
             # stream, however late it happens to show up. Waiting for the
             # begin marker before looking at anything excludes it without
             # ever having to guess whether it has fully arrived.
-            begin_at = raw.find(begin)
+            begin_at = _find_marker(raw, begin, 0)
             if begin_at == -1:
                 return None
             start = begin_at + len(begin)
             marker_seen = kernel is not None and kernel.marker_seen
-            end_at = raw.find(end, start)
+            end_at = _find_marker(raw, end, start)
             if end_at == -1 and not marker_seen:
                 return None
             if end_at != -1:
@@ -531,6 +599,7 @@ class CasSession:
                 # via `marker_seen`, but the bytes themselves are gone.
                 body = raw[start:].decode("utf-8", errors="replace")
                 consumed = len(raw)
+            body = self.backend.sanitize(body)
             outcome = CellOutcome(
                 status=self.backend.classify(body),
                 stdout=body,
@@ -566,7 +635,15 @@ class CasSession:
         outcome, consumed = reply
         if self.backend.framing == "sentinel":
             kernel.consume(consumed)
-            outcome = outcome.model_copy(update={"stderr": kernel.stderr_text()})
+            stderr_text = kernel.stderr_text()
+            # `extract_sentinel` classified on stdout alone, before stderr for
+            # this cell was necessarily complete. Reclassify now that both
+            # streams are in: confirmed of Macaulay2 (CI run 30167266358),
+            # whose errors ("stdio:...: error: ...") land on stderr with
+            # nothing error-shaped left on stdout at all, so a stdout-only
+            # classification always read a broken M2 cell as "ok".
+            status = self.backend.classify(outcome.stdout, stderr_text)
+            outcome = outcome.model_copy(update={"stderr": stderr_text, "status": status})
         return outcome
 
     # ------------------------------------------------------------- execute
