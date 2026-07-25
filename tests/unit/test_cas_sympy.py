@@ -239,6 +239,29 @@ def test_a_script_that_cannot_run_is_not_reported_as_reproducing(
     assert manifest["script_verdict"] == "failed"
 
 
+def test_awkwardly_shaped_cells_still_render_into_a_runnable_script(
+    sympy_session, tmp_path
+) -> None:
+    """The trailing expression is spliced by source offset, not by line.
+
+    A cell can put statements and its trailing expression on one line, spread
+    that expression over several, and carry non-ASCII text in front of it --
+    `ast` reports a column as a count of UTF-8 bytes, so naive arithmetic
+    splices such a cell in the wrong place and the script no longer parses.
+    """
+    sympy_session.execute("x = symbols('x')")
+    sympy_session.execute("y = 2; x + y")
+    sympy_session.execute("factor(\n    x**2 - 1\n)")
+    sympy_session.execute("# ∀ε>0\nsimplify(x - x + 7)")
+
+    report = export_session(sympy_session, tmp_path / "cas")
+    script = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
+    assert "y = 2; sys.displayhook(x + y)" in script
+    assert "# ∀ε>0" in script  # the comment survives the splice
+    assert report.script_verdict == "verified", report.script_detail
+    assert report.reproduces
+
+
 def test_the_script_header_does_not_claim_a_verification_it_cannot_have(
     sympy_session, tmp_path
 ) -> None:
