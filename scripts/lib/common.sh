@@ -337,6 +337,7 @@ write_config() {
 	fi
 	if [ -z "$model" ] && [ "$ASSUME_YES" = 0 ] && [ -t 0 ]; then
 		printf '\nHardy talks to Claude through your Claude Code subscription.\n'
+		# shellcheck disable=SC2016  # the backticks quote a command for the reader
 		printf 'There is no API key to supply; sign in once with `claude login`.\n'
 		read -r -p "Model identity [claude-opus-5]: " model
 	fi

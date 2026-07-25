@@ -10,3 +10,4 @@ lean_project/
 # Linked worktrees live inside the repo for convenience; their contents
 # belong to their own branches, never to this checkout.
 .worktrees/
+.claude/worktrees/

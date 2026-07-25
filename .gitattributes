@@ -1,0 +1,4 @@
+# Shell scripts run on Linux and macOS. A CRLF checkout makes every one of
+# them fail at the shebang with "bad interpreter: bash^M", so they are LF
+# whatever the platform and whatever core.autocrlf says.
+*.sh text eol=lf

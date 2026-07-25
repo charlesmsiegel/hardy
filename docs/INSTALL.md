@@ -138,6 +138,60 @@ hardy doctor --deep   # also compiles `import Mathlib` + `norm_num`, which is sl
 `doctor` checks that the Claude Code CLI is signed in, not merely installed: a
 logged-out machine fails here rather than on your first question.
 
+## Updating
+
+```sh
+scripts/update.sh                 # Linux, macOS
+powershell -ExecutionPolicy Bypass -File scripts\update-windows.ps1
+```
+
+Pulls the source tree, reinstalls it, and runs `doctor`. Hardy is installed
+editable, so new *code* is already live once the tree moves; the reinstall is
+what picks up a newly declared *dependency*, which is otherwise a current
+checkout and a broken `hardy` command.
+
+Mathlib and the Lean toolchain are left alone by default — refreshing Mathlib is
+a multi-gigabyte rebuild, and rarely what updating Hardy is about.
+
+| Flag | PowerShell | Effect |
+| --- | --- | --- |
+| `--mathlib` | `-Mathlib` | also `lake update`, `cache get`, and `build` |
+| `--toolchain` | `-Toolchain` | also `elan self update` and `elan update` |
+| `--source DIR` | `-Source DIR` | update this tree instead of the installed one |
+
+The source tree is found by asking the installed environment where its own code
+lives, so it works whether you installed from a clone or let the installer fetch
+one. An install made from a downloaded archive has no history to pull; re-run
+the installer to get a newer copy.
+
+## Uninstalling
+
+```sh
+scripts/uninstall.sh              # Linux, macOS
+powershell -ExecutionPolicy Bypass -File scripts\uninstall-windows.ps1
+```
+
+Removes the virtual environment, the fetched source tree, the `hardy` command,
+and the PATH lines the installer added. Before touching anything expensive to
+rebuild or personal, it asks:
+
+| Asked about | Kept unless you say otherwise |
+| --- | --- |
+| The Lean project | a multi-gigabyte download to rebuild |
+| The config file | holds your model choice |
+| elan and the Lean toolchain | other Lean projects on the machine use it |
+
+`--yes` answers **no** to all three, so an unattended uninstall never silently
+takes them; `--all` answers yes. Individually: `--remove-lean-project`,
+`--remove-config`, `--remove-toolchain` (`-RemoveLeanProject`, `-RemoveConfig`,
+`-RemoveToolchain` in PowerShell).
+
+TeX, Node, and the Claude Code CLI are never removed. Hardy may have installed
+them, but they are ordinary shared tools that something else likely wants.
+
+Only the PATH lines carrying the installer's own marker comment are stripped; a
+line you wrote yourself for the same directory is left alone.
+
 ## Troubleshooting
 
 **The installer printed nothing and exited** — you likely double-clicked it
