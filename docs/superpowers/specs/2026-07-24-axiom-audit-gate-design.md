@@ -62,11 +62,16 @@ def parse(output: str, expected: Collection[str]) -> tuple[AxiomReport, ...] | N
 def classify(reports, approved: Collection[str]) -> Verdict
 ```
 
-`parse` scans for `'NAME' depends on axioms: [...]` and
-`'NAME' does not depend on any axioms`, ignoring any file/line/severity prefix
-the toolchain prepends. It gathers bracket contents to the closing `]` rather
-than matching within one line, because Lean wraps long axiom lists at its
-formatter width. It returns `None` when any expected declaration has no report.
+`parse` searches for **each expected name explicitly** — building a pattern from
+`re.escape(f"'{name}'")` — rather than capturing whatever sits between two
+apostrophes. Lean declaration names may themselves contain apostrophes, and
+`add_comm'`-style names are pervasive in Mathlib; a generic `'([^']+)'` capture
+finds nothing at all in `'add_comm'' depends on axioms: [...]`, which would
+reject every primed declaration as an unestablished audit. It ignores any
+file/line/severity prefix the toolchain prepends, and gathers bracket contents
+to the closing `]` rather than matching within one line, because Lean wraps long
+axiom lists at its formatter width. It returns `None` when any expected
+declaration has no report.
 
 `approved` is the set of axiom names a human has already sanctioned: the
 `formal_name` of each entry in `state["assumptions"]` for the interactive path,
@@ -98,6 +103,17 @@ collection. Audit lines are added to the **checked temporary source only**; the
 
 The audit rides on the same Lean invocation as the check. A separate audit run
 would pay a second Mathlib import on every save.
+
+Every name Hardy interpolates into `#print axioms` must be a Lean declaration
+name, and both places that currently derive one are wrong. Splitting the
+declaration on `(`, `{`, and `:` turns `theorem Foo.{u} (a : Sort u) : True`
+into `Foo.`, so a universe-polymorphic request could never verify; and the
+existing identifier pattern `[A-Za-z_][A-Za-z0-9_'.]*` accepts `Foo..bar` and
+`Foo.`, which `record_name` would persist and every later save would then fail
+on. Both are replaced by one pattern that validates namespace components rather
+than allowing dots anywhere:
+`[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*`. Matching it against the
+declaration head yields `Foo` for `Foo.{u}` without special-casing universes.
 
 ### Call sites
 
@@ -162,16 +178,40 @@ blocked and latency is not the concern — Hardy spends one extra Lean run on
 `#print <axiom>` to show the statement. If that lookup fails, the prompt still
 appears and says the statement could not be retrieved; the human decides.
 
+That lookup goes through the same `_run` as everything else, and `_run`
+truncates to the trailing 12 000 characters. A long enough printed type would
+show the human its tail while presenting as complete — an approval given for
+something never fully seen, which is the exact failure this prompt exists to
+prevent. So a lookup whose output reaches the limit is reported as **possibly
+truncated** rather than as the statement.
+
+The recorded entry carries source identity rather than a generic phrase, per
+`AGENTS.md`: the imports of the source under audit and the Lean command that
+elaborated it. `discovered by the axiom audit` says how it was found and nothing
+about what supplied it, so a widened trust base could not be traced back or
+reproduced if that imported declaration later changed.
+
 Registered names are the audit scope because they are the declarations the model
 itself said matter and linked to the writeup. Helper lemmas are covered
 transitively: an unsound helper appears in its consumer's axiom set.
 
-That scope has a stated hole: an empty registry means nothing is audited, and
-the save proceeds on the existing checks alone. Requiring at least one
-registered name would be a different feature — enforcing that the model
-populates the registry — and is deliberately not bundled here. The `ToolResult`
-says when a save was audited against no declarations, so the transcript shows
-which saves carry an audit and which do not.
+An empty registry therefore means there is nothing to audit — and a save with
+nothing to audit is **refused**, not waved through. Treating it as a pass would
+make the gate optional: a model that simply never calls `record_name` would
+save `sorryAx`-dependent work after an exit-code check alone, which is the state
+this feature exists to end. `tests/test_chat.py` currently calls `save_lean`
+before `record_name`, so this is the common path rather than a corner, and that
+ordering changes: register the declarations, then save. `check_lean` is
+unaffected and remains the tool for scratch work.
+
+A successful audit is **persisted**, not merely reported. `state["audit"]`
+records the verdict for the `Main.lean` that was saved. Without it the grade
+lives only in a transient `ToolResult`, `session.json` cannot say whether the
+saved artifact is clean or verified-modulo, and `save_latex` — which checks only
+labels — would happily accept a writeup claiming plain kernel verification for a
+modulo artifact, with no authoritative grade to contradict it. So when the
+stored verdict is `modulo`, `save_latex` requires the writeup to name each
+assumed axiom, in exactly the shape of the existing registered-label check.
 
 ## Behaviour: unattended `prove`
 
@@ -197,10 +237,38 @@ and the existing `wall_clock_limit`, `turn_limit`, and `runtime_error` reasons
 continue to take precedence as they do today.
 
 `RunResult.axioms` stops being the raw Lean output blob and becomes the
-structured verdict. `RunResult.formalization` is derived from that verdict
-rather than from the exit code.
+structured verdict — including on a rejected run. A run that ends
+`axioms_rejected` must record the verdict that rejected it, naming the `sorryAx`
+or unapproved assumption responsible; reporting `not audited` there would say an
+audit never ran when one ran and refused. `not audited` is reserved for runs
+where no submission ever reached the audit. `RunResult.formalization` is derived
+from the verdict rather than from the exit code.
 
-## Known limit
+## Known limit: the audit runs inside the environment it is auditing
+
+Hardy appends `#print axioms` to a source it has just let Lean elaborate, so the
+audit command is interpreted by an environment the submitted source has already
+had the chance to modify. A source can register a command elaborator or macro
+rule for that syntax and answer the audit itself, printing one clean-looking
+report instead of invoking Lean's built-in handler. The duplicate-report check
+does not help, because in that scenario only the replacement handler runs and
+only one report appears.
+
+Moving the audit to a second invocation does not close this either: the audited
+module would still have to be imported, and its elaborator extensions come with
+it.
+
+This is worth stating plainly rather than papering over. What the audit defends
+against is an artifact that is *unsound* — a proof resting on `sorryAx` or on an
+axiom nobody approved — reached by ordinary means. It does not defend against a
+source written to subvert the elaborator, and it cannot, while Lean runs
+unconfined with the submitted source deciding what elaboration means. Closing it
+belongs with the process isolation `DESIGN.md` defers, and inherits that
+section's standing warning: run only trusted output, in a disposable
+environment. Filing it as an issue against the anti-cheat work in `FEATURES.md`
+is the right home for it.
+
+## Known limit: `prove` cannot reach "verified modulo"
 
 With fail-closed and no pre-approval list in the request file, `prove` can never
 emit "verified modulo listed assumptions". That grade is reachable only in the
