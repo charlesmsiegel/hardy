@@ -11,7 +11,7 @@ class Request:
     imports: tuple[str, ...] = ("Mathlib",)
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "Request":
+    def from_dict(cls, value: dict[str, Any]) -> Request:
         declaration = str(value["declaration"]).strip()
         if ":=" in declaration:
             raise ValueError("declaration must contain the statement only, not ':='")

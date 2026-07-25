@@ -4,8 +4,9 @@ import json
 import os
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from .chat import provenance
 from .claude_runtime import TurnLimitReached
@@ -116,7 +117,8 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     if final and proof:
         (output_dir / "proof.lean").write_text(lean.source(proof, audit=True), encoding="utf-8")
     writeup = f"# Hardy proof result\n\n## Claim\n\n{request.informal_claim}\n\n## Exact Lean statement\n\n```lean\n{request.declaration}\n```\n\n## Grades\n\n- Formalization: **{formal}**\n- Informal completeness: **{informal}**\n\n## Limits\n\n{WARNING}\n"
-    if not final: writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
+    if not final:
+        writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
     _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds, "turns_enforced_by": "provider sdk", "wall_clock_enforced_by": "hardy", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "events": events, "terminal_reason": reason})
     _write_json(output_dir / "result.json", result.as_dict())

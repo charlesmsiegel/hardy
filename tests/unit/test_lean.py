@@ -1,6 +1,6 @@
 import importlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -31,7 +31,7 @@ def _claim(domain):
         proposal=proposal,
         environment=environment,
         imports=('Mathlib',),
-        approved_at=datetime(2026, 7, 24, tzinfo=timezone.utc),
+        approved_at=datetime(2026, 7, 24, tzinfo=UTC),
         content_hash='a' * 64,
     )
 

@@ -1,10 +1,10 @@
 import importlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
-APPROVED_AT = datetime(2026, 7, 24, tzinfo=timezone.utc)
+APPROVED_AT = datetime(2026, 7, 24, tzinfo=UTC)
 
 
 def _proposal(domain, proposition='2 = 2'):

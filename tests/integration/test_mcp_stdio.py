@@ -1,7 +1,7 @@
 import os
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
@@ -15,7 +15,7 @@ from hardy.domain import EnvironmentIdentity, FormalizationProposal, freeze_clai
 from hardy.storage import RunStore
 
 ROOT = Path(__file__).parents[2]
-NOW = datetime(2026, 7, 24, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 24, tzinfo=UTC)
 
 
 @pytest.mark.real_toolchain

@@ -1,6 +1,6 @@
 import hashlib
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -31,7 +31,7 @@ def _hardy_config(**overrides):
 
 ROOT = Path(__file__).parents[2]
 LEAN_PROJECT = ROOT / 'lean_project'
-NOW = datetime(2026, 7, 24, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 24, tzinfo=UTC)
 
 
 def _environment() -> EnvironmentIdentity:

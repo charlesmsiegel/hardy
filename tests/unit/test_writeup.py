@@ -1,9 +1,9 @@
 import importlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-NOW = datetime(2026, 7, 24, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 24, tzinfo=UTC)
 RUN_ID = UUID('12345678-1234-5678-1234-567812345678')
 
 

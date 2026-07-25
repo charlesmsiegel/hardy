@@ -1,15 +1,16 @@
 import importlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
 import pytest
+
 _codex = pytest.importorskip("openai_codex", reason="the Codex backend is an optional extra")
 ApprovalMode, Sandbox = _codex.ApprovalMode, _codex.Sandbox
 
 FIXTURES = Path(__file__).parents[1] / 'fixtures' / 'codex'
-NOW = datetime(2026, 7, 24, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 24, tzinfo=UTC)
 RUN_ID = UUID('12345678-1234-5678-1234-567812345678')
 
 

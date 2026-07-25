@@ -5,8 +5,9 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from .latex import LatexTools
 from .lean import LeanTools

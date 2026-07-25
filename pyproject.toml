@@ -45,3 +45,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+# E501: the interactive and batch code states a tool spec or a printed line on
+# one long line on purpose, and rewrapping them reads worse than it lints.
+# UP042: `str, Enum` is deliberate — these values are written to disk and
+# compared as strings by readers that never import Hardy.
+ignore = ["E501", "UP042"]

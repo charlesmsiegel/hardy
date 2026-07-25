@@ -2,3 +2,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# The Lake project and its packages are built locally by `hardy setup`,
+# never committed: they are hundreds of megabytes of compiled Mathlib.
+lean_project/

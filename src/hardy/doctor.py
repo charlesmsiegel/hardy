@@ -7,7 +7,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import catalog
 from .config import Config
 from .lean import LeanTools
 from .models import Request

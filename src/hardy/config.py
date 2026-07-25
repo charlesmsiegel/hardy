@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import catalog
 from .domain import RunLimits
 
 DEFAULT_MODEL = "claude-opus-5"

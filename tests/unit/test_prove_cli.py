@@ -1,5 +1,5 @@
 import importlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -57,7 +57,7 @@ def test_run_prove_dispatches_the_exact_claim_and_model_to_the_workflow(
             seen.append(request)
             return domain.RunManifest(
                 run_id=UUID('12345678-1234-5678-1234-567812345678'),
-                created_at=datetime(2026, 7, 24, tzinfo=timezone.utc),
+                created_at=datetime(2026, 7, 24, tzinfo=UTC),
                 phase=domain.RunPhase.COMPLETED,
                 model=request.model,
                 prompt_set_sha256='p' * 64,

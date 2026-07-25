@@ -7,16 +7,15 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Callable
 from importlib import metadata
 from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
-from . import catalog
+from . import catalog, claude_runtime, doctor
 from . import config as configuration
-from . import doctor
-from . import claude_runtime
 from .chat import MathematicsSession
 from .lean import LeanTools
 from .models import Request

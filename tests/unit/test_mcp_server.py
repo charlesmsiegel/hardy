@@ -1,10 +1,10 @@
 import importlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
 
-NOW = datetime(2026, 7, 24, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 24, tzinfo=UTC)
 RUN_ID = UUID('12345678-1234-5678-1234-567812345678')
 
 
@@ -53,7 +53,6 @@ def _check(lean, process, claim, proof_body):
 def test_proof_tool_requires_the_frozen_claim_and_owns_the_official_budget(
     tmp_path,
 ) -> None:
-    config = importlib.import_module('hardy.config')
     domain = importlib.import_module('hardy.domain')
     lean = importlib.import_module('hardy.lean')
     server = importlib.import_module('hardy.mcp_server')
@@ -122,10 +121,10 @@ def test_tool_observations_are_bounded_and_full_output_is_saved(tmp_path) -> Non
 
 
 def test_runtime_loader_rejects_a_claim_file_with_a_mismatched_hash(tmp_path) -> None:
-    config = importlib.import_module('hardy.config')
     domain = importlib.import_module('hardy.domain')
     server = importlib.import_module('hardy.mcp_server')
     storage = importlib.import_module('hardy.storage')
+    config = importlib.import_module('hardy.config')
     claim = _claim(domain).model_copy(update={'content_hash': '0' * 64})
     run_dir = tmp_path / 'run'
     run_dir.mkdir()
@@ -147,7 +146,6 @@ def test_runtime_loader_rejects_a_claim_file_with_a_mismatched_hash(tmp_path) ->
 
 
 def test_oversized_proof_input_is_rejected_without_spending_a_check(tmp_path) -> None:
-    config = importlib.import_module('hardy.config')
     domain = importlib.import_module('hardy.domain')
     server = importlib.import_module('hardy.mcp_server')
     storage = importlib.import_module('hardy.storage')

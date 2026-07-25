@@ -1,5 +1,5 @@
 import importlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def _claim(domain):
@@ -24,7 +24,7 @@ def _claim(domain):
         'Two equals two.',
         proposal,
         environment,
-        datetime(2026, 7, 24, tzinfo=timezone.utc),
+        datetime(2026, 7, 24, tzinfo=UTC),
     )
 
 

@@ -1,5 +1,5 @@
 import importlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -103,7 +103,7 @@ def test_frozen_claim_records_statement_and_environment_identity() -> None:
         proposal=proposal,
         environment=environment,
         imports=('Mathlib',),
-        approved_at=datetime(2026, 7, 24, tzinfo=timezone.utc),
+        approved_at=datetime(2026, 7, 24, tzinfo=UTC),
         content_hash='a' * 64,
     )
 
@@ -116,7 +116,7 @@ def test_run_manifest_has_stable_phase_and_terminal_reason_values() -> None:
 
     manifest = domain.RunManifest(
         run_id=UUID(int=1),
-        created_at=datetime(2026, 7, 24, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 24, tzinfo=UTC),
         phase=domain.RunPhase.SETUP,
         model='gpt-5.6-codex',
         prompt_set_sha256='c' * 64,

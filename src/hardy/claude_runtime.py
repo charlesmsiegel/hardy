@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .models import ToolResult
 
@@ -157,7 +158,7 @@ class ClaudeAgentRuntime:
             return await self._ask(text)
         try:
             return await asyncio.wait_for(self._ask(text), timeout=self.wall_seconds)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds})
             raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget") from None
 

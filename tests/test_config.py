@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy import catalog, config
+from hardy import config
 
 
 @pytest.fixture(autouse=True)
