@@ -2,7 +2,11 @@
 import pathlib
 import sys
 
-source = pathlib.Path(sys.argv[-1]).read_text()
+# Real Lean writes UTF-8 whatever the console codepage is, and Hardy decodes it
+# as UTF-8. This stand-in has to do the same or it cannot print a goal marker.
+sys.stdout.reconfigure(encoding="utf-8")
+
+source = pathlib.Path(sys.argv[-1]).read_text(encoding="utf-8")
 if "exact True.intro" in source and "sorry" not in source and "admit" not in source:
     if "#print axioms" in source:
         print("'HardyTarget' depends on axioms: []")

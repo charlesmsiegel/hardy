@@ -1,0 +1,2 @@
+{"caption":"","data":"Type mismatch\n  \"oops\"\nhas type\n  String\nbut is expected to have type\n  Nat","endPos":{"column":21,"line":1},"fileName":"<stdin>","isSilent":false,"keepFullRange":false,"kind":"[anonymous]","pos":{"column":15,"line":1},"severity":"error"}
+{"caption":"","data":"unsolved goals\n⊢ True","endPos":{"column":22,"line":1},"fileName":"<stdin>","isSilent":false,"keepFullRange":false,"kind":"Tactic.unsolvedGoals","pos":{"column":20,"line":1},"severity":"error"}
