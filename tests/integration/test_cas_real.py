@@ -153,3 +153,36 @@ def test_a_truncated_capture_is_not_accepted(name, executable, source, tmp_path)
         assert record.accepted is False, record.model_dump_json(indent=2)
     finally:
         session.close()
+
+
+def test_debug_macaulay2_script_transcript(tmp_path) -> None:
+    """TEMPORARY: dump both transcripts so the divergence can be read."""
+    from hardy.cas import run_exported_script
+    from hardy.cas_export import _content_lines, _expected_transcript
+
+    session = session_for("macaulay2", "M2", tmp_path)
+    try:
+        session.probe_version()
+        session.execute("R = QQ[x, y]")
+        for power in range(2, 14):
+            session.execute(f"x^{power} + y^{power}")
+        cells = session.accepted()
+        export_session(session, tmp_path / "cas")
+        run = run_exported_script(
+            backend=session.backend,
+            command=None,
+            script=tmp_path / "cas" / "session.m2",
+            cwd=tmp_path / "dbg",
+            timeout=120,
+            max_output_bytes=256 * 1024,
+        )
+        expected_out, _ = _expected_transcript(cells)
+        print("=== SCRIPT SANITIZED ===")
+        for index, line in enumerate(_content_lines(session.backend.sanitize(run.stdout))):
+            print(f"{index:3d}|{line}|")
+        print("=== EXPECTED ===")
+        for index, line in enumerate(_content_lines(expected_out)):
+            print(f"{index:3d}|{line}|")
+    finally:
+        session.close()
+    raise AssertionError("temporary debug dump")
