@@ -331,6 +331,20 @@ def dependents(reports: Sequence[AxiomReport], axiom: str) -> tuple[str, ...]:
     return tuple(item.declaration for item in reports if axiom in item.axioms)
 
 
+_AXIOM_OF = "(?ms)^axiom\\s+{name}\\s*:\\s*(.*?)(?=^\\S|\\Z)"
+
+
+def printed(output: str, name: str) -> str | None:
+    """The statement Lean printed for an axiom, whitespace-normalised.
+
+    Used to notice that an assumption a human approved is no longer the
+    assumption Lean resolves under that name — after a Mathlib or project
+    upgrade, say. A name alone is not an identity.
+    """
+    found = re.search(_AXIOM_OF.format(name=re.escape(name)), output)
+    return " ".join(found.group(1).split()) if found else None
+
+
 def unestablished(reason: str) -> dict[str, Any]:
     """The record for an audit that was attempted and could not be completed.
 
@@ -386,9 +400,9 @@ git commit -m "feat: grade an audited axiom set against approved assumptions"
 Append to `tests/test_hardy.py`:
 
 ```python
-def test_audit_lines_are_appended_for_each_requested_name(lean: LeanTools):
-    source = lean.with_audit("import Mathlib\n\ntheorem A : True := trivial\n", ("A", "B"))
-    assert source.endswith("#print axioms A\n#print axioms B\n")
+def test_audit_lines_are_appended_for_each_requested_target(lean: LeanTools):
+    source = lean.with_audit("import Mathlib\n\ntheorem A : True := trivial\n", ("axioms A", "axioms B", "Papers.Smith.main"))
+    assert source.endswith("#print axioms A\n#print axioms B\n#print Papers.Smith.main\n")
     assert "theorem A : True := trivial" in source
 
 
@@ -466,22 +480,24 @@ In `src/hardy/lean.py`, replace the `source` method (lines 26-32) with:
         return found.group(1) if found else None
 
     @staticmethod
-    def with_audit(source: str, names: Sequence[str]) -> str:
-        """Ask Lean what each name rests on, in the same elaboration.
+    def with_audit(source: str, targets: Sequence[str]) -> str:
+        """Ask Lean about each target, in the same elaboration.
 
-        Appended last so the answers survive the tail truncation in `_run`, and
-        so a proof's own output cannot follow them.
+        A target is whatever follows `#print`: `axioms Foo` for an axiom set,
+        or a bare name to print a declaration. Appended last so the answers
+        survive the tail truncation in `_run`, and so a proof's own output
+        cannot follow them.
         """
-        if not names:
+        if not targets:
             return source
-        lines = "\n".join(f"#print axioms {name}" for name in names)
+        lines = "\n".join(f"#print {target}" for target in targets)
         return f"{source.rstrip()}\n\n{lines}\n"
 
     def source(self, proof: str, *, audit: bool = False) -> str:
         imports = "\n".join(f"import {name}" for name in self.request.imports)
         body = f"{imports}\n\n{self.request.declaration} := {proof.strip()}\n"
         name = self.target_name
-        return self.with_audit(body, (name,)) if audit and name else body
+        return self.with_audit(body, (f"axioms {name}",)) if audit and name else body
 ```
 
 Add `from collections.abc import Sequence` to the imports at the top of
@@ -516,7 +532,11 @@ Replace `run_source` (lines 61-63) with:
 
 ```python
     def run_source(self, source: str, *, audit: Sequence[str] = ()) -> ToolResult:
-        """Run a complete Lean source file, without claiming it is hole-free."""
+        """Run a complete Lean source file, without claiming it is hole-free.
+
+        `audit` holds `#print` targets, so a caller can ask for both an axiom
+        set (`axioms Foo`) and a declaration (`Bar`) in one elaboration.
+        """
         return self._run(self.with_audit(source, audit))
 ```
 
@@ -542,6 +562,11 @@ def report_axioms() -> None:
             print(f"'{name}' depends on axioms: [{', '.join(listed)}]")
         else:
             print(f"'{name}' does not depend on any axioms")
+    # `#print <name>` on its own prints the declaration. A test changes what an
+    # assumption resolves to with a `-- restated:` marker.
+    restated = re.search(r"--\s*restated:\s*(.*)", source)
+    for name in re.findall(r"(?m)^#print (?!axioms )(\S+)", source):
+        print(f"axiom {name} : {restated.group(1).strip() if restated else 'True'}")
 
 
 if "exact True.intro" in source and not HOLE.search(source):
@@ -786,7 +811,7 @@ git commit -m "feat: prove grades on an audited axiom set, not an exit code"
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/test_chat.py`:
+Add `import hashlib` to `tests/test_chat.py`, then append:
 
 ```python
 NAME = {"formal_name": "HardyTarget", "latex_name": "thm:true", "description": "True is true."}
@@ -1023,6 +1048,93 @@ def test_the_statement_lookup_uses_the_sources_own_imports(tmp_path: Path):
     assert recorded == [("Mathlib", "Papers.Smith")]
 
 
+def test_the_verdict_is_published_only_after_main_lean_exists(tmp_path: Path):
+    """A verdict written first would outlive a failed write and describe a
+    Main.lean that was never saved."""
+    lean = "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro"
+    chat = session(tmp_path, registered(lean))
+    chat.send("Save it.")
+    stored = json.loads((tmp_path / "session.json").read_text())["audit"]
+    saved = (tmp_path / "Main.lean").read_bytes()
+    assert stored["source_sha256"] == hashlib.sha256(saved).hexdigest()
+
+
+def test_a_writeup_is_refused_when_main_lean_changed_under_the_audit(tmp_path: Path):
+    lean = "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro"
+    latex = "\\documentclass{article}\\begin{document}True.\\label{thm:true}\\end{document}"
+    chat = session(tmp_path, registered(lean))
+    chat.send("Save it.")
+    (tmp_path / "Main.lean").write_text("import Mathlib\n\ntheorem HardyTarget : True := by sorry\n")
+    chat.runtime.script = [call("save_latex", {"source": latex}, "latex")]
+    chat.send("Write it up.")
+    refusal = last_tool(tmp_path)
+    assert not refusal["ok"]
+    assert "no current audit" in refusal["output"]
+
+
+def test_a_primed_registered_name_is_found_in_the_source(tmp_path: Path):
+    """`\\bNat.add_comm'\\b` never matches, so this refused every save."""
+    lean = "import Mathlib\n\ntheorem Nat.add_comm' : True := by exact True.intro"
+    chat = session(tmp_path, FakeChatRuntime([
+        call("record_name", {"formal_name": "Nat.add_comm'", "latex_name": "thm:ac", "description": "primed"}, "name"),
+        call("save_lean", {"source": lean}, "lean"),
+    ]))
+    chat.send("Save it.")
+    assert last_tool(tmp_path)["ok"]
+    assert (tmp_path / "Main.lean").exists()
+
+
+def test_an_assumption_for_an_already_registered_name_does_not_duplicate_it(tmp_path: Path):
+    """Two mappings for one name emit two audit lines, and the workspace can
+    then never be saved again."""
+    lean = "import Mathlib\n\naxiom Foo : True\n\ntheorem Foo' : True := by exact True.intro"
+    chat = session(tmp_path, FakeChatRuntime([
+        call("record_name", {"formal_name": "Foo", "latex_name": "ax:foo", "description": "an axiom"}, "name"),
+        call("request_assumption", {"formal_name": "Foo", "lean_statement": "True", "latex_name": "ax:foo", "informal_statement": "an axiom", "source": "test", "reason": "test"}, "ask"),
+        call("record_name", {"formal_name": "Foo'", "latex_name": "thm:x", "description": "a theorem"}, "name2"),
+        call("save_lean", {"source": lean}, "lean"),
+    ]), approvals=[True])
+    chat.send("Register, assume, then save.")
+    names = [item["formal_name"] for item in json.loads((tmp_path / "session.json").read_text())["names"]]
+    assert names == ["Foo", "Foo'"]
+    assert last_tool(tmp_path)["ok"]
+
+
+def test_an_explicit_request_upgrades_an_audit_discovered_record(tmp_path: Path):
+    """Otherwise the record keeps an empty statement and every later save is
+    compared against it and refused, with no way to correct it."""
+    discovered = "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro -- axioms: Foo"
+    declared = "import Mathlib\n\naxiom Foo : True\n\ntheorem HardyTarget : True := by exact True.intro -- axioms: Foo"
+    chat = session(tmp_path, registered(discovered), approvals=[True, True])
+    chat.send("Save it.")
+    assert json.loads((tmp_path / "session.json").read_text())["assumptions"][0]["lean_statement"] == ""
+
+    chat.runtime.script = [
+        call("request_assumption", {"formal_name": "Foo", "lean_statement": "True", "latex_name": "ax:foo", "informal_statement": "an axiom", "source": "test", "reason": "test"}, "ask"),
+        call("save_lean", {"source": declared}, "again"),
+    ]
+    chat.send("Now declare it.")
+    entry = json.loads((tmp_path / "session.json").read_text())["assumptions"][0]
+    assert entry["lean_statement"] == "True"
+    assert last_tool(tmp_path)["ok"]
+
+
+def test_an_approved_assumption_that_changed_meaning_is_refused(tmp_path: Path):
+    """A name is not an identity: after an upgrade the same name can resolve to
+    a different statement than the one a human approved."""
+    first = "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro -- axioms: Foo"
+    changed = first + "\n-- restated: False"
+    chat = session(tmp_path, registered(first), approvals=[True])
+    chat.send("Save it.")
+    assert json.loads((tmp_path / "session.json").read_text())["assumptions"][0]["printed_statement"] == "True"
+
+    chat.runtime.script = [call("save_lean", {"source": changed}, "again")]
+    chat.send("Save it again.")
+    refusal = last_tool(tmp_path)
+    assert not refusal["ok"]
+    assert "no longer the statements Lean resolves" in refusal["output"]
+
+
 def test_the_prompt_says_when_a_statement_was_cut_off(tmp_path: Path):
     """A tail presented as the whole statement is an approval given blind."""
     lean = "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro -- axioms: Papers.Smith.main"
@@ -1077,7 +1189,10 @@ Replace `_run_lean_source` (lines 169-181) with:
 
 ```python
     def _audit_names(self) -> tuple[str, ...]:
-        return tuple(item["formal_name"] for item in self.state["names"])
+        # Deduplicated: two mappings for one name would emit two `#print axioms`
+        # lines, which audit.parse treats as an unestablished audit — leaving a
+        # workspace that can never be saved again.
+        return tuple(dict.fromkeys(item["formal_name"] for item in self.state["names"]))
 
     def _admit(self, axiom: str, reports: tuple[audit.AxiomReport, ...], source: str) -> bool:
         """Ask a human about an axiom the audit found and nobody approved.
@@ -1119,9 +1234,14 @@ Replace `_run_lean_source` (lines 169-181) with:
         _atomic_json(self.state_path, self.state)
         return True
 
-    def _run_lean_source(self, source: str, *, final: bool) -> ToolResult:
+    def _run_lean_source(self, source: str, *, final: bool) -> tuple[ToolResult, dict[str, Any] | None]:
+        """Returns the result, and the verdict to publish once the file is saved.
+
+        The verdict is handed back rather than persisted here: `session.json`
+        must not claim an audited artifact before that artifact is on disk.
+        """
         if final and self.lean.has_holes(source):
-            return ToolResult(False, "saved Lean artifacts may not contain sorry or admit", source)
+            return ToolResult(False, "saved Lean artifacts may not contain sorry or admit", source), None
         if final:
             approved = {item["formal_name"]: " ".join(item["lean_statement"].split()) for item in self.state["assumptions"]}
             # Runs to the next top-level declaration rather than to end of line:
@@ -1134,42 +1254,92 @@ Replace `_run_lean_source` (lines 169-181) with:
             )
             for name, statement in declarations:
                 if approved.get(name) != " ".join(statement.split()):
-                    return ToolResult(False, f"unapproved or altered assumption `{name}`; use request_assumption first", source)
-            missing_names = [item["formal_name"] for item in self.state["names"] if not re.search(rf"\b{re.escape(item['formal_name'])}\b", source)]
+                    return ToolResult(False, f"unapproved or altered assumption `{name}`; use request_assumption first", source), None
+            # Identifier-aware rather than `\b`-delimited: a trailing apostrophe
+            # is a non-word character, so `\bNat.add_comm'\b` never matches and
+            # every save of a primed declaration would be refused.
+            missing_names = [name for name in self._audit_names() if not re.search(rf"(?<![\w'.]){re.escape(name)}(?![\w'])", source)]
             if missing_names:
-                return ToolResult(False, f"Lean source is missing registered names: {missing_names}", source)
+                return ToolResult(False, f"Lean source is missing registered names: {missing_names}", source), None
         audited = self._audit_names() if final else ()
         # Nothing to audit is not a clean audit. Saving here would make the gate
         # optional: never call record_name, never get audited.
         if final and not audited:
-            return ToolResult(False, "record_name at least one declaration before saving. Hardy audits the axioms of registered declarations, and will not save work it cannot audit. Use check_lean for scratch work.", source)
-        result = self.lean.run_source(source, audit=audited)
+            return ToolResult(False, "record_name at least one declaration before saving. Hardy audits the axioms of registered declarations, and will not save work it cannot audit. Use check_lean for scratch work.", source), None
+        # Approved assumptions are re-printed in the same run, so an approval is
+        # checked against the declaration Lean resolves now rather than reused on
+        # the strength of a matching name.
+        sanctioned = sorted(self._audit_approved())
+        result = self.lean.run_source(source, audit=tuple(f"axioms {name}" for name in audited) + tuple(sanctioned))
         if not final or not result.ok:
-            return result
+            return result, None
         reports = audit.parse(result.output, audited)
         if reports is None:
-            return ToolResult(False, "the axiom audit could not be established; remove any #print axioms from your source, Hardy adds its own", source)
+            return ToolResult(False, "the axiom audit could not be established; remove any #print axioms from your source, Hardy adds its own", source), None
+        drifted = self._drifted(result.output, sanctioned)
+        if drifted:
+            return ToolResult(False, f"these approved assumptions are no longer the statements Lean resolves under their names: {drifted}. The approval was granted for something else; request it again.", source), None
         verdict = audit.classify(reports, self._audit_approved())
         # Before any prompt: a hole is not an assumption and is never offered.
         if verdict.forbidden:
-            return ToolResult(False, f"the axiom audit refused this source: {audit.describe(verdict)}. A hole cannot be approved.", source)
+            return ToolResult(False, f"the axiom audit refused this source: {audit.describe(verdict)}. A hole cannot be approved.", source), None
         for axiom in verdict.unapproved:
             if not self._admit(axiom, reports, source):
-                return ToolResult(False, f"the user declined the assumption `{axiom}`, which this source depends on. Do not save work that requires it.", source)
+                return ToolResult(False, f"the user declined the assumption `{axiom}`, which this source depends on. Do not save work that requires it.", source), None
         verdict = audit.classify(reports, self._audit_approved())
-        # Persisted, not merely reported: without this the grade lives only in
-        # this ToolResult, and save_latex has no authority to contradict a
-        # writeup claiming plain kernel verification for a modulo artifact.
         # Stamped with what it covered: registering another declaration later
         # widens the registry without re-auditing, and a verdict that no longer
         # describes the current registry must not be trusted by save_latex.
-        self.state["audit"] = {**verdict.as_dict(), "audited_names": list(audited)}
-        _atomic_json(self.state_path, self.state)
-        return ToolResult(True, f"{result.output}\n\naxiom audit: {audit.describe(verdict)}", source)
+        return ToolResult(True, f"{result.output}\n\naxiom audit: {audit.describe(verdict)}", source), {**verdict.as_dict(), "audited_names": list(audited)}
+
+    def _drifted(self, output: str, sanctioned: list[str]) -> list[str]:
+        """Approved assumptions that are no longer the statement approved.
+
+        The printed statement is recorded the first time it is seen, so an
+        approval granted before this check existed acquires an identity rather
+        than being refused for lacking one.
+        """
+        changed, learned = [], False
+        for entry in self.state["assumptions"]:
+            if entry["formal_name"] not in sanctioned:
+                continue
+            statement = audit.printed(output, entry["formal_name"])
+            if statement is None:
+                continue
+            if not entry.get("printed_statement"):
+                entry["printed_statement"], learned = statement, True
+            elif entry["printed_statement"] != statement:
+                changed.append(entry["formal_name"])
+        if learned:
+            _atomic_json(self.state_path, self.state)
+        return changed
 
     def _audit_approved(self) -> set[str]:
         return {item["formal_name"] for item in self.state["assumptions"]}
 ```
+
+Replace the `check_lean` and `save_lean` branches (lines 184-191) so the verdict
+is published only once the artifact it describes exists on disk, bound to a
+digest of that artifact:
+
+```python
+        if name == "check_lean":
+            return self._run_lean_source(str(arguments["source"]), final=False)[0]
+        if name == "save_lean":
+            source = str(arguments["source"])
+            result, verdict = self._run_lean_source(source, final=True)
+            if result.ok and verdict is not None:
+                saved = source.rstrip() + "\n"
+                (self.workspace / "Main.lean").write_text(saved, encoding="utf-8")
+                # After the write, and tied to what was written: a verdict
+                # published first would survive a failed write or a crash and
+                # describe a Main.lean that was never saved.
+                self.state["audit"] = {**verdict, "source_sha256": hashlib.sha256(saved.encode("utf-8")).hexdigest()}
+                _atomic_json(self.state_path, self.state)
+            return result
+```
+
+Add `import hashlib` to `chat.py`.
 
 Replace the label check in the `save_latex` branch of `_tool` (line 196) with one
 that also demands disclosure of whatever the saved Lean rests on:
@@ -1183,8 +1353,10 @@ that also demands disclosure of whatever the saved Lean rests on:
             # A writeup for a modulo artifact must say so. Hardy holds the grade,
             # so the model cannot describe assumed work as plainly verified.
             stored = self.state.get("audit")
-            if stored is None or stored.get("audited_names") != list(self._audit_names()):
-                return ToolResult(False, "the registry has changed since the last audited save; call save_lean again so the writeup is graded against a current audit", source)
+            saved = self.workspace / "Main.lean"
+            digest = hashlib.sha256(saved.read_bytes()).hexdigest() if saved.exists() else None
+            if stored is None or stored.get("audited_names") != list(self._audit_names()) or stored.get("source_sha256") != digest:
+                return ToolResult(False, "no current audit covers the saved Lean — the registry or Main.lean has changed since it was audited. Call save_lean again so the writeup is graded against what is actually on disk.", source)
             # Searched outside TeX comments: `% Papers.Smith.main` discloses
             # nothing to a reader of the compiled document.
             visible = re.sub(r"(?m)(?<!\\)%.*$", "", source)
@@ -1218,6 +1390,30 @@ Replace the `record_name` branch of `_tool` (lines 209-217) with:
                 self.state.pop("audit", None)
                 _atomic_json(self.state_path, self.state)
             return ToolResult(True, f"recorded mapping: {entry}")
+```
+
+Finally, replace the recording step inside the `request_assumption` branch
+(lines 222-227), which currently skips both the assumption and its mapping when
+the name is already known:
+
+```python
+            proposal["status"] = "user-approved"
+            existing = next((item for item in self.state["assumptions"] if item["formal_name"] == proposal["formal_name"]), None)
+            if existing is None:
+                self.state["assumptions"].append(proposal)
+            elif not existing.get("lean_statement"):
+                # An audit-discovered record carries no declared statement.
+                # Skipping the update would leave every later save comparing the
+                # declared statement against "" and refusing it, with no way out.
+                existing.update(proposal)
+            mapping = {"formal_name": proposal["formal_name"], "latex_name": proposal["latex_name"], "description": proposal["informal_statement"]}
+            # Only when the name is not already registered: a second mapping for
+            # one name emits a second `#print axioms` line, which audit.parse
+            # reads as an unestablished audit — an unsaveable workspace.
+            if not any(item["formal_name"] == mapping["formal_name"] for item in self.state["names"]):
+                self.state["names"].append(mapping)
+                self.state.pop("audit", None)
+            _atomic_json(self.state_path, self.state)
 ```
 
 - [ ] **Step 4: Run the whole suite**
