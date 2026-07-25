@@ -99,7 +99,9 @@ def test_an_unconfigured_lean_project_warns_without_failing(tmp_path: Path):
 
 def test_the_deep_check_compiles_a_mathlib_probe(tmp_path: Path, project: Path):
     recorder = project / "seen.lean"
-    lean = (sys.executable, "-c", f"import pathlib, sys; pathlib.Path({str(recorder)!r}).write_text(pathlib.Path(sys.argv[1]).read_text())")
+    # LeanTools invokes this as `lean_command --json <source>`, so the source
+    # path arrives as the last argv entry, not the first.
+    lean = (sys.executable, "-c", f"import pathlib, sys; pathlib.Path({str(recorder)!r}).write_text(pathlib.Path(sys.argv[-1]).read_text())")
     checks = doctor.run_checks(configuration(tmp_path, lean_command=lean), deep=True)
     assert named(checks, "mathlib").ok is True
     assert "import Mathlib" in recorder.read_text(encoding="utf-8")
