@@ -1,0 +1,65 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{fancyvrb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{HardyBlue}{RGB}{24,64,112}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.7em}
+\setlist[itemize]{leftmargin=1.5em}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\color{HardyBlue}\bfseries @@TITLE@@\par}
+\vspace{1em}
+Formal status: @@FORMAL_STATUS@@\\
+Faithfulness: @@FAITHFULNESS_STATUS@@\\
+Informal completeness: @@INFORMAL_STATUS@@\\
+Document status: @@DOCUMENT_STATUS@@
+\end{center}
+
+\hrule
+\vspace{1em}
+
+\section*{Theorem}
+@@THEOREM_TEXT@@
+
+\section*{Approved interpretation}
+@@INTERPRETATION@@
+
+\section*{Human-readable proof}
+@@PROOF_TEXT@@
+
+\section*{Known gaps}
+@@KNOWN_GAPS@@
+
+\section*{Exact Lean statement}
+\begin{Verbatim}[fontsize=\small]
+@@LEAN_SIGNATURE@@
+\end{Verbatim}
+
+\section*{Verification appendix}
+\textbf{Axioms used:} @@AXIOMS@@
+
+\begin{Verbatim}[fontsize=\small]
+@@HASHES@@
+\end{Verbatim}
+
+\begin{samepage}
+\textbf{Run and tool identities}
+\begin{itemize}
+@@IDENTITIES@@
+\end{itemize}
+\end{samepage}
+
+\vfill
+\small
+Lean kernel verification, user-approved faithfulness, heuristic informal review,
+and document compilation are independent statuses. This trusted-development MVP
+does not sandbox generated Lean or TeX.
+
+\end{document}
