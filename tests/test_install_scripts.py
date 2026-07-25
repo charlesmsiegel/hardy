@@ -11,9 +11,12 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 SHELL_SCRIPTS = ["install.sh", "install-linux.sh", "install-macos.sh", "lib/common.sh"]
 POWERSHELL_SCRIPT = SCRIPTS / "install-windows.ps1"
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="the POSIX installers are checked on POSIX hosts")
+# Only the POSIX installers need a POSIX host. The Windows installer is checked
+# everywhere, and above all on Windows, which is the platform it is written for.
+posix_only = pytest.mark.skipif(os.name == "nt", reason="the POSIX installers are checked on POSIX hosts")
 
 
+@posix_only
 @pytest.mark.parametrize("name", SHELL_SCRIPTS)
 def test_shell_installers_parse(name: str):
     interpreter = "sh" if name == "install.sh" else "bash"
@@ -22,6 +25,7 @@ def test_shell_installers_parse(name: str):
     subprocess.run([interpreter, "-n", str(SCRIPTS / name)], check=True)
 
 
+@posix_only
 @pytest.mark.parametrize("name", SHELL_SCRIPTS)
 def test_shellcheck_is_clean(name: str):
     if shutil.which("shellcheck") is None:
@@ -30,11 +34,13 @@ def test_shellcheck_is_clean(name: str):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@posix_only
 def test_the_executable_installers_are_executable():
     for name in ("install.sh", "install-linux.sh", "install-macos.sh"):
         assert os.access(SCRIPTS / name, os.X_OK), f"{name} is not executable"
 
 
+@posix_only
 @pytest.mark.parametrize("script", ["install-linux.sh", "install-macos.sh"])
 def test_help_describes_the_installer_without_touching_the_system(script: str):
     """--help must work on a clean machine, before anything is installed.
@@ -51,6 +57,7 @@ def test_help_describes_the_installer_without_touching_the_system(script: str):
         assert flag in result.stdout
 
 
+@posix_only
 @pytest.mark.parametrize("script", ["install-linux.sh", "install-macos.sh"])
 def test_unknown_options_are_refused(script: str):
     result = subprocess.run([str(SCRIPTS / script), "--definitely-not-a-flag"], capture_output=True, text=True)
@@ -58,6 +65,7 @@ def test_unknown_options_are_refused(script: str):
     assert "unknown option" in result.stderr
 
 
+@posix_only
 def test_the_dispatcher_delegates_to_this_platforms_installer():
     result = subprocess.run([str(SCRIPTS / "install.sh"), "--help"], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -83,6 +91,56 @@ def test_every_supported_platform_has_an_installer():
     assert POWERSHELL_SCRIPT.exists()
     for name in SHELL_SCRIPTS:
         assert (SCRIPTS / name).exists()
+
+
+def run_installer_functions(body: str) -> subprocess.CompletedProcess:
+    """Run `body` with the installer's function definitions in scope.
+
+    The script installs Hardy when it is dot-sourced, so its functions are
+    lifted out of the parse tree instead: that tests the definitions actually
+    shipped rather than a copy of them.
+    """
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+    preamble = (
+        "$e = $null; $t = $null; "
+        f"$ast = [System.Management.Automation.Language.Parser]::ParseFile('{POWERSHELL_SCRIPT}', [ref]$t, [ref]$e); "
+        "$ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | "
+        "ForEach-Object { Invoke-Expression $_.Extent.Text }; "
+    )
+    return subprocess.run([powershell, "-NoProfile", "-Command", preamble + body], capture_output=True, text=True)
+
+
+def test_the_windows_installer_writes_files_without_a_byte_order_mark(tmp_path: Path):
+    """Windows PowerShell's `-Encoding UTF8` prepends a BOM.
+
+    Lean rejects one before `import` ("expected token" at 1:0), so the
+    installer's own Mathlib probe fails on a perfectly good project and the
+    install stops with "'import Mathlib' still fails". tomllib rejects one
+    before the first key, so a config written the same way breaks every later
+    Hardy command.
+    """
+    probe = tmp_path / "probe.lean"
+    config_file = tmp_path / "config.toml"
+    result = run_installer_functions(
+        f"Write-Utf8File '{probe}' \"import Mathlib`n\"; "
+        f"Write-Utf8File '{config_file}' \"model = `\"m`\"`n\"; "
+        f"Add-Utf8Line '{config_file}' 'lean_project = \"p\"'"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    for path in (probe, config_file):
+        assert path.exists(), f"{path.name} was not written: {result.stdout}{result.stderr}"
+        assert not path.read_bytes().startswith(b"\xef\xbb\xbf"), f"{path.name} starts with a UTF-8 BOM"
+    # Appending must leave the file readable, and on its own line.
+    assert config_file.read_text(encoding="utf-8").splitlines() == ['model = "m"', 'lean_project = "p"']
+
+
+def test_the_windows_installer_generates_no_utf8_bom():
+    """The BOM-free helpers are only worth having if nothing bypasses them."""
+    code = [line for line in POWERSHELL_SCRIPT.read_text(encoding="utf-8").splitlines() if not line.lstrip().startswith("#")]
+    offenders = [line.strip() for line in code if "-Encoding UTF8" in line]
+    assert not offenders, f"-Encoding UTF8 writes a BOM on Windows PowerShell; use Write-Utf8File: {offenders}"
 
 
 def written_config(tmp_path: Path, **environment: str) -> str:
@@ -130,6 +188,7 @@ def interactive_config(tmp_path: Path, answers: list[str], **environment: str) -
 
 
 
+@posix_only
 def test_an_unattended_install_writes_only_settings_the_parser_accepts(tmp_path: Path):
     """A generated config with an unknown key makes every later Hardy
     invocation fail with "unknown settings" — including the install-time doctor."""
@@ -144,6 +203,7 @@ def test_an_unattended_install_writes_only_settings_the_parser_accepts(tmp_path:
     assert configuration.load(target).model == "claude-opus-5"
 
 
+@posix_only
 def test_the_installer_installs_the_cli_the_runtime_needs(tmp_path: Path):
     """`hardy doctor` requires the Claude Code CLI, so a full install that never
     installs it would complete and then fail its own verification."""

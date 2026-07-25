@@ -62,6 +62,20 @@ function Write-Warn($message) { Write-Warning $message }
 function Stop-Install($message) { Write-Host "error: $message" -ForegroundColor Red; exit 1 }
 function Test-Command($name) { $null -ne (Get-Command $name -ErrorAction SilentlyContinue) }
 
+# Windows PowerShell's `-Encoding UTF8` prepends a byte-order mark, and the two
+# readers of these files both choke on one: Lean reports "expected token" before
+# `import`, and tomllib "Invalid statement" before the first key. Everything
+# generated here is written through these instead.
+function Write-Utf8File($path, $text) {
+    [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding $false))
+}
+
+function Add-Utf8Line($path, $line) {
+    $existing = if (Test-Path $path) { [System.IO.File]::ReadAllText($path) } else { '' }
+    if ($existing -and -not $existing.EndsWith("`n")) { $existing += "`r`n" }
+    Write-Utf8File $path ($existing + $line + "`r`n")
+}
+
 function Confirm-Step($question) {
     if ($Yes) { return $true }
     if (-not [Environment]::UserInteractive) { return $true }
@@ -223,7 +237,7 @@ function Install-Elan {
 
 function Test-LeanProject {
     $probe = Join-Path ([System.IO.Path]::GetTempPath()) ("hardy-probe-" + [System.Guid]::NewGuid().ToString('N') + '.lean')
-    Set-Content -Path $probe -Encoding UTF8 -Value "import Mathlib`n`nexample : 2 + 2 = 4 := by norm_num"
+    Write-Utf8File $probe "import Mathlib`n`nexample : 2 + 2 = 4 := by norm_num`n"
     try {
         Push-Location $LeanProject
         & lake env lean $probe *> $null
@@ -321,7 +335,7 @@ function Write-Config {
     if (Test-Path $ConfigPath) {
         Write-Detail 'config already exists; leaving your model and key untouched'
         if (-not $SkipMathlib -and -not (Select-String -Path $ConfigPath -Pattern '^\s*lean_project' -Quiet)) {
-            Add-Content -Path $ConfigPath -Value ('lean_project = "{0}"' -f (ConvertTo-TomlString $LeanProject))
+            Add-Utf8Line $ConfigPath ('lean_project = "{0}"' -f (ConvertTo-TomlString $LeanProject))
             Write-Detail "recorded lean_project = $LeanProject"
         }
         return
@@ -341,7 +355,7 @@ function Write-Config {
     # invocation fail with "unknown settings".
     if ($model) { $lines += 'model = "{0}"' -f (ConvertTo-TomlString $model) }
     if (-not $SkipMathlib) { $lines += 'lean_project = "{0}"' -f (ConvertTo-TomlString $LeanProject) }
-    Set-Content -Path $ConfigPath -Value $lines -Encoding UTF8
+    Write-Utf8File $ConfigPath (($lines -join "`r`n") + "`r`n")
     $script:ConfiguredModel = $model
     Write-Detail "wrote $ConfigPath"
 }

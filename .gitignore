@@ -6,3 +6,7 @@ __pycache__/
 # The Lake project and its packages are built locally by `hardy setup`,
 # never committed: they are hundreds of megabytes of compiled Mathlib.
 lean_project/
+
+# Linked worktrees live inside the repo for convenience; their contents
+# belong to their own branches, never to this checkout.
+.worktrees/

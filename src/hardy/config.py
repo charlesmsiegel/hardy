@@ -92,10 +92,16 @@ class Config:
 
 
 def read_file(path: Path) -> dict[str, Any]:
-    """Read one config file, rejecting keys Hardy does not understand."""
+    """Read one config file, rejecting keys Hardy does not understand.
+
+    Read as `utf-8-sig` because Windows editors and PowerShell write UTF-8 with
+    a byte-order mark: read as plain utf-8 the mark joins the first key and
+    tomllib rejects a file that looks perfectly ordinary on screen. Writing
+    stays plain utf-8, so saving a setting also drops the mark.
+    """
     if not path.exists():
         return {}
-    values = tomllib.loads(path.read_text(encoding="utf-8"))
+    values = tomllib.loads(path.read_text(encoding="utf-8-sig"))
     unknown = sorted(set(values) - set(SETTINGS))
     if unknown:
         raise ValueError(f"{path}: unknown settings {unknown}; known settings are {sorted(SETTINGS)}")
@@ -153,7 +159,7 @@ def write_setting(path: Path, key: str, value: str) -> None:
     if key not in SETTINGS:
         raise ValueError(f"unknown setting {key!r}; known settings are {sorted(SETTINGS)}")
     header = ["# Written by Hardy. Every value can be overridden by a", "# HARDY_* environment variable or a command-line flag."]
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else list(header)
+    lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else list(header)
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     rendered = f'{key} = "{escaped}"'
     pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
@@ -178,7 +184,7 @@ def remove_setting(path: Path, key: str) -> None:
     if not path.exists():
         return
     pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
-    lines = path.read_text(encoding="utf-8").splitlines()
+    lines = path.read_text(encoding="utf-8-sig").splitlines()
     kept = [line for line in lines if not pattern.match(line)]
     if len(kept) != len(lines):
         _rewrite(path, kept)

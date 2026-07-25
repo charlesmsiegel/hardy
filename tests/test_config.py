@@ -52,6 +52,29 @@ def test_unknown_settings_are_rejected_rather_than_ignored(tmp_path: Path):
         config.load(path)
 
 
+def test_a_byte_order_mark_does_not_hide_the_first_setting(tmp_path: Path):
+    """Windows editors and PowerShell write UTF-8 with a leading BOM.
+
+    Read as plain utf-8 the mark becomes part of the first key, so tomllib
+    rejects the file and every Hardy command fails on a config that looks
+    perfectly ordinary in an editor.
+    """
+    path = tmp_path / "config.toml"
+    path.write_bytes(b'\xef\xbb\xbfmodel = "provider/model-1"\n')
+    assert config.load(path).model == "provider/model-1"
+
+
+def test_editing_a_config_with_a_byte_order_mark_keeps_it_readable(tmp_path: Path):
+    """The line-based editors read the file too, so a BOM must not survive into
+    a key they then write back."""
+    path = tmp_path / "config.toml"
+    path.write_bytes(b'\xef\xbb\xbfmodel = "old"\n')
+    config.write_setting(path, "model", "new")
+    assert config.load(path).model == "new"
+    config.remove_setting(path, "model")
+    assert config.load(path).model == config.DEFAULT_MODEL
+
+
 
 
 
