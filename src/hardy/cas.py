@@ -1492,6 +1492,7 @@ def run_exported_script(
         threading.Thread(target=_drain_capped, args=(pipe, buffer, cap, overflowed), daemon=True)
         for pipe, buffer in ((process.stdout, out), (process.stderr, err))
     ]
+    stdout_worker, stderr_worker = workers
     # Feeding stdin is a third concurrent job, not a preamble to the other two.
     # `subprocess.run(input=...)` multiplexes all three inside `communicate()`;
     # writing the payload straight through on this thread instead re-created
@@ -1522,15 +1523,23 @@ def run_exported_script(
                 process.wait(timeout=5)
         for worker in workers:
             worker.join(timeout=5)
-        # And stdin is closed only once the feeder has actually let go of it.
-        # `_feed` closes it itself, and it holds that `BufferedWriter`'s lock
-        # for as long as its write is stuck inside -- so closing the same
-        # handle from here waits on the same write, with no timeout, and the
-        # bounded join two lines above buys nothing at all. Leaving it to the
-        # feeder costs a file handle for as long as that thread lives; the
+        # And each stream is closed only once its own worker has actually let
+        # go of it. A drain thread blocked in `pipe.read1` -- because, say, a
+        # grandchild the child spawned inherited the handle and is still
+        # holding it open -- holds that `BufferedReader`'s lock for as long as
+        # the read is stuck; `_feed` closes stdin itself and holds its
+        # `BufferedWriter`'s lock the same way for as long as its write is
+        # stuck. Closing any of those same handles from here would wait on
+        # that same blocked call, with no timeout, and the bounded joins two
+        # lines above buy nothing at all. Leaving a stream to its wedged
+        # worker costs a file handle for as long as that thread lives; the
         # child is already dead, so its end of the pipe is gone regardless and
         # nothing is kept alive by the wait.
-        closing = [process.stdout, process.stderr]
+        closing = []
+        if not stdout_worker.is_alive():
+            closing.append(process.stdout)
+        if not stderr_worker.is_alive():
+            closing.append(process.stderr)
         if not feeder.is_alive():
             closing.append(process.stdin)
         for stream in closing:

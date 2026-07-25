@@ -385,6 +385,51 @@ def test_a_wedged_feeder_does_not_take_the_main_thread_down_with_it(
     assert handles and not handles[0].close_attempted.is_set()
 
 
+def test_a_grandchild_holding_stdout_open_does_not_wedge_the_close(tmp_path) -> None:
+    """`process.stdout.close()` was still unconditional -- the same bug as
+    stdin, just two lines further down the same hunk.
+
+    An exported script's own process can be killed at the deadline while a
+    process *it* spawned keeps the write end of the stdout pipe open,
+    inherited -- Singular and Macaulay2 scripts routinely shell out. The
+    drain thread reading that pipe then blocks in `read1` for as long as the
+    grandchild lives, not as long as the script does, and closing the same
+    handle from the main thread waits on that blocked read with no timeout.
+
+    Verified as a real OS-level hang, not a simulated one: the grandchild
+    here is an actual process holding an actual inherited handle, so a
+    pre-fix run of this test measurably takes as long as the grandchild's
+    own sleep, not as long as the deadline given to the script.
+    """
+    grandchild_seconds = 15
+    script = tmp_path / "session.py"
+    script.write_text(
+        "import subprocess, sys, time\n"
+        "subprocess.Popen(\n"
+        f"    [sys.executable, '-c', 'import time; time.sleep({grandchild_seconds})'],\n"
+        "    stdout=sys.stdout, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,\n"
+        ")\n"
+        "time.sleep(300)\n",
+        encoding="utf-8",
+    )
+
+    started = time.monotonic()
+    run = run_exported_script(
+        backend=backend_for("sympy"),
+        command=None,
+        script=script,
+        cwd=tmp_path / "run",
+        timeout=1.0,
+        max_output_bytes=4_096,
+    )
+    elapsed = time.monotonic() - started
+
+    assert run.timed_out is True
+    # Bounded by the deadline plus the joins' own timeouts, not by the
+    # grandchild's 15s hold on the pipe -- a wedged close would run past it.
+    assert elapsed < 10, f"took {elapsed:g}s, so the stdout close was waited on"
+
+
 @pytest.mark.parametrize("error", [OSError("closed"), ValueError("read of closed file")])
 def test_a_pipe_closed_under_a_read_does_not_escape_as_a_thread_traceback(
     tmp_path, cas_session, error
