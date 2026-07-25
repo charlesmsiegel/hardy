@@ -20,6 +20,7 @@ DEFAULT_LATEX_COMMAND = "pdflatex -interaction=nonstopmode -halt-on-error"
 DEFAULT_WORKSPACE = ".hardy"
 DEFAULT_RUNS_ROOT = "runs"
 DEFAULT_LAKE = "lake"
+DEFAULT_ELAN = "elan"
 DEFAULT_TECTONIC = "tectonic"
 # The bundle is pinned by URL and digest together: a writeup is only
 # reproducible if the TeX distribution behind it is the one that built it.
@@ -38,6 +39,7 @@ SETTINGS = {
     "workspace": "HARDY_WORKSPACE",
     "runs_root": "HARDY_RUNS_ROOT",
     "lake": "HARDY_LAKE",
+    "elan": "HARDY_ELAN",
     "tectonic": "HARDY_TECTONIC",
     "tectonic_bundle": "HARDY_TECTONIC_BUNDLE",
     "tectonic_bundle_sha256": "HARDY_TECTONIC_BUNDLE_SHA256",
@@ -71,6 +73,7 @@ class Config:
     # their documents. The budgets a run is frozen under travel with them.
     runs_root: Path = Path(DEFAULT_RUNS_ROOT)
     lake: Path = Path(DEFAULT_LAKE)
+    elan: Path = Path(DEFAULT_ELAN)
     tectonic: Path = Path(DEFAULT_TECTONIC)
     tectonic_bundle: str = DEFAULT_TECTONIC_BUNDLE
     tectonic_bundle_sha256: str = DEFAULT_TECTONIC_BUNDLE_SHA256
@@ -133,6 +136,7 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
         workspace=location("workspace") or Path(DEFAULT_WORKSPACE),
         runs_root=location("runs_root") or Path(DEFAULT_RUNS_ROOT),
         lake=location("lake") or Path(DEFAULT_LAKE),
+        elan=location("elan") or Path(DEFAULT_ELAN),
         tectonic=location("tectonic") or Path(DEFAULT_TECTONIC),
         tectonic_bundle=text("tectonic_bundle", DEFAULT_TECTONIC_BUNDLE),
         tectonic_bundle_sha256=text("tectonic_bundle_sha256", DEFAULT_TECTONIC_BUNDLE_SHA256),

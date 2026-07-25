@@ -398,6 +398,14 @@ Other useful commands:
 
   hardy doctor --deep     check Lean, Mathlib, LaTeX, and the model end to end
   hardy chat --workspace ./my-project
+  hardy prove             stage one claim from statement to a checked document
+  hardy accept --force-budget-exhaustion-test
+                          check the whole pipeline with no model and no network
+
+This installer sets up Lean, Mathlib and pdflatex. Staged \`hardy prove\` runs
+also build their documents with Tectonic against a checksum-pinned bundle:
+
+  hardy setup             find, install and record the pinned toolchain
 EOF
 	[ "$(command -v hardy 2>/dev/null)" = "$HARDY_BIN_DIR/hardy" ] ||
 		printf '\nOpen a new shell first, so that %s is on your PATH.\n' "$HARDY_BIN_DIR"

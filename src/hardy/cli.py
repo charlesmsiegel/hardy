@@ -4,7 +4,9 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import os
 import re
+import shutil
 from importlib import metadata
 from importlib.resources import files
 from pathlib import Path
@@ -209,6 +211,94 @@ class ConsoleTerminal:
             self._output(f"Known gap: {gap}")
         if manifest.terminal_reason is not None:
             self._output(f"Terminal reason: {manifest.terminal_reason.value}")
+
+
+def _common_locations() -> dict[str, tuple[Path, ...]]:
+    """Where these tools land when their own installers put them there."""
+    local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    elan_bin = Path.home() / ".elan" / "bin"
+    suffix = ".exe" if os.name == "nt" else ""
+    return {
+        "elan": (elan_bin / f"elan{suffix}",),
+        "lake": (elan_bin / f"lake{suffix}",),
+        "tectonic": (local / "Hardy" / "tools" / "tectonic" / "0.16.9" / "tectonic.exe",),
+    }
+
+
+def _print_report(report: Any) -> None:
+    for tool in report.tools:
+        state = "OK" if tool.healthy else "MISSING/FAILED"
+        location = str(tool.path) if tool.path else "not registered"
+        version = tool.version or "unknown version"
+        print(f"{tool.name:9} {state:14} {version} [{location}] - {tool.detail}")
+    print(f"mathlib   {'OK' if report.mathlib_ready else 'MISSING/FAILED'}")
+
+
+def _confirm(prompt: str) -> bool:
+    return input(prompt + " [y/N] ").strip().lower() in {"y", "yes"}
+
+
+def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _confirm) -> int:
+    """Discover the pinned toolchain, offer to install what is missing, record it."""
+    from .installers import download_file, install_elan, install_tectonic, prepare_mathlib
+    from .process import run_process
+    from .setup import discover_environment
+
+    config, config_path = _load_config_argument(getattr(args, "config", None))
+    report = discover_environment(config, common_locations=_common_locations())
+    statuses = {item.name: item for item in report.tools}
+    if not statuses["elan"].healthy:
+        winget = shutil.which("winget")
+        if winget:
+            print(
+                install_elan(
+                    winget=Path(winget),
+                    cwd=Path.cwd(),
+                    confirmer=confirmer,
+                    runner=run_process,
+                ).manual_instructions
+            )
+        else:
+            print(
+                "elan was not found. Install it with the platform installer under scripts/, "
+                "then rerun `hardy setup`."
+            )
+    if not statuses["tectonic"].healthy:
+        if os.name == "nt":
+            local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+            print(
+                install_tectonic(
+                    destination_root=local / "Hardy" / "tools",
+                    confirmer=confirmer,
+                    downloader=download_file,
+                ).manual_instructions
+            )
+        else:
+            print(
+                "tectonic was not found. Install it from your package manager or "
+                "https://tectonic-typesetting.github.io, then rerun `hardy setup`."
+            )
+    rediscovered = discover_environment(config, common_locations=_common_locations())
+    tools = {item.name: item for item in rediscovered.tools}
+    for setting in ("elan", "lake", "tectonic"):
+        found = tools[setting].path
+        if found is not None:
+            configuration.write_setting(config_path, setting, str(found))
+    if tools["lake"].path is not None and config.lean_project and not rediscovered.mathlib_ready:
+        print(
+            prepare_mathlib(
+                lake=tools["lake"].path,
+                lean_project=config.lean_project,
+                confirmer=confirmer,
+                runner=run_process,
+            ).manual_instructions
+        )
+    final = discover_environment(
+        configuration.load(config_path), common_locations=_common_locations()
+    )
+    _print_report(final)
+    print(f"Configuration saved to {config_path}")
+    return 0 if final.healthy else 1
 
 
 def _environment_identity(config: configuration.Config) -> Any:
@@ -440,6 +530,7 @@ def build_parser() -> argparse.ArgumentParser:
     accept = subparsers.add_parser("accept", help="run the checked-in acceptance problems")
     accept.add_argument("--backend", choices=("claude", "codex"), default="claude")
     accept.add_argument("--model", default=argparse.SUPPRESS)
+    subparsers.add_parser("setup", help="discover, install, and record the pinned toolchain")
     accept.add_argument(
         "--force-budget-exhaustion-test",
         action="store_true",
@@ -463,6 +554,8 @@ def main() -> int:
         return run_prove(args)
     if args.command == "accept":
         return run_accept(args)
+    if args.command == "setup":
+        return run_setup(args)
     if args.command == "batch":
         return _batch(args, config, parser)
     # No subcommand is intentionally the primary interactive experience.
