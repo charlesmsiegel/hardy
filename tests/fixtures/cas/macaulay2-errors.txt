@@ -1,0 +1,2 @@
+stdio:1:1:(3): error: no method for adjacent objects:
+stdio:2:14:(3): error: expected a ring
