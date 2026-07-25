@@ -1,0 +1,3 @@
+o5 = "division by zero error: not encountered here"
+-- note: no error: occurred during this session
+i6 : print "an error: string, not a real error"

@@ -179,7 +179,11 @@ class SingularBackend(_SentinelBackend):
     preamble = ""
     version_source = 'system("version");'
     echo = 'print("{marker}");'
-    error_pattern = re.compile(r"(?m)^\s{0,3}\? ")
+    # Singular indents its `?` error banner by call-stack depth, not a fixed
+    # maximum -- an error raised inside a nested procedure can be indented
+    # arbitrarily far. Any run of leading horizontal whitespace counts;
+    # newlines are excluded so this stays anchored to one line's own start.
+    error_pattern = re.compile(r"(?m)^[ \t]*\? ")
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         return (str(command) if command else "Singular", "-q")

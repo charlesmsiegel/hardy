@@ -1,0 +1,3 @@
+"is x = y? we verify this below"
+// helper(n) checks whether n > 0? see docs for details
+list L = 1,2,3; // trailing comment: what?
