@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 
-from hardy.cas_tools import CAS_TOOL_NAMES, CasToolRuntime
+from hardy.cas import CasSession, backend_for
+from hardy.cas_tools import CAS_TOOL_NAMES, CasToolRuntime, build_runtime
+from hardy.domain import RunLimits
 
 
 def make_runtime(session, spilled: dict, observation_bytes: int = 32 * 1024) -> CasToolRuntime:
@@ -99,6 +101,58 @@ def test_every_binding_dispatches_into_the_same_runtime_and_budget(tmp_path, cas
     assert mcp_result.value_repr == "3"
     # One log, one kernel, one budget, whichever door was used.
     assert [record.source for record in session.accepted()] == ["one", "two", "three"]
+
+
+def test_a_model_reset_is_recorded_as_the_models(tmp_path, cas_session) -> None:
+    """`cas_reset` is a tool the model can call. A state-destroying model
+    action recorded as the human's makes the timeline lie about why earlier
+    definitions disappeared."""
+    session = cas_session()
+    runtime = make_runtime(session, {})
+    runtime.run("a")
+    runtime.reset()
+    boundary = session.records()[-1]
+    assert boundary.segment == 1
+    assert boundary.author == "model"
+
+
+def test_reopening_a_workspace_restores_the_state_it_lists(tmp_path) -> None:
+    """Discovery must not be mistaken for a rebuilt kernel.
+
+    `build_runtime` probes the backend, which starts a kernel. That left the
+    session looking live, so the first cell after reopening a saved workspace
+    skipped recovery: the accepted cells were listed back to the user and then
+    answered from an empty namespace.
+    """
+    log = tmp_path / "cells.jsonl"
+    first = CasSession(
+        backend=backend_for("sympy"),
+        command=None,
+        log_path=log,
+        limits=RunLimits(cas_cell_seconds=60),
+        cwd=tmp_path,
+    )
+    try:
+        assert first.execute("x = 41").status == "ok"
+        assert first.execute("x + 1").value_repr == "42"
+    finally:
+        first.close()
+
+    runtime, detail = build_runtime(
+        backend_name="sympy",
+        command=None,
+        limits=RunLimits(cas_cell_seconds=60),
+        log_path=log,
+        cwd=tmp_path,
+    )
+    assert runtime is not None, detail
+    try:
+        assert len(runtime.state().accepted) == 2
+        result = runtime.run("x + 1")
+        assert result.status == "ok", result.stderr
+        assert result.value_repr == "42"
+    finally:
+        runtime.session.close()
 
 
 def test_the_tool_names_are_the_ones_the_bindings_route_on() -> None:

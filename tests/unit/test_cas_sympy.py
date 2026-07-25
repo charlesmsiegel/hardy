@@ -31,6 +31,17 @@ def test_the_version_probe_doubles_as_a_smoke_test(sympy_session) -> None:
     assert sympy_session.probe_version()[0].isdigit()
 
 
+def test_probing_leaves_no_state_a_fresh_kernel_would_not_have(sympy_session) -> None:
+    """The version source is a trailing expression, so the driver bound it to
+    `_`. A session discovered that way started with hidden user-visible state:
+    a first cell mentioning `_` succeeded live and failed on export or
+    recovery, where no probe had ever run."""
+    sympy_session.probe_version()
+    record = sympy_session.execute("_")
+    assert record.status == "error"
+    assert "NameError" in record.stderr
+
+
 def test_a_trailing_expression_reports_its_value(sympy_session) -> None:
     """`exec` discards this. The driver splits it off and evaluates it."""
     assert sympy_session.execute("2 + 2").value_repr == "4"

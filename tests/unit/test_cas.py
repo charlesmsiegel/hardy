@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
-import pytest
+import time
 
-from hardy.cas import CasError, CellOutcome, backend_for, reproduces
+import pytest
+from pydantic import ValidationError
+
+from hardy.cas import (
+    CasError,
+    CasSession,
+    CellOutcome,
+    backend_for,
+    replay_in_fresh_kernel,
+    reproduces,
+)
+from hardy.cas_export import export_session
+from hardy.domain import RunLimits
 
 
 def test_state_carries_between_cells(tmp_path, cas_session) -> None:
@@ -195,3 +207,221 @@ def test_comparison_covers_stderr(tmp_path, cas_session) -> None:
 def test_unknown_backends_are_rejected_by_name() -> None:
     with pytest.raises(ValueError, match="unknown cas_backend"):
         backend_for("mathematica")
+
+
+# ------------------------------------------------------------------ the log
+
+
+def test_an_interrupted_final_append_does_not_destroy_the_log(tmp_path, cas_session) -> None:
+    """One torn write must cost one cell, not the whole durable session.
+
+    A crash mid-append leaves a partial final line behind an intact prefix.
+    Refusing to load it took every earlier cell down with it — and could take
+    chat startup with them, since the session is built before anything is
+    offered.
+    """
+    session = cas_session()
+    session.execute("a")
+    session.execute("b")
+    session.close()
+
+    log = tmp_path / "cells.jsonl"
+    with log.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write('{"seq": 2, "segment": 0, "author": "mod')
+
+    reopened = cas_session()
+    assert [record.source for record in reopened.accepted()] == ["a", "b"]
+
+    # And the log is usable again rather than merely readable once: the partial
+    # bytes are gone, so the next append is its own line instead of being glued
+    # onto a fragment that would never be final again.
+    reopened.execute("c")
+    reopened.close()
+    again = cas_session()
+    assert [record.source for record in again.accepted()] == ["a", "b", "c"]
+
+
+def test_corruption_before_the_final_record_is_still_refused(tmp_path, cas_session) -> None:
+    """Only an unterminated tail is an interrupted append. A damaged record
+    with a newline behind it was durable when it was written, so it is
+    corruption, and loading around it would silently rewrite history."""
+    session = cas_session()
+    session.execute("a")
+    session.execute("b")
+    session.close()
+
+    log = tmp_path / "cells.jsonl"
+    lines = log.read_text(encoding="utf-8").splitlines()
+    lines[0] = '{"seq": 0, "segment": 0, "author": "mod'
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        cas_session()
+
+
+def test_a_record_that_could_not_be_saved_is_not_in_memory(tmp_path, cas_session) -> None:
+    """A long-lived server must not number cells after one that never landed.
+
+    The log directory here is a file, so the append cannot even be opened. The
+    record used to reach `_records` first, so the session went on answering —
+    and numbering — from a history a restart could not reconstruct.
+    """
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory\n", encoding="utf-8")
+    template = cas_session()
+    session = CasSession(
+        backend=template.backend,
+        command=None,
+        log_path=blocked / "cells.jsonl",
+        limits=RunLimits(),
+        cwd=tmp_path / "work",
+    )
+    try:
+        with pytest.raises(CasError, match="could not be written"):
+            session.execute("a")
+        assert session.records() == ()
+        # The cell ran, and nothing durable describes what it did to the
+        # namespace, so continuing would be building on state no rebuild can
+        # reach.
+        assert session.state == "poisoned"
+    finally:
+        session.close()
+
+
+# --------------------------------------------------------------- the budget
+
+
+def test_a_cell_cannot_outlive_the_remaining_session_budget(tmp_path, cas_session) -> None:
+    """`cas_session_seconds` is an upper bound or it is nothing.
+
+    With one second left, a sleeping cell used to get the whole 30-second cell
+    limit, because `spent_seconds` was only consulted before the round trip and
+    only updated after it.
+    """
+    session = cas_session(cas_cell_seconds=30, cas_session_seconds=1)
+    try:
+        started = time.monotonic()
+        record = session.execute("hang")
+        elapsed = time.monotonic() - started
+        assert record.status == "timeout"
+        assert elapsed < 10
+    finally:
+        session.close()
+
+
+def test_a_recovery_replay_is_charged_to_the_session_budget(tmp_path, cas_session) -> None:
+    """A rebuild is the session's own time.
+
+    Unbilled, a session holding expensive accepted cells could die and replay
+    them over and over while the budget never moved.
+    """
+    session = cas_session(cas_cell_seconds=30)
+    try:
+        session.execute("slow")
+        session.execute("die")
+        assert session.state == "dead"
+
+        before = session.spent_seconds
+        session.execute("quick")
+        # The rebuild replayed `slow`, which costs half a second in the fake
+        # kernel; `quick` itself costs nothing measurable.
+        assert session.spent_seconds - before >= 0.5
+    finally:
+        session.close()
+
+
+def test_an_export_replay_is_charged_to_the_session_budget(tmp_path, cas_session) -> None:
+    """The fresh kernel an export verifies in spends the session's budget too."""
+    session = cas_session(cas_cell_seconds=30)
+    try:
+        session.execute("slow")
+        before = session.spent_seconds
+        export_session(session, tmp_path / "cas")
+        assert session.spent_seconds - before >= 0.5
+    finally:
+        session.close()
+
+
+def test_a_reset_does_not_refund_the_time_already_spent(tmp_path, cas_session) -> None:
+    session = cas_session()
+    try:
+        session.execute("slow")
+        spent = session.spent_seconds
+        assert spent >= 0.5
+        session.reset()
+        assert session.spent_seconds >= spent
+        assert session.accepted() == ()
+        assert session.segment == 1
+    finally:
+        session.close()
+
+
+def test_reset_cannot_be_used_to_buy_a_second_session_budget(tmp_path, cas_session) -> None:
+    """`cas_reset` is a tool the model calls itself.
+
+    Refunding the budget on reset let a model at the limit clear the namespace
+    it no longer needed and start the allowance again, as often as it liked.
+    """
+    session = cas_session(cas_session_seconds=5)
+    try:
+        session.execute("a")
+        session.spent_seconds = 5.0
+        session.reset()
+        with pytest.raises(CasError, match="budget exhausted"):
+            session.execute("b")
+    finally:
+        session.close()
+
+
+# ------------------------------------------------------------ the toolchain
+
+
+def test_a_cell_records_the_backend_that_produced_it(tmp_path, cas_session) -> None:
+    """An unexported trajectory has nowhere else to say what ran it."""
+    session = cas_session()
+    try:
+        session.probe_version()
+        record = session.execute("a")
+        assert record.backend == session.backend.name
+        assert record.backend_version == session.version
+    finally:
+        session.close()
+
+
+def test_a_log_written_by_another_backend_is_refused_until_reset(
+    tmp_path, cas_session, sentinel_session
+) -> None:
+    """Same workspace, different `cas_backend`. Replaying one backend's source
+    under another is not something a session may do quietly."""
+    written = cas_session()
+    written.execute("a")
+    written.close()
+
+    reopened = sentinel_session()
+    try:
+        assert reopened.backend.name != written.backend.name
+        with pytest.raises(CasError, match=written.backend.name):
+            reopened.execute("value;")
+        # A reset opens a clean segment under the configured backend, which is
+        # the way out that refusing has to leave.
+        reopened.reset()
+        assert reopened.execute("value;").status == "ok"
+    finally:
+        reopened.close()
+
+
+def test_a_replay_refuses_cells_recorded_by_another_backend(tmp_path, cas_session) -> None:
+    session = cas_session()
+    try:
+        session.execute("a")
+        foreign = session.records()[0].model_copy(update={"backend": "macaulay2"})
+        with pytest.raises(CasError, match="macaulay2"):
+            replay_in_fresh_kernel(
+                backend=session.backend,
+                command=None,
+                cells=(foreign,),
+                limits=RunLimits(),
+                cwd=tmp_path / "replay",
+            )
+    finally:
+        session.close()

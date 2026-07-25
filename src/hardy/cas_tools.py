@@ -180,8 +180,14 @@ class CasToolRuntime:
             ),
         )
 
-    def reset(self) -> CasStateResult:
-        self.session.reset()
+    def reset(self, *, author: str = "model") -> CasStateResult:
+        """Discard the namespace and open a clean segment.
+
+        `author` defaults to the model because `cas_reset` is one of the tools
+        the model is given; the `/cas reset` path passes the human through, as
+        it already does for a human's cells.
+        """
+        self.session.reset(author=author)
         return self.state()
 
     def _bound(self, record: CellRecord) -> CasCellResult:

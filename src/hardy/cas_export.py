@@ -193,6 +193,13 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
         cells=cells,
         limits=session.limits,
         cwd=directory / "replay",
+        # An export is the session spending its own budget in a second kernel.
+        # Bounded by what is left, and billed for what it uses, so a session
+        # cannot exceed `cas_session_seconds` by exporting repeatedly. Cells
+        # the remaining budget does not reach come back `unverified`, which is
+        # what `docs/.../interactive-cas-design.md` already promised.
+        budget_seconds=session.remaining_seconds,
+        charge=session.charge,
     )
     verdicts = _verdicts(cells, outcomes)
 

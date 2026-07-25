@@ -108,13 +108,22 @@ Priority labels are sequencing hints:
   rather than advertising calls that can only fail.
 - **Known gap:** no interrupt. A runaway cell is stopped only by its timeout,
   which kills the kernel and costs the accumulated state. Tracked in issue #33.
-- **Known gap:** total CAS time is not bounded. `cas_session_seconds` charges
-  only the cells a caller executes: rebuilding state after a kernel death, and
-  the fresh-kernel replay an export runs to check its own artifacts, are both
-  unbilled, and `cas_reset` — a tool the model can call itself — returns the
-  budget to zero. So the per-cell timeout is the only hard ceiling that always
-  applies, and a session can spend more wall clock than `cas_session_seconds`
-  names.
+- **Now (implemented):** `cas_session_seconds` bounds total CAS wall clock, not
+  only the cells a caller asked for. A rebuild after a kernel death and the
+  fresh-kernel replay an export verifies itself with are both charged; a cell's
+  deadline is the smaller of `cas_cell_seconds` and what is left of the
+  session, so a session with one second remaining cannot run a sleeping cell
+  for a minute; and `cas_reset` — a tool the model can call itself — clears the
+  namespace and opens a new segment without refunding time already spent.
+- **Now (implemented):** every cell record carries the backend and probed
+  version that produced it, so a saved-but-never-exported trajectory still
+  names its toolchain. A log whose live segment was written by another backend
+  is refused rather than replayed under the newly configured one; a reset opens
+  a clean segment without deleting anything.
+- **Now (implemented):** an append interrupted mid-write costs one cell, not
+  the session. A malformed *final unterminated* record is treated as a torn
+  append and removed; a damaged record with a terminator behind it is still
+  refused, because it was durable when it was written.
 - **Now (implemented):** Singular and Macaulay2 adapters, verified on Linux CI
   against the real binaries. They remain unavailable natively on Windows —
   Macaulay2 has no Windows build and Singular arrives through Cygwin — which is

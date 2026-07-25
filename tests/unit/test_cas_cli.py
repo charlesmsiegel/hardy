@@ -62,6 +62,9 @@ def test_cas_commands_report_state_and_reset(tmp_path, cas_session) -> None:
 
     cas_command("reset", target, out=printed.append)
     assert session.segment == 1
+    # The human asked, so the human is on the boundary record. The default is
+    # the model's, since `cas_reset` is a tool the model calls.
+    assert session.records()[-1].author == "human"
 
 
 def test_without_a_backend_the_escape_says_so_rather_than_failing(tmp_path) -> None:
