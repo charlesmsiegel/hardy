@@ -38,8 +38,13 @@ jobs:
           M2 --version
       - name: Debug M2 raw transcript (temporary, task-4 diagnosis)
         run: |
-          printf '<< "BEGIN" << endl;\nthisIsNotDefined\n<< "END" << endl;\n' | M2 --no-readline -q
-          echo "===VALUE-CELL-BOUNDARY==="
-          printf '<< "BEGIN" << endl;\nR = QQ[x, y]; f = x^2 + y^2; f\n<< "END" << endl;\n' | M2 --no-readline -q
+          echo "===ERROR-CELL stdout==="
+          printf '<< "BEGIN" << endl;\n1/0\n<< "END" << endl;\n' | M2 --no-readline -q 2>/tmp/err1.txt
+          echo "===ERROR-CELL stderr==="
+          cat /tmp/err1.txt
+          echo "===UNDEFINED-CALL-CELL stdout==="
+          printf '<< "BEGIN" << endl;\nthisIsNotDefined 1\n<< "END" << endl;\n' | M2 --no-readline -q 2>/tmp/err2.txt
+          echo "===UNDEFINED-CALL-CELL stderr==="
+          cat /tmp/err2.txt
       - name: Real-backend tests
         run: uv run --extra test pytest tests/integration/test_cas_real.py -v -m real_toolchain
