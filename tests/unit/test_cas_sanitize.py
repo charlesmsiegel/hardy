@@ -72,6 +72,88 @@ def test_macaulay2_sanitize_does_not_dedent_across_a_block_boundary() -> None:
     assert backend.sanitize(raw) == 'o = 1\n\n       kept\n'
 
 
+# Verbatim from CI run 30175627022, which fed M2 a three-cell exported script
+# on stdin and dumped `repr(stdout)`. The header, the blank line and the
+# `-- --- cell N` notes all come back inside the transcript: only the first
+# line of each group wears an `iN : ` prompt, and everything M2 reads after it
+# without completing a statement is echoed under a run of spaces exactly as
+# wide as that prompt. A fed blank line comes back as the indent alone.
+M2_SCRIPT = (
+    "-- header comment\n"
+    "-- second header line\n"
+    "\n"
+    "-- --- cell 0 (model)\n"
+    "R = QQ[x, y]\n"
+    "\n"
+    "-- --- cell 1 (model)\n"
+    "x^12 + y^12\n"
+)
+M2_TRANSCRIPT = (
+    'Macaulay2, version 1.26.06\nType "help" to see useful commands\n\n'
+    "i1 : -- header comment\n"
+    "     -- second header line\n"
+    "     \n"
+    "     -- --- cell 0 (model)\n"
+    "     R = QQ[x, y]\n"
+    "\no1 = R\n\no1 : PolynomialRing\n\n"
+    "i2 : \n"
+    "     -- --- cell 1 (model)\n"
+    "     x^12 + y^12\n"
+    "\n      12    12\no3 = x   + y\n\no3 : R\n\ni4 : \n     \n"
+)
+
+
+def test_macaulay2_sanitize_removes_the_echo_of_the_file_it_was_fed() -> None:
+    """Hardy's own comments came back as output between one cell and the next.
+
+    `_appears_in_order` tolerates the interpreter's chrome around a transcript
+    and nothing at all inside it, so the header and the `-- --- cell N` notes
+    Hardy writes into an exported script split the session's own output into
+    pieces: no Macaulay2 session of more than one cell could export
+    `verified`. Only the first line of each echoed group wears an `iN : `
+    prompt, so stripping prompt lines was never enough.
+    """
+    sanitized = backend_for("macaulay2").sanitize(M2_TRANSCRIPT, M2_SCRIPT)
+    assert "-- --- cell 0 (model)" not in sanitized
+    assert "-- header comment" not in sanitized
+    assert "R = QQ[x, y]" not in sanitized
+    assert "x^12 + y^12" not in sanitized
+    # And what the interpreter actually computed is untouched, alignment row
+    # and all.
+    kept = [line for line in sanitized.splitlines() if line.strip()]
+    assert kept == [
+        "Macaulay2, version 1.26.06",
+        'Type "help" to see useful commands',
+        "o = R",
+        "o : PolynomialRing",
+        "      12    12",
+        "o = x   + y",
+        "o : R",
+    ]
+
+
+def test_macaulay2_sanitize_keeps_output_that_merely_looks_like_an_echo() -> None:
+    """Both conditions are load-bearing.
+
+    An alignment row is indented to the same width as a continuation line by
+    coincidence, and a cell that prints is free to reproduce its own source, so
+    a line is only an echo when it is indented to the prompt's width *and* what
+    is under the indent is verbatim a line that was fed in.
+    """
+    backend = backend_for("macaulay2")
+    fed = 'print "     indented output"\n'
+    transcript = 'i2 : print "     indented output"\n     indented output\n'
+    assert backend.sanitize(transcript, fed) == "     indented output\n"
+
+
+def test_macaulay2_sanitize_without_the_fed_text_keeps_the_older_rule() -> None:
+    """`sanitize` is called from paths that cannot say what was fed, and there
+    it must still take the prompt lines it always took."""
+    backend = backend_for("macaulay2")
+    raw = 'i2 : x^2 + y^2\n\n      2    2\no4 = x  + y\n'
+    assert backend.sanitize(raw) == '\n      2    2\no = x  + y\n'
+
+
 def test_macaulay2_sanitize_is_a_noop_on_text_without_prompts_or_counters() -> None:
     assert backend_for("macaulay2").sanitize("just some text\n") == "just some text\n"
 

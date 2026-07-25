@@ -119,6 +119,34 @@ def test_macaulay2_exports_cleanly_once_the_output_counter_reaches_two_digits(
         session.close()
 
 
+def test_macaulay2_rebuilds_a_session_whose_counter_passed_nine(tmp_path) -> None:
+    """The same defect, on the path where it costs the live session.
+
+    A rebuild replays the accepted cells only, so a cell that ran and was
+    refused leaves the live counter three statements ahead of the one the
+    replay reaches. Once that gap straddles the ninth counter, one side prints
+    its alignment row one column further out than the other, `reproduces` is
+    false for a cell that computed exactly the same polynomial, and `_restore`
+    poisons a session that was perfectly healthy.
+    """
+    session = session_for("macaulay2", "M2", tmp_path)
+    try:
+        session.probe_version()
+        assert session.execute("R = QQ[x, y]").status == "ok"
+        # Recorded, never accepted -- and therefore absent from the rebuild,
+        # which is what opens the gap between the two sides' counters.
+        assert session.execute("1/0").accepted is False
+        for power in range(2, 8):
+            assert session.execute(f"x^{power} + y^{power}").status == "ok"
+        session._drop_kernel()
+        rebuilt = session.execute("x^99 + y^99")
+        assert rebuilt.status == "ok", rebuilt.model_dump_json(indent=2)
+        assert "kernel restarted" in rebuilt.restart_note
+        assert session.state == "live"
+    finally:
+        session.close()
+
+
 @pytest.mark.parametrize(("name", "executable", "source"), BACKENDS)
 def test_a_truncated_capture_is_not_accepted(name, executable, source, tmp_path) -> None:
     """A real interpreter, a real overflow, and no claim of success.
@@ -153,44 +181,3 @@ def test_a_truncated_capture_is_not_accepted(name, executable, source, tmp_path)
         assert record.accepted is False, record.model_dump_json(indent=2)
     finally:
         session.close()
-
-
-
-
-def test_debug_macaulay2_echo_options(tmp_path) -> None:
-    """TEMPORARY: which flags stop M2 echoing, and does output ever abut it."""
-    import shutil as _shutil
-    import subprocess
-
-    if _shutil.which("M2") is None:
-        pytest.skip("M2 is not installed on this machine")
-
-    body = [
-        "-- header comment",
-        "-- second header line",
-        "",
-        "-- --- cell 0 (model)",
-        "R = QQ[x, y]",
-        "",
-        "-- --- cell 1 (model)",
-        'print "     indented output"',
-        "",
-        "-- --- cell 2 (model)",
-        "x^12 + y^12",
-        "",
-    ]
-    script = tmp_path / "probe.m2"
-    script.write_text("\n".join(body) + "\n", encoding="utf-8")
-    for flags in (
-        ["--no-readline", "-q"],
-        ["--no-readline", "-q", "--no-prompts"],
-        ["--no-readline", "-q", "--no-tty"],
-        ["--no-readline", "-q", "--no-prompts", "--no-tty"],
-    ):
-        probe = subprocess.run(
-            ["M2", *flags], input=script.read_bytes(), capture_output=True, timeout=120
-        )
-        print("=== FLAGS " + " ".join(flags) + f" rc={probe.returncode} ===")
-        print(repr(probe.stdout.decode("utf-8", "replace")))
-        print("STDERR " + repr(probe.stderr.decode("utf-8", "replace")[:300]))
-    raise AssertionError("temporary debug dump")

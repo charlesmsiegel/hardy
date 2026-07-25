@@ -207,7 +207,7 @@ class SympyBackend:
         payload = json.dumps({"source": source}, ensure_ascii=False).encode("utf-8")
         return f"{len(payload):0{HEADER_BYTES}d}".encode("ascii") + payload
 
-    def sanitize(self, stdout: str) -> str:
+    def sanitize(self, stdout: str, fed: str = "") -> str:
         """No cleanup: the driver hands back exactly what the cell captured."""
         return stdout
 
@@ -302,9 +302,15 @@ class _SentinelBackend:
         found = self.error_pattern.search(stdout) or self.error_pattern.search(stderr)
         return "error" if found else "ok"
 
-    def sanitize(self, stdout: str) -> str:
+    def sanitize(self, stdout: str, fed: str = "") -> str:
         """Backend-specific stdout cleanup, applied to a cell's captured body
-        before it is recorded. Identity by default; Macaulay2 overrides it."""
+        before it is recorded. Identity by default; Macaulay2 overrides it.
+
+        `fed` is the text the interpreter was given to produce this output --
+        the framed cell for a live round trip, the whole file for an exported
+        script. An interpreter that echoes its input needs it to tell its own
+        echo from what it computed; one that does not may ignore it.
+        """
         return stdout
 
     def parse_version(self, sanitized_stdout: str) -> str:
@@ -378,6 +384,19 @@ class Macaulay2Backend(_SentinelBackend):
     # digits is the fix for the prompt-noise defect flagged in this task's
     # brief.
     _prompt_line = re.compile(r"(?m)^i\d+ : .*\n")
+    # The prompt only introduces the echo. M2 keeps echoing under a run of
+    # spaces exactly as wide as `iN : ` for every further line it reads before
+    # a statement completes, and a comment or a blank line never completes one
+    # -- so the header and the `-- --- cell N` note Hardy writes into an
+    # exported script come back embedded in the transcript, with only their
+    # first line wearing a prompt. Confirmed verbatim in CI run 30175627022:
+    # `i2 : \n     -- --- cell 1 (model)\n     x^2 + y^2\n\n      2    2\n
+    # o2 = x  + y`. Every cell after the first was therefore separated from
+    # the next by two lines the session never printed, and
+    # `_appears_in_order` -- which tolerates the interpreter's chrome around
+    # the transcript but nothing inside it -- could not match. No Macaulay2
+    # session of more than one cell has ever been able to export `verified`.
+    _echo_prompt = re.compile(r"^i\d+ : ")
     _output_counter = re.compile(r"(?m)^o\d+(?=[ :=])")
     # The counter is not only a token, it is a *column*. M2 pretty-prints a
     # value as a net: `o4 = x  + y` with its exponent row `      2    2` laid
@@ -390,7 +409,39 @@ class Macaulay2Backend(_SentinelBackend):
     # stopping at it.
     _value_marker = re.compile(r"(?m)^o[ \t]*=[ \t]*")
 
-    def sanitize(self, stdout: str) -> str:
+    def _strip_echo(self, stdout: str, fed: str) -> str:
+        """Remove M2's echo of the input, prompt line and continuations alike.
+
+        The prompt line goes whatever is on it -- it is always an echo. A
+        continuation line goes only when it is indented to exactly that
+        prompt's width *and* what is under the indent is verbatim a line of
+        the text the interpreter was fed. Both conditions are needed: an
+        alignment row is indented to the same width by coincidence, and a cell
+        that prints is free to reproduce its own source. A truly empty line
+        ends the block, which is what M2 puts between an echo and the value it
+        then computes; a fed blank line comes back as the indent alone and so
+        does not end anything.
+
+        What survives this and should not is narrow enough to name: output
+        indented by exactly the prompt width, abutting the echo with no blank
+        line between, whose text is verbatim one of the lines fed in.
+        """
+        echoed = {line.rstrip() for line in fed.splitlines() if line.strip()}
+        kept: list[str] = []
+        width = 0
+        for line in stdout.split("\n"):
+            prompt = self._echo_prompt.match(line)
+            if prompt is not None:
+                width = prompt.end()
+                continue
+            if not line:
+                width = 0
+            elif width and line.startswith(" " * width) and line[width:].rstrip() in echoed:
+                continue
+            kept.append(line)
+        return "\n".join(kept)
+
+    def sanitize(self, stdout: str, fed: str = "") -> str:
         """Drop M2's echoed prompts and make its output counters comparable.
 
         Blanking the digits is not enough on its own. `oN = ` is five columns
@@ -409,8 +460,14 @@ class Macaulay2Backend(_SentinelBackend):
         above and below it that are indented to at least the prefix width --
         which is what M2's net padding guarantees and what any other line
         (blank, a prompt, the next marker) is not.
+
+        The echo goes first, and only when the caller could say what was fed:
+        without that there is no way to tell an echoed continuation line from
+        an alignment row, and `_prompt_line` remains the older, weaker rule
+        that at least takes the prompt lines themselves.
         """
-        lines = self._prompt_line.sub("", stdout).split("\n")
+        stdout = self._strip_echo(stdout, fed) if fed else self._prompt_line.sub("", stdout)
+        lines = stdout.split("\n")
         dedent = [0] * len(lines)
         for index, line in enumerate(lines):
             prefix = self._output_prefix.match(line)
@@ -927,7 +984,10 @@ class CasSession:
             self.version = raw.strip().strip("'\"") or "unknown"
             return self.version
 
-    def _extractor(self, nonce: str) -> Callable[[bytes], Any]:
+    def _extractor(self, nonce: str, fed: str = "") -> Callable[[bytes], Any]:
+        """`fed` is the framed text this cell was sent, for `sanitize` to
+        recognise the interpreter's echo of it. Unused by the length path,
+        whose driver never echoes anything."""
         if self.backend.framing == "length":
 
             def extract_length(raw: bytes) -> Any:
@@ -1026,7 +1086,7 @@ class CasSession:
                 # via `marker_seen`, but the bytes themselves are gone.
                 body = raw[start:].decode("utf-8", errors="replace")
                 consumed = len(raw)
-            body = self.backend.sanitize(body)
+            body = self.backend.sanitize(body, fed)
             outcome = CellOutcome(
                 # Provisional, and never read: `_send` reclassifies every
                 # sentinel reply once stderr has settled, because a Macaulay2
@@ -1057,10 +1117,16 @@ class CasSession:
         else:
             end = SENTINEL_END.format(nonce=nonce).encode()
             kernel.rearm(end)
-        if not kernel.send(self.backend.frame(source, nonce)):
+        frame = self.backend.frame(source, nonce)
+        if not kernel.send(frame):
             return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
         deadline = time.monotonic() + limit
-        reply = kernel.read_reply(self._extractor(nonce), deadline)
+        # The frame, not the source: an echoing interpreter echoes the sentinel
+        # statements bracketing the cell as readily as the cell itself, and a
+        # multi-line cell's second line onward comes back under a continuation
+        # indent rather than a prompt of its own.
+        fed = frame.decode("utf-8", errors="replace")
+        reply = kernel.read_reply(self._extractor(nonce, fed), deadline)
         if reply is TIMED_OUT:
             return CellOutcome(
                 status="timeout",

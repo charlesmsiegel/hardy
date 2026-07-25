@@ -263,7 +263,16 @@ def _verify_script(
     if run.returncode:
         return "failed", f"the script exited {run.returncode}: {_excerpt(run.stderr.strip())}"
 
-    stdout = session.backend.sanitize(run.stdout)
+    # The file itself is what a line-oriented interpreter was fed, and what it
+    # echoes back into its own transcript -- including Hardy's header and the
+    # per-cell notes, which the session never printed and which sit between one
+    # cell's output and the next.
+    fed = (
+        script.read_text(encoding="utf-8", errors="replace")
+        if getattr(session.backend, "script_stdin", False)
+        else ""
+    )
+    stdout = session.backend.sanitize(run.stdout, fed)
     pattern = getattr(session.backend, "error_pattern", None)
     if pattern is not None and (pattern.search(stdout) or pattern.search(run.stderr)):
         # A sentinel interpreter reports an error and carries on with the next
