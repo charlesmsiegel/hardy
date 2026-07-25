@@ -93,7 +93,10 @@ class CellRecord(FrozenModel):
     value_repr: str
     duration_ms: int
     capture_truncated: bool = False
-    output_artifact: str | None = None
+    # `output_artifact` was drafted here and is not on the implemented record.
+    # A spill replaces an over-large *observation* with a pointer to the whole
+    # record on disk, so the pointer belongs on `CasCellResult`, where it is;
+    # on the record itself it would point at a copy of that same record.
 
 
 class CellOutcome(FrozenModel):
@@ -302,7 +305,7 @@ discovery. A tool that can only fail is never advertised.
 {"seq": 7, "segment": 0, "author": "model",
  "source": "groebner(F, x, y, z, order='lex')",
  "status": "ok", "accepted": true, "stdout": "", "value_repr": "GroebnerBasis([...], x, y, z, domain='QQ', order='lex')",
- "duration_ms": 8420, "capture_truncated": false, "output_artifact": null}
+ "duration_ms": 8420, "capture_truncated": false}
 ```
 
 `session.json` grows a `cas` block: backend name, version string, cell count,

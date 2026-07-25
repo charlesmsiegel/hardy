@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import sys
+import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -15,6 +18,7 @@ from hardy.cas import (
     CasError,
     CasSession,
     CellOutcome,
+    CellRecord,
     backend_for,
     normalise,
     replay_in_fresh_kernel,
@@ -316,6 +320,99 @@ def test_a_script_that_stops_reading_its_input_still_hits_the_deadline(tmp_path)
     assert elapsed < 60, f"took {elapsed:g}s for a 3s deadline"
 
 
+class _WedgedStdin:
+    """A stdin handle whose `close()` blocks, as a real one's does.
+
+    `BufferedWriter.close()` has to take the same lock the writing thread is
+    holding, so while a `_feed` worker is stuck inside `write()` the handle
+    cannot be closed from anywhere else -- it can only be waited on, with no
+    timeout available to the waiter.
+    """
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+        self.close_attempted = threading.Event()
+
+    def close(self) -> None:
+        self.close_attempted.set()
+        time.sleep(30)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+
+def test_a_wedged_feeder_does_not_take_the_main_thread_down_with_it(
+    tmp_path, monkeypatch
+) -> None:
+    """The bounded join was undone two lines below it.
+
+    Every worker is joined with a timeout so a stuck one costs a thread and
+    never the export -- and then stdin was closed unconditionally, on the very
+    `BufferedWriter` the feeder holds locked while its write is stuck. That
+    close has no timeout, so the main thread joined the wedged feeder again
+    under another name. Killing the child usually releases the write first,
+    which is why this is rare rather than impossible; the invariant the
+    comment stated was false either way.
+    """
+    handles: list[_WedgedStdin] = []
+
+    def never_returns(process, payload) -> None:
+        # Exactly what a `_feed` blocked inside `write()` leaves behind: the
+        # handle is still open, still owned by this thread, and unclosable.
+        wedged = _WedgedStdin(process.stdin)
+        handles.append(wedged)
+        process.stdin = wedged
+        time.sleep(30)
+
+    monkeypatch.setattr("hardy.cas._feed", never_returns)
+    script = tmp_path / "session.py"
+    script.write_text("import time\ntime.sleep(0.3)\n", encoding="utf-8")
+
+    started = time.monotonic()
+    run = run_exported_script(
+        backend=backend_for("sympy"),
+        command=None,
+        script=script,
+        cwd=tmp_path / "run",
+        timeout=30,
+        max_output_bytes=4_096,
+    )
+    elapsed = time.monotonic() - started
+
+    assert run.returncode == 0
+    # The feeder's own bounded join is 5s; the wedged close would add 30 more.
+    assert elapsed < 20, f"took {elapsed:g}s, so the close was waited on"
+    assert handles and not handles[0].close_attempted.is_set()
+
+
+@pytest.mark.parametrize("error", [OSError("closed"), ValueError("read of closed file")])
+def test_a_pipe_closed_under_a_read_does_not_escape_as_a_thread_traceback(
+    tmp_path, cas_session, error
+) -> None:
+    """`kill()` closes these pipes while the drain threads are still in `read1`.
+
+    A closed handle does not politely end the stream for a read already in
+    flight -- it raises, on a thread with nobody to catch it, and Python prints
+    a traceback to stderr as though Hardy had crashed. `_drain_capped` has
+    caught this pair since it was written; `_drain` had a `finally` and no
+    `except` at all.
+    """
+    session = cas_session()
+    session.execute("a")
+    kernel = session._kernel
+    assert kernel is not None
+
+    class _ClosedPipe:
+        def read1(self, _size: int) -> bytes:
+            raise error
+
+    before = kernel._finished
+    kernel._drain(_ClosedPipe(), bytearray())
+    # And the stream is still recorded as over, so `read_reply` cannot wait on
+    # a drain that has already stopped.
+    assert kernel._finished == before + 1
+
+
 def test_unknown_backends_are_rejected_by_name() -> None:
     with pytest.raises(ValueError, match="unknown cas_backend"):
         backend_for("mathematica")
@@ -379,6 +476,104 @@ def test_a_torn_log_that_cannot_be_repaired_still_opens(tmp_path, cas_session) -
         assert [record.source for record in reopened.accepted()] == ["a", "b"]
     finally:
         log.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_a_repair_the_filesystem_refused_is_redone_before_the_next_append(
+    tmp_path, cas_session
+) -> None:
+    """A transient write failure must not become a permanent one.
+
+    `_mend_log` swallows its `OSError` so a repair it cannot perform does not
+    stop the session being constructed -- correct -- but `_load` then went on
+    to return the healed bytes *in memory* while the file on disk still ended
+    mid-record. The claim that a filesystem refusing the repair would refuse
+    the append too is untrue for anything transient: a quota freed a minute
+    later, an ENOSPC that cleared, an `fsync` that returned EINVAL once. The
+    next append then landed on the fragment and welded it into a line that is
+    neither final nor valid, which is precisely the permanently unreadable log
+    `_repair_interrupted_append` exists to prevent.
+    """
+    session = cas_session()
+    session.execute("a")
+    session.execute("b")
+    session.execute("c")
+    session.close()
+
+    log = tmp_path / "cells.jsonl"
+    # A torn append that landed its whole record and lost only the terminator.
+    log.write_bytes(log.read_bytes()[:-1])
+    log.chmod(stat.S_IREAD)
+    try:
+        if os.access(log, os.W_OK):  # pragma: no cover - root, or a filesystem
+            pytest.skip("this filesystem does not honour the read-only bit")
+        reopened = cas_session()
+        assert [record.source for record in reopened.accepted()] == ["a", "b", "c"]
+    finally:
+        # The quota is freed, the disk empties, the transient fault clears.
+        log.chmod(stat.S_IREAD | stat.S_IWRITE)
+    reopened.execute("d")
+    reopened.close()
+
+    again = cas_session()
+    assert [record.source for record in again.accepted()] == ["a", "b", "c", "d"]
+
+
+def test_an_append_onto_a_log_that_cannot_be_repaired_poisons_the_session(
+    tmp_path, cas_session
+) -> None:
+    """The other half: refusing is the alternative to gluing, not to checking.
+
+    When the repair still cannot be written, the append has to fail loudly --
+    which is what `_mend_log`'s docstring always claimed would happen and what
+    nothing actually enforced.
+    """
+    session = cas_session()
+    session.execute("a")
+    session.close()
+
+    log = tmp_path / "cells.jsonl"
+    log.write_bytes(log.read_bytes()[:-1])
+    log.chmod(stat.S_IREAD)
+    try:
+        if os.access(log, os.W_OK):  # pragma: no cover - root, or a filesystem
+            pytest.skip("this filesystem does not honour the read-only bit")
+        reopened = cas_session()
+        with pytest.raises(CasError, match="could not be written"):
+            reopened.execute("b")
+        assert reopened.state == "poisoned"
+        reopened.close()
+    finally:
+        log.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_the_dead_output_artifact_field_is_gone_from_the_durable_record(
+    tmp_path, cas_session
+) -> None:
+    """Written by nothing, read by nothing, and on every line of every log.
+
+    The spill path it was named for lives on `CasCellResult`, where a
+    too-large *observation* is replaced by a pointer to the whole record on
+    disk. A field on the record pointing at a copy of that same record is
+    circular, so it is retired rather than wired -- but `FrozenModel` forbids
+    extras, so a log an earlier build wrote would stop loading, and a session
+    that cannot be constructed takes chat startup with it. It is dropped on
+    the way in instead.
+    """
+    assert "output_artifact" not in CellRecord.model_fields
+
+    session = cas_session()
+    session.execute("a")
+    session.close()
+    log = tmp_path / "cells.jsonl"
+    legacy = [
+        json.dumps({**json.loads(line), "output_artifact": None})
+        for line in log.read_text(encoding="utf-8").splitlines()
+    ]
+    log.write_text("\n".join(legacy) + "\n", encoding="utf-8")
+
+    reopened = cas_session()
+    assert [record.source for record in reopened.accepted()] == ["a"]
+    reopened.close()
 
 
 def test_corruption_before_the_final_record_is_still_refused(tmp_path, cas_session) -> None:

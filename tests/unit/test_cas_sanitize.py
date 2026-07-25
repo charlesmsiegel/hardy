@@ -30,6 +30,48 @@ def test_macaulay2_sanitize_strips_prompt_lines_and_blanks_counters() -> None:
     assert "o4" not in sanitized
 
 
+def test_macaulay2_sanitize_normalises_the_counter_width_not_only_its_digits() -> None:
+    """The counter is a column as well as a token.
+
+    M2 lays a value out as a net and pads every row after the first to the
+    width of the `oN = ` prefix: five columns at `o4`, six at `o12`. Blanking
+    the digits made the value lines agree and left the alignment row above them
+    differing by one space, so the identical polynomial computed in a live
+    session and in a fresh replay compared unequal the moment their counters
+    differed in digit count -- which they do routinely, since every cell costs
+    a live kernel two extra statements for its own sentinel markers and the
+    exported script has none. The result was a false `diverged` on export and,
+    through `_restore`, a poisoned session over a cell that had reproduced.
+    """
+    backend = backend_for("macaulay2")
+    single = 'i2 : x^2 + y^2\n\n      2    2\no4 = x  + y\n\no4 : R\n'
+    double = 'i9 : x^2 + y^2\n\n       2    2\no12 = x  + y\n\no12 : R\n'
+    assert backend.sanitize(single) == backend.sanitize(double)
+    assert backend.sanitize(double) == '\n      2    2\no = x  + y\n\no : R\n'
+
+
+def test_macaulay2_sanitize_normalises_a_matrix_written_below_its_counter() -> None:
+    """The same padding, on the rows M2 writes *after* the marker line."""
+    backend = backend_for("macaulay2")
+    single = 'o5 = | 1 2 |\n     | 3 4 |\n\no5 : Matrix\n'
+    double = 'o100 = | 1 2 |\n       | 3 4 |\n\no100 : Matrix\n'
+    assert backend.sanitize(single) == backend.sanitize(double)
+    assert backend.sanitize(double) == 'o = | 1 2 |\n     | 3 4 |\n\no : Matrix\n'
+
+
+def test_macaulay2_sanitize_does_not_dedent_across_a_block_boundary() -> None:
+    """Only the run of padded lines touching the marker belongs to it.
+
+    A blank line, a prompt, or the next marker ends the block, so a wide
+    counter cannot reach back and eat indentation that is somebody else's
+    content -- indentation is content in M2 more than anywhere else Hardy
+    drives.
+    """
+    backend = backend_for("macaulay2")
+    raw = 'o11 = 1\n\n       kept\n'
+    assert backend.sanitize(raw) == 'o = 1\n\n       kept\n'
+
+
 def test_macaulay2_sanitize_is_a_noop_on_text_without_prompts_or_counters() -> None:
     assert backend_for("macaulay2").sanitize("just some text\n") == "just some text\n"
 

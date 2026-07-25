@@ -467,7 +467,16 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
             # `cas_run` (and `cas_reset`) publish a completed cell record here;
             # without this the trajectory shows the tool was *requested* but
             # never what the kernel actually returned.
-            store.append("cas." + str(event.get("type", "event")), event, phase=RunPhase.PROVING)
+            #
+            # The event's own `type` is already "cas" -- that is the name chat
+            # files these under in its transcript -- so prefixing it produced
+            # the trajectory kind "cas.cas", which names the subsystem twice
+            # and the thing recorded not at all. What the event carries is a
+            # completed cell.
+            kind = str(event.get("type", "event"))
+            store.append(
+                "cas.cell" if kind == "cas" else f"cas.{kind}", event, phase=RunPhase.PROVING
+            )
 
         cas_directory = store.path / "cas"
         cas_runtime, _ = cas_tools.build_runtime(
