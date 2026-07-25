@@ -1,0 +1,342 @@
+"""Acceptance fixtures and cross-artifact release consistency checks.
+
+A deterministic run exercises the whole workflow with the model, Lean and
+Tectonic replaced by fixtures, so the pipeline can be checked end to end
+without a network, a subscription, or a built toolchain. What it proves is not
+mathematics but self-consistency: that the manifest, the trajectory, the Lean
+source and the document all describe the same run.
+
+`validate_run_consistency` is the part worth reading. It refuses the failure
+modes that would otherwise be invisible — a manifest whose artifact hashes do
+not match the files, a verified grade with no verification behind it, a Lean
+source whose signature drifted from the frozen claim, a document claiming a
+compile that produced no PDF.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
+from typing import Literal
+from uuid import uuid4
+
+from .codex_runtime import ProofSubmission
+from .config import Config
+from .domain import (
+    DocumentStatus,
+    EnvironmentIdentity,
+    FormalizationProposal,
+    FormalStatus,
+    FrozenClaim,
+    FrozenModel,
+    RunManifest,
+    TerminalReason,
+)
+from .lean import LeanCheckResult, render_theorem
+from .process import ProcessResult
+from .prompts import PROMPT_SET_SHA256
+from .verifier import VerificationResult
+from .workflow import ProveRequest, ProveWorkflow
+from .writeup import RunIdentities, WriteupContent, build_writeup
+
+
+class DeterministicRun(FrozenModel):
+    manifest: RunManifest
+    run_dir: Path
+
+
+class _AutomaticTerminal:
+    def show_formalization(self, proposal, elaboration) -> None:
+        if not elaboration.success:
+            raise RuntimeError("deterministic statement did not elaborate")
+
+    def choose_approval(self):
+        return "approve"
+
+    def revision_text(self) -> str:
+        return ""
+
+    def acknowledge_unsafe_execution(self) -> bool:
+        return True
+
+    def show_result(self, manifest) -> None:
+        pass
+
+
+def _environment() -> EnvironmentIdentity:
+    return EnvironmentIdentity(
+        lean_version="4.32.0",
+        lean_commit="8c9756b28d64dab099da31a4c09229a9e6a2ef35",
+        mathlib_revision="81a5d257c8e410db227a6665ed08f64fea08e997",
+        lake_manifest_sha256="b" * 64,
+        imports=("Mathlib",),
+    )
+
+
+class _DeterministicRuntime:
+    def __init__(self, outcome: Literal["verified", "exhausted"]) -> None:
+        self.outcome = outcome
+
+    def start(self, *, model, run_dir, claim):
+        return SimpleNamespace(claim=claim)
+
+    def run_structured(self, thread, stage, prompt, output_type):
+        if stage == "formalization":
+            return FormalizationProposal(
+                restatement="Two equals two.",
+                domains=("natural numbers",),
+                quantifiers=(),
+                assumptions=(),
+                interpretation_choices=(),
+                theorem_name="two_eq_two",
+                binders="",
+                proposition="2 = 2",
+            )
+        title = (
+            "Verified deterministic fixture"
+            if self.outcome == "verified"
+            else "Partial deterministic fixture"
+        )
+        return WriteupContent(
+            title=title,
+            theorem_text="Two equals two.",
+            proof_text=(
+                "Reflexivity proves the equality."
+                if self.outcome == "verified"
+                else "The submitted proof was rejected by the verifier."
+            ),
+            known_gaps=(
+                ()
+                if self.outcome == "verified"
+                else ("No proof passed the independent FinalVerifier.",)
+            ),
+        )
+
+    def run_proof(self, thread, prompt):
+        return ProofSubmission(
+            proof_body=("by rfl" if self.outcome == "verified" else "by exact True.intro"),
+            informal_proof="Reflexivity." if self.outcome == "verified" else "Incomplete.",
+        )
+
+    def cancel(self, thread) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _DeterministicLean:
+    def check_proof(self, claim: FrozenClaim, proof_body: str) -> LeanCheckResult:
+        process = ProcessResult(
+            argv=("deterministic-lean",),
+            cwd=Path("."),
+            returncode=0,
+            stdout="",
+            stderr="",
+            timed_out=False,
+            output_overflow=False,
+            duration_ms=0,
+        )
+        return LeanCheckResult(
+            success=True,
+            diagnostics=(),
+            open_goals=(),
+            process=process,
+            source_sha256="s" * 64,
+            toolchain=claim.environment,
+        )
+
+
+class _DeterministicVerifier:
+    def __init__(self, outcome: Literal["verified", "exhausted"]) -> None:
+        self.outcome = outcome
+
+    def verify(self, claim, proof_body, store) -> VerificationResult:
+        source = render_theorem(claim, proof_body)
+        source_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        if self.outcome == "verified":
+            result = VerificationResult(
+                verified=True,
+                reason=None,
+                axioms=(),
+                diagnostics=(),
+                source_sha256=source_sha,
+                verification_sha256="v" * 64,
+            )
+            store.write_text(PurePosixPath("lean/Main.lean"), source)
+        else:
+            result = VerificationResult(
+                verified=False,
+                reason=TerminalReason.LEAN_ELABORATION_FAILURE,
+                axioms=(),
+                diagnostics=(),
+                source_sha256=source_sha,
+                verification_sha256=None,
+            )
+            store.write_text(PurePosixPath("lean/last-attempt.lean"), source)
+        store.write_json(PurePosixPath("lean/verification.json"), result)
+        return result
+
+
+def run_deterministic_experiment(
+    config: Config,
+    *,
+    outcome: Literal["verified", "exhausted"],
+) -> DeterministicRun:
+    if outcome == "exhausted":
+        config = replace(
+            config, limits=config.limits.model_copy(update={"official_checks": 1})
+        )
+    environment = _environment()
+
+    def fake_tectonic(spec):
+        output = Path(spec.argv[spec.argv.index("--outdir") + 1])
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "paper.pdf").write_bytes(b"%PDF-deterministic-fixture")
+        (output / "paper.log").write_text("deterministic compile\n", encoding="utf-8")
+        return ProcessResult(
+            argv=spec.argv,
+            cwd=spec.cwd,
+            returncode=0,
+            stdout="",
+            stderr="",
+            timed_out=False,
+            output_overflow=False,
+            duration_ms=0,
+        )
+
+    def writeup_builder(*args, **kwargs):
+        return build_writeup(*args, **kwargs, runner=fake_tectonic)
+
+    def identities(run_id, model):
+        return RunIdentities(
+            run_id=run_id,
+            model=model,
+            backend="deterministic-no-model",
+            runtime_sdk_version="deterministic-no-model",
+            prompt_set_sha256=PROMPT_SET_SHA256,
+            lean_version=environment.lean_version,
+            mathlib_revision=environment.mathlib_revision,
+            tectonic_version="deterministic-fixture",
+            tectonic_executable=Path("tectonic-fixture"),
+            tectonic_bundle=config.tectonic_bundle,
+            tectonic_bundle_sha256=config.tectonic_bundle_sha256,
+        )
+
+    before = set(config.runs_root.iterdir()) if config.runs_root.exists() else set()
+    controller = ProveWorkflow(
+        config=config,
+        environment=environment,
+        doctor=lambda _: SimpleNamespace(healthy=True, authenticated=True),
+        lean=_DeterministicLean(),
+        runtime_factory=lambda _: _DeterministicRuntime(outcome),
+        verifier=_DeterministicVerifier(outcome),
+        writeup_builder=writeup_builder,
+        identities_factory=identities,
+        now=lambda: datetime(2026, 7, 24, tzinfo=UTC),
+        uuid_factory=uuid4,
+    )
+    manifest = controller.run(
+        ProveRequest(
+            text="Two equals two.",
+            model="deterministic-no-model",
+            problem_slug="deterministic-" + outcome,
+        ),
+        _AutomaticTerminal(),
+    )
+    created = set(config.runs_root.iterdir()) - before
+    if len(created) != 1:
+        raise RuntimeError("deterministic experiment did not create exactly one run")
+    return DeterministicRun(manifest=manifest, run_dir=created.pop())
+
+
+def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str, ...]:
+    """Report every way a run's artifacts disagree with each other."""
+    issues = []
+    manifest_path = run_dir / "manifest.json"
+    if not manifest_path.exists():
+        return ("manifest.json is missing",)
+    saved_manifest = RunManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+    if saved_manifest != manifest:
+        issues.append("provided manifest differs from manifest.json")
+    for relative, expected in manifest.artifacts.items():
+        path = run_dir / Path(relative)
+        if not path.exists():
+            issues.append("missing artifact: " + relative)
+            continue
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != expected:
+            issues.append("hash mismatch: " + relative)
+    claim_path = run_dir / "formalization.json"
+    claim = None
+    if claim_path.exists():
+        claim = FrozenClaim.model_validate_json(claim_path.read_text(encoding="utf-8"))
+        if claim.content_hash != manifest.claim_sha256:
+            issues.append("Frozen Claim hash differs from manifest")
+    elif manifest.claim_sha256 is not None:
+        issues.append("formalization.json is missing")
+    trajectory = run_dir / "trajectory.jsonl"
+    if not trajectory.exists():
+        issues.append("trajectory.jsonl is missing")
+    else:
+        events = [
+            json.loads(line) for line in trajectory.read_text(encoding="utf-8").splitlines()
+        ]
+        if not events or events[-1].get("kind") != "workflow.terminal":
+            issues.append("trajectory has no final terminal event")
+        else:
+            terminal = events[-1]["payload"]
+            reason = manifest.terminal_reason.value if manifest.terminal_reason else None
+            if terminal.get("terminal_reason") != reason:
+                issues.append("terminal reason differs from manifest")
+            if terminal.get("grades") != manifest.grades.model_dump(mode="json"):
+                issues.append("terminal grades differ from manifest")
+    main = run_dir / "lean" / "Main.lean"
+    verification_path = run_dir / "lean" / "verification.json"
+    if manifest.grades.formal is FormalStatus.KERNEL_VERIFIED:
+        if not main.exists():
+            issues.append("verified run has no lean/Main.lean")
+        if not verification_path.exists():
+            issues.append("verified run has no lean/verification.json")
+        else:
+            verification = VerificationResult.model_validate_json(
+                verification_path.read_text(encoding="utf-8")
+            )
+            if not verification.verified:
+                issues.append("verification.json is not verified")
+            if verification.verification_sha256 != manifest.grades.verification_sha256:
+                issues.append("verification evidence differs from grades")
+            if main.exists():
+                actual_source = hashlib.sha256(main.read_bytes()).hexdigest()
+                if actual_source != verification.source_sha256:
+                    issues.append("Lean source hash differs from verification")
+                if claim is not None:
+                    binders = (
+                        " " + claim.proposal.binders.strip()
+                        if claim.proposal.binders.strip()
+                        else ""
+                    )
+                    signature = (
+                        f"theorem {claim.proposal.theorem_name}{binders} : "
+                        f"{claim.proposal.proposition.strip()} :="
+                    )
+                    if signature not in main.read_text(encoding="utf-8"):
+                        issues.append("Lean source signature differs from Frozen Claim")
+    elif main.exists():
+        issues.append("non-verified run unexpectedly has lean/Main.lean")
+    tex = run_dir / "writeup" / "paper.tex"
+    pdf = run_dir / "writeup" / "paper.pdf"
+    if not tex.exists():
+        issues.append("writeup/paper.tex is missing")
+    elif claim is not None and claim.content_hash not in tex.read_text(encoding="utf-8"):
+        issues.append("paper.tex does not identify the Frozen Claim")
+    if manifest.grades.document is DocumentStatus.TEX_COMPILED:
+        if not pdf.exists() or not pdf.read_bytes().startswith(b"%PDF-"):
+            issues.append("compiled document has no valid PDF artifact")
+    elif pdf.exists():
+        issues.append("failed document unexpectedly has a PDF artifact")
+    return tuple(issues)

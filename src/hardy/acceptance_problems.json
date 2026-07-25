@@ -1,0 +1,13 @@
+{
+    "schema_version": 1,
+    "problems": [
+        {
+            "id": "odd-sum",
+            "input": "For every natural number n, the sum of the first n odd natural numbers is n^2."
+        },
+        {
+            "id": "sqrt-two-irrational",
+            "input": "The square root of 2 is irrational."
+        }
+    ]
+}
