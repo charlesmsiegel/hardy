@@ -112,7 +112,16 @@ Priority labels are sequencing hints:
 - **Now (implemented):** a capture that hit `cas_output_bytes` is never called
   verified — a sentinel backend's cell is not accepted at all, since its error
   banner may be in the discarded tail, and an export marks a truncated cell
-  `unverified` rather than claiming matching prefixes are a reproduction.
+  `unverified` rather than claiming matching prefixes are a reproduction. The
+  script verdict goes `unverified` too, never `diverged`: "the script printed
+  something else" is as much a claim about the unread tail as "it printed the
+  same".
+- **Known cost of that refusal:** a refused cell still changed the live
+  namespace, and that change is now outside the accepted set. Every later cell
+  that depends on it will diverge on export and fail to rebuild after a kernel
+  restart, exactly as one depending on an errored cell does. The cell's record
+  says so. The remedy is to rerun it printing less, or to raise
+  `cas_output_bytes` and rerun it, before building on it.
 - **Now (implemented):** the human drives the same kernel through `/cas`, and
   those cells enter the same log, replay, and export as the model's.
 - **Now (implemented):** an absent backend registers no tools on any binding,

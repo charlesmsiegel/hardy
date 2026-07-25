@@ -47,6 +47,17 @@ def answer(source: str) -> dict:
         # A different answer every process, so a replay of an accepted cell
         # cannot reproduce it. This is what divergence detection is for.
         return {"status": "ok", "stdout": "", "stderr": "", "value_repr": uuid.uuid4().hex}
+    if word == "longdrift":
+        # `drift`, but with a line long enough to matter when something quotes
+        # it. A recorded line is allowed to be `cas_output_bytes` long, and an
+        # export's explanation of a divergence is copied into export.json, the
+        # notebook, and every tool result.
+        return {
+            "status": "ok",
+            "stdout": "q" * 5_000 + uuid.uuid4().hex + "\n",
+            "stderr": "",
+            "value_repr": "",
+        }
     if word == "noisy":
         return {"status": "ok", "stdout": "out", "stderr": "warning: noisy", "value_repr": "1"}
     HISTORY.append(word)

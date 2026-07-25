@@ -180,6 +180,31 @@ def _expected_transcript(cells: tuple[CellRecord, ...]) -> tuple[str, str]:
     return "".join(out), "".join(err)
 
 
+EXCERPT_LINES = 6
+EXCERPT_LINE_CHARS = 120
+EXCERPT_CHARS = 400
+
+
+def _excerpt(lines: list[str] | str) -> str:
+    """A quotable fragment of a transcript, small enough to publish.
+
+    `script_detail` is copied into `export.json`, into the notebook's metadata,
+    and into whatever the model or the CLI prints. A recorded line is allowed to
+    be `cas_output_bytes` long, so quoting even a handful verbatim can make the
+    detail larger than either artifact it is describing.
+    """
+    if isinstance(lines, str):
+        return lines[:EXCERPT_CHARS] + ("…" if len(lines) > EXCERPT_CHARS else "")
+    clipped = [
+        line[:EXCERPT_LINE_CHARS] + ("…" if len(line) > EXCERPT_LINE_CHARS else "")
+        for line in lines[:EXCERPT_LINES]
+    ]
+    rendered = repr(clipped)
+    if len(lines) > EXCERPT_LINES:
+        rendered += f" (+{len(lines) - EXCERPT_LINES} more line(s))"
+    return rendered[:EXCERPT_CHARS]
+
+
 def _verify_script(
     session: CasSession, cells: tuple[CellRecord, ...], script: Path, directory: Path
 ) -> tuple[Verdict, str]:
@@ -192,6 +217,7 @@ def _verify_script(
     remaining = session.remaining_seconds
     if remaining <= 0:
         return "unverified", "the session budget ran out before the script could be run"
+    truncated_cells = [record.seq for record in cells if record.capture_truncated]
 
     run_directory = directory / "script-run"
     # Fresh every time: a script that writes a file must be seen to create it,
@@ -205,6 +231,7 @@ def _verify_script(
             script=script,
             cwd=run_directory,
             timeout=remaining,
+            max_output_bytes=session.limits.cas_output_bytes,
         )
     except CasError as error:
         session.charge(time.monotonic() - started)
@@ -214,7 +241,7 @@ def _verify_script(
     if run.timed_out:
         return "failed", f"the script did not finish within {remaining:g}s"
     if run.returncode:
-        return "failed", f"the script exited {run.returncode}: {run.stderr.strip()[-200:]}"
+        return "failed", f"the script exited {run.returncode}: {_excerpt(run.stderr.strip())}"
 
     stdout = session.backend.sanitize(run.stdout)
     pattern = getattr(session.backend, "error_pattern", None)
@@ -222,6 +249,24 @@ def _verify_script(
         # A sentinel interpreter reports an error and carries on with the next
         # line, so a broken script still exits 0. The banner is the exit code.
         return "failed", "the script printed an error banner"
+
+    # Everything above is a claim the evidence supports whatever was truncated:
+    # the file ran, it exited 0, and no banner appeared in what was read.
+    # Comparing transcripts is not, and this is the point at which a missing
+    # tail stops being survivable. `diverged` is as much an affirmative claim as
+    # `verified` -- "the script printed something else" about bytes Hardy never
+    # read is the same rounding-up the truncated-cell verdict refuses, pointed
+    # the other way.
+    if run.capture_truncated:
+        return "unverified", (
+            "the script's own output passed cas_output_bytes, so its transcript "
+            "could not be compared against the record"
+        )
+    if truncated_cells:
+        return "unverified", (
+            f"cell(s) {truncated_cells} were recorded from a truncated capture, so "
+            "there is no complete transcript to compare the script against"
+        )
 
     expected_out, expected_err = _expected_transcript(cells)
     for stream, actual, expected in (
@@ -232,10 +277,13 @@ def _verify_script(
         if not _appears_in_order(got, want):
             # The excerpts are here so a reader — or a CI log — can see *what*
             # differed without re-running anything. A verdict of "diverged" with
-            # no evidence attached is another thing taken on trust.
+            # no evidence attached is another thing taken on trust. They are cut
+            # to a readable size: a recorded line may be `cas_output_bytes` long,
+            # and this detail is copied into export.json and the notebook, where
+            # a verbatim pair of transcripts would dwarf the artifact.
             return "diverged", (
                 f"the script's {stream} is not the {stream} the session recorded; "
-                f"recorded {want[:6]!r}, script printed {got[:6]!r}"
+                f"recorded {_excerpt(want)}, script printed {_excerpt(got)}"
             )
     return "verified", ""
 
@@ -386,7 +434,16 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
     # The script is published before it is checked, because the thing checked
     # has to be the thing published: these exact bytes are what gets run.
     atomic_write_bytes(script_path, script)
-    script_verdict = _verify_script(session, cells, script_path, directory)
+    try:
+        script_verdict = _verify_script(session, cells, script_path, directory)
+    except Exception as error:  # noqa: BLE001 - see below
+        # Deliberately everything. `DESIGN.md` requires a partial export to be
+        # written and marked rather than withheld, and the check is the *last*
+        # thing that should be able to take the notebook and the manifest with
+        # it: a session that cannot say whether its script runs is strictly
+        # better off than one with no artifacts at all. A verdict of
+        # `unverified` naming the failure is what that costs.
+        script_verdict = ("unverified", _excerpt(f"the script could not be checked: {error!r}"))
     notebook = render_notebook(session, cells, verdicts, script_verdict).encode("utf-8")
     atomic_write_bytes(notebook_path, notebook)
 

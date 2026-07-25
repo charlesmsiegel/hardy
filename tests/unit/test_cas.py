@@ -17,6 +17,7 @@ from hardy.cas import (
     normalise,
     replay_in_fresh_kernel,
     reproduces,
+    run_exported_script,
 )
 from hardy.cas_export import export_session
 from hardy.domain import RunLimits
@@ -230,6 +231,32 @@ def test_comparison_does_not_ignore_leading_whitespace(tmp_path, cas_session) ->
         assert not reproduces(indented, outcome)
     finally:
         session.close()
+
+
+def test_the_exported_script_run_is_captured_within_the_output_cap(tmp_path) -> None:
+    """Every other capture Hardy takes is bounded; this one was not.
+
+    `subprocess.run(capture_output=True)` grows a buffer for as long as the
+    child writes, so a script of cells that print heavily held its whole
+    transcript in Hardy's memory. Reading still has to continue past the cap --
+    a child whose pipe stops being read blocks forever on its next write -- so
+    what is bounded is retention, and the overflow is reported rather than
+    quietly dropped.
+    """
+    script = tmp_path / "loud.py"
+    script.write_text("import sys\nsys.stdout.write('z' * 400_000)\n", encoding="utf-8")
+    run = run_exported_script(
+        backend=backend_for("sympy"),
+        command=None,
+        script=script,
+        cwd=tmp_path / "run",
+        timeout=120,
+        max_output_bytes=4_096,
+    )
+    assert run.returncode == 0
+    assert run.timed_out is False
+    assert run.capture_truncated is True
+    assert len(run.stdout.encode("utf-8")) <= 4_096
 
 
 def test_unknown_backends_are_rejected_by_name() -> None:
