@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from hardy.cas import CasError
+from hardy.cas import CasError, CellOutcome
 from hardy.cas_export import export_session
 
 
@@ -249,6 +249,69 @@ def test_a_check_that_blows_up_costs_the_verdict_not_the_artifacts(
     manifest = json.loads((tmp_path / "cas" / "export.json").read_text(encoding="utf-8"))
     for name, digest in manifest["files"].items():
         assert hashlib.sha256((tmp_path / "cas" / name).read_bytes()).hexdigest() == digest
+
+
+def test_a_multi_line_verdict_detail_still_publishes_a_runnable_script(
+    tmp_path, cas_session, monkeypatch
+) -> None:
+    """The verdict is a comment, and a comment ends at the first newline.
+
+    `_verdicts` builds a `failed` detail out of the replay's stderr, which for
+    the default backend is a traceback. Written straight into the one-line
+    `# --- cell N (model)  [failed: ...]` header, every line of it after the
+    first landed in the script as source, and the published file died with
+    `SyntaxError: unexpected indent` before reaching the first cell. This is
+    reachable through exactly the drift the module docstring describes -- an
+    accepted cell that fails in a fresh kernel -- so Hardy's own verification
+    corrupted the artifact it was verifying and then reported a syntax error
+    that was its own.
+    """
+    traceback = (
+        'Traceback (most recent call last):\n  File "<hardy-cell>", line 1\n'
+        "    a\nNameError: name 'a' is not defined\n"
+    )
+
+    def failed_replay(**_kwargs):
+        return [CellOutcome(status="error", stderr=traceback)]
+
+    monkeypatch.setattr("hardy.cas_export.replay_in_fresh_kernel", failed_replay)
+    session = cas_session()
+    try:
+        session.execute("a")
+        report = export_session(session, tmp_path / "cas")
+    finally:
+        session.close()
+
+    assert [verdict.verdict for verdict in report.verdicts] == ["failed"]
+    script = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
+    # The published bytes are the ones that have to compile. The fake kernel's
+    # cells are plain Python names, so anything that fails here came out of
+    # Hardy's own header.
+    compile(script, "session.py", "exec")
+    # Marked, not withheld: the failure still has to be visible in the file.
+    assert "[failed:" in script
+    assert "NameError" in script
+
+
+def test_the_replay_directory_does_not_survive_into_the_next_export(
+    tmp_path, cas_session
+) -> None:
+    """`script-run` is cleared between exports and `replay` was not.
+
+    The replay's whole claim is that a *fresh* kernel reproduces the session,
+    and a kernel that starts in the previous export's working directory can
+    find a file the cell under test was supposed to create.
+    """
+    session = cas_session()
+    try:
+        session.execute("a")
+        export_session(session, tmp_path / "cas")
+        stray = tmp_path / "cas" / "replay" / "left-behind.txt"
+        stray.write_text("written by the previous export\n", encoding="utf-8")
+        export_session(session, tmp_path / "cas")
+    finally:
+        session.close()
+    assert not stray.exists()
 
 
 def test_only_accepted_cells_reach_the_script(tmp_path, cas_session) -> None:

@@ -162,3 +162,6 @@ def test_staged_runtime_factory_records_cas_tool_results_in_the_trajectory(
     cas_events = [event for event in events if event['kind'].startswith('cas.')]
     assert cas_events, f'no cas.* trajectory event was recorded, saw {[e["kind"] for e in events]}'
     assert cas_events[0]['payload']['record']['status'] == 'ok'
+    # The event's own `type` is already "cas", so prefixing it named the
+    # subsystem twice and the thing recorded not at all.
+    assert cas_events[0]['kind'] == 'cas.cell'

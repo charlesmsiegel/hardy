@@ -205,6 +205,26 @@ def _excerpt(lines: list[str] | str) -> str:
     return rendered[:EXCERPT_CHARS]
 
 
+def _one_line(text: str) -> str:
+    """An excerpt with no newline left in it, for quoting into a comment.
+
+    A comment ends at the first newline in every language Hardy drives, so
+    anything written into one has to be flattened first. `_verdicts` builds a
+    `failed` detail out of the replay's stderr, and for the default backend
+    that is a traceback: emitted as one comment line, its second line onward
+    landed in the published script as *source*, and the file died with
+    `SyntaxError: unexpected indent` before it reached the first cell. The
+    drift this module exists to report was reported by corrupting the artifact
+    it reports on, and Hardy's own check then blamed the session for a syntax
+    error that was Hardy's.
+
+    `str.split()` with no argument splits on every character Python considers
+    whitespace, which is a superset of the line terminators any of these
+    interpreters recognise.
+    """
+    return _excerpt(" ".join(text.split()))
+
+
 def _verify_script(
     session: CasSession, cells: tuple[CellRecord, ...], script: Path, directory: Path
 ) -> tuple[Verdict, str]:
@@ -304,9 +324,13 @@ def render_script(
     backend = session.backend
     mark = backend.comment
     replayed = sum(1 for verdict in verdicts if verdict.verdict == "verified")
+    # Flattened for the same reason the per-cell notes below are: a version a
+    # backend reported over more than one line would break the header out of
+    # its comment exactly as a traceback broke the cell notes out of theirs.
+    version = _one_line(session.version or "") or "unknown version"
     lines = [
         f"{mark} {WARNING}",
-        f"{mark} backend: {backend.name} {session.version or 'unknown version'}",
+        f"{mark} backend: {backend.name} {version}",
         f"{mark} exported: {datetime.now(UTC).isoformat(timespec='seconds')}",
         f"{mark} cells: {len(cells)}; {replayed} of them reproduced when replayed"
         " one at a time in a fresh kernel.",
@@ -318,7 +342,11 @@ def render_script(
     if backend.preamble:
         lines += [backend.preamble, ""]
     for record, verdict in zip(cells, verdicts, strict=True):
-        note = "" if verdict.verdict == "verified" else f"  [{verdict.verdict}: {verdict.detail}]"
+        note = (
+            ""
+            if verdict.verdict == "verified"
+            else f"  [{verdict.verdict}: {_one_line(verdict.detail)}]"
+        )
         lines.append(f"{mark} --- cell {record.seq} ({record.author}){note}")
         lines.append(backend.render_cell(record.source).rstrip())
         lines.append("")
@@ -412,12 +440,18 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
         raise CasError("nothing to export: the session has no accepted cells")
 
     directory.mkdir(parents=True, exist_ok=True)
+    replay_directory = directory / "replay"
+    # Fresh every time, on the same rule `_verify_script` applies to
+    # `script-run`: a replay that starts in the previous export's leftovers is
+    # not the fresh kernel this check says it is, and a cell that writes a file
+    # must be seen to create it rather than to find it.
+    shutil.rmtree(replay_directory, ignore_errors=True)
     outcomes = replay_in_fresh_kernel(
         backend=session.backend,
         command=session.command,
         cells=cells,
         limits=session.limits,
-        cwd=directory / "replay",
+        cwd=replay_directory,
         # An export is the session spending its own budget in a second kernel.
         # Bounded by what is left, and billed for what it uses, so a session
         # cannot exceed `cas_session_seconds` by exporting repeatedly. Cells

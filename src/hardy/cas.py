@@ -38,7 +38,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import ValidationError
+from pydantic import ValidationError, model_validator
 
 from .domain import FrozenModel, RunLimits
 from .process import child_environment
@@ -73,6 +73,16 @@ class CellOutcome(FrozenModel):
     capture_truncated: bool = False
 
 
+
+# Fields this model used to carry, dropped on the way in rather than refused.
+# `FrozenModel` forbids extras, and `model_dump_json` writes every field --
+# including a defaulted one nothing ever set -- into every line of the durable
+# log. Retiring a field without this makes every log an earlier build wrote
+# unloadable, and a `CasSession` that cannot be constructed takes chat startup
+# down with it, which is the failure `_mend_log` already exists to avoid.
+RETIRED_RECORD_FIELDS = ("output_artifact",)
+
+
 class CellRecord(FrozenModel):
     seq: int
     # Incremented by reset. Only the highest segment is live, which is how a
@@ -97,7 +107,6 @@ class CellRecord(FrozenModel):
     # for the same reason.
     backend: str = ""
     backend_version: str = ""
-    output_artifact: str | None = None
     # Hardy's own commentary on the cell -- currently only that the kernel was
     # rebuilt before it ran. Deliberately its own field rather than a line
     # prepended to `stdout`: `stdout` is what the kernel produced, and it is
@@ -105,6 +114,13 @@ class CellRecord(FrozenModel):
     # it makes the record unreproducible by construction, which poisons the
     # next rebuild and marks every post-restart cell `diverged` on export.
     restart_note: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict) and any(name in data for name in RETIRED_RECORD_FIELDS):
+            return {key: value for key, value in data.items() if key not in RETIRED_RECORD_FIELDS}
+        return data
 
 
 class RebuildReport(FrozenModel):
@@ -363,14 +379,59 @@ class Macaulay2Backend(_SentinelBackend):
     # brief.
     _prompt_line = re.compile(r"(?m)^i\d+ : .*\n")
     _output_counter = re.compile(r"(?m)^o\d+(?=[ :=])")
+    # The counter is not only a token, it is a *column*. M2 pretty-prints a
+    # value as a net: `o4 = x  + y` with its exponent row `      2    2` laid
+    # out above it, and every row other than the first is padded to the width
+    # of the `oN = ` prefix. Matching that prefix as well as the counter is how
+    # the padding can be shrunk by exactly as much as the counter is.
+    _output_prefix = re.compile(r"^o(\d+) [:=] ")
     # `[ \t]`, not `\s`: `\s` matches newlines too, which would let this
     # cross onto whatever comes after the marker's own line instead of
     # stopping at it.
     _value_marker = re.compile(r"(?m)^o[ \t]*=[ \t]*")
 
     def sanitize(self, stdout: str) -> str:
-        stdout = self._prompt_line.sub("", stdout)
-        return self._output_counter.sub("o", stdout)
+        """Drop M2's echoed prompts and make its output counters comparable.
+
+        Blanking the digits is not enough on its own. `oN = ` is five columns
+        wide at `o4` and six at `o12`, and M2 indents a value's alignment rows
+        to exactly that width -- so a session and a fresh replay that computed
+        the identical polynomial printed alignment rows differing by one space
+        as soon as their counters differed in digit count. Nothing in the
+        session causes the counters to agree: every cell costs a live kernel
+        two extra statements for its own sentinel markers, which the exported
+        script does not have. The result was a false `diverged` on export and,
+        through `_restore`, a poisoned session over a cell that had reproduced
+        perfectly.
+
+        So the rows are dedented by however many characters the counter loses.
+        A block is the marker line together with the run of lines immediately
+        above and below it that are indented to at least the prefix width --
+        which is what M2's net padding guarantees and what any other line
+        (blank, a prompt, the next marker) is not.
+        """
+        lines = self._prompt_line.sub("", stdout).split("\n")
+        dedent = [0] * len(lines)
+        for index, line in enumerate(lines):
+            prefix = self._output_prefix.match(line)
+            if prefix is None:
+                continue
+            drop = len(prefix.group(1)) - 1
+            if drop <= 0:
+                continue
+            padding = " " * prefix.end()
+            for step in (-1, 1):
+                at = index + step
+                while 0 <= at < len(lines) and lines[at].startswith(padding):
+                    dedent[at] = max(dedent[at], drop)
+                    at += step
+        return self._output_counter.sub(
+            "o",
+            "\n".join(
+                line[width:] if width and line.startswith(" " * width) else line
+                for line, width in zip(lines, dedent, strict=True)
+            ),
+        )
 
     def parse_version(self, sanitized_stdout: str) -> str:
         # Confirmed of CI run 30168046413's "Debug sanitized M2 stdout" step:
@@ -462,6 +523,15 @@ class _Kernel:
                         if self._marker in self._tail:
                             self.marker_seen = True
                     self._changed.notify_all()
+        except (OSError, ValueError):
+            # `kill()` closes these pipes, and a `read1` already in flight on
+            # one of them does not politely return b"" -- it raises, on a
+            # thread with nobody to catch it, and Python prints the traceback
+            # to stderr as if Hardy had crashed. `_drain_capped` has caught
+            # exactly this pair since it was written; there is no reason for
+            # the two drains to disagree. The stream is over either way, which
+            # is what the `finally` below records.
+            pass
         finally:
             with self._changed:
                 self._finished += 1
@@ -672,6 +742,18 @@ class CasSession:
         self._mend_log(truncate_to=None)
         return raw + b"\n"
 
+    def _truncate_log(self, size: int) -> None:
+        with self.log_path.open("r+b") as stream:
+            stream.truncate(size)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    def _terminate_log(self) -> None:
+        with self.log_path.open("ab") as stream:
+            stream.write(b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
     def _mend_log(self, *, truncate_to: int | None) -> None:
         """Write the repair to disk, or leave the file alone if it will not take it.
 
@@ -683,21 +765,53 @@ class CasSession:
         to relocate it.
 
         A log that can be read but not repaired still opens: the fragment is
-        skipped in memory, and the next append will fail loudly and poison the
-        session rather than being glued onto it, because `_append` cannot
-        succeed on a filesystem that refused this either.
+        skipped in memory, and `_append` redoes the repair before it writes,
+        which is where refusing it turns into a poisoned session rather than
+        into a record glued onto a fragment.
         """
         with contextlib.suppress(OSError):
             if truncate_to is None:
-                with self.log_path.open("ab") as stream:
-                    stream.write(b"\n")
-                    stream.flush()
-                    os.fsync(stream.fileno())
+                self._terminate_log()
+            else:
+                self._truncate_log(truncate_to)
+
+    def _ensure_terminated(self) -> None:
+        """Leave the log ending on a record boundary, or raise `OSError`.
+
+        `_mend_log` swallows the failure it may hit, so a repair that the
+        filesystem refused at load time exists only in memory: `_load` returns
+        the healed bytes while the file still ends mid-record. The old claim
+        that a filesystem refusing the repair would refuse the append too is
+        simply untrue for a transient failure -- ENOSPC, a quota freed a minute
+        later, an `fsync` that returned EINVAL once. The next append then lands
+        on the fragment and welds it into a line that is neither final nor
+        valid, which is exactly the permanently unreadable log
+        `_repair_interrupted_append` exists to prevent.
+
+        So the repair is redone here, where it is allowed to fail loudly: this
+        runs inside `_append`, whose caller has already decided that a log it
+        cannot write means a poisoned session rather than a silent one.
+        """
+        try:
+            size = self.log_path.stat().st_size
+        except FileNotFoundError:
+            return
+        if not size:
+            return
+        with self.log_path.open("rb") as stream:
+            stream.seek(-1, os.SEEK_END)
+            if stream.read(1) == b"\n":
                 return
-            with self.log_path.open("r+b") as stream:
-                stream.truncate(truncate_to)
-                stream.flush()
-                os.fsync(stream.fileno())
+        # Same rule as at load: a well-formed final record lost only its
+        # terminator and is kept, anything else is a fragment and goes. The
+        # whole file is read only on this path, which is the damaged one.
+        head, separator, tail = self.log_path.read_bytes().rpartition(b"\n")
+        try:
+            CellRecord.model_validate_json(tail)
+        except ValidationError:
+            self._truncate_log(len(head + separator))
+        else:
+            self._terminate_log()
 
     def _append(self, record: CellRecord) -> CellRecord:
         """Publish a record, durably first and only then in memory.
@@ -712,8 +826,9 @@ class CasSession:
         """
         try:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.log_path.open("a", encoding="utf-8", newline="\n") as stream:
-                stream.write(record.model_dump_json() + "\n")
+            self._ensure_terminated()
+            with self.log_path.open("ab") as stream:
+                stream.write(record.model_dump_json().encode("utf-8") + b"\n")
                 stream.flush()
                 os.fsync(stream.fileno())
         except OSError as error:
@@ -1320,7 +1435,8 @@ def run_exported_script(
     # so no timeout applies and nothing can kill the child. That is not a
     # corner: `script_stdin` is how Singular and Macaulay2 are fed, and with a
     # 64 KiB per-cell source cap a handful of cells passes any pipe buffer.
-    workers.append(threading.Thread(target=_feed, args=(process, payload), daemon=True))
+    feeder = threading.Thread(target=_feed, args=(process, payload), daemon=True)
+    workers.append(feeder)
     for worker in workers:
         worker.start()
     timed_out = False
@@ -1333,15 +1449,25 @@ def run_exported_script(
         # pipe is released by the child's death -- the write fails and the
         # thread unwinds -- whereas closing the handle from here would queue
         # behind the very write that is stuck. Every worker is a daemon and
-        # every join is bounded, so a wedged one costs a thread, never the
-        # export.
+        # every join is bounded, so a wedged one costs a thread.
         if process.poll() is None:
             process.kill()
             with contextlib.suppress(subprocess.TimeoutExpired):
                 process.wait(timeout=5)
         for worker in workers:
             worker.join(timeout=5)
-        for stream in (process.stdin, process.stdout, process.stderr):
+        # And stdin is closed only once the feeder has actually let go of it.
+        # `_feed` closes it itself, and it holds that `BufferedWriter`'s lock
+        # for as long as its write is stuck inside -- so closing the same
+        # handle from here waits on the same write, with no timeout, and the
+        # bounded join two lines above buys nothing at all. Leaving it to the
+        # feeder costs a file handle for as long as that thread lives; the
+        # child is already dead, so its end of the pipe is gone regardless and
+        # nothing is kept alive by the wait.
+        closing = [process.stdout, process.stderr]
+        if not feeder.is_alive():
+            closing.append(process.stdin)
+        for stream in closing:
             if stream is not None:
                 with contextlib.suppress(OSError, ValueError):
                     stream.close()
