@@ -37,6 +37,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic import ValidationError
+
 from .domain import FrozenModel, RunLimits
 from .process import child_environment
 
@@ -85,6 +87,15 @@ class CellRecord(FrozenModel):
     value_repr: str = ""
     duration_ms: int = 0
     capture_truncated: bool = False
+    # The toolchain that produced this record, carried on the durable log
+    # rather than only in an export manifest: a session that is saved but never
+    # exported has no other place to say what ran it, and a log reopened under
+    # a different `cas_backend` would otherwise be replayed as if the source
+    # were the new backend's language. Defaulted to "" so logs written before
+    # this field existed still load; `_foreign_backend` ignores empty values
+    # for the same reason.
+    backend: str = ""
+    backend_version: str = ""
     output_artifact: str | None = None
     # Hardy's own commentary on the cell -- currently only that the kernel was
     # rebuilt before it ran. Deliberately its own field rather than a line
@@ -526,22 +537,85 @@ class CasSession:
     def _load(self) -> list[CellRecord]:
         if not self.log_path.exists():
             return []
+        raw = self._repair_interrupted_append(self.log_path.read_bytes())
         records = []
-        for line in self.log_path.read_text(encoding="utf-8").splitlines():
+        for line in raw.split(b"\n"):
+            # Bytes, not text: a torn write can cut a multi-byte character in
+            # half, and decoding the whole file first would fail on the very
+            # record this is here to survive.
             if line.strip():
                 records.append(CellRecord.model_validate_json(line))
         return records
 
-    def _append(self, record: CellRecord) -> CellRecord:
-        self._records.append(record)
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.log_path.open("a", encoding="utf-8", newline="\n") as stream:
-            stream.write(record.model_dump_json() + "\n")
+    def _repair_interrupted_append(self, raw: bytes) -> bytes:
+        """Heal a final record that a crash cut off mid-write.
+
+        Every append is one write of `record + "\\n"` followed by an fsync, so
+        a log that does not end in a newline ended in an append that did not
+        finish. That is the *only* damage tolerated here: a record with a
+        terminator behind it was durable, and a bad one is corruption that must
+        still be refused rather than quietly dropped.
+
+        The partial bytes are removed from the file, not merely skipped. The
+        log is appended to, so leaving them would glue the next record onto the
+        fragment and turn a one-off interruption into a line that is neither
+        final nor valid -- permanently unreadable, which is the failure this
+        exists to prevent.
+        """
+        if not raw or raw.endswith(b"\n"):
+            return raw
+        head, separator, tail = raw.rpartition(b"\n")
+        try:
+            CellRecord.model_validate_json(tail)
+        except ValidationError:
+            kept = head + separator
+            with self.log_path.open("r+b") as stream:
+                stream.truncate(len(kept))
+                stream.flush()
+                os.fsync(stream.fileno())
+            return kept
+        # The record itself arrived; only its terminator was lost. Nothing is
+        # discarded -- the newline is supplied so the next append starts on its
+        # own line.
+        with self.log_path.open("ab") as stream:
+            stream.write(b"\n")
             stream.flush()
             os.fsync(stream.fileno())
+        return raw + b"\n"
+
+    def _append(self, record: CellRecord) -> CellRecord:
+        """Publish a record, durably first and only then in memory.
+
+        The order matters in a long-lived server. A record added to `_records`
+        before the write succeeded numbers and anchors everything after it, so
+        a workspace that filled up or went read-only would keep answering from
+        a history that a restart cannot reconstruct. If the log cannot be
+        written the cell has already run, so what the kernel holds is no longer
+        described by anything durable: the session is poisoned rather than
+        allowed to continue on state it can never explain.
+        """
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_path.open("a", encoding="utf-8", newline="\n") as stream:
+                stream.write(record.model_dump_json() + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+        except OSError as error:
+            self._drop_kernel()
+            self.state = "poisoned"
+            raise CasError(
+                f"the CAS cell log could not be written ({self.log_path}): {error}. "
+                "The session is poisoned because its live state is no longer recorded. "
+                "Reset it to start clean."
+            ) from None
+        self._records.append(record)
         if self.observe is not None:
             self.observe({"type": "cas", "record": record.model_dump(mode="json")})
         return record
+
+    def records(self) -> tuple[CellRecord, ...]:
+        """Every durable record, boundaries included."""
+        return tuple(self._records)
 
     @property
     def segment(self) -> int:
@@ -593,12 +667,26 @@ class CasSession:
         self.state = "live"
 
     def probe_version(self) -> str:
-        """Ask the kernel what it is. Doubles as the smoke test: a backend that
-        cannot answer this is not a working backend, however present it looks."""
+        """Ask the kernel what it is, in a kernel that is then thrown away.
+
+        Doubles as the smoke test: a backend that cannot answer this is not a
+        working backend, however present it looks.
+
+        The probe is thrown away because it is a cell like any other. For the
+        default backend the version source is a trailing expression, so the
+        driver binds its value to `_` -- and a session discovered that way
+        would start with state no fresh kernel has, so a first cell mentioning
+        `_` would work live and fail in export or recovery. Discarding the
+        kernel leaves the session cold, and the next cell builds it from the
+        accepted log, which is the only state anything else can reconstruct.
+        """
         with self._lock:
             if self._kernel is None:
                 self._start()
-            outcome = self._send(self.backend.version_source)
+            try:
+                outcome = self._send(self.backend.version_source)
+            finally:
+                self._discard_kernel()
             if outcome.status != "ok":
                 raise CasError(
                     f"{self.backend.name} kernel did not answer a version query: "
@@ -722,8 +810,14 @@ class CasSession:
 
         return extract_sentinel
 
-    def _send(self, source: str) -> CellOutcome:
-        """One round trip. Assumes the lock and a started kernel."""
+    def _send(self, source: str, seconds: float | None = None) -> CellOutcome:
+        """One round trip. Assumes the lock and a started kernel.
+
+        `seconds` is the deadline actually applied, which is not always
+        `cas_cell_seconds`: a caller with less session budget left than that
+        must not be able to buy a full cell's worth of wall clock with it.
+        """
+        limit = self.limits.cas_cell_seconds if seconds is None else seconds
         kernel = self._kernel
         assert kernel is not None
         nonce = f"{time.monotonic_ns():x}"
@@ -734,12 +828,12 @@ class CasSession:
             kernel.rearm(end)
         if not kernel.send(self.backend.frame(source, nonce)):
             return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
-        deadline = time.monotonic() + self.limits.cas_cell_seconds
+        deadline = time.monotonic() + limit
         reply = kernel.read_reply(self._extractor(nonce), deadline)
         if reply is TIMED_OUT:
             return CellOutcome(
                 status="timeout",
-                stderr=f"cell exceeded its {self.limits.cas_cell_seconds}s limit",
+                stderr=f"cell exceeded its {limit:g}s limit",
             )
         if reply is None or reply is DESYNCHRONISED:
             # A stream that desynchronised cannot be trusted to be answering
@@ -759,13 +853,59 @@ class CasSession:
             outcome = outcome.model_copy(update={"stderr": stderr_text, "status": status})
         return outcome
 
+    # -------------------------------------------------------------- budget
+
+    @property
+    def remaining_seconds(self) -> float:
+        """What is left of `cas_session_seconds`, never negative."""
+        return max(0.0, self.limits.cas_session_seconds - self.spent_seconds)
+
+    def charge(self, seconds: float) -> None:
+        """Bill CAS wall clock to the session budget.
+
+        Public because the budget covers every kernel a session causes to run,
+        not only the cells a caller asked for: the fresh kernel an export
+        replays in is the session's own time too, and an export that could
+        spend it unbilled would make `cas_session_seconds` describe nothing.
+        """
+        with self._lock:
+            self.spent_seconds += max(0.0, seconds)
+
+    def _cell_seconds(self) -> float:
+        """The deadline one round trip may have: the smaller of the two limits.
+
+        A session with one second left must not be able to run a sleeping cell
+        for a full `cas_cell_seconds`, or the session limit is not a limit --
+        it is only a value consulted before work that ignores it.
+        """
+        return min(float(self.limits.cas_cell_seconds), self.remaining_seconds)
+
     # ------------------------------------------------------------- execute
+
+    def _foreign_backend(self) -> str | None:
+        """The name on the live segment's records, if it is not this backend's."""
+        segment = self.segment
+        for record in self._records:
+            if record.segment == segment and record.backend and record.backend != self.backend.name:
+                return record.backend
+        return None
 
     def _guard(self) -> None:
         if self.state == "poisoned":
             raise CasError(
                 "the CAS session is poisoned: its state could not be rebuilt faithfully. "
                 "Reset it to start a clean kernel."
+            )
+        foreign = self._foreign_backend()
+        if foreign is not None:
+            # Replaying this segment would feed one backend's language to
+            # another, and a cell that happens to parse would be worse than one
+            # that does not. Refusing leaves a way out: a reset opens a clean
+            # segment under the configured backend without deleting anything.
+            raise CasError(
+                f"this CAS cell log was written by the {foreign} backend, but "
+                f"{self.backend.name} is configured. Reset the session to start a "
+                "clean segment, or restore the original cas_backend setting."
             )
         if self.spent_seconds >= self.limits.cas_session_seconds:
             raise CasError("CAS session budget exhausted")
@@ -779,13 +919,20 @@ class CasSession:
                 raise CasError("cell source exceeds the 64 KiB limit")
 
             notes = ""
+            # `_kernel is None` covers a session that has never run a cell in
+            # this process as well as one whose kernel died -- including the
+            # kernel discovery threw away. A merely probed kernel used to leave
+            # this false, so a reopened workspace listed its accepted cells and
+            # then answered the next one from an empty namespace.
             if self._kernel is None or self.state == "dead":
                 report = self._restore()
                 if report.replayed:
                     notes = f"[kernel restarted; replayed {report.replayed} cell(s)]"
+                # The rebuild is billed, so it can be what exhausts the budget.
+                self._guard()
 
             started = time.monotonic()
-            outcome = self._send(source)
+            outcome = self._send(source, self._cell_seconds())
             elapsed = time.monotonic() - started
             self.spent_seconds += elapsed
 
@@ -805,6 +952,8 @@ class CasSession:
                 value_repr=outcome.value_repr,
                 duration_ms=round(elapsed * 1_000),
                 capture_truncated=truncated,
+                backend=self.backend.name,
+                backend_version=self.version or "",
                 restart_note=notes,
             )
             return self._append(record)
@@ -815,6 +964,14 @@ class CasSession:
         self._kernel = None
         self.state = "dead"
 
+    def _discard_kernel(self) -> None:
+        """Close a kernel that nothing died in, leaving the session cold."""
+        if self._kernel is not None:
+            self._kernel.kill()
+        self._kernel = None
+        if self.state != "poisoned":
+            self.state = "cold"
+
     def _restore(self) -> RebuildReport:
         """Rebuild live state after a death, and verify what was rebuilt."""
         self._start()
@@ -822,8 +979,20 @@ class CasSession:
         if not pending:
             return RebuildReport()
         diverged: list[int] = []
-        for index, record in enumerate(pending):
-            outcome = self._send(record.source)
+        for record in pending:
+            # A rebuild is the session's own time. Left unbilled, a session
+            # holding expensive accepted cells could time out and replay many
+            # minutes of work over and over while the budget never moved.
+            if self.remaining_seconds <= 0:
+                self._drop_kernel()
+                self.state = "poisoned"
+                raise CasError(
+                    "could not rebuild CAS state: the session budget ran out during "
+                    "replay. Reset the session to start clean."
+                )
+            started = time.monotonic()
+            outcome = self._send(record.source, self._cell_seconds())
+            self.charge(time.monotonic() - started)
             if outcome.status != "ok":
                 self._drop_kernel()
                 self.state = "poisoned"
@@ -837,8 +1006,6 @@ class CasSession:
             # built on it.
             if not reproduces(record, outcome):
                 diverged.append(record.seq)
-            if index % 4 == 3:
-                self._guard()
         if diverged:
             self.state = "poisoned"
             raise CasError(
@@ -848,25 +1015,35 @@ class CasSession:
             )
         return RebuildReport(replayed=len(pending))
 
-    def reset(self) -> None:
+    def reset(self, *, author: str = "model") -> None:
         """Close the current segment. Nothing is deleted.
 
         The boundary is itself a `CellRecord` carrying the new segment, so one
         schema describes the whole log and the reset is durable the moment it
         happens rather than when the next cell is written.
+
+        A reset clears state, not the bill. `cas_reset` is a tool the model can
+        call, so refunding `spent_seconds` here would make the session budget
+        advisory: a model near the limit could buy the whole allowance again,
+        as often as it liked, by discarding a namespace it no longer needed.
+
+        `author` is carried through for the same reason `execute` carries it.
+        A state-destroying action recorded as the human's when a model asked
+        for it makes the timeline lie about why earlier definitions vanished.
         """
         with self._lock:
             self._drop_kernel()
             self.state = "cold"
-            self.spent_seconds = 0.0
             self._append(
                 CellRecord(
                     seq=len(self._records),
                     segment=self.segment + 1,
-                    author="human",
+                    author=author,  # type: ignore[arg-type]
                     source="",
                     status="ok",
                     accepted=False,
+                    backend=self.backend.name,
+                    backend_version=self.version or "",
                 )
             )
 
@@ -885,8 +1062,23 @@ def replay_in_fresh_kernel(
     limits: RunLimits,
     cwd: Path,
     budget_seconds: float | None = None,
+    charge: Callable[[float], None] | None = None,
 ) -> list[CellOutcome | None]:
-    """Run cells in a throwaway kernel. `None` marks a cell never reached."""
+    """Run cells in a throwaway kernel. `None` marks a cell never reached.
+
+    `charge` reports each cell's wall clock back to whoever owns the budget
+    this replay is spending. An export replays the whole accepted segment, and
+    that is the session's own time however fresh the kernel running it is.
+    """
+    foreign = next(
+        (record.backend for record in cells if record.backend and record.backend != backend.name),
+        None,
+    )
+    if foreign is not None:
+        raise CasError(
+            f"these cells were recorded by the {foreign} backend and cannot be "
+            f"replayed under {backend.name}"
+        )
     session = CasSession(
         backend=backend,
         command=command,
@@ -900,12 +1092,18 @@ def replay_in_fresh_kernel(
         session._start()
         spent = 0.0
         for record in cells:
-            if spent >= budget:
+            remaining = budget - spent
+            if remaining <= 0:
                 outcomes.append(None)
                 continue
             started = time.monotonic()
-            outcome = session._send(record.source)
-            spent += time.monotonic() - started
+            outcome = session._send(
+                record.source, min(float(limits.cas_cell_seconds), remaining)
+            )
+            elapsed = time.monotonic() - started
+            spent += elapsed
+            if charge is not None:
+                charge(elapsed)
             outcomes.append(outcome)
             if outcome.status in {"kernel_died", "timeout"}:
                 outcomes.extend([None] * (len(cells) - len(outcomes)))

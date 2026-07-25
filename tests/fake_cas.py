@@ -33,6 +33,12 @@ def answer(source: str) -> dict:
         return {"status": "error", "stdout": "", "stderr": "boom", "value_repr": ""}
     if word == "hang":
         time.sleep(120)
+    if word == "slow":
+        # Long enough to be measurable against a budget, short enough that a
+        # test replaying it a few times still finishes quickly. Falls through
+        # to the deterministic counter below, so it is accepted and replays
+        # faithfully like any other cell.
+        time.sleep(0.5)
     if word == "die":
         raise SystemExit(1)
     if word == "flood":

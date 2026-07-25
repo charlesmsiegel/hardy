@@ -158,7 +158,7 @@ def cas_command(
                 out(f"  {line}")
             return
         if argument == "reset":
-            session.cas.reset()
+            session.cas.reset(author="human")
             out("CAS session reset; the next cell starts a clean kernel.")
             return
         if argument == "export":
