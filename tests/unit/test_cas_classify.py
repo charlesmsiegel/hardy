@@ -59,3 +59,26 @@ def test_a_deeply_nested_singular_error_is_still_recognised() -> None:
     """
     text = "      ? nested procedure call failed: undefined symbol"
     assert backend_for("singular").classify(text) == "error"
+
+
+def test_a_macaulay2_error_without_the_depth_marker_is_still_recognised() -> None:
+    """`:[N]:` was only ever seen from one M2 build (CI run 30167266358).
+
+    A pattern that *required* it would read the older, no-depth-marker form
+    -- what the pre-verification guess used, and what a different M2 build
+    might still emit -- as `"ok"`: a false negative, accepted into
+    replayable state, worse than a false positive because the session then
+    rebuilds from a cell that never worked.
+    """
+    text = "stdio:1:1:(3): error: expected a ring"
+    assert backend_for("macaulay2").classify(text) == "error"
+
+
+def test_macaulay2_errors_on_stderr_alone_are_classified() -> None:
+    """Confirmed of the real backend (CI run 30167266358): M2 writes its
+    error text to stderr, with nothing error-shaped left on stdout at all.
+    `classify` must catch this on the second argument, not just the first.
+    """
+    backend = backend_for("macaulay2")
+    assert backend.classify("", "stdio:2:1:(3):[1]: error: division by zero") == "error"
+    assert backend.classify("ordinary output", "") == "ok"

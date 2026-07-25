@@ -86,3 +86,49 @@ def sentinel_session(tmp_path):
     yield make
     for session in sessions:
         session.close()
+
+
+FAKE_SENTINEL_ECHO = Path(__file__).parents[1] / "fake_sentinel_cas_echo.py"
+
+
+class FakeEchoingSentinelBackend(_SentinelBackend):
+    """Sentinel framing against a scripted interpreter that echoes stdin and
+    writes errors to stderr -- Macaulay2's behaviour, unlike
+    `FakeSentinelBackend` above, which is modelled on Singular and does
+    neither. Exists so `_find_marker`'s tail-aware skip of a marker's own
+    echoed occurrence, and stderr-driven `classify`, both run in the
+    hermetic suite rather than only against the real binary in CI.
+    """
+
+    name = "macaulay2"  # a real backend name, so config paths accept it
+    script_suffix = ".fake"
+    language = "fake"
+    kernel_name = "fake"
+    comment = "--"
+    preamble = ""
+    version_source = "version;"
+    echo = 'ECHO "{marker}";'
+    error_pattern = re.compile(r"(?m)^stdio:\d+:\d+:\(\d+\): error:")
+
+    def argv(self, command, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
+        return (sys.executable, "-u", str(FAKE_SENTINEL_ECHO))
+
+
+@pytest.fixture
+def echoing_sentinel_session(tmp_path):
+    sessions: list[CasSession] = []
+
+    def make(**limits) -> CasSession:
+        session = CasSession(
+            backend=FakeEchoingSentinelBackend(),
+            command=None,
+            log_path=tmp_path / "cells.jsonl",
+            limits=RunLimits(**limits),
+            cwd=tmp_path,
+        )
+        sessions.append(session)
+        return session
+
+    yield make
+    for session in sessions:
+        session.close()
