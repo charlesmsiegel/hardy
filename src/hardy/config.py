@@ -4,11 +4,12 @@ import os
 import re
 import shlex
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from . import catalog
+from .domain import RunLimits
 
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_LEAN_COMMAND = "lake env lean"
@@ -17,6 +18,15 @@ DEFAULT_LEAN_COMMAND = "lake env lean"
 DEFAULT_LEAN_TIMEOUT = 180.0
 DEFAULT_LATEX_COMMAND = "pdflatex -interaction=nonstopmode -halt-on-error"
 DEFAULT_WORKSPACE = ".hardy"
+DEFAULT_RUNS_ROOT = "runs"
+DEFAULT_LAKE = "lake"
+DEFAULT_TECTONIC = "tectonic"
+# The bundle is pinned by URL and digest together: a writeup is only
+# reproducible if the TeX distribution behind it is the one that built it.
+DEFAULT_TECTONIC_BUNDLE = "https://data1.fullyjustified.net/tlextras-2022.0r0.tar"
+DEFAULT_TECTONIC_BUNDLE_SHA256 = (
+    "6ffe055852f8faf66c0acbe1a7fb27f87b869a90bad1204f3bf4d9683f597c7c"
+)
 
 # Every setting, and the environment variable that overrides the config file.
 SETTINGS = {
@@ -26,6 +36,11 @@ SETTINGS = {
     "lean_timeout": "HARDY_LEAN_TIMEOUT",
     "latex_command": "HARDY_LATEX_COMMAND",
     "workspace": "HARDY_WORKSPACE",
+    "runs_root": "HARDY_RUNS_ROOT",
+    "lake": "HARDY_LAKE",
+    "tectonic": "HARDY_TECTONIC",
+    "tectonic_bundle": "HARDY_TECTONIC_BUNDLE",
+    "tectonic_bundle_sha256": "HARDY_TECTONIC_BUNDLE_SHA256",
 }
 
 
@@ -52,6 +67,14 @@ class Config:
     lean_timeout: float
     latex_command: tuple[str, ...]
     workspace: Path
+    # Where staged `prove` runs are kept, and the pinned toolchain that builds
+    # their documents. The budgets a run is frozen under travel with them.
+    runs_root: Path = Path(DEFAULT_RUNS_ROOT)
+    lake: Path = Path(DEFAULT_LAKE)
+    tectonic: Path = Path(DEFAULT_TECTONIC)
+    tectonic_bundle: str = DEFAULT_TECTONIC_BUNDLE
+    tectonic_bundle_sha256: str = DEFAULT_TECTONIC_BUNDLE_SHA256
+    limits: RunLimits = field(default_factory=RunLimits)
     path: Path | None = None
     requested_path: Path | None = None
 
@@ -108,6 +131,11 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
         lean_timeout=lean_timeout,
         latex_command=tuple(shlex.split(text("latex_command", DEFAULT_LATEX_COMMAND))),
         workspace=location("workspace") or Path(DEFAULT_WORKSPACE),
+        runs_root=location("runs_root") or Path(DEFAULT_RUNS_ROOT),
+        lake=location("lake") or Path(DEFAULT_LAKE),
+        tectonic=location("tectonic") or Path(DEFAULT_TECTONIC),
+        tectonic_bundle=text("tectonic_bundle", DEFAULT_TECTONIC_BUNDLE),
+        tectonic_bundle_sha256=text("tectonic_bundle_sha256", DEFAULT_TECTONIC_BUNDLE_SHA256),
         path=path if path.exists() else None,
         requested_path=path,
     )

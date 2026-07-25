@@ -1,0 +1,1 @@
+[{"method":"item/completed","payload":{"turn_id":"turn-proof","item":{"id":"item-proof","type":"agentMessage","text":"{\"proof_body\":\"by rfl\",\"informal_proof\":\"Both sides are definitionally equal.\"}"}}},{"method":"turn/completed","payload":{"turn":{"id":"turn-proof","status":"completed","duration_ms":99}}}]

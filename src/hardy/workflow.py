@@ -1,0 +1,482 @@
+"""Explicit controller for one approved, proved, and documented Hardy claim.
+
+The stages are explicit and the transitions between them are checked, because
+the interesting failures are the ones where a run quietly skips a step: a
+proof accepted without verification, a document written for a claim nobody
+approved. An illegal transition raises rather than proceeds.
+
+Time spent waiting for the user is measured and excluded from the run's active
+budget. Thinking about whether a formalization is right should not cost the
+model its proving time.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath
+from typing import Any, Literal, Protocol
+from uuid import UUID, uuid4
+
+from .config import Config
+from .domain import (
+    DocumentStatus,
+    EnvironmentIdentity,
+    FaithfulnessStatus,
+    FormalizationProposal,
+    FormalStatus,
+    FrozenClaim,
+    FrozenModel,
+    Grades,
+    InformalStatus,
+    RunManifest,
+    RunPhase,
+    TerminalReason,
+    freeze_claim,
+)
+from .lean import LeanCheckResult
+from .prompts import (
+    FORMALIZATION_PROMPT,
+    PROMPT_SET_SHA256,
+    WRITEUP_PROMPT,
+    proof_prompt,
+)
+from .storage import RunStore
+from .verifier import VerificationResult
+from .writeup import DocumentResult, WriteupContent
+
+ALLOWED = {
+    RunPhase.SETUP: {RunPhase.FORMALIZING},
+    RunPhase.FORMALIZING: {RunPhase.AWAITING_APPROVAL},
+    RunPhase.AWAITING_APPROVAL: {
+        RunPhase.FORMALIZING,
+        RunPhase.PROVING,
+        RunPhase.CANCELLED,
+    },
+    RunPhase.PROVING: {RunPhase.FINAL_VERIFICATION},
+    RunPhase.FINAL_VERIFICATION: {RunPhase.PROVING, RunPhase.WRITEUP},
+    RunPhase.WRITEUP: {RunPhase.COMPLETED},
+}
+
+
+class ProveRequest(FrozenModel):
+    text: str
+    model: str
+    problem_slug: str = "theorem"
+
+
+class Terminal(Protocol):
+    def show_formalization(self, proposal: Any, elaboration: LeanCheckResult) -> None: ...
+
+    def choose_approval(self) -> Literal["approve", "revise", "cancel"]: ...
+
+    def revision_text(self) -> str: ...
+
+    def acknowledge_unsafe_execution(self) -> bool: ...
+
+    def show_result(self, manifest: RunManifest) -> None: ...
+
+
+class _RunState:
+    def __init__(self, store: RunStore) -> None:
+        self.phase = RunPhase.SETUP
+        self.store = store
+
+    def transition(self, target: RunPhase) -> None:
+        if target not in ALLOWED.get(self.phase, set()):
+            raise RuntimeError(f"illegal workflow transition: {self.phase} -> {target}")
+        previous = self.phase
+        self.phase = target
+        self.store.append(
+            "workflow.transition",
+            {"from": previous.value, "to": target.value},
+            phase=target,
+        )
+
+
+class ProveWorkflow:
+    def __init__(
+        self,
+        *,
+        config: Config,
+        environment: EnvironmentIdentity,
+        doctor: Callable[[Config], Any],
+        lean: Any,
+        runtime_factory: Callable[[RunStore], Any],
+        verifier: Any,
+        writeup_builder: Callable[..., DocumentResult],
+        identities_factory: Callable[[UUID, str], Any],
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        monotonic: Callable[[], float] = time.monotonic,
+        uuid_factory: Callable[[], UUID] = uuid4,
+    ) -> None:
+        self._config = config
+        self._environment = environment
+        self._doctor = doctor
+        self._lean = lean
+        self._runtime_factory = runtime_factory
+        self._verifier = verifier
+        self._writeup_builder = writeup_builder
+        self._identities_factory = identities_factory
+        self._now = now
+        self._monotonic = monotonic
+        self._uuid_factory = uuid_factory
+
+    def run(self, request: ProveRequest, terminal: Terminal) -> RunManifest:
+        created_at = self._now()
+        run_id = self._uuid_factory()
+        store = RunStore.create(
+            self._config.runs_root,
+            request.problem_slug,
+            now=created_at,
+            run_id=run_id,
+        )
+        state = _RunState(store)
+        active_started = self._monotonic()
+        user_wait = 0.0
+        store.write_text(PurePosixPath("request.md"), request.text.rstrip() + "\n")
+        store.append(
+            "workflow.warning",
+            {
+                "message": (
+                    "Generated Lean and TeX are not sandboxed; run only trusted "
+                    "output in a disposable development environment."
+                )
+            },
+            phase=state.phase,
+        )
+        approved_claim: FrozenClaim | None = None
+        runtime: Any | None = None
+        active_thread: Any | None = None
+        verification: VerificationResult | None = None
+        terminal_reason: TerminalReason | None = None
+        grades = Grades()
+        try:
+            wait_started = self._monotonic()
+            acknowledged = terminal.acknowledge_unsafe_execution()
+            user_wait += self._monotonic() - wait_started
+            if not acknowledged:
+                return self._finalize(
+                    request,
+                    terminal,
+                    store,
+                    state,
+                    created_at,
+                    active_started,
+                    user_wait,
+                    grades,
+                    TerminalReason.USER_CANCELLATION,
+                    approved_claim,
+                )
+            report = self._doctor(self._config)
+            if not report.healthy:
+                setup_reason = (
+                    TerminalReason.AUTHENTICATION_FAILURE
+                    if getattr(report, "authenticated", True) is False
+                    else TerminalReason.SETUP_FAILURE
+                )
+                return self._finalize(
+                    request,
+                    terminal,
+                    store,
+                    state,
+                    created_at,
+                    active_started,
+                    user_wait,
+                    grades,
+                    setup_reason,
+                    approved_claim,
+                )
+            state.transition(RunPhase.FORMALIZING)
+            runtime = self._runtime_factory(store)
+            formal_thread = runtime.start(model=request.model, run_dir=store.path, claim=None)
+            revision = ""
+            for proposal_number in range(self._config.limits.formalization_proposals):
+                active_elapsed = self._monotonic() - active_started - user_wait
+                if active_elapsed >= self._config.limits.active_seconds:
+                    terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
+                    break
+                prompt = FORMALIZATION_PROMPT + "\n\nUser claim:\n" + request.text
+                if revision:
+                    prompt += "\n\nUser revision request:\n" + revision
+                try:
+                    proposal = runtime.run_structured(
+                        formal_thread,
+                        "formalization",
+                        prompt,
+                        FormalizationProposal,
+                    )
+                except ValueError as error:
+                    store.append(
+                        "formalization.malformed",
+                        {"proposal": proposal_number, "message": str(error)},
+                        phase=state.phase,
+                    )
+                    revision = "Return a valid structured formalization."
+                    continue
+                temporary_claim = freeze_claim(
+                    request.text, proposal, self._environment, self._now()
+                )
+                # A statement that does not elaborate is not a statement, so it
+                # is never put in front of the user for approval.
+                elaboration = self._lean.check_proof(temporary_claim, "by sorry")
+                terminal.show_formalization(proposal, elaboration)
+                if not elaboration.success:
+                    store.append(
+                        "formalization.rejected",
+                        {"proposal": proposal_number, "reason": "statement did not elaborate"},
+                        phase=state.phase,
+                    )
+                    revision = "The proposed Lean signature did not elaborate. Repair it."
+                    continue
+                state.transition(RunPhase.AWAITING_APPROVAL)
+                wait_started = self._monotonic()
+                choice = terminal.choose_approval()
+                user_wait += self._monotonic() - wait_started
+                store.append("user.approval", {"choice": choice}, phase=state.phase)
+                if choice == "cancel":
+                    state.transition(RunPhase.CANCELLED)
+                    return self._finalize(
+                        request,
+                        terminal,
+                        store,
+                        state,
+                        created_at,
+                        active_started,
+                        user_wait,
+                        grades,
+                        TerminalReason.USER_REJECTION,
+                        approved_claim,
+                    )
+                if choice == "revise":
+                    wait_started = self._monotonic()
+                    revision = terminal.revision_text()
+                    user_wait += self._monotonic() - wait_started
+                    state.transition(RunPhase.FORMALIZING)
+                    continue
+                approved_claim = freeze_claim(
+                    request.text, proposal, self._environment, self._now()
+                )
+                store.write_json(PurePosixPath("formalization.json"), approved_claim)
+                # Read back what was actually persisted: the claim the proof is
+                # judged against must be the one on disk, not the one in memory.
+                approved_claim = FrozenClaim.model_validate_json(
+                    (store.path / "formalization.json").read_text(encoding="utf-8")
+                )
+                expected = freeze_claim(
+                    approved_claim.original_text,
+                    approved_claim.proposal,
+                    approved_claim.environment,
+                    approved_claim.approved_at,
+                )
+                if expected.content_hash != approved_claim.content_hash:
+                    raise RuntimeError("persisted Frozen Claim hash mismatch")
+                state.transition(RunPhase.PROVING)
+                break
+            if approved_claim is None:
+                grades = Grades(
+                    formal=FormalStatus.NOT_FORMALIZED,
+                    known_gaps=("formalization proposal budget exhausted",),
+                )
+                terminal_reason = terminal_reason or TerminalReason.MALFORMED_MODEL_OUTPUT
+                return self._finalize(
+                    request,
+                    terminal,
+                    store,
+                    state,
+                    created_at,
+                    active_started,
+                    user_wait,
+                    grades,
+                    terminal_reason,
+                    approved_claim,
+                )
+
+            active_thread = runtime.start(
+                model=request.model, run_dir=store.path, claim=approved_claim
+            )
+            proof_started = self._monotonic()
+            proof_request = proof_prompt(approved_claim)
+            last_submission = None
+            for attempt in range(self._config.limits.official_checks):
+                active_elapsed = self._monotonic() - active_started - user_wait
+                proof_elapsed = self._monotonic() - proof_started
+                if (
+                    active_elapsed >= self._config.limits.active_seconds
+                    or proof_elapsed >= self._config.limits.proof_seconds
+                ):
+                    state.transition(RunPhase.FINAL_VERIFICATION)
+                    state.transition(RunPhase.WRITEUP)
+                    terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
+                    break
+                last_submission = runtime.run_proof(active_thread, proof_request)
+                state.transition(RunPhase.FINAL_VERIFICATION)
+                verification = self._verifier.verify(
+                    approved_claim, last_submission.proof_body, store
+                )
+                if verification.verified:
+                    state.transition(RunPhase.WRITEUP)
+                    break
+                if attempt + 1 >= self._config.limits.official_checks:
+                    state.transition(RunPhase.WRITEUP)
+                    terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
+                    break
+                state.transition(RunPhase.PROVING)
+                reason = verification.reason.name if verification.reason else "UNKNOWN"
+                proof_request = (
+                    "The FinalVerifier rejected the candidate with reason "
+                    + reason
+                    + ". Repair the proof body without changing the Frozen Claim.\n"
+                    + json.dumps(
+                        verification.model_dump(mode="json"),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
+            verified = verification is not None and verification.verified
+            gaps = () if verified else ("No proof passed the independent FinalVerifier.",)
+            grades = Grades(
+                formal=(FormalStatus.KERNEL_VERIFIED if verified else FormalStatus.PARTIAL),
+                faithfulness=FaithfulnessStatus.USER_APPROVED,
+                informal=(
+                    InformalStatus.NOT_INDEPENDENTLY_ASSESSED
+                    if verified
+                    else InformalStatus.KNOWN_GAPS
+                ),
+                known_gaps=gaps,
+                verification_sha256=(verification.verification_sha256 if verified else None),
+            )
+            try:
+                content = runtime.run_structured(
+                    active_thread,
+                    "writeup",
+                    WRITEUP_PROMPT,
+                    WriteupContent,
+                )
+            except (ValueError, RuntimeError):
+                # A failed writeup turn must not lose the run: the document is
+                # built from what is already known instead.
+                informal = last_submission.informal_proof if last_submission else ""
+                content = WriteupContent(
+                    title=approved_claim.proposal.restatement,
+                    theorem_text=approved_claim.proposal.restatement,
+                    proof_text=informal or "No complete informal proof was produced.",
+                    known_gaps=gaps,
+                )
+            document = self._writeup_builder(
+                approved_claim,
+                content,
+                grades,
+                verification if verified else None,
+                self._identities_factory(run_id, request.model),
+                store,
+                limits=self._config.limits,
+            )
+            grades = grades.model_copy(update={"document": document.status})
+            if document.status is DocumentStatus.TEX_FAILED:
+                terminal_reason = TerminalReason.TEX_COMPILATION_FAILURE
+            state.transition(RunPhase.COMPLETED)
+            return self._finalize(
+                request,
+                terminal,
+                store,
+                state,
+                created_at,
+                active_started,
+                user_wait,
+                grades,
+                terminal_reason,
+                approved_claim,
+            )
+        except KeyboardInterrupt:
+            if runtime is not None and active_thread is not None:
+                runtime.cancel(active_thread)
+            return self._finalize(
+                request,
+                terminal,
+                store,
+                state,
+                created_at,
+                active_started,
+                user_wait,
+                grades,
+                TerminalReason.USER_CANCELLATION,
+                approved_claim,
+            )
+        except Exception as error:
+            store.append(
+                "workflow.error",
+                {"type": type(error).__name__, "message": str(error)},
+                phase=state.phase,
+            )
+            return self._finalize(
+                request,
+                terminal,
+                store,
+                state,
+                created_at,
+                active_started,
+                user_wait,
+                grades,
+                TerminalReason.AGENT_RUNTIME_FAILURE,
+                approved_claim,
+            )
+        finally:
+            if runtime is not None and hasattr(runtime, "close"):
+                runtime.close()
+
+    def _finalize(
+        self,
+        request: ProveRequest,
+        terminal: Terminal,
+        store: RunStore,
+        state: _RunState,
+        created_at: datetime,
+        active_started: float,
+        user_wait: float,
+        grades: Grades,
+        reason: TerminalReason | None,
+        claim: FrozenClaim | None,
+    ) -> RunManifest:
+        active_ms = max(0, round((self._monotonic() - active_started - user_wait) * 1_000))
+        store.append(
+            "workflow.terminal",
+            {
+                "phase": state.phase.value,
+                "terminal_reason": reason.value if reason else None,
+                "grades": grades.model_dump(mode="json"),
+                "claim_sha256": claim.content_hash if claim else None,
+            },
+            phase=state.phase,
+        )
+        artifacts = _artifact_hashes(store.path)
+        manifest = RunManifest(
+            run_id=store.run_id,
+            created_at=created_at,
+            phase=state.phase,
+            model=request.model,
+            prompt_set_sha256=PROMPT_SET_SHA256,
+            limits=self._config.limits,
+            environment=self._environment,
+            claim_sha256=claim.content_hash if claim else None,
+            grades=grades,
+            terminal_reason=reason,
+            artifacts=artifacts,
+            timings_ms={"active": active_ms, "user_wait_excluded": round(user_wait * 1_000)},
+        )
+        store.finalize(manifest)
+        terminal.show_result(manifest)
+        return manifest
+
+
+def _artifact_hashes(run_dir: Path) -> dict[str, str]:
+    artifacts = {}
+    for path in sorted(run_dir.rglob("*")):
+        if not path.is_file() or path.name == "manifest.json":
+            continue
+        relative = path.relative_to(run_dir).as_posix()
+        artifacts[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return artifacts
