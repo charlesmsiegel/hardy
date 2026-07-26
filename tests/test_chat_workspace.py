@@ -7,6 +7,8 @@ from pathlib import Path
 from test_chat import FakeChatRuntime, call, session
 from workspace_helpers import results
 
+from hardy.chat import _toolchain_identity
+
 BASIC = "import Mathlib\nlemma hardyBasic : True := by exact True.intro\n"
 MAIN = "import Basic\nlemma hardyMain : True := by exact True.intro\n"
 
@@ -194,3 +196,27 @@ def test_a_cleared_build_cache_is_rebuilt_on_demand(tmp_path: Path):
     later = session(tmp_path, second)
     later.send("Import it after the cache is gone.")
     assert results(tmp_path)[-1]["ok"] is True, results(tmp_path)
+
+
+def test_an_advanced_lake_manifest_invalidates_the_build(tmp_path: Path):
+    """`lake update` can move Mathlib without touching lean-toolchain.
+
+    An olean built against the old dependency must not be reported as current.
+    """
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "lean-toolchain").write_text("leanprover/lean4:v4.33.0\n", encoding="utf-8")
+    manifest = project / "lake-manifest.json"
+    manifest.write_text('{"packages": ["old"]}\n', encoding="utf-8")
+    first = _toolchain_identity(("lake", "env", "lean"), project)
+    manifest.write_text('{"packages": ["new"]}\n', encoding="utf-8")
+    assert _toolchain_identity(("lake", "env", "lean"), project) != first
+
+
+def test_the_identity_follows_the_project_and_the_command(tmp_path: Path):
+    project = tmp_path / "project"
+    project.mkdir()
+    base = _toolchain_identity(("lake", "env", "lean"), project)
+    assert _toolchain_identity(("lean",), project) != base
+    assert _toolchain_identity(("lake", "env", "lean"), tmp_path / "other") != base
+    assert _toolchain_identity(("lake", "env", "lean"), project) == base

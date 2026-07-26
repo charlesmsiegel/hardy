@@ -155,6 +155,25 @@ def test_deleting_an_included_tex_fragment_is_refused(tmp_path: Path):
     assert (tmp_path / "tex" / "sections" / "one.tex").exists()
 
 
+def test_a_drive_qualified_tex_path_is_refused(tmp_path: Path):
+    """`PurePosixPath("C:/out.tex").is_absolute()` is False, but joining that
+    to a Windows root discards the root and escapes the workspace."""
+    outside = tmp_path.parent / "outside.tex"
+    outside.write_text("untouched\n", encoding="utf-8")
+    for index, candidate in enumerate(("C:/outside.tex", "C:outside.tex", "../outside.tex")):
+        workspace = tmp_path / f"attempt{index}"
+        runtime = FakeChatRuntime([
+            call("save_latex", {"path": candidate, "source": PLAIN_ROOT}),
+            call("read_file", {"path": candidate}),
+            call("delete_file", {"path": candidate}),
+            {"role": "assistant", "content": "Refused."},
+        ])
+        chat = session(workspace, runtime)
+        chat.send("Escape the workspace.")
+        assert not any(item["ok"] for item in results(workspace)), candidate
+    assert outside.read_text() == "untouched\n"
+
+
 def test_the_root_document_cannot_be_deleted(tmp_path: Path):
     runtime = FakeChatRuntime([
         call("save_latex", {"source": PLAIN_ROOT}),

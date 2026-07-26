@@ -16,6 +16,7 @@ from hardy.workspace import (
     name_aliases,
     parse_imports,
     safe_relative,
+    strip_comments,
 )
 
 
@@ -177,3 +178,34 @@ def test_a_section_does_not_qualify_a_name_and_can_be_ended_bare():
 def test_a_named_end_closes_what_was_left_open_inside_it():
     source = "namespace A\nsection\ntheorem one : True := trivial\nend A\ntheorem two : True := trivial\n"
     assert declarations(source)["theorem"] == ("A.one", "two")
+
+
+def test_nested_block_comments_close_at_the_right_place():
+    """`/- a /- b -/ c -/` is one comment, not one ending at the first `-/`.
+
+    Closing early would leave the tail of the comment looking like code, stop
+    the header scan, and drop the imports after it.
+    """
+    source = "/- outer /- inner -/ still outer -/\nimport Basic\nimport Mathlib\n"
+    assert parse_imports(source) == ("Basic", "Mathlib")
+
+
+def test_a_comment_marker_inside_a_string_is_not_a_comment():
+    source = 'def s := "-- not a comment"\n'
+    assert strip_comments(source) == source
+
+
+def test_strip_comments_keeps_the_lines_lined_up():
+    assert len(strip_comments("import A -- trailing\nimport B\n").splitlines()) == 2
+
+
+def test_a_declaration_behind_a_leading_doc_comment_is_seen():
+    """Lean reads the comment as whitespace. A theorem it hid would never be
+    recorded, and so would never owe a writeup."""
+    source = "/-- explanation -/ theorem result : True := by trivial\n"
+    assert declarations(source)["theorem"] == ("result",)
+
+
+def test_a_declaration_inside_a_block_comment_is_not_seen():
+    source = "/-\ntheorem commented : True := trivial\n-/\ntheorem real : True := trivial\n"
+    assert declarations(source)["theorem"] == ("real",)

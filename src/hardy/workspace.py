@@ -69,46 +69,83 @@ def module_path(name: str) -> PurePosixPath:
     return PurePosixPath(*name.split(".")).with_suffix(".lean")
 
 
+def strip_comments(source: str) -> str:
+    """`source` with its comments blanked out, line structure preserved.
+
+    One pass serves both the import scan and the declaration scan, because
+    both were getting comments wrong in their own way: a trailing `--` hid an
+    import, a nested `/- /- -/ -/` closed early, and `/-- doc -/ theorem foo`
+    hid a declaration behind a leading comment. Lean treats all of that as
+    whitespace, so the honest fix is to do the same once, rather than teach
+    every regex about comments separately.
+
+    Comments are replaced by spaces rather than removed so that line and
+    column positions still line up with the source a reader has open. String
+    literals are respected, or a `"-- "` inside one would blank the rest of a
+    real line.
+    """
+    out = list(source)
+    index = 0
+    depth = 0
+    length = len(source)
+    while index < length:
+        character = source[index]
+        if depth:
+            if source.startswith("/-", index):
+                depth += 1
+                out[index] = out[index + 1] = " "
+                index += 2
+                continue
+            if source.startswith("-/", index):
+                depth -= 1
+                out[index] = out[index + 1] = " "
+                index += 2
+                continue
+            if character != "\n":
+                out[index] = " "
+            index += 1
+            continue
+        if character == '"':
+            index += 1
+            while index < length:
+                if source[index] == "\\":
+                    index += 2
+                    continue
+                if source[index] == '"':
+                    index += 1
+                    break
+                index += 1
+            continue
+        if source.startswith("/-", index):
+            depth = 1
+            out[index] = out[index + 1] = " "
+            index += 2
+            continue
+        if source.startswith("--", index):
+            while index < length and source[index] != "\n":
+                out[index] = " "
+                index += 1
+            continue
+        index += 1
+    return "".join(out)
+
+
 def parse_imports(source: str) -> tuple[str, ...]:
     """The modules a source file imports.
 
     Lean requires imports before any declaration, so the header is scanned and
-    abandoned at the first line that is not blank, a comment, or an import. A
-    regex over the whole file would find the word in a string literal and
-    invent a dependency that does not exist.
+    abandoned at the first line that is neither blank nor an import. Comments
+    are already gone by then; a regex over the raw file would find the word in
+    a string literal and invent a dependency that does not exist.
     """
     imports: list[str] = []
-    depth = 0
-    for line in source.splitlines():
+    for line in strip_comments(source).splitlines():
         text = line.strip()
-        while text:
-            if depth:
-                closing = text.find("-/")
-                if closing < 0:
-                    text = ""
-                    break
-                depth -= 1
-                text = text[closing + 2 :].strip()
-                continue
-            if text.startswith("/-"):
-                depth += 1
-                text = text[2:]
-                continue
-            break
-        if depth or not text or text.startswith("--"):
+        if not text:
             continue
         if not text.startswith("import "):
             break
-        # `import Basic -- shared definitions` is a legal header line. Matching
-        # the whole remainder would fail on the comment and stop reading the
-        # header, losing every import after it -- and an import Hardy cannot
-        # see is a dependency it will not rebuild.
-        rest = text.removeprefix("import ")
-        for opener in ("--", "/-"):
-            cut = rest.find(opener)
-            if cut >= 0:
-                rest = rest[:cut]
-        match = MODULE.fullmatch(rest.strip())
+        match = MODULE.fullmatch(text.removeprefix("import ").strip())
         if match is None:
             break
         imports.append(match.group())
@@ -130,7 +167,10 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
     # would let `section ... end` pop a namespace that is still open, and every
     # later declaration would then be recorded under a name Lean never gave it.
     scope: list[tuple[str, str | None]] = []
-    for line in source.splitlines():
+    # Comments first: Lean reads `/-- explanation -/ theorem result ...` as a
+    # declaration, and a scanner that saw the leading slash would miss it --
+    # so the theorem would never be recorded and never owe a writeup.
+    for line in strip_comments(source).splitlines():
         opening = NAMESPACE.match(line)
         if opening:
             scope.append(("namespace", opening.group(1)))

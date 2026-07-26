@@ -110,6 +110,63 @@ def test_a_partial_writeup_saves_with_an_advisory(tmp_path: Path):
     assert (tmp_path / "tex" / "writeup.tex").exists()
 
 
+def test_a_commented_out_label_does_not_release_the_ratchet(tmp_path: Path):
+    """`% \\label{thm:one}` is a placeholder, not a writeup: LaTeX never
+    creates that label and the document describes nothing."""
+    commented = "\\documentclass{article}\n\\begin{document}% \\label{thm:one}\n\\end{document}\n"
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "One.lean", "source": FIRST}),
+        call("record_name", {"formal_name": "hardyOne", "latex_name": "thm:one", "description": "One."}),
+        call("save_latex", {"source": commented}),
+        call("save_lean", {"path": "Two.lean", "source": SECOND}),
+        {"role": "assistant", "content": "Still blocked."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Comment out the label.")
+    assert results(tmp_path)[-1]["ok"] is False
+    assert not (tmp_path / "lean" / "Two.lean").exists()
+
+
+def test_an_escaped_percent_does_not_hide_a_real_label(tmp_path: Path):
+    escaped = "\\documentclass{article}\n\\begin{document}100\\% done \\label{thm:one}\n\\end{document}\n"
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "One.lean", "source": FIRST}),
+        call("record_name", {"formal_name": "hardyOne", "latex_name": "thm:one", "description": "One."}),
+        call("save_latex", {"source": escaped}),
+        call("save_lean", {"path": "Two.lean", "source": SECOND}),
+        {"role": "assistant", "content": "Released."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Use an escaped percent.")
+    assert all(item["ok"] for item in results(tmp_path)), results(tmp_path)
+
+
+def test_a_bare_name_shared_by_two_theorems_documents_neither(tmp_path: Path):
+    """`A.result` and `B.result` both answer to `result`. One label must not
+    cover both, or a theorem is reported as written up while nothing in the
+    document refers to it."""
+    first = "import Mathlib\nnamespace A\ntheorem result : True := by exact True.intro\nend A\n"
+    second = "import Mathlib\nnamespace B\ntheorem result : True := by exact True.intro\nend B\n"
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "A.lean", "source": first}),
+        call("record_name", {"formal_name": "result", "latex_name": "thm:one", "description": "A result."}),
+        call("save_latex", {"source": TEX}),
+        call("save_lean", {"path": "B.lean", "source": second}),
+        call("save_lean", {"path": "C.lean", "source": SECOND}),
+        {"role": "assistant", "content": "Blocked once ambiguous."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Share a leaf name.")
+    saved = results(tmp_path)
+    # B.lean saves: at that moment `result` names only A.result, so it is
+    # documented and the ratchet is open.
+    assert saved[3]["ok"] is True, saved
+    # Once both exist the bare name is ambiguous, so neither counts and the
+    # next new theorem is refused.
+    assert saved[4]["ok"] is False
+    assert not (tmp_path / "lean" / "C.lean").exists()
+
+
 def test_a_namespaced_theorem_is_documented_by_either_name(tmp_path: Path):
     source = "import Mathlib\nnamespace Hardy\ntheorem one : True := by exact True.intro\nend Hardy\n"
     runtime = FakeChatRuntime([
