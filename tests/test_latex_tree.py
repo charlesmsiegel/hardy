@@ -88,3 +88,30 @@ def test_the_pdf_lands_in_the_output_directory(tmp_path: Path):
     output = tmp_path / "workspace"
     assert LatexTools(COMMAND).check(FINE, output_dir=output).ok
     assert (output / "writeup.pdf").read_bytes() == b"%PDF-fake"
+
+
+def test_a_braced_mention_is_not_an_inclusion(tmp_path: Path):
+    r"""`{sections/one}` in a comment, or as another command's argument, means
+    nothing to TeX. Reading it as an inclusion would leave the fragment
+    uncompiled while reporting it as checked."""
+    tree = tmp_path / "tex"
+    (tree / "sections").mkdir(parents=True)
+    (tree / "sections" / "one.tex").write_text("Section one.\n", encoding="utf-8")
+    mentioned = (
+        "\\documentclass{article}\n"
+        "% see \\input{sections/one} for the argument\n"
+        "\\begin{document}\\index{sections/one}Body.\\end{document}\n"
+    )
+    (tree / "writeup.tex").write_text(mentioned, encoding="utf-8")
+    # The fragment is not really included, so it must be compiled on its own
+    # through a probe root -- and a broken one must fail.
+    broken = LatexTools(COMMAND).check("\\input{nowhere}\n", path="sections/one.tex", tree=tree)
+    assert not broken.ok
+
+
+def test_a_real_inclusion_is_recognised(tmp_path: Path):
+    tree = tmp_path / "tex"
+    (tree / "sections").mkdir(parents=True)
+    (tree / "sections" / "one.tex").write_text("Section one.\n", encoding="utf-8")
+    (tree / "writeup.tex").write_text(ROOT, encoding="utf-8")
+    assert LatexTools(COMMAND).check("Revised.\n", path="sections/one.tex", tree=tree).ok

@@ -220,6 +220,31 @@ def test_a_theorem_named_on_the_next_line_still_owes_a_writeup(tmp_path: Path):
     assert "hardySplit" in saved[1]["output"]
 
 
+def test_deleting_the_fragment_that_held_a_label_closes_the_ratchet_again(tmp_path: Path):
+    """The label index has to follow the deletion.
+
+    Otherwise the .aux keeps a label no remaining file provides, and the next
+    theorem is released on the strength of a writeup that is gone.
+    """
+    root = "\\documentclass{article}\n\\begin{document}Body.\\end{document}\n"
+    fragment = "Section one.\\label{thm:one}\n"
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "One.lean", "source": FIRST}),
+        call("record_name", {"formal_name": "hardyOne", "latex_name": "thm:one", "description": "One."}),
+        call("save_latex", {"source": root}),
+        call("save_latex", {"path": "sections/one.tex", "source": fragment}),
+        call("delete_file", {"path": "sections/one.tex"}),
+        call("save_lean", {"path": "Two.lean", "source": SECOND}),
+        {"role": "assistant", "content": "Blocked again."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Write up, then take it away.")
+    saved = results(tmp_path)
+    assert saved[4]["ok"] is True, "an unreferenced fragment can be deleted"
+    assert saved[5]["ok"] is False, "its label must no longer count"
+    assert not (tmp_path / "lean" / "Two.lean").exists()
+
+
 def test_a_namespaced_theorem_is_documented_by_either_name(tmp_path: Path):
     source = "import Mathlib\nnamespace Hardy\ntheorem one : True := by exact True.intro\nend Hardy\n"
     runtime = FakeChatRuntime([

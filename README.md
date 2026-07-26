@@ -157,7 +157,11 @@ fragments are `\input` from `writeup.tex` and are always compiled through it —
 so a split writeup is built fragment first, and `writeup.tex` is rewritten to
 include it afterwards, since a root referencing a file that does not exist yet
 will not compile. Deleting a fragment the root still includes is refused, as is
-deleting a Lean file another imports or one holding a registered name.
+deleting a Lean file another imports. Deleting a Lean file that holds a
+registered declaration *is* allowed — an undocumented result must always be
+abandonable — and the naming registry drops the mappings it stranded, recording
+that in `transcript.jsonl`, since losing a formal-to-writeup link is a change to
+the record of what was claimed.
 
 **Every `theorem` owes a writeup.** Before Hardy may save a file introducing a
 new theorem, each theorem already saved must be recorded with `record_name` and

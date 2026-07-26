@@ -197,3 +197,33 @@ def test_the_same_toolchain_still_reuses_the_build(tmp_path: Path):
     same = LeanWorkspace(space.root, space.build, space._compile, environment="lean-4.33.0")
     assert same.build_modules(["Basic"]) is None
     assert compiled == []
+
+
+def test_a_changed_external_module_invalidates_the_build(tmp_path: Path):
+    """An olean built against a local Lake module is only valid while that
+    module is. Pointing lean_project at your own project is documented, so
+    editing and rebuilding a module the workspace imports must not leave Hardy
+    reusing a cached artifact and reporting it as current."""
+    compiled: list[str] = []
+    stamps = {"Local": "first"}
+    base = workspace(tmp_path, compiled)
+    space = LeanWorkspace(base.root, base.build, base._compile, external=lambda name: stamps.get(name, "missing"))
+    write(space, "Main.lean", "import Local\ndef a := 1\n")
+    assert space.build_modules(["Main"]) is None
+    compiled.clear()
+    assert space.build_modules(["Main"]) is None
+    assert compiled == [], "an unchanged external must not force a rebuild"
+    stamps["Local"] = "second"
+    assert space.build_modules(["Main"]) is None
+    assert compiled == ["Main"]
+
+
+def test_mathlib_alone_does_not_churn_the_cache(tmp_path: Path):
+    compiled: list[str] = []
+    base = workspace(tmp_path, compiled)
+    space = LeanWorkspace(base.root, base.build, base._compile, external=lambda name: f"{name}:stable")
+    write(space, "Main.lean", "import Mathlib\ndef a := 1\n")
+    space.build_modules(["Main"])
+    compiled.clear()
+    assert space.build_modules(["Main"]) is None
+    assert compiled == []

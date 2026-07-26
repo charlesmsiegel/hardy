@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
@@ -176,11 +177,18 @@ class MathematicsSession:
         # The Lean tree and the writeup tree. Both are directories now: a
         # development outgrows one file, and so does the document about it.
         self.tex_root = workspace / TEX_DIR
+        self._lean_command = lean_command
+        self._lean_project = lean_project
+        # Resolved lazily and once: it costs a subprocess, and a session that
+        # never builds Lean should never pay for it.
+        self._search_path: tuple[Path, ...] | None = None
+        self._external_stamps: dict[str, str] = {}
         self.lean_workspace = LeanWorkspace(
             workspace / LEAN_DIR,
             workspace / BUILD_DIR,
             self._compile_module,
             environment=_toolchain_identity(lean_command, lean_project),
+            external=self._external_stamp,
         )
         self._migrate_layout()
         self._make_runtime = make_runtime
@@ -340,6 +348,66 @@ class MathematicsSession:
         """Build one workspace module, for `LeanWorkspace` to sequence."""
         result = self.lean.compile_module(source_root, build_root, source_file)
         return result.ok, result.output
+
+    def _lean_search_path(self) -> tuple[Path, ...]:
+        """Where Lean looks for the modules a workspace file imports.
+
+        Asked of Lake rather than assumed, because the answer includes Mathlib,
+        the toolchain, and any local library the configured project provides,
+        and only Lake knows where those are. Resolved once per session: it is a
+        subprocess, and the answer does not move while a session runs.
+        """
+        if self._search_path is not None:
+            return self._search_path
+        found: list[Path] = []
+        command = self._lean_command
+        # Only Lake can be asked this. Any other command -- a bare `lean`, or a
+        # stand-in under test -- would be handed arguments it does not
+        # understand, so the inherited variable is used instead.
+        if len(command) >= 2 and Path(command[0]).stem == "lake" and command[1] == "env":
+            try:
+                probe = subprocess.run(
+                    [command[0], "env", "printenv", "LEAN_PATH"],
+                    cwd=self._lean_project or Path.cwd(),
+                    capture_output=True, text=True, timeout=60, check=False,
+                )
+                if probe.returncode == 0:
+                    found = [Path(part) for part in probe.stdout.strip().split(os.pathsep) if part]
+            except (OSError, subprocess.SubprocessError):
+                found = []
+        if not found:
+            found = [Path(part) for part in os.environ.get("LEAN_PATH", "").split(os.pathsep) if part]
+        self._search_path = tuple(found)
+        return self._search_path
+
+    def _external_stamp(self, module: str) -> str:
+        """What the olean behind an import outside the workspace currently is.
+
+        Mixed into the build signature so a workspace file is rebuilt when a
+        module it imports from the configured Lake project is edited and
+        rebuilt. Without it Hardy would reuse an olean compiled against source
+        that has since changed and report the result as current -- and pointing
+        `lean_project` at your own project is a documented way to work.
+
+        Size and modification time rather than contents: Mathlib's oleans are
+        large, this runs per module per save, and either changing already means
+        it is not the artifact the cache was built against.
+        """
+        if module in self._external_stamps:
+            return self._external_stamps[module]
+        relative = PurePosixPath(*module.split(".")).with_suffix(".olean")
+        stamp = "missing"
+        for directory in self._lean_search_path():
+            candidate = directory / relative
+            try:
+                if candidate.is_file():
+                    found = candidate.stat()
+                    stamp = f"{candidate}:{found.st_size}:{found.st_mtime_ns}"
+                    break
+            except OSError:
+                continue
+        self._external_stamps[module] = stamp
+        return stamp
 
     def _migrate_layout(self) -> None:
         """Move a workspace written before the trees existed into them.
@@ -689,7 +757,10 @@ class MathematicsSession:
         root = self.tex_root / ROOT_DOCUMENT
         if root.is_file():
             checked = self.latex.check(
-                root.read_text(encoding="utf-8"), tree=self.tex_root, output_dir=self.workspace
+                root.read_text(encoding="utf-8"),
+                tree=self.tex_root,
+                output_dir=self.workspace,
+                aux_dir=self.workspace / BUILD_DIR_TEX,
             )
             if not checked.ok:
                 target.parent.mkdir(parents=True, exist_ok=True)

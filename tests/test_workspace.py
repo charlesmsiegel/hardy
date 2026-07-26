@@ -10,6 +10,7 @@ from hardy.workspace import (
     build_order,
     declarations,
     dependents,
+    external_imports,
     internal_imports,
     module_name,
     module_path,
@@ -241,3 +242,34 @@ def test_a_name_on_the_line_after_its_keyword_is_found():
 def test_a_split_declaration_is_attributed_to_its_keyword_scope():
     source = "namespace A\ntheorem\n  one : True := trivial\nend A\n"
     assert declarations(source)["theorem"] == ("A.one",)
+
+
+def test_an_escaped_declaration_name_is_recognised():
+    """`theorem «first result»` compiles -- verified against Lean 4.33.0-rc1 --
+    so a pattern that could not see it would let that theorem escape the
+    writeup gate entirely."""
+    assert declarations("theorem «first result» : True := by trivial\n")["theorem"] == (
+        "«first result»",
+    )
+    source = "namespace A\ntheorem «two words» : True := trivial\nend A\n"
+    assert declarations(source)["theorem"] == ("A.«two words»",)
+
+
+def test_a_module_header_and_public_import_carry_the_dependency():
+    """Lean's module system: `module` opens the file and `public import` is an
+    ordinary import. Both were ending the header scan, dropping the graph."""
+    assert parse_imports("module\npublic import Basic\nimport Mathlib\n") == (
+        "Basic",
+        "Mathlib",
+    )
+    assert parse_imports("module\nmeta import Basic\n") == ("Basic",)
+    assert parse_imports("public import Basic\n") == ("Basic",)
+
+
+def test_import_all_is_still_a_dependency():
+    assert parse_imports("module\npublic import all Basic\n") == ("Basic",)
+
+
+def test_external_imports_are_what_is_left_over():
+    assert external_imports(TREE["Main"], TREE) == ("Mathlib",)
+    assert external_imports(TREE["Basic"], TREE) == ("Mathlib",)
