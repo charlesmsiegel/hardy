@@ -92,6 +92,29 @@ cancellation and undo it, leaving the model running while the transcript said
 it had stopped. The shell therefore calls `session.stream` on the loop and
 hands only the iteration to the executor.
 
+Eagerness closes the window before the turn's own thread starts; it does not
+close the one inside it. Connecting the SDK client happens on that thread, so a
+cancellation landing while `_client` is still unpublished finds nothing to
+interrupt and can only set the flag. `_exchange` therefore reads it after
+publishing the client and before asking anything: without that, the turn goes on
+to consume a whole reply while the terminal and the transcript both call it
+stopped. A cancellation arriving after that line has a client and takes the
+ordinary path.
+
+The staged (`hardy prove`) path needs the same gate, for a sharper reason.
+`ProveWorkflow` calls `runtime.cancel(thread)` and then finalizes: it writes the
+terminal event and hashes the run directory. A tool call still running would
+write artifacts and trajectory events *after* they were recorded, leaving a
+manifest that does not describe the directory it names — and the runtime's
+teardown join is bounded at five seconds while a Lean check is not.
+`ClaudeStagedRuntime` therefore gates its dispatcher exactly as
+`MathematicsSession` does, and `cancel` takes the gate before returning: holding
+it is how the finalizing thread learns no tool is running. It then waits on the
+provider's own thread through `ClaudeAgentRuntime.settle`, which is what reports
+a finished call onward into the trajectory. The wait is bounded by the tools'
+own timeouts rather than by a guess, because interrupting a Lean or CAS
+subprocess is precisely what this section says Hardy will not do.
+
 Teardown has an ordering requirement of its own. A consumer that unwinds —
 Ctrl+C under `--plain` — closes the generator, and with `yield from` that
 teardown reaches the runtime first: it interrupts the model and then waits on
@@ -161,5 +184,11 @@ survive. The existing tests in `tests/tui/test_turns.py` and
   copy of the reply, not two; `cancel()` reaches `interrupt()`.
 - `tests/tui/test_stream.py` — wrapping across delta boundaries, no line
   rewritten, tail flushed.
-- `tests/tui/` — Esc cancels a turn; plain mode streams and still records an
-  abandoned turn on Ctrl+C.
+- `tests/tui/` — Esc cancels a turn; plain mode streams, keeps the words that
+  had already arrived when Ctrl+C lands mid-sentence, and still records an
+  abandoned turn.
+- `test_cancel_races.py` — one test per race, each confirmed to fail against the
+  implementation it was written against: the reset that undid a cancellation,
+  the tool waiting on the gate, plain-mode teardown ordering, the startup window
+  before there is a client to interrupt, and the staged run that finalized while
+  a tool was still working.

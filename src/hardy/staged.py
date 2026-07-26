@@ -13,6 +13,7 @@ the model reached it through.
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
@@ -30,6 +31,11 @@ from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS, STRUCTURE_INSTRU
 from .storage import RunStore
 
 T = TypeVar("T", bound=BaseModel)
+
+# What a tool call asked for after the run was cancelled gets back. An answer
+# rather than an exception, for the reason `_cas_tool` gives: a model handed a
+# traceback learns nothing it can act on.
+REFUSED = ToolResult(False, "the run was cancelled before this tool call was made")
 
 TOOLS = [
     {
@@ -116,6 +122,15 @@ class ClaudeStagedRuntime:
         self._cas = cas_runtime
         self._cas_directory = cas_directory
         self._threads: list[StagedThread] = []
+        # The SDK may call several tools at once, each on its own thread, but
+        # these share one Lean project directory and one CAS kernel. Holding
+        # this is also what "no tool is running" means, which is the boundary
+        # `cancel` waits for -- see `MathematicsSession._dispatch`, which gates
+        # the interactive path the same way and for the same reasons.
+        self._gate = threading.Lock()
+        # Set once for the whole run, not per stage: the only caller is
+        # `ProveWorkflow` tearing a run down, and there is no next stage.
+        self._cancelled = threading.Event()
 
     def start(self, *, model: str, run_dir: Path, claim: FrozenClaim | None) -> StagedThread:
         # Before a claim is approved there is nothing to check a proof against,
@@ -162,7 +177,7 @@ class ClaudeStagedRuntime:
         return ToolResult(False, f"unknown tool: {name}")
 
     def _dispatcher(self, lean_runtime: Any):
-        def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
+        def run(name: str, arguments: dict[str, Any]) -> ToolResult:
             if name in CAS_TOOL_NAMES:
                 return self._cas_dispatch(name, arguments)
             if lean_runtime is None:
@@ -194,6 +209,20 @@ class ClaudeStagedRuntime:
                 return ToolResult(False, f"invalid tool call: {error}")
             return ToolResult(getattr(result, "success", True), result.model_dump_json())
 
+        def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
+            # Checked before the gate: a cancelled run's queued calls must not
+            # first wait behind the Lean check that is still finishing.
+            if self._cancelled.is_set():
+                return REFUSED
+            with self._gate:
+                # And again, holding it. The SDK can launch several calls at
+                # once, so one can pass the check above, block here behind a
+                # Lean run taking minutes, and arrive long after the run was
+                # cancelled and its manifest hashed.
+                if self._cancelled.is_set():
+                    return REFUSED
+                return run(name, arguments)
+
         return dispatch
 
     def run_structured(
@@ -213,14 +242,38 @@ class ClaudeStagedRuntime:
         return self.run_structured(thread, "proof", prompt, ProofSubmission)
 
     def cancel(self, thread: StagedThread) -> None:
+        """Stop the run, and do not return until its work has actually stopped.
+
+        `ProveWorkflow` calls this and then finalizes: it writes the terminal
+        event and hashes everything in the run directory. So returning early is
+        not merely untidy -- a Lean check still running would go on to write
+        artifacts and trajectory events *after* they were recorded, leaving a
+        manifest that does not describe the directory it names.
+
+        The boundary is the documented one, the same as the interactive path's:
+        no further tool call runs, and one already inside a subprocess is left
+        to finish rather than torn out halfway.
+        """
+        self._cancelled.set()
         # There is a handle to interrupt now (issue #32): the runtime holds the
         # SDK client for the turn in flight and `cancel` is safe to call from
-        # any thread. The wall clock is still the backstop, not the mechanism.
-        # A runtime too old to be told to stop is left to its deadline rather
-        # than being an error here.
+        # any thread. A runtime too old to be told to stop is left to its
+        # deadline rather than being an error here.
         cancel = getattr(thread.runtime, "cancel", None)
         if cancel is not None:
             cancel()
+        # Taking the gate is how this thread learns that no tool is running.
+        # Bounded by the tools' own timeouts, not by a guess here: interrupting
+        # a Lean or CAS subprocess is exactly what the paragraph above says
+        # Hardy will not do.
+        with self._gate:
+            pass
+        # And then the provider's own thread, which is what reports a finished
+        # tool call onward into the trajectory. `settle` is bounded and its
+        # thread is a daemon; a runtime without one is simply left behind.
+        settle = getattr(thread.runtime, "settle", None)
+        if settle is not None:
+            settle()
 
     def close(self) -> None:
         # The workflow calls this in a `finally`; without it every staged run

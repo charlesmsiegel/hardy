@@ -6,6 +6,7 @@ The fakes here wear the SDK's class names because `_note` dispatches on them.
 from __future__ import annotations
 
 import asyncio
+import threading
 import types
 
 import pytest
@@ -107,10 +108,10 @@ class FakeClient:
             yield message
 
 
-def wired(messages, stall_after=None, after_interrupt=(), **kwargs):
+def wired(messages, stall_after=None, after_interrupt=(), client_class=FakeClient, **kwargs):
     """A runtime whose SDK is the fakes above."""
     live = runtime(**kwargs)
-    client = FakeClient(messages, stall_after, after_interrupt)
+    client = client_class(messages, stall_after, after_interrupt)
     live._options = lambda: None
     live._sdk = types.SimpleNamespace(ClaudeSDKClient=lambda options=None: client)
     return live, client
@@ -232,6 +233,42 @@ def test_a_cancelled_turn_is_not_reported_as_a_provider_error():
     assert events[-1].kind == "reply"
 
 
+def test_a_cancellation_during_startup_is_not_lost(tmp_path):
+    """Esc so soon after Enter that there is nothing yet to interrupt.
+
+    The SDK client is built on the turn's own thread, so `cancel` can arrive
+    while `_client` is still None -- all it can do then is set the flag. If the
+    startup path does not look at that flag, the turn goes on to ask the model
+    and consumes a full reply while the terminal and the transcript both say it
+    stopped.
+    """
+    reached = threading.Event()
+    proceed = threading.Event()
+
+    class Slow(FakeClient):
+        async def __aenter__(self):
+            reached.set()
+            # Off the loop: the flag is set by the test's thread, and blocking
+            # the loop here is what holds the turn inside its startup window.
+            await asyncio.to_thread(proceed.wait, 5)
+            return self
+
+    live, client = wired(
+        [StreamEvent("late"), AssistantMessage(TextBlock("late")), ResultMessage()],
+        client_class=Slow,
+    )
+    events = live.stream("go")
+    assert reached.wait(timeout=5), "the turn never reached its client"
+    live.cancel()
+    proceed.set()
+    drawn = list(events)
+
+    assert client.asked is None, "the model was asked after the turn was cancelled"
+    # Nothing to interrupt, and nothing said: the reply is empty rather than a
+    # whole answer to a question the user withdrew.
+    assert [(event.kind, event.text) for event in drawn] == [("reply", "")]
+
+
 def test_a_turn_does_not_start_cancelled():
     """`cancel` before a turn belongs to the turn it was aimed at, not the next
     one, so starting a stream clears it."""
@@ -252,6 +289,27 @@ def test_abandoning_the_stream_early_stops_the_model():
         if event.kind == "text":
             break
     assert client.interrupted
+
+
+def test_settle_reports_whether_the_turn_thread_really_ended():
+    """What a caller about to write down a run's results needs to know.
+
+    `cancel` promises the model stops; only this says the thread that was
+    running it -- and anything it had already dispatched -- is finished.
+    """
+    live, client = wired(
+        [StreamEvent("x"), AssistantMessage(TextBlock("x")), ResultMessage()],
+        stall_after=2,
+        after_interrupt=[ResultMessage(is_error=True, subtype="interrupted")],
+    )
+    assert live.settle() is True, "nothing has run, so there is nothing to wait for"
+    events = live.stream("go")
+    # The fake stalls until interrupted, so the thread is genuinely still going.
+    assert live.settle(timeout=0.05) is False
+    live.cancel()
+    list(events)
+    assert client.interrupted
+    assert live.settle() is True
 
 
 def test_partial_messages_are_actually_requested():

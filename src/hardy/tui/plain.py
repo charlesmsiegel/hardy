@@ -154,6 +154,13 @@ def run(
             # from the shell's ("user_pressed_escape", "forced_exit",
             # "app_exited"): this is `--plain`'s only way to abandon a turn.
             #
+            # Flushed first, and unconditionally. The painter holds the line it
+            # is still wrapping until nothing further can change it, so a turn
+            # cut off mid-sentence still has words in that tail -- words the
+            # model really did send. Returning without this drops them, which
+            # the ordinary failure path below is careful not to do.
+            for line in painter.finish():
+                out(line)
             # Cancelled as well as recorded, now that the runtime can be told
             # to stop -- otherwise the model would go on answering a question
             # this loop has already stopped reading.
