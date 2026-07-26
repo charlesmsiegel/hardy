@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import hashlib
 import json
 import os
@@ -14,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
-from . import cas_tools, catalog, claude_runtime, doctor
+from . import cas_tools, claude_runtime, doctor
 from . import config as configuration
 from .cas import CasError
 from .cas_export import export_session
@@ -22,21 +21,42 @@ from .chat import MathematicsSession
 from .lean import LeanTools
 from .models import Request
 from .runner import WARNING, run
+from .tui.ports import Choice
 
 
-def _confirm_assumption(proposal: dict[str, str]) -> bool:
-    print("\nHardy wants to introduce an assumption:")
-    print(f"  Informal: {proposal['informal_statement']}")
-    print(f"  Lean: axiom {proposal['formal_name']} : {proposal['lean_statement']}")
-    print(f"  Source: {proposal['source']}")
-    print(f"  Reason: {proposal['reason']}")
-    while True:
-        answer = input("Approve this explicit assumption? [y/N] ").strip().lower()
-        if answer in {"y", "yes"}:
-            return True
-        if answer in {"", "n", "no"}:
+def confirm_assumption(ui: Any) -> Callable[[dict[str, str]], bool]:
+    """The axiom gate, reached from an SDK tool thread.
+
+    `MathematicsSession` calls this synchronously from inside a tool call
+    (`chat.py`'s `_tool`, itself dispatched from whichever thread the SDK ran
+    the tool on), so it must not touch the terminal application directly --
+    it goes through `ui.from_thread`, which marshals the prompt onto the
+    event loop and blocks this thread for the answer. A decline still
+    hard-gates the assumption: `picked is None` (Esc, or the prompt could not
+    be shown at all) is treated exactly like an explicit "No", never as
+    approval. Every non-approval path returns `False`, including an
+    unexpected exception from `blocking` itself -- a bug in the prompting
+    path must not be able to fail this gate open.
+    """
+
+    def confirm(proposal: dict[str, str]) -> bool:
+        blocking = ui.from_thread
+        try:
+            blocking.write("Hardy wants to introduce an assumption:", style="warning")
+            blocking.write(f"  Informal: {proposal['informal_statement']}")
+            blocking.write(f"  Lean: axiom {proposal['formal_name']} : {proposal['lean_statement']}")
+            blocking.write(f"  Source: {proposal['source']}")
+            blocking.write(f"  Reason: {proposal['reason']}")
+            picked = blocking.choose(
+                f"Approve the assumption {proposal['formal_name']}?",
+                [Choice("no", "No, decline it"), Choice("yes", "Yes, approve it")],
+                current=0,
+            )
+        except Exception:  # noqa: BLE001 - every non-approval path is a decline, never a crash
             return False
-        print("Please answer y or n.")
+        return picked is not None and picked.value == "yes"
+
+    return confirm
 
 
 def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> configuration.Config:
@@ -62,62 +82,46 @@ def runtime_factory(default_model: str) -> Callable[..., Any]:
     return make
 
 
-def _show_models(config: configuration.Config, out: Callable[[str], None]) -> None:
-    current = (config.model or "").lower()
-    out("")
-    for number, entry in enumerate(catalog.available(), start=1):
-        mark = "*" if entry.identifier.lower() == current else " "
-        note = f"  {entry.note}" if entry.note else ""
-        out(f"  {mark} {number:>3}  {entry.identifier}{note}")
-    out("")
-    out("  * = current. All models run through your Claude Code subscription; any other identity can be typed in.")
+def _chat(config: configuration.Config, *, plain: bool = False) -> int:
+    from .tui import run_session
 
+    # Built once, here -- not inside `build` below -- because `run_session`
+    # can call its `session_factory` a second time (the interactive shell
+    # falling back to the plain session after failing to start) and a second
+    # kernel process is not what that fallback should cost. `finally` closes
+    # it exactly once regardless of which path `run_session` actually took,
+    # or how it ended.
+    cas, cas_detail = cas_tools.build_runtime(
+        backend_name=config.cas_backend,
+        command=config.cas_command,
+        limits=config.limits,
+        log_path=config.workspace / "cas" / "cells.jsonl",
+        cwd=config.workspace / "cas",
+    )
 
-def model_command(argument: str, config: configuration.Config, session: MathematicsSession | None, *, ask: Callable[[str], str] = input, out: Callable[[str], None] = print) -> configuration.Config:
-    """Handle `/model`, returning the configuration to use from here on.
+    def build(confirm: Callable[[dict[str, str]], bool]) -> MathematicsSession:
+        return MathematicsSession(
+            config.workspace,
+            runtime_factory(str(config.model)),
+            config.lean_command,
+            config.latex_command,
+            confirm,
+            lean_project=config.lean_project,
+            lean_timeout=config.lean_timeout,
+            cas=cas,
+            cas_detail=cas_detail,
+        )
 
-    Returns the configuration unchanged when the user backs out, so a failed
-    switch never leaves the session half-moved.
-    """
-    choice = argument.strip()
-    models = catalog.available()
-    if not choice:
-        _show_models(config, out)
-        try:
-            choice = ask(f"Model (number, identity, or blank to keep {config.model}): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            out("")
-            return config
-    if not choice:
-        return config
-    if choice.isdigit():
-        index = int(choice)
-        if not 1 <= index <= len(models):
-            out(f"No model number {index}.")
-            return config
-        choice = models[index - 1].identifier
-
-    entry = catalog.describe(choice)
-    if session is not None:
-        try:
-            session.switch_model(entry.identifier)
-        except RuntimeError as error:
-            out(f"{error} Model unchanged.")
-            return config
-    out(f"Model: {entry.identifier}")
-
-    updated = dataclasses.replace(config, model=entry.identifier)
-    destination = config.config_path
     try:
-        if ask(f"Save this as the default in {destination}? [y/N] ").strip().lower() in {"y", "yes"}:
-            configuration.write_setting(destination, "model", entry.identifier)
-            out(f"Saved to {destination}.")
-            updated = dataclasses.replace(updated, path=destination)
-    except (EOFError, KeyboardInterrupt):
-        out("")
-    except OSError as error:
-        out(f"Could not write {destination}: {error}")
-    return updated
+        return run_session(config, build, plain=plain)
+    finally:
+        # Not reached at all if a forced double-Ctrl+C exit inside the shell
+        # reaches `os._exit` -- that bypasses every `finally` in the process,
+        # not just this one. Accepted for the same reason a forced exit
+        # already leaves Lean/LaTeX subprocesses orphaned: the user was
+        # warned before pressing Ctrl+C a second time.
+        if cas is not None:
+            cas.session.close()
 
 
 def _read_block(ask: Callable[[str], str] = input) -> str:
@@ -190,45 +194,6 @@ def cas_command(
         out(f"CAS: {error}")
 
 
-def _chat(config: configuration.Config, parser: argparse.ArgumentParser) -> int:
-    cas, cas_detail = cas_tools.build_runtime(
-        backend_name=config.cas_backend,
-        command=config.cas_command,
-        limits=config.limits,
-        log_path=config.workspace / "cas" / "cells.jsonl",
-        cwd=config.workspace / "cas",
-    )
-    session = MathematicsSession(config.workspace, runtime_factory(str(config.model)), config.lean_command, config.latex_command, _confirm_assumption, lean_project=config.lean_project, lean_timeout=config.lean_timeout, cas=cas)
-    print("Hardy — interactive mathematics workspace")
-    print(f"Workspace: {config.workspace}    Model: {config.model}  (Claude Code subscription)")
-    print(f"Lean project: {config.lean_project or 'current directory'}")
-    print(f"Computer algebra: {cas_detail if cas else 'unavailable — ' + cas_detail}")
-    warning = f"WARNING: {WARNING} LaTeX is also executed without isolation."
-    print(warning + (" So are computer algebra cells." if cas else ""))
-    print("Type /model to change models, /cas to compute, and /exit to leave. Your transcript and artifacts are saved as you work.\n")
-    try:
-        while True:
-            try:
-                text = input("you> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                return 0
-            if text in {"/exit", "/quit"}:
-                return 0
-            if text == "/model" or text.startswith("/model "):
-                config = model_command(text[len("/model"):], config, session)
-                print()
-                continue
-            if text == "/cas" or text.startswith("/cas "):
-                cas_command(text[len("/cas"):], session)
-                print()
-                continue
-            if not text:
-                continue
-            print(f"hardy> {session.send(text)}\n")
-    finally:
-        if cas is not None:
-            cas.session.close()
 
 
 def _batch(args: argparse.Namespace, config: configuration.Config, parser: argparse.ArgumentParser) -> int:
@@ -640,6 +605,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lean-command", help=f"command that elaborates a Lean file (default {configuration.DEFAULT_LEAN_COMMAND!r})")
     parser.add_argument("--lean-project", type=Path, help="Lake project whose imports Lean should resolve")
     parser.add_argument("--latex-command", help=f"command that compiles a LaTeX file (default {configuration.DEFAULT_LATEX_COMMAND!r})")
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="use the line-based session with no terminal control",
+    )
     subparsers = parser.add_subparsers(dest="command")
     chat = subparsers.add_parser("chat", help="start or resume an interactive session")
     chat.add_argument("--workspace", type=Path, help=f"workspace directory (default {configuration.DEFAULT_WORKSPACE})")
@@ -683,7 +653,7 @@ def main() -> int:
     if args.command == "batch":
         return _batch(args, config, parser)
     # No subcommand is intentionally the primary interactive experience.
-    return _chat(config, parser)
+    return _chat(config, plain=args.plain)
 
 
 if __name__ == "__main__":

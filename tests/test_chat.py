@@ -303,3 +303,16 @@ def test_migration_ignores_events_that_carry_no_message(tmp_path: Path):
     )
     chat = session(tmp_path, FakeChatRuntime([]))
     assert "Earlier question." in chat.runtime.context["system_prompt"]
+
+
+def test_an_abandoned_turn_is_written_to_the_transcript(tmp_path: Path):
+    """A dim notice dies with the session; replay reads transcript.jsonl."""
+    conversation = session(tmp_path, FakeChatRuntime([]))
+    conversation.record_abandonment("user_pressed_escape")
+    events = [
+        json.loads(line)
+        for line in conversation.transcript_path.read_text(encoding="utf-8").splitlines()
+    ]
+    abandoned = [event for event in events if event.get("status") == "abandoned"]
+    assert abandoned and abandoned[-1]["reason"] == "user_pressed_escape"
+    assert abandoned[-1]["type"] == "turn"

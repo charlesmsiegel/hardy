@@ -56,7 +56,7 @@ Bring the interactive session to that standard on three axes:
 | Ambiguous prefix | No ghost text; Tab opens a completion menu over the matches |
 | `/model` row selection | Arrow keys move a `❯` pointer; number keys **1-9 only** select immediately; Enter selects; Esc cancels |
 | Unlisted model identities | An `Other…` row prompts for a literal identity, preserving today's escape hatch (`catalog.py:38`). An unlisted *current* model also gets its own row |
-| Newline in the input box | Alt+Enter always; Shift+Enter where the terminal reports it; a trailing `\` also continues |
+| Newline in the input box | **Shift+Enter**, plus a trailing `\`. No Alt+Enter — see below |
 | Not a TTY | Fall back to today's `input()`/`print()` loop, same command registry |
 | Asking the human anything | `Ui`'s prompting methods are coroutines; command handlers are `async` and await them on the live event loop |
 | Prompts raised from tool threads | `Ui.from_thread` is a sync facade using `run_coroutine_threadsafe`; the calling tool thread blocks for the answer |
@@ -266,13 +266,46 @@ today's `/model`-centric hint now that a registry exists to point at.
 │ > show that for all n : ℕ,                          │
 │   ∑ i in range n, i = n * (n - 1) / 2█              │
 ╰─────────────────────────────────────────────────────╯
-  / for commands · alt+enter for newline   claude-opus-5
+  / for commands · shift+enter for newline
 ```
 
-- The box grows with the input and reflows on resize.
+- **The box grows with the input up to a maximum, then scrolls with a
+  scrollbar.** It starts one line tall and grows as lines are added, so a short
+  claim gets a short box. Past the maximum it stops growing and scrolls
+  internally, keeping the cursor visible, with a scrollbar showing where in the
+  buffer you are. Without a cap, pasting a long Lean snippet would push the
+  transcript off the screen entirely.
+- **The maximum is `min(12, max(3, rows // 3))`** where `rows` is the terminal
+  height: about a third of the screen, never more than twelve lines, never
+  fewer than three. A fraction rather than a constant because an 80×24 terminal
+  and a tall one want different answers; the ceiling stops the box swallowing a
+  large screen; the floor keeps it usable on a small one. Because it is derived
+  from terminal height it must be **recomputed on resize**, not captured once.
+- **Newline is Shift+Enter, and making that work takes one deliberate step.**
+  `prompt_toolkit`'s sequence table maps `\x1b[27;2;13~` (Shift+Enter),
+  `\x1b[27;5;13~` and `\x1b[27;6;13~` all onto `Keys.ControlM` — the same key as
+  plain Enter (`input/ansi_escape_sequences.py:129-131`) — so out of the box the
+  library discards the distinction before any binding sees it. The shell extends
+  that table to route the Shift+Enter sequences to a key of their own and binds
+  newline to it. A trailing `\` also continues a line, and is the fallback in
+  terminals that never emit those sequences.
+- **Alt+Enter is deliberately not bound**, and dropping it buys something. At the
+  wire level Alt+Enter *is* Escape+Enter, so binding it forces the plain
+  `escape` binding to be non-eager, which opens a ~1.5 s ambiguous-key window
+  (`ttimeoutlen` 0.5 + `timeoutlen` 1.0). In that window Escape followed by `/`
+  is swallowed as Emacs `M-/` (`emacs.py:300`) — so pressing Esc and then quickly
+  typing `/status` loses the slash and submits `status`. With no Escape-prefixed
+  chord, `escape` is bound `eager=True`: Esc responds instantly and that
+  collision cannot occur.
 - The hint line is dim: keys on the left, active model on the right.
 - Below 40 columns the border is dropped for a bare `> ` prompt rather than
   wrapping a broken box.
+- **Resize must reflow the box without corrupting the transcript above it.**
+  Round one of the visual spike found this badly broken with a bordered
+  non-full-screen layout, and it is unfixed. Task 9 owns it, and it is bound up
+  with the maximum height above since that value changes on resize. If reflow
+  cannot be made correct with the border, the border is what goes — a bare `> `
+  prompt with a rule above it, as the sub-40-column case already does.
 - History is navigated with Up/Down **only when the buffer is a single line**;
   otherwise those keys move the cursor between lines. History persists to
   `<workspace>/input-history` through `FileHistory`.
@@ -611,6 +644,9 @@ hermetic.
 | **Nested prompting on the loop** | Drive bare `/model` end to end through piped keystrokes — row, then `Other…` line, then save confirmation — and assert all three prompts complete. This is the test that would have caught a synchronous handler |
 | Approval marshalling | Call the rebuilt `_confirm_assumption` from a worker thread against a running `AppSession`; assert the answer crosses back and neither thread deadlocks |
 | **The startup warning** | Assert the unsandboxed-execution text appears on **both** the TTY and plain startup paths |
+| **No outer render under a nested prompt** | `tests/tui/nested_render.py`'s `assert_no_outer_render_during_nested()`. Required coverage for every nested prompt — it is the only headless defence against a class that reached production through an implementer, a reviewer, and the controller |
+| **The box's growth and cap** | Pure test of the maximum at several terminal heights: 24 rows → 8, 9 rows → 3 (floor), 60 rows → 12 (ceiling). Then keystrokes asserting the box grows line by line and stops at the cap rather than growing without bound |
+| **Reflow on resize** | Change the reported terminal size between renders and assert the box's height follows the new cap, and that a resize while a prompt is open does not corrupt it |
 | **Unresolved commands never reach the model** | End-to-end: submit `/mo`, assert an error notice and that `session.send` was not called. A leading space must still send literal text |
 | **`/model` refused in flight** | With a turn in flight, submit `/model` and assert the runtime is unchanged. Silent failure otherwise — nothing crashes, the transcript just becomes false |
 | Plain mode | Piped stdin; assert the old behaviour and that `/model` still switches |
@@ -660,6 +696,138 @@ the prompt (`run_in_terminal`) and prompt against the raw terminal — uglier, a
 it interrupts the box, but single-reader and safe. What is *not* acceptable is
 either a synchronous handler blocking the loop or `_confirm_assumption` left as a
 bare `input()` competing with the application for stdin.
+
+### Task 1 spike findings (2026-07-25)
+
+The spike ran in two halves. `spike_terminal.py` (repo root) is the brief's
+original script — it needs a human at a real terminal and has **not** been
+run; see the instructions in `task-1-report.md` for how to run it on Windows
+Terminal and legacy `conhost.exe`. `spike_headless.py` (repo root) is the
+headless half, executed here, and is the one this subsection reports on.
+
+**Assumption 1 (screen model — bordered box over native scrollback):
+partly disproved. Round one of the visual half has been run.** Two failures
+are real, and two observations turned out to be defects in the throwaway spike
+script rather than in the design.
+
+Real:
+
+- **Reflow on resize is badly broken.** Resizing the window while the
+  non-full-screen `Application` runs corrupts the rendering. This is the
+  finding that most threatens the design as specified.
+- **Opening one nested selector inside another did nothing.** Note this test
+  was partly contaminated — one of the two paths exercised was the buggy one
+  below — so treat it as unproven rather than cleanly disproved.
+
+Not the design's fault, and already corrected in shipped code:
+
+- **The thread-driven selector's pointer rendered off by one** while the
+  on-loop selector was correct. `spike_terminal.py` round one built its
+  thread selector with no explicit `input=`/`output=` — exactly the pattern
+  the headless half had already proven breaks across a thread boundary. It
+  predicted a silent misrender rather than an exception on a real terminal,
+  and that is what happened. This is a **confirmation** of the correction now
+  carried as a global constraint, and `select.py:89-90` already passes both
+  through.
+- **Enter inserted a newline instead of submitting.** Round one bound no
+  `enter` handler and used `TextArea(multiline=True)`, so a newline was
+  correct for that script.
+
+Still open, because round one never tested it: whether output printed *while*
+the application runs lands above the box, leaving the box at the bottom of the
+content. A non-full-screen application draws at the cursor, so the box
+scrolling when the user scrolls the terminal is expected — Claude Code behaves
+the same way. What matters is where new output goes. Round two of the spike
+instruments this with a ticker.
+
+**Assumption 2 (prompting while an `Application` is already running):
+confirmed on `prompt_toolkit==3.0.52`, headlessly, via
+`create_pipe_input()` + `Vt100_Output(StringIO(), lambda: Size(...))`, on
+Windows (Git Bash over MSYS2). Both directions hold, and so does the
+overlap case:
+
+- *On the loop* — a nested `Application.run_async()` awaited from inside an
+  `async def` key binding of a running outer `Application` returns its
+  result, and the outer application keeps taking keys afterward. Confirmed
+  exactly as the brief's idiom describes.
+- *From off the loop* — `asyncio.run_coroutine_threadsafe(coro, app.loop)`
+  from a plain `threading.Thread` reaches the nested application and returns
+  its result via `future.result()`, without deadlocking. **With one load-bearing
+  correction, below.**
+- *Overlapping* — opening a nested selector from a key binding and then, while
+  it is still open, having a thread schedule a second nested selector on the
+  same input/output did **not** deadlock and did **not** corrupt either
+  result: each selector consumed its own `Enter` and returned the row it was
+  sent, in the order the keys arrived. `prompt_toolkit` appears to serialize
+  the two rather than let them race — evidence, not a documented guarantee,
+  so later tasks should still avoid relying on true concurrency between two
+  nested applications and treat this as "safe, not simultaneous."
+- `patch_stdout()` stayed active for the whole run; a plain `print()` called
+  from inside a synchronous key binding did not raise and its text reached
+  the captured output stream, with the application resuming normally
+  afterward.
+- An `async def` handler bound with `@keys.add("enter")` is awaited by
+  `prompt_toolkit` to actual completion — a two-step coroutine (`sleep` then
+  exit) ran both steps in order before `run_async()` returned. It is not
+  fired-and-forgotten.
+
+**The one correction to the brief's idioms:** the brief's code relies on the
+*ambient* application session — a nested `Application()` built without
+`input=`/`output=` inherits them from whatever `create_app_session()` (or the
+process default) is current. That inheritance reads `contextvars`, and
+`contextvars.Context` **does not propagate across `threading.Thread`
+boundaries** — and, more subtly, `asyncio.run_coroutine_threadsafe` /
+`loop.call_soon_threadsafe` captures `contextvars.copy_context()` from the
+**calling** (worker) thread at the moment it is invoked, not the target
+loop's ambient context, even though the coroutine body itself later executes
+on the loop's thread. The spike reproduced this exactly: a nested
+`Application()` built inside a coroutine scheduled from a worker thread,
+relying on ambient session lookup, raised
+`prompt_toolkit.output.win32.NoConsoleScreenBufferError` trying to build a
+*real* console output instead of picking up the test's `Vt100_Output`. On a
+real terminal this would not raise — it would silently attach to the process's
+actual stdio instead of the intended input/output, which is worse. **Fix,
+confirmed to work:** pass `input=` and `output=` explicitly to every
+`Application(...)` that might be constructed from a foreign-thread-scheduled
+coroutine, rather than relying on `create_app_session()` ambient inheritance.
+`PromptToolkitUi` must therefore hold explicit references to its `input`/
+`output` objects and pass them to every nested `Application` it builds,
+whether from a key binding or from `from_thread`.
+
+**Confirmed API idioms (all on `prompt_toolkit==3.0.52`):**
+
+| Idiom | Status | Notes |
+|---|---|---|
+| `Application(layout=..., key_bindings=..., full_screen=False)` | Confirmed | As in the brief |
+| `Application(..., erase_when_done=True, input=, output=)` | Confirmed | All four accepted together |
+| `await nested_app.run_async()` inside an `async def` key binding | Confirmed | Outer app resumes afterward |
+| `asyncio.run_coroutine_threadsafe(coro, app.loop)` from a worker thread | Confirmed, **with the input=/output= correction above** | Do not rely on ambient `create_app_session()` for the nested `Application`; pass `input=`/`output=` explicitly |
+| `Application.loop` | Confirmed to exist, but **only while running** | Set to `None` at construction, assigned the running loop for the duration of `run_async()`, reset to `None` on exit. Reading it before the app starts or after it returns is `None`. Capture it from inside the app (e.g. at the top of the run, or from a key binding) rather than from the constructor |
+| `create_pipe_input()` | Confirmed, **context manager only** | `with create_pipe_input() as p:` — as of 3.0.28 it no longer returns a bare `PipeInput` |
+| `Vt100_Output(stream, get_size)` | Confirmed | Signature is `Vt100_Output(stdout, get_size, term=None, default_color_depth=None, enable_bell=True, enable_cpr=True)`; `get_size` is a zero-arg callable returning `data_structures.Size` |
+| `prompt_toolkit.application.create_app_session(input=, output=)` | Confirmed to exist and work | But see the threading correction — it does not help a coroutine scheduled from another thread |
+| `patch_stdout()` active during `app.run()`/`run_async()`, `print()` inside a key binding | Confirmed | No corruption observed; text reaches the output |
+| `@keys.add("enter")` on an `async def` | Confirmed | Awaited to completion by `prompt_toolkit`, not fire-and-forget |
+| `Frame(body)`, `TextArea(multiline=, wrap_lines=, prompt=, history=, auto_suggest=, completer=, complete_while_typing=)` | Confirmed | All listed kwargs accepted |
+| `AutoSuggest.get_suggestion(buffer, document) -> Suggestion(text) \| None` | Confirmed | Shape matches exactly |
+| `Completer.get_completions(document, complete_event) -> Iterable[Completion]`, `Completion(text, start_position=, display_meta=)` | Confirmed | Shape matches; `Completion` additionally accepts `display=`, `style=`, `selected_style=` |
+| `Style.from_dict({...})`, `.style_rules` | Confirmed | `style_rules` is a `list[tuple[str, str]]` of the rules as given |
+| `class:select.row.current` dotted style classes | Confirmed | Resolves via exact match on the full dotted class; a rule for `select.row` alone does not also apply to `select.row.current` — each dotted class is its own key, not a prefix match |
+| Binding both `@keys.add("escape", eager=True)` and `@keys.add("escape", "enter")` in one `KeyBindings` | **Behaves differently from a naive reading — matters for Esc/save-confirm flows** | `eager=True` on the one-key binding makes it fire **immediately** on Escape and **shadows** the two-key sequence outright: sending `Escape` then `Enter` back-to-back still only ever fires `escape-alone` twice, never `escape-enter`. Removing `eager=True` from the one-key binding restores correct disambiguation: a lone `Escape` (followed by a pause past `prompt_toolkit`'s ambiguous-key timeout) fires `escape-alone`, while `Escape` immediately followed by `Enter` fires `escape-enter`. **Any handler that wants a plain `Escape` and a chorded `Escape`-prefixed sequence to coexist must not mark the plain `Escape` binding eager.** |
+
+The escape/escape-enter finding matters beyond a style note: the design's
+`select.py` cancels on Esc, and if a later task ever wants an
+`Escape`-prefixed chord (e.g. `Escape, Enter` as a distinct action) alongside
+a plain-Esc cancel, marking plain Esc `eager=True` — which the brief's own
+`spike_terminal.py` example does, for the unrelated reason of cancelling
+without waiting on the ambiguous-key timeout — would silently make the chord
+unreachable. If a future task needs both, it must accept the timeout latency
+on plain Esc instead of using `eager=True`, or bind the chord under a
+different prefix key.
+
+Full evidence, including the executed output of every assertion above and the
+raw traceback that reproduced the threading trap, is in
+`.superpowers/sdd/2026-07-25-tui-improvements/task-1-report.md`.
 
 ## Companion changes
 

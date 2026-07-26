@@ -12,17 +12,23 @@ requires-python = ">=3.11"
 # which is a separate install (npm install -g @anthropic-ai/claude-code).
 # Pydantic carries the frozen run values Hardy writes to disk, `mcp` serves
 # the bounded Lean tools to clients other than the in-process agent SDK, and
-# Jinja renders the prompt templates in hardy/prompts.
+# Jinja renders the prompt templates in hardy/prompts. prompt-toolkit is
+# capped below its next minor: hardy/tui/shell.py and select.py patch five of
+# its private internals (ANSI_SEQUENCES, _IS_PREFIX_OF_LONGER_MATCH_CACHE,
+# Application._on_resize, Application._running_in_terminal, and
+# Window.render_info), and only the resize guard has a test that would
+# notice one of those breaking underneath an upgrade.
 dependencies = [
     "claude-agent-sdk>=0.2",
     "pydantic>=2.9",
     "mcp>=1.28",
     "jinja2>=3.1",
+    "prompt-toolkit>=3.0.50,<3.1",
     "sympy>=1.14.0",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+test = ["pytest>=8", "pytest-asyncio>=0.24"]
 # The Codex backend is optional: Hardy runs on the Claude backend alone, and
 # only a ChatGPT-subscription user needs this SDK installed.
 codex = ["openai-codex>=0.144"]
@@ -37,6 +43,7 @@ packages = ["src/hardy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 markers = [
     "real_toolchain: invokes a real installed binary — pinned Lean, Tectonic, Singular, or Macaulay2",
     "live: invokes a billable model or installer",

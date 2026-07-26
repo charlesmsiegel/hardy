@@ -161,7 +161,45 @@ with `cas_backend` (`sympy`, `singular`, or `macaulay2`) and point `cas_command`
 at the executable when it is not on `PATH`; `hardy doctor` starts the kernel and
 reports its version, treating a named non-default backend as required and the
 built-in SymPy as advisory. Cells are executed without isolation, like Lean and
-LaTeX.
+LaTeX — the session's opening banner says which backend is live (or why none
+is) and extends the unsandboxed-execution warning to name computer algebra
+cells whenever one is.
+
+### The interactive session
+
+Running `hardy` with no subcommand (or `hardy chat`) opens a real terminal
+session when stdin and stdout are both a TTY: a short rule naming the current
+model, a bare `> ` prompt, and a one-line hint underneath — not a bordered
+input box. An earlier design called for one; resizing a non-full-screen
+`prompt_toolkit` application above a bordered frame turned out to corrupt the
+screen on a narrowing resize, so every row of chrome here stays at or under
+38 columns instead, which is what keeps a resize safe.
+
+Slash commands: `/help` lists them, `/model` opens a selector to switch the
+live model (arrow keys or a row number, Enter to choose, Esc to cancel),
+`/cas` reaches the same persistent kernel described above (`/cas <source>`,
+a bare `/cas` for a multi-line block ended by `/end`, `/cas state`, `/cas
+reset`, `/cas export`) but is refused while a turn is running, since it is
+the same locked kernel a model tool call may already be using, `/status`
+shows the workspace/model/paths, `/doctor` checks Lean, LaTeX, computer
+algebra, and the model, `/clear` clears the screen (nothing on disk is
+touched), and `/exit` (or `/quit`, or Ctrl+D) leaves.
+
+Typing `/` shows a dim inline suggestion for the rest of a likely command as
+you type it; Tab accepts it. Enter submits; to write a second line without
+submitting, press Shift+Enter — a terminal that does not send that sequence
+can end a line with a trailing `\` instead. Esc does **not** cancel an
+in-flight turn: the call keeps running in the background (it may already be
+running Lean, LaTeX, or a computer algebra cell), and its reply still
+prints, tagged as having arrived after you stopped waiting, once it lands.
+Ctrl+C once, while a turn is running, only warns; a second Ctrl+C leaves at
+once, at the cost of whatever that turn was still doing.
+
+Without a TTY on both ends — a pipe, `TERM=dumb`, `HARDY_PLAIN=1`, or
+`--plain` — Hardy runs the same commands and the same banner through a
+line-based session instead, with no ghost text or selectors. If the real
+terminal session cannot start at all, Hardy falls back to that line-based
+session automatically rather than ending the run.
 
 Use `hardy chat --workspace path` to select a workspace. A staged run is
 `hardy prove "every prime above two is odd"`, and its artifacts — request,
