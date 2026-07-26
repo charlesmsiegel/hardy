@@ -299,7 +299,7 @@ class LeanWorkspace:
         return None
 
     def stage(
-        self, relative: PurePosixPath, source: str | None
+        self, relative: PurePosixPath, source: str | None, compile: Compile | None = None
     ) -> tuple[LeanWorkspace, Callable[[], None]]:
         """A copy of this workspace carrying one edit, and a way to keep it.
 
@@ -307,7 +307,9 @@ class LeanWorkspace:
         workspace red, so the edit is built somewhere else first and only
         copied back once everything depending on it still compiles. `source` of
         None stages a deletion. The caller drops the shadow either way, with
-        `discard`.
+        `discard`. `compile` overrides how the shadow builds, which is how a
+        caller keeps what Lean said about each module -- the build itself
+        reports only which module failed, not what a successful one printed.
         """
         temporary = Path(tempfile.mkdtemp(prefix="hardy-workspace-"))
         shadow_root = temporary / "lean"
@@ -326,7 +328,7 @@ class LeanWorkspace:
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(source, encoding="utf-8")
-        shadow = LeanWorkspace(shadow_root, shadow_build, self._compile)
+        shadow = LeanWorkspace(shadow_root, shadow_build, compile or self._compile)
 
         def commit() -> None:
             self.root.mkdir(parents=True, exist_ok=True)
