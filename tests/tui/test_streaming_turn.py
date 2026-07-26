@@ -91,6 +91,27 @@ def test_tool_calls_are_drawn_at_both_ends_and_kept_off_the_prose(settings):
     )
 
 
+def test_ctrl_c_keeps_the_words_that_had_already_arrived(settings):
+    """`--plain` runs the turn on its only thread, so Ctrl+C lands mid-sentence.
+
+    The painter holds the line it is still wrapping until nothing further can
+    change it. Returning without flushing it drops text the model really did
+    send -- which the ordinary failure path is careful not to do.
+    """
+
+    class Interrupted(StreamingSession):
+        def stream(self, text: str):
+            self.asked.append(text)
+            # No newline: the line is unfinished, so it is still in the tail.
+            yield TurnEvent("text", text="The kernel accepted")
+            raise KeyboardInterrupt
+
+    session = Interrupted([])
+    written = run_plain(settings, session, ["prove it"])
+    assert "The kernel accepted" in written
+    assert session.cancelled == ["keyboard_interrupt"]
+
+
 def test_a_failed_tool_call_is_drawn_as_failed(settings):
     session = StreamingSession(
         [

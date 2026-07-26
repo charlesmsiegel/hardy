@@ -160,6 +160,7 @@ class ClaudeAgentRuntime:
         self._cancelled = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._client: Any | None = None
+        self._worker: threading.Thread | None = None
         # Tool-use id -> bare name, so a completed call can be named when the
         # SDK reports it back by id alone.
         self._called: dict[str, str] = {}
@@ -242,6 +243,7 @@ class ClaudeAgentRuntime:
                 outbox.put(_FINISHED)
 
         worker = threading.Thread(target=pump, name="hardy-turn", daemon=True)
+        self._worker = worker
         worker.start()
         return self._consume(outbox, worker)
 
@@ -280,6 +282,24 @@ class ClaudeAgentRuntime:
         with contextlib.suppress(RuntimeError):
             asyncio.run_coroutine_threadsafe(client.interrupt(), loop)
 
+    def settle(self, timeout: float = TEARDOWN_SECONDS) -> bool:
+        """Wait for the turn's thread to end. True if it did.
+
+        `cancel` promises that the model stops; this is how a caller learns
+        that the thread which was running it has actually finished, along with
+        anything it had already reported. A caller about to write down what a
+        run produced -- `ProveWorkflow`, finalizing a manifest -- needs that
+        boundary and not only the promise that nothing new will start.
+
+        Bounded, and returning whether the wait was enough: the thread is a
+        daemon, so a caller is entitled to give up on it and say so.
+        """
+        worker = self._worker
+        if worker is None or worker is threading.current_thread():
+            return True
+        worker.join(timeout)
+        return not worker.is_alive()
+
     async def _within_budget(self, text: str, outbox: queue.Queue) -> None:
         """The wall clock is Hardy's to keep even when the loop is not.
 
@@ -304,10 +324,19 @@ class ClaudeAgentRuntime:
             # it from another thread and must never find a half-built one.
             self._client = client
             try:
-                await client.query(text)
-                async for message in client.receive_response():
-                    for event in self._note(message, spoken):
-                        outbox.put(event)
+                # Read after publishing the client, and before asking anything.
+                # Esc can land in the same input batch as the Enter that began
+                # the turn, while connecting is still in progress -- `cancel`
+                # then finds no client to interrupt and can only set this flag.
+                # Honouring it here is what makes that window a real
+                # cancellation instead of a full turn the record calls stopped.
+                # A cancellation arriving *after* this line has a client, so it
+                # interrupts by the ordinary path.
+                if not self._cancelled:
+                    await client.query(text)
+                    async for message in client.receive_response():
+                        for event in self._note(message, spoken):
+                            outbox.put(event)
             finally:
                 self._client = None
         reply = "\n\n".join(spoken).strip()
