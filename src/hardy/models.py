@@ -33,6 +33,24 @@ class ToolResult:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class TurnEvent:
+    """One thing that happened while a turn was in flight.
+
+    `text` events are *deltas*, for drawing only. The reply a caller keeps is
+    the `reply` event's text, assembled from whole blocks -- see
+    `claude_runtime._deltas` for why consuming both would double every answer.
+    """
+
+    kind: str                    # text | thinking | tool_use | tool_result | reply
+    text: str = ""               # a delta for `text`; the whole reply for `reply`
+    name: str = ""               # the tool, for tool_use and tool_result
+    ok: bool | None = None       # how a tool call came out, for tool_result
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass
 class RunResult:
     terminal_reason: str
