@@ -156,3 +156,31 @@ def test_the_prompt_set_hash_covers_the_template_files():
     payload = prompts._prompt_set_payload()
     assert payload["proof"] == prompts.source("staged/proof")
     assert payload["version"] == prompts.PROMPT_SET_VERSION
+
+
+def test_the_chat_prompt_describes_the_file_tree():
+    prompts = importlib.import_module("hardy.prompts")
+    text = prompts.render("chat")
+    assert "path" in text
+    # The module naming rule has to be shown, not implied.
+    assert "Group.Sylow" in text
+    assert r"\input" in text
+
+
+def test_the_chat_prompt_states_the_writeup_ratchet_and_its_exemption():
+    """A model that meets the gate by surprise wastes a turn discovering it."""
+    prompts = importlib.import_module("hardy.prompts")
+    text = prompts.render("chat")
+    assert "owes a writeup" in text
+    assert "record_name" in text and r"\label" in text
+    for exempt in ("lemma", "def", "instance"):
+        assert exempt in text
+
+
+def test_the_chat_prompt_no_longer_treats_the_writeup_as_running_ahead():
+    """The old paragraph forbade unprompted work in terms that read as
+    forbidding the writeup, which is why writeups stopped being produced."""
+    prompts = importlib.import_module("hardy.prompts")
+    text = prompts.render("chat")
+    assert "refactor the file" not in text
+    assert "not running ahead" in text

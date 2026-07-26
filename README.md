@@ -140,15 +140,35 @@ mode.
 
 ## Use
 
-The default `.hardy/` workspace contains `Main.lean`, `writeup.tex`, compiled
-`writeup.pdf`, `session.json`, and an append-only `transcript.jsonl`. The manifest
-links Lean declaration names to LaTeX labels and records every user-approved
-assumption, exact Lean statement, informal rendering, reason, and source. Hardy
-must ask before adding an assumption; declining it does not widen the formal trust
-base. Imports in `Main.lean` resolve through the configured `lean_project`, which
-the installer points at the shared Mathlib project; set it to your own Lake
-project — in the config file or with `--lean-project` — to import your own Lean
-modules. Without it, Lean runs in the current directory as before.
+The default `.hardy/` workspace contains a Lean tree under `lean/`, a writeup
+tree under `tex/` rooted at `writeup.tex`, the compiled `writeup.pdf`,
+`session.json`, and an append-only `transcript.jsonl`. A workspace written
+before the trees existed is migrated into them the next time it is opened.
+
+Both trees hold as many files as the work needs. A Lean file's path is its
+module name — `lean/Group/Sylow.lean` is `import Group.Sylow` — so a development
+can be split and its pieces can import each other. Hardy compiles each file to
+an olean under `.hardy/.build/lean/` and puts that directory on `LEAN_PATH`
+beside Mathlib's, which is what makes the imports resolve; `lake env` augments
+that variable rather than replacing it, so no shared `lakefile.toml` is touched.
+Saving a file rebuilds everything that imports it and is refused whole if any of
+them breaks, so a save can never leave the workspace uncompilable. LaTeX
+fragments are `\input` from `writeup.tex` and are always compiled through it.
+
+**Every `theorem` owes a writeup.** Before Hardy may save a file introducing a
+new theorem, each theorem already saved must be recorded with `record_name` and
+carry a matching `\label` somewhere in the writeup tree. `lemma`, `def`, and
+`instance` are exempt, so scaffolding stays free — the rule is that anything
+reported as a result is stated as a `theorem`. Repairing, restating, or deleting
+an undocumented theorem is always allowed; only *adding* a new one is gated.
+
+The manifest links Lean declaration names to LaTeX labels and records every
+user-approved assumption, exact Lean statement, informal rendering, reason, and
+source. Hardy must ask before adding an assumption; declining it does not widen
+the formal trust base. Imports resolve through the configured `lean_project`,
+which the installer points at the shared Mathlib project; set it to your own
+Lake project — in the config file or with `--lean-project` — to import your own
+Lean modules. Without it, Lean runs in the current directory as before.
 
 Computer algebra artifacts live under `.hardy/cas/`: an append-only
 `cells.jsonl` recording every cell and who ran it, and, once exported,

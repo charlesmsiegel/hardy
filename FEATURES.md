@@ -11,6 +11,21 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   rather than requiring a prewritten theorem request.
 - **Now (implemented):** the agent can check and save Lean, compile and save LaTeX,
   read its workspace, and resume from a durable manifest and transcript.
+- **Now (implemented):** both artifacts are trees, not single files. Lean sources
+  live under `lean/` where a file's path is its module name, so a development can
+  be split and its pieces can import each other; Hardy builds each to an olean and
+  puts that directory on `LEAN_PATH` beside Mathlib's. Saving rebuilds every file
+  that imports the one edited and is refused whole if any of them breaks, so the
+  workspace is never left uncompilable. LaTeX fragments are `\input` from
+  `writeup.tex` and compiled through it. `read_workspace` lists the tree,
+  `read_file` fetches one file, and `delete_file` removes one that nothing imports.
+- **Now (implemented):** a `theorem` cannot be accumulated without a writeup. Saving
+  a file that introduces a new theorem is refused while an already-saved theorem has
+  no `record_name` entry and no matching `\label` in the writeup tree. `lemma`,
+  `def`, and `instance` are exempt, so scaffolding is free; repairing or deleting an
+  undocumented theorem is always allowed, and only adding another is gated. This
+  replaces an arrangement in which the writeup was optional and, in practice,
+  usually absent.
 - **Now (implemented):** a naming registry links Lean declarations to LaTeX labels
   for later translation review; this link is not itself a faithfulness grade.
 - **Now (implemented):** introducing an axiom pauses for human approval and records
