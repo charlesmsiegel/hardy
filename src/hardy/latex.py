@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -12,18 +13,50 @@ from .models import ToolResult
 # compiler is ever pointed at.
 ROOT_DOCUMENT = "writeup.tex"
 BODY = "\\begin{document}"
+INCLUSION = re.compile(r"\\(?:input|include|subfile)\s*\{([^}]*)\}")
+
+
+def _uncommented(source: str) -> str:
+    r"""`source` with its TeX comments dropped.
+
+    A `%` opens a comment unless escaped as `\%`, and the backslash before it
+    may itself be escaped -- so the run of backslashes is counted rather than
+    the single character before the marker.
+    """
+    kept = []
+    for line in source.splitlines():
+        cut = 0
+        while True:
+            found = line.find("%", cut)
+            if found < 0:
+                kept.append(line)
+                break
+            run = len(line[:found]) - len(line[:found].rstrip("\\"))
+            if run % 2 == 0:
+                kept.append(line[:found])
+                break
+            cut = found + 1
+    return "\n".join(kept)
 
 
 def _includes(root: str, path: str) -> bool:
-    r"""Whether `root` already pulls `path` in.
+    r"""Whether `root` actually pulls `path` in.
 
-    TeX lets the extension be dropped, and either separator is accepted on the
-    platforms this runs on, so both spellings are looked for.
+    An `\input` command, not merely the text `{sections/one}` appearing
+    somewhere: in a comment, or as an argument to an unrelated command, that
+    text means nothing to TeX, and treating it as an inclusion would leave the
+    fragment uncompiled while reporting it as checked. TeX lets the extension
+    be dropped, and either separator reaches the same file here, so all the
+    spellings are compared.
     """
     stem = path[: -len(".tex")] if path.endswith(".tex") else path
-    return any(
-        f"{{{name}}}" in root
+    wanted = {
+        name.replace("\\", "/")
         for name in (path, stem, path.replace("/", "\\"), stem.replace("/", "\\"))
+    }
+    return any(
+        found.strip().replace("\\", "/") in wanted
+        for found in INCLUSION.findall(_uncommented(root))
     )
 
 

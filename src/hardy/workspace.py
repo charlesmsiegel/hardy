@@ -26,21 +26,33 @@ from .domain import FrozenModel
 # never appeared in the listing and never owed a writeup. `[^\W\d]` is "any
 # letter or underscore" under Python's Unicode-aware `\w`.
 IDENTIFIER = r"[^\W\d][\w'!?]*"
+# `theorem «first result»` is a valid declaration: Lean lets guillemets quote a
+# name containing anything, spaces included. A pattern that could not see one
+# would leave that theorem out of the listing, so it would never owe a writeup.
+ESCAPED = r"«[^»\n]+»"
+ANY_NAME = rf"(?:{IDENTIFIER}|{ESCAPED})"
 QUALIFIED = rf"{IDENTIFIER}(?:\.{IDENTIFIER})*"
+QUALIFIED_NAME = rf"{ANY_NAME}(?:\.{ANY_NAME})*"
 
+# Module and path components stay unescaped: they are file names on disk, and a
+# guillemet in one is not something to invite.
 COMPONENT = re.compile(IDENTIFIER)
 MODULE = re.compile(QUALIFIED)
+# Lean's module system spells an import `public import X` or `meta import X`,
+# and opens such a file with `module`. Neither ends the header.
+IMPORT_PREFIX = re.compile(r"^(?:(?:public|meta|private|protected)\s+)*")
+HEADER_KEYWORDS = frozenset({"prelude", "module"})
 # Scanned over the whole source rather than line by line, because Lean allows a
 # newline between the keyword and the name and a line-oriented match would lose
 # the declaration entirely.
 DECLARATION = re.compile(
     rf"(?m)^[ \t]*(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|nonrec|noncomputable)\s+)*"
-    rf"(theorem|lemma)\s+({QUALIFIED})"
+    rf"(theorem|lemma)\s+({QUALIFIED_NAME})"
 )
-NAMESPACE = re.compile(rf"^\s*namespace\s+({QUALIFIED})\s*$")
+NAMESPACE = re.compile(rf"^\s*namespace\s+({QUALIFIED_NAME})\s*$")
 # `section` may be anonymous, and `end` may be bare -- both are ordinary Lean.
-SECTION = re.compile(rf"^\s*section(?:\s+({QUALIFIED}))?\s*$")
-END = re.compile(rf"^\s*end(?:\s+({QUALIFIED}))?\s*$")
+SECTION = re.compile(rf"^\s*section(?:\s+({QUALIFIED_NAME}))?\s*$")
+END = re.compile(rf"^\s*end(?:\s+({QUALIFIED_NAME}))?\s*$")
 
 Compile = Callable[[str, Path, Path, Path], tuple[bool, str]]
 
@@ -150,26 +162,35 @@ def parse_imports(source: str) -> tuple[str, ...]:
     a string literal and invent a dependency that does not exist.
     """
     imports: list[str] = []
-    started = False
     for line in strip_comments(source).splitlines():
         text = line.strip()
         if not text:
             continue
-        # `prelude` may open a module, before its imports, to suppress the
-        # implicit `import Init`. Reading it as the end of the header would
-        # drop every import that follows -- and an import Hardy cannot see is
-        # a dependency it will not rebuild.
-        if text == "prelude" and not started and not imports:
-            started = True
+        # `prelude` suppresses the implicit `import Init`; `module` opens a file
+        # using Lean's module system. Both sit before the imports, and reading
+        # either as the end of the header would drop every import that follows
+        # -- and an import Hardy cannot see is a dependency it will not rebuild.
+        if text in HEADER_KEYWORDS and not imports:
             continue
-        started = True
+        # `public import X` and `meta import X` are ordinary imports under the
+        # module system, and carry the dependency just as a bare one does.
+        text = IMPORT_PREFIX.sub("", text, count=1)
         if not text.startswith("import "):
             break
-        match = MODULE.fullmatch(text.removeprefix("import ").strip())
+        rest = text.removeprefix("import ").strip()
+        # `import all X` re-exports; the dependency is the same either way.
+        if rest.startswith("all "):
+            rest = rest.removeprefix("all ").strip()
+        match = MODULE.fullmatch(rest)
         if match is None:
             break
         imports.append(match.group())
     return tuple(imports)
+
+
+def external_imports(source: str, known: Collection[str]) -> tuple[str, ...]:
+    """The imports of `source` that are not workspace modules."""
+    return tuple(name for name in parse_imports(source) if name not in known)
 
 
 def declarations(source: str) -> dict[str, tuple[str, ...]]:
@@ -308,10 +329,23 @@ class BuildFailure(FrozenModel):
 class LeanWorkspace:
     """A Lean source tree and the compiled mirror that makes it importable."""
 
-    def __init__(self, root: Path, build: Path, compile: Compile, environment: str = "") -> None:
+    def __init__(
+        self,
+        root: Path,
+        build: Path,
+        compile: Compile,
+        environment: str = "",
+        external: Callable[[str], str] | None = None,
+    ) -> None:
         self.root = root
         self.build = build
         self._compile = compile
+        # What a module imported from outside the workspace currently is. An
+        # olean built against one version of a local Lake module stays valid
+        # only while that module does; without this, editing and rebuilding a
+        # module in the configured project would leave Hardy reusing a cached
+        # workspace olean and reporting it as current.
+        self._external = external
         # Mixed into every signature. An olean is only valid for the toolchain
         # and project that produced it, so a workspace reopened after the Lean
         # command, the Lake project, or the pinned toolchain changed must
@@ -379,6 +413,10 @@ class LeanWorkspace:
             digest.update(sources[module].encode("utf-8"))
             for dependency in sorted(internal_imports(sources[module], sources)):
                 digest.update(signatures[dependency].encode("ascii"))
+            if self._external is not None:
+                for name in sorted(external_imports(sources[module], sources)):
+                    digest.update(b"\0")
+                    digest.update(self._external(name).encode("utf-8"))
             signatures[module] = digest.hexdigest()
         return signatures
 
@@ -440,7 +478,11 @@ class LeanWorkspace:
             shadow_build.mkdir(parents=True)
         target = shadow_root / relative
         shadow = LeanWorkspace(
-            shadow_root, shadow_build, compile or self._compile, environment=self._environment
+            shadow_root,
+            shadow_build,
+            compile or self._compile,
+            environment=self._environment,
+            external=self._external,
         )
         if source is None:
             target.unlink(missing_ok=True)
