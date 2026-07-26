@@ -134,7 +134,19 @@ def run(
         # which interrupts the model and then waits on its worker, before the
         # handler below ever runs. Holding the reference keeps the ordering
         # ours: cancel first, close second.
-        events = session.stream(outcome.argument)
+        #
+        # Guarded separately from the drain below, and deliberately not folded
+        # into it: starting a turn is eager -- it writes the transcript's `user`
+        # event and starts the provider's thread -- so it can fail before a
+        # single event exists, and it must not take the session with it. The
+        # real shell catches the same synchronous failure (`shell._submit_key`)
+        # for the same reason. Its own `try` keeps the ordering above intact:
+        # nothing needs closing when there is nothing to close.
+        try:
+            events = session.stream(outcome.argument)
+        except Exception as error:                  # noqa: BLE001 - never lose the session
+            ui.write(f"{type(error).__name__}: {error}", style="error")
+            continue
         try:
             for event in events:
                 for line in painter.draw(event):

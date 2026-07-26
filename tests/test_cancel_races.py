@@ -233,3 +233,43 @@ def test_cancelling_a_staged_run_waits_for_the_tool_call_in_flight(tmp_path: Pat
     # onward into the trajectory was waited on before finalization could begin.
     assert thread.runtime.cancelled
     assert thread.runtime.settled
+
+
+class Store:
+    """`RunStore.append`, as `_observe` reaches it."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
+
+    def append(self, kind: str, payload: dict, *, phase=None):
+        self.events.append((kind, payload))
+
+
+def test_a_provider_thread_that_will_not_settle_seals_the_trajectory(tmp_path: Path):
+    """`settle` is bounded, so it can fail, and `_finalize` hashes every file in
+    the run directory -- `trajectory.jsonl` included -- the moment `cancel`
+    returns. An event appended after that would leave the manifest carrying the
+    hash of a file that changed after it was read. Waiting forever instead is
+    not available: this is the Ctrl+C path.
+    """
+
+    class Stuck(StagedProvider):
+        def settle(self, timeout: float | None = None) -> bool:
+            self.settled = True
+            return False
+
+    store = Store()
+    runtime = ClaudeStagedRuntime(
+        store=store, lean_runtime_factory=lambda claim: None, runtime_class=Stuck
+    )
+    thread = runtime.start(model="claude-haiku-4-5", run_dir=tmp_path, claim=None)
+
+    runtime._observe({"type": "assistant"})
+    runtime.cancel(thread)
+    runtime._observe({"type": "assistant"})     # the thread that would not stop
+
+    kinds = [kind for kind, _ in store.events]
+    assert kinds.count("claude.assistant") == 1, "an event landed after the run was sealed"
+    # Sealed, and the trajectory says so rather than simply stopping: a reader
+    # can tell a run that ended from one whose record was cut off.
+    assert kinds[-1] == "claude.unsettled"

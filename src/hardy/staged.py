@@ -131,6 +131,10 @@ class ClaudeStagedRuntime:
         # Set once for the whole run, not per stage: the only caller is
         # `ProveWorkflow` tearing a run down, and there is no next stage.
         self._cancelled = threading.Event()
+        # `_observe` is the one path from the provider's thread into the
+        # trajectory, so it is the one that has to be closable. See `_seal`.
+        self._records = threading.Lock()
+        self._sealed = False
 
     def start(self, *, model: str, run_dir: Path, claim: FrozenClaim | None) -> StagedThread:
         # Before a claim is approved there is nothing to check a proof against,
@@ -154,7 +158,44 @@ class ClaudeStagedRuntime:
     def _observe(self, event: dict[str, Any]) -> None:
         from .domain import RunPhase
 
-        self._store.append("claude." + str(event.get("type", "event")), event, phase=RunPhase.PROVING)
+        # Held across the append, not merely checked: `_seal` must be able to
+        # promise that nothing is mid-write when it returns.
+        with self._records:
+            if self._sealed:
+                return
+            self._store.append("claude." + str(event.get("type", "event")), event, phase=RunPhase.PROVING)
+
+    def _seal(self) -> None:
+        """Stop recording this run, and record that as the last thing said.
+
+        Only for a provider thread that outlived the wait for it. `settle` is
+        bounded, so it can fail, and `ProveWorkflow._finalize` hashes every file
+        in the run directory -- `trajectory.jsonl` among them -- as soon as
+        `cancel` returns. An event appended after that would leave the manifest
+        carrying the hash of a file that changed after it was read, which is the
+        one thing a record built for verification cannot do. Waiting
+        indefinitely instead is not on offer: this is the Ctrl+C path.
+
+        So the last event says the record stops here, which is worse evidence
+        than a complete trajectory and much better than a silent truncation a
+        reader would mistake for the end of the run.
+        """
+        from .domain import RunPhase
+
+        with self._records:
+            if self._sealed:
+                return
+            self._store.append(
+                "claude.unsettled",
+                {
+                    "message": (
+                        "the provider thread was still running when the run was "
+                        "cancelled; events after this point were not recorded"
+                    )
+                },
+                phase=RunPhase.PROVING,
+            )
+            self._sealed = True
 
     def _cas_dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if self._cas is None:
@@ -272,8 +313,10 @@ class ClaudeStagedRuntime:
         # tool call onward into the trajectory. `settle` is bounded and its
         # thread is a daemon; a runtime without one is simply left behind.
         settle = getattr(thread.runtime, "settle", None)
-        if settle is not None:
-            settle()
+        if settle is not None and settle() is False:
+            # It would not stop, and the manifest is about to be written. Sealing
+            # is what keeps that manifest true; `_seal` states the cost.
+            self._seal()
 
     def close(self) -> None:
         # The workflow calls this in a `finally`; without it every staged run
