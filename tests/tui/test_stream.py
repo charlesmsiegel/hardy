@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hardy.tui.stream import LineWriter, tool_finished, tool_started
+from hardy.tui.stream import LineWriter, TurnPainter, tool_finished, tool_started
 
 
 def drain(writer: LineWriter, deltas: list[str]) -> list[str]:
@@ -97,3 +97,42 @@ def test_tool_lines_name_the_tool_and_its_outcome():
     assert tool_finished("check_lean", False, 2.0).startswith("✗ check_lean")
     # An unnamed call still draws, rather than printing a bare marker.
     assert "tool" in tool_started("")
+
+
+class Call:
+    """A tool event, as `claude_runtime` now reports one."""
+
+    def __init__(self, kind, name, call_id, ok=None):
+        self.kind, self.name, self.call_id, self.ok = kind, name, call_id, ok
+        self.text = ""
+
+
+def test_two_calls_to_the_same_tool_are_timed_separately():
+    """The SDK can run several tools at once, including two of the same one.
+    Keyed by name they overwrite each other's start times, and the first
+    result to land claims nothing is running any more."""
+    ticks = iter([100.0, 101.0, 105.0, 110.0])
+    painter = TurnPainter(80, clock=lambda: next(ticks))
+
+    painter.draw(Call("tool_use", "check_lean", "a"))       # t=100
+    painter.draw(Call("tool_use", "check_lean", "b"))       # t=101
+    # Two in flight: the spinner must not pretend there is only the latest.
+    assert painter.running == "check_lean +1"
+
+    first = painter.draw(Call("tool_result", "check_lean", "a", ok=True))    # t=105
+    assert "5.0s" in first[0], "the first call was timed from the second's start"
+    # One still running, so the spinner must not fall silent.
+    assert painter.running == "check_lean"
+
+    second = painter.draw(Call("tool_result", "check_lean", "b", ok=True))   # t=110
+    assert "9.0s" in second[0]
+    assert painter.running == ""
+
+
+def test_a_call_with_no_id_is_still_timed():
+    """A backend that reports no invocation id keeps working, one call at a
+    time, rather than reporting every duration as 0.0s."""
+    ticks = iter([10.0, 13.0])
+    painter = TurnPainter(80, clock=lambda: next(ticks))
+    painter.draw(Call("tool_use", "check_latex", ""))
+    assert "3.0s" in painter.draw(Call("tool_result", "check_latex", "", ok=True))[0]

@@ -78,7 +78,27 @@ already running, and it cannot unwrite a file such a tool has already written.
 
 So `MathematicsSession.cancel()` sets a flag that makes `_dispatch` refuse
 *new* tool calls while letting in-flight ones finish — the pattern `runner.py`
-already uses with its `closed` Event. The transcript gains
+already uses with its `closed` Event. The flag is read twice, once before the
+tool gate and again after acquiring it: the SDK may launch several calls at
+once, and one can pass the first check, block behind a Lean run that takes
+minutes, and arrive long after the turn was cancelled.
+
+Starting a turn is what clears that flag, so where "starting" happens decides
+whether a cancellation survives. Neither `MathematicsSession.stream` nor
+`ClaudeAgentRuntime.stream` is a generator: a generator body runs on whoever
+iterates it, which is a worker thread, and Esc resolves in the same input batch
+as the Enter that began the turn. A lazy reset would land after the
+cancellation and undo it, leaving the model running while the transcript said
+it had stopped. The shell therefore calls `session.stream` on the loop and
+hands only the iteration to the executor.
+
+Teardown has an ordering requirement of its own. A consumer that unwinds —
+Ctrl+C under `--plain` — closes the generator, and with `yield from` that
+teardown reaches the runtime first: it interrupts the model and then waits on
+its worker, all while the session's tool gate is still open. `_stream` yields
+explicitly rather than delegating, so the gate shuts before any of that, and
+`plain.run` holds its own reference to the generator so the close happens after
+`session.cancel()` rather than the instant the loop is left. The transcript gains
 `{"type": "turn", "status": "cancelled"}`, distinct from `"abandoned"`, which
 stays for the `/exit`, forced-exit, and app-exited paths where nothing was
 actually stopped.

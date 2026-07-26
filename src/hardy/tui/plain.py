@@ -128,15 +128,22 @@ def run(
         for line in transcript.user_lines(outcome.argument, WIDTH):
             out(line)
         painter = stream.TurnPainter(WIDTH)
+        # Bound to a name on purpose. Left as the `for` statement's own
+        # temporary, a Ctrl+C escaping the loop would drop the last reference
+        # and close the generator on the spot -- tearing down the runtime,
+        # which interrupts the model and then waits on its worker, before the
+        # handler below ever runs. Holding the reference keeps the ordering
+        # ours: cancel first, close second.
+        events = session.stream(outcome.argument)
         try:
-            for event in session.stream(outcome.argument):
+            for event in events:
                 for line in painter.draw(event):
                     out(line)
             for line in painter.finish():
                 out(line)
         except KeyboardInterrupt:
-            # `session.send` runs synchronously, right here, on the only
-            # thread this session has -- unlike the real shell, which moves
+            # The turn runs synchronously, right here, on the only thread this
+            # session has -- unlike the real shell, which moves
             # it to a worker thread precisely so Ctrl+C stays live. A plain
             # `except Exception` does not catch this (`KeyboardInterrupt` is
             # a `BaseException`, not an `Exception`), so it used to escape
@@ -154,6 +161,9 @@ def run(
                 session.cancel("keyboard_interrupt")
             elif hasattr(session, "record_abandonment"):
                 session.record_abandonment("keyboard_interrupt")
+            # Only now: the tool gate is shut, so nothing new can start while
+            # the runtime is interrupted and its worker joined.
+            events.close()
             out("")
             return 0
         except Exception as error:                      # noqa: BLE001 - never lose the session

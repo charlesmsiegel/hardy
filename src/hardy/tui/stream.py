@@ -121,20 +121,30 @@ class TurnPainter:
         self._width = width
         self._clock = clock
         self._writer = LineWriter(width)
-        self._began: dict[str, float] = {}
+        # Keyed by invocation, never by name: the SDK can run several calls at
+        # once, including two of the same tool, and keying by name would let
+        # them overwrite each other's start times and let the first result to
+        # land claim that nothing was running any more.
+        self._active: dict[str, tuple[str, float]] = {}
         self._reply = ""
         self._spoke = False
-        # The tool currently running, for the spinner to name. A turn that is
-        # three minutes inside `check_lean` should say so.
-        self.running = ""
+
+    @property
+    def running(self) -> str:
+        """What the spinner should name. A turn three minutes inside
+        `check_lean` should say so, and one inside two calls should not
+        pretend it is only inside the last to start."""
+        if not self._active:
+            return ""
+        names = [name for name, _ in sorted(self._active.values(), key=lambda item: item[1])]
+        return names[0] if len(names) == 1 else f"{names[0]} +{len(names) - 1}"
 
     def draw(self, event: Any) -> list[str]:
         if event.kind == "text":
             self._spoke = True
             return self._writer.feed(event.text)
         if event.kind == "tool_use":
-            self.running = event.name
-            self._began[event.name] = self._clock()
+            self._active[self._key(event)] = (event.name, self._clock())
             # Prose is flushed and the writer replaced, so the model's words and
             # the work Lean or LaTeX did never share a line, and whatever the
             # model says afterwards starts as a fresh message rather than
@@ -143,13 +153,18 @@ class TurnPainter:
             self._writer = LineWriter(self._width)
             return lines + [tool_started(event.name)]
         if event.kind == "tool_result":
-            self.running = ""
-            began = self._began.pop(event.name, None)
-            elapsed = self._clock() - began if began is not None else 0.0
-            return [tool_finished(event.name, event.ok, elapsed)]
+            started = self._active.pop(self._key(event), None)
+            elapsed = self._clock() - started[1] if started is not None else 0.0
+            return [tool_finished(event.name or (started[0] if started else ""), event.ok, elapsed)]
         if event.kind == "reply":
             self._reply = event.text
         return []
+
+    @staticmethod
+    def _key(event: Any) -> str:
+        """The invocation, falling back to the name for a backend that reports
+        no call id. One un-identified call at a time still times correctly."""
+        return getattr(event, "call_id", "") or event.name
 
     @property
     def streamed(self) -> bool:
@@ -158,7 +173,7 @@ class TurnPainter:
 
     def finish(self) -> list[str]:
         lines = self._writer.flush()
-        self.running = ""
+        self._active.clear()
         if self._spoke:
             return lines
         # Nothing was streamed. A backend that does not report partial text is

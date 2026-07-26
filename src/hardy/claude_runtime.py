@@ -215,12 +215,21 @@ class ClaudeAgentRuntime:
         The SDK is asynchronous and no caller here is: the shell runs a turn on
         a worker thread precisely so its event loop stays free to draw. So the
         SDK gets an event loop on a thread of its own and hands events back
-        through a queue, rather than this generator trying to own a loop it
-        would have to re-enter on every `next()`.
+        through a queue, rather than a generator trying to own a loop it would
+        have to re-enter on every `next()`.
+
+        Deliberately not a generator itself. A generator body does not run
+        until it is first iterated, and the iterating is done on a worker
+        thread -- so the per-turn reset below would land *after* an Esc pressed
+        in the same input batch as the Enter that started the turn, wiping the
+        cancellation and letting the model run on while the terminal and the
+        transcript both said it had stopped. Starting the turn has to happen on
+        the thread that sequenced it.
         """
         outbox: queue.Queue[Any] = queue.Queue()
         # Reset per turn, not in `cancel`: a turn cancelled a moment before
-        # this one started must not leave the flag set over the new one.
+        # this one started must not leave the flag set over the new one. Safe
+        # to do here precisely because "here" is turn-submission time.
         self._cancelled = False
         self._loop, self._client, self._called = None, None, {}
 
@@ -234,6 +243,9 @@ class ClaudeAgentRuntime:
 
         worker = threading.Thread(target=pump, name="hardy-turn", daemon=True)
         worker.start()
+        return self._consume(outbox, worker)
+
+    def _consume(self, outbox: queue.Queue, worker: threading.Thread) -> Iterator[TurnEvent]:
         finished = False
         try:
             while True:
@@ -340,11 +352,13 @@ class ClaudeAgentRuntime:
                 self._observe({"type": "assistant", "message": {"role": "assistant", "content": block.text}})
             elif kind == "ToolUseBlock":
                 name = getattr(block, "name", "")
+                identifier = str(getattr(block, "id", ""))
                 # Kept so the result below can be named. The SDK identifies a
-                # completed call by the id it was asked under, not by name.
-                self._called[str(getattr(block, "id", ""))] = plain(name)
+                # completed call by the id it was asked under, not by name --
+                # and two calls to the same tool can be in flight at once.
+                self._called[identifier] = plain(name)
                 self._observe({"type": "tool_use", "name": name, "input": getattr(block, "input", {})})
-                yield TurnEvent("tool_use", name=plain(name))
+                yield TurnEvent("tool_use", name=plain(name), call_id=identifier)
             elif kind == "ToolResultBlock":
                 # The far end of a tool call, which Hardy used to drop. Drawing
                 # it is what keeps a three-minute Lean check from looking like
@@ -355,6 +369,7 @@ class ClaudeAgentRuntime:
                     "tool_result",
                     name=self._called.pop(identifier, ""),
                     ok=not getattr(block, "is_error", False),
+                    call_id=identifier,
                 )
             elif kind == "ThinkingBlock":
                 self._observe({"type": "thinking"})
