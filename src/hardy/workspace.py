@@ -139,10 +139,19 @@ def parse_imports(source: str) -> tuple[str, ...]:
     a string literal and invent a dependency that does not exist.
     """
     imports: list[str] = []
+    started = False
     for line in strip_comments(source).splitlines():
         text = line.strip()
         if not text:
             continue
+        # `prelude` may open a module, before its imports, to suppress the
+        # implicit `import Init`. Reading it as the end of the header would
+        # drop every import that follows -- and an import Hardy cannot see is
+        # a dependency it will not rebuild.
+        if text == "prelude" and not started and not imports:
+            started = True
+            continue
+        started = True
         if not text.startswith("import "):
             break
         match = MODULE.fullmatch(text.removeprefix("import ").strip())
