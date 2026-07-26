@@ -32,6 +32,7 @@ import threading
 import time
 from io import StringIO
 
+import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
@@ -241,24 +242,40 @@ async def test_status_is_allowed_while_a_turn_is_in_flight(settings):
     assert str(settings.workspace) in written
 
 
-async def test_shift_enter_inserts_a_newline_not_a_submit(settings):
+@pytest.mark.parametrize(
+    "sequence",
+    ["\x1b[27;2;13~", "\x1b[13;2u"],
+    ids=["xterm-modifyOtherKeys", "kitty-protocol"],
+)
+async def test_shift_enter_inserts_a_newline_not_a_submit(settings, sequence):
     """Both encodings prompt_toolkit's own table would otherwise flatten onto
     plain Enter (`Keys.ControlM`) before any binding ever saw the difference:
     the vt100/xterm "modifyOtherKeys" form and the kitty keyboard protocol
     form. `shell.py` extends `ANSI_SEQUENCES` for both; this sends the raw
     escape bytes for each and checks the buffer was not submitted early.
+
+    Parametrised rather than looped. Every other test here drives exactly one
+    `Shell`, and pytest-asyncio gives each test its own event loop; a loop that
+    ran two whole app lifecycles on one event loop was the only place in this
+    file where a second `Application` started on a loop the first had already
+    used, and it failed on Linux for that reason -- the first app left a
+    background task pending, and the exception that followed was handled by
+    prompt_toolkit's own event-loop hook, which prints and then *waits for
+    ENTER* (`application.py:1026`). That wait swallowed the keystrokes, so the
+    second sequence was never delivered and `sent_text` was empty: a failure
+    that looked exactly like a broken key binding but was not one. One
+    lifecycle per test, and each encoding now names itself when it fails.
     """
-    for sequence in ("\x1b[27;2;13~", "\x1b[13;2u"):
-        session = SlowSession()
-        code, written = await blast(settings, session, f"one{sequence}two\r\x03")
-        # Reported, not just compared: the two ways this fails look identical
-        # from `sent_text` alone. A turn that was submitted echoes its own user
-        # line, so text on screen with nothing sent means the newline was lost,
-        # while a bare banner means the keys never reached the box at all.
-        assert session.sent_text == ["one\ntwo"], (
-            f"sequence {sequence!r} did not insert a newline: "
-            f"exit={code} sent={session.sent_text!r} screen={written!r}"
-        )
+    session = SlowSession()
+    code, written = await blast(settings, session, f"one{sequence}two\r\x03")
+    # Reported, not just compared: the two ways this fails look identical
+    # from `sent_text` alone. A turn that was submitted echoes its own user
+    # line, so text on screen with nothing sent means the newline was lost,
+    # while a bare banner means the keys never reached the box at all.
+    assert session.sent_text == ["one\ntwo"], (
+        f"sequence {sequence!r} did not insert a newline: "
+        f"exit={code} sent={session.sent_text!r} screen={written!r}"
+    )
 
 
 async def test_plain_enter_still_submits(settings):
