@@ -13,6 +13,7 @@ from hardy.workspace import (
     internal_imports,
     module_name,
     module_path,
+    name_aliases,
     parse_imports,
     safe_relative,
 )
@@ -114,9 +115,27 @@ def test_declarations_separate_theorems_from_lemmas():
     assert found["lemma"] == ("helper",)
 
 
-def test_declarations_offer_both_the_bare_and_qualified_name():
+def test_a_namespaced_declaration_is_reported_once_by_its_qualified_name():
+    """One theorem must not read as two, or it would owe two writeups."""
     source = "namespace Hardy\ntheorem one : True := trivial\nend Hardy\n"
-    assert declarations(source)["theorem"] == ("one", "Hardy.one")
+    assert declarations(source)["theorem"] == ("Hardy.one",)
+
+
+def test_nested_namespaces_compose():
+    source = "namespace A\nnamespace B\ntheorem one : True := trivial\nend B\nend A\n"
+    assert declarations(source)["theorem"] == ("A.B.one",)
+
+
+def test_a_namespace_that_ended_no_longer_qualifies():
+    source = "namespace A\ntheorem one : True := trivial\nend A\ntheorem two : True := trivial\n"
+    assert declarations(source)["theorem"] == ("A.one", "two")
+
+
+def test_name_aliases_offer_the_bare_name_of_a_qualified_one():
+    assert name_aliases("Hardy.one") == ("Hardy.one", "one")
+    assert name_aliases("one") == ("one",)
+    # Only the last component: `Group.one` is not resolvable from the root.
+    assert name_aliases("Hardy.Group.one") == ("Hardy.Group.one", "one")
 
 
 def test_declarations_see_through_attributes_and_modifiers():

@@ -100,8 +100,8 @@ def test_chat_checks_and_saves_linked_artifacts(tmp_path: Path):
     chat = session(tmp_path, runtime)
     answer = chat.send("Document that True is true.")
     assert "Lean checked" in answer
-    assert (tmp_path / "Main.lean").read_text().startswith("import Mathlib")
-    assert "thm:true" in (tmp_path / "writeup.tex").read_text()
+    assert (tmp_path / "lean" / "Main.lean").read_text().startswith("import Mathlib")
+    assert "thm:true" in (tmp_path / "tex" / "writeup.tex").read_text()
     assert (tmp_path / "writeup.pdf").read_bytes() == b"%PDF-fake"
     state = json.loads((tmp_path / "session.json").read_text())
     assert state["names"][0]["formal_name"] == "HardyTarget"
@@ -142,7 +142,7 @@ def test_saved_lean_must_be_hole_free(tmp_path: Path):
     ])
     chat = session(tmp_path, runtime)
     chat.send("Save a placeholder.")
-    assert not (tmp_path / "Main.lean").exists()
+    assert not (tmp_path / "lean" / "Main.lean").exists()
 
 
 def test_unapproved_axiom_cannot_bypass_confirmation(tmp_path: Path):
@@ -152,7 +152,7 @@ def test_unapproved_axiom_cannot_bypass_confirmation(tmp_path: Path):
     ])
     chat = session(tmp_path, runtime)
     chat.send("Sneak in an axiom.")
-    assert not (tmp_path / "Main.lean").exists()
+    assert not (tmp_path / "lean" / "Main.lean").exists()
     transcript = (tmp_path / "transcript.jsonl").read_text()
     assert "unapproved or altered assumption" in transcript
 
@@ -410,7 +410,7 @@ def test_a_cancelled_turn_runs_no_further_tools(tmp_path: Path):
     result = chat._dispatch("save_lean", {"source": "import Mathlib\n\nexample : True := by exact True.intro"})
     assert not result.ok
     assert "cancelled" in result.output
-    assert not (tmp_path / "Main.lean").exists()
+    assert not (tmp_path / "lean" / "Main.lean").exists()
     # Refusal is still an event: a trajectory that simply omits the call would
     # not show that the model asked.
     events = [json.loads(line) for line in chat.transcript_path.read_text().splitlines()]
