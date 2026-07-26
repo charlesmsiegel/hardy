@@ -77,7 +77,7 @@ def test_a_cancellation_between_asking_and_iterating_is_not_wiped(tmp_path: Path
     assert chat.runtime.cancelled
     refused = chat._dispatch("save_lean", {"source": "import Mathlib"})
     assert not refused.ok, "the tool gate reopened when the turn was iterated"
-    assert not (tmp_path / "Main.lean").exists()
+    assert not (tmp_path / "lean" / "Main.lean").exists()
 
 
 def test_a_tool_waiting_on_the_gate_does_not_run_after_cancellation(tmp_path: Path):

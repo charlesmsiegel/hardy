@@ -6,23 +6,49 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
-from .latex import LatexTools
+from .latex import ROOT_DOCUMENT, LatexTools
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
+from .workspace import (
+    BuildFailure,
+    ImportCycle,
+    LeanWorkspace,
+    WorkspacePathError,
+    declarations,
+    dependents,
+    internal_imports,
+    module_name,
+    module_path,
+    name_aliases,
+    safe_relative,
+)
+
+# Where the two artifact trees live inside a workspace. A session written
+# before they existed kept one file of each at the top level; `_migrate_layout`
+# moves those in rather than leaving a workspace that reads as empty.
+LEAN_DIR = "lean"
+BUILD_DIR = ".build/lean"
+TEX_DIR = "tex"
+DEFAULT_LEAN_PATH = "Main.lean"
+DEFAULT_TEX_PATH = ROOT_DOCUMENT
+
+LABEL = re.compile(r"\\label\{([^}]*)\}")
 
 CHAT_TOOLS = [
-    {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file. This does not save it.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
-    {"type": "function", "function": {"name": "save_lean", "description": "Check and save Main.lean. Completed saved work must contain no sorry or admit.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
-    {"type": "function", "function": {"name": "check_latex", "description": "Compile a complete LaTeX document without saving it.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
-    {"type": "function", "function": {"name": "save_latex", "description": "Compile and save writeup.tex.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
-    {"type": "function", "function": {"name": "read_workspace", "description": "Read the current Lean, LaTeX, naming, and assumption artifacts.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "save_lean", "description": "Check and save one Lean file in the workspace tree, defaulting to Main.lean. Every file importing it is rebuilt and the save is refused whole if any of them breaks. Completed saved work must contain no sorry or admit.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "check_latex", "description": "Compile a candidate LaTeX file against the saved document tree without keeping it. `path` defaults to writeup.tex, the root document.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "save_latex", "description": "Compile and save one LaTeX file in the writeup tree, defaulting to writeup.tex. Fragments are \\input from the root document.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "read_workspace", "description": "List the workspace: the manifest, every Lean file with its module name and declarations, and every LaTeX file.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "read_file", "description": "Read one workspace file, Lean or LaTeX, by its path.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "delete_file", "description": "Delete one workspace file. Refused if another workspace file imports it.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "record_name", "description": "Record the durable correspondence between a Lean declaration and its LaTeX label/name.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "latex_name": {"type": "string"}, "description": {"type": "string"}}, "required": ["formal_name", "latex_name", "description"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "request_assumption", "description": "Ask the human for permission to introduce an axiom when a result is unavailable. Never assume approval.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "lean_statement": {"type": "string"}, "latex_name": {"type": "string"}, "informal_statement": {"type": "string"}, "source": {"type": "string"}, "reason": {"type": "string"}}, "required": ["formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason"], "additionalProperties": False}}},
 ]
@@ -94,6 +120,13 @@ class MathematicsSession:
         self.latex = LatexTools(latex_command)
         self.state_path = workspace / "session.json"
         self.transcript_path = workspace / "transcript.jsonl"
+        # The Lean tree and the writeup tree. Both are directories now: a
+        # development outgrows one file, and so does the document about it.
+        self.tex_root = workspace / TEX_DIR
+        self.lean_workspace = LeanWorkspace(
+            workspace / LEAN_DIR, workspace / BUILD_DIR, self._compile_module
+        )
+        self._migrate_layout()
         self._make_runtime = make_runtime
         # The SDK may call several tools at once, each on its own thread, but
         # these run Lean, rewrite session.json, and stop to ask a human for
@@ -229,43 +262,294 @@ class MathematicsSession:
             return ToolResult(False, "saved Lean artifacts may not contain sorry or admit", source)
         if final:
             approved = {item["formal_name"]: " ".join(item["lean_statement"].split()) for item in self.state["assumptions"]}
-            declarations = re.findall(r"(?m)^\s*(?:axiom|constant)\s+([A-Za-z_][A-Za-z0-9_'.]*)\s*:\s*(.+?)\s*$", source)
-            for name, statement in declarations:
+            # Named `assumed` rather than `declarations`: the module-level
+            # function of that name is what reads theorems out of a source.
+            assumed = re.findall(r"(?m)^\s*(?:axiom|constant)\s+([A-Za-z_][A-Za-z0-9_'.]*)\s*:\s*(.+?)\s*$", source)
+            for name, statement in assumed:
                 if approved.get(name) != " ".join(statement.split()):
                     return ToolResult(False, f"unapproved or altered assumption `{name}`; use request_assumption first", source)
-            missing_names = [item["formal_name"] for item in self.state["names"] if not re.search(rf"\b{re.escape(item['formal_name'])}\b", source)]
-            if missing_names:
-                return ToolResult(False, f"Lean source is missing registered names: {missing_names}", source)
-        return self.lean.run_source(source)
+        return self.lean.run_source(source, env={"LEAN_PATH": self.lean_workspace.lean_path()})
+
+    def _compile_module(
+        self, module: str, source_root: Path, build_root: Path, source_file: Path
+    ) -> tuple[bool, str]:
+        """Build one workspace module, for `LeanWorkspace` to sequence."""
+        result = self.lean.compile_module(source_root, build_root, source_file)
+        return result.ok, result.output
+
+    def _migrate_layout(self) -> None:
+        """Move a workspace written before the trees existed into them.
+
+        Without this, reopening a workspace would show an empty tree while
+        `Main.lean` sat beside it, and the model would start again from nothing
+        on top of work it could no longer see.
+        """
+        moves = ((DEFAULT_LEAN_PATH, self.lean_workspace.root), (DEFAULT_TEX_PATH, self.tex_root))
+        moved = []
+        for filename, destination in moves:
+            legacy = self.workspace / filename
+            if not legacy.is_file() or (destination / filename).exists():
+                continue
+            destination.mkdir(parents=True, exist_ok=True)
+            os.replace(legacy, destination / filename)
+            moved.append(filename)
+        if moved:
+            self._record({"type": "migration", "reason": "layout", "moved": moved})
+
+    def _check_lean(self, path: str, source: str) -> ToolResult:
+        try:
+            safe_relative(path)
+        except WorkspacePathError as error:
+            return ToolResult(False, str(error), source)
+        failure = self._build_imports(self.lean_workspace, source)
+        if isinstance(failure, ToolResult):
+            return failure
+        if failure is not None:
+            return ToolResult(False, f"a workspace file this one imports does not build: {failure.module}\n{failure.output}", source)
+        return self._run_lean_source(source, final=False)
+
+    def _save_lean(self, path: str, source: str) -> ToolResult:
+        try:
+            relative = safe_relative(path)
+        except WorkspacePathError as error:
+            return ToolResult(False, str(error), source)
+        gate = self._documentation_gate(source)
+        if gate is not None:
+            return ToolResult(False, gate, source)
+        checked = self._run_lean_source(source, final=True)
+        if not checked.ok:
+            return checked
+        text = source.rstrip() + "\n"
+        shadow, commit = self.lean_workspace.stage(relative, text)
+        try:
+            module = module_name(relative)
+            try:
+                affected = [module, *sorted(dependents(shadow.sources(), module))]
+                failure = shadow.build_modules(affected)
+            except ImportCycle as error:
+                return ToolResult(False, f"{error}; nothing was written", source)
+            if failure is not None:
+                return ToolResult(False, f"this save breaks {failure.module}, so nothing was written:\n{failure.output}", source)
+            # The registry and the Lean must stay in step. This was a per-file
+            # check when the workspace was one file; a registered name now has
+            # to survive somewhere in the tree, not in whichever file is being
+            # saved -- but it must not be allowed to vanish from all of them.
+            lost = self._missing_registered_names(shadow.sources())
+            if lost:
+                return ToolResult(False, f"this save would drop registered names from the workspace: {lost}", source)
+            commit()
+        finally:
+            LeanWorkspace.discard(shadow)
+        return checked
+
+    def _build_imports(self, space: LeanWorkspace, source: str) -> BuildFailure | ToolResult | None:
+        """Make the workspace modules a candidate imports importable."""
+        try:
+            needed = internal_imports(source, space.sources())
+            return space.build_modules(needed) if needed else None
+        except ImportCycle as error:
+            return ToolResult(False, str(error), source)
+
+    def _missing_registered_names(self, sources: dict[str, str]) -> list[str]:
+        """Registered formal names that survive nowhere in a tree.
+
+        Declarations are matched by name rather than by text, because a
+        `theorem one` inside `namespace Hardy` is `Hardy.one` and that string
+        appears nowhere in the file. The textual fallback still covers what
+        `declarations` does not read -- an approved `axiom`, a `def`, a
+        structure -- so a registered name backed by one of those is not
+        reported as lost.
+        """
+        declared: set[str] = set()
+        for source in sources.values():
+            found = declarations(source)
+            for name in (*found["theorem"], *found["lemma"]):
+                declared.update(name_aliases(name))
+        return [
+            item["formal_name"]
+            for item in self.state["names"]
+            if not declared.intersection(name_aliases(item["formal_name"]))
+            and not any(
+                re.search(rf"\b{re.escape(item['formal_name'])}\b", source)
+                for source in sources.values()
+            )
+        ]
+
+    def _labels(self) -> set[str]:
+        r"""Every `\label` in the saved writeup tree."""
+        if not self.tex_root.is_dir():
+            return set()
+        found: set[str] = set()
+        for path in sorted(self.tex_root.rglob("*.tex")):
+            found.update(LABEL.findall(path.read_text(encoding="utf-8")))
+        return found
+
+    def _saved_theorems(self) -> set[str]:
+        found: set[str] = set()
+        for source in self.lean_workspace.sources().values():
+            found.update(declarations(source)["theorem"])
+        return found
+
+    def _undocumented(self) -> tuple[str, ...]:
+        """Saved theorems with no writeup behind them.
+
+        Derived from the registry and the writeup tree every time it is asked
+        for. A stored flag would outlive the file it described, and
+        `session.json` already carries enough state that has to be kept true.
+        """
+        labels = self._labels()
+        documented = {item["formal_name"] for item in self.state["names"] if item["latex_name"] in labels}
+        return tuple(
+            sorted(
+                name
+                for name in self._saved_theorems()
+                if not documented.intersection(name_aliases(name))
+            )
+        )
+
+    def _documentation_gate(self, source: str) -> str | None:
+        """The catch-up ratchet: write up the last theorem before the next.
+
+        Refuses only when the tree already owes a writeup *and* this save would
+        add a theorem it does not already contain. The first condition alone
+        would trap the session: a model could no longer repair, restate, or
+        delete the very theorem blocking it. The second alone would let one
+        file absorb any number of undocumented claims.
+        """
+        owed = self._undocumented()
+        if not owed:
+            return None
+        existing = self._saved_theorems()
+        introduced = [name for name in declarations(source)["theorem"] if name not in existing]
+        if not introduced:
+            return None
+        return (
+            f"the workspace owes a writeup for {list(owed)} before a new theorem "
+            f"({introduced[0]}) is added. Call record_name for each, then save_latex "
+            "with a \\label for each latex_name. A lemma carries no such requirement."
+        )
+
+    def _check_latex(self, path: str, source: str) -> ToolResult:
+        target = self._tex_target(path)
+        if isinstance(target, ToolResult):
+            return target
+        return self.latex.check(source, path=path, tree=self.tex_root)
+
+    def _save_latex(self, path: str, source: str) -> ToolResult:
+        target = self._tex_target(path)
+        if isinstance(target, ToolResult):
+            return target
+        result = self.latex.check(source, path=path, tree=self.tex_root, output_dir=self.workspace)
+        if not result.ok:
+            return result
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source.rstrip() + "\n", encoding="utf-8")
+        # Advisory rather than a refusal. With the save_lean ratchet in place a
+        # hard gate here would deadlock: Lean blocked for want of a writeup,
+        # and the writeup blocked for not yet covering everything registered.
+        missing = [item["latex_name"] for item in self.state["names"] if item["latex_name"] not in self._labels()]
+        if missing:
+            return ToolResult(True, f"{result.output}\n\nSaved. Still missing labels for registered names: {missing}", source)
+        return result
+
+    def _tex_target(self, path: str) -> Path | ToolResult:
+        cleaned = str(path).replace("\\", "/")
+        if not cleaned.endswith(".tex"):
+            return ToolResult(False, f"not a workspace LaTeX path: {path!r}")
+        candidate = PurePosixPath(cleaned)
+        if candidate.is_absolute() or any(part in {"..", "."} for part in candidate.parts):
+            return ToolResult(False, f"path escapes the workspace: {path!r}")
+        return self.tex_root / candidate
+
+    def _workspace_listing(self) -> dict[str, Any]:
+        """What is in the workspace, without its full contents.
+
+        `read_file` fetches a body. Returning every file's text here was fine
+        when there were two of them and would flood the context now.
+        """
+        lean = []
+        for module, source in sorted(self.lean_workspace.sources().items()):
+            found = declarations(source)
+            lean.append({
+                "path": str(module_path(module)),
+                "module": module,
+                "imports": list(internal_imports(source, self.lean_workspace.sources())),
+                "theorems": list(found["theorem"]),
+                "lemmas": list(found["lemma"]),
+            })
+        tex = (
+            sorted(path.relative_to(self.tex_root).as_posix() for path in self.tex_root.rglob("*.tex"))
+            if self.tex_root.is_dir()
+            else []
+        )
+        return {
+            "manifest": self.state,
+            "lean": lean,
+            "tex": tex,
+            "undocumented_theorems": list(self._undocumented()),
+        }
+
+    def _read_file(self, path: str) -> ToolResult:
+        resolved = self._resolve(path)
+        if isinstance(resolved, ToolResult):
+            return resolved
+        target, _ = resolved
+        if not target.is_file():
+            return ToolResult(False, f"no such workspace file: {path}")
+        return ToolResult(True, target.read_text(encoding="utf-8"))
+
+    def _delete_file(self, path: str) -> ToolResult:
+        resolved = self._resolve(path)
+        if isinstance(resolved, ToolResult):
+            return resolved
+        target, kind = resolved
+        if not target.is_file():
+            return ToolResult(False, f"no such workspace file: {path}")
+        if kind == "tex":
+            target.unlink()
+            return ToolResult(True, f"deleted {path}")
+        relative = safe_relative(str(path).replace("\\", "/"))
+        module = module_name(relative)
+        importers = dependents(self.lean_workspace.sources(), module)
+        if importers:
+            return ToolResult(False, f"{module} is imported by {sorted(importers)}; change those first")
+        shadow, commit = self.lean_workspace.stage(relative, None)
+        try:
+            commit()
+        finally:
+            LeanWorkspace.discard(shadow)
+        return ToolResult(True, f"deleted {path}")
+
+    def _resolve(self, path: str) -> tuple[Path, str] | ToolResult:
+        """Where a tool path lives: the Lean tree or the writeup tree."""
+        cleaned = str(path).replace("\\", "/")
+        if cleaned.endswith(".lean"):
+            try:
+                return self.lean_workspace.root / safe_relative(cleaned), "lean"
+            except WorkspacePathError as error:
+                return ToolResult(False, str(error))
+        if cleaned.endswith(".tex"):
+            target = self._tex_target(cleaned)
+            return target if isinstance(target, ToolResult) else (target, "tex")
+        return ToolResult(False, f"not a workspace file: {path!r}")
 
     def _tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if name == "check_lean":
-            return self._run_lean_source(str(arguments["source"]), final=False)
+            return self._check_lean(str(arguments.get("path") or DEFAULT_LEAN_PATH), str(arguments["source"]))
         if name == "save_lean":
-            source = str(arguments["source"])
-            result = self._run_lean_source(source, final=True)
-            if result.ok:
-                (self.workspace / "Main.lean").write_text(source.rstrip() + "\n", encoding="utf-8")
-            return result
+            return self._save_lean(str(arguments.get("path") or DEFAULT_LEAN_PATH), str(arguments["source"]))
         if name == "check_latex":
-            return self.latex.check(str(arguments["source"]))
+            return self._check_latex(str(arguments.get("path") or DEFAULT_TEX_PATH), str(arguments["source"]))
         if name == "save_latex":
-            source = str(arguments["source"])
-            missing_labels = [item["latex_name"] for item in self.state["names"] if f"\\label{{{item['latex_name']}}}" not in source]
-            if missing_labels:
-                return ToolResult(False, f"LaTeX source is missing registered labels: {missing_labels}", source)
-            result = self.latex.check(source, output_dir=self.workspace)
-            if result.ok:
-                (self.workspace / "writeup.tex").write_text(source.rstrip() + "\n", encoding="utf-8")
-            return result
+            return self._save_latex(str(arguments.get("path") or DEFAULT_TEX_PATH), str(arguments["source"]))
         if name in CAS_TOOL_NAMES:
             return self._cas_tool(name, arguments)
         if name == "read_workspace":
-            payload = {"manifest": self.state}
-            for filename in ("Main.lean", "writeup.tex"):
-                path = self.workspace / filename
-                payload[filename] = path.read_text(encoding="utf-8") if path.exists() else None
-            return ToolResult(True, json.dumps(payload, ensure_ascii=False))
+            return ToolResult(True, json.dumps(self._workspace_listing(), ensure_ascii=False))
+        if name == "read_file":
+            return self._read_file(str(arguments["path"]))
+        if name == "delete_file":
+            return self._delete_file(str(arguments["path"]))
         if name == "record_name":
             entry = {key: str(arguments[key]) for key in ("formal_name", "latex_name", "description")}
             existing = next((item for item in self.state["names"] if item["formal_name"] == entry["formal_name"] or item["latex_name"] == entry["latex_name"]), None)

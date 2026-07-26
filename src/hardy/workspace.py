@@ -105,11 +105,13 @@ def parse_imports(source: str) -> tuple[str, ...]:
 
 
 def declarations(source: str) -> dict[str, tuple[str, ...]]:
-    """Top-level `theorem` and `lemma` names, qualified by namespace.
+    """Top-level `theorem` and `lemma` names, one entry per declaration.
 
-    Both the bare and the qualified name are produced for a declaration inside
-    a namespace, because the registry may reasonably record either and a
-    mismatch would silently make a documented theorem look undocumented.
+    A declaration inside a namespace is reported by its qualified name, which
+    is the one Lean itself would print. Emitting the bare name as well would
+    make one theorem look like two, and a caller counting what still owes a
+    writeup would then demand two of them -- see `name_aliases` for the other
+    half of this, which is that a *reader* of the registry must accept either.
     """
     found: dict[str, list[str]] = {"theorem": [], "lemma": []}
     scope: list[str] = []
@@ -125,10 +127,21 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
         match = DECLARATION.match(line)
         if match:
             kind, name = match.group(1), match.group(2)
-            found[kind].append(name)
-            if scope:
-                found[kind].append(".".join((*scope, name)))
+            found[kind].append(".".join((*scope, name)) if scope else name)
     return {kind: tuple(names) for kind, names in found.items()}
+
+
+def name_aliases(name: str) -> tuple[str, ...]:
+    """The names a registry entry might reasonably use for one declaration.
+
+    `Hardy.one` and `one` denote the same theorem, and a registry recording
+    either must count as recording it. Only the last component is offered, not
+    every suffix: `Hardy.Group.one` abbreviated to `Group.one` is not a name
+    Lean would resolve from the root.
+    """
+    if "." not in name:
+        return (name,)
+    return (name, name.rsplit(".", 1)[1])
 
 
 def internal_imports(source: str, known: Collection[str]) -> tuple[str, ...]:
