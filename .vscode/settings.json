@@ -1,0 +1,28 @@
+{
+  // `hardy setup` has Lake fetch Mathlib and its transitive dependencies into
+  // lean_project/.lake/packages/. Lake clones each one as a standalone git repo,
+  // so without these exclusions VS Code discovers nine extra source-control
+  // roots and tries to index ~7.5 GB / 123k files of compiled Mathlib.
+  // .gitignore already keeps the tree out of commits; this keeps it out of the
+  // editor. The Lean 4 extension reads the packages from disk directly and is
+  // unaffected by any of these settings.
+  "files.exclude": {
+    "lean_project/.lake": true
+  },
+  "search.exclude": {
+    "lean_project/.lake": true
+  },
+  "files.watcherExclude": {
+    "**/lean_project/.lake/**": true
+  },
+  "git.repositoryScanIgnoredFolders": [
+    "node_modules",
+    ".lake"
+  ],
+  // The user-level setting is -1 (unlimited), which is what let the scan reach
+  // the package clones at lean_project/.lake/packages/* (depth 4). This repo has
+  // no legitimate nested repositories, so cap the scan at the root. Linked
+  // worktrees are found via .git/worktrees by `git.detectWorktrees` and are not
+  // affected by scan depth.
+  "git.repositoryScanMaxDepth": 1
+}
