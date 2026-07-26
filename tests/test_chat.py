@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from hardy.chat import MathematicsSession
+from hardy.chat import MathematicsSession, final_text
+from hardy.models import TurnEvent
 
 
 class FakeChatRuntime:
@@ -26,20 +27,39 @@ class FakeChatRuntime:
         self.session_id = context.get("session_id")
         self.dispatch = context.get("dispatch")
         self.results = []
+        self.cancelled = False
 
-    def ask(self, text: str) -> str:
+    def stream(self, text: str):
+        """The scripted turn, as the real runtime now delivers one.
+
+        Text is yielded as deltas *and* accumulated into the closing `reply`
+        event, exactly as the SDK's partial messages sit beside its completed
+        blocks -- so a consumer that mistakenly counted both would fail here
+        the same way it would in production.
+        """
         spoken = []
         observe = self.context.get("observe") or (lambda event: None)
         for step in self.script:
             if isinstance(step, tuple):
                 observe({"type": "tool_use", "name": step[0], "input": step[1]})
-                self.results.append(self.dispatch(*step))
+                yield TurnEvent("tool_use", name=step[0])
+                result = self.dispatch(*step)
+                self.results.append(result)
+                yield TurnEvent("tool_result", name=step[0], ok=result.ok)
             else:
                 said = str(step.get("content") or "") if isinstance(step, dict) else str(step)
                 spoken.append(said)
+                for word in said.split(" "):
+                    yield TurnEvent("text", text=word + " ")
                 observe({"type": "assistant", "message": {"role": "assistant", "content": said}})
         self.session_id = "thread-1"
-        return "\n\n".join(spoken)
+        yield TurnEvent("reply", text="\n\n".join(spoken))
+
+    def ask(self, text: str) -> str:
+        return final_text(self.stream(text))
+
+    def cancel(self) -> None:
+        self.cancelled = True
 
 
 def call(name: str, arguments: dict, _identifier: str = "") -> tuple:
@@ -209,7 +229,7 @@ def test_tool_calls_are_serialized(tmp_path: Path):
     overlaps, inside, guard = [], [], threading.Lock()
 
     class ConcurrentRuntime(FakeChatRuntime):
-        def ask(self, text: str) -> str:
+        def stream(self, text: str):
             def one(index: int) -> None:
                 self.dispatch("record_name", {"formal_name": f"N{index}", "latex_name": f"l{index}", "description": "d"})
 
@@ -218,7 +238,7 @@ def test_tool_calls_are_serialized(tmp_path: Path):
                 thread.start()
             for thread in threads:
                 thread.join()
-            return "done"
+            yield TurnEvent("reply", text="done")
 
     chat = session(tmp_path, ConcurrentRuntime([]))
     original = chat._tool
@@ -269,9 +289,10 @@ def test_the_provider_thread_survives_a_failed_exchange(tmp_path: Path):
     """That turn and its tool calls are only reachable again by resuming it."""
 
     class Failing(FakeChatRuntime):
-        def ask(self, text: str) -> str:
+        def stream(self, text: str):
             self.session_id = "thread-after-error"
             raise RuntimeError("the provider ended the exchange with an error: overloaded")
+            yield  # pragma: no cover - unreachable, but this must be a generator
 
     chat = session(tmp_path, Failing([]))
     with pytest.raises(RuntimeError):
@@ -316,3 +337,68 @@ def test_an_abandoned_turn_is_written_to_the_transcript(tmp_path: Path):
     abandoned = [event for event in events if event.get("status") == "abandoned"]
     assert abandoned and abandoned[-1]["reason"] == "user_pressed_escape"
     assert abandoned[-1]["type"] == "turn"
+
+
+def test_the_reply_is_the_whole_answer_and_not_the_deltas_as_well(tmp_path: Path):
+    """The runtime hands back partial text *and* completed blocks. A caller
+    that counted both would return every answer twice, which is the one way a
+    streaming rework can silently corrupt what the workspace records."""
+    chat = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "Exactly once."}]))
+    assert chat.send("Say it once.") == "Exactly once."
+
+
+def test_asking_is_enough_to_be_remembered(tmp_path: Path):
+    """A turn nobody ever drains still has to leave a trace: `stream` records
+    the question when it is asked, not when a consumer gets round to it."""
+    chat = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "Unread."}]))
+    chat.stream("Did anyone hear me?")          # deliberately never iterated
+    events = [json.loads(line) for line in chat.transcript_path.read_text().splitlines()]
+    assert [event for event in events if event["type"] == "user"]
+
+
+def test_cancelling_is_written_down_and_reaches_the_runtime(tmp_path: Path):
+    chat = session(tmp_path, FakeChatRuntime([]))
+    chat.cancel()
+    assert chat.runtime.cancelled
+    events = [json.loads(line) for line in chat.transcript_path.read_text().splitlines()]
+    cancelled = [event for event in events if event.get("status") == "cancelled"]
+    assert cancelled and cancelled[-1]["type"] == "turn"
+    assert cancelled[-1]["reason"] == "user_cancelled"
+
+
+def test_cancelling_twice_records_once(tmp_path: Path):
+    """Esc, then Esc again, is one cancelled turn and not two."""
+    chat = session(tmp_path, FakeChatRuntime([]))
+    chat.cancel()
+    chat.cancel("something_else")
+    events = [json.loads(line) for line in chat.transcript_path.read_text().splitlines()]
+    assert len([event for event in events if event.get("status") == "cancelled"]) == 1
+
+
+def test_a_cancelled_turn_runs_no_further_tools(tmp_path: Path):
+    """What cancellation can honestly promise. A call already running owns a
+    Lean process and its workspace writes; one that has not started must not
+    begin."""
+    chat = session(tmp_path, FakeChatRuntime([]))
+    chat.cancel()
+    result = chat._dispatch("save_lean", {"source": "import Mathlib\n\nexample : True := by exact True.intro"})
+    assert not result.ok
+    assert "cancelled" in result.output
+    assert not (tmp_path / "Main.lean").exists()
+    # Refusal is still an event: a trajectory that simply omits the call would
+    # not show that the model asked.
+    events = [json.loads(line) for line in chat.transcript_path.read_text().splitlines()]
+    assert [event for event in events if event["type"] == "tool"]
+
+
+def test_the_next_turn_is_not_born_cancelled(tmp_path: Path):
+    """The flag is cleared when a turn starts, not when one is cancelled --
+    otherwise a turn stopped a moment ago disarms the tool gate of the turn
+    that replaces it."""
+    chat = session(tmp_path, FakeChatRuntime([
+        call("record_name", {"formal_name": "N", "latex_name": "l", "description": "d"}),
+        {"role": "assistant", "content": "Recorded."},
+    ]))
+    chat.cancel()
+    assert chat.send("Try again.") == "Recorded."
+    assert json.loads((tmp_path / "session.json").read_text())["names"]

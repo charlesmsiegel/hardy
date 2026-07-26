@@ -39,7 +39,9 @@ def test_everything_else_is_refused_by_default(name: str):
 def test_the_provider_turn_count_is_taken_from_the_result():
     """The SDK ran the loop, so only it knows how many turns that took."""
     live = runtime()
-    live._note(ResultMessage(num_turns=7), [])
+    # `_note` yields what the terminal should draw, so it has to be drained
+    # before any of its recording happens.
+    list(live._note(ResultMessage(num_turns=7), []))
     assert live.turns == 7
     assert live.session_id == "thread-9"
 
@@ -47,7 +49,7 @@ def test_the_provider_turn_count_is_taken_from_the_result():
 def test_an_error_result_is_not_reported_as_a_finished_answer():
     """Otherwise a batch run records a provider failure as 'no proof submitted'."""
     live = runtime()
-    live._note(ResultMessage(is_error=True, subtype="error_max_turns"), [])
+    list(live._note(ResultMessage(is_error=True, subtype="error_max_turns"), []))
     assert live.failure == "error_max_turns"
 
 
@@ -69,10 +71,10 @@ def test_a_stalled_exchange_is_cut_off_at_the_wall_clock_budget():
     seen: list[dict] = []
     live = runtime(wall_seconds=0.05, observe=seen.append)
 
-    async def forever(text):
+    async def forever(text, outbox):
         await asyncio.sleep(30)
 
-    live._ask = forever
+    live._exchange = forever
     with pytest.raises(TimeoutError):
         live.ask("hello")
     assert seen == [{"type": "wall_clock_limit", "seconds": 0.05}]

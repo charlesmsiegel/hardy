@@ -98,6 +98,27 @@ rewritten; the tail is flushed when the turn ends.
 Tool boundaries print as their own notice lines between prose, so output that
 came from Lean or LaTeX stays visually distinct from the model's own words.
 
+### Silence during tool work
+
+Token streaming alone does not fix the worst wait. A `check_lean` call can run
+for minutes and emits no prose at all, so a purely textual stream would still
+show nothing while the slowest part of a turn happens.
+
+Both ends of every tool call already cross the wire and Hardy currently drops
+one: `_note` reads `TextBlock`, `ToolUseBlock`, and `ThinkingBlock`, but
+ignores the `ToolResultBlock`s the SDK delivers inside `UserMessage`s. Emitting
+both gives, with no new plumbing:
+
+- `tool_use` rendered **when the call starts** rather than after it returns;
+- `tool_result` rendered on completion, its duration timed by the shell from
+  the gap between the two events;
+- a spinner hint naming what is actually running — `⠹ check_lean · 45s` —
+  instead of a generic `working`.
+
+Out of scope, because nothing produces the information yet: partial output from
+a running Lean or LaTeX subprocess, which needs plumbing into `lean.py` and
+`latex.py`, and token or cost meters. Those are a separate issue.
+
 `shell._run_turn` drains the stream on the worker thread and marshals each
 event to the loop. `plain.run` iterates it directly through the same wrapper,
 keeping `hardy < script.txt` working.

@@ -18,13 +18,30 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+import queue
+import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from .models import ToolResult
+from .chat import final_text
+from .models import ToolResult, TurnEvent
 
 SERVER = "hardy"
+
+# How long `stream` waits for the SDK's thread to wind down once a consumer has
+# stopped reading. It is a daemon thread, so this bounds tidiness, not safety.
+TEARDOWN_SECONDS = 5.0
+
+# Put on the queue by the SDK's thread when it has nothing further to say.
+_FINISHED = object()
+
+
+class _Failed:
+    """An exception on its way from the SDK's thread back to the caller's."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
 
 # The SDK reports its own turn bound being reached as an error result. It is not
 # one: it is the limit the caller asked for, arriving as requested.
@@ -49,6 +66,35 @@ REFUSED = ("Bash", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFet
 def qualified(name: str) -> str:
     """An SDK MCP tool is addressed by its server-qualified name."""
     return f"mcp__{SERVER}__{name}"
+
+
+def plain(name: str) -> str:
+    """The bare tool name, for a human reading the terminal.
+
+    Only for drawing. The transcript keeps the qualified name, because that is
+    what was actually called.
+    """
+    prefix = f"mcp__{SERVER}__"
+    return name[len(prefix):] if name.startswith(prefix) else name
+
+
+def _delta(message: Any) -> str:
+    """The text of a partial-message event, if that is what this is.
+
+    `include_partial_messages` adds raw provider stream events alongside the
+    completed blocks. Only `text_delta` is drawn: a `thinking_delta` is not the
+    model's answer, and Hardy reports *that* a model is thinking without
+    transcribing what it thought.
+    """
+    if type(message).__name__ != "StreamEvent":
+        return ""
+    event = getattr(message, "event", None)
+    if not isinstance(event, dict) or event.get("type") != "content_block_delta":
+        return ""
+    delta = event.get("delta")
+    if not isinstance(delta, dict) or delta.get("type") != "text_delta":
+        return ""
+    return str(delta.get("text") or "")
 
 
 def load_sdk():
@@ -107,6 +153,15 @@ class ClaudeAgentRuntime:
         self._observe = observe or (lambda event: None)
         self._sdk = load_sdk()
         self._server = build_server(self._sdk, specs, dispatch)
+        # The turn in flight, if any. `cancel` reads all three from whatever
+        # thread it is called on, so nothing here is ever mutated except by
+        # `stream` starting a turn and `_exchange` running one.
+        self._cancelled = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._client: Any | None = None
+        # Tool-use id -> bare name, so a completed call can be named when the
+        # SDK reports it back by id alone.
+        self._called: dict[str, str] = {}
 
     def _options(self) -> Any:
         return self._sdk.ClaudeAgentOptions(
@@ -130,6 +185,11 @@ class ClaudeAgentRuntime:
             # A declared bound has to reach the thing that owns the loop, or the
             # trajectory records a limit that nothing applied.
             max_turns=self.max_turns,
+            # Partial text, so a turn is visible while it is still being
+            # written rather than only once it is finished. This adds events
+            # beside the completed blocks; it does not replace them, which is
+            # why `_note` draws from one and records from the other.
+            include_partial_messages=True,
         )
 
     async def _permit(self, name: str, arguments: dict[str, Any], context: Any) -> Any:
@@ -145,30 +205,107 @@ class ClaudeAgentRuntime:
         return self._sdk.PermissionResultDeny(behavior="deny", message="Hardy runs its own tools only.")
 
     def ask(self, text: str) -> str:
-        """One exchange. The SDK may call Hardy's tools any number of times."""
-        return asyncio.run(self._ask_within_budget(text))
+        """One exchange, for a caller with nothing to draw it on."""
+        return final_text(self.stream(text))
 
-    async def _ask_within_budget(self, text: str) -> str:
+    def stream(self, text: str) -> Iterator[TurnEvent]:
+        """One exchange, delivered as it happens.
+
+        The SDK is asynchronous and no caller here is: the shell runs a turn on
+        a worker thread precisely so its event loop stays free to draw. So the
+        SDK gets an event loop on a thread of its own and hands events back
+        through a queue, rather than this generator trying to own a loop it
+        would have to re-enter on every `next()`.
+        """
+        outbox: queue.Queue[Any] = queue.Queue()
+        # Reset per turn, not in `cancel`: a turn cancelled a moment before
+        # this one started must not leave the flag set over the new one.
+        self._cancelled = False
+        self._loop, self._client, self._called = None, None, {}
+
+        def pump() -> None:
+            try:
+                asyncio.run(self._within_budget(text, outbox))
+            except BaseException as error:  # noqa: BLE001 - re-raised on the consumer's thread
+                outbox.put(_Failed(error))
+            finally:
+                outbox.put(_FINISHED)
+
+        worker = threading.Thread(target=pump, name="hardy-turn", daemon=True)
+        worker.start()
+        finished = False
+        try:
+            while True:
+                item = outbox.get()
+                if item is _FINISHED:
+                    finished = True
+                    return
+                if isinstance(item, _Failed):
+                    raise item.error
+                yield item
+        finally:
+            # A consumer that stopped early -- `break`, an exception, a turn
+            # cancelled from the terminal -- must not leave the SDK pushing
+            # into a queue nobody will ever read again.
+            if not finished:
+                self.cancel()
+            worker.join(timeout=TEARDOWN_SECONDS)
+
+    def cancel(self) -> None:
+        """Stop the model. Safe from any thread, and safe to call twice.
+
+        Tool work already running is not unwound; `MathematicsSession.cancel`
+        is where that limit is stated and kept.
+        """
+        self._cancelled = True
+        loop, client = self._loop, self._client
+        if loop is None or client is None or loop.is_closed():
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(client.interrupt(), loop)
+        except RuntimeError:
+            # The loop stopped between the check above and this call. The turn
+            # is over either way, which is what cancelling asked for.
+            pass
+
+    async def _within_budget(self, text: str, outbox: queue.Queue) -> None:
         """The wall clock is Hardy's to keep even when the loop is not.
 
         `max_turns` is the SDK's to enforce, but nothing bounds a stalled
         request, so the deadline is imposed here rather than trusted to it.
         """
         if not self.wall_seconds:
-            return await self._ask(text)
+            await self._exchange(text, outbox)
+            return
         try:
-            return await asyncio.wait_for(self._ask(text), timeout=self.wall_seconds)
+            await asyncio.wait_for(self._exchange(text, outbox), timeout=self.wall_seconds)
         except TimeoutError:
             self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds})
             raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget") from None
 
-    async def _ask(self, text: str) -> str:
+    async def _exchange(self, text: str, outbox: queue.Queue) -> None:
         spoken: list[str] = []
         self.failure = None
+        self._loop = asyncio.get_running_loop()
         async with self._sdk.ClaudeSDKClient(options=self._options()) as client:
-            await client.query(text)
-            async for message in client.receive_response():
-                self._note(message, spoken)
+            # Published only once the client is connected: `cancel` reaches for
+            # it from another thread and must never find a half-built one.
+            self._client = client
+            try:
+                await client.query(text)
+                async for message in client.receive_response():
+                    for event in self._note(message, spoken):
+                        outbox.put(event)
+            finally:
+                self._client = None
+        reply = "\n\n".join(spoken).strip()
+        if self._cancelled:
+            # Stopped on purpose. The SDK reports an interrupted exchange as an
+            # error, and raising here would dress the user's own decision up as
+            # a provider failure. Whatever was said before the interrupt is
+            # still the reply -- it was really said.
+            outbox.put(TurnEvent("reply", text=reply))
+            return
         if self.failure == TURN_LIMIT:
             raise TurnLimitReached(f"the exchange reached its {self.max_turns}-turn bound")
         if self.failure:
@@ -176,24 +313,52 @@ class ClaudeAgentRuntime:
             # answer, and a batch run would record it as "no proof submitted"
             # rather than as the error it was.
             raise RuntimeError(f"the provider ended the exchange with an error: {self.failure}")
-        return "\n\n".join(spoken).strip()
+        outbox.put(TurnEvent("reply", text=reply))
 
-    def _note(self, message: Any, spoken: list[str]) -> None:
-        """Record what the SDK reports, and keep the thread it belongs to."""
+    def _note(self, message: Any, spoken: list[str]) -> Iterator[TurnEvent]:
+        """Record what the SDK reports, and say what a watcher should draw.
+
+        Two granularities, on purpose. What it *yields* is for the terminal and
+        includes partial text; what it hands `observe` -- and so what reaches
+        `transcript.jsonl` -- is whole blocks, as before.
+        """
         # Resuming by session id is how a conversation survives both the next
         # exchange and the next process.
         session = getattr(message, "session_id", None)
         if session:
             self.session_id = session
+        delta = _delta(message)
+        if delta:
+            # Drawn, never recorded, and deliberately never added to `spoken`:
+            # the completed TextBlock below carries this same text, and
+            # counting both would return every answer twice.
+            yield TurnEvent("text", text=delta)
         for block in getattr(message, "content", None) or []:
             kind = type(block).__name__
             if kind == "TextBlock" and getattr(block, "text", ""):
                 spoken.append(block.text)
                 self._observe({"type": "assistant", "message": {"role": "assistant", "content": block.text}})
             elif kind == "ToolUseBlock":
-                self._observe({"type": "tool_use", "name": getattr(block, "name", ""), "input": getattr(block, "input", {})})
+                name = getattr(block, "name", "")
+                # Kept so the result below can be named. The SDK identifies a
+                # completed call by the id it was asked under, not by name.
+                self._called[str(getattr(block, "id", ""))] = plain(name)
+                self._observe({"type": "tool_use", "name": name, "input": getattr(block, "input", {})})
+                yield TurnEvent("tool_use", name=plain(name))
+            elif kind == "ToolResultBlock":
+                # The far end of a tool call, which Hardy used to drop. Drawing
+                # it is what keeps a three-minute Lean check from looking like
+                # a hang. Not observed: `MathematicsSession._dispatch` already
+                # records the result it produced, in more detail than this.
+                identifier = str(getattr(block, "tool_use_id", ""))
+                yield TurnEvent(
+                    "tool_result",
+                    name=self._called.pop(identifier, ""),
+                    ok=not getattr(block, "is_error", False),
+                )
             elif kind == "ThinkingBlock":
                 self._observe({"type": "thinking"})
+                yield TurnEvent("thinking")
         if type(message).__name__ == "ResultMessage":
             # The SDK ran the loop, so it is the only thing that knows how many
             # turns that took. Hardy counting tool calls would be a different

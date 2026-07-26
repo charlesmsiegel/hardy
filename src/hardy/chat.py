@@ -5,7 +5,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -14,7 +14,7 @@ from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .latex import LatexTools
 from .lean import LeanTools
-from .models import Request, ToolResult
+from .models import Request, ToolResult, TurnEvent
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
 
 CHAT_TOOLS = [
@@ -39,7 +39,24 @@ SYSTEM_PROMPT = CHAT_SYSTEM_PROMPT
 
 class ChatRuntime(Protocol):
     model: str
+    def stream(self, text: str) -> Iterator[TurnEvent]: ...
     def ask(self, text: str) -> str: ...
+    def cancel(self) -> None: ...
+
+
+def final_text(events: Iterable[TurnEvent]) -> str:
+    """Drain a turn and keep the reply it settled on.
+
+    The one place a blocking caller turns a stream back into the string it
+    used to get. It reads the `reply` event and never the `text` deltas: the
+    deltas are for drawing, and assembling the answer from them as well would
+    return every word twice.
+    """
+    reply = ""
+    for event in events:
+        if event.kind == "reply":
+            reply = event.text
+    return reply
 
 
 def provenance(runtime: Any) -> dict[str, Any]:
@@ -82,6 +99,10 @@ class MathematicsSession:
         # these run Lean, rewrite session.json, and stop to ask a human for
         # approval. None of that is safe to interleave.
         self._gate = threading.Lock()
+        # Set for the rest of a turn once it is cancelled, and cleared when the
+        # next one starts. Read by `_dispatch` on the SDK's own tool threads,
+        # which is why it is an Event rather than a bare bool.
+        self._cancelled = threading.Event()
         # State first: the runtime is built from the system prompt, which embeds
         # the manifest, and it resumes the provider thread the state remembers.
         self.state = self._read_state()
@@ -274,19 +295,57 @@ class MathematicsSession:
             return ToolResult(False, str(error))
         return ToolResult(False, f"unknown tool: {name}")
 
-    def send(self, text: str) -> str:
-        """One exchange. The provider's SDK decides how many tools to call.
+    def stream(self, text: str) -> Iterator[TurnEvent]:
+        """One exchange, as it arrives. The SDK decides how many tools to call.
 
         Hardy no longer counts the turns — see issue #23. What it still does is
         run every tool the model asks for, and write down what happened.
+
+        The events are for whoever is drawing the turn. What lands in
+        `transcript.jsonl` is unchanged and still comes from `observe` and
+        `_dispatch`: the record holds whole blocks and tool results, because a
+        transcript of ten thousand token deltas would be worse evidence, not
+        better.
         """
+        # Deliberately not a generator itself. A generator body does not run
+        # until it is first iterated, which would make the record of the turn
+        # wait on a consumer that may never come -- and the whole point of
+        # `record_abandonment` is that a turn nobody waited for still leaves a
+        # trace. Recording here means asking is enough to be remembered.
         self._record({"type": "user", "message": {"role": "user", "content": text}})
+        # Cleared here rather than in `cancel`: a turn cancelled during the
+        # previous exchange must not silently disarm this one's tool gate.
+        self._cancelled.clear()
+        return self._stream(text)
+
+    def _stream(self, text: str) -> Iterator[TurnEvent]:
         try:
-            return self.runtime.ask(text)
+            yield from self.runtime.stream(text)
         finally:
             # Even a failed exchange belongs to a provider thread, and that turn
             # and its tool calls are only reachable again by resuming it.
             self._remember_thread()
+
+    def send(self, text: str) -> str:
+        """`stream`, for a caller with nothing to draw it on."""
+        return final_text(self.stream(text))
+
+    def cancel(self, reason: str = "user_cancelled") -> None:
+        """Stop the turn. Idempotent, and callable from any thread.
+
+        What this can honestly promise is that the model stops and that no
+        *further* tool call will run. It cannot promise that a Lean or LaTeX
+        process already started will stop, or that a file such a call has
+        already written will be unwritten — so `_dispatch` lets work in flight
+        finish rather than tearing it out from under the workspace.
+        """
+        if self._cancelled.is_set():
+            return
+        self._cancelled.set()
+        self._record({"type": "turn", "status": "cancelled", "reason": reason})
+        cancel = getattr(self.runtime, "cancel", None)
+        if cancel is not None:
+            cancel()
 
     def record_abandonment(self, reason: str) -> None:
         """Write down that a turn was walked away from.
@@ -304,6 +363,15 @@ class MathematicsSession:
         for a tool, but only Hardy knows what running it produced, and a
         trajectory without the results is not an account of what happened.
         """
+        # Checked before the gate, not inside it: a cancelled turn's queued
+        # tool calls must not first wait behind the Lean check that is still
+        # finishing. Refusing is all cancellation can do here — a call already
+        # past this point owns a subprocess and its workspace writes, and
+        # interrupting it halfway would leave worse behind than letting it end.
+        if self._cancelled.is_set():
+            result = ToolResult(False, "the turn was cancelled before this tool call was made")
+            self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
+            return result
         with self._gate:
             try:
                 result = self._tool(name, arguments)
