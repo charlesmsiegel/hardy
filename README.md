@@ -153,7 +153,11 @@ beside Mathlib's, which is what makes the imports resolve; `lake env` augments
 that variable rather than replacing it, so no shared `lakefile.toml` is touched.
 Saving a file rebuilds everything that imports it and is refused whole if any of
 them breaks, so a save can never leave the workspace uncompilable. LaTeX
-fragments are `\input` from `writeup.tex` and are always compiled through it.
+fragments are `\input` from `writeup.tex` and are always compiled through it —
+so a split writeup is built fragment first, and `writeup.tex` is rewritten to
+include it afterwards, since a root referencing a file that does not exist yet
+will not compile. Deleting a fragment the root still includes is refused, as is
+deleting a Lean file another imports or one holding a registered name.
 
 **Every `theorem` owes a writeup.** Before Hardy may save a file introducing a
 new theorem, each theorem already saved must be recorded with `record_name` and
