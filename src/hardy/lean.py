@@ -201,21 +201,39 @@ def elaborate(
     cwd: Path,
     timeout_seconds: float,
     max_output_bytes: int = DEFAULT_PROCESS_OUTPUT_BYTES,
+    env: dict[str, str] | None = None,
+    source_path: Path | None = None,
     runner: Callable[[ProcessSpec], ProcessResult] = run_process,
 ) -> Elaboration:
-    """Elaborate one Lean source file and return what Lean said about it."""
+    """Elaborate one Lean source file and return what Lean said about it.
+
+    `source_path` elaborates a file already sitting in a tree, which a
+    workspace build needs: Lean derives a module's name from its path under a
+    root, and that name is what other files import it by. Without one the
+    source goes to a throwaway `Main.lean`, which is all a single-file check
+    ever needed. `env` carries the `LEAN_PATH` that makes the rest of the
+    workspace importable; `lake env` augments it rather than replacing it.
+    """
     encoded = source.encode("utf-8")
-    with tempfile.TemporaryDirectory(prefix="hardy-lean-") as temporary:
-        source_path = Path(temporary) / "Main.lean"
-        source_path.write_bytes(encoded)
-        process = runner(
+
+    def run(path: Path) -> ProcessResult:
+        return runner(
             ProcessSpec(
-                argv=(*argv, str(source_path)),
+                argv=(*argv, str(path)),
                 cwd=cwd,
                 timeout_seconds=timeout_seconds,
                 max_output_bytes=max_output_bytes,
+                env=dict(env or {}),
             )
         )
+
+    if source_path is not None:
+        process = run(source_path)
+    else:
+        with tempfile.TemporaryDirectory(prefix="hardy-lean-") as temporary:
+            path = Path(temporary) / "Main.lean"
+            path.write_bytes(encoded)
+            process = run(path)
     diagnostics, open_goals = parse_lean_json(
         "\n".join(part for part in (process.stdout, process.stderr) if part)
     )
@@ -258,16 +276,25 @@ class LeanTools:
             suffix = f"\n\n#print axioms {name}"
         return f"{imports}\n\n{self.request.declaration} := {proof.strip()}{suffix}\n"
 
-    def _run(self, source: str) -> LeanToolResult:
+    def _run(
+        self,
+        source: str,
+        *,
+        argv: tuple[str, ...] | None = None,
+        env: dict[str, str] | None = None,
+        source_path: Path | None = None,
+    ) -> LeanToolResult:
         if self.project is not None and not self.project.is_dir():
             return LeanToolResult(False, f"Lean project directory not found: {self.project}", source)
         try:
             elaboration = elaborate(
                 source,
-                argv=(*self.lean_command, "--json"),
+                argv=argv if argv is not None else (*self.lean_command, "--json"),
                 cwd=self.project if self.project is not None else Path.cwd(),
                 timeout_seconds=self.timeout,
                 max_output_bytes=self.max_output_bytes,
+                env=env,
+                source_path=source_path,
                 runner=self._runner,
             )
         except FileNotFoundError:
@@ -304,9 +331,30 @@ class LeanTools:
     def has_holes(source: str) -> bool:
         return HOLE.search(source) is not None
 
-    def run_source(self, source: str) -> LeanToolResult:
+    def run_source(self, source: str, *, env: dict[str, str] | None = None) -> LeanToolResult:
         """Run a complete Lean source file, without claiming it is hole-free."""
-        return self._run(source)
+        return self._run(source, env=env)
+
+    def compile_module(
+        self, source_root: Path, build_root: Path, source_file: Path
+    ) -> LeanToolResult:
+        """Build one workspace file to an olean, so others can import it.
+
+        `--root` is not optional. Without it Lean derives a module name from
+        the directory it was started in -- the Lake project -- and refuses an
+        input file that is not underneath it. `LEAN_PATH` reaches the modules
+        already built; `lake env` adds Mathlib's own paths to it rather than
+        overwriting it.
+        """
+        source = source_file.read_text(encoding="utf-8")
+        olean = (build_root / source_file.relative_to(source_root)).with_suffix(".olean")
+        olean.parent.mkdir(parents=True, exist_ok=True)
+        return self._run(
+            source,
+            argv=(*self.lean_command, "--json", f"--root={source_root}", "-o", str(olean)),
+            env={"LEAN_PATH": str(build_root)},
+            source_path=source_file,
+        )
 
     def check_proof(self, proof: str, *, final: bool = False) -> LeanToolResult:
         if final and self.has_holes(proof):
