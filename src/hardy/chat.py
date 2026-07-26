@@ -307,21 +307,47 @@ class MathematicsSession:
         transcript of ten thousand token deltas would be worse evidence, not
         better.
         """
-        # Deliberately not a generator itself. A generator body does not run
-        # until it is first iterated, which would make the record of the turn
-        # wait on a consumer that may never come -- and the whole point of
-        # `record_abandonment` is that a turn nobody waited for still leaves a
-        # trace. Recording here means asking is enough to be remembered.
+        # Deliberately not a generator itself, and neither is the runtime's
+        # `stream`. A generator body does not run until it is first iterated,
+        # which would make the record of the turn wait on a consumer that may
+        # never come -- and the whole point of `record_abandonment` is that a
+        # turn nobody waited for still leaves a trace.
+        #
+        # It also decides where the per-turn reset below happens. The terminal
+        # iterates on a worker thread, so a lazy body would clear the flag
+        # *after* an Esc pressed in the same input batch as the Enter that
+        # started the turn, wiping a cancellation the transcript had already
+        # recorded. Starting a turn belongs on the thread that sequenced it;
+        # only the waiting belongs on the worker.
         self._record({"type": "user", "message": {"role": "user", "content": text}})
         # Cleared here rather than in `cancel`: a turn cancelled during the
         # previous exchange must not silently disarm this one's tool gate.
         self._cancelled.clear()
-        return self._stream(text)
+        return self._stream(self.runtime.stream(text))
 
-    def _stream(self, text: str) -> Iterator[TurnEvent]:
+    def _stream(self, events: Iterator[TurnEvent]) -> Iterator[TurnEvent]:
+        # An explicit `yield`, not `yield from`. A consumer that unwinds --
+        # Ctrl+C in `--plain`, most of all -- closes this generator, and with
+        # `yield from` that teardown would reach the runtime first: it
+        # interrupts the model and then waits on its worker, all while this
+        # session's tool gate is still open and the provider can dispatch one
+        # more call. Yielding here means the gate shuts before any of that.
+        iterator = iter(events)
         try:
-            yield from self.runtime.stream(text)
+            while True:
+                try:
+                    event = next(iterator)
+                except StopIteration:
+                    return
+                try:
+                    yield event
+                except BaseException:
+                    self._cancelled.set()
+                    raise
         finally:
+            close = getattr(iterator, "close", None)
+            if close is not None:
+                close()
             # Even a failed exchange belongs to a provider thread, and that turn
             # and its tool calls are only reachable again by resuming it.
             self._remember_thread()
@@ -369,16 +395,29 @@ class MathematicsSession:
         # past this point owns a subprocess and its workspace writes, and
         # interrupting it halfway would leave worse behind than letting it end.
         if self._cancelled.is_set():
-            result = ToolResult(False, "the turn was cancelled before this tool call was made")
-            self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
-            return result
+            return self._refuse_cancelled(name, arguments)
         with self._gate:
+            # Checked again, now that the gate is held. The SDK may launch
+            # several calls at once: one of them can pass the check above,
+            # block here behind a Lean run that takes minutes, and reach this
+            # line long after the turn was cancelled. Without the second look
+            # it would then start fresh work and write to the workspace, which
+            # is exactly what `cancel` promises will not happen.
+            if self._cancelled.is_set():
+                return self._refuse_cancelled(name, arguments)
             try:
                 result = self._tool(name, arguments)
             except (KeyError, TypeError, ValueError) as error:
                 result = ToolResult(False, f"invalid tool call: {error}")
             self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
             return result
+
+    def _refuse_cancelled(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        """Still recorded: a trajectory that simply omitted the call would not
+        show that the model asked for it."""
+        result = ToolResult(False, "the turn was cancelled before this tool call was made")
+        self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
+        return result
 
     def _remember_thread(self) -> None:
         thread = getattr(self.runtime, "session_id", None)

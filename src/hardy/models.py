@@ -46,6 +46,10 @@ class TurnEvent:
     text: str = ""               # a delta for `text`; the whole reply for `reply`
     name: str = ""               # the tool, for tool_use and tool_result
     ok: bool | None = None       # how a tool call came out, for tool_result
+    # Which invocation this is, for tool_use and tool_result. The SDK can run
+    # several calls at once, including two of the same tool, so the name does
+    # not identify one of them -- pairing a result with its start needs the id.
+    call_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

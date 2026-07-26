@@ -37,6 +37,7 @@ from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output.vt100 import Vt100_Output
 
+from hardy.models import TurnEvent
 from hardy.tui import handlers, shell
 
 from .conftest import Streams
@@ -510,3 +511,52 @@ async def test_spinner_ticking_does_not_paint_under_a_nested_prompt(settings):
                 code = await built.run_async()
                 await driving
     assert code == 0
+
+
+class RacingSession(Streams):
+    """Reports which thread started the turn, and whether a cancellation
+    that arrived with the Enter survived into the turn itself."""
+
+    def __init__(self):
+        self.release = threading.Event()
+        self.started_on = ""
+        self.cancelled_when_read = None
+        self._cancelled = False
+        self.abandoned: list[str] = []
+
+    def stream(self, text: str):
+        # The real session and runtime both reset here, eagerly. Where "here"
+        # runs is the whole point of this fake.
+        self.started_on = threading.current_thread().name
+        self._cancelled = False
+        return self._events()
+
+    def _events(self):
+        self.release.wait(timeout=5)
+        self.cancelled_when_read = self._cancelled
+        yield TurnEvent("reply", text="late reply")
+
+    def cancel(self, reason: str = "user_cancelled") -> None:
+        self._cancelled = True
+
+    def switch_model(self, model: str) -> None: ...
+
+    def record_abandonment(self, reason: str) -> None:
+        self.abandoned.append(reason)
+
+
+async def test_a_turn_is_started_on_the_thread_that_sequenced_it(settings):
+    """Enter and a lone Escape resolve in the very same input batch, with no
+    event-loop turn in between (see this module's docstring). Starting the
+    turn -- which is what clears the per-turn cancellation flags -- therefore
+    has to happen in the Enter handler itself. Left to the worker, the reset
+    would land *after* `_abandon` had cancelled and quietly undo it, leaving
+    the model running while the transcript said the turn had stopped.
+
+    Only the waiting belongs on the worker, and `cancelled_when_read` proves
+    the cancellation was still in force once it got there.
+    """
+    session = RacingSession()
+    await blast(settings, session, "prove something\r\x1b \x03")
+    assert session.started_on == threading.current_thread().name
+    assert session.cancelled_when_read is True

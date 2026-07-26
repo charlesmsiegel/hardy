@@ -499,11 +499,25 @@ class Shell:
                 # through `arrivals`. The queue is created here, on the loop,
                 # for the same reason the work is submitted here -- `_run_turn`
                 # may never get a turn to create one.
+                #
+                # `session.stream` is *called* here too, synchronously, and
+                # only its iteration handed to the executor. Both it and the
+                # runtime's `stream` are eager for this reason: starting the
+                # turn is what clears the per-turn cancellation flags, and a
+                # lone Escape behind this Enter is resolved in the very same
+                # input batch, with no event-loop turn in between. Left to the
+                # worker, those resets would land after `_abandon` had already
+                # cancelled, and the turn would run on with the transcript
+                # saying it had stopped.
                 loop = asyncio.get_running_loop()
                 arrivals: asyncio.Queue = asyncio.Queue()
-                future = loop.run_in_executor(
-                    None, self._drain, outcome.argument, arrivals, loop
-                )
+                try:
+                    events = self._state.session.stream(outcome.argument)
+                except Exception as error:  # noqa: BLE001 - never lose the session
+                    self._state = dataclasses.replace(self._state, turn_running=False)
+                    self.write(f"{type(error).__name__}: {error}", style="error")
+                    return
+                future = loop.run_in_executor(None, self._drain, events, arrivals, loop)
                 self._pending_future = future
                 event.app.create_background_task(
                     self._run_turn(outcome.argument, future, arrivals)
@@ -600,8 +614,13 @@ class Shell:
             # than claiming a cancellation that did not happen.
             session.record_abandonment("user_pressed_escape")
 
-    def _drain(self, text: str, arrivals: asyncio.Queue, loop: asyncio.AbstractEventLoop) -> None:
-        """Run the turn on a worker thread; post what arrives back to the loop.
+    def _drain(
+        self,
+        events: Any,
+        arrivals: asyncio.Queue,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        """Wait on a turn already started by `_submit_key`; post what arrives.
 
         Everything this touches crosses a thread boundary exactly once, through
         `call_soon_threadsafe`. `_run_turn` does all the drawing, on the loop,
@@ -612,7 +631,7 @@ class Shell:
         will ever fill. The exception itself travels on the future.
         """
         try:
-            for event in self._state.session.stream(text):
+            for event in events:
                 loop.call_soon_threadsafe(arrivals.put_nowait, event)
         finally:
             loop.call_soon_threadsafe(arrivals.put_nowait, _TURN_OVER)
