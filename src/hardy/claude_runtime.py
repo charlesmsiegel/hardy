@@ -79,23 +79,31 @@ def plain(name: str) -> str:
     return name[len(prefix):] if name.startswith(prefix) else name
 
 
-def _delta(message: Any) -> str:
-    """The text of a partial-message event, if that is what this is.
+def _delta(message: Any) -> tuple[int, str] | None:
+    """Which content block a partial-message event belongs to, and its text.
 
     `include_partial_messages` adds raw provider stream events alongside the
     completed blocks. Only `text_delta` is drawn: a `thinking_delta` is not the
     model's answer, and Hardy reports *that* a model is thinking without
     transcribing what it thought.
+
+    The index comes back because one message can carry several text blocks, and
+    `_note` has to tell their deltas apart to know which block each of them
+    already drew.
     """
     if type(message).__name__ != "StreamEvent":
-        return ""
+        return None
     event = getattr(message, "event", None)
     if not isinstance(event, dict) or event.get("type") != "content_block_delta":
-        return ""
+        return None
     delta = event.get("delta")
     if not isinstance(delta, dict) or delta.get("type") != "text_delta":
-        return ""
-    return str(delta.get("text") or "")
+        return None
+    text = str(delta.get("text") or "")
+    if not text:
+        return None
+    index = event.get("index")
+    return (index if isinstance(index, int) else 0, text)
 
 
 def load_sdk():
@@ -164,10 +172,12 @@ class ClaudeAgentRuntime:
         # Tool-use id -> bare name, so a completed call can be named when the
         # SDK reports it back by id alone.
         self._called: dict[str, str] = {}
-        # Deltas drawn for a block that has not completed yet. Cleared by the
-        # completed block, which supersedes them; flushed at end of turn if one
-        # never came. See `_note` and `_settle_drawn`.
+        # One entry per streamed text block that has not completed yet, oldest
+        # first, and the block index the last delta belonged to. A completed
+        # block consumes its own entry; whatever is left at the end of the turn
+        # was drawn and never superseded. See `_note` and `_settle_drawn`.
         self._drawn: list[str] = []
+        self._drawing: int | None = None
 
     def _options(self) -> Any:
         return self._sdk.ClaudeAgentOptions(
@@ -236,7 +246,8 @@ class ClaudeAgentRuntime:
         # this one started must not leave the flag set over the new one. Safe
         # to do here precisely because "here" is turn-submission time.
         self._cancelled = False
-        self._loop, self._client, self._called, self._drawn = None, None, {}, []
+        self._loop, self._client, self._called = None, None, {}
+        self._drawn, self._drawing = [], None
 
         def pump() -> None:
             try:
@@ -323,6 +334,35 @@ class ClaudeAgentRuntime:
         spoken: list[str] = []
         self.failure = None
         self._loop = asyncio.get_running_loop()
+        try:
+            await self._ask(text, outbox, spoken)
+        finally:
+            # Every way out, not just the ordinary one: the wall clock cancels
+            # this coroutine where it stands, and a provider error raises out of
+            # the middle of a block. Text that was drawn was drawn on any of
+            # those paths, and this is the only place left to say so.
+            drawn = self._settle_drawn()
+            if drawn:
+                spoken.append(drawn)
+        reply = "\n\n".join(spoken).strip()
+        if self._cancelled:
+            # Stopped on purpose. The SDK reports an interrupted exchange as an
+            # error, and raising here would dress the user's own decision up as
+            # a provider failure. Whatever was said before the interrupt is
+            # still the reply -- it was really said.
+            outbox.put(TurnEvent("reply", text=reply))
+            return
+        if self.failure == TURN_LIMIT:
+            raise TurnLimitReached(f"the exchange reached its {self.max_turns}-turn bound")
+        if self.failure:
+            # Returning the text would let a provider failure read as a finished
+            # answer, and a batch run would record it as "no proof submitted"
+            # rather than as the error it was.
+            raise RuntimeError(f"the provider ended the exchange with an error: {self.failure}")
+        outbox.put(TurnEvent("reply", text=reply))
+
+    async def _ask(self, text: str, outbox: queue.Queue, spoken: list[str]) -> None:
+        """The exchange itself, so `_exchange` can settle what it drew."""
         async with self._sdk.ClaudeSDKClient(options=self._options()) as client:
             # Published only once the client is connected: `cancel` reaches for
             # it from another thread and must never find a half-built one.
@@ -343,46 +383,46 @@ class ClaudeAgentRuntime:
                             outbox.put(event)
             finally:
                 self._client = None
-        self._settle_drawn(spoken)
-        reply = "\n\n".join(spoken).strip()
-        if self._cancelled:
-            # Stopped on purpose. The SDK reports an interrupted exchange as an
-            # error, and raising here would dress the user's own decision up as
-            # a provider failure. Whatever was said before the interrupt is
-            # still the reply -- it was really said.
-            outbox.put(TurnEvent("reply", text=reply))
-            return
-        if self.failure == TURN_LIMIT:
-            raise TurnLimitReached(f"the exchange reached its {self.max_turns}-turn bound")
-        if self.failure:
-            # Returning the text would let a provider failure read as a finished
-            # answer, and a batch run would record it as "no proof submitted"
-            # rather than as the error it was.
-            raise RuntimeError(f"the provider ended the exchange with an error: {self.failure}")
-        outbox.put(TurnEvent("reply", text=reply))
 
-    def _settle_drawn(self, spoken: list[str]) -> None:
-        """Keep text that was drawn but never arrived as a completed block.
+    def _settle_drawn(self) -> str:
+        """Text that was drawn and that no completed block ever superseded.
 
         Normally there is none: the block supersedes the deltas that built it,
         which is the whole rule -- deltas draw, blocks are authoritative. But an
-        interrupt lands where it lands, and a block the model never finished has
-        no authoritative form while its words are already on the user's screen.
-        Dropping them would make the reply empty and leave `transcript.jsonl`
-        denying text the user watched arrive.
+        interrupt, a wall-clock deadline, or a provider error lands where it
+        lands, and a block that never finished has no authoritative form while
+        its words are already on the user's screen. Dropping them would leave
+        `transcript.jsonl` denying text the user watched arrive.
 
         Recorded as `partial`, because that is what distinguishes it from a
-        block the provider actually completed.
+        block the provider actually completed. Returned as well, so a caller can
+        decide whether it also belongs in a reply: a cancelled turn's does, and
+        a turn that raises has no reply to put it in.
         """
         if not self._drawn:
-            return
-        said, self._drawn = "".join(self._drawn), []
-        spoken.append(said)
+            return ""
+        # Joined as blocks are joined: each entry was a block of its own.
+        said = "\n\n".join(entry for entry in self._drawn if entry)
+        self._drawn, self._drawing = [], None
+        if not said:
+            return ""
         self._observe({
             "type": "assistant",
             "message": {"role": "assistant", "content": said},
             "partial": True,
         })
+        return said
+
+    def _draw(self, index: int, text: str) -> None:
+        """Remember a delta as drawn, under the block it belongs to.
+
+        Kept per block, not per turn: one message can carry several text blocks,
+        and each has to be able to recognise the deltas that already drew *it*.
+        """
+        if not self._drawn or index != self._drawing:
+            self._drawn.append("")
+            self._drawing = index
+        self._drawn[-1] += text
 
     def _note(self, message: Any, spoken: list[str]) -> Iterator[TurnEvent]:
         """Record what the SDK reports, and say what a watcher should draw.
@@ -397,15 +437,16 @@ class ClaudeAgentRuntime:
         if session:
             self.session_id = session
         delta = _delta(message)
-        if delta:
+        if delta is not None:
+            index, text = delta
             # Drawn, never recorded, and deliberately never added to `spoken`
             # here: the completed TextBlock below carries this same text, and
             # counting both would return every answer twice. Kept in `_drawn`
             # only so that block knows it has already been shown -- and so an
             # interrupt that stops the block from ever arriving does not take
             # these words down with it (`_settle_drawn`).
-            self._drawn.append(delta)
-            yield TurnEvent("text", text=delta)
+            self._draw(index, text)
+            yield TurnEvent("text", text=text)
         for block in getattr(message, "content", None) or []:
             kind = type(block).__name__
             if kind == "TextBlock" and getattr(block, "text", ""):
@@ -414,7 +455,10 @@ class ClaudeAgentRuntime:
                 if self._drawn:
                     # Deltas already put these words on screen; the block is
                     # the record's copy of them and must not be drawn again.
-                    self._drawn = []
+                    # Its own entry only, oldest first: clearing the lot would
+                    # make every later block in this same message look undrawn
+                    # and get drawn a second time.
+                    self._drawn.pop(0)
                 else:
                     # Nothing streamed this block -- an older CLI, a provider
                     # that does not stream. Drawn here, in the order it

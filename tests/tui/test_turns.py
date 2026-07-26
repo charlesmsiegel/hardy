@@ -250,8 +250,15 @@ async def test_shift_enter_inserts_a_newline_not_a_submit(settings):
     """
     for sequence in ("\x1b[27;2;13~", "\x1b[13;2u"):
         session = SlowSession()
-        await blast(settings, session, f"one{sequence}two\r\x03")
-        assert session.sent_text == ["one\ntwo"], f"sequence {sequence!r} did not insert a newline"
+        code, written = await blast(settings, session, f"one{sequence}two\r\x03")
+        # Reported, not just compared: the two ways this fails look identical
+        # from `sent_text` alone. A turn that was submitted echoes its own user
+        # line, so text on screen with nothing sent means the newline was lost,
+        # while a bare banner means the keys never reached the box at all.
+        assert session.sent_text == ["one\ntwo"], (
+            f"sequence {sequence!r} did not insert a newline: "
+            f"exit={code} sent={session.sent_text!r} screen={written!r}"
+        )
 
 
 async def test_plain_enter_still_submits(settings):
