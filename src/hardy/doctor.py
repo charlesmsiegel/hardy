@@ -157,9 +157,14 @@ def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
     return checks
 
 
+def describe(checks: list[Check]) -> list[str]:
+    """The report as lines, so a caller that is not a terminal can render it."""
+    return [check.line() for check in checks]
+
+
 def report(checks: list[Check]) -> int:
-    for check in checks:
-        print(check.line())
+    for line in describe(checks):
+        print(line)
     failures = [check for check in checks if check.required and not check.ok]
     print("\nHardy is ready." if not failures else f"\n{len(failures)} required check(s) failed; Hardy will not work until they are fixed.")
     return 1 if failures else 0

@@ -16,6 +16,16 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
 - **Now (implemented):** introducing an axiom pauses for human approval and records
   its exact formal/informal statements, reason, and source identity. Existing local
   Lean modules remain available through ordinary imports in the launch project.
+- **Now (implemented):** on a real terminal, the session runs through a
+  `prompt_toolkit`-backed shell rather than a plain `input()` loop: dim
+  ghost-text completion of slash commands as you type, a `/model` selector
+  (arrow keys or a row number), and Esc that stops *waiting* on an in-flight
+  turn without cancelling it — the call keeps running and its reply still
+  prints, tagged, once it lands. Without a TTY, or with `--plain`/
+  `HARDY_PLAIN`/`TERM=dumb`, or if the terminal session fails to start, the
+  same commands and banner run through a line-based session instead.
+- **Next:** stream model output as it is produced rather than printing a
+  reply only once the turn finishes (issue #32).
 
 Priority labels are sequencing hints:
 

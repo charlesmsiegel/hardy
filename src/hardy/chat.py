@@ -59,12 +59,18 @@ def _atomic_json(path: Path, value: Any) -> None:
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = ""):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
         # cas_* tool in that case, rather than offering one that always fails.
         self.cas = cas
+        # `cas_tools.build_runtime`'s second return value: a version string
+        # when `cas` is not None, the reason it is None otherwise. Not used
+        # by this class itself -- carried only so a caller showing a banner
+        # (the interactive session, real or plain) has it without needing to
+        # keep its own `build_runtime` call in sync with this one.
+        self.cas_detail = cas_detail
         self.workspace.mkdir(parents=True, exist_ok=True)
         placeholder = Request("example : True", "interactive workspace", ("Mathlib",))
         self.lean = LeanTools(placeholder, lean_command, timeout=lean_timeout, project=lean_project)
@@ -281,6 +287,15 @@ class MathematicsSession:
             # Even a failed exchange belongs to a provider thread, and that turn
             # and its tool calls are only reachable again by resuming it.
             self._remember_thread()
+
+    def record_abandonment(self, reason: str) -> None:
+        """Write down that a turn was walked away from.
+
+        The terminal shows a notice, but a notice dies with the session and
+        `transcript.jsonl` is what replay and evaluation read. Without this, a
+        turn the user abandoned is indistinguishable from one they waited for.
+        """
+        self._record({"type": "turn", "status": "abandoned", "reason": reason})
 
     def _dispatch(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """The single door every tool call goes through, whoever asked for it.

@@ -178,6 +178,17 @@ wherever the conversation starts. `hardy doctor` reports each prerequisite
 separately, distinguishing a missing tool from a broken one, and checks that the
 Claude Code CLI is not merely installed but actually signed in.
 
+### 9. Terminal interface
+
+The interactive session's one new runtime dependency is `prompt_toolkit`: a
+real terminal input layer, needed for ghost-text command completion, a
+`/model` selector, and Esc-to-stop-waiting without blocking the input box on
+a synchronous `input()` call while a turn is in flight. It is confined to two
+modules (`hardy/tui/select.py` and `hardy/tui/shell.py`); everything else in
+`hardy/tui` speaks only the plain `Ui` port, so the line-based fallback
+(`--plain`, `HARDY_PLAIN`, a non-TTY, or a terminal session that fails to
+start) needs none of it.
+
 ## Trust boundary and safety
 
 The Lean kernel is the authority for formal proof, subject to an audited axiom

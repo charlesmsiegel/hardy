@@ -12,6 +12,11 @@ lean_project/
 .worktrees/
 .claude/worktrees/
 
-# Subagent-driven development scratch: ledgers, briefs, and review packages.
-# The git history is the record; this is the working area that produces it.
+# Scratch for plan execution: ledgers, task briefs, review packages. The git
+# history is the durable record, not this.
 .superpowers/
+
+# The default workspace a `hardy` run creates in the current directory:
+# Main.lean, writeup.tex/pdf, session.json, transcript.jsonl. Per-run state,
+# never committed.
+.hardy/
