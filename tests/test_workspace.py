@@ -225,3 +225,19 @@ def test_a_declaration_behind_a_leading_doc_comment_is_seen():
 def test_a_declaration_inside_a_block_comment_is_not_seen():
     source = "/-\ntheorem commented : True := trivial\n-/\ntheorem real : True := trivial\n"
     assert declarations(source)["theorem"] == ("real",)
+
+
+def test_unicode_declaration_names_are_recognised():
+    """Lean identifiers are Unicode; an ASCII pattern would not see these."""
+    assert declarations("theorem α : True := trivial\n")["theorem"] == ("α",)
+    assert declarations("lemma h₁ : True := trivial\n")["lemma"] == ("h₁",)
+    assert declarations("namespace Γ\ntheorem δ : True := trivial\nend Γ\n")["theorem"] == ("Γ.δ",)
+
+
+def test_a_name_on_the_line_after_its_keyword_is_found():
+    assert declarations("theorem\n  result : True := trivial\n")["theorem"] == ("result",)
+
+
+def test_a_split_declaration_is_attributed_to_its_keyword_scope():
+    source = "namespace A\ntheorem\n  one : True := trivial\nend A\n"
+    assert declarations(source)["theorem"] == ("A.one",)

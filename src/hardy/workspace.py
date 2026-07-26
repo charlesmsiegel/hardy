@@ -15,21 +15,32 @@ import os
 import re
 import shutil
 import tempfile
+from bisect import bisect_right
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path, PurePosixPath
 
 from .domain import FrozenModel
 
-COMPONENT = re.compile(r"[A-Za-z_][A-Za-z0-9_']*")
-MODULE = re.compile(r"[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*")
+# Lean identifiers are Unicode: `theorem α` and `theorem h₁` are ordinary, and
+# an ASCII-only pattern would not see them -- so a theorem could be saved that
+# never appeared in the listing and never owed a writeup. `[^\W\d]` is "any
+# letter or underscore" under Python's Unicode-aware `\w`.
+IDENTIFIER = r"[^\W\d][\w'!?]*"
+QUALIFIED = rf"{IDENTIFIER}(?:\.{IDENTIFIER})*"
+
+COMPONENT = re.compile(IDENTIFIER)
+MODULE = re.compile(QUALIFIED)
+# Scanned over the whole source rather than line by line, because Lean allows a
+# newline between the keyword and the name and a line-oriented match would lose
+# the declaration entirely.
 DECLARATION = re.compile(
-    r"^\s*(?:@\[[^\]]*\]\s*)*(?:private\s+|protected\s+|nonrec\s+|noncomputable\s+)*"
-    r"(theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_'.]*)"
+    rf"(?m)^[ \t]*(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|nonrec|noncomputable)\s+)*"
+    rf"(theorem|lemma)\s+({QUALIFIED})"
 )
-NAMESPACE = re.compile(r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_'.]*)\s*$")
+NAMESPACE = re.compile(rf"^\s*namespace\s+({QUALIFIED})\s*$")
 # `section` may be anonymous, and `end` may be bare -- both are ordinary Lean.
-SECTION = re.compile(r"^\s*section(?:\s+([A-Za-z_][A-Za-z0-9_'.]*))?\s*$")
-END = re.compile(r"^\s*end(?:\s+([A-Za-z_][A-Za-z0-9_'.]*))?\s*$")
+SECTION = re.compile(rf"^\s*section(?:\s+({QUALIFIED}))?\s*$")
+END = re.compile(rf"^\s*end(?:\s+({QUALIFIED}))?\s*$")
 
 Compile = Callable[[str, Path, Path, Path], tuple[bool, str]]
 
@@ -171,41 +182,53 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
     half of this, which is that a *reader* of the registry must accept either.
     """
     found: dict[str, list[str]] = {"theorem": [], "lemma": []}
+    # Comments first: Lean reads `/-- explanation -/ theorem result ...` as a
+    # declaration, and a scanner that saw the leading slash would miss it --
+    # so the theorem would never be recorded and never owe a writeup.
+    text = strip_comments(source)
+    lines = text.splitlines()
+
     # Both kinds of scope, because a bare `end` closes whichever is innermost
     # and only a namespace contributes to a name. Tracking namespaces alone
     # would let `section ... end` pop a namespace that is still open, and every
     # later declaration would then be recorded under a name Lean never gave it.
     scope: list[tuple[str, str | None]] = []
-    # Comments first: Lean reads `/-- explanation -/ theorem result ...` as a
-    # declaration, and a scanner that saw the leading slash would miss it --
-    # so the theorem would never be recorded and never owe a writeup.
-    for line in strip_comments(source).splitlines():
+    prefixes: list[tuple[str, ...]] = []
+    for line in lines:
         opening = NAMESPACE.match(line)
         if opening:
             scope.append(("namespace", opening.group(1)))
-            continue
-        section = SECTION.match(line)
-        if section:
-            scope.append(("section", section.group(1)))
-            continue
-        closing = END.match(line)
-        if closing:
-            name = closing.group(1)
-            if name is None:
-                if scope:
-                    scope.pop()
-            else:
-                # Named `end` closes that scope and anything left open inside it.
-                for index in range(len(scope) - 1, -1, -1):
-                    if scope[index][1] == name:
-                        del scope[index:]
-                        break
-            continue
-        match = DECLARATION.match(line)
-        if match:
-            kind, name = match.group(1), match.group(2)
-            prefix = [item for kind_, item in scope if kind_ == "namespace" and item]
-            found[kind].append(".".join((*prefix, name)) if prefix else name)
+        elif SECTION.match(line):
+            scope.append(("section", SECTION.match(line).group(1)))
+        else:
+            closing = END.match(line)
+            if closing:
+                name = closing.group(1)
+                if name is None:
+                    if scope:
+                        scope.pop()
+                else:
+                    # A named `end` closes that scope and anything still open
+                    # inside it.
+                    for index in range(len(scope) - 1, -1, -1):
+                        if scope[index][1] == name:
+                            del scope[index:]
+                            break
+        prefixes.append(tuple(item for kind, item in scope if kind == "namespace" and item))
+
+    # Declarations are matched over the whole text so a name on the line after
+    # its keyword is still found, then attributed to the scope open at the line
+    # the keyword sits on.
+    starts = []
+    offset = 0
+    for line in lines:
+        starts.append(offset)
+        offset += len(line) + 1
+    for match in DECLARATION.finditer(text):
+        index = bisect_right(starts, match.start()) - 1
+        prefix = prefixes[index] if 0 <= index < len(prefixes) else ()
+        kind, name = match.group(1), match.group(2)
+        found[kind].append(".".join((*prefix, name)) if prefix else name)
     return {kind: tuple(names) for kind, names in found.items()}
 
 
