@@ -239,6 +239,60 @@ than they are today. This is inherent to cross-file imports rather than a
 property of this approach: the oleans have to exist for `import` to resolve at
 all.
 
+## Amendments from review
+
+Six corrections that review forced, recorded because each changes a rule stated
+above rather than only its implementation.
+
+**Comments are stripped once, not handled per regex.** Reading imports and
+reading declarations were each getting Lean's comment syntax wrong in their own
+way: a trailing `--` hid an import, a nested `/- /- -/ -/` closed at the first
+terminator and abandoned the rest of the header, and `/-- doc -/ theorem foo`
+hid a declaration behind a leading comment. All three are the same mistake, so
+`strip_comments` now blanks comments in one pass — respecting nesting and string
+literals — and both scanners read its output.
+
+**A bare alias counts only while it is unambiguous.** `name_aliases` alone was
+not enough: `A.result` and `B.result` both answer to `result`, so one registry
+entry and one label would have marked both theorems documented while the writeup
+described only one. A bare name now documents a theorem only while exactly one
+saved declaration carries that leaf.
+
+**A commented-out label is not documentation.** `% \label{thm:x}` is a
+placeholder LaTeX never acts on. TeX comments are stripped before the ratchet
+reads labels, counting the run of backslashes so an escaped `\%` does not hide a
+real label.
+
+**The build identity includes the toolchain, not just the sources.** An olean is
+only valid for the toolchain and project that built it, so the signature mixes
+in the Lean command, the project path, and digests of `lean-toolchain` and
+`lake-manifest.json` — the latter because `lake update` moves Mathlib without
+touching the former.
+
+**Deleting is as dangerous as saving, and is gated the same way.** A deletion
+left the module's olean behind, so Lean could still resolve an import that Hardy
+— seeing no source — classified as external and never rebuilt. A deletion could
+also strand a registered name and wedge the workspace, since every later save
+was then refused for dropping a name already gone, with no tool able to clear
+it. Deleting an `\input`-ed fragment left the writeup uncompilable beside a
+stale `writeup.pdf` still describing it. Deletion now purges the olean, makes
+the registry check a save makes, and recompiles the root before removing a
+fragment; the root document cannot be deleted at all.
+
+**A writeup tree has a build order.** A root cannot `\input` a fragment that
+does not exist yet, because LaTeX stops on the missing file — so a split writeup
+is built fragment-first, against a root that does not yet include it, and the
+root is rewritten afterwards. The prompt states this; it is not discoverable
+except by failing.
+
+One finding was **declined**: that a save should introduce at most one new
+theorem. The gate as specified refuses a *new* theorem while any is
+undocumented, which bounds drift to a single save and preserves the invariant
+that no theorem is ever added while one is owed. Requiring one per save would
+refuse a file holding a theorem and its immediate corollary, pushing work to be
+split to satisfy the tool rather than the mathematics. Changing it is a decision
+for the author, not for review.
+
 ## Out of scope
 
 The staged `hardy prove` path and the `hardy batch` runner are untouched. Both
