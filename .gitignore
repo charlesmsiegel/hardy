@@ -16,7 +16,7 @@ lean_project/
 # history is the durable record, not this.
 .superpowers/
 
-# The default workspace a `hardy` run creates in the current directory:
-# Main.lean, writeup.tex/pdf, session.json, transcript.jsonl. Per-run state,
-# never committed.
+# The default workspace a `hardy` run creates in the current directory: the
+# lean/ and tex/ trees, the .build/ oleans, writeup.pdf, session.json, and
+# transcript.jsonl. Per-run state, never committed.
 .hardy/

@@ -213,9 +213,11 @@ and hostile-input tests.
 
 1. **Interactive vertical slice (implemented):** one conversational model, direct
    Lean and LaTeX invocation, linked names, explicitly approved assumptions,
-   durable transcript, and saved artifacts. The older one-shot proof loop remains
-   as a dependency smoke path. A real model/Mathlib acceptance run remains to be
-   recorded.
+   durable transcript, and saved artifacts. Both artifacts are multi-file trees,
+   with Lean modules importing each other and a save refused whole if it would
+   break a dependent; a saved `theorem` owes a writeup before another may be
+   added. The older one-shot proof loop remains as a dependency smoke path. A
+   real model/Mathlib acceptance run remains to be recorded.
 2. **Honest experiment harness:** faithfulness and axiom checks, budgets, fixed
    evaluation inputs, reproducible identities, and useful failure reports.
 3. **Broaden capability:** literature, critique/repair, alternative runtimes and
