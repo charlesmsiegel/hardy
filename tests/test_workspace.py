@@ -180,6 +180,22 @@ def test_a_named_end_closes_what_was_left_open_inside_it():
     assert declarations(source)["theorem"] == ("A.one", "two")
 
 
+def test_a_leading_prelude_does_not_end_the_header():
+    """`prelude` opens a module before its imports, suppressing the implicit
+    `import Init`. Reading it as the end of the header would drop every import
+    after it, and a dependency Hardy cannot see is one it will not rebuild."""
+    assert parse_imports("prelude\nimport Basic\nimport Mathlib\n") == ("Basic", "Mathlib")
+    assert parse_imports("/- doc -/\nprelude\nimport Basic\n") == ("Basic",)
+
+
+def test_prelude_after_an_import_is_still_the_end_of_the_header():
+    assert parse_imports("import Basic\nprelude\nimport Other\n") == ("Basic",)
+
+
+def test_a_declaration_named_like_prelude_still_ends_the_header():
+    assert parse_imports("preludeThing\nimport Basic\n") == ()
+
+
 def test_nested_block_comments_close_at_the_right_place():
     """`/- a /- b -/ c -/` is one comment, not one ending at the first `-/`.
 
