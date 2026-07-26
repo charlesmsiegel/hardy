@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from test_chat import FakeChatRuntime, call, session
@@ -156,3 +157,40 @@ def test_an_unelaborable_save_never_reaches_lean(tmp_path: Path):
     chat.send("Save a hole.")
     assert results(tmp_path)[-1]["ok"] is False
     assert reached == []
+
+
+def test_a_migrated_workspace_can_be_imported_without_a_prior_build(tmp_path: Path):
+    """A migrated Main.lean has no olean, and the .build cache is disposable.
+
+    The save path must therefore compile what the candidate imports rather than
+    assume it is already built, or a valid workspace would need an unrelated
+    check or resave before it could be used at all.
+    """
+    (tmp_path / "Main.lean").write_text(
+        "import Mathlib\nlemma hardyMain : True := by exact True.intro\n", encoding="utf-8"
+    )
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "Extra.lean", "source": "import Main\nlemma hardyExtra : True := by exact True.intro\n"}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Build on the migrated file.")
+    assert results(tmp_path)[-1]["ok"] is True, results(tmp_path)
+    assert (tmp_path / "lean" / "Extra.lean").exists()
+
+
+def test_a_cleared_build_cache_is_rebuilt_on_demand(tmp_path: Path):
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "Basic.lean", "source": BASIC}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Save the base.")
+    shutil.rmtree(tmp_path / ".build")
+    second = FakeChatRuntime([
+        call("save_lean", {"path": "Main.lean", "source": MAIN}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    later = session(tmp_path, second)
+    later.send("Import it after the cache is gone.")
+    assert results(tmp_path)[-1]["ok"] is True, results(tmp_path)
