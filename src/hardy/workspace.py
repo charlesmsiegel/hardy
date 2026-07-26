@@ -27,7 +27,9 @@ DECLARATION = re.compile(
     r"(theorem|lemma)\s+([A-Za-z_][A-Za-z0-9_'.]*)"
 )
 NAMESPACE = re.compile(r"^\s*namespace\s+([A-Za-z_][A-Za-z0-9_'.]*)\s*$")
-END = re.compile(r"^\s*end\s+([A-Za-z_][A-Za-z0-9_'.]*)\s*$")
+# `section` may be anonymous, and `end` may be bare -- both are ordinary Lean.
+SECTION = re.compile(r"^\s*section(?:\s+([A-Za-z_][A-Za-z0-9_'.]*))?\s*$")
+END = re.compile(r"^\s*end(?:\s+([A-Za-z_][A-Za-z0-9_'.]*))?\s*$")
 
 Compile = Callable[[str, Path, Path, Path], tuple[bool, str]]
 
@@ -97,7 +99,16 @@ def parse_imports(source: str) -> tuple[str, ...]:
             continue
         if not text.startswith("import "):
             break
-        match = MODULE.fullmatch(text.removeprefix("import ").strip())
+        # `import Basic -- shared definitions` is a legal header line. Matching
+        # the whole remainder would fail on the comment and stop reading the
+        # header, losing every import after it -- and an import Hardy cannot
+        # see is a dependency it will not rebuild.
+        rest = text.removeprefix("import ")
+        for opener in ("--", "/-"):
+            cut = rest.find(opener)
+            if cut >= 0:
+                rest = rest[:cut]
+        match = MODULE.fullmatch(rest.strip())
         if match is None:
             break
         imports.append(match.group())
@@ -114,20 +125,38 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
     half of this, which is that a *reader* of the registry must accept either.
     """
     found: dict[str, list[str]] = {"theorem": [], "lemma": []}
-    scope: list[str] = []
+    # Both kinds of scope, because a bare `end` closes whichever is innermost
+    # and only a namespace contributes to a name. Tracking namespaces alone
+    # would let `section ... end` pop a namespace that is still open, and every
+    # later declaration would then be recorded under a name Lean never gave it.
+    scope: list[tuple[str, str | None]] = []
     for line in source.splitlines():
         opening = NAMESPACE.match(line)
         if opening:
-            scope.append(opening.group(1))
+            scope.append(("namespace", opening.group(1)))
+            continue
+        section = SECTION.match(line)
+        if section:
+            scope.append(("section", section.group(1)))
             continue
         closing = END.match(line)
-        if closing and scope and scope[-1] == closing.group(1):
-            scope.pop()
+        if closing:
+            name = closing.group(1)
+            if name is None:
+                if scope:
+                    scope.pop()
+            else:
+                # Named `end` closes that scope and anything left open inside it.
+                for index in range(len(scope) - 1, -1, -1):
+                    if scope[index][1] == name:
+                        del scope[index:]
+                        break
             continue
         match = DECLARATION.match(line)
         if match:
             kind, name = match.group(1), match.group(2)
-            found[kind].append(".".join((*scope, name)) if scope else name)
+            prefix = [item for kind_, item in scope if kind_ == "namespace" and item]
+            found[kind].append(".".join((*prefix, name)) if prefix else name)
     return {kind: tuple(names) for kind, names in found.items()}
 
 
@@ -207,10 +236,16 @@ class BuildFailure(FrozenModel):
 class LeanWorkspace:
     """A Lean source tree and the compiled mirror that makes it importable."""
 
-    def __init__(self, root: Path, build: Path, compile: Compile) -> None:
+    def __init__(self, root: Path, build: Path, compile: Compile, environment: str = "") -> None:
         self.root = root
         self.build = build
         self._compile = compile
+        # Mixed into every signature. An olean is only valid for the toolchain
+        # and project that produced it, so a workspace reopened after the Lean
+        # command, the Lake project, or the pinned toolchain changed must
+        # rebuild rather than reuse artifacts from the old configuration and
+        # report a check that never ran under the current one.
+        self._environment = environment
 
     @property
     def index_path(self) -> Path:
@@ -234,6 +269,13 @@ class LeanWorkspace:
 
     def olean(self, module: str) -> Path:
         return (self.build / PurePosixPath(*module.split("."))).with_suffix(".olean")
+
+    def forget(self, module: str) -> None:
+        """Drop a module's compiled artifact and its cache entry."""
+        self.olean(module).unlink(missing_ok=True)
+        index = self._index()
+        if index.pop(module, None) is not None:
+            self._write_index(index)
 
     def _index(self) -> dict[str, str]:
         if not self.index_path.is_file():
@@ -260,7 +302,9 @@ class LeanWorkspace:
         """
         signatures: dict[str, str] = {}
         for module in order:
-            digest = hashlib.sha256(sources[module].encode("utf-8"))
+            digest = hashlib.sha256(self._environment.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(sources[module].encode("utf-8"))
             for dependency in sorted(internal_imports(sources[module], sources)):
                 digest.update(signatures[dependency].encode("ascii"))
             signatures[module] = digest.hexdigest()
@@ -323,12 +367,20 @@ class LeanWorkspace:
         else:
             shadow_build.mkdir(parents=True)
         target = shadow_root / relative
+        shadow = LeanWorkspace(
+            shadow_root, shadow_build, compile or self._compile, environment=self._environment
+        )
         if source is None:
             target.unlink(missing_ok=True)
+            # The olean has to go with the source. Left behind, the module is
+            # absent from `sources()` -- so Hardy reads any later `import` of
+            # it as external and never builds it -- while Lean still resolves
+            # the stale artifact from LEAN_PATH. A saved proof would then
+            # depend on source that is no longer in the workspace.
+            shadow.forget(module_name(relative))
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(source, encoding="utf-8")
-        shadow = LeanWorkspace(shadow_root, shadow_build, compile or self._compile)
 
         def commit() -> None:
             self.root.mkdir(parents=True, exist_ok=True)

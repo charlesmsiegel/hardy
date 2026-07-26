@@ -153,3 +153,47 @@ def test_committing_carries_the_shadow_build_over(tmp_path: Path):
     # The committed build is the shadow's, so nothing needs compiling again.
     assert space.build_modules(["Basic"]) is None
     assert compiled == []
+
+
+def test_deleting_a_module_purges_its_olean_and_cache_entry(tmp_path: Path):
+    """A stale olean stays importable while its source is gone.
+
+    Hardy reads an import of a module with no source as external and never
+    builds it, but Lean would still resolve the leftover artifact from
+    LEAN_PATH -- so a saved proof could rest on source no longer present.
+    """
+    compiled: list[str] = []
+    space = workspace(tmp_path, compiled)
+    write(space, "Scratch.lean", "def a := 1\n")
+    space.build_modules(["Scratch"])
+    assert (tmp_path / "build" / "Scratch.olean").exists()
+    shadow, commit = space.stage(PurePosixPath("Scratch.lean"), None)
+    commit()
+    LeanWorkspace.discard(shadow)
+    assert not (tmp_path / "build" / "Scratch.olean").exists()
+    assert "Scratch" not in json.loads((tmp_path / "build" / "index.json").read_text())
+
+
+def test_a_changed_toolchain_invalidates_the_build(tmp_path: Path):
+    compiled: list[str] = []
+    space = workspace(tmp_path, compiled)
+    write(space, "Basic.lean", "def a := 1\n")
+    space.build_modules(["Basic"])
+    compiled.clear()
+    moved = LeanWorkspace(space.root, space.build, space._compile, environment="lean-4.34.0")
+    assert moved.build_modules(["Basic"]) is None
+    assert compiled == ["Basic"], "an olean from another toolchain must not be reused"
+
+
+def test_the_same_toolchain_still_reuses_the_build(tmp_path: Path):
+    compiled: list[str] = []
+    space = LeanWorkspace(
+        tmp_path / "lean", tmp_path / "build",
+        workspace(tmp_path, compiled)._compile, environment="lean-4.33.0",
+    )
+    write(space, "Basic.lean", "def a := 1\n")
+    space.build_modules(["Basic"])
+    compiled.clear()
+    same = LeanWorkspace(space.root, space.build, space._compile, environment="lean-4.33.0")
+    assert same.build_modules(["Basic"]) is None
+    assert compiled == []

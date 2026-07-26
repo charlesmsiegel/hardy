@@ -141,3 +141,39 @@ def test_name_aliases_offer_the_bare_name_of_a_qualified_one():
 def test_declarations_see_through_attributes_and_modifiers():
     source = "@[simp]\nprivate theorem one : True := trivial\n"
     assert declarations(source)["theorem"] == ("one",)
+
+
+def test_a_trailing_comment_does_not_hide_an_import():
+    """`import Basic -- shared definitions` is a legal header line.
+
+    Failing to read it would drop the dependency, and a dependency Hardy
+    cannot see is one it will not rebuild when the imported file changes.
+    """
+    assert parse_imports("import Basic -- shared definitions\nimport Mathlib\n") == (
+        "Basic",
+        "Mathlib",
+    )
+    assert parse_imports("import Basic /- inline -/\n") == ("Basic",)
+
+
+def test_a_bare_end_closes_the_innermost_scope():
+    source = "namespace Hardy\ntheorem one : True := trivial\nend\ntheorem two : True := trivial\n"
+    assert declarations(source)["theorem"] == ("Hardy.one", "two")
+
+
+def test_a_section_does_not_qualify_a_name_and_can_be_ended_bare():
+    source = (
+        "namespace Hardy\n"
+        "section\n"
+        "theorem one : True := trivial\n"
+        "end\n"
+        "theorem two : True := trivial\n"
+        "end Hardy\n"
+        "theorem three : True := trivial\n"
+    )
+    assert declarations(source)["theorem"] == ("Hardy.one", "Hardy.two", "three")
+
+
+def test_a_named_end_closes_what_was_left_open_inside_it():
+    source = "namespace A\nsection\ntheorem one : True := trivial\nend A\ntheorem two : True := trivial\n"
+    assert declarations(source)["theorem"] == ("A.one", "two")

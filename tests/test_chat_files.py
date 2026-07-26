@@ -8,6 +8,10 @@ from workspace_helpers import results
 
 BASIC = "import Mathlib\nlemma hardyBasic : True := by exact True.intro\n"
 MAIN = "import Basic\nlemma hardyMain : True := by exact True.intro\n"
+PLAIN_ROOT = "\\documentclass{article}\n\\begin{document}Hi.\\end{document}\n"
+ROOT_WITH_INPUT = (
+    "\\documentclass{article}\n\\begin{document}\\input{sections/one}\\end{document}\n"
+)
 
 
 def test_read_workspace_lists_the_tree_rather_than_two_files(tmp_path: Path):
@@ -85,14 +89,79 @@ def test_deleting_a_missing_file_is_an_answer_not_a_crash(tmp_path: Path):
 
 
 def test_a_latex_fragment_can_be_saved_and_read_back(tmp_path: Path):
-    root = "\\documentclass{article}\n\\begin{document}\\input{sections/one}\\end{document}\n"
+    """The order a multi-file writeup has to be built in.
+
+    A root cannot reference a fragment that does not exist yet -- LaTeX itself
+    stops on a missing `\\input` -- so the fragment is saved first, against a
+    root that does not yet include it, and the root is then rewritten.
+    """
     runtime = FakeChatRuntime([
-        call("save_latex", {"source": root}),
+        call("save_latex", {"source": PLAIN_ROOT}),
         call("save_latex", {"path": "sections/one.tex", "source": "Section one.\n"}),
+        call("save_latex", {"source": ROOT_WITH_INPUT}),
         call("read_file", {"path": "sections/one.tex"}),
         {"role": "assistant", "content": "Written."},
     ])
     chat = session(tmp_path, runtime)
     chat.send("Split the writeup.")
+    assert all(item["ok"] for item in results(tmp_path)), results(tmp_path)
     assert (tmp_path / "tex" / "sections" / "one.tex").exists()
     assert "Section one." in results(tmp_path)[-1]["output"]
+
+
+def test_a_root_referencing_a_missing_fragment_is_refused(tmp_path: Path):
+    runtime = FakeChatRuntime([
+        call("save_latex", {"source": ROOT_WITH_INPUT}),
+        {"role": "assistant", "content": "Refused."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Reference a fragment that is not there.")
+    assert results(tmp_path)[-1]["ok"] is False
+    assert not (tmp_path / "tex" / "writeup.tex").exists()
+
+
+def test_deleting_a_file_may_not_strand_a_registered_name(tmp_path: Path):
+    """Otherwise the manifest names a declaration that exists nowhere, and
+    every later save is refused for dropping a name already gone -- with no
+    tool able to clear it."""
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "Basic.lean", "source": BASIC}),
+        call("record_name", {"formal_name": "hardyBasic", "latex_name": "lem:basic", "description": "Basic."}),
+        call("delete_file", {"path": "Basic.lean"}),
+        call("save_lean", {"path": "Other.lean", "source": BASIC.replace("hardyBasic", "hardyOther")}),
+        {"role": "assistant", "content": "Refused, then saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Delete a registered result.")
+    saved = results(tmp_path)
+    assert saved[2]["ok"] is False, "the deletion should have been refused"
+    assert "hardyBasic" in saved[2]["output"]
+    assert (tmp_path / "lean" / "Basic.lean").exists()
+    # The workspace is not wedged: an unrelated save still works.
+    assert saved[3]["ok"] is True
+
+
+def test_deleting_an_included_tex_fragment_is_refused(tmp_path: Path):
+    runtime = FakeChatRuntime([
+        call("save_latex", {"source": PLAIN_ROOT}),
+        call("save_latex", {"path": "sections/one.tex", "source": "Section one.\n"}),
+        call("save_latex", {"source": ROOT_WITH_INPUT}),
+        call("delete_file", {"path": "sections/one.tex"}),
+        {"role": "assistant", "content": "Refused."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Delete an included fragment.")
+    assert results(tmp_path)[-1]["ok"] is False
+    assert (tmp_path / "tex" / "sections" / "one.tex").exists()
+
+
+def test_the_root_document_cannot_be_deleted(tmp_path: Path):
+    runtime = FakeChatRuntime([
+        call("save_latex", {"source": PLAIN_ROOT}),
+        call("delete_file", {"path": "writeup.tex"}),
+        {"role": "assistant", "content": "Refused."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Delete the writeup.")
+    assert results(tmp_path)[-1]["ok"] is False
+    assert (tmp_path / "tex" / "writeup.tex").exists()

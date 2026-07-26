@@ -95,6 +95,30 @@ def provenance(runtime: Any) -> dict[str, Any]:
     return {"model": runtime.model, "backend": getattr(runtime, "backend", None), "endpoint": getattr(runtime, "endpoint", None)}
 
 
+def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None) -> str:
+    """What an olean in this workspace was built by.
+
+    An olean is only meaningful for the toolchain and project that produced it.
+    Reopening a workspace after switching Lean project or bumping the pinned
+    toolchain must rebuild, or a check would be reported as current while
+    resting on an artifact from a different configuration. The project's
+    `lean-toolchain` is read because it is what `elan` pins the compiler with,
+    and reading a small file is cheaper than running Lean to ask its version.
+    """
+    parts = [" ".join(lean_command), str(lean_project or "")]
+    if lean_project is not None:
+        pin = lean_project / "lean-toolchain"
+        if pin.is_file():
+            try:
+                parts.append(pin.read_text(encoding="utf-8").strip())
+            except OSError:
+                # An unreadable pin is not a reason to refuse to work; it only
+                # means this identity is coarser, and a rebuild is the safe way
+                # for it to be wrong.
+                parts.append("unreadable")
+    return "\0".join(parts)
+
+
 def _atomic_json(path: Path, value: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -124,7 +148,10 @@ class MathematicsSession:
         # development outgrows one file, and so does the document about it.
         self.tex_root = workspace / TEX_DIR
         self.lean_workspace = LeanWorkspace(
-            workspace / LEAN_DIR, workspace / BUILD_DIR, self._compile_module
+            workspace / LEAN_DIR,
+            workspace / BUILD_DIR,
+            self._compile_module,
+            environment=_toolchain_identity(lean_command, lean_project),
         )
         self._migrate_layout()
         self._make_runtime = make_runtime
@@ -452,16 +479,23 @@ class MathematicsSession:
         )
 
     def _check_latex(self, path: str, source: str) -> ToolResult:
-        target = self._tex_target(path)
-        if isinstance(target, ToolResult):
-            return target
-        return self.latex.check(source, path=path, tree=self.tex_root)
+        resolved = self._tex_path(path)
+        if isinstance(resolved, ToolResult):
+            return resolved
+        relative, _ = resolved
+        return self.latex.check(source, path=relative, tree=self.tex_root)
 
     def _save_latex(self, path: str, source: str) -> ToolResult:
-        target = self._tex_target(path)
-        if isinstance(target, ToolResult):
-            return target
-        result = self.latex.check(source, path=path, tree=self.tex_root, output_dir=self.workspace)
+        resolved = self._tex_path(path)
+        if isinstance(resolved, ToolResult):
+            return resolved
+        # The normalised path, not the argument: `sections\one.tex` names one
+        # file to `_tex_target` and, on a platform where a backslash is an
+        # ordinary character, a different one to the compiler -- so the root
+        # would be checked against the old fragment and then overwritten by a
+        # candidate nothing had compiled.
+        relative, target = resolved
+        result = self.latex.check(source, path=relative, tree=self.tex_root, output_dir=self.workspace)
         if not result.ok:
             return result
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -474,14 +508,19 @@ class MathematicsSession:
             return ToolResult(True, f"{result.output}\n\nSaved. Still missing labels for registered names: {missing}", source)
         return result
 
-    def _tex_target(self, path: str) -> Path | ToolResult:
+    def _tex_path(self, path: str) -> tuple[str, Path] | ToolResult:
+        """The workspace-relative writeup path, and where it lives on disk."""
         cleaned = str(path).replace("\\", "/")
         if not cleaned.endswith(".tex"):
             return ToolResult(False, f"not a workspace LaTeX path: {path!r}")
         candidate = PurePosixPath(cleaned)
         if candidate.is_absolute() or any(part in {"..", "."} for part in candidate.parts):
             return ToolResult(False, f"path escapes the workspace: {path!r}")
-        return self.tex_root / candidate
+        return str(candidate), self.tex_root / candidate
+
+    def _tex_target(self, path: str) -> Path | ToolResult:
+        resolved = self._tex_path(path)
+        return resolved if isinstance(resolved, ToolResult) else resolved[1]
 
     def _workspace_listing(self) -> dict[str, Any]:
         """What is in the workspace, without its full contents.
@@ -528,8 +567,7 @@ class MathematicsSession:
         if not target.is_file():
             return ToolResult(False, f"no such workspace file: {path}")
         if kind == "tex":
-            target.unlink()
-            return ToolResult(True, f"deleted {path}")
+            return self._delete_tex(target, path)
         relative = safe_relative(str(path).replace("\\", "/"))
         module = module_name(relative)
         importers = dependents(self.lean_workspace.sources(), module)
@@ -537,9 +575,38 @@ class MathematicsSession:
             return ToolResult(False, f"{module} is imported by {sorted(importers)}; change those first")
         shadow, commit = self.lean_workspace.stage(relative, None)
         try:
+            # The same check a save makes. Without it a deletion could leave
+            # the manifest naming a declaration that exists nowhere, and every
+            # later save would then be refused for dropping a name that was
+            # already gone -- with no tool able to clear it.
+            lost = self._missing_registered_names(shadow.sources())
+            if lost:
+                return ToolResult(False, f"deleting {path} would drop registered names: {lost}; nothing was deleted")
             commit()
         finally:
             LeanWorkspace.discard(shadow)
+        return ToolResult(True, f"deleted {path}")
+
+    def _delete_tex(self, target: Path, path: str) -> ToolResult:
+        """Remove a writeup file, unless the document stops compiling without it.
+
+        A fragment pulled in with `\\input` cannot simply be dropped: the root
+        would no longer compile while the last `writeup.pdf` sat beside it,
+        still describing content the workspace no longer has.
+        """
+        if target.resolve() == (self.tex_root / ROOT_DOCUMENT).resolve():
+            return ToolResult(False, f"{ROOT_DOCUMENT} is the root document and cannot be deleted")
+        kept = target.read_text(encoding="utf-8")
+        target.unlink()
+        root = self.tex_root / ROOT_DOCUMENT
+        if root.is_file():
+            checked = self.latex.check(
+                root.read_text(encoding="utf-8"), tree=self.tex_root, output_dir=self.workspace
+            )
+            if not checked.ok:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(kept, encoding="utf-8")
+                return ToolResult(False, f"the writeup no longer compiles without {path}, so it was kept:\n{checked.output}")
         return ToolResult(True, f"deleted {path}")
 
     def _resolve(self, path: str) -> tuple[Path, str] | ToolResult:
