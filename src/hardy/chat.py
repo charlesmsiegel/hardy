@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -95,6 +96,29 @@ def provenance(runtime: Any) -> dict[str, Any]:
     return {"model": runtime.model, "backend": getattr(runtime, "backend", None), "endpoint": getattr(runtime, "endpoint", None)}
 
 
+def _uncommented_tex(source: str) -> str:
+    r"""`source` with its TeX comments removed.
+
+    A `%` starts a comment unless it is escaped as `\%`, and a backslash before
+    that is itself an escaped backslash -- so the run of backslashes has to be
+    counted rather than just the one character before the `%`.
+    """
+    kept = []
+    for line in source.splitlines():
+        cut = 0
+        while True:
+            found = line.find("%", cut)
+            if found < 0:
+                kept.append(line)
+                break
+            backslashes = len(line[:found]) - len(line[:found].rstrip("\\"))
+            if backslashes % 2 == 0:
+                kept.append(line[:found])
+                break
+            cut = found + 1
+    return "\n".join(kept)
+
+
 def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None) -> str:
     """What an olean in this workspace was built by.
 
@@ -107,15 +131,20 @@ def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None
     """
     parts = [" ".join(lean_command), str(lean_project or "")]
     if lean_project is not None:
-        pin = lean_project / "lean-toolchain"
-        if pin.is_file():
+        # The manifest as well as the pin: `lake update` can advance Mathlib
+        # without touching `lean-toolchain`, and an olean built against the old
+        # dependency would otherwise be reported as current.
+        for name in ("lean-toolchain", "lake-manifest.json"):
+            source = lean_project / name
+            if not source.is_file():
+                continue
             try:
-                parts.append(pin.read_text(encoding="utf-8").strip())
+                parts.append(hashlib.sha256(source.read_bytes()).hexdigest())
             except OSError:
-                # An unreadable pin is not a reason to refuse to work; it only
-                # means this identity is coarser, and a rebuild is the safe way
+                # An unreadable file is not a reason to refuse to work; it only
+                # makes this identity coarser, and rebuilding is the safe way
                 # for it to be wrong.
-                parts.append("unreadable")
+                parts.append(f"{name}:unreadable")
     return "\0".join(parts)
 
 
@@ -425,12 +454,17 @@ class MathematicsSession:
         ]
 
     def _labels(self) -> set[str]:
-        r"""Every `\label` in the saved writeup tree."""
+        r"""Every live `\label` in the saved writeup tree.
+
+        Commented-out lines do not count. `% \label{thm:x}` is a placeholder,
+        not a writeup: LaTeX never creates that label, and treating it as one
+        would release the ratchet for a theorem the document does not describe.
+        """
         if not self.tex_root.is_dir():
             return set()
         found: set[str] = set()
         for path in sorted(self.tex_root.rglob("*.tex")):
-            found.update(LABEL.findall(path.read_text(encoding="utf-8")))
+            found.update(LABEL.findall(_uncommented_tex(path.read_text(encoding="utf-8"))))
         return found
 
     def _saved_theorems(self) -> set[str]:
@@ -448,13 +482,21 @@ class MathematicsSession:
         """
         labels = self._labels()
         documented = {item["formal_name"] for item in self.state["names"] if item["latex_name"] in labels}
-        return tuple(
-            sorted(
-                name
-                for name in self._saved_theorems()
-                if not documented.intersection(name_aliases(name))
-            )
-        )
+        saved = self._saved_theorems()
+        # A bare registry name may stand for a qualified declaration, but only
+        # while it names exactly one. `A.result` and `B.result` both answer to
+        # `result`, and letting one label cover both would report a theorem as
+        # written up when nothing in the document refers to it.
+        by_leaf: dict[str, list[str]] = {}
+        for name in saved:
+            by_leaf.setdefault(name.rsplit(".", 1)[-1], []).append(name)
+        owed = []
+        for name in sorted(saved):
+            leaf = name.rsplit(".", 1)[-1]
+            if name in documented or (leaf in documented and len(by_leaf[leaf]) == 1):
+                continue
+            owed.append(name)
+        return tuple(owed)
 
     def _documentation_gate(self, source: str) -> str | None:
         """The catch-up ratchet: write up the last theorem before the next.
@@ -514,7 +556,15 @@ class MathematicsSession:
         if not cleaned.endswith(".tex"):
             return ToolResult(False, f"not a workspace LaTeX path: {path!r}")
         candidate = PurePosixPath(cleaned)
-        if candidate.is_absolute() or any(part in {"..", "."} for part in candidate.parts):
+        # A colon is refused because `PurePosixPath("C:/out.tex").is_absolute()`
+        # is False, while joining that to a Windows root discards the root and
+        # yields `C:\out.tex` -- an escape that would let a tool read, overwrite,
+        # or delete a file anywhere on the machine.
+        if (
+            candidate.is_absolute()
+            or any(part in {"..", "."} for part in candidate.parts)
+            or any(":" in part for part in candidate.parts)
+        ):
             return ToolResult(False, f"path escapes the workspace: {path!r}")
         return str(candidate), self.tex_root / candidate
 
