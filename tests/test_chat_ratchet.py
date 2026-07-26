@@ -167,6 +167,59 @@ def test_a_bare_name_shared_by_two_theorems_documents_neither(tmp_path: Path):
     assert not (tmp_path / "lean" / "C.lean").exists()
 
 
+def test_a_label_inside_verb_does_not_release_the_ratchet(tmp_path: Path):
+    r"""`\verb|\label{thm:one}|` is a code sample. LaTeX never creates that
+    label, so Hardy reads the compiler's .aux rather than the source text --
+    the same reason it believes Lean's kernel and not its own reading."""
+    verbatim = (
+        "\\documentclass{article}\n\\begin{document}\n"
+        "\\verb|\\label{thm:one}|\n\\end{document}\n"
+    )
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "One.lean", "source": FIRST}),
+        call("record_name", {"formal_name": "hardyOne", "latex_name": "thm:one", "description": "One."}),
+        call("save_latex", {"source": verbatim}),
+        call("save_lean", {"path": "Two.lean", "source": SECOND}),
+        {"role": "assistant", "content": "Still blocked."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Show the label as a code sample.")
+    assert results(tmp_path)[-1]["ok"] is False
+    assert not (tmp_path / "lean" / "Two.lean").exists()
+
+
+def test_a_unicode_theorem_name_still_owes_a_writeup(tmp_path: Path):
+    """Lean identifiers are Unicode. A theorem an ASCII pattern could not see
+    would never be recorded, and so would never owe anything."""
+    greek = "import Mathlib\ntheorem α : True := by exact True.intro\n"
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "One.lean", "source": greek}),
+        call("save_lean", {"path": "Two.lean", "source": SECOND}),
+        {"role": "assistant", "content": "Blocked."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Prove something with a Greek name.")
+    saved = results(tmp_path)
+    assert saved[0]["ok"] is True
+    assert saved[1]["ok"] is False
+    assert "α" in saved[1]["output"]
+
+
+def test_a_theorem_named_on_the_next_line_still_owes_a_writeup(tmp_path: Path):
+    """Lean allows a newline between the keyword and the name."""
+    split = "import Mathlib\ntheorem\n  hardySplit : True := by exact True.intro\n"
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "One.lean", "source": split}),
+        call("save_lean", {"path": "Two.lean", "source": SECOND}),
+        {"role": "assistant", "content": "Blocked."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Split the declaration over two lines.")
+    saved = results(tmp_path)
+    assert saved[1]["ok"] is False
+    assert "hardySplit" in saved[1]["output"]
+
+
 def test_a_namespaced_theorem_is_documented_by_either_name(tmp_path: Path):
     source = "import Mathlib\nnamespace Hardy\ntheorem one : True := by exact True.intro\nend Hardy\n"
     runtime = FakeChatRuntime([

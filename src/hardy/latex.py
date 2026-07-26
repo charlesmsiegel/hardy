@@ -11,6 +11,35 @@ from .models import ToolResult
 # Fragments are `\input` from one document, and that document is what a
 # compiler is ever pointed at.
 ROOT_DOCUMENT = "writeup.tex"
+BODY = "\\begin{document}"
+
+
+def _includes(root: str, path: str) -> bool:
+    r"""Whether `root` already pulls `path` in.
+
+    TeX lets the extension be dropped, and either separator is accepted on the
+    platforms this runs on, so both spellings are looked for.
+    """
+    stem = path[: -len(".tex")] if path.endswith(".tex") else path
+    return any(
+        f"{{{name}}}" in root
+        for name in (path, stem, path.replace("/", "\\"), stem.replace("/", "\\"))
+    )
+
+
+def _probe_root(root: str, path: str) -> str:
+    r"""A document that compiles `path` under `root`'s own preamble.
+
+    Keeping the real preamble matters: a fragment using a package or a macro
+    the writeup defines would fail under an invented one, and the failure would
+    say nothing about the fragment.
+    """
+    stem = path[: -len(".tex")] if path.endswith(".tex") else path
+    body = f"\\input{{{stem}}}\n"
+    head, marker, _ = root.partition(BODY)
+    if not marker:
+        return f"{root.rstrip()}\n"
+    return f"{head}{BODY}\n{body}\\end{{document}}\n"
 
 
 class LatexTools:
@@ -28,6 +57,7 @@ class LatexTools:
         path: str = ROOT_DOCUMENT,
         tree: Path | None = None,
         output_dir: Path | None = None,
+        aux_dir: Path | None = None,
     ) -> ToolResult:
         r"""Compile a candidate against the documents already saved.
 
@@ -45,10 +75,22 @@ class LatexTools:
             candidate.parent.mkdir(parents=True, exist_ok=True)
             candidate.write_text(source, encoding="utf-8")
             root = work / ROOT_DOCUMENT
-            # A workspace whose root has never been saved still has to compile
-            # something, and the candidate is the only document there is.
             if not root.is_file():
+                if path != ROOT_DOCUMENT:
+                    return ToolResult(
+                        False,
+                        f"there is no {ROOT_DOCUMENT} to compile {path} into; save the root document first",
+                        source,
+                    )
                 root.write_text(source, encoding="utf-8")
+            elif path != ROOT_DOCUMENT and not _includes(root.read_text(encoding="utf-8"), path):
+                # The root does not pull this fragment in yet, which is exactly
+                # the fragment-first order a split writeup has to be built in.
+                # Compiling the unchanged root would check nothing about the
+                # candidate, and malformed source would be saved as though it
+                # had been checked -- so it is compiled through a probe root
+                # carrying the real preamble.
+                root.write_text(_probe_root(root.read_text(encoding="utf-8"), path), encoding="utf-8")
             try:
                 process = subprocess.run(
                     [*self.command, root.name], cwd=work, capture_output=True,
@@ -60,6 +102,15 @@ class LatexTools:
                 if process.returncode == 0 and output_dir is not None and pdf.exists():
                     output_dir.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(pdf, output_dir / "writeup.pdf")
+                    # The compiler's own record of the labels it created. What
+                    # a caller needs to know is which labels LaTeX *made*, not
+                    # which ones appear in the text -- a `\label` inside
+                    # `\verb` or a discarded branch is written down but never
+                    # created.
+                    aux = work / "writeup.aux"
+                    if aux_dir is not None and aux.exists():
+                        aux_dir.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(aux, aux_dir / "writeup.aux")
                 return ToolResult(process.returncode == 0, f"exit={process.returncode} elapsed={elapsed:.3f}s\n{output}", source)
             except subprocess.TimeoutExpired as error:
                 output = ((error.stdout or "") + (error.stderr or ""))[-self.output_limit :]

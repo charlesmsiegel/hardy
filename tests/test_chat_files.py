@@ -120,25 +120,52 @@ def test_a_root_referencing_a_missing_fragment_is_refused(tmp_path: Path):
     assert not (tmp_path / "tex" / "writeup.tex").exists()
 
 
-def test_deleting_a_file_may_not_strand_a_registered_name(tmp_path: Path):
-    """Otherwise the manifest names a declaration that exists nowhere, and
-    every later save is refused for dropping a name already gone -- with no
-    tool able to clear it."""
+def test_deleting_a_declaration_takes_its_registry_mapping_with_it(tmp_path: Path):
+    """A registered result must still be abandonable.
+
+    Refusing the deletion instead would strand the model: no tool removes a
+    mapping, so a theorem registered but not yet written up could never be
+    walked away from, and every later save would be refused for dropping a
+    name that was already gone.
+    """
     runtime = FakeChatRuntime([
         call("save_lean", {"path": "Basic.lean", "source": BASIC}),
         call("record_name", {"formal_name": "hardyBasic", "latex_name": "lem:basic", "description": "Basic."}),
         call("delete_file", {"path": "Basic.lean"}),
         call("save_lean", {"path": "Other.lean", "source": BASIC.replace("hardyBasic", "hardyOther")}),
-        {"role": "assistant", "content": "Refused, then saved."},
+        {"role": "assistant", "content": "Deleted, then saved."},
     ])
     chat = session(tmp_path, runtime)
-    chat.send("Delete a registered result.")
+    chat.send("Abandon a registered result.")
     saved = results(tmp_path)
-    assert saved[2]["ok"] is False, "the deletion should have been refused"
+    assert saved[2]["ok"] is True, saved
     assert "hardyBasic" in saved[2]["output"]
-    assert (tmp_path / "lean" / "Basic.lean").exists()
-    # The workspace is not wedged: an unrelated save still works.
+    assert not (tmp_path / "lean" / "Basic.lean").exists()
+    state = json.loads((tmp_path / "session.json").read_text())
+    assert state["names"] == []
+    # Dropping a formal-to-writeup mapping is a change to the record of what
+    # was claimed, so it is written down.
+    assert any(
+        event.get("type") == "registry" and event.get("dropped") == ["hardyBasic"]
+        for event in [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
+    )
+    # The workspace is not wedged: a later save still works.
     assert saved[3]["ok"] is True
+
+
+def test_a_mapping_backed_by_a_surviving_declaration_is_kept(tmp_path: Path):
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "Basic.lean", "source": BASIC}),
+        call("save_lean", {"path": "Scratch.lean", "source": BASIC.replace("hardyBasic", "hardyScratch")}),
+        call("record_name", {"formal_name": "hardyBasic", "latex_name": "lem:basic", "description": "Basic."}),
+        call("delete_file", {"path": "Scratch.lean"}),
+        {"role": "assistant", "content": "Deleted the scratch."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Drop only the scratch.")
+    assert results(tmp_path)[-1]["ok"] is True
+    state = json.loads((tmp_path / "session.json").read_text())
+    assert [item["formal_name"] for item in state["names"]] == ["hardyBasic"]
 
 
 def test_deleting_an_included_tex_fragment_is_refused(tmp_path: Path):

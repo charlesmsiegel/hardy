@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
@@ -27,7 +28,6 @@ from .workspace import (
     internal_imports,
     module_name,
     module_path,
-    name_aliases,
     safe_relative,
 )
 
@@ -36,11 +36,13 @@ from .workspace import (
 # moves those in rather than leaving a workspace that reads as empty.
 LEAN_DIR = "lean"
 BUILD_DIR = ".build/lean"
+BUILD_DIR_TEX = ".build/tex"
 TEX_DIR = "tex"
 DEFAULT_LEAN_PATH = "Main.lean"
 DEFAULT_TEX_PATH = ROOT_DOCUMENT
 
-LABEL = re.compile(r"\\label\{([^}]*)\}")
+# What LaTeX wrote down about the labels it actually created, in its own .aux.
+NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")
 
 CHAT_TOOLS = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -96,29 +98,6 @@ def provenance(runtime: Any) -> dict[str, Any]:
     return {"model": runtime.model, "backend": getattr(runtime, "backend", None), "endpoint": getattr(runtime, "endpoint", None)}
 
 
-def _uncommented_tex(source: str) -> str:
-    r"""`source` with its TeX comments removed.
-
-    A `%` starts a comment unless it is escaped as `\%`, and a backslash before
-    that is itself an escaped backslash -- so the run of backslashes has to be
-    counted rather than just the one character before the `%`.
-    """
-    kept = []
-    for line in source.splitlines():
-        cut = 0
-        while True:
-            found = line.find("%", cut)
-            if found < 0:
-                kept.append(line)
-                break
-            backslashes = len(line[:found]) - len(line[:found].rstrip("\\"))
-            if backslashes % 2 == 0:
-                kept.append(line[:found])
-                break
-            cut = found + 1
-    return "\n".join(kept)
-
-
 def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None) -> str:
     """What an olean in this workspace was built by.
 
@@ -130,6 +109,27 @@ def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None
     and reading a small file is cheaper than running Lean to ask its version.
     """
     parts = [" ".join(lean_command), str(lean_project or "")]
+    # The compiler itself, so an upgrade behind an unchanged command still
+    # invalidates. This is the only identity there is when no project is
+    # configured, which is a supported way to run. Its size and mtime rather
+    # than its contents: a toolchain binary is large, this runs on every save,
+    # and either changing means it is not the executable that built the cache.
+    executable = shutil.which(lean_command[0]) if lean_command else None
+    if executable:
+        try:
+            stamp = Path(executable).stat()
+            parts.append(f"{executable}:{stamp.st_size}:{stamp.st_mtime_ns}")
+        except OSError:
+            parts.append(f"{executable}:unreadable")
+    for name in ("lean-toolchain",):
+        # Also the toolchain pin beside the working directory, which is what
+        # `elan` reads when Lean runs outside a configured project.
+        local = (lean_project or Path.cwd()) / name
+        if lean_project is None and local.is_file():
+            try:
+                parts.append(hashlib.sha256(local.read_bytes()).hexdigest())
+            except OSError:
+                parts.append(f"{name}:unreadable")
     if lean_project is not None:
         # The manifest as well as the pin: `lake update` can advance Mathlib
         # without touching `lean-toolchain`, and an olean built against the old
@@ -428,44 +428,63 @@ class MathematicsSession:
         except ImportCycle as error:
             return ToolResult(False, str(error), source)
 
-    def _missing_registered_names(self, sources: dict[str, str]) -> list[str]:
-        """Registered formal names that survive nowhere in a tree.
+    def _resolves(self, formal_name: str, sources: dict[str, str]) -> bool:
+        """Whether a registered name still names something in a tree.
+
+        A qualified entry must find that exact declaration: with `A.result` and
+        `B.result` both present, accepting `A.result` because *some* `result`
+        exists would let the mapped declaration be deleted while the manifest
+        went on pointing at it. A bare entry may match a qualified declaration,
+        but only while exactly one carries that leaf.
 
         Declarations are matched by name rather than by text, because a
         `theorem one` inside `namespace Hardy` is `Hardy.one` and that string
-        appears nowhere in the file. The textual fallback still covers what
+        appears nowhere in the file. The textual fallback covers what
         `declarations` does not read -- an approved `axiom`, a `def`, a
-        structure -- so a registered name backed by one of those is not
-        reported as lost.
+        structure -- so a name backed by one of those is not reported as lost.
         """
         declared: set[str] = set()
         for source in sources.values():
             found = declarations(source)
-            for name in (*found["theorem"], *found["lemma"]):
-                declared.update(name_aliases(name))
+            declared.update(found["theorem"])
+            declared.update(found["lemma"])
+        if formal_name in declared:
+            return True
+        if "." not in formal_name:
+            sharing = [name for name in declared if name.rsplit(".", 1)[-1] == formal_name]
+            if len(sharing) == 1:
+                return True
+        return any(
+            re.search(rf"(?<![\w'.]){re.escape(formal_name)}(?![\w'])", source)
+            for source in sources.values()
+        )
+
+    def _missing_registered_names(self, sources: dict[str, str]) -> list[str]:
+        """Registered formal names that survive nowhere in a tree."""
         return [
             item["formal_name"]
             for item in self.state["names"]
-            if not declared.intersection(name_aliases(item["formal_name"]))
-            and not any(
-                re.search(rf"\b{re.escape(item['formal_name'])}\b", source)
-                for source in sources.values()
-            )
+            if not self._resolves(item["formal_name"], sources)
         ]
 
     def _labels(self) -> set[str]:
-        r"""Every live `\label` in the saved writeup tree.
+        r"""Every label LaTeX actually created, from the last saved compile.
 
-        Commented-out lines do not count. `% \label{thm:x}` is a placeholder,
-        not a writeup: LaTeX never creates that label, and treating it as one
-        would release the ratchet for a theorem the document does not describe.
+        Read from the compiler's own `.aux`, not from the source text. A
+        `\label` can appear in a document without ever being created -- inside
+        `\verb`, in a comment, in a branch that was not taken -- and counting
+        those would release the ratchet for a theorem the document does not
+        describe. The `.aux` is what LaTeX wrote down about what it did, which
+        is the same reason Hardy believes Lean's kernel and not its own reading
+        of a proof.
+
+        Still derived rather than stored: the file is a build artifact of the
+        last successful save, and if it is absent nothing is documented yet.
         """
-        if not self.tex_root.is_dir():
+        aux = self.workspace / BUILD_DIR_TEX / "writeup.aux"
+        if not aux.is_file():
             return set()
-        found: set[str] = set()
-        for path in sorted(self.tex_root.rglob("*.tex")):
-            found.update(LABEL.findall(_uncommented_tex(path.read_text(encoding="utf-8"))))
-        return found
+        return set(NEWLABEL.findall(aux.read_text(encoding="utf-8", errors="replace")))
 
     def _saved_theorems(self) -> set[str]:
         found: set[str] = set()
@@ -537,7 +556,13 @@ class MathematicsSession:
         # would be checked against the old fragment and then overwritten by a
         # candidate nothing had compiled.
         relative, target = resolved
-        result = self.latex.check(source, path=relative, tree=self.tex_root, output_dir=self.workspace)
+        result = self.latex.check(
+            source,
+            path=relative,
+            tree=self.tex_root,
+            output_dir=self.workspace,
+            aux_dir=self.workspace / BUILD_DIR_TEX,
+        )
         if not result.ok:
             return result
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -578,13 +603,16 @@ class MathematicsSession:
         `read_file` fetches a body. Returning every file's text here was fine
         when there were two of them and would flood the context now.
         """
+        # Read once. `sources()` walks and reads the whole tree, so calling it
+        # per module made listing quadratic in the number of files.
+        sources = self.lean_workspace.sources()
         lean = []
-        for module, source in sorted(self.lean_workspace.sources().items()):
+        for module, source in sorted(sources.items()):
             found = declarations(source)
             lean.append({
                 "path": str(module_path(module)),
                 "module": module,
-                "imports": list(internal_imports(source, self.lean_workspace.sources())),
+                "imports": list(internal_imports(source, sources)),
                 "theorems": list(found["theorem"]),
                 "lemmas": list(found["lemma"]),
             })
@@ -625,16 +653,26 @@ class MathematicsSession:
             return ToolResult(False, f"{module} is imported by {sorted(importers)}; change those first")
         shadow, commit = self.lean_workspace.stage(relative, None)
         try:
-            # The same check a save makes. Without it a deletion could leave
-            # the manifest naming a declaration that exists nowhere, and every
-            # later save would then be refused for dropping a name that was
-            # already gone -- with no tool able to clear it.
+            # Names the deletion strands go with it, rather than the deletion
+            # being refused. Refusing was worse than the problem it solved: a
+            # theorem registered but not yet written up could never be
+            # abandoned, since no tool removes a mapping, and every later save
+            # was then refused for dropping a name already gone. The contract
+            # is that an undocumented theorem can always be walked away from.
             lost = self._missing_registered_names(shadow.sources())
-            if lost:
-                return ToolResult(False, f"deleting {path} would drop registered names: {lost}; nothing was deleted")
             commit()
+            if lost:
+                self.state["names"] = [
+                    item for item in self.state["names"] if item["formal_name"] not in lost
+                ]
+                self._save_state()
+                # Written down: dropping a formal-to-writeup mapping is a change
+                # to the record of what was claimed, not a bookkeeping detail.
+                self._record({"type": "registry", "reason": "declaration_deleted", "path": path, "dropped": lost})
         finally:
             LeanWorkspace.discard(shadow)
+        if lost:
+            return ToolResult(True, f"deleted {path}; also dropped now-unbacked registry names: {lost}")
         return ToolResult(True, f"deleted {path}")
 
     def _delete_tex(self, target: Path, path: str) -> ToolResult:
