@@ -702,6 +702,12 @@ class Shell:
             # Esc; `run_async`'s own backstop only covers a task that never ran
             # at all. Re-raised so cancellation still propagates normally.
             self._record_abandonment("app_exited")
+            # The tail below is never reached from here -- this re-raises so
+            # cancellation still propagates -- and the painter is still holding
+            # the line it was wrapping. Flushed before going, for the reason
+            # `--plain` flushes on Ctrl+C: words the user has already watched
+            # arrive must not vanish because the app is leaving.
+            self._echo(painter.finish())
             raise
         except Exception as error:  # noqa: BLE001 - never lose the session to one bad turn
             failure = error

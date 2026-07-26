@@ -164,6 +164,10 @@ class ClaudeAgentRuntime:
         # Tool-use id -> bare name, so a completed call can be named when the
         # SDK reports it back by id alone.
         self._called: dict[str, str] = {}
+        # Deltas drawn for a block that has not completed yet. Cleared by the
+        # completed block, which supersedes them; flushed at end of turn if one
+        # never came. See `_note` and `_settle_drawn`.
+        self._drawn: list[str] = []
 
     def _options(self) -> Any:
         return self._sdk.ClaudeAgentOptions(
@@ -232,7 +236,7 @@ class ClaudeAgentRuntime:
         # this one started must not leave the flag set over the new one. Safe
         # to do here precisely because "here" is turn-submission time.
         self._cancelled = False
-        self._loop, self._client, self._called = None, None, {}
+        self._loop, self._client, self._called, self._drawn = None, None, {}, []
 
         def pump() -> None:
             try:
@@ -339,6 +343,7 @@ class ClaudeAgentRuntime:
                             outbox.put(event)
             finally:
                 self._client = None
+        self._settle_drawn(spoken)
         reply = "\n\n".join(spoken).strip()
         if self._cancelled:
             # Stopped on purpose. The SDK reports an interrupted exchange as an
@@ -356,6 +361,29 @@ class ClaudeAgentRuntime:
             raise RuntimeError(f"the provider ended the exchange with an error: {self.failure}")
         outbox.put(TurnEvent("reply", text=reply))
 
+    def _settle_drawn(self, spoken: list[str]) -> None:
+        """Keep text that was drawn but never arrived as a completed block.
+
+        Normally there is none: the block supersedes the deltas that built it,
+        which is the whole rule -- deltas draw, blocks are authoritative. But an
+        interrupt lands where it lands, and a block the model never finished has
+        no authoritative form while its words are already on the user's screen.
+        Dropping them would make the reply empty and leave `transcript.jsonl`
+        denying text the user watched arrive.
+
+        Recorded as `partial`, because that is what distinguishes it from a
+        block the provider actually completed.
+        """
+        if not self._drawn:
+            return
+        said, self._drawn = "".join(self._drawn), []
+        spoken.append(said)
+        self._observe({
+            "type": "assistant",
+            "message": {"role": "assistant", "content": said},
+            "partial": True,
+        })
+
     def _note(self, message: Any, spoken: list[str]) -> Iterator[TurnEvent]:
         """Record what the SDK reports, and say what a watcher should draw.
 
@@ -370,15 +398,29 @@ class ClaudeAgentRuntime:
             self.session_id = session
         delta = _delta(message)
         if delta:
-            # Drawn, never recorded, and deliberately never added to `spoken`:
-            # the completed TextBlock below carries this same text, and
-            # counting both would return every answer twice.
+            # Drawn, never recorded, and deliberately never added to `spoken`
+            # here: the completed TextBlock below carries this same text, and
+            # counting both would return every answer twice. Kept in `_drawn`
+            # only so that block knows it has already been shown -- and so an
+            # interrupt that stops the block from ever arriving does not take
+            # these words down with it (`_settle_drawn`).
+            self._drawn.append(delta)
             yield TurnEvent("text", text=delta)
         for block in getattr(message, "content", None) or []:
             kind = type(block).__name__
             if kind == "TextBlock" and getattr(block, "text", ""):
                 spoken.append(block.text)
                 self._observe({"type": "assistant", "message": {"role": "assistant", "content": block.text}})
+                if self._drawn:
+                    # Deltas already put these words on screen; the block is
+                    # the record's copy of them and must not be drawn again.
+                    self._drawn = []
+                else:
+                    # Nothing streamed this block -- an older CLI, a provider
+                    # that does not stream. Drawn here, in the order it
+                    # happened: left to `TurnPainter.finish()`, prose said
+                    # before a tool call would appear after that call's result.
+                    yield TurnEvent("text", text=block.text)
             elif kind == "ToolUseBlock":
                 name = getattr(block, "name", "")
                 identifier = str(getattr(block, "id", ""))

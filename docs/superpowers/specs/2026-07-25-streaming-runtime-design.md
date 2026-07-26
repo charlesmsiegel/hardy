@@ -46,6 +46,18 @@ authoritative.** `ask()` joins blocks exactly as it does today, the closing
 `reply` event carries that same joined text, and `observe` records whole
 blocks. Nothing derives the reply from deltas.
 
+Two cases the rule does not cover on its own, both handled by keeping the
+deltas drawn for the block in hand (`_drawn`) rather than discarding them as
+they go out. A block that *never arrives* — the interrupt landed mid-sentence —
+has no authoritative form, and its words are already on the user's screen: those
+are kept, as the reply of a cancelled turn and as a `partial` assistant event,
+because a transcript that denied text the user watched arrive would be worse
+evidence, not better. And a block that *no delta covered* — an older CLI, a
+provider that does not stream — is drawn where it happened, since prose left to
+`TurnPainter.finish()` appears after the result of a tool call it preceded. The
+buffer answers both questions with one piece of state: whether these words have
+been shown, and what was shown that nothing has superseded.
+
 ### Protocol
 
 ```python
@@ -137,6 +149,13 @@ has more than one writing thread, and every write goes through one lock:
 can now fail before a single event exists — it writes the transcript's `user`
 event and starts a thread — so both terminals catch that synchronously and keep
 the session, rather than losing it to one bad turn.
+
+Whatever the terminal has drawn is flushed on every path out of a turn, and
+`painter.finish()` is what does it: the wrapper emits a line only once no
+further delta can change it, so a turn cut off mid-sentence always has words
+still held in its tail. That means the failure path, plain mode's Ctrl+C, *and*
+`_run_turn`'s `CancelledError` — the app leaving with a turn in flight, which
+re-raises and so never reaches the ordinary flush below it.
 
 Teardown has an ordering requirement of its own. A consumer that unwinds —
 Ctrl+C under `--plain` — closes the generator, and with `yield from` that
