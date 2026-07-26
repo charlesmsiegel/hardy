@@ -356,6 +356,32 @@ def test_asking_is_enough_to_be_remembered(tmp_path: Path):
     assert [event for event in events if event["type"] == "user"]
 
 
+class EagerChatRuntime(FakeChatRuntime):
+    """The real backend's timing: the turn runs on its own thread from the
+    moment it is asked for, so it can finish whether or not anyone reads it."""
+
+    def stream(self, text: str):
+        observe = self.context.get("observe") or (lambda event: None)
+        self.session_id = "thread-1"
+        observe({"type": "result", "session_id": self.session_id, "turns": 1})
+        return iter([TurnEvent("reply", text="Unread.")])
+
+
+def test_a_turn_nobody_drains_still_remembers_the_provider_thread(tmp_path: Path):
+    """The conversation is only reachable again by resuming its provider thread.
+
+    An undrained stream is supported (above), and the runtime's worker is eager,
+    so that turn really does happen. With the id written down only by the outer
+    generator's teardown, reopening the workspace would start from nothing while
+    the artifacts on disk implied a conversation that had already taken place.
+    """
+    chat = session(tmp_path, EagerChatRuntime([]))
+    chat.stream("Did anyone hear me?")          # deliberately never iterated
+
+    state = json.loads((tmp_path / "session.json").read_text())
+    assert state.get("provider_session") == "thread-1"
+
+
 def test_cancelling_is_written_down_and_reaches_the_runtime(tmp_path: Path):
     chat = session(tmp_path, FakeChatRuntime([]))
     chat.cancel()

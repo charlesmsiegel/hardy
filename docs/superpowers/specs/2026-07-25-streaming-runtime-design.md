@@ -113,7 +113,30 @@ it is how the finalizing thread learns no tool is running. It then waits on the
 provider's own thread through `ClaudeAgentRuntime.settle`, which is what reports
 a finished call onward into the trajectory. The wait is bounded by the tools'
 own timeouts rather than by a guess, because interrupting a Lean or CAS
-subprocess is precisely what this section says Hardy will not do.
+subprocess is precisely what this section says Hardy will not do. The workflow
+has to name the right handle for any of this to happen, so the formalizing
+thread is the active thread too, and not only once proving starts.
+
+`settle` is bounded, so it can fail, and waiting indefinitely is not on offer on
+a Ctrl+C path. When it does fail, `_observe` — the one route from the provider's
+thread into the trajectory — is sealed, and the seal is itself the last event
+recorded. `_artifact_hashes` reads every file in the run directory,
+`trajectory.jsonl` among them, so an append landing after `cancel` returns would
+leave the manifest carrying the hash of a file that changed after it was read.
+A record built for verification cannot do that; a record that says where it
+stops is worse evidence than a complete one and far better than a silent
+truncation a reader would mistake for the end of the run.
+
+Eagerness has two consequences past cancellation. A turn nobody drains still
+happens, so the provider session id is written down by the observer path on the
+`result` event rather than only by the outer generator's teardown — otherwise
+reopening the workspace would start from nothing while the artifacts on disk
+implied a conversation that had already taken place. (`session.json` therefore
+has more than one writing thread, and every write goes through one lock:
+`_atomic_json` replaces a temporary file at a fixed path.) And starting a turn
+can now fail before a single event exists — it writes the transcript's `user`
+event and starts a thread — so both terminals catch that synchronously and keep
+the session, rather than losing it to one bad turn.
 
 Teardown has an ordering requirement of its own. A consumer that unwinds —
 Ctrl+C under `--plain` — closes the generator, and with `yield from` that

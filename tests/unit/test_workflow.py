@@ -103,6 +103,7 @@ def _scripted_controller(
     runtime_error=False,
     limits=None,
     monotonic=None,
+    interrupt_stage=None,
 ):
     config_module = importlib.import_module('hardy.config')
     codex_runtime = importlib.import_module('hardy.codex_runtime')
@@ -115,17 +116,24 @@ def _scripted_controller(
     proposals = list(proposals or [_proposal(domain)])
     elaborations = list(elaborations or [True] * len(proposals))
     proof_results = list(proof_results or [True])
-    state = SimpleNamespace(starts=[], prompts=[], verifier_calls=0)
+    state = SimpleNamespace(
+        starts=[], handles=[], prompts=[], verifier_calls=0, cancelled=None
+    )
 
     class Runtime:
         def start(self, *, model, run_dir, claim):
             if runtime_error:
                 raise RuntimeError('runtime fixture failure')
             state.starts.append(claim)
-            return object()
+            # Kept so a test can say *which* thread a cancellation reached, not
+            # merely that one did: each stage has its own.
+            state.handles.append(SimpleNamespace(claim=claim))
+            return state.handles[-1]
 
         def run_structured(self, thread, stage, prompt, output_type):
             state.prompts.append((stage, prompt))
+            if stage == interrupt_stage:
+                raise KeyboardInterrupt
             if stage == 'formalization':
                 return proposals.pop(0) if proposals else _proposal(domain)
             return writeup.WriteupContent(
@@ -142,7 +150,7 @@ def _scripted_controller(
             )
 
         def cancel(self, thread):
-            state.cancelled = True
+            state.cancelled = thread
 
     class Lean:
         def check_proof(self, claim, proof):
@@ -421,6 +429,25 @@ def test_revision_feedback_is_used_and_cancellation_finalizes(tmp_path) -> None:
     assert 'Use an explicit Nat domain.' in state.prompts[1][1]
     assert len(state.starts) == 1
     assert (next(tmp_path.iterdir()) / 'manifest.json').exists()
+
+
+def test_ctrl_c_while_formalizing_still_reaches_the_runtime(tmp_path) -> None:
+    """Cancellation is the boundary the staged runtime waits on before this
+    method hashes the run directory. A phase whose handle the handler never sees
+    is a phase whose provider thread is still running while that happens -- and
+    the formalizing handle used to be kept in a local of its own.
+    """
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path, interrupt_stage='formalization'
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert state.starts == [None], 'proving never began, so only one thread exists'
+    assert state.cancelled is state.handles[0], 'the formalizing thread was never stopped'
 
 
 def test_invalid_proposals_exhaust_budget_without_starting_proof(tmp_path) -> None:

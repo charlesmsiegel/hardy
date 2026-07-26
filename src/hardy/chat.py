@@ -103,6 +103,11 @@ class MathematicsSession:
         # next one starts. Read by `_dispatch` on the SDK's own tool threads,
         # which is why it is an Event rather than a bare bool.
         self._cancelled = threading.Event()
+        # `session.json` is written from more than one thread -- a tool call
+        # under the gate above, and `_observed` remembering the provider thread
+        # on the runtime's own thread -- and `_atomic_json` replaces a temporary
+        # file at a fixed path. Two writers at once would interleave into it.
+        self._writes = threading.Lock()
         # State first: the runtime is built from the system prompt, which embeds
         # the manifest, and it resumes the provider thread the state remembers.
         self.state = self._read_state()
@@ -122,8 +127,22 @@ class MathematicsSession:
             dispatch=self._dispatch,
             cwd=self.workspace,
             session_id=session_id,
-            observe=self._record,
+            observe=self._observed,
         )
+
+    def _observed(self, event: dict[str, Any]) -> None:
+        """What the runtime reports, recorded and acted on.
+
+        `_stream`'s teardown remembers the provider thread for a turn somebody
+        drained. This covers one nobody did -- `stream` supports that, and the
+        runtime's worker is eager, so the turn really happens. Left to the
+        generator alone, reopening the workspace would start from nothing while
+        the artifacts on disk implied a conversation that had already taken
+        place.
+        """
+        self._record(event)
+        if event.get("type") == "result":
+            self._remember_thread()
 
     def switch_model(self, model: str) -> None:
         """Continue this conversation on a different model.
@@ -135,7 +154,7 @@ class MathematicsSession:
         previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint")}
         self.runtime = self._build(model=model, session_id=self.state.get("provider_session"))
         self.state.update(provenance(self.runtime))
-        _atomic_json(self.state_path, self.state)
+        self._save_state()
         self._record({"type": "model", "reason": "switched", "previous": previous, **provenance(self.runtime)})
 
     def _carried(self, session_id: str | None) -> str:
@@ -175,6 +194,11 @@ class MathematicsSession:
             return json.loads(self.state_path.read_text(encoding="utf-8"))
         return {"schema_version": 1, "names": [], "assumptions": []}
 
+    def _save_state(self) -> None:
+        """The one door `session.json` is written through, from any thread."""
+        with self._writes:
+            _atomic_json(self.state_path, self.state)
+
     def _sync_provenance(self) -> None:
         """Make the record agree with what is actually about to answer.
 
@@ -188,7 +212,7 @@ class MathematicsSession:
         previous = {key: self.state.get(key) for key in current}
         started = any(previous.values())
         self.state.update(current)
-        _atomic_json(self.state_path, self.state)
+        self._save_state()
         if started:
             self._record({"type": "model", "reason": "session_resumed", "previous": previous, **current})
 
@@ -249,7 +273,7 @@ class MathematicsSession:
                 return ToolResult(False, f"name conflicts with existing mapping: {existing}")
             if not existing:
                 self.state["names"].append(entry)
-                _atomic_json(self.state_path, self.state)
+                self._save_state()
             return ToolResult(True, f"recorded mapping: {entry}")
         if name == "request_assumption":
             proposal = {key: str(arguments[key]) for key in ("formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason")}
@@ -260,7 +284,7 @@ class MathematicsSession:
                 self.state["assumptions"].append(proposal)
                 mapping = {"formal_name": proposal["formal_name"], "latex_name": proposal["latex_name"], "description": proposal["informal_statement"]}
                 self.state["names"].append(mapping)
-                _atomic_json(self.state_path, self.state)
+                self._save_state()
             declaration = f"axiom {proposal['formal_name']} : {proposal['lean_statement']}"
             return ToolResult(True, f"User approved. Declare exactly `{declaration}` and disclose source `{proposal['source']}` in the writeup.")
         return ToolResult(False, f"unknown tool: {name}")
@@ -289,7 +313,7 @@ class MathematicsSession:
                     "notebook": report.notebook_path,
                     "reproduces": report.reproduces,
                 }
-                _atomic_json(self.state_path, self.state)
+                self._save_state()
                 return ToolResult(True, report.model_dump_json())
         except CasError as error:
             return ToolResult(False, str(error))
@@ -423,4 +447,4 @@ class MathematicsSession:
         thread = getattr(self.runtime, "session_id", None)
         if thread and self.state.get("provider_session") != thread:
             self.state["provider_session"] = thread
-            _atomic_json(self.state_path, self.state)
+            self._save_state()

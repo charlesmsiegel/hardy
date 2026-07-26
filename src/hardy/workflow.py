@@ -192,7 +192,15 @@ class ProveWorkflow:
                 )
             state.transition(RunPhase.FORMALIZING)
             runtime = self._runtime_factory(store)
-            formal_thread = runtime.start(model=request.model, run_dir=store.path, claim=None)
+            # `active_thread` too, not only once proving starts: it is the handle
+            # the cancellation path below reaches for, and a Ctrl+C while
+            # formalizing has just as much running behind it. Without this the
+            # staged runtime never hears about that phase, so its provider thread
+            # is still live -- and can still append -- while `_finalize` hashes
+            # the run directory.
+            active_thread = formal_thread = runtime.start(
+                model=request.model, run_dir=store.path, claim=None
+            )
             revision = ""
             for proposal_number in range(self._config.limits.formalization_proposals):
                 active_elapsed = self._monotonic() - active_started - user_wait

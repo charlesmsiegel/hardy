@@ -112,6 +112,25 @@ def test_ctrl_c_keeps_the_words_that_had_already_arrived(settings):
     assert session.cancelled == ["keyboard_interrupt"]
 
 
+def test_a_turn_that_fails_to_start_does_not_end_the_plain_session(settings):
+    """Starting a turn is eager -- it writes the transcript's `user` event and
+    starts the provider's thread -- so it can fail before a single event exists.
+
+    The real shell catches exactly this and keeps the session; `--plain` let it
+    escape as an uncaught traceback, losing the session over one bad turn.
+    """
+
+    class Broken(StreamingSession):
+        def stream(self, text: str):
+            self.asked.append(text)
+            raise RuntimeError("the provider could not be reached")
+
+    session = Broken([])
+    written = run_plain(settings, session, ["prove it", "and again"])
+    assert session.asked == ["prove it", "and again"], "the session ended on the first failure"
+    assert written.count("RuntimeError: the provider could not be reached") == 2
+
+
 def test_a_failed_tool_call_is_drawn_as_failed(settings):
     session = StreamingSession(
         [
