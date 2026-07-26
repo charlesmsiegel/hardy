@@ -560,3 +560,44 @@ async def test_a_turn_is_started_on_the_thread_that_sequenced_it(settings):
     await blast(settings, session, "prove something\r\x1b \x03")
     assert session.started_on == threading.current_thread().name
     assert session.cancelled_when_read is True
+
+
+async def test_a_turn_the_app_exit_cut_off_keeps_the_words_it_drew(settings):
+    """`/exit` or Ctrl+D mid-turn cancels this task, and the painter is still
+    holding the line it was wrapping -- a line is emitted only once no further
+    delta can change it.
+
+    The tail flush sits after `_run_turn`'s `finally`, which this path never
+    reaches: it re-raises so cancellation still propagates. Ordinary stream
+    failures and plain-mode Ctrl+C both keep that tail, so text the user has
+    already watched arrive must not vanish here either.
+
+    Driven directly rather than through `blast`: whether the first event is
+    drawn before the exit lands is a race when both keys share one input batch,
+    and this is about what happens once it has been.
+    """
+    drawn: list[str] = []
+    session = SlowSession()
+    buffer = StringIO()
+    with create_pipe_input() as pipe:
+        output = Vt100_Output(buffer, lambda: Size(rows=24, columns=80))
+        with create_app_session(input=pipe, output=output):
+            built = shell.Shell(
+                settings, session, handlers.build_registry(), input=pipe, output=output
+            )
+            built._echo = drawn.extend
+            arrivals: asyncio.Queue = asyncio.Queue()
+            future: asyncio.Future = asyncio.get_running_loop().create_future()
+            turn = asyncio.ensure_future(built._run_turn("prove it", future, arrivals))
+            # No newline, so the painter cannot settle this line yet.
+            arrivals.put_nowait(TurnEvent("text", text="The kernel accepted"))
+            await asyncio.sleep(0.05)
+            turn.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await turn
+            future.cancel()
+
+    assert any("The kernel accepted" in line for line in drawn), (
+        "the streamed tail was dropped when the app went away"
+    )
+    assert session.abandoned == ["app_exited"]

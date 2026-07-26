@@ -218,6 +218,76 @@ def test_cancelling_interrupts_the_model_and_keeps_what_it_already_said():
     assert [event.text for event in events if event.kind == "reply"] == ["Partial"]
 
 
+def test_cancelling_mid_block_keeps_the_words_already_drawn():
+    """Esc between a delta and the completed block it was building.
+
+    Deltas are for drawing and blocks are authoritative -- but a block the
+    interrupt prevented has no authoritative form, and its words were on screen.
+    Dropping them leaves the reply empty and the transcript denying text the
+    user watched arrive.
+    """
+    seen: list[dict] = []
+    live, _ = wired(
+        [StreamEvent("Half a "), StreamEvent("sentence"), ResultMessage()],
+        stall_after=2,
+        after_interrupt=[ResultMessage(is_error=True, subtype="interrupted")],
+        observe=seen.append,
+    )
+    events = []
+    for event in live.stream("go"):
+        events.append(event)
+        live.cancel()
+
+    assert [event.text for event in events if event.kind == "reply"] == ["Half a sentence"]
+    # Recorded too, and marked for what it is: drawn text with no completed
+    # block behind it, rather than a block the provider actually finished.
+    assert [event for event in seen if event["type"] == "assistant"] == [
+        {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": "Half a sentence"},
+            "partial": True,
+        }
+    ]
+
+
+def test_a_block_no_delta_covered_is_drawn_where_it_happened():
+    """A turn whose partial text never came -- an older CLI, a provider that
+    does not stream -- still has to draw its prose in order.
+
+    Left to `TurnPainter.finish()`, everything said before a tool call appears
+    *after* that call's result, because the painter is handed the whole reply
+    only once the turn is over.
+    """
+    live, _ = wired(
+        [
+            AssistantMessage(TextBlock("Let me check.")),
+            AssistantMessage(ToolUseBlock("mcp__hardy__check_lean", "call-1")),
+            UserMessage(ToolResultBlock("call-1")),
+            AssistantMessage(TextBlock("It compiles.")),
+            ResultMessage(),
+        ]
+    )
+    events = list(live.stream("go"))
+    assert [(event.kind, event.text or event.name) for event in events] == [
+        ("text", "Let me check."),
+        ("tool_use", "check_lean"),
+        ("tool_result", "check_lean"),
+        ("text", "It compiles."),
+        ("reply", "Let me check.\n\nIt compiles."),
+    ]
+
+
+def test_a_block_a_delta_already_drew_is_not_drawn_twice():
+    """The other half of the rule above, and the hazard the design turns on:
+    when deltas did arrive, the completed block must stay a record-only event."""
+    live, _ = wired(
+        [StreamEvent("Lean "), StreamEvent("agrees."), AssistantMessage(TextBlock("Lean agrees.")), ResultMessage()]
+    )
+    events = list(live.stream("go"))
+    assert [event.text for event in events if event.kind == "text"] == ["Lean ", "agrees."]
+    assert [event.text for event in events if event.kind == "reply"] == ["Lean agrees."]
+
+
 def test_a_cancelled_turn_is_not_reported_as_a_provider_error():
     """The SDK reports an interrupted exchange as an error. Raising would dress
     the user's own decision up as a failure of the provider."""
