@@ -25,7 +25,7 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   printed and labelled. Without a TTY, or with `--plain`/`HARDY_PLAIN`/
   `TERM=dumb`, or if the terminal session fails to start, the same commands and
   banner run through a line-based session instead.
-- **Now:** model output is streamed as it is produced rather than printed only
+- **Now (implemented):** model output is streamed as it is produced rather than printed only
   once the turn finishes, and both ends of every tool call are drawn, so a
   three-minute Lean check reports itself instead of looking like a hang
   (issue #32).

@@ -53,11 +53,20 @@ class UserMessage:
 
 class StreamEvent:
     """A partial message. `include_partial_messages` delivers these *beside*
-    the completed blocks, never instead of them."""
+    the completed blocks, never instead of them.
 
-    def __init__(self, text: str, kind: str = "text_delta"):
+    `index` is the content block the text belongs to, as the provider reports
+    it: one message can carry several, and their deltas are only tellable apart
+    by this.
+    """
+
+    def __init__(self, text: str, kind: str = "text_delta", index: int = 0):
         self.content, self.session_id = [], "thread-9"
-        self.event = {"type": "content_block_delta", "delta": {"type": kind, "text": text}}
+        self.event = {
+            "type": "content_block_delta",
+            "index": index,
+            "delta": {"type": kind, "text": text},
+        }
 
 
 class FakeClient:
@@ -286,6 +295,59 @@ def test_a_block_a_delta_already_drew_is_not_drawn_twice():
     events = list(live.stream("go"))
     assert [event.text for event in events if event.kind == "text"] == ["Lean ", "agrees."]
     assert [event.text for event in events if event.kind == "reply"] == ["Lean agrees."]
+
+
+def test_two_blocks_in_one_message_each_consume_only_their_own_deltas():
+    """A message can carry several text blocks, and deltas arrive for each.
+
+    Tracked per turn rather than per block, the first completed block clears the
+    lot -- so every later block in that same message looks undrawn and is drawn
+    a second time, doubling it on screen while the reply stays right.
+    """
+    live, _ = wired(
+        [
+            StreamEvent("Two ", index=0),
+            StreamEvent("halves.", index=0),
+            StreamEvent("And a second.", index=1),
+            AssistantMessage(TextBlock("Two halves."), TextBlock("And a second.")),
+            ResultMessage(),
+        ]
+    )
+    events = list(live.stream("go"))
+    assert [event.text for event in events if event.kind == "text"] == [
+        "Two ",
+        "halves.",
+        "And a second.",
+    ]
+    assert [event.text for event in events if event.kind == "reply"] == [
+        "Two halves.\n\nAnd a second."
+    ]
+
+
+def test_the_wall_clock_does_not_discard_what_was_drawn():
+    """`wait_for` cancels the exchange where it stands, so the turn's own
+    settling never runs on that path. Budget exhaustion must not silently take
+    text off the record that the user had already seen."""
+    seen: list[dict] = []
+    live, _ = wired(
+        [StreamEvent("Thinking out"), ResultMessage()],
+        stall_after=1,          # never interrupted: the deadline arrives instead
+        wall_seconds=0.1,
+        observe=seen.append,
+    )
+    with pytest.raises(TimeoutError):
+        list(live.stream("go"))
+
+    assert [event for event in seen if event["type"] == "assistant"] == [
+        {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": "Thinking out"},
+            "partial": True,
+        }
+    ]
+    # And in that order: the drawn text belongs to the turn, the limit is what
+    # ended it.
+    assert [event["type"] for event in seen][-1] == "wall_clock_limit"
 
 
 def test_a_cancelled_turn_is_not_reported_as_a_provider_error():
