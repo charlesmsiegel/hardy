@@ -257,17 +257,25 @@ class MathematicsSession:
         with self.transcript_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-    def _run_lean_source(self, source: str, *, final: bool) -> ToolResult:
-        if final and self.lean.has_holes(source):
+    def _final_gates(self, source: str) -> ToolResult | None:
+        """What disqualifies a source from being saved, before Lean is asked.
+
+        All of it is textual, so it costs nothing and runs first: there is no
+        point spending a minute elaborating a file that a `sorry` or an
+        unapproved axiom already rules out.
+        """
+        if self.lean.has_holes(source):
             return ToolResult(False, "saved Lean artifacts may not contain sorry or admit", source)
-        if final:
-            approved = {item["formal_name"]: " ".join(item["lean_statement"].split()) for item in self.state["assumptions"]}
-            # Named `assumed` rather than `declarations`: the module-level
-            # function of that name is what reads theorems out of a source.
-            assumed = re.findall(r"(?m)^\s*(?:axiom|constant)\s+([A-Za-z_][A-Za-z0-9_'.]*)\s*:\s*(.+?)\s*$", source)
-            for name, statement in assumed:
-                if approved.get(name) != " ".join(statement.split()):
-                    return ToolResult(False, f"unapproved or altered assumption `{name}`; use request_assumption first", source)
+        approved = {item["formal_name"]: " ".join(item["lean_statement"].split()) for item in self.state["assumptions"]}
+        # Named `assumed` rather than `declarations`: the module-level function
+        # of that name is what reads theorems out of a source.
+        assumed = re.findall(r"(?m)^\s*(?:axiom|constant)\s+([A-Za-z_][A-Za-z0-9_'.]*)\s*:\s*(.+?)\s*$", source)
+        for name, statement in assumed:
+            if approved.get(name) != " ".join(statement.split()):
+                return ToolResult(False, f"unapproved or altered assumption `{name}`; use request_assumption first", source)
+        return None
+
+    def _run_lean_source(self, source: str) -> ToolResult:
         return self.lean.run_source(source, env={"LEAN_PATH": self.lean_workspace.lean_path()})
 
     def _compile_module(
@@ -306,7 +314,7 @@ class MathematicsSession:
             return failure
         if failure is not None:
             return ToolResult(False, f"a workspace file this one imports does not build: {failure.module}\n{failure.output}", source)
-        return self._run_lean_source(source, final=False)
+        return self._run_lean_source(source)
 
     def _save_lean(self, path: str, source: str) -> ToolResult:
         try:
@@ -316,11 +324,23 @@ class MathematicsSession:
         gate = self._documentation_gate(source)
         if gate is not None:
             return ToolResult(False, gate, source)
-        checked = self._run_lean_source(source, final=True)
-        if not checked.ok:
-            return checked
+        refusal = self._final_gates(source)
+        if refusal is not None:
+            return refusal
         text = source.rstrip() + "\n"
-        shadow, commit = self.lean_workspace.stage(relative, text)
+        # The shadow build elaborates this file itself, so there is no
+        # pre-check run: with Mathlib imported each elaboration costs tens of
+        # seconds, and checking the same source twice per save doubled the
+        # expensive half of the operation. What Lean said is captured here
+        # because the build reports only which module failed.
+        seen: dict[str, ToolResult] = {}
+
+        def capturing(module: str, source_root: Path, build_root: Path, source_file: Path) -> tuple[bool, str]:
+            result = self.lean.compile_module(source_root, build_root, source_file)
+            seen[module] = result
+            return result.ok, result.output
+
+        shadow, commit = self.lean_workspace.stage(relative, text, capturing)
         try:
             module = module_name(relative)
             try:
@@ -340,7 +360,9 @@ class MathematicsSession:
             commit()
         finally:
             LeanWorkspace.discard(shadow)
-        return checked
+        # Absent from `seen` when the source was byte-identical to what was
+        # already built, so the cache skipped it. Nothing was wrong with it.
+        return seen.get(module, ToolResult(True, "unchanged; already built", source))
 
     def _build_imports(self, space: LeanWorkspace, source: str) -> BuildFailure | ToolResult | None:
         """Make the workspace modules a candidate imports importable."""
