@@ -213,9 +213,14 @@ class ClaudeStagedRuntime:
         return self.run_structured(thread, "proof", prompt, ProofSubmission)
 
     def cancel(self, thread: StagedThread) -> None:
-        # The SDK owns the turn loop, so there is no turn handle to interrupt;
-        # the wall clock it was given is what stops it. See issue #23.
-        pass
+        # There is a handle to interrupt now (issue #32): the runtime holds the
+        # SDK client for the turn in flight and `cancel` is safe to call from
+        # any thread. The wall clock is still the backstop, not the mechanism.
+        # A runtime too old to be told to stop is left to its deadline rather
+        # than being an error here.
+        cancel = getattr(thread.runtime, "cancel", None)
+        if cancel is not None:
+            cancel()
 
     def close(self) -> None:
         # The workflow calls this in a `finally`; without it every staged run

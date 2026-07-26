@@ -10,7 +10,7 @@ import asyncio
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from . import banner, dispatch, transcript
+from . import banner, dispatch, stream, transcript
 from .handlers import build_registry
 from .ports import Choice, State
 
@@ -127,8 +127,13 @@ def run(
 
         for line in transcript.user_lines(outcome.argument, WIDTH):
             out(line)
+        painter = stream.TurnPainter(WIDTH)
         try:
-            reply = session.send(outcome.argument)
+            for event in session.stream(outcome.argument):
+                for line in painter.draw(event):
+                    out(line)
+            for line in painter.finish():
+                out(line)
         except KeyboardInterrupt:
             # `session.send` runs synchronously, right here, on the only
             # thread this session has -- unlike the real shell, which moves
@@ -141,14 +146,22 @@ def run(
             # actually waited for. Recorded with its own reason, distinct
             # from the shell's ("user_pressed_escape", "forced_exit",
             # "app_exited"): this is `--plain`'s only way to abandon a turn.
-            if hasattr(session, "record_abandonment"):
+            #
+            # Cancelled as well as recorded, now that the runtime can be told
+            # to stop -- otherwise the model would go on answering a question
+            # this loop has already stopped reading.
+            if hasattr(session, "cancel"):
+                session.cancel("keyboard_interrupt")
+            elif hasattr(session, "record_abandonment"):
                 session.record_abandonment("keyboard_interrupt")
             out("")
             return 0
         except Exception as error:                      # noqa: BLE001 - never lose the session
+            # Whatever was streamed before the failure was really said, so it
+            # is printed rather than discarded along with the turn.
+            for line in painter.finish():
+                out(line)
             ui.write(f"{type(error).__name__}: {error}", style="error")
             continue
-        for line in transcript.hardy_lines(reply, WIDTH):
-            out(line)
         out("")
     return 0

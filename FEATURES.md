@@ -19,13 +19,16 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
 - **Now (implemented):** on a real terminal, the session runs through a
   `prompt_toolkit`-backed shell rather than a plain `input()` loop: dim
   ghost-text completion of slash commands as you type, a `/model` selector
-  (arrow keys or a row number), and Esc that stops *waiting* on an in-flight
-  turn without cancelling it — the call keeps running and its reply still
-  prints, tagged, once it lands. Without a TTY, or with `--plain`/
-  `HARDY_PLAIN`/`TERM=dumb`, or if the terminal session fails to start, the
-  same commands and banner run through a line-based session instead.
-- **Next:** stream model output as it is produced rather than printing a
-  reply only once the turn finishes (issue #32).
+  (arrow keys or a row number), and Esc that really cancels an in-flight turn:
+  the model stops and no further tool call runs, though work already begun is
+  left to finish rather than killed halfway, and a reply that lands anyway is
+  printed and labelled. Without a TTY, or with `--plain`/`HARDY_PLAIN`/
+  `TERM=dumb`, or if the terminal session fails to start, the same commands and
+  banner run through a line-based session instead.
+- **Now:** model output is streamed as it is produced rather than printed only
+  once the turn finishes, and both ends of every tool call are drawn, so a
+  three-minute Lean check reports itself instead of looking like a hang
+  (issue #32).
 
 Priority labels are sequencing hints:
 

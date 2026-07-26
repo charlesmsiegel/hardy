@@ -17,6 +17,7 @@ around the verification this project exists to guarantee.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import queue
 import threading
@@ -261,12 +262,11 @@ class ClaudeAgentRuntime:
         loop, client = self._loop, self._client
         if loop is None or client is None or loop.is_closed():
             return
-        try:
+        # Suppressed rather than handled: the loop can stop between the check
+        # above and this call, and the turn is over either way -- which is what
+        # cancelling asked for.
+        with contextlib.suppress(RuntimeError):
             asyncio.run_coroutine_threadsafe(client.interrupt(), loop)
-        except RuntimeError:
-            # The loop stopped between the check above and this call. The turn
-            # is over either way, which is what cancelling asked for.
-            pass
 
     async def _within_budget(self, text: str, outbox: queue.Queue) -> None:
         """The wall clock is Hardy's to keep even when the loop is not.

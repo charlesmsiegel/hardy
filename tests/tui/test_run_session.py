@@ -19,8 +19,10 @@ from prompt_toolkit.output.vt100 import Vt100_Output
 from hardy import runner
 from hardy.tui import run_session
 
+from .conftest import Streams
 
-class FakeSession:
+
+class FakeSession(Streams):
     def send(self, text: str) -> str:
         return "answered"
 

@@ -29,8 +29,8 @@ The batch path. `runner.Runtime` (`runner.py:30`) stays `ask(text) -> str`, and
 ```python
 @dataclass(frozen=True)
 class TurnEvent:
-    kind: str                    # text | tool_use | tool_result | thinking | result
-    text: str = ""               # a delta for `text`; the whole reply for `result`
+    kind: str                    # text | thinking | tool_use | tool_result | reply
+    text: str = ""               # a delta for `text`; the whole reply for `reply`
     name: str = ""               # tool name for tool_use / tool_result
     ok: bool | None = None       # tool outcome for tool_result
 ```
@@ -42,8 +42,8 @@ class TurnEvent:
 Consuming both would double every reply.
 
 The rule, applied everywhere: **deltas are for display; `TextBlock`s remain
-authoritative.** `ask()` joins blocks exactly as it does today, the terminal
-`result` event carries that same joined text, and `observe` records whole
+authoritative.** `ask()` joins blocks exactly as it does today, the closing
+`reply` event carries that same joined text, and `observe` records whole
 blocks. Nothing derives the reply from deltas.
 
 ### Protocol
