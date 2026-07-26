@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from hardy import config as configuration
+from hardy.models import TurnEvent
 from hardy.tui.ports import Choice
 
 
@@ -75,6 +76,28 @@ class _Blocking:
         import asyncio
 
         return asyncio.run(self._ui.confirm(question))
+
+
+class Streams:
+    """A fake session whose answer arrives in one piece.
+
+    The terminal takes a stream now, but most of these tests are about the
+    terminal rather than about streaming, so they go on defining `send` and get
+    a one-event stream from it.
+
+    That is a real backend shape and not a shortcut: a runtime that reports no
+    partial text is exactly what `--plain` and any non-streaming provider look
+    like, and `TurnPainter` draws such a reply whole, as it always did. A fake
+    that streamed word by word would test the painter, which has its own tests,
+    rather than the shell.
+    """
+
+    def stream(self, text: str):
+        yield TurnEvent("reply", text=self.send(text))
+
+    def cancel(self, reason: str = "user_cancelled") -> None:
+        self.cancelled = getattr(self, "cancelled", [])
+        self.cancelled.append(reason)
 
 
 @pytest.fixture

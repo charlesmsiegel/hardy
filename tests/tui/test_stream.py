@@ -38,7 +38,7 @@ def test_no_line_is_ever_handed_out_twice():
     seen = drain(writer, ["one two three four five six seven eight nine ten"])
     # Reconstructing the message from the lines must not repeat or lose a word.
     words = " ".join(bare(seen)).split()
-    assert words == "one two three four five six seven eight nine ten".split()
+    assert words == ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
 
 
 def test_a_partial_word_is_never_printed():

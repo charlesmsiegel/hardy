@@ -29,6 +29,7 @@ from prompt_toolkit.output.vt100 import Vt100_Output
 
 from hardy.tui import handlers, shell
 
+from .conftest import Streams
 from .nested_render import assert_no_outer_render_during_nested
 
 PROPOSAL = {
@@ -71,7 +72,7 @@ async def test_a_tool_thread_can_ask_and_get_an_answer(settings):
     answers: list[bool] = []
     buffer = StringIO()
 
-    class Session:
+    class Session(Streams):
         def send(self, text: str) -> str:
             confirm = cli.confirm_assumption(the_shell)
             answers.append(confirm(PROPOSAL))
@@ -190,7 +191,7 @@ async def test_an_escaped_prompt_from_a_tool_thread_also_declines(settings):
     buffer = StringIO()
     answers: list[bool] = []
 
-    class Session:
+    class Session(Streams):
         def send(self, text: str) -> str:
             answers.append(cli.confirm_assumption(the_shell)(PROPOSAL))
             return "done"
@@ -232,7 +233,7 @@ async def test_axiom_prompt_from_a_tool_thread_does_not_paint_under_the_spinner(
     answers: list[bool] = []
     release = threading.Event()
 
-    class Session:
+    class Session(Streams):
         def send(self, text: str) -> str:
             release.wait(timeout=5)
             answers.append(cli.confirm_assumption(the_shell)(PROPOSAL))

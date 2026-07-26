@@ -13,6 +13,11 @@ the last -- appending words never moves a break that has already fallen.
 from __future__ import annotations
 
 import textwrap
+import time
+from collections.abc import Callable
+from typing import Any
+
+from . import transcript
 
 INDENT = "  "
 
@@ -103,3 +108,60 @@ def tool_started(name: str) -> str:
 def tool_finished(name: str, ok: bool | None, seconds: float) -> str:
     mark = "✓" if ok or ok is None else "✗"
     return f"{mark} {name or 'tool'} · {seconds:.1f}s"
+
+
+class TurnPainter:
+    """A turn's events, turned into lines. Shared by both terminals.
+
+    The real shell and `--plain` differ in how a line reaches the screen, not
+    in what a turn looks like, so the decision of what to draw lives here once.
+    """
+
+    def __init__(self, width: int, clock: Callable[[], float] = time.monotonic):
+        self._width = width
+        self._clock = clock
+        self._writer = LineWriter(width)
+        self._began: dict[str, float] = {}
+        self._reply = ""
+        self._spoke = False
+        # The tool currently running, for the spinner to name. A turn that is
+        # three minutes inside `check_lean` should say so.
+        self.running = ""
+
+    def draw(self, event: Any) -> list[str]:
+        if event.kind == "text":
+            self._spoke = True
+            return self._writer.feed(event.text)
+        if event.kind == "tool_use":
+            self.running = event.name
+            self._began[event.name] = self._clock()
+            # Prose is flushed and the writer replaced, so the model's words and
+            # the work Lean or LaTeX did never share a line, and whatever the
+            # model says afterwards starts as a fresh message rather than
+            # trailing off the paragraph the tool call interrupted.
+            lines = self._writer.flush()
+            self._writer = LineWriter(self._width)
+            return lines + [tool_started(event.name)]
+        if event.kind == "tool_result":
+            self.running = ""
+            began = self._began.pop(event.name, None)
+            elapsed = self._clock() - began if began is not None else 0.0
+            return [tool_finished(event.name, event.ok, elapsed)]
+        if event.kind == "reply":
+            self._reply = event.text
+        return []
+
+    @property
+    def streamed(self) -> bool:
+        """Whether any of the reply was drawn as it arrived."""
+        return self._spoke
+
+    def finish(self) -> list[str]:
+        lines = self._writer.flush()
+        self.running = ""
+        if self._spoke:
+            return lines
+        # Nothing was streamed. A backend that does not report partial text is
+        # allowed to exist -- the plain path has to keep working, streaming or
+        # not -- so the reply is drawn whole rather than silently dropped.
+        return lines + transcript.hardy_lines(self._reply, self._width)

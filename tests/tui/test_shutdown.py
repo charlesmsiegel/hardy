@@ -27,13 +27,15 @@ from prompt_toolkit.output.vt100 import Vt100_Output
 
 from hardy.tui import handlers, shell
 
+from .conftest import Streams
+
 # Long enough that nothing in a passing test could observe it "finishing
 # naturally"; short enough that the one test which genuinely waits this out
 # (see the module docstring) does not badly slow the suite.
 _STALL = 1.5
 
 
-class Stalled:
+class Stalled(Streams):
     def __init__(self):
         self.abandoned: list[str] = []
 

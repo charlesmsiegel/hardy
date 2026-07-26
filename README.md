@@ -188,10 +188,15 @@ touched), and `/exit` (or `/quit`, or Ctrl+D) leaves.
 Typing `/` shows a dim inline suggestion for the rest of a likely command as
 you type it; Tab accepts it. Enter submits; to write a second line without
 submitting, press Shift+Enter — a terminal that does not send that sequence
-can end a line with a trailing `\` instead. Esc does **not** cancel an
-in-flight turn: the call keeps running in the background (it may already be
-running Lean, LaTeX, or a computer algebra cell), and its reply still
-prints, tagged as having arrived after you stopped waiting, once it lands.
+can end a line with a trailing `\` instead. The reply is drawn as the model
+writes it, and each tool call is announced when it starts rather than when it
+returns, so a long Lean check reports what it is doing instead of going quiet.
+
+Esc cancels an in-flight turn: the model stops and no further tool call runs.
+What it cannot undo is work already begun — a Lean, LaTeX, or computer algebra
+process already running is left to finish rather than killed halfway, and
+anything such a call has already written stays written. A reply that lands
+anyway is still printed, labelled as belonging to the turn you stopped.
 Ctrl+C once, while a turn is running, only warns; a second Ctrl+C leaves at
 once, at the cost of whatever that turn was still doing.
 

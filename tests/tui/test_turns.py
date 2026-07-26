@@ -1,8 +1,12 @@
-"""Esc abandons waiting on an in-flight turn without claiming to cancel it.
+"""Esc cancels an in-flight turn, and claims no more than it really did.
 
 `SlowSession.send` blocks on a real `threading.Event`, so the worker thread
 genuinely has a turn in flight while the box is driven -- this is what proves
 `_run_turn` moved the call off the event loop instead of merely deferring it.
+
+It also answers anyway once released, ignoring the cancellation entirely. That
+is deliberate: it stands for the part cancelling cannot reach, so the tests
+here see what the terminal does when work the user stopped lands regardless.
 
 This file also pins the shell's key bindings: newline is Shift+Enter (both
 the vt100/xterm and kitty-protocol encodings, `shell.py`'s `_SHIFT_ENTER`
@@ -35,6 +39,7 @@ from prompt_toolkit.output.vt100 import Vt100_Output
 
 from hardy.tui import handlers, shell
 
+from .conftest import Streams
 from .nested_render import assert_no_outer_render_during_nested
 
 # Comfortably past `Application.ttimeoutlen` (0.5s): the one remaining
@@ -45,7 +50,7 @@ from .nested_render import assert_no_outer_render_during_nested
 _ESCAPE_ALONE_PAUSE = 0.7
 
 
-class SlowSession:
+class SlowSession(Streams):
     """Blocks until released, so a turn is genuinely in flight."""
 
     def __init__(self):
@@ -145,14 +150,20 @@ async def test_escape_records_the_abandonment(settings):
     # is peek-ahead-resolved instantly, the same way `\x03` used to.
     session = SlowSession()
     await blast(settings, session, "prove something\r\x1b \x03")
-    assert session.abandoned == ["user_pressed_escape"]
+    # Cancelled now, not merely walked away from -- but recorded under the same
+    # reason, because why a turn ended is what a trajectory has to show.
+    assert session.cancelled == ["user_pressed_escape"]
 
 
-async def test_escape_does_not_claim_to_have_cancelled(settings):
+async def test_escape_says_it_cancelled_without_overclaiming(settings):
+    """Esc really does stop the turn now, so the notice may say so -- but the
+    limit has not moved. A Lean or LaTeX process already running is left to
+    finish, and a file such a call has written stays written, so the wording
+    still has to promise only the part that is true."""
     session = SlowSession()
     _, written = await blast(settings, session, "prove something\r\x1b \x03")
-    assert "still running" in written
-    assert "cancel" not in written.lower()
+    assert "cancelled" in written.lower()
+    assert "may still finish" in written
 
 
 async def test_escape_abandons_instantly_without_waiting_out_a_timeout(settings):
@@ -187,8 +198,8 @@ async def test_escape_abandons_instantly_without_waiting_out_a_timeout(settings)
             # combined figure a non-eager escape needed.
             await asyncio.sleep(0.8)
             elapsed = time.monotonic() - started
-            assert session.abandoned == ["user_pressed_escape"], (
-                f"not abandoned within {elapsed:.2f}s -- escape is no longer resolving eagerly"
+            assert session.cancelled == ["user_pressed_escape"], (
+                f"not cancelled within {elapsed:.2f}s -- escape is no longer resolving eagerly"
             )
             session.release.set()
             await asyncio.sleep(0.2)
@@ -428,9 +439,11 @@ async def test_a_turn_task_cancelled_before_its_first_step_is_still_recorded(set
     session.release.set()
 
 
-async def test_the_reply_of_an_abandoned_turn_is_tagged_when_it_lands(settings):
+async def test_the_reply_of_a_stopped_turn_is_tagged_when_it_lands(settings):
     """The brief singles this out: Esc does not drop the reply, it tags it as
-    belonging to the abandoned turn once it lands. Every other Escape test in
+    belonging to the turn that was stopped once it lands. Still true with real
+    cancellation: `SlowSession` answers anyway, exactly as a backend that
+    cannot be interrupted would. Every other Escape test in
     this file pairs Escape with an immediate Ctrl+C, so none of them ever
     leave the app open long enough to actually observe this happening.
 
@@ -458,7 +471,7 @@ async def test_the_reply_of_an_abandoned_turn_is_tagged_when_it_lands(settings):
             pipe.send_text("\x03")
             code = await task
     assert code == 0
-    assert "the abandoned turn has replied:" in buffer.getvalue()
+    assert "this turn was stopped; it had already replied:" in buffer.getvalue()
     assert "late reply" in buffer.getvalue()
 
 

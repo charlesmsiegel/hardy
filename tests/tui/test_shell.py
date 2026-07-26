@@ -33,6 +33,7 @@ from hardy.tui import handlers, shell
 from hardy.tui.commands import Command
 from hardy.tui.ports import Choice
 
+from .conftest import Streams
 from .nested_render import assert_no_outer_render_during_nested
 
 
@@ -235,7 +236,7 @@ async def test_the_scrollbar_appears_only_when_the_box_overflows(settings):
 # -- the session actually receives input ----------------------------------
 
 
-class FakeSession:
+class FakeSession(Streams):
     def __init__(self):
         self.sent: list[str] = []
 

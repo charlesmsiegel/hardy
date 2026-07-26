@@ -5,8 +5,10 @@ import dataclasses
 from hardy import runner
 from hardy.tui import plain
 
+from .conftest import Streams
 
-class FakeSession:
+
+class FakeSession(Streams):
     def __init__(self):
         self.sent: list[str] = []
 
@@ -18,7 +20,7 @@ class FakeSession:
         pass
 
 
-class InterruptedSession:
+class InterruptedSession(Streams):
     """`send` raises `KeyboardInterrupt`, as a real Ctrl+C mid-turn would:
     `session.send` runs synchronously on `plain.run`'s only thread, unlike
     the real shell's worker-thread turn."""
@@ -118,4 +120,4 @@ def test_ctrl_c_mid_turn_is_recorded_not_left_to_escape_as_a_traceback(settings)
     session = InterruptedSession()
     code, _, _ = run(settings, ["prove something"], session=session)
     assert code == 0
-    assert session.abandoned == ["keyboard_interrupt"]
+    assert session.cancelled == ["keyboard_interrupt"]

@@ -182,7 +182,7 @@ Claude Code CLI is not merely installed but actually signed in.
 
 The interactive session's one new runtime dependency is `prompt_toolkit`: a
 real terminal input layer, needed for ghost-text command completion, a
-`/model` selector, and Esc-to-stop-waiting without blocking the input box on
+`/model` selector, and Esc-to-cancel without blocking the input box on
 a synchronous `input()` call while a turn is in flight. It is confined to two
 modules (`hardy/tui/select.py` and `hardy/tui/shell.py`); everything else in
 `hardy/tui` speaks only the plain `Ui` port, so the line-based fallback

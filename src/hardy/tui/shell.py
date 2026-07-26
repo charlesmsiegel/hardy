@@ -48,9 +48,13 @@ from prompt_toolkit.shortcuts import PromptSession
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import TextArea
 
-from . import banner, dispatch, select, transcript
+from . import banner, dispatch, select, stream, transcript
 from .commands import Command, canonical, complete, resolve, suggest
 from .ports import Choice, State
+
+# Posted to a turn's queue when nothing further is coming. An object of its
+# own rather than None, so it can never be confused with an event.
+_TURN_OVER = object()
 
 # -- Shift+Enter --------------------------------------------------------------
 #
@@ -489,11 +493,21 @@ class Shell:
                 # transcript.jsonl with no record whatsoever. Calling
                 # `run_in_executor` here submits the work immediately, before
                 # anything later in this same batch can prevent it.
-                future = asyncio.get_running_loop().run_in_executor(
-                    None, self._state.session.send, outcome.argument
+                #
+                # What is submitted is `_drain`, not `session.send`: the turn
+                # arrives in pieces now, and they cross back to this loop
+                # through `arrivals`. The queue is created here, on the loop,
+                # for the same reason the work is submitted here -- `_run_turn`
+                # may never get a turn to create one.
+                loop = asyncio.get_running_loop()
+                arrivals: asyncio.Queue = asyncio.Queue()
+                future = loop.run_in_executor(
+                    None, self._drain, outcome.argument, arrivals, loop
                 )
                 self._pending_future = future
-                event.app.create_background_task(self._run_turn(outcome.argument, future))
+                event.app.create_background_task(
+                    self._run_turn(outcome.argument, future, arrivals)
+                )
                 return
             event.app.create_background_task(self._run_command(outcome))
 
@@ -501,14 +515,13 @@ class Shell:
         def _abandon(event) -> None:
             if not self._state.turn_running:
                 return
-            # Not a cancellation: `session.send` cannot be stopped, and its
-            # tool calls may already have written Lean or LaTeX to the
-            # workspace. Say only what is true -- we stopped waiting.
-            self._record_abandonment("user_pressed_escape")
-            self.write(
-                "stopped waiting; the call is still running and its reply "
-                "will appear when it lands"
-            )
+            # A real cancellation now, and the wording says only what is still
+            # true. The model stops and no further tool call runs; a Lean or
+            # LaTeX process already started is left to finish, because killing
+            # it halfway would leave worse behind in the workspace than letting
+            # it end. Tool work that already wrote a file has written it.
+            self._cancel_turn()
+            self.write("cancelled; work a tool had already started may still finish")
 
         @keys.add("c-d")
         def _leave(event) -> None:
@@ -560,13 +573,49 @@ class Shell:
         return keys
 
     def _record_abandonment(self, reason: str) -> None:
-        """Idempotent: the first reason recorded for a turn wins."""
+        """Idempotent: the first reason recorded for a turn wins.
+
+        Still "abandoned" rather than "cancelled", and still distinct from
+        `_cancel_turn`. These are the paths where the turn was *not* stopped --
+        the app is going away with work still running -- and calling that a
+        cancellation would claim something nothing did.
+        """
         if self._abandoned:
             return
         self._abandoned = True
         session = self._state.session
         if session is not None and hasattr(session, "record_abandonment"):
             session.record_abandonment(reason)
+
+    def _cancel_turn(self) -> None:
+        """Stop the turn in flight. Idempotent, like the abandonment record."""
+        if self._abandoned:
+            return
+        self._abandoned = True
+        session = self._state.session
+        if session is not None and hasattr(session, "cancel"):
+            session.cancel("user_pressed_escape")
+        elif session is not None and hasattr(session, "record_abandonment"):
+            # A session too old to be told to stop. Say so honestly rather
+            # than claiming a cancellation that did not happen.
+            session.record_abandonment("user_pressed_escape")
+
+    def _drain(self, text: str, arrivals: asyncio.Queue, loop: asyncio.AbstractEventLoop) -> None:
+        """Run the turn on a worker thread; post what arrives back to the loop.
+
+        Everything this touches crosses a thread boundary exactly once, through
+        `call_soon_threadsafe`. `_run_turn` does all the drawing, on the loop,
+        because prompt_toolkit is not safe to touch from here.
+
+        The sentinel is posted in a `finally`, so a turn that raises still ends
+        the drawing loop rather than leaving it waiting on a queue that nothing
+        will ever fill. The exception itself travels on the future.
+        """
+        try:
+            for event in self._state.session.stream(text):
+                loop.call_soon_threadsafe(arrivals.put_nowait, event)
+        finally:
+            loop.call_soon_threadsafe(arrivals.put_nowait, _TURN_OVER)
 
     async def _run_command(self, outcome: dispatch.Outcome) -> None:
         if outcome.kind == "empty":
@@ -581,8 +630,10 @@ class Shell:
         if self._state.done:
             self._app.exit(result=0)
 
-    async def _run_turn(self, text: str, future: asyncio.Future) -> None:
-        """Await a turn already submitted to the executor by `_submit_key`.
+    async def _run_turn(
+        self, text: str, future: asyncio.Future, arrivals: asyncio.Queue
+    ) -> None:
+        """Draw a turn already submitted to the executor by `_submit_key`.
 
         `future` is already running on a worker thread by the time this is
         even scheduled -- see the comment there for why submission cannot
@@ -590,9 +641,14 @@ class Shell:
         too, for the same reason. The spinner text is chrome (module
         docstring) and drawn through `_hint`, which slices it to
         `_chrome_limit()`.
+
+        The turn is drained here rather than awaited whole: `_drain` posts each
+        event as it arrives, and the future is awaited afterwards only to
+        collect whatever it raised.
         """
         self._echo(transcript.user_lines(text, self._size().columns))
         started = asyncio.get_running_loop().time()
+        painter = stream.TurnPainter(self._size().columns)
 
         async def spinner() -> None:
             frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -600,27 +656,36 @@ class Shell:
             while self._state.turn_running:
                 elapsed = int(asyncio.get_running_loop().time() - started)
                 frame = frames[tick % len(frames)]
-                self._status = f"{frame} working · {elapsed}s · esc to stop waiting"
+                # Naming the tool is the difference between a spinner that
+                # reassures and one that only proves the process is alive.
+                doing = painter.running or "working"
+                self._status = f"{frame} {doing} · {elapsed}s · esc to cancel"
                 tick += 1
                 self._app.invalidate()
                 await asyncio.sleep(0.1)
 
         watch = asyncio.create_task(spinner())
+        failure: BaseException | None = None
         try:
-            reply = await future
+            while True:
+                event = await arrivals.get()
+                if event is _TURN_OVER:
+                    break
+                self._echo(painter.draw(event))
+            # Only now: `_drain` posts the sentinel in a `finally`, so the
+            # queue has already ended by the time the future can be inspected,
+            # and this cannot wait on work that has stopped.
+            await future
         except asyncio.CancelledError:
-            # The app is exiting (Ctrl+C, /exit) while `send` -- already
-            # running on its own thread and unstoppable -- hasn't replied
-            # yet. This task *did* get a turn on the loop (it reached this
-            # line), so it is the one place that can record the reason
-            # distinctly from Esc; `run_async`'s own backstop only covers a
-            # task that never ran at all. Re-raised so cancellation still
-            # propagates normally.
+            # The app is exiting (Ctrl+C, /exit) with the turn still in flight.
+            # This task *did* get a turn on the loop (it reached this line), so
+            # it is the one place that can record the reason distinctly from
+            # Esc; `run_async`'s own backstop only covers a task that never ran
+            # at all. Re-raised so cancellation still propagates normally.
             self._record_abandonment("app_exited")
             raise
         except Exception as error:  # noqa: BLE001 - never lose the session to one bad turn
-            reply = None
-            self.write(f"{type(error).__name__}: {error}", style="error")
+            failure = error
         finally:
             if self._pending_future is future:
                 self._pending_future = None
@@ -629,11 +694,19 @@ class Shell:
             watch.cancel()
             self._app.invalidate()
 
-        if reply is None:
+        # Whatever was streamed before a failure was really said, so the tail
+        # is flushed either way rather than discarded along with the turn.
+        tail = painter.finish()
+        if tail and self._abandoned and not painter.streamed:
+            # A turn the user stopped is not dropped, it is labelled. Only when
+            # nothing was streamed: if the reply was drawn as it arrived, the
+            # user watched it happen and a notice here would land in the middle
+            # of prose they have already read.
+            self.write("this turn was stopped; it had already replied:")
+        self._echo(tail)
+        if failure is not None:
+            self.write(f"{type(failure).__name__}: {failure}", style="error")
             return
-        if self._abandoned:
-            self.write("the abandoned turn has replied:")
-        self._echo(transcript.hardy_lines(reply, self._size().columns))
         print()
 
     # -- resize -----------------------------------------------------------
