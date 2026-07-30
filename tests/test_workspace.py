@@ -260,6 +260,29 @@ def test_blanking_a_string_keeps_the_lines_lined_up():
     assert len(strip_comments(source).splitlines()) == len(source.splitlines())
 
 
+def test_a_bare_quote_inside_a_hash_raw_string_does_not_end_it():
+    """`r#"..."#` exists precisely so the body may contain a `"`."""
+    source = (
+        'def d := r#"a " b\ntheorem fake : True := trivial\n"#\n\n'
+        'theorem real : True := trivial\n'
+    )
+    assert declarations(source)["theorem"] == ("real",)
+
+
+def test_a_raw_string_ending_in_a_backslash_ends_there():
+    """A backslash is an ordinary character in a raw string, so it does not
+    escape the closing quote. Reading it as an escape ran the literal on and
+    swallowed the code after it -- which is how a `sorry` slipped past the
+    verifier's hole scan."""
+    source = 'def d := r"a\\"\ntheorem real : True := trivial\n'
+    assert declarations(source)["theorem"] == ("real",)
+
+
+def test_an_r_ending_an_identifier_does_not_open_a_raw_string():
+    source = 'def forr := "x"\ntheorem real : True := trivial\n'
+    assert declarations(source)["theorem"] == ("real",)
+
+
 def test_an_escaped_quote_does_not_end_a_string_early():
     """Otherwise the text after it would read as code again."""
     source = 'def s := "a \\" theorem sneaky : True"\ntheorem real : True := trivial\n'

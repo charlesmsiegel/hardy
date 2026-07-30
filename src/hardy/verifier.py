@@ -31,6 +31,12 @@ from .lean import LeanDiagnostic, elaborate, render_theorem
 from .process import ProcessResult, ProcessSpec, run_process
 from .storage import RunStore
 
+# One scanner, not a second copy. The copy that lived here missed Lean's raw
+# strings: `r"a\"` ends at that quote, but this blanked past it and swallowed
+# the `sorry` on the next line, so the hole check passed on a proof that had
+# one. Two implementations of the same job drifted, and only one was fixed.
+from .workspace import strip_comments
+
 # Lean's own foundations. Everything else is an assumption someone made. Kept
 # as a name here because readers and tests reach for it; `hardy.audit` owns the
 # set, so the three surfaces cannot drift into disagreeing about it.
@@ -129,7 +135,7 @@ class FinalVerifier:
                 TerminalReason.FORBIDDEN_HOLE,
                 "Forbidden Lean syntax in Frozen Claim signature: " + signature_violation,
             )
-        forbidden = FORBIDDEN_TOKEN.search(_strip_comments_and_strings(proof_body))
+        forbidden = FORBIDDEN_TOKEN.search(strip_comments(proof_body))
         if forbidden is not None:
             result = VerificationResult(
                 verified=False,
@@ -247,7 +253,7 @@ def _signature_violation(claim: FrozenClaim) -> str | None:
     ):
         return "invalid theorem name"
     signature_fields = claim.proposal.binders + "\n" + claim.proposal.proposition
-    stripped = _strip_comments_and_strings(signature_fields)
+    stripped = strip_comments(signature_fields)
     if ":=" in stripped:
         return ":="
     unauthorized = UNAUTHORIZED_SIGNATURE_TOKEN.search(stripped)
@@ -280,59 +286,3 @@ def _failure(
     return _save_failure(store, source, result)
 
 
-def _strip_comments_and_strings(source: str) -> str:
-    """Blank out comments and string literals, preserving line structure.
-
-    A forbidden token inside a comment is not a hole, and a comment containing
-    `:=` is not a proof term. Positions are preserved so reported offsets still
-    line up with the original source.
-    """
-    output = []
-    index = 0
-    block_depth = 0
-    in_line_comment = False
-    in_string = False
-    escaped = False
-    while index < len(source):
-        current = source[index]
-        following = source[index + 1] if index + 1 < len(source) else ""
-        if in_line_comment:
-            if current == "\n":
-                in_line_comment = False
-                output.append(current)
-            else:
-                output.append(" ")
-        elif block_depth:
-            if current == "/" and following == "-":
-                block_depth += 1
-                output.extend((" ", " "))
-                index += 1
-            elif current == "-" and following == "/":
-                block_depth -= 1
-                output.extend((" ", " "))
-                index += 1
-            else:
-                output.append("\n" if current == "\n" else " ")
-        elif in_string:
-            output.append("\n" if current == "\n" else " ")
-            if escaped:
-                escaped = False
-            elif current == "\\":
-                escaped = True
-            elif current == '"':
-                in_string = False
-        elif current == "-" and following == "-":
-            in_line_comment = True
-            output.extend((" ", " "))
-            index += 1
-        elif current == "/" and following == "-":
-            block_depth = 1
-            output.extend((" ", " "))
-            index += 1
-        elif current == '"':
-            in_string = True
-            output.append(" ")
-        else:
-            output.append(current)
-        index += 1
-    return "".join(output)

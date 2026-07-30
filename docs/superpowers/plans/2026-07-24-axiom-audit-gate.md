@@ -28,6 +28,15 @@
 >   verdict's `source_sha256` binding, registry-change invalidation, and drift
 >   detection on an approved assumption's statement. All of them layer on top of
 >   the gate rather than being part of it.
+> - **Known limit — declarations a macro generates are not audited.** What the
+>   audit asks about comes from `declarations()`, a textual scan, so a theorem
+>   produced by a command macro or elaborator with no literal `theorem` in the
+>   source is never asked about; the module records "not established" rather than
+>   "clean". Closing it means enumerating a module's declarations from the built
+>   environment, which is a third Lean output format to parse — and the gate
+>   already rests on two whose exact text is unverified against a real toolchain
+>   here. Worth doing on top of a run that has confirmed the first two, not
+>   before.
 > - **Known limit — a guillemet axiom name containing a comma or a bracket.**
 >   `audit.parse` splits the reported list on `,` and bounds it with `[…]`, so an
 >   axiom named `«paper,main»` reads as two axioms and `«paper]main»` matches no
