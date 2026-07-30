@@ -184,7 +184,6 @@ class MathematicsSession:
         # Resolved lazily and once: it costs a subprocess, and a session that
         # never builds Lean should never pay for it.
         self._search_path: tuple[Path, ...] | None = None
-        self._external_stamps: dict[str, str] = {}
         # Kept on the session as well as handed to the workspace: it invalidates
         # the olean cache there, and stamps each audit verdict here. A verdict
         # describes what Lean reported under one toolchain and project, and
@@ -417,9 +416,14 @@ class MathematicsSession:
         Size and modification time rather than contents: Mathlib's oleans are
         large, this runs per module per save, and either changing already means
         it is not the artifact the cache was built against.
+
+        Restatted every time rather than memoised for the session. Remembering
+        it made a rebuild of the configured Lake project invisible until Hardy
+        restarted -- the build cache went on reusing an olean compiled against
+        the old dependency, and the audit went on being reported as current. The
+        expensive part is finding the file, and the search path is still cached;
+        what is not cached is what the file currently *is*.
         """
-        if module in self._external_stamps:
-            return self._external_stamps[module]
         relative = PurePosixPath(*module.split(".")).with_suffix(".olean")
         stamp = "missing"
         for directory in self._lean_search_path():
@@ -431,7 +435,6 @@ class MathematicsSession:
                     break
             except OSError:
                 continue
-        self._external_stamps[module] = stamp
         return stamp
 
     def _migrate_layout(self) -> None:
@@ -938,7 +941,11 @@ class MathematicsSession:
             # ordered, let alone built.
             current = {}
         return {
-            "manifest": self.state,
+            # Without the stored verdicts. They are reported below, checked
+            # against the tree in front of us; handing back the raw ones as well
+            # would put a `clean` and a `not established` for the same module in
+            # one response, and a reader could believe either.
+            "manifest": {key: value for key, value in self.state.items() if key != "audit"},
             "lean": lean,
             "tex": tex,
             "undocumented_theorems": list(self._undocumented()),

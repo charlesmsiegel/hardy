@@ -35,3 +35,43 @@ jobs:
           # anything, and turning that into a second red step would bury the
           # first, which is the one that says what actually went wrong.
           if-no-files-found: warn
+
+  # The whole axiom gate rests on two sentences of Lean's output. The hermetic
+  # suite proves the parser reads them; only real Lean proves they are still
+  # what Lean says. Those tests skip themselves without a toolchain, so before
+  # this job they had never run anywhere -- an incompatible Lean could have
+  # landed with nothing but the fake objecting.
+  real-toolchain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install Lean
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o elan-init.sh
+          # `stable` rather than a pin, deliberately. This job exists to notice
+          # when Lean's `#print axioms` wording moves; pinning would hide the
+          # very change it is here to catch. A failure is a real answer.
+          sh elan-init.sh -y --default-toolchain leanprover/lean4:stable
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Provision the Lean project
+        run: |
+          set -euo pipefail
+          mkdir -p lean_project
+          # Written by hand rather than with `lake new`, which lays out a
+          # template this does not need. These tests elaborate standalone
+          # sources with no imports, so no Mathlib and no library build: what
+          # they need is a directory `lake env lean` will run in.
+          printf 'leanprover/lean4:stable\n' > lean_project/lean-toolchain
+          cat > lean_project/lakefile.toml <<'TOML'
+          name = "hardy_project"
+          TOML
+          cd lean_project && lake update
+      - name: Confirm the toolchain is really there
+        run: |
+          set -euo pipefail
+          lake --version
+          test -f lean_project/lake-manifest.json
+      - name: The tests the fake cannot answer
+        run: uv run --extra test pytest -q -m real_toolchain tests/integration/test_audit_real.py

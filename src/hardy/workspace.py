@@ -213,7 +213,18 @@ def strip_comments(source: str) -> str:
 
 NAMESPACE = re.compile(rf"^namespace\s+({QUALIFIED})$")
 END = re.compile(rf"^end(?:\s+({QUALIFIED}))?$")
-ASSUMPTION = re.compile(rf"^(?:axiom|constant)\s+({QUALIFIED})\s*:\s*(.+?)$")
+ASSUMPTION = re.compile(rf"^(?:axiom|constant)\s+({QUALIFIED})\s*:(.*)$")
+# Where a declaration stops, so the one before it is not read as running on.
+# Approximate on purpose: over-reading appends text to a statement and the
+# comparison refuses a save that should have passed, which is visible and
+# recoverable, while under-reading truncates one and is not.
+COMMAND = re.compile(
+    r"^(?:@\[|#)|"
+    r"^(?:axiom|constant|theorem|lemma|def|abbrev|instance|structure|class|inductive"
+    r"|example|namespace|end|section|open|variable|variables|universe|import|attribute"
+    r"|macro|macro_rules|notation|syntax|deriving|mutual|set_option|run_cmd"
+    r"|private|protected|noncomputable|nonrec|unsafe|partial|scoped|local)\b"
+)
 
 
 def assumptions(source: str) -> tuple[tuple[str, str], ...]:
@@ -229,11 +240,21 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
     only a named `end` matching the open namespace pops. A mismatched one is
     left alone rather than guessed at: Lean will reject the file anyway, and
     unwinding on a guess could qualify a later axiom wrongly.
+
+    A statement is gathered across lines, because `axiom trusted :` with its
+    type on the next line is ordinary Lean and a line-anchored read of it
+    returned *nothing* -- so the one place Hardy compares a declared statement
+    against the one a human approved was skipped entirely, and the axiom passed
+    on its name alone. A wrapped statement fared no better: it was truncated at
+    the first newline and then failed a comparison it should have passed.
     """
+    stripped = strip_comments(source).splitlines()
     stack: list[str] = []
     found: list[tuple[str, str]] = []
-    for line in strip_comments(source).splitlines():
-        text = line.strip()
+    index = 0
+    while index < len(stripped):
+        text = stripped[index].strip()
+        index += 1
         opened = NAMESPACE.match(text)
         if opened:
             stack.append(opened.group(1))
@@ -244,13 +265,21 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
                 stack.pop()
             continue
         declared = ASSUMPTION.match(text)
-        if declared:
-            name, statement = declared.group(1), declared.group(2).strip()
-            # `_root_.` is how a source says "not in this namespace".
-            if name.startswith("_root_."):
-                found.append((name.removeprefix("_root_."), statement))
-            else:
-                found.append((".".join([*stack, name]), statement))
+        if not declared:
+            continue
+        name, parts = declared.group(1), [declared.group(2).strip()]
+        while index < len(stripped):
+            following = stripped[index].strip()
+            if not following or COMMAND.match(following):
+                break
+            parts.append(following)
+            index += 1
+        statement = " ".join(part for part in parts if part)
+        # `_root_.` is how a source says "not in this namespace".
+        if name.startswith("_root_."):
+            found.append((name.removeprefix("_root_."), statement))
+        else:
+            found.append((".".join([*stack, name]), statement))
     return tuple(found)
 
 

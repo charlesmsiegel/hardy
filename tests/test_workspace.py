@@ -7,6 +7,7 @@ import pytest
 from hardy.workspace import (
     ImportCycle,
     WorkspacePathError,
+    assumptions,
     build_order,
     declarations,
     dependents,
@@ -350,3 +351,24 @@ def test_import_all_is_still_a_dependency():
 def test_external_imports_are_what_is_left_over():
     assert external_imports(TREE["Main"], TREE) == ("Mathlib",)
     assert external_imports(TREE["Basic"], TREE) == ("Mathlib",)
+
+
+def test_an_assumption_with_its_type_on_the_next_line_is_still_read():
+    """`axiom trusted :` with the type below is ordinary Lean, and a
+    line-anchored read returned nothing at all — so the one place Hardy compares
+    a declared statement against the approved one was skipped, and the axiom
+    passed on its name alone."""
+    assert assumptions("axiom trusted :\n  False\n") == (("trusted", "False"),)
+
+
+def test_a_wrapped_assumption_is_gathered_rather_than_truncated():
+    """Truncating at the newline failed a comparison that should have passed."""
+    source = "axiom trusted : ∀ n : Nat,\n  n = n\n"
+    assert assumptions(source) == (("trusted", "∀ n : Nat, n = n"),)
+
+
+def test_gathering_an_assumption_stops_at_the_next_declaration():
+    """Over-reading would append a theorem to the statement and refuse a save
+    that should have passed."""
+    assert assumptions("axiom a :\n  True\ntheorem T : True := trivial\n") == (("a", "True"),)
+    assert assumptions("axiom a :\n  True\n@[simp] theorem T : True := trivial\n") == (("a", "True"),)
