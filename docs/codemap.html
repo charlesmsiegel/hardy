@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>hardy — Codebase Atlas</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0d1420; --bg-grid:rgba(120,160,220,0.05); --surface:#141d2e; --surface-2:#1a2538;
+  --border:rgba(150,180,230,0.14); --border-strong:rgba(150,180,230,0.30);
+  --text:#dbe4f3; --text-dim:#8fa1bd; --text-faint:#5f7191;
+  --accent:#5aa7e8; --accent-dim:rgba(90,167,232,0.14);
+  --good:#59c98f; --good-dim:rgba(89,201,143,0.14);
+  --warn:#e0b25a; --warn-dim:rgba(224,178,90,0.14);
+  --bad:#e06a6a; --bad-dim:rgba(224,106,106,0.15);
+  --violet:#a08fd8;
+  --heat-lo:#27405e; --heat-hi:#e0703f;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#f3f5f9; --bg-grid:rgba(40,70,120,0.055); --surface:#ffffff; --surface-2:#eef1f7;
+    --border:rgba(30,55,95,0.14); --border-strong:rgba(30,55,95,0.30);
+    --text:#1d2838; --text-dim:#51617a; --text-faint:#8593a8;
+    --accent:#1f6fbd; --accent-dim:rgba(31,111,189,0.10);
+    --good:#1f8f5c; --good-dim:rgba(31,143,92,0.10);
+    --warn:#a87418; --warn-dim:rgba(168,116,24,0.12);
+    --bad:#bd3f3f; --bad-dim:rgba(189,63,63,0.10);
+    --violet:#6a55b0;
+    --heat-lo:#c9d8ec; --heat-hi:#cf5a26;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--sans); background:var(--bg); color:var(--text);
+  background-image:linear-gradient(var(--bg-grid) 1px,transparent 1px),linear-gradient(90deg,var(--bg-grid) 1px,transparent 1px);
+  background-size:32px 32px; line-height:1.55; font-size:15px;
+}
+header.doc{padding:34px 28px 0; max-width:1280px; margin:0 auto}
+.doc-label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:8px}
+.doc-label::before{content:"";width:8px;height:8px;background:var(--accent);border-radius:2px;display:inline-block}
+h1.doc-title{font-size:30px;font-weight:700;letter-spacing:-.02em;margin-top:8px}
+.doc-sub{color:var(--text-dim);margin-top:6px;max-width:900px}
+.doc-meta{font-family:var(--mono);font-size:12px;color:var(--text-faint);margin-top:10px}
+nav.tabs{
+  position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--border);
+  margin-top:22px;padding:0 28px;display:flex;gap:2px;overflow-x:auto;
+  max-width:1280px;margin-left:auto;margin-right:auto;scrollbar-width:thin;
+}
+nav.tabs button{
+  appearance:none;background:none;border:none;border-bottom:2px solid transparent;
+  color:var(--text-dim);font-family:var(--mono);font-size:12.5px;letter-spacing:.02em;
+  padding:12px 14px;cursor:pointer;white-space:nowrap;transition:color .15s;
+}
+nav.tabs button:hover{color:var(--text)}
+nav.tabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+nav.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+main{max-width:1280px;margin:0 auto;padding:26px 28px 80px}
+.panel{display:none;animation:fadeUp .25s ease both}
+.panel.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- content primitives ---------- */
+.panel h2{font-size:21px;font-weight:600;letter-spacing:-.01em;margin:26px 0 10px}
+.panel h2:first-child{margin-top:0}
+.panel h3{font-size:16px;font-weight:600;margin:22px 0 8px}
+.panel p{margin:8px 0;max-width:940px;color:var(--text)}
+.panel ul,.panel ol{margin:8px 0 8px 22px;max-width:940px}
+.panel li{margin:4px 0}
+.dim{color:var(--text-dim)} .faint{color:var(--text-faint)}
+code,.mono{font-family:var(--mono);font-size:.92em}
+p code,li code,td code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+pre{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.5;margin:10px 0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin:12px 0}
+.card.hero{border-color:var(--border-strong);background:linear-gradient(180deg,var(--accent-dim),var(--surface) 60%)}
+.grid{display:grid;gap:14px;margin:12px 0}
+.grid.cols-2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+.grid.cols-3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.grid>*{min-width:0}
+.kpis{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;min-width:130px}
+.kpi .n{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi .l{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim);margin-top:2px}
+.kpi.warn .n{color:var(--warn)} .kpi.bad .n{color:var(--bad)} .kpi.good .n{color:var(--good)} .kpi.accent .n{color:var(--accent)}
+.badge{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);vertical-align:1px;white-space:nowrap}
+.badge.good{color:var(--good);background:var(--good-dim);border-color:transparent}
+.badge.warn{color:var(--warn);background:var(--warn-dim);border-color:transparent}
+.badge.bad{color:var(--bad);background:var(--bad-dim);border-color:transparent}
+.badge.accent{color:var(--accent);background:var(--accent-dim);border-color:transparent}
+.badge.neutral{color:var(--text-dim);background:var(--surface-2);border-color:transparent}
+.callout{border-left:3px solid var(--accent);background:var(--accent-dim);border-radius:0 8px 8px 0;padding:12px 16px;margin:12px 0;max-width:940px}
+.callout.warn{border-color:var(--warn);background:var(--warn-dim)}
+.callout.bad{border-color:var(--bad);background:var(--bad-dim)}
+.callout.good{border-color:var(--good);background:var(--good-dim)}
+details{border:1px solid var(--border);border-radius:8px;margin:10px 0;background:var(--surface)}
+details summary{cursor:pointer;padding:10px 16px;font-weight:500;color:var(--text-dim)}
+details[open] summary{border-bottom:1px solid var(--border);color:var(--text)}
+details .body{padding:12px 16px}
+
+/* tables */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;margin:12px 0;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+thead th{
+  position:sticky;top:0;background:var(--surface-2);text-align:left;font-family:var(--mono);
+  font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim);
+  padding:9px 14px;border-bottom:1px solid var(--border-strong);white-space:nowrap;
+}
+tbody td{padding:8px 14px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:break-word}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even){background:color-mix(in srgb,var(--surface-2) 45%,transparent)}
+tbody tr:hover{background:var(--accent-dim)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12.5px}
+table.sortable thead th{cursor:pointer;user-select:none}
+table.sortable thead th::after{content:"↕";opacity:.35;margin-left:6px;font-size:10px}
+table.sortable thead th.asc::after{content:"↑";opacity:1;color:var(--accent)}
+table.sortable thead th.desc::after{content:"↓";opacity:1;color:var(--accent)}
+
+/* CSS bars inside tables */
+.bar{position:relative;background:var(--surface-2);border-radius:4px;height:14px;min-width:120px;overflow:hidden}
+.bar>i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:4px}
+.bar.warn>i{background:var(--warn)} .bar.bad>i{background:var(--bad)} .bar.good>i{background:var(--good)}
+
+/* ---------- viz containers ---------- */
+.viz{position:relative;border:1px solid var(--border);border-radius:10px;background:var(--surface);margin:12px 0;overflow:hidden}
+.viz svg{display:block;width:100%;height:100%}
+.viz .zoombar{position:absolute;top:10px;right:10px;display:flex;gap:6px;z-index:5}
+.viz .zoombar button{width:28px;height:28px;border-radius:6px;border:1px solid var(--border-strong);background:var(--surface-2);color:var(--text);font-family:var(--mono);cursor:pointer;font-size:14px;line-height:1}
+.viz .zoombar button:hover{background:var(--accent-dim);color:var(--accent)}
+.viz .legend{position:absolute;left:12px;bottom:10px;display:flex;flex-wrap:wrap;gap:10px;font-family:var(--mono);font-size:11px;color:var(--text-dim);background:color-mix(in srgb,var(--surface) 80%,transparent);padding:4px 8px;border-radius:6px;max-width:70%}
+.legend .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.viz-tip{position:fixed;pointer-events:none;z-index:200;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:8px;padding:8px 12px;font-family:var(--mono);font-size:12px;color:var(--text);box-shadow:0 6px 24px rgba(0,0,0,.35);display:none;max-width:380px}
+.mermaid-wrap{position:relative;border:1px solid var(--border);border-radius:10px;background:var(--surface);margin:12px 0;overflow:hidden;min-height:120px}
+.mermaid-wrap .mviewport{overflow:hidden;cursor:grab;padding:14px}
+.mermaid-wrap .mviewport.dragging{cursor:grabbing}
+.mermaid{font-family:var(--sans)}
+.mermaid[data-processed="true"]{display:flex;justify-content:center}
+footer.doc{max-width:1280px;margin:0 auto;padding:0 28px 34px;color:var(--text-faint);font-family:var(--mono);font-size:11.5px}
+@media(max-width:720px){header.doc,main,nav.tabs,footer.doc{padding-left:16px;padding-right:16px} h1.doc-title{font-size:24px}}
+</style>
+</head>
+<body>
+<header class="doc">
+  <div class="doc-label">CODEBASE ATLAS</div>
+  <h1 class="doc-title">hardy — Codebase Atlas</h1>
+  <p class="doc-sub">An experimental agentic harness for mathematics in Lean 4, where the harness — not the model — owns verification</p>
+  <div class="doc-meta">generated 2026-07-30 · 3917807 · 150 files, 30,868 LOC</div>
+</header>
+<nav class="tabs" role="tablist"><button role="tab" data-tab="overview" aria-selected="true" aria-controls="overview">Overview</button>
+<button role="tab" data-tab="inventory" aria-selected="false" aria-controls="inventory">Inventory</button>
+<button role="tab" data-tab="dependencies" aria-selected="false" aria-controls="dependencies">Dependencies</button>
+<button role="tab" data-tab="hotspots" aria-selected="false" aria-controls="hotspots">Hotspots</button>
+<button role="tab" data-tab="flows" aria-selected="false" aria-controls="flows">Critical Flows</button>
+<button role="tab" data-tab="boundaries" aria-selected="false" aria-controls="boundaries">Boundaries &amp; Ownership</button>
+<button role="tab" data-tab="invariants" aria-selected="false" aria-controls="invariants">Invariants &amp; Risks</button>
+<button role="tab" data-tab="glossary" aria-selected="false" aria-controls="glossary">Glossary</button>
+<button role="tab" data-tab="llm-ops" aria-selected="false" aria-controls="llm-ops">LLM Ops</button></nav>
+<main><section class="panel active" id="overview" role="tabpanel">
+
+<div class="card hero">
+  <h2>What Hardy is</h2>
+  <p>Hardy is an <strong>agentic harness for proving theorems in Lean 4</strong>, built on one architectural conviction: the harness — never the model — owns verification, budgets, artifacts, and the distinction between a promising argument and a checked proof. A model proposes; Lean's kernel decides; Hardy records what was actually established and under which assumptions.</p>
+  <p>Its shape is a <strong>CLI-driven layered monolith</strong>: a thin <code>argparse</code> front door over a flat core package, with two model backends behind one protocol, and subprocess adapters for the three external authorities it cannot fake — Lean, LaTeX, and a computer algebra kernel. There is no server, no database, and no long-lived process beyond a session; durability is files on disk (JSON manifests, JSONL trajectories, a Lean workspace tree).</p>
+  <p>The dominant design tension, stated repeatedly in the code's own comments: Hardy authenticates through Claude Code's agent SDK to run on a subscription rather than a metered key, and the price of that is <em>the agent loop itself</em> — the SDK decides when a model call happens. What Hardy refuses to surrender is the trust boundary (<code>src/hardy/claude_runtime.py:9-14</code>).</p>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="n">30.9k</div><div class="l">total LOC</div></div>
+  <div class="kpi"><div class="n">21.4k</div><div class="l">Python LOC</div></div>
+  <div class="kpi accent"><div class="n">49%</div><div class="l">of LOC is tests</div></div>
+  <div class="kpi"><div class="n">41</div><div class="l">core modules (src/hardy)</div></div>
+  <div class="kpi warn"><div class="n">1</div><div class="l">file cycle</div></div>
+  <div class="kpi bad"><div class="n">0</div><div class="l">coverage measured</div></div>
+</div>
+
+<h2>Entry points</h2>
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr><th>Entry point</th><th>Where</th><th>What it kicks off</th></tr></thead>
+<tbody>
+<tr><td><code>hardy chat</code></td><td><code>src/hardy/cli.py:614</code></td><td>The primary interactive session — <code>MathematicsSession</code> plus a real terminal or a plain line loop. This is the workflow DESIGN.md calls <em>Explore</em>.</td></tr>
+<tr><td><code>hardy prove</code></td><td><code>src/hardy/cli.py:618</code></td><td>The staged run: formalize → human approval → prove → independent verification → writeup, producing a graded <code>RunManifest</code>.</td></tr>
+<tr><td><code>hardy accept</code></td><td><code>src/hardy/cli.py:624</code></td><td>Runs the checked-in acceptance problems (<code>src/hardy/acceptance_problems.json</code>) through the same staged path.</td></tr>
+<tr><td><code>hardy doctor</code></td><td><code>src/hardy/cli.py:616</code></td><td>Per-prerequisite health report; distinguishes a missing tool from a broken one and checks the Claude CLI is signed in, not merely installed.</td></tr>
+<tr><td><code>hardy setup</code></td><td><code>src/hardy/cli.py:627</code></td><td>Discovers, installs and records the pinned toolchain (elan/lake, Mathlib project, TeX, config file).</td></tr>
+<tr><td><code>hardy batch</code></td><td><code>src/hardy/cli.py:633</code></td><td>The earlier one-shot proof experiment, kept deliberately as a dependency smoke path (<code>src/hardy/runner.py</code>).</td></tr>
+<tr><td>MCP stdio server</td><td><code>src/hardy/mcp_server.py:185</code></td><td>Serves the same bounded Lean and CAS tools to clients other than the in-process agent SDK.</td></tr>
+<tr><td><code>python -m hardy</code></td><td><code>src/hardy/__main__.py</code></td><td>Same as the <code>hardy</code> console script.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Reading order</h2>
+<p class="dim">A tour for someone who has to be able to argue with this code, not just run it. Roughly 2,000 lines; skip the rest until you need it.</p>
+<div class="tbl-wrap">
+<table>
+<thead><tr><th class="num">#</th><th>File</th><th>Why this stop</th></tr></thead>
+<tbody>
+<tr><td class="num">1</td><td><code>src/hardy/domain.py</code></td><td>184 lines, fan-in 31 — the highest in the repo. Every durable value: <code>RunLimits</code>, <code>FrozenClaim</code>, the four orthogonal grade enums, <code>RunManifest</code>. Read <code>src/hardy/domain.py:161-165</code> first: a <code>kernel_verified</code> grade is <em>structurally impossible</em> without verification evidence. That validator is the project's thesis in five lines.</td></tr>
+<tr><td class="num">2</td><td><code>src/hardy/verifier.py</code></td><td>The trust core, and the best-written file here. Nothing the model said is believed: the claim is re-frozen and its hash re-checked (<code>src/hardy/verifier.py:82-99</code>), the proof is re-elaborated by a fresh Lean, and a <em>silent</em> axiom report is treated as failure rather than absence of axioms (<code>src/hardy/verifier.py:159-168</code>).</td></tr>
+<tr><td class="num">3</td><td><code>src/hardy/workflow.py:128-438</code></td><td><code>ProveWorkflow.run</code> — the staged pipeline as one long procedure. Read it for the phase/budget bookkeeping, and note how much state each of its seven exits has to carry by hand.</td></tr>
+<tr><td class="num">4</td><td><code>src/hardy/chat.py:324-340</code></td><td><code>_final_gates</code> — the interactive surface's answer to the same question <code>src/hardy/verifier.py</code> asks. Compare the two; they are not the same check. See Invariants &amp; Risks.</td></tr>
+<tr><td class="num">5</td><td><code>src/hardy/claude_runtime.py:191-220</code></td><td><code>_options</code> and <code>_permit</code>. Every line is a deliberate refusal — no <code>allowed_tools</code>, no <code>bypassPermissions</code>, no inherited user settings, and a default-deny permission callback rather than a denylist.</td></tr>
+<tr><td class="num">6</td><td><code>src/hardy/prompts/__init__.py</code></td><td>Prompts as Jinja files with <code>StrictUndefined</code>, hashed into every manifest so a result traces to exact instructions (<code>src/hardy/prompts/__init__.py:116-137</code>).</td></tr>
+<tr><td class="num">7</td><td><code>src/hardy/cas.py:1-24</code> then <code>:1210-1296</code></td><td>The largest file and top hotspot. The header states its two hard rules; <code>execute</code> shows what they cost in practice — especially the truncated-output case at <code>src/hardy/cas.py:1265-1281</code>.</td></tr>
+<tr><td class="num">8</td><td><code>src/hardy/tui/ports.py</code></td><td>74 lines that make the whole terminal layer testable: an async <code>Ui</code> protocol plus a sync <code>BlockingUi</code> for callers off the UI thread. Read the docstring at <code>src/hardy/tui/ports.py:50-56</code> for why prompting must be async.</td></tr>
+<tr><td class="num">9</td><td><code>src/hardy/workspace.py</code></td><td>The multi-file Lean tree: import parsing, build order, dependents, and shadow-copy staging (<code>src/hardy/workspace.py:455</code>) so a save that would break a dependent is refused whole.</td></tr>
+</tbody>
+</table>
+</div>
+<p><span class="badge neutral">skip</span> <code>docs/superpowers/</code> (7.5k LOC of historical plans and specs — useful archaeology, not current truth), <code>scripts/</code> installers unless you are debugging a machine, and the <code>tests/tui/</code> harness until you need to change the shell.</p>
+
+<h2>Intended architecture</h2>
+<div class="mermaid-wrap"><div class="mviewport"><pre class="mermaid">
+flowchart TD
+  CLI["cli.py — argparse front door"]
+  CHAT["chat.py — MathematicsSession<br/>(Explore)"]
+  WF["workflow.py — ProveWorkflow<br/>(staged Prove)"]
+  RT["Model runtime<br/>claude_runtime.py / codex_runtime.py"]
+  TOOLS["Bounded tool layer<br/>mcp_server.py / cas_tools.py"]
+  LEAN["lean.py + workspace.py"]
+  CAS["cas.py + cas_export.py"]
+  TEX["latex.py + writeup.py"]
+  VER["verifier.py — independent re-check"]
+  STORE["storage.py — manifest, trajectory, artifacts"]
+  TUI["tui/ — Shell or PlainUi behind the Ui port"]
+
+  CLI --> CHAT
+  CLI --> WF
+  CLI --> TUI
+  CHAT --> RT
+  WF --> RT
+  RT --> TOOLS
+  TOOLS --> LEAN
+  TOOLS --> CAS
+  TOOLS --> TEX
+  WF --> VER
+  VER --> LEAN
+  WF --> STORE
+  CHAT --> STORE
+  TUI --> CHAT
+</pre></div></div>
+
+<div class="callout warn">
+  <strong>The real graph is coarser than this picture, and the analysis can't fix that.</strong> <code>src/hardy</code> is a <em>flat</em> package: 30 files, 8,581 LOC, no sub-packages except <code>tui/</code>, <code>prompts/</code> and <code>templates/</code>. So the module-level dependency graph collapses to 13 nodes and tells you almost nothing — re-running the analyzer at greater depth cannot split a directory that has no subdirectories. Read the <strong>file-level</strong> fan-in/fan-out and the file cycle on the Dependencies tab; the module boxes above are the intended design, drawn by hand, not measured.
+</div>
+
+<div class="callout">
+  <strong>Two reported findings are analysis artifacts, not design problems.</strong> The module cycle <code>.github/workflows ↔ tests/unit</code> exists only because <code>tests/unit/test_ci_workflow.py:33</code> reads the workflow file to assert CI covers the right modules — a test asserting on config, which is good practice. And the five "orphan" staged prompt templates are <em>false</em> orphans: they are loaded by name through <code>prompts.render("staged/…")</code>, which appends the <code>.md.j2</code> suffix at <code>src/hardy/prompts/__init__.py:45</code>, so no literal path exists for a textual resolver to find. <code>src/hardy/prompts/staged/base.md.j2</code> looks referenced only because <code>tests/unit/test_prompts.py:139</code> happens to name the file directly.
+</div>
+
+<h2>Key decisions &amp; constraints</h2>
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Subscription auth, at the cost of the loop</h3>
+    <p>The Claude backend drives the Claude Code CLI through <code>claude-agent-sdk</code>, so a Max subscription works with no API key. The SDK therefore owns turn scheduling. The costs are recorded rather than glossed: turn limits become the SDK's to enforce, cheap Lean closers cannot run before a model turn is spent, and token budgets have no decision point. The <em>wall clock</em> is kept by Hardy anyway, because nothing in the SDK bounds a stalled request (<code>src/hardy/claude_runtime.py:312-330</code>).</p>
+  </div>
+  <div class="card">
+    <h3>Default-deny tool permissions</h3>
+    <p><code>can_use_tool</code> refuses anything not prefixed <code>mcp__hardy__</code> (<code>src/hardy/claude_runtime.py:211-220</code>). The <code>REFUSED</code> list at <code>src/hardy/claude_runtime.py:64</code> is explicitly belt-and-braces; the comment explains that a denylist has to anticipate every built-in the CLI might grow, and this cannot. <code>setting_sources=[]</code> also refuses to inherit the user's own CLAUDE.md — "a run that silently inherits them is not the run its record claims."</p>
+  </div>
+  <div class="card">
+    <h3>No sandbox, said out loud</h3>
+    <p>The reset deliberately removed the old container sandbox. Rather than scan CAS cell source for <code>os.system</code> — trivially bypassable while implying safety that does not exist — the warning is stated on every surface that can execute: the chat banner, the staged run's typed acknowledgement (<code>src/hardy/workflow.py:141-150</code>), the MCP tool descriptions, and every exported script header. This is the single largest accepted risk in the project.</p>
+  </div>
+  <div class="card">
+    <h3>Threads, not async, at the seams</h3>
+    <p>The SDK is async and no caller is. A turn runs on a daemon worker thread with events crossing back through a <code>queue.Queue</code> (<code>src/hardy/claude_runtime.py:225-265</code>), and tool dispatch hops off the event loop via <code>asyncio.to_thread</code> because tools run subprocesses and one of them stops to ask a human (<code>src/hardy/claude_runtime.py:127-131</code>). The CAS kernel serialises everything under one lock.</p>
+  </div>
+  <div class="card">
+    <h3>Frozen values, canonical hashes</h3>
+    <p>Everything durable is a <code>pydantic</code> model with <code>extra="forbid", frozen=True</code> (<code>src/hardy/domain.py:20-23</code>). Claim identity is a SHA-256 over canonically-serialized JSON (<code>src/hardy/domain.py:80-97</code>), and the prompt set gets the same treatment. Identity must not drift between approval and grading.</p>
+  </div>
+  <div class="card">
+    <h3>Two backends, one protocol</h3>
+    <p>Claude (<code>src/hardy/claude_runtime.py</code>) is required; Codex (<code>src/hardy/codex_runtime.py</code>, 200 lines) is an optional extra for ChatGPT-subscription users. Both satisfy the same narrow runtime shape, and <code>hardy prove --backend</code> selects between them (<code>src/hardy/cli.py:620</code>).</p>
+  </div>
+</div>
+
+<h2>Evaluation artifacts</h2>
+<div class="callout warn">
+  <strong>Acceptance problems exist; results do not.</strong> The repo ships a checked-in problem set (<code>src/hardy/acceptance_problems.json</code>, mirrored at <code>acceptance/problems.json</code>) and a runner (<code>src/hardy/acceptance.py</code>, <code>src/hardy/cli.py:528</code>), with a consistency test tying the two manifests together (<code>tests/integration/test_manifest_consistency.py:34</code>). There are no recorded results in the tree — consistent with DESIGN.md's own admission that "a real model/Mathlib acceptance run remains to be recorded." The scaffolding for honest evaluation is built and unused; that is a milestone, not a defect, but it means <em>no claim in this repo about end-to-end proving has been demonstrated</em>.
+</div>
+<div class="callout warn">
+  <strong>Read the LLM Ops tab with its blindness in mind.</strong> It reports <strong>0 call sites</strong> and <strong>0 prompt files</strong>, and neither is true of this codebase. The detector looks for provider SDK method names such as <code>messages.create</code>; Hardy reaches a model only through <code>claude-agent-sdk</code>'s client and the optional Codex SDK, so every real call site is invisible to it. Likewise the 11 <code>.j2</code> templates under <code>src/hardy/prompts/</code> are the prompt set, loaded by logical name (see the false-orphan note above), so the prompt-file count reads zero. The model-id inventory on that tab <em>is</em> accurate and useful — with one artifact: <code>claude-agent-sdk</code> is listed as a model because the package name matches the pattern. The genuine defaults are <code>src/hardy/config.py:13</code> and the catalog at <code>src/hardy/catalog.py:26-29</code>.
+</div>
+<div class="callout bad">
+  <strong>Test coverage is not measured at all.</strong> Half the codebase by line count is tests (10,977 LOC under <code>tests/</code> across 68 files), but there is no <code>pytest-cov</code> dependency, no coverage configuration in <code>pyproject.toml</code>, and no coverage artifact anywhere in the tree — so the Coverage tab is absent rather than empty. A suite this large with no measured coverage cannot tell you which of the careful invariants in <code>src/hardy/verifier.py</code> and <code>src/hardy/cas.py</code> are actually exercised. The suite was <em>not</em> executed while building this atlas, so nothing here asserts it passes.
+</div>
+
+</section>
+<section class="panel" id="inventory" role="tabpanel">
+
+
+<div class="kpis">
+  <div class="kpi accent"><div class="n">150</div><div class="l">source files</div></div>
+  <div class="kpi"><div class="n">30,868</div><div class="l">lines of code</div></div>
+  <div class="kpi"><div class="n">2</div><div class="l">languages</div></div>
+  <div class="kpi good"><div class="n">49%</div><div class="l">test code share</div></div>
+</div>
+
+<h2>Languages</h2>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>Language</th><th class="num">LOC</th><th class="num">Files</th><th>Share</th><th class="num">%</th></tr></thead>
+<tbody><tr><td>Python</td><td class='num'>21,355</td><td class='num'>122</td><td><div class="bar "><i style="width:100.0%"></i></div></td><td class='num'>69.2%</td></tr>
+<tr><td>Markdown</td><td class='num'>8,258</td><td class='num'>14</td><td><div class="bar "><i style="width:38.7%"></i></div></td><td class='num'>26.8%</td></tr>
+<tr><td>Shell</td><td class='num'>1,064</td><td class='num'>6</td><td><div class="bar "><i style="width:5.0%"></i></div></td><td class='num'>3.4%</td></tr>
+<tr><td>HTML</td><td class='num'>57</td><td class='num'>1</td><td><div class="bar "><i style="width:1.5%"></i></div></td><td class='num'>0.2%</td></tr>
+<tr><td>TOML</td><td class='num'>55</td><td class='num'>1</td><td><div class="bar "><i style="width:1.5%"></i></div></td><td class='num'>0.2%</td></tr>
+<tr><td>YAML</td><td class='num'>46</td><td class='num'>1</td><td><div class="bar "><i style="width:1.5%"></i></div></td><td class='num'>0.1%</td></tr>
+<tr><td>JSON</td><td class='num'>33</td><td class='num'>5</td><td><div class="bar "><i style="width:1.5%"></i></div></td><td class='num'>0.1%</td></tr></tbody></table></div>
+<p class="dim">Coverage: 23 file(s) in unrecognized languages are not counted above (.j2 (11), .txt (6), .ps1 (3), .lock (1), .tex (1)).</p>
+
+<h2>Top-level directories</h2>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>Directory</th><th class="num">LOC</th><th>Share</th></tr></thead>
+<tbody><tr><td><code>tests/</code></td><td class='num'>10,977</td><td><div class="bar "><i style="width:100.0%"></i></div></td></tr>
+<tr><td><code>src/</code></td><td class='num'>10,393</td><td><div class="bar "><i style="width:94.7%"></i></div></td></tr>
+<tr><td><code>docs/</code></td><td class='num'>7,529</td><td><div class="bar "><i style="width:68.6%"></i></div></td></tr>
+<tr><td><code>scripts/</code></td><td class='num'>1,064</td><td><div class="bar "><i style="width:9.7%"></i></div></td></tr>
+<tr><td><code>(root)/</code></td><td class='num'>841</td><td><div class="bar "><i style="width:7.7%"></i></div></td></tr>
+<tr><td><code>.github/</code></td><td class='num'>46</td><td><div class="bar "><i style="width:1.5%"></i></div></td></tr>
+<tr><td><code>acceptance/</code></td><td class='num'>13</td><td><div class="bar "><i style="width:1.5%"></i></div></td></tr>
+<tr><td><code>examples/</code></td><td class='num'>5</td><td><div class="bar "><i style="width:1.5%"></i></div></td></tr></tbody></table></div>
+
+<div class="grid cols-2">
+<div>
+<h2>Largest files</h2>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>File</th><th class="num">LOC</th><th>Size</th><th class="num">Branches</th></tr></thead>
+<tbody><tr><td><code>src/hardy/cas.py</code></td><td class='num'>1,457</td><td><div class="bar "><i style="width:100.0%"></i></div></td><td class='num'>163</td></tr>
+<tr><td><code>src/hardy/chat.py</code></td><td class='num'>892</td><td><div class="bar "><i style="width:61.2%"></i></div></td><td class='num'>178</td></tr>
+<tr><td><code>src/hardy/tui/shell.py</code></td><td class='num'>800</td><td><div class="bar "><i style="width:54.9%"></i></div></td><td class='num'>73</td></tr>
+<tr><td><code>tests/unit/test_cas.py</code> <span class="badge neutral">test</span></td><td class='num'>668</td><td><div class="bar "><i style="width:45.8%"></i></div></td><td class='num'>40</td></tr>
+<tr><td><code>src/hardy/cli.py</code></td><td class='num'>583</td><td><div class="bar "><i style="width:40.0%"></i></div></td><td class='num'>80</td></tr>
+<tr><td><code>tests/tui/test_turns.py</code> <span class="badge neutral">test</span></td><td class='num'>550</td><td><div class="bar "><i style="width:37.7%"></i></div></td><td class='num'>52</td></tr>
+<tr><td><code>tests/unit/test_workflow.py</code> <span class="badge neutral">test</span></td><td class='num'>492</td><td><div class="bar "><i style="width:33.8%"></i></div></td><td class='num'>21</td></tr>
+<tr><td><code>src/hardy/cas_export.py</code></td><td class='num'>471</td><td><div class="bar "><i style="width:32.3%"></i></div></td><td class='num'>49</td></tr>
+<tr><td><code>src/hardy/workflow.py</code></td><td class='num'>466</td><td><div class="bar "><i style="width:32.0%"></i></div></td><td class='num'>37</td></tr>
+<tr><td><code>src/hardy/workspace.py</code></td><td class='num'>449</td><td><div class="bar "><i style="width:30.8%"></i></div></td><td class='num'>87</td></tr>
+<tr><td><code>src/hardy/claude_runtime.py</code></td><td class='num'>442</td><td><div class="bar "><i style="width:30.3%"></i></div></td><td class='num'>47</td></tr>
+<tr><td><code>src/hardy/lean.py</code></td><td class='num'>418</td><td><div class="bar "><i style="width:28.7%"></i></div></td><td class='num'>48</td></tr>
+<tr><td><code>scripts/lib/common.sh</code></td><td class='num'>390</td><td><div class="bar "><i style="width:26.8%"></i></div></td><td class='num'>87</td></tr>
+<tr><td><code>tests/test_claude_runtime_stream.py</code> <span class="badge neutral">test</span></td><td class='num'>366</td><td><div class="bar "><i style="width:25.1%"></i></div></td><td class='num'>55</td></tr>
+<tr><td><code>tests/tui/test_shell.py</code> <span class="badge neutral">test</span></td><td class='num'>346</td><td><div class="bar "><i style="width:23.7%"></i></div></td><td class='num'>35</td></tr>
+<tr><td><code>tests/test_chat.py</code> <span class="badge neutral">test</span></td><td class='num'>345</td><td><div class="bar "><i style="width:23.7%"></i></div></td><td class='num'>54</td></tr>
+<tr><td><code>src/hardy/staged.py</code></td><td class='num'>333</td><td><div class="bar "><i style="width:22.9%"></i></div></td><td class='num'>49</td></tr>
+<tr><td><code>src/hardy/acceptance.py</code></td><td class='num'>307</td><td><div class="bar "><i style="width:21.1%"></i></div></td><td class='num'>42</td></tr>
+<tr><td><code>tests/tui/test_marshalling.py</code> <span class="badge neutral">test</span></td><td class='num'>305</td><td><div class="bar "><i style="width:20.9%"></i></div></td><td class='num'>14</td></tr>
+<tr><td><code>tests/test_install_scripts.py</code> <span class="badge neutral">test</span></td><td class='num'>302</td><td><div class="bar "><i style="width:20.7%"></i></div></td><td class='num'>32</td></tr></tbody></table></div>
+</div>
+<div>
+<h2>Most branch-heavy files</h2>
+<p class="dim">Branch count ≈ decision points (if/for/while/case/catch/&amp;&amp;/||). A rough cyclomatic-complexity proxy.</p>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>File</th><th class="num">Branches</th><th>Heat</th><th class="num">LOC</th><th class="num">Max depth</th></tr></thead>
+<tbody><tr><td><code>src/hardy/chat.py</code></td><td class='num'>178</td><td><div class="bar warn"><i style="width:100.0%"></i></div></td><td class='num'>892</td><td class='num'>5</td></tr>
+<tr><td><code>src/hardy/cas.py</code></td><td class='num'>163</td><td><div class="bar warn"><i style="width:91.6%"></i></div></td><td class='num'>1,457</td><td class='num'>7</td></tr>
+<tr><td><code>scripts/lib/common.sh</code></td><td class='num'>87</td><td><div class="bar warn"><i style="width:48.9%"></i></div></td><td class='num'>390</td><td class='num'>6</td></tr>
+<tr><td><code>src/hardy/workspace.py</code></td><td class='num'>87</td><td><div class="bar warn"><i style="width:48.9%"></i></div></td><td class='num'>449</td><td class='num'>7</td></tr>
+<tr><td><code>src/hardy/cli.py</code></td><td class='num'>80</td><td><div class="bar warn"><i style="width:44.9%"></i></div></td><td class='num'>583</td><td class='num'>5</td></tr>
+<tr><td><code>src/hardy/tui/shell.py</code></td><td class='num'>73</td><td><div class="bar warn"><i style="width:41.0%"></i></div></td><td class='num'>800</td><td class='num'>6</td></tr>
+<tr><td><code>tests/test_claude_runtime_stream.py</code> <span class="badge neutral">test</span></td><td class='num'>55</td><td><div class="bar warn"><i style="width:30.9%"></i></div></td><td class='num'>366</td><td class='num'>5</td></tr>
+<tr><td><code>tests/test_chat.py</code> <span class="badge neutral">test</span></td><td class='num'>54</td><td><div class="bar warn"><i style="width:30.3%"></i></div></td><td class='num'>345</td><td class='num'>5</td></tr>
+<tr><td><code>tests/tui/test_turns.py</code> <span class="badge neutral">test</span></td><td class='num'>52</td><td><div class="bar warn"><i style="width:29.2%"></i></div></td><td class='num'>550</td><td class='num'>5</td></tr>
+<tr><td><code>src/hardy/cas_export.py</code></td><td class='num'>49</td><td><div class="bar warn"><i style="width:27.5%"></i></div></td><td class='num'>471</td><td class='num'>6</td></tr>
+<tr><td><code>src/hardy/staged.py</code></td><td class='num'>49</td><td><div class="bar warn"><i style="width:27.5%"></i></div></td><td class='num'>333</td><td class='num'>7</td></tr>
+<tr><td><code>src/hardy/lean.py</code></td><td class='num'>48</td><td><div class="bar warn"><i style="width:27.0%"></i></div></td><td class='num'>418</td><td class='num'>5</td></tr>
+<tr><td><code>src/hardy/claude_runtime.py</code></td><td class='num'>47</td><td><div class="bar warn"><i style="width:26.4%"></i></div></td><td class='num'>442</td><td class='num'>7</td></tr>
+<tr><td><code>src/hardy/acceptance.py</code></td><td class='num'>42</td><td><div class="bar warn"><i style="width:23.6%"></i></div></td><td class='num'>307</td><td class='num'>6</td></tr>
+<tr><td><code>tests/unit/test_cas.py</code> <span class="badge neutral">test</span></td><td class='num'>40</td><td><div class="bar warn"><i style="width:22.5%"></i></div></td><td class='num'>668</td><td class='num'>4</td></tr>
+<tr><td><code>scripts/update.sh</code></td><td class='num'>39</td><td><div class="bar warn"><i style="width:21.9%"></i></div></td><td class='num'>183</td><td class='num'>4</td></tr>
+<tr><td><code>src/hardy/verifier.py</code></td><td class='num'>39</td><td><div class="bar warn"><i style="width:21.9%"></i></div></td><td class='num'>295</td><td class='num'>6</td></tr>
+<tr><td><code>src/hardy/tui/handlers.py</code></td><td class='num'>38</td><td><div class="bar warn"><i style="width:21.3%"></i></div></td><td class='num'>221</td><td class='num'>4</td></tr>
+<tr><td><code>src/hardy/workflow.py</code></td><td class='num'>37</td><td><div class="bar warn"><i style="width:20.8%"></i></div></td><td class='num'>466</td><td class='num'>6</td></tr>
+<tr><td><code>tests/tui/test_shell.py</code> <span class="badge neutral">test</span></td><td class='num'>35</td><td><div class="bar warn"><i style="width:19.7%"></i></div></td><td class='num'>346</td><td class='num'>5</td></tr></tbody></table></div>
+</div>
+</div>
+
+
+</section>
+<section class="panel" id="dependencies" role="tabpanel">
+
+
+<div class="kpis">
+  <div class="kpi accent"><div class="n">13</div><div class="l">modules</div></div>
+  <div class="kpi"><div class="n">309</div><div class="l">file-level imports</div></div>
+  <div class="kpi"><div class="n">64</div><div class="l">runtime loads</div></div>
+  <div class="kpi bad"><div class="n">2</div><div class="l">cycles</div></div>
+  <div class="kpi"><div class="n">9</div><div class="l">top-level arms</div></div>
+</div>
+<div class="callout bad"><b>2 module-level dependency cycles detected</b> — modules that import each other directly or transitively. Cycles make modules impossible to understand or test in isolation.<ul style="margin-top:8px"><li><span class='badge bad'>cycle 1</span> <code>src/hardy</code> ⇄ <code>src/hardy/prompts</code> ⇄ <code>src/hardy/tui</code></li><li><span class='badge bad'>cycle 2</span> <code>.github/workflows</code> ⇄ <code>tests/unit</code></li></ul></div><details><summary>File-level import cycles: 1 strongly-connected group</summary><div class="body"><p class="dim">Files that (transitively) import each other. In Python these often include type-annotation or lazy in-function imports — less harmful than top-level cycles, but each one still couples the files' lifecycles. Worth explaining case-by-case in the Boundaries tab.</p><ul><li><span class='badge warn'>group 1</span> <code>src/hardy/cli.py</code> ⇄ <code>src/hardy/tui/__init__.py</code> ⇄ <code>src/hardy/tui/plain.py</code> ⇄ <code>src/hardy/tui/shell.py</code> ⇄ <code>src/hardy/tui/stream.py</code></li></ul></div></details>
+<h2>Module dependency graph</h2>
+<p class="dim">Node area = lines of code · solid arrows = imports, dashed = runtime loads (a rendered template, a prompt read off disk) · drag nodes, Ctrl/⌘-scroll to zoom, hover to isolate a neighborhood.</p>
+<div class="viz" data-render="forcegraph" style="height:620px"></div>
+<script type="application/json">{"nodes":[{"id":"","label":"(root)","group":"(root)","size":537,"fanIn":1,"fanOut":0,"meta":"(repo root) \u00b7 3 files"},{"id":".github/workflows","label":"workflows","group":"cycle","size":46,"fanIn":1,"fanOut":3,"meta":".github/workflows \u00b7 1 files \u00b7 in dependency cycle #2"},{"id":"acceptance","label":"acceptance","group":"acceptance","size":13,"fanIn":1,"fanOut":0,"meta":"acceptance \u00b7 1 files"},{"id":"scripts","label":"scripts","group":"scripts","size":1741,"fanIn":1,"fanOut":0,"meta":"scripts \u00b7 9 files"},{"id":"src/hardy","label":"hardy","group":"cycle","size":8581,"fanIn":7,"fanOut":3,"meta":"src/hardy \u00b7 30 files \u00b7 in dependency cycle #1"},{"id":"src/hardy/prompts","label":"prompts","group":"cycle","size":104,"fanIn":2,"fanOut":1,"meta":"src/hardy/prompts \u00b7 2 files \u00b7 in dependency cycle #1"},{"id":"src/hardy/templates","label":"templates","group":"templates","size":51,"fanIn":3,"fanOut":0,"meta":"src/hardy/templates \u00b7 1 files"},{"id":"src/hardy/tui","label":"tui","group":"cycle","size":1712,"fanIn":3,"fanOut":1,"meta":"src/hardy/tui \u00b7 11 files \u00b7 in dependency cycle #1"},{"id":"tests","label":"tests","group":"tests","size":3296,"fanIn":1,"fanOut":4,"meta":"tests \u00b7 24 files"},{"id":"tests/fixtures","label":"fixtures","group":"tests","size":32,"fanIn":1,"fanOut":0,"meta":"tests/fixtures \u00b7 4 files"},{"id":"tests/integration","label":"integration","group":"tests","size":718,"fanIn":1,"fanOut":3,"meta":"tests/integration \u00b7 8 files"},{"id":"tests/tui","label":"tui","group":"tests","size":2562,"fanIn":1,"fanOut":2,"meta":"tests/tui \u00b7 20 files"},{"id":"tests/unit","label":"unit","group":"cycle","size":4371,"fanIn":1,"fanOut":7,"meta":"tests/unit \u00b7 28 files \u00b7 in dependency cycle #2"}],"links":[{"source":".github/workflows","target":"src/hardy","weight":10,"imports":0,"loads":10,"kind":"resource","cycle":false},{"source":".github/workflows","target":"tests/integration","weight":1,"imports":0,"loads":1,"kind":"resource","cycle":false},{"source":".github/workflows","target":"tests/unit","weight":9,"imports":0,"loads":9,"kind":"resource","cycle":true},{"source":"src/hardy","target":"src/hardy/prompts","weight":8,"imports":8,"loads":0,"kind":"import","cycle":true},{"source":"src/hardy","target":"src/hardy/templates","weight":2,"imports":0,"loads":2,"kind":"resource","cycle":false},{"source":"src/hardy","target":"src/hardy/tui","weight":2,"imports":2,"loads":0,"kind":"import","cycle":true},{"source":"src/hardy/prompts","target":"src/hardy","weight":1,"imports":1,"loads":0,"kind":"import","cycle":true},{"source":"src/hardy/tui","target":"src/hardy","weight":9,"imports":9,"loads":0,"kind":"import","cycle":true},{"source":"tests","target":"scripts","weight":9,"imports":0,"loads":9,"kind":"resource","cycle":false},{"source":"tests","target":"src/hardy","weight":32,"imports":32,"loads":0,"kind":"import","cycle":false},{"source":"tests","target":"src/hardy/tui","weight":3,"imports":3,"loads":0,"kind":"import","cycle":false},{"source":"tests","target":"tests/tui","weight":1,"imports":1,"loads":0,"kind":"import","cycle":false},{"source":"tests/integration","target":"acceptance","weight":1,"imports":0,"loads":1,"kind":"resource","cycle":false},{"source":"tests/integration","target":"src/hardy","weight":30,"imports":29,"loads":1,"kind":"mixed","cycle":false},{"source":"tests/integration","target":"src/hardy/templates","weight":1,"imports":0,"loads":1,"kind":"resource","cycle":false},{"source":"tests/tui","target":"src/hardy","weight":17,"imports":17,"loads":0,"kind":"import","cycle":false},{"source":"tests/tui","target":"src/hardy/tui","weight":43,"imports":39,"loads":4,"kind":"mixed","cycle":false},{"source":"tests/unit","target":"","weight":1,"imports":0,"loads":1,"kind":"resource","cycle":false},{"source":"tests/unit","target":".github/workflows","weight":1,"imports":0,"loads":1,"kind":"resource","cycle":true},{"source":"tests/unit","target":"src/hardy","weight":29,"imports":25,"loads":4,"kind":"mixed","cycle":false},{"source":"tests/unit","target":"src/hardy/prompts","weight":1,"imports":0,"loads":1,"kind":"resource","cycle":false},{"source":"tests/unit","target":"src/hardy/templates","weight":1,"imports":0,"loads":1,"kind":"resource","cycle":false},{"source":"tests/unit","target":"tests","weight":4,"imports":0,"loads":4,"kind":"resource","cycle":false},{"source":"tests/unit","target":"tests/fixtures","weight":5,"imports":0,"loads":5,"kind":"resource","cycle":false}],"legendExtra":"<span><i class=\"sw\" style=\"background:transparent;border:2px solid var(--bad);box-sizing:border-box\"><\/i>red edges = cycle<\/span><span><i class=\"sw\" style=\"background:var(--text-faint)\"><\/i>dashed edges = runtime load<\/span>"}</script>
+
+<div class="grid cols-2">
+<div>
+<h2>Highest fan-in (most depended-on)</h2>
+<p class="dim">Changes here ripple widely — review with extra care.</p>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>File</th><th class="num">Fan-in</th><th></th><th class="num">Fan-out</th></tr></thead>
+<tbody><tr><td><code>src/hardy/domain.py</code></td><td class='num'>31</td><td><div class="bar "><i style="width:100.0%"></i></div></td><td class='num'>0</td></tr>
+<tr><td><code>src/hardy/config.py</code></td><td class='num'>23</td><td><div class="bar "><i style="width:74.2%"></i></div></td><td class='num'>1</td></tr>
+<tr><td><code>src/hardy/tui/__init__.py</code></td><td class='num'>19</td><td><div class="bar "><i style="width:61.3%"></i></div></td><td class='num'>5</td></tr>
+<tr><td><code>src/hardy/__init__.py</code></td><td class='num'>18</td><td><div class="bar "><i style="width:58.1%"></i></div></td><td class='num'>0</td></tr>
+<tr><td><code>src/hardy/cas.py</code></td><td class='num'>16</td><td><div class="bar "><i style="width:51.6%"></i></div></td><td class='num'>2</td></tr>
+<tr><td><code>src/hardy/models.py</code></td><td class='num'>16</td><td><div class="bar "><i style="width:51.6%"></i></div></td><td class='num'>0</td></tr>
+<tr><td><code>src/hardy/tui/ports.py</code></td><td class='num'>14</td><td><div class="bar "><i style="width:45.2%"></i></div></td><td class='num'>0</td></tr>
+<tr><td><code>src/hardy/lean.py</code></td><td class='num'>12</td><td><div class="bar "><i style="width:38.7%"></i></div></td><td class='num'>3</td></tr>
+<tr><td><code>src/hardy/cas_export.py</code></td><td class='num'>11</td><td><div class="bar "><i style="width:35.5%"></i></div></td><td class='num'>3</td></tr>
+<tr><td><code>src/hardy/storage.py</code></td><td class='num'>10</td><td><div class="bar "><i style="width:32.3%"></i></div></td><td class='num'>1</td></tr>
+<tr><td><code>src/hardy/process.py</code></td><td class='num'>9</td><td><div class="bar "><i style="width:29.0%"></i></div></td><td class='num'>1</td></tr>
+<tr><td><code>src/hardy/cas_tools.py</code></td><td class='num'>9</td><td><div class="bar "><i style="width:29.0%"></i></div></td><td class='num'>3</td></tr>
+<tr><td><code>src/hardy/chat.py</code></td><td class='num'>9</td><td><div class="bar "><i style="width:29.0%"></i></div></td><td class='num'>8</td></tr>
+<tr><td><code>src/hardy/tui/handlers.py</code></td><td class='num'>9</td><td><div class="bar "><i style="width:29.0%"></i></div></td><td class='num'>8</td></tr>
+<tr><td><code>src/hardy/cli.py</code></td><td class='num'>8</td><td><div class="bar "><i style="width:25.8%"></i></div></td><td class='num'>26</td></tr></tbody></table></div>
+</div>
+<div>
+<h2>Highest fan-out (most dependencies)</h2>
+<p class="dim">High fan-out can indicate orchestrators — or god modules doing too much.</p>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>File</th><th class="num">Fan-out</th><th></th><th class="num">Fan-in</th></tr></thead>
+<tbody><tr><td><code>src/hardy/cli.py</code></td><td class='num'>26</td><td><div class="bar warn"><i style="width:100.0%"></i></div></td><td class='num'>8</td></tr>
+<tr><td><code>.github/workflows/cas-backends.yml</code></td><td class='num'>20</td><td><div class="bar warn"><i style="width:76.9%"></i></div></td><td class='num'>1</td></tr>
+<tr><td><code>tests/test_install_scripts.py</code></td><td class='num'>11</td><td><div class="bar warn"><i style="width:42.3%"></i></div></td><td class='num'>0</td></tr>
+<tr><td><code>src/hardy/acceptance.py</code></td><td class='num'>10</td><td><div class="bar warn"><i style="width:38.5%"></i></div></td><td class='num'>3</td></tr>
+<tr><td><code>src/hardy/staged.py</code></td><td class='num'>9</td><td><div class="bar warn"><i style="width:34.6%"></i></div></td><td class='num'>5</td></tr>
+<tr><td><code>src/hardy/chat.py</code></td><td class='num'>8</td><td><div class="bar warn"><i style="width:30.8%"></i></div></td><td class='num'>9</td></tr>
+<tr><td><code>src/hardy/tui/handlers.py</code></td><td class='num'>8</td><td><div class="bar warn"><i style="width:30.8%"></i></div></td><td class='num'>9</td></tr>
+<tr><td><code>src/hardy/tui/shell.py</code></td><td class='num'>8</td><td><div class="bar warn"><i style="width:30.8%"></i></div></td><td class='num'>6</td></tr>
+<tr><td><code>src/hardy/workflow.py</code></td><td class='num'>7</td><td><div class="bar warn"><i style="width:26.9%"></i></div></td><td class='num'>2</td></tr>
+<tr><td><code>src/hardy/tui/plain.py</code></td><td class='num'>7</td><td><div class="bar warn"><i style="width:26.9%"></i></div></td><td class='num'>3</td></tr>
+<tr><td><code>tests/test_model_command.py</code></td><td class='num'>7</td><td><div class="bar warn"><i style="width:26.9%"></i></div></td><td class='num'>0</td></tr>
+<tr><td><code>tests/tui/test_marshalling.py</code></td><td class='num'>7</td><td><div class="bar warn"><i style="width:26.9%"></i></div></td><td class='num'>0</td></tr>
+<tr><td><code>tests/tui/test_shell.py</code></td><td class='num'>7</td><td><div class="bar warn"><i style="width:26.9%"></i></div></td><td class='num'>0</td></tr>
+<tr><td><code>src/hardy/mcp_server.py</code></td><td class='num'>6</td><td><div class="bar warn"><i style="width:23.1%"></i></div></td><td class='num'>3</td></tr>
+<tr><td><code>tests/tui/test_handlers.py</code></td><td class='num'>6</td><td><div class="bar warn"><i style="width:23.1%"></i></div></td><td class='num'>0</td></tr></tbody></table></div>
+</div>
+</div>
+
+<h2>Runtime resources</h2>
+<p class="dim">Files loaded rather than imported — templates, prompts, schemas, embedded data — and the
+code that names them. Resource edges are found textually: a quoted path is an edge only when it resolves to a file that exists. Paths assembled entirely at runtime (no literal segment) are invisible, and a resolved string is evidence of a reference, not proof the file is loaded on every code path.</p>
+<div class="callout warn"><b>7 assets nothing references</b> — same file type, same directories as the loaded ones, but no code path names them. Either dead weight or loaded by a computed path this analysis cannot see.<p style="margin-top:8px"><code>AGENTS.md</code> <code>README.md</code> <code>src/hardy/prompts/staged/developer.md.j2</code> <code>src/hardy/prompts/staged/formalization.md.j2</code> <code>src/hardy/prompts/staged/proof.md.j2</code> <code>src/hardy/prompts/staged/structure.md.j2</code> <code>src/hardy/prompts/staged/writeup.md.j2</code></p></div>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>Asset</th><th class="num">Loaders</th><th>Loaded at</th></tr></thead>
+<tbody><tr><td><code>src/hardy/templates/paper.tex</code></td><td class='num'>4</td><td><code>src/hardy/acceptance.py:331</code> <code>src/hardy/writeup.py:98</code> <code>tests/integration/test_forced_failure.py:36</code> <code>tests/unit/test_writeup.py:131</code></td></tr>
+<tr><td><code>tests/fake_latex.py</code></td><td class='num'>3</td><td><code>tests/test_cancel_races.py:59</code> <code>tests/test_chat.py:86</code> <code>tests/test_latex_tree.py:8</code></td></tr>
+<tr><td><code>tests/fake_lean.py</code></td><td class='num'>3</td><td><code>tests/test_cancel_races.py:58</code> <code>tests/test_chat.py:85</code> <code>tests/test_hardy.py:55</code></td></tr>
+<tr><td><code>src/hardy/acceptance_problems.json</code></td><td class='num'>2</td><td><code>src/hardy/cli.py:556</code> <code>tests/integration/test_manifest_consistency.py:34</code></td></tr>
+<tr><td><code>src/hardy/chat.py</code></td><td class='num'>2</td><td><code>.github/workflows/cas-backends.yml:14</code> <code>tests/unit/test_ci_workflow.py:11</code></td></tr>
+<tr><td><code>src/hardy/cli.py</code></td><td class='num'>2</td><td><code>.github/workflows/cas-backends.yml:15</code> <code>tests/unit/test_ci_workflow.py:12</code></td></tr>
+<tr><td><code>src/hardy/mcp_server.py</code></td><td class='num'>2</td><td><code>.github/workflows/cas-backends.yml:17</code> <code>tests/unit/test_ci_workflow.py:14</code></td></tr>
+<tr><td><code>src/hardy/staged.py</code></td><td class='num'>2</td><td><code>.github/workflows/cas-backends.yml:16</code> <code>tests/unit/test_ci_workflow.py:13</code></td></tr>
+<tr><td><code>tests/fixtures/process/emit.py</code></td><td class='num'>2</td><td><code>tests/unit/test_cas_tools.py:15</code> <code>tests/unit/test_process.py:5</code></td></tr>
+<tr><td><code>.github/workflows/cas-backends.yml</code></td><td class='num'>1</td><td><code>tests/unit/test_ci_workflow.py:33</code></td></tr>
+<tr><td><code>ARCHITECTURE.html</code></td><td class='num'>1</td><td><code>tests/unit/test_architecture_doc.py:13</code></td></tr>
+<tr><td><code>DESIGN.md</code></td><td class='num'>1</td><td><code>ARCHITECTURE.html:63</code></td></tr>
+<tr><td><code>FEATURES.md</code></td><td class='num'>1</td><td><code>ARCHITECTURE.html:63</code></td></tr>
+<tr><td><code>acceptance/problems.json</code></td><td class='num'>1</td><td><code>tests/integration/test_manifest_consistency.py:31</code></td></tr>
+<tr><td><code>scripts/install-linux.sh</code></td><td class='num'>1</td><td><code>tests/test_install_scripts.py:11</code></td></tr>
+<tr><td><code>scripts/install-macos.sh</code></td><td class='num'>1</td><td><code>tests/test_install_scripts.py:11</code></td></tr>
+<tr><td><code>scripts/install-windows.ps1</code></td><td class='num'>1</td><td><code>tests/test_install_scripts.py:12</code></td></tr>
+<tr><td><code>scripts/install.sh</code></td><td class='num'>1</td><td><code>tests/test_install_scripts.py:11</code></td></tr>
+<tr><td><code>scripts/lib/common.sh</code></td><td class='num'>1</td><td><code>tests/test_install_scripts.py:11</code></td></tr>
+<tr><td><code>scripts/uninstall-windows.ps1</code></td><td class='num'>1</td><td><code>tests/test_install_scripts.py:13</code></td></tr>
+<tr><td><code>scripts/uninstall.sh</code></td><td class='num'>1</td><td><code>tests/test_install_scripts.py:11</code></td></tr>
+<tr><td><code>scripts/update-windows.ps1</code></td><td class='num'>1</td><td><code>tests/test_install_scripts.py:13</code></td></tr>
+<tr><td><code>scripts/update.sh</code></td><td class='num'>1</td><td><code>tests/test_install_scripts.py:11</code></td></tr>
+<tr><td><code>src/hardy/cas.py</code></td><td class='num'>1</td><td><code>.github/workflows/cas-backends.yml:10</code></td></tr>
+<tr><td><code>src/hardy/cas_driver.py</code></td><td class='num'>1</td><td><code>.github/workflows/cas-backends.yml:10</code></td></tr></tbody></table></div>
+
+
+
+</section>
+<section class="panel" id="hotspots" role="tabpanel">
+
+
+<div class="kpis">
+  <div class="kpi accent"><div class="n">50</div><div class="l">commits (24 months ago)</div></div>
+  <div class="kpi"><div class="n">128</div><div class="l">files touched</div></div>
+  <div class="kpi warn"><div class="n">cas.py</div><div class="l">top hotspot</div></div>
+</div>
+<div class="callout"><b>How to read this:</b> files that are both <i>complex</i> and <i>frequently changed</i> are where defects concentrate — complexity makes mistakes likely, churn gives them opportunities. Prioritize refactoring and review attention here, not on complex-but-stable code.</div>
+<div class="callout warn"><b>Shallow clone:</b> history is truncated at the clone depth, so commit counts undercount the true churn. Deepen the clone (<code>git fetch --unshallow</code>) for accurate numbers.</div>
+
+<h2>Churn × size map</h2>
+<p class="dim">Area = lines of code · color = commit count since 24 months ago · hover for details.</p>
+<div class="viz" data-render="treemap" style="height:540px"></div>
+<script type="application/json">{"items":[{"name":"src/hardy/cas.py","value":1457,"metric":15,"meta":"163 branches \u00b7 1 authors"},{"name":"src/hardy/chat.py","value":892,"metric":11,"meta":"178 branches \u00b7 1 authors"},{"name":"src/hardy/workspace.py","value":449,"metric":8,"meta":"87 branches \u00b7 1 authors"},{"name":"src/hardy/cli.py","value":583,"metric":7,"meta":"80 branches \u00b7 1 authors"},{"name":"src/hardy/claude_runtime.py","value":442,"metric":7,"meta":"47 branches \u00b7 1 authors"},{"name":"src/hardy/cas_export.py","value":471,"metric":6,"meta":"49 branches \u00b7 1 authors"},{"name":"src/hardy/tui/shell.py","value":800,"metric":4,"meta":"73 branches \u00b7 1 authors"},{"name":"src/hardy/staged.py","value":333,"metric":5,"meta":"49 branches \u00b7 1 authors"},{"name":"src/hardy/tui/plain.py","value":172,"metric":5,"meta":"28 branches \u00b7 1 authors"},{"name":"src/hardy/lean.py","value":418,"metric":2,"meta":"48 branches \u00b7 1 authors"},{"name":"scripts/lib/common.sh","value":390,"metric":1,"meta":"87 branches \u00b7 1 authors"},{"name":"src/hardy/latex.py","value":135,"metric":4,"meta":"19 branches \u00b7 1 authors"},{"name":"src/hardy/workflow.py","value":466,"metric":2,"meta":"37 branches \u00b7 1 authors"},{"name":"src/hardy/tui/stream.py","value":153,"metric":3,"meta":"20 branches \u00b7 1 authors"},{"name":"src/hardy/doctor.py","value":137,"metric":2,"meta":"30 branches \u00b7 1 authors"},{"name":"src/hardy/cas_driver.py","value":158,"metric":2,"meta":"23 branches \u00b7 1 authors"},{"name":"src/hardy/acceptance.py","value":307,"metric":1,"meta":"42 branches \u00b7 1 authors"},{"name":"scripts/update.sh","value":183,"metric":1,"meta":"39 branches \u00b7 1 authors"},{"name":"src/hardy/verifier.py","value":295,"metric":1,"meta":"39 branches \u00b7 1 authors"},{"name":"src/hardy/tui/handlers.py","value":221,"metric":1,"meta":"38 branches \u00b7 1 authors"},{"name":"src/hardy/models.py","value":55,"metric":3,"meta":"11 branches \u00b7 1 authors"},{"name":"src/hardy/cas_tools.py","value":200,"metric":3,"meta":"10 branches \u00b7 1 authors"},{"name":"scripts/uninstall.sh","value":180,"metric":1,"meta":"30 branches \u00b7 1 authors"},{"name":"src/hardy/config.py","value":188,"metric":1,"meta":"28 branches \u00b7 1 authors"},{"name":"scripts/install-linux.sh","value":139,"metric":1,"meta":"27 branches \u00b7 1 authors"},{"name":"src/hardy/codex_runtime.py","value":169,"metric":1,"meta":"27 branches \u00b7 1 authors"},{"name":"scripts/install-macos.sh","value":102,"metric":1,"meta":"26 branches \u00b7 1 authors"},{"name":"src/hardy/mcp_server.py","value":238,"metric":1,"meta":"25 branches \u00b7 1 authors"},{"name":"src/hardy/runner.py","value":112,"metric":1,"meta":"20 branches \u00b7 1 authors"},{"name":"src/hardy/setup.py","value":207,"metric":1,"meta":"19 branches \u00b7 1 authors"},{"name":"src/hardy/writeup.py","value":237,"metric":1,"meta":"17 branches \u00b7 1 authors"},{"name":"src/hardy/tui/commands.py","value":51,"metric":1,"meta":"17 branches \u00b7 1 authors"},{"name":"src/hardy/storage.py","value":146,"metric":1,"meta":"16 branches \u00b7 1 authors"},{"name":"scripts/install.sh","value":70,"metric":1,"meta":"14 branches \u00b7 1 authors"},{"name":"src/hardy/process.py","value":131,"metric":1,"meta":"14 branches \u00b7 1 authors"},{"name":"src/hardy/installers.py","value":160,"metric":1,"meta":"11 branches \u00b7 1 authors"},{"name":"src/hardy/tui/dispatch.py","value":41,"metric":1,"meta":"11 branches \u00b7 1 authors"},{"name":"src/hardy/tui/select.py","value":99,"metric":1,"meta":"10 branches \u00b7 1 authors"},{"name":"src/hardy/prompts/__init__.py","value":100,"metric":1,"meta":"9 branches \u00b7 1 authors"},{"name":"src/hardy/tui/banner.py","value":44,"metric":1,"meta":"6 branches \u00b7 1 authors"},{"name":"src/hardy/tui/__init__.py","value":41,"metric":1,"meta":"5 branches \u00b7 1 authors"},{"name":"src/hardy/catalog.py","value":30,"metric":1,"meta":"4 branches \u00b7 1 authors"},{"name":"src/hardy/tui/transcript.py","value":38,"metric":1,"meta":"4 branches \u00b7 1 authors"},{"name":"src/hardy/tui/ports.py","value":52,"metric":1,"meta":"2 branches \u00b7 1 authors"},{"name":"src/hardy/domain.py","value":147,"metric":1,"meta":"1 branches \u00b7 1 authors"},{"name":"src/hardy/__init__.py","value":2,"metric":1,"meta":"0 branches \u00b7 1 authors"},{"name":"src/hardy/__main__.py","value":3,"metric":1,"meta":"0 branches \u00b7 1 authors"}],"valueLabel":"LOC","metricLabel":"commits","metricMax":15}</script>
+
+<h2>Hotspot ranking</h2>
+<p class="dim">Score = commits × (branch points + 1). Tests excluded. 45 frequently-changed non-code file(s) (config/SQL/proto/docs) are not ranked here — top: FEATURES.md (11), README.md (7), .github/workflows/cas-backends.yml (7).</p>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>File</th><th class="num">Commits</th><th class="num">Branches</th><th class="num">LOC</th><th class="num">Authors</th><th class="num">Hotspot score</th></tr></thead>
+<tbody><tr><td><code>src/hardy/cas.py</code></td><td class='num'>15</td><td class='num'>163</td><td class='num'>1,457</td><td class='num'>1</td><td class='num' data-sort='2460'><div class="bar bad"><i style="width:100.0%"></i></div></td></tr>
+<tr><td><code>src/hardy/chat.py</code></td><td class='num'>11</td><td class='num'>178</td><td class='num'>892</td><td class='num'>1</td><td class='num' data-sort='1969'><div class="bar bad"><i style="width:80.0%"></i></div></td></tr>
+<tr><td><code>src/hardy/workspace.py</code></td><td class='num'>8</td><td class='num'>87</td><td class='num'>449</td><td class='num'>1</td><td class='num' data-sort='704'><div class="bar bad"><i style="width:28.6%"></i></div></td></tr>
+<tr><td><code>src/hardy/cli.py</code></td><td class='num'>7</td><td class='num'>80</td><td class='num'>583</td><td class='num'>1</td><td class='num' data-sort='567'><div class="bar bad"><i style="width:23.0%"></i></div></td></tr>
+<tr><td><code>src/hardy/claude_runtime.py</code></td><td class='num'>7</td><td class='num'>47</td><td class='num'>442</td><td class='num'>1</td><td class='num' data-sort='336'><div class="bar bad"><i style="width:13.7%"></i></div></td></tr>
+<tr><td><code>src/hardy/cas_export.py</code></td><td class='num'>6</td><td class='num'>49</td><td class='num'>471</td><td class='num'>1</td><td class='num' data-sort='300'><div class="bar bad"><i style="width:12.2%"></i></div></td></tr>
+<tr><td><code>src/hardy/tui/shell.py</code></td><td class='num'>4</td><td class='num'>73</td><td class='num'>800</td><td class='num'>1</td><td class='num' data-sort='296'><div class="bar bad"><i style="width:12.0%"></i></div></td></tr>
+<tr><td><code>src/hardy/staged.py</code></td><td class='num'>5</td><td class='num'>49</td><td class='num'>333</td><td class='num'>1</td><td class='num' data-sort='250'><div class="bar bad"><i style="width:10.2%"></i></div></td></tr>
+<tr><td><code>src/hardy/tui/plain.py</code></td><td class='num'>5</td><td class='num'>28</td><td class='num'>172</td><td class='num'>1</td><td class='num' data-sort='145'><div class="bar bad"><i style="width:5.9%"></i></div></td></tr>
+<tr><td><code>src/hardy/lean.py</code></td><td class='num'>2</td><td class='num'>48</td><td class='num'>418</td><td class='num'>1</td><td class='num' data-sort='98'><div class="bar bad"><i style="width:4.0%"></i></div></td></tr>
+<tr><td><code>scripts/lib/common.sh</code></td><td class='num'>1</td><td class='num'>87</td><td class='num'>390</td><td class='num'>1</td><td class='num' data-sort='88'><div class="bar bad"><i style="width:3.6%"></i></div></td></tr>
+<tr><td><code>src/hardy/latex.py</code></td><td class='num'>4</td><td class='num'>19</td><td class='num'>135</td><td class='num'>1</td><td class='num' data-sort='80'><div class="bar bad"><i style="width:3.3%"></i></div></td></tr>
+<tr><td><code>src/hardy/workflow.py</code></td><td class='num'>2</td><td class='num'>37</td><td class='num'>466</td><td class='num'>1</td><td class='num' data-sort='76'><div class="bar bad"><i style="width:3.1%"></i></div></td></tr>
+<tr><td><code>src/hardy/tui/stream.py</code></td><td class='num'>3</td><td class='num'>20</td><td class='num'>153</td><td class='num'>1</td><td class='num' data-sort='63'><div class="bar bad"><i style="width:2.6%"></i></div></td></tr>
+<tr><td><code>src/hardy/doctor.py</code></td><td class='num'>2</td><td class='num'>30</td><td class='num'>137</td><td class='num'>1</td><td class='num' data-sort='62'><div class="bar bad"><i style="width:2.5%"></i></div></td></tr>
+<tr><td><code>src/hardy/cas_driver.py</code></td><td class='num'>2</td><td class='num'>23</td><td class='num'>158</td><td class='num'>1</td><td class='num' data-sort='48'><div class="bar bad"><i style="width:2.0%"></i></div></td></tr>
+<tr><td><code>src/hardy/acceptance.py</code></td><td class='num'>1</td><td class='num'>42</td><td class='num'>307</td><td class='num'>1</td><td class='num' data-sort='43'><div class="bar bad"><i style="width:1.7%"></i></div></td></tr>
+<tr><td><code>scripts/update.sh</code></td><td class='num'>1</td><td class='num'>39</td><td class='num'>183</td><td class='num'>1</td><td class='num' data-sort='40'><div class="bar bad"><i style="width:1.6%"></i></div></td></tr>
+<tr><td><code>src/hardy/verifier.py</code></td><td class='num'>1</td><td class='num'>39</td><td class='num'>295</td><td class='num'>1</td><td class='num' data-sort='40'><div class="bar bad"><i style="width:1.6%"></i></div></td></tr>
+<tr><td><code>src/hardy/tui/handlers.py</code></td><td class='num'>1</td><td class='num'>38</td><td class='num'>221</td><td class='num'>1</td><td class='num' data-sort='39'><div class="bar bad"><i style="width:1.6%"></i></div></td></tr>
+<tr><td><code>src/hardy/models.py</code></td><td class='num'>3</td><td class='num'>11</td><td class='num'>55</td><td class='num'>1</td><td class='num' data-sort='36'><div class="bar bad"><i style="width:1.5%"></i></div></td></tr>
+<tr><td><code>src/hardy/cas_tools.py</code></td><td class='num'>3</td><td class='num'>10</td><td class='num'>200</td><td class='num'>1</td><td class='num' data-sort='33'><div class="bar bad"><i style="width:1.5%"></i></div></td></tr>
+<tr><td><code>scripts/uninstall.sh</code></td><td class='num'>1</td><td class='num'>30</td><td class='num'>180</td><td class='num'>1</td><td class='num' data-sort='31'><div class="bar bad"><i style="width:1.5%"></i></div></td></tr>
+<tr><td><code>src/hardy/config.py</code></td><td class='num'>1</td><td class='num'>28</td><td class='num'>188</td><td class='num'>1</td><td class='num' data-sort='29'><div class="bar bad"><i style="width:1.5%"></i></div></td></tr>
+<tr><td><code>scripts/install-linux.sh</code></td><td class='num'>1</td><td class='num'>27</td><td class='num'>139</td><td class='num'>1</td><td class='num' data-sort='28'><div class="bar bad"><i style="width:1.5%"></i></div></td></tr></tbody></table></div>
+
+
+
+</section>
+<section class="panel" id="flows" role="tabpanel">
+
+<p class="dim">Four flows where correctness actually matters: the staged <code>prove</code> pipeline, the interactive Lean save, the CAS state rebuild, and turn cancellation. Each diagram shows the unhappy paths, because that is where this codebase spends its care.</p>
+
+<h2>1. Staged <code>prove</code>: statement → grade</h2>
+<div class="mermaid-wrap"><div class="mviewport"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant W as ProveWorkflow
+  participant S as RunStore
+  participant R as StagedRuntime
+  participant L as Lean
+  participant V as FinalVerifier
+
+  U->>W: prove "claim"
+  W->>S: create run dir, write request.md
+  W->>S: append workflow.warning "not sandboxed"
+  W->>U: acknowledge_unsafe_execution()
+  alt declined
+    W->>S: finalize USER_CANCELLATION
+  end
+  W->>W: doctor() health check
+  alt unhealthy
+    W->>S: finalize SETUP_FAILURE / AUTHENTICATION_FAILURE
+  end
+  loop up to formalization_proposals
+    W->>R: run_structured("formalization")
+    R-->>W: FormalizationProposal
+    W->>W: freeze_claim → temporary hash
+    W->>L: check_proof(claim, "by sorry")
+    alt statement does not elaborate
+      W->>S: append formalization.rejected
+    else elaborates
+      W->>U: show_formalization + choose_approval
+      U-->>W: approve / revise / cancel
+    end
+  end
+  alt no approved claim
+    W->>S: finalize MALFORMED_MODEL_OUTPUT
+  end
+  W->>W: re-freeze persisted claim, assert hash matches
+  loop up to official_checks
+    W->>R: run_proof(prompt)
+    R-->>W: ProofSubmission
+    W->>V: verify(claim, proof_body, store)
+    V->>L: fresh elaborate + "#print axioms"
+    V-->>W: VerificationResult
+    opt verified
+      W->>W: break to WRITEUP
+    end
+  end
+  W->>S: build writeup, hash artifacts
+  W->>S: finalize(grades, terminal_reason)
+</pre></div></div>
+
+<h3>Seams</h3>
+<div class="callout">
+  <strong>The claim hash is re-checked twice, on both sides of persistence.</strong> Once when the approved claim is read back (<code>src/hardy/workflow.py:277-284</code>, raising <code>RuntimeError</code> on mismatch) and again inside the verifier (<code>src/hardy/verifier.py:82-99</code>, returning <code>STATEMENT_MISMATCH</code>). Belt-and-braces on the one thing that must not drift; note the two responses differ — an exception versus a graded failure.
+</div>
+<div class="callout warn">
+  <strong>Seven exits, ten hand-threaded arguments.</strong> <code>run()</code> is 311 lines (<code>src/hardy/workflow.py:128-438</code>) and every exit calls <code>_finalize</code> with the same ten values — <code>request, terminal, store, state, created_at, active_started, user_wait, grades, reason, claim</code> (<code>src/hardy/workflow.py:439-451</code>, seven call sites). <code>active_started</code> and <code>user_wait</code> in particular are a hand-rolled stopwatch: every exit must subtract user wait from active elapsed correctly, and nothing structurally prevents a future eighth exit from getting it wrong.
+</div>
+<div class="callout warn">
+  <strong>Budget checks happen at loop tops, not during work.</strong> Both loops test elapsed time before starting an attempt (<code>src/hardy/workflow.py:200-204</code>, <code>:311-320</code>). A single proof attempt that overruns cannot be interrupted by the <code>active_seconds</code> budget — only by the per-process Lean timeout. A run can therefore exceed <code>active_seconds</code> by up to one attempt's duration, and the recorded timing will say so honestly, but the budget is a floor on granularity rather than a ceiling on wall time.
+</div>
+<div class="callout">
+  <strong>Cancellation is caught, not leaked.</strong> <code>KeyboardInterrupt</code> and any <code>Exception</code> both land in <code>_finalize</code> with a proper terminal reason (<code>src/hardy/workflow.py:388-424</code>), and <code>active_thread</code> is deliberately assigned as early as the formalizing phase so a Ctrl+C during formalization still reaches the runtime's cancel — the comment at <code>src/hardy/workflow.py:196-200</code> explains that without it the provider thread could still be appending while <code>_finalize</code> hashes the run directory.
+</div>
+
+<h2>2. Interactive Lean save: the ratchet</h2>
+<div class="mermaid-wrap"><div class="mviewport"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant M as Model
+  participant C as MathematicsSession
+  participant WS as LeanWorkspace
+  participant L as Lean
+
+  M->>C: save_lean(path, source)
+  C->>C: safe_relative(path)
+  C->>C: _documentation_gate(source)
+  alt undocumented theorem already saved
+    C-->>M: refused, nothing written
+  end
+  C->>C: _final_gates(source)
+  alt sorry/admit present
+    C-->>M: refused
+  else unapproved or altered axiom
+    C-->>M: refused, "use request_assumption first"
+  end
+  C->>WS: stage(relative, text) → shadow copy
+  WS->>WS: build_order over module + dependents
+  alt import cycle
+    C-->>M: refused, nothing written
+  end
+  WS->>L: compile each affected module
+  alt a dependent breaks
+    C-->>M: "this save breaks X, nothing was written"
+  end
+  C->>C: _missing_registered_names(shadow)
+  alt a registered name would vanish
+    C-->>M: refused
+  end
+  C->>WS: commit()
+  WS->>WS: discard shadow (finally)
+</pre></div></div>
+
+<h3>Seams</h3>
+<div class="callout good">
+  <strong>Every refusal is atomic.</strong> The save is staged into a shadow workspace and only committed after the whole affected module set builds (<code>src/hardy/chat.py:461-486</code>, <code>src/hardy/workspace.py:455-513</code>), with <code>discard</code> in a <code>finally</code>. "Nothing was written" appears in three separate refusal messages and is true in each.
+</div>
+<div class="callout warn">
+  <strong>This gate is <em>not</em> the verifier's gate.</strong> <code>_final_gates</code> (<code>src/hardy/chat.py:324-340</code>) checks <code>sorry</code>/<code>admit</code> via <code>src/hardy/lean.py:28</code> and matches declared axioms against the approved set. It never runs <code>#print axioms</code>. So a theorem saved through the interactive workspace has no recorded axiom dependency set, while one graded by <code>prove</code> does. Detailed on the Invariants tab.
+</div>
+<div class="callout">
+  <strong>The pre-check was removed on purpose, and the comment says why.</strong> <code>_save_lean</code> skips a standalone elaboration because the shadow build elaborates the file anyway, and with Mathlib imported each elaboration costs tens of seconds (<code>src/hardy/chat.py:455-461</code>). The consequence is that Lean's own diagnostics have to be captured out of the build callback into a <code>seen</code> dict, and a byte-identical source that the cache skips returns the string <code>"unchanged; already built"</code> instead of compiler output (<code>src/hardy/chat.py:487-489</code>).
+</div>
+
+<h2>3. CAS rebuild: replay is not recovery</h2>
+<div class="mermaid-wrap"><div class="mviewport"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant M as Model
+  participant S as CasSession
+  participant K as Kernel process
+  participant J as JSONL log
+
+  M->>S: execute(source)
+  S->>S: acquire _lock
+  S->>S: _guard() — poisoned? foreign backend? budget?
+  opt kernel is None or dead
+    S->>K: start fresh process
+    loop over accepted cells
+      S->>S: bill elapsed to spent_seconds
+      S->>K: replay cell
+      alt budget ran out mid-replay
+        S->>S: state = poisoned, raise
+      else cell errored on replay
+        S->>S: state = poisoned, raise
+      else output differs from record
+        S->>S: state = poisoned, raise
+      end
+    end
+    S->>S: _guard() again — the rebuild is billed
+  end
+  S->>K: send framed cell + sentinels
+  K-->>S: stdout between begin/end markers
+  alt timeout or kernel died
+    S->>S: _drop_kernel(), state = dead
+  end
+  S->>S: accepted = (status ok AND NOT truncated-sentinel)
+  S->>J: append CellRecord
+</pre></div></div>
+
+<h3>Seams</h3>
+<div class="callout good">
+  <strong>A rebuild that reconstructs different values poisons the session rather than reporting success.</strong> <code>_restore</code> replays only <em>accepted</em> cells and compares each against its record; divergence sets <code>state = "poisoned"</code> and raises (<code>src/hardy/cas.py:1338-1350</code>). The comment names the exact hazard: a cell depending on randomness, time, or the filesystem can succeed on replay and still reconstruct a different value.
+</div>
+<div class="callout good">
+  <strong>Replay is billed, and a reset does not refund.</strong> Rebuild time is charged to <code>spent_seconds</code> (<code>src/hardy/cas.py:1329</code>) and <code>_guard()</code> runs a second time afterwards, so the rebuild can be what exhausts the budget. <code>reset</code> deliberately does not refund, because <code>cas_reset</code> is a model-callable tool and refunding would make the session budget advisory (<code>src/hardy/cas.py:1352-1366</code>).
+</div>
+<div class="callout warn">
+  <strong>A truncated sentinel cell mutates live state that replay will never reproduce.</strong> When a Singular or Macaulay2 cell exceeds <code>cas_output_bytes</code>, its status was classified from a prefix and an error banner may sit in the discarded tail, so the cell is recorded but excluded from <code>accepted</code> (<code>src/hardy/cas.py:1265-1281</code>). It <em>did</em> change the namespace. The session therefore knowingly holds live state outside its own replayable set, and the model is told so in a 7-line note. This is handled about as honestly as it can be without re-running the cell — but it means "the live kernel and the accepted log agree" is not an invariant this code can promise.
+</div>
+<div class="callout">
+  <strong>Export asks two questions and requires both.</strong> Replaying cells and running the published file are different claims — a kernel evaluates a trailing expression where a script discards it — so export compares both transcripts and reproduces only when both hold (<code>src/hardy/cas_export.py:81-87</code>). A prefix-truncated capture can only yield <code>unverified</code>, never <code>verified</code> (<code>src/hardy/cas_export.py:113-122</code>).
+</div>
+
+<h2>4. Turn cancellation (Esc)</h2>
+<div class="mermaid-wrap"><div class="mviewport"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant SH as Shell (event loop)
+  participant WK as hardy-turn thread
+  participant SDK as agent SDK
+  participant T as Hardy tool
+
+  U->>SH: Enter — submit turn
+  SH->>WK: stream(text) sets _cancelled=False, starts thread
+  WK->>SDK: asyncio.run(_within_budget)
+  SDK->>T: tool call via asyncio.to_thread
+  T-->>SDK: ToolResult
+  SDK-->>WK: events onto queue
+  WK-->>SH: events consumed on the loop
+  U->>SH: Esc
+  SH->>SDK: cancel() — run_coroutine_threadsafe(client.interrupt())
+  Note over T: work already begun is left to finish, not killed
+  SDK-->>WK: stream ends
+  WK-->>SH: _FINISHED sentinel
+  SH->>WK: join(TEARDOWN_SECONDS)
+</pre></div></div>
+
+<h3>Seams</h3>
+<div class="callout">
+  <strong><code>stream</code> is deliberately not a generator.</strong> A generator body does not run until first iterated, and iteration happens on a worker thread — so the per-turn reset of <code>_cancelled</code> would land <em>after</em> an Esc pressed in the same input batch as the Enter that started the turn, wiping the cancellation while the terminal and transcript both claimed the turn had stopped (<code>src/hardy/claude_runtime.py:227-238</code>). Subtle, correctly reasoned, and exactly the kind of thing that regresses silently.
+</div>
+<div class="callout warn">
+  <strong>Cancel crosses threads with no lock.</strong> <code>cancel()</code> is documented as safe from any thread and reads <code>_loop</code>/<code>_client</code> via a snapshot (<code>src/hardy/claude_runtime.py:283-295</code>), suppressing <code>RuntimeError</code> because the loop can stop between the check and the call. Correct in CPython by attribute-read atomicity, but it is a convention held by comment. <code>tests/test_cancel_races.py</code> exercises the paths; a race this shape cannot be proven absent by testing.
+</div>
+<div class="callout">
+  <strong>A consumer that stops early must not orphan the producer.</strong> <code>_consume</code>'s <code>finally</code> calls <code>cancel()</code> whenever the stream was not drained to <code>_FINISHED</code>, then joins with a timeout (<code>src/hardy/claude_runtime.py:265-281</code>). The thread is a daemon, so the join bounds tidiness rather than safety — and <code>settle()</code> exists precisely so a caller about to write down what a run produced can learn whether the thread actually finished (<code>src/hardy/claude_runtime.py:297-311</code>).
+</div>
+
+</section>
+<section class="panel" id="boundaries" role="tabpanel">
+
+<div class="card hero">
+  <h2>The boundaries that matter are held; the plumbing is duplicated</h2>
+  <p>Hardy's <em>security</em> and <em>verification</em> boundaries are unusually clean for a project this young: one place decides what a model may call, one place decides what counts as verified, one file owns the CAS kernel protocol. The smearing is in ordinary infrastructure — durable writes, output bounding, and the hole/axiom checks that exist twice with different strictness.</p>
+</div>
+
+<h2>Concern ownership</h2>
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr><th>Concern</th><th>Owner(s)</th><th>Verdict</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>Tool permission / trust boundary</td><td><code>src/hardy/claude_runtime.py:211-220</code></td><td><span class="badge good">single owner</span></td><td>Default-deny in one callback. The <code>REFUSED</code> list at <code>src/hardy/claude_runtime.py:64</code> is explicitly redundant, and says so.</td></tr>
+<tr><td>Verification authority</td><td><code>src/hardy/verifier.py</code></td><td><span class="badge good">single owner</span></td><td>Only <code>FinalVerifier.verify</code> can produce the <code>verification_sha256</code> that <code>src/hardy/domain.py:161-165</code> requires for a <code>kernel_verified</code> grade.</td></tr>
+<tr><td>CAS kernel protocol</td><td><code>src/hardy/cas.py</code></td><td><span class="badge good">single owner</span></td><td>Sentinel framing, serialisation, and the accepted-set rule are all enforced in the file rather than by callers — stated as an explicit intent at <code>src/hardy/cas.py:14-19</code>.</td></tr>
+<tr><td>Configuration resolution</td><td><code>src/hardy/config.py:123-170</code></td><td><span class="badge good">single owner</span></td><td>File → env → flags, in one function, with unknown keys rejected at read time (<code>src/hardy/config.py:117-119</code>).</td></tr>
+<tr><td>Workspace path safety</td><td><code>src/hardy/workspace.py:68</code></td><td><span class="badge good">single owner</span></td><td><code>safe_relative</code> is the only path validator; all four call sites are in <code>src/hardy/chat.py</code> (<code>:433</code>, <code>:445</code>, <code>:717</code>, <code>:776</code>).</td></tr>
+<tr><td>Lean import graph / build order</td><td><code>src/hardy/workspace.py:278-322</code></td><td><span class="badge good">single owner</span></td><td>Topological order, dependents, and cycle detection live together.</td></tr>
+<tr><td>Prompt text &amp; identity</td><td><code>src/hardy/prompts/__init__.py</code></td><td><span class="badge good">single owner</span></td><td>All model instructions are Jinja files under one loader; the set is hashed into every manifest.</td></tr>
+<tr><td>Terminal rendering</td><td><code>src/hardy/tui/</code> behind <code>src/hardy/tui/ports.py</code></td><td><span class="badge good">single owner</span></td><td><code>prompt_toolkit</code> is confined to <code>src/hardy/tui/shell.py</code> and <code>src/hardy/tui/select.py</code>; everything else speaks only the <code>Ui</code> protocol.</td></tr>
+<tr><td>Model observation bounding</td><td><code>src/hardy/cas_tools.py:193</code>, <code>src/hardy/mcp_server.py:61-124</code>, <code>src/hardy/lean.py</code></td><td><span class="badge warn">3 owners</span></td><td>One budget (<code>model_observation_bytes</code>) applied by three separate clipping implementations, one per tool family. Consistent in intent, independent in code.</td></tr>
+<tr><td>Hole / axiom gating</td><td><code>src/hardy/verifier.py:33-42</code> and <code>src/hardy/chat.py:324-340</code></td><td><span class="badge bad">smeared</span></td><td>Two independent implementations of "what disqualifies a Lean artifact", with materially different strictness. See below and the Invariants tab.</td></tr>
+<tr><td>Durable atomic writes</td><td><code>src/hardy/storage.py:47</code>, <code>src/hardy/chat.py:152</code>, <code>src/hardy/runner.py:33</code>, <code>src/hardy/config.py:213</code>, <code>src/hardy/installers.py:164</code></td><td><span class="badge bad">smeared</span></td><td>Five implementations of temp-file-then-<code>os.replace</code>, two of them byte-identical. See below.</td></tr>
+<tr><td>Run-directory layout</td><td><code>src/hardy/storage.py</code> writes; <code>src/hardy/chat.py:412-430</code> migrates</td><td><span class="badge warn">2 owners</span></td><td><code>_migrate_layout</code> relocates legacy files with a bare <code>os.replace</code> outside <code>RunStore</code>'s path discipline.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout bad">
+  <strong><code>src/hardy/chat.py:152</code> and <code>src/hardy/runner.py:33</code> are the same function under two names.</strong> <code>_atomic_json</code> and <code>_write_json</code> have byte-identical bodies: fixed <code>.tmp</code> suffix, <code>write_text</code>, <code>os.replace</code>. Both differ from the canonical <code>storage.atomic_write_bytes</code> (<code>src/hardy/storage.py:47-59</code>) in two ways that matter — no <code>fsync</code>, so a crash after <code>replace</code> can leave a zero-length file on some filesystems, and a <em>fixed</em> temp name where <code>src/hardy/storage.py</code> uses <code>NamedTemporaryFile</code>, so two writers to the same path would collide on the temp file rather than serialising harmlessly. <code>src/hardy/config.py:213-218</code> is a third variant that adds <code>chmod(0o600)</code> — appropriate for a config file, and an argument for one parameterised helper rather than five.
+</div>
+
+<div class="callout bad">
+  <strong>"What disqualifies a Lean artifact" is answered twice, differently.</strong>
+  <div class="tbl-wrap">
+  <table>
+  <thead><tr><th>Check</th><th><code>src/hardy/verifier.py</code> (staged <code>prove</code>)</th><th><code>src/hardy/chat.py</code> (interactive save)</th></tr></thead>
+  <tbody>
+  <tr><td>Pattern</td><td><code>FORBIDDEN_TOKEN</code>, <code>src/hardy/verifier.py:33-37</code></td><td><code>HOLE</code>, <code>src/hardy/lean.py:28</code></td></tr>
+  <tr><td>Tokens caught</td><td><code>sorryAx</code>, <code>sorry</code>, <code>admit</code>, <code>axiom</code>, <code>opaque</code>, <code>by?</code></td><td><code>sorry</code>, <code>admit</code></td></tr>
+  <tr><td>Comments stripped first</td><td><span class="badge good">yes</span> — <code>src/hardy/verifier.py:267-322</code></td><td><span class="badge warn">no</span> — raw <code>\b(sorry|admit)\b</code></td></tr>
+  <tr><td><code>#print axioms</code> audit</td><td><span class="badge good">required; silence fails the run</span></td><td><span class="badge bad">never run</span></td></tr>
+  <tr><td>Declared axioms</td><td>forbidden outright</td><td>permitted if pre-approved (<code>src/hardy/chat.py:333-339</code>) — deliberate, this is the Assume workflow</td></tr>
+  </tbody>
+  </table>
+  </div>
+  <p>Some of this divergence is correct: the interactive surface issues no grades, and it <em>must</em> allow approved axioms where the verifier must not. But <code>opaque</code> — which manufactures an unverifiable definition — is refused on one path and accepted on the other, and the missing comment-stripping means a Lean file with the word <code>sorry</code> in a docstring is refused for no reason. The two checks should share a single parameterised implementation so their differences are declared rather than emergent.</p>
+</div>
+
+<h2>Data ownership</h2>
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr><th>Store</th><th>Written by</th><th>Verdict</th></tr></thead>
+<tbody>
+<tr><td><code>runs/&lt;slug&gt;/manifest.json</code>, <code>trajectory.jsonl</code>, <code>lean/</code></td><td><code>RunStore</code> only (<code>src/hardy/storage.py:62-157</code>)</td><td><span class="badge good">one writer</span></td></tr>
+<tr><td>CAS cell log (JSONL)</td><td><code>CasSession._append</code> only, under <code>self._lock</code></td><td><span class="badge good">one writer</span></td></tr>
+<tr><td>Lean workspace tree + olean index</td><td><code>LeanWorkspace</code>, always through <code>stage()</code>/<code>commit()</code></td><td><span class="badge good">one writer</span></td></tr>
+<tr><td>The session state file &mdash; <span class="dim">state.json</span> in the workspace (assumptions, name registry, provenance)</td><td><code>MathematicsSession._save_state</code> (<code>src/hardy/chat.py:294-298</code>), plus <code>_sync_provenance</code> and <code>_migrate_layout</code></td><td><span class="badge warn">one writer, three paths</span></td></tr>
+<tr><td>The settings file &mdash; <span class="dim">config.toml</span></td><td><code>config.write_setting</code> / <code>remove_setting</code>, and the installers</td><td><span class="badge warn">2 writers</span></td></tr>
+</tbody>
+</table>
+</div>
+<div class="callout warn">
+  <strong>The session state file is written from more than one thread.</strong> <code>_save_state</code> is called from tool dispatch, which runs on a worker thread via <code>asyncio.to_thread</code> (<code>src/hardy/claude_runtime.py:127-131</code>), while the shell's own commands can touch state on the event loop. The comment at <code>src/hardy/chat.py:203-206</code> shows the author was aware — it explains that <code>_atomic_json</code> replaces a temporary — but the atomicity being relied on is <code>os.replace</code>, and with a <em>fixed</em> <code>.tmp</code> name two concurrent writers would race on the temporary itself, not merely on the destination. Serialised in practice today because the SDK issues one tool call at a time; not enforced anywhere.
+</div>
+<div class="callout warn">
+  <strong>Config has two writers with different intents.</strong> <code>config.write_setting</code> is deliberately line-based so a human's comments and ordering survive (<code>src/hardy/config.py:173-192</code>), while <code>src/hardy/setup.py</code>/<code>src/hardy/installers.py</code> also write the file during installation. Both go through <code>_rewrite</code>, so the file stays well-formed; the risk is ordering, not corruption.
+</div>
+
+<h2>Boundary violations &amp; cycle semantics</h2>
+<div class="callout warn">
+  <strong>The one real file cycle: <code>cli.py → tui/__init__.py → tui/plain.py → tui/shell.py → tui/stream.py → cli.py</code>.</strong> It is broken at runtime by function-local imports (<code>src/hardy/tui/__init__.py:31-33</code> and <code>:46-47</code>), and the reason is documented at <code>src/hardy/tui/__init__.py:20-26</code>: the shell must exist <em>before</em> the session does, because the session needs an axiom-approval callback and that callback runs through whichever <code>Ui</code> ends up live. So <code>tui</code> depends on <code>cli</code> for <code>confirm_assumption</code>, and <code>cli</code> depends on <code>tui</code> to start a session.
+  <p>The fix is small and structural: <code>confirm_assumption</code> (<code>src/hardy/cli.py:27-60</code>) depends only on the <code>Ui</code> port, not on anything else in <code>cli</code>. Moving it into <code>tui/</code> — next to <code>src/hardy/tui/ports.py</code>, where its only dependency lives — collapses the cycle and removes the need for deferred imports. That the current arrangement is deliberate and commented makes it a design debt rather than a bug, but a lazy import is a cycle you have agreed to stop noticing.</p>
+</div>
+<div class="callout">
+  <strong>The reported <code>src/hardy ↔ prompts ↔ tui</code> module cycle is the flat-package artifact.</strong> With 30 files in one directory, "module" and "package" coincide, so any subpackage importing back into the core (<code>prompts</code> imports <code>..domain</code>; <code>tui</code> imports <code>..cli</code>) reads as a cycle at module granularity. Only the <code>tui ↔ cli</code> half is a real one; <code>prompts → domain</code> is a leaf importing a leaf.
+</div>
+<div class="callout">
+  <strong><code>src/hardy/cli.py</code> is the intended dependency sink, and it is filling up.</strong> Fan-out 26 — the highest in the repo, ahead of the CI workflow file. That is appropriate for a front door that wires everything, but <code>src/hardy/cli.py</code> also holds <code>ConsoleTerminal</code> (<code>src/hardy/cli.py:207-274</code>, the staged workflow's <code>Terminal</code> implementation), <code>confirm_assumption</code>, <code>build_prove_workflow</code>, and <code>run_setup</code> — four things that are not argument parsing. Splitting the wiring out of the parsing would drop the fan-out and give <code>ConsoleTerminal</code> a home next to the port it implements.
+</div>
+<div class="callout good">
+  <strong>No layering inversions found.</strong> <code>src/hardy/domain.py</code> has fan-out 0 — it imports nothing from Hardy and 31 files import it, which is exactly the right shape for a durable-values module. <code>src/hardy/models.py</code> and <code>src/hardy/tui/ports.py</code> are likewise pure leaves. Nothing in the domain or verification layer imports the terminal, the CLI, or a model SDK.
+</div>
+
+</section>
+<section class="panel" id="invariants" role="tabpanel">
+
+<div class="card hero">
+  <h2>The verification invariants are enforced; the documentation invariants are not</h2>
+  <p>Hardy's central claims — a grade cannot exist without evidence, an axiom cannot enter without a human, a rebuilt CAS state that differs poisons the session — are enforced <em>structurally</em>, in code, at the place that would otherwise be able to lie. That is rare and worth saying plainly. The unenforced invariants are all one layer out: the repository's own rule that four documents stay mutually consistent, and the claim that the axiom audit applies everywhere.</p>
+</div>
+
+<h2>Invariants</h2>
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr><th>Invariant</th><th>Where enforced</th><th>Verdict</th></tr></thead>
+<tbody>
+<tr><td>A <code>kernel_verified</code> formalization grade cannot exist without verification evidence</td><td><code>src/hardy/domain.py:161-165</code> — a pydantic <code>model_validator</code>, so an offending <code>Grades</code> cannot be constructed at all</td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>A claim's identity never drifts between approval and grading</td><td>Canonical-JSON SHA-256 at <code>src/hardy/domain.py:80-97</code>; re-derived and compared at <code>src/hardy/workflow.py:277-284</code> and <code>src/hardy/verifier.py:82-99</code></td><td><span class="badge good">enforced twice</span></td></tr>
+<tr><td>A silent axiom report is not an absence of axioms</td><td><code>src/hardy/verifier.py:158-168</code> — <code>_parse_axiom_report</code> returning <code>None</code> fails the run</td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>Only Lean's own three axioms are acceptable without disclosure</td><td><code>src/hardy/verifier.py:32</code>, checked at <code>:169-179</code></td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>The proof body cannot smuggle a declaration past the frozen signature</td><td><code>src/hardy/verifier.py:211-222</code> — <code>:=</code> and any of eleven declaration keywords are rejected in binders/proposition, after comment- and string-stripping</td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>An axiom enters only with explicit human approval, and every failure is a decline</td><td><code>src/hardy/cli.py:42-58</code> — default choice is "No", <code>picked is None</code> is a decline, and a bare <code>except Exception</code> returns <code>False</code> so a bug in the prompting path cannot fail the gate open</td><td><span class="badge good">enforced, fail-closed</span></td></tr>
+<tr><td>The model never executes anything Hardy did not register</td><td><code>src/hardy/claude_runtime.py:211-220</code> — default-deny; <code>allowed_tools</code> deliberately unset because an entry there would auto-approve before the callback is consulted</td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>A run does not silently inherit the user's Claude Code settings</td><td><code>src/hardy/claude_runtime.py:197</code> — <code>setting_sources=[]</code></td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>Every CAS call is serialised against the single stateful kernel</td><td><code>self._lock</code> held across <code>execute</code>, <code>reset</code>, <code>close</code> (<code>src/hardy/cas.py:1211</code>, <code>:1379</code>, <code>:1386</code>)</td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>A CAS state that cannot be rebuilt faithfully is unusable, not "probably fine"</td><td><code>src/hardy/cas.py:1338-1350</code> sets <code>poisoned</code>; <code>_guard</code> refuses every later cell (<code>src/hardy/cas.py:1191-1196</code>)</td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>A model cannot buy back its CAS budget by resetting</td><td><code>src/hardy/cas.py:1352-1366</code> — <code>reset</code> clears state, not <code>spent_seconds</code>, and the docstring explains why</td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>Replaying a segment never feeds one backend's language to another</td><td><code>src/hardy/cas.py:1197-1207</code> — a foreign-backend log is refused with a way out</td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>A prompt that lost a variable fails loudly rather than asking the model to prove nothing</td><td><code>src/hardy/prompts/__init__.py:58</code> — <code>StrictUndefined</code>; raised as <code>PromptError</code> at <code>:77-78</code></td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>A save that would break a dependent module writes nothing</td><td><code>src/hardy/chat.py:461-486</code> via shadow staging (<code>src/hardy/workspace.py:455-513</code>), with <code>discard</code> in a <code>finally</code></td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>A theorem cannot accumulate without a writeup</td><td><code>src/hardy/chat.py:588-609</code> — <code>_documentation_gate</code>; <code>lemma</code>/<code>def</code>/<code>instance</code> exempt, repair and delete always allowed</td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>An unknown config key is a typo, reported where the file is read</td><td><code>src/hardy/config.py:117-119</code>, <code>:150-151</code></td><td><span class="badge good">enforced</span></td></tr>
+<tr><td>The live CAS kernel and the replayable accepted set agree</td><td>Deliberately <em>not</em> promised — a truncated sentinel cell mutates the namespace while being excluded from <code>accepted</code> (<code>src/hardy/cas.py:1265-1281</code>). The model is told, in detail.</td><td><span class="badge warn">knowingly not held</span></td></tr>
+<tr><td>Saved Lean artifacts have a known axiom dependency set</td><td>True on the staged path (<code>src/hardy/verifier.py:206-208</code>); <strong>never checked</strong> in the interactive session — <code>#print axioms</code> appears only in <code>src/hardy/verifier.py</code>, <code>src/hardy/lean.py:276</code> and <code>src/hardy/runner.py:119</code></td><td><span class="badge bad">holds on one of two surfaces</span></td></tr>
+<tr><td>The session state file (state.json) has one writer at a time</td><td>Assumed. <code>_save_state</code> is reachable from tool-dispatch threads and from the event loop; <code>_atomic_json</code>'s fixed <code>.tmp</code> name is not collision-safe (<code>src/hardy/chat.py:152-155</code>)</td><td><span class="badge warn">assumed, true only because the SDK issues one tool call at a time</span></td></tr>
+<tr><td>README, DESIGN, FEATURES and ARCHITECTURE stay consistent (an <code>AGENTS.md</code> rule)</td><td>One assertion, about one panel: <code>tests/unit/test_architecture_doc.py</code></td><td><span class="badge bad">assumed; already drifted</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Intent vs. implementation</h2>
+<div class="callout bad">
+  <strong>FEATURES.md states the axiom audit as an unqualified implemented capability; it holds on the staged path only.</strong> <code>FEATURES.md:79-81</code> reads "<em>Now (implemented): audit <code>#print axioms</code>; distinguish standard axioms, forbidden <code>sorryAx</code>, and explicitly declared paper assumptions.</em>" That is true of <code>hardy prove</code> and <code>hardy batch</code>. It is not true of <code>hardy chat</code> — the workflow DESIGN.md calls "the primary interactive shell" (<code>DESIGN.md:37</code>) — where <code>_final_gates</code> checks text only and no audit runs. Nothing in the interactive session overclaims a grade, so no false "verified" is produced; the gap is that a reader of a saved <code>.hardy/</code> workspace cannot tell what a saved theorem stands on, and the feature list does not say so.
+</div>
+<div class="callout warn">
+  <strong>DESIGN.md promises a four-way formalization grade; the enum has three values.</strong> <code>DESIGN.md:26-27</code> lists "kernel verified, verified modulo listed paper assumptions, partially formalized, or not formalized". <code>FormalStatus</code> (<code>src/hardy/domain.py:128-131</code>) offers <code>KERNEL_VERIFIED</code>, <code>PARTIAL</code>, <code>NOT_FORMALIZED</code>. "Verified modulo listed paper assumptions" — precisely the state the Assume workflow exists to produce — has no representation, so such a result must be recorded as <code>PARTIAL</code> with prose in <code>known_gaps</code>. Since these values are written to disk and compared as strings by readers that never import Hardy (<code>pyproject.toml</code> explains that <code>str, Enum</code> is deliberate for this reason), adding the member later is a format change, not a refactor.
+</div>
+<div class="callout warn">
+  <strong>A comment in <code>pyproject.toml</code> is one commit stale, and it is a comment about test coverage.</strong> <code>pyproject.toml:19</code> says "only the resize guard has a test that would notice one of those breaking underneath an upgrade." Both Shift+Enter encodings are now covered — <code>tests/tui/test_turns.py:247-250</code> parameterises over <code>\x1b[27;2;13~</code> and <code>\x1b[13;2u</code>. Trivial in itself; notable because it is exactly the drift <code>AGENTS.md</code>'s consistency rule exists to prevent, and the only mechanical guard on that rule checks one HTML panel.
+</div>
+
+<h2>Failure handling</h2>
+<div class="callout good">
+  <strong>The broad excepts are deliberate and all fail in the safe direction.</strong> Three of them, each with a <code>noqa</code> and a reason: the axiom gate returns <code>False</code> on any exception (<code>src/hardy/cli.py:56-58</code>); <code>run_session</code> falls back to the plain UI rather than ending a session over rendering (<code>src/hardy/tui/__init__.py:40-42</code>); and the turn worker re-raises on the consumer's thread instead of dying silently (<code>src/hardy/claude_runtime.py:253-258</code>). None swallows an error that a caller needed.
+</div>
+<div class="callout warn">
+  <strong>The <code>doctor</code> health gate reads a possibly-absent attribute with a permissive default.</strong> <code>getattr(report, "authenticated", True) is False</code> (<code>src/hardy/workflow.py:175-179</code>) — a report object that has lost the attribute is treated as authenticated, and the run is recorded as <code>SETUP_FAILURE</code> rather than <code>AUTHENTICATION_FAILURE</code>. Only the terminal reason is affected, not whether the run proceeds; still, a <code>getattr</code> default is a type hole where a protocol would do.
+</div>
+<div class="callout warn">
+  <strong>Timeouts exist everywhere except the model call, where they cannot.</strong> Lean (<code>lean_process_seconds</code>), TeX (<code>tex_process_seconds</code>), CAS cells and CAS sessions all have process bounds in <code>RunLimits</code> (<code>src/hardy/domain.py:26-42</code>). The model call has no turn-level timeout Hardy can impose — the SDK owns the loop — so Hardy imposes a wall clock outside it (<code>src/hardy/claude_runtime.py:312-330</code>) and the trajectory records which of the two enforced the stop. Correct given the constraint, and the constraint is the subscription-auth trade.
+</div>
+<div class="callout">
+  <strong>Secret redaction is key-name based.</strong> <code>storage._redact</code> (<code>src/hardy/storage.py:159-170</code>) replaces values whose <em>key</em> matches a secret pattern, recursing through dicts and lists. A credential appearing inside a free-text value — a model message, a Lean error, a subprocess stderr — is not caught, and trajectories record all three. Reasonable for a local-first tool; worth knowing before any run directory is shared.
+</div>
+
+<h2>Concurrency</h2>
+<p>Three distinct models coexist, and the boundaries between them are where this codebase is most intricate.</p>
+<div class="grid cols-3">
+  <div class="card">
+    <h3>Turn worker thread</h3>
+    <p>The SDK's event loop runs on a daemon thread; events cross to the caller via <code>queue.Queue</code>. <code>_cancelled</code>, <code>_loop</code> and <code>_client</code> are written by the submitting thread and read by <code>cancel()</code> from any thread with <strong>no lock</strong>, using a snapshot and a suppressed <code>RuntimeError</code> (<code>src/hardy/claude_runtime.py:283-295</code>). Sound under CPython attribute atomicity; a convention held by comment, not by a primitive.</p>
+  </div>
+  <div class="card">
+    <h3>Tool dispatch hop</h3>
+    <p>Tools leave the event loop through <code>asyncio.to_thread</code> because they run subprocesses and one stops to ask a human (<code>src/hardy/claude_runtime.py:127-131</code>). The <code>Ui</code>/<code>BlockingUi</code> pair (<code>src/hardy/tui/ports.py</code>) exists exactly to marshal that prompt back onto the loop — the async-only <code>Ui</code> docstring notes that blocking the loop while waiting for keys "deadlocks by construction" (<code>src/hardy/tui/ports.py:50-56</code>).</p>
+  </div>
+  <div class="card">
+    <h3>CAS kernel</h3>
+    <p>One long-lived subprocess behind one stdin stream, with three bindings able to reach it (chat, staged runs, MCP). Everything is serialised under <code>self._lock</code>, and reader threads drain stdout/stderr into buffers (<code>src/hardy/cas.py:564-596</code>). The file's header states the serialisation rule as something enforced here rather than by callers.</p>
+  </div>
+</div>
+<div class="callout warn">
+  <strong>Process-global mutation of a third-party library, at import time.</strong> <code>src/hardy/tui/shell.py:85-92</code> writes two entries into <code>prompt_toolkit</code>'s module-level <code>ANSI_SEQUENCES</code> dict and then clears its private prefix-ambiguity cache. The comment argues correctly that this is idempotent and runs once per process. It is still a library's global state being edited by an application, and it happens as a side effect of importing a module.
+</div>
+
+<h2>Risk ranking</h2>
+<div class="callout bad">
+  <strong>1. No sandbox, by design, on every execution path.</strong> Generated Lean, generated TeX, and CAS cells all run as ordinary subprocesses with the user's privileges; a cell can call <code>os.system</code>, Macaulay2's <code>run</code>, or Singular's <code>system("sh", …)</code>. This is acknowledged in <code>DESIGN.md</code>, <code>AGENTS.md</code>, <code>src/hardy/cas.py:21-23</code>, and warned on every surface that can execute — the mitigation is disclosure, and disclosure is not confinement. Blast radius: the developer's machine. It is first on this list not because it is unknown but because it is the only item whose worst case is unbounded.
+</div>
+<div class="callout bad">
+  <strong>2. Half the codebase is tests and none of it is measured.</strong> 10,977 LOC across 68 test files, no <code>pytest-cov</code>, no coverage artifact, nothing in CI producing one. The invariants above are the whole value of the project, and there is no evidence about which of them a test would actually catch breaking. Adding coverage measurement is the single cheapest risk reduction available here.
+</div>
+<div class="callout bad">
+  <strong>3. Five private <code>prompt_toolkit</code> internals patched, pinned only below the next minor.</strong> <code>ANSI_SEQUENCES</code>, <code>_IS_PREFIX_OF_LONGER_MATCH_CACHE</code>, <code>Application._on_resize</code>, <code>Application._running_in_terminal</code>, and <code>Window.render_info</code> (<code>src/hardy/tui/shell.py:39-40</code>, <code>:85-92</code>, <code>:287</code>, <code>:751-757</code>). The resize patch even cites line numbers inside <code>prompt_toolkit</code>'s own source, which will drift on any upgrade. The <code>&lt;3.1</code> cap in <code>pyproject.toml</code> is doing real load-bearing work; a patch release that reshapes any of these fails at runtime in the terminal path, and the plain-UI fallback would mask it as a mysterious downgrade rather than an error.
+</div>
+<div class="callout warn">
+  <strong>4. Two divergent implementations of the hole/axiom gate.</strong> The interactive surface's check is weaker than the verifier's in ways that are partly deliberate and partly accidental (<code>opaque</code> permitted, comments not stripped, no axiom audit), and nothing marks which is which. Consolidating into one parameterised gate would turn an emergent difference into a declared one.
+</div>
+<div class="callout warn">
+  <strong>5. <code>src/hardy/cas.py</code> (1,625 LOC, top hotspot: 15 commits × 163 branches) carries four concerns.</strong> Backend dialects (<code>SympyBackend</code>, <code>_SentinelBackend</code>, <code>SingularBackend</code>, <code>Macaulay2Backend</code>), the raw subprocess protocol (<code>_Kernel</code>, <code>src/hardy/cas.py:536</code>), the session and its durable log (<code>CasSession</code>, <code>src/hardy/cas.py:729</code>), and export/replay verification (<code>src/hardy/cas.py:1445</code>, <code>:1566</code>). Each is coherent; together they are the file most likely to be edited and the hardest to review. <code>ProveWorkflow.run</code> (311 lines, seven exits, ten hand-threaded arguments) is the same problem at smaller scale.
+</div>
+<div class="callout">
+  <strong>Analysis caveat:</strong> the git history available here is shallow — 50 commits, all from a single author — so the churn half of every hotspot score understates real edit pressure, and "1 author" is an artifact of the clone rather than a bus-factor measurement. No test suite was executed while building this atlas.
+</div>
+
+</section>
+<section class="panel" id="glossary" role="tabpanel">
+
+<p class="dim">Hardy's naming is deliberate and mostly excellent — several identifiers carry comments explaining why <em>that</em> word was chosen over a near-synonym (<code>src/hardy/chat.py:335-336</code> explains picking <code>assumed</code> over <code>declarations</code>). The drift that exists is concentrated in three overloaded words: <strong>accept</strong>, <strong>stage</strong>, and <strong>check</strong>.</p>
+
+<h2>Domain term → code name</h2>
+<div class="tbl-wrap">
+<table class="sortable">
+<thead><tr><th>Domain term</th><th>Code name(s)</th><th>Where</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>The interactive workflow</td><td><code>Explore</code> / <code>chat</code> / <code>MathematicsSession</code></td><td><code>DESIGN.md:37</code>, <code>src/hardy/cli.py:614</code>, <code>src/hardy/chat.py:158</code></td><td><span class="badge warn">three names</span> The docs call it Explore, the CLI calls it chat, the class is a MathematicsSession. No code identifier contains "explore".</td></tr>
+<tr><td>The staged workflow</td><td><code>Prove</code> / <code>prove</code> / <code>ProveWorkflow</code></td><td><code>DESIGN.md:39</code>, <code>src/hardy/cli.py:618</code>, <code>src/hardy/workflow.py:100</code></td><td><span class="badge good">consistent</span></td></tr>
+<tr><td>An approved, immutable statement</td><td><code>FrozenClaim</code>, <code>freeze_claim</code>, <code>claim_sha256</code></td><td><code>src/hardy/domain.py:64-97</code></td><td><span class="badge good">consistent</span> — and "Frozen Claim" appears in user-facing error text too (<code>src/hardy/verifier.py:98</code>).</td></tr>
+<tr><td>A model's proposed formalization</td><td><code>FormalizationProposal</code></td><td><code>src/hardy/domain.py:45-53</code></td><td><span class="badge good">consistent</span></td></tr>
+<tr><td>A paper assumption admitted as a Lean axiom</td><td><code>assumption</code> (state, tool) / <code>assumed</code> (parsed) / <code>axiom</code> (Lean) / <code>Assume</code> (docs)</td><td><code>src/hardy/chat.py:333-339</code>, <code>src/hardy/cli.py:27</code>, <code>DESIGN.md:157</code></td><td><span class="badge warn">four registers</span> Defensible — each name belongs to its own layer — but a reader tracing the feature crosses all four.</td></tr>
+<tr><td>The four orthogonal result grades</td><td><code>FormalStatus</code>, <code>FaithfulnessStatus</code>, <code>InformalStatus</code>, <code>DocumentStatus</code></td><td><code>src/hardy/domain.py:128-165</code></td><td><span class="badge warn">one grade missing</span> DESIGN.md's "verified modulo listed paper assumptions" has no enum member — see Invariants.</td></tr>
+<tr><td>Why a run stopped</td><td><code>TerminalReason</code></td><td><code>src/hardy/domain.py:111-125</code></td><td><span class="badge good">consistent</span> — 14 members, all used.</td></tr>
+<tr><td>The multi-file Lean tree</td><td><code>LeanWorkspace</code>, <code>workspace</code>, <code>.hardy/</code></td><td><code>src/hardy/workspace.py:329</code>, <code>src/hardy/config.py:19</code></td><td><span class="badge good">consistent</span></td></tr>
+<tr><td>One computer-algebra input</td><td><code>cell</code>, <code>CellRecord</code>, <code>CellOutcome</code></td><td><code>src/hardy/cas.py:66-124</code></td><td><span class="badge good">consistent</span> — notebook vocabulary, used correctly.</td></tr>
+<tr><td>A CAS log epoch after a reset</td><td><code>segment</code></td><td><code>src/hardy/cas.py:909</code>, <code>:1375</code></td><td><span class="badge good">clear</span> — the reset boundary is itself a <code>CellRecord</code> carrying the new segment.</td></tr>
+<tr><td>Kernel liveness</td><td><code>cold</code> / <code>dead</code> / <code>poisoned</code></td><td><code>src/hardy/cas.py:1191</code>, <code>:1298-1301</code>, <code>:1344</code></td><td><span class="badge good">three well-chosen words</span> — never started, died, and cannot be trusted are genuinely three different conditions.</td></tr>
+<tr><td>The terminal abstraction</td><td><code>Ui</code> (async) / <code>BlockingUi</code> (sync)</td><td><code>src/hardy/tui/ports.py:31-74</code></td><td><span class="badge good">consistent</span> — reached as <code>ui.from_thread</code>, which names what it is for.</td></tr>
+<tr><td>The model conversation transport</td><td><code>runtime</code> — <code>ChatRuntime</code>, <code>ClaudeAgentRuntime</code>, <code>ClaudeStagedRuntime</code>, <code>LeanToolRuntime</code>, <code>CasToolRuntime</code></td><td><code>src/hardy/chat.py:70</code>, <code>src/hardy/claude_runtime.py:136</code>, <code>src/hardy/staged.py:102</code>, <code>src/hardy/mcp_server.py:34</code>, <code>src/hardy/cas_tools.py</code></td><td><span class="badge warn">two meanings</span> "Runtime" names both <em>a conversation with a model</em> and <em>a bounded wrapper around a local tool</em>. The <code>…ToolRuntime</code> pair are not runtimes in the first sense at all.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>Overloaded words</h2>
+<div class="callout warn">
+  <strong><code>accept</code> means four different things.</strong>
+  <ul>
+    <li><code>hardy accept</code> — the CLI command that runs the checked-in benchmark set (<code>src/hardy/cli.py:624</code>), backed by <code>src/hardy/acceptance.py</code>.</li>
+    <li><code>CellRecord.accepted</code> — a CAS cell that succeeded <em>and</em> is safe to replay, so it joins the set rebuilds and exports are built from (<code>src/hardy/cas.py:1284</code>).</li>
+    <li>Lean "accepting" a source — kernel acceptance, the only thing that justifies <code>verified</code> (<code>src/hardy/verifier.py:155</code>).</li>
+    <li><code>acknowledge_unsafe_execution</code> — the human accepting the no-sandbox warning (<code>src/hardy/workflow.py:78</code>). Correctly named <em>acknowledge</em>, which is why it is the least confusing of the four.</li>
+  </ul>
+  <p>The collision that could actually mislead is the second and third: a CAS cell being "accepted" carries no verification weight whatsoever — DESIGN.md is emphatic that "nothing computed here is evidence" — while Lean accepting a proof is the entire point. Same verb, opposite epistemic status.</p>
+</div>
+
+<div class="callout warn">
+  <strong><code>stage</code> / <code>staged</code> names two unrelated mechanisms.</strong> <code>src/hardy/staged.py</code> is the <em>staged run</em> — the phased <code>prove</code> pipeline's model runtime (<code>ClaudeStagedRuntime</code>, and <code>StagedThread</code> at <code>src/hardy/staged.py:97</code>). <code>LeanWorkspace.stage()</code> (<code>src/hardy/workspace.py:455</code>) is <em>staging</em> in the git sense: a shadow copy that is built before being committed. A reader who has met one meaning will misread the other; "shadow" is already used in the code for the second concept (<code>src/hardy/chat.py:455-457</code>) and would be the better public name.
+</div>
+
+<div class="callout warn">
+  <strong><code>official_checks</code> is undefined in the docs and meters two different things.</strong> The name appears in no document — not <code>DESIGN.md</code>, not <code>FEATURES.md</code> — yet it is a frozen run budget (<code>src/hardy/domain.py:31</code>, default 40). It bounds the proof-attempt loop in <code>src/hardy/workflow.py:312</code>, and <em>separately</em> serves as a decrementing quota on <code>check_proof</code> tool calls in <code>src/hardy/mcp_server.py:47-58</code>. In a staged run both meters are live at once against the same number. Nothing explains what makes a check "official" as opposed to the informal Lean checks a model makes while exploring — which appears to be the intended distinction, and is exactly the sort of thing a name should not leave to inference. (<code>src/hardy/acceptance.py:192</code> overrides it to 1, which reads clearly only once you know it means "one attempt".)
+</div>
+
+<div class="callout">
+  <strong><code>check</code> vs <code>verify</code> is, by contrast, held rigorously.</strong> "Check" is provisional — <code>check_proof</code>, <code>_check_lean</code>, <code>_check_latex</code>, <code>hardy doctor</code>'s checks — while "verify" is reserved for the independent final authority: <code>FinalVerifier.verify</code>, <code>VerificationResult</code>, <code>verification_sha256</code>, and the run's written lean/verification.json. The distinction that carries the project's whole epistemic claim is the one the naming protects most carefully, and <code>DESIGN.md:32</code> states the rule out loud: "TeX compilation checks document construction, not mathematical truth."
+</div>
+
+<h2>Misleading names</h2>
+<div class="tbl-wrap">
+<table>
+<thead><tr><th>Name</th><th>Where</th><th>What it actually does</th></tr></thead>
+<tbody>
+<tr><td><code>_final_gates</code></td><td><code>src/hardy/chat.py:324</code></td><td>Runs <em>before</em> Lean is invoked, not finally — the docstring corrects this immediately ("before Lean is asked"), but the name suggests a last line of defence, and it is in fact the only textual one on that path.</td></tr>
+<tr><td><code>_write_json</code> / <code>_atomic_json</code></td><td><code>src/hardy/runner.py:33</code>, <code>src/hardy/chat.py:152</code></td><td>Byte-identical implementations under two names; only one of the names mentions the atomicity both provide, and neither <code>fsync</code>s where <code>storage.atomic_write_bytes</code> does.</td></tr>
+<tr><td><code>_SentinelBackend</code></td><td><code>src/hardy/cas.py:260</code></td><td>Names the <em>framing</em> strategy (marker-delimited output, status inferred from an error banner), not a backend — it is the shared base for Singular and Macaulay2. Consistent with <code>backend.framing == "sentinel"</code> at <code>src/hardy/cas.py:1275</code>, so the vocabulary holds; only the class name reads like a concrete backend.</td></tr>
+<tr><td><code>plain</code></td><td><code>src/hardy/claude_runtime.py:72</code> and <code>src/hardy/tui/plain.py</code></td><td>Two unrelated meanings in one package: stripping an MCP tool-name prefix for display, and the line-based non-TTY session. The runtime one is documented as "only for drawing".</td></tr>
+</tbody>
+</table>
+</div>
+<div class="callout good">
+  <strong>Overall, naming is a strength here.</strong> The durable enums are <code>str, Enum</code> on purpose so external readers can compare them as strings (<code>pyproject.toml</code> ignores ruff's <code>UP042</code> for exactly this reason), the grade types are separated so a compiled document can never imply a proved theorem (<code>src/hardy/domain.py:151-152</code>), and several identifiers carry a comment defending the specific word chosen. The overloads above are worth fixing precisely because the surrounding standard is high enough to make them stand out.
+</div>
+
+</section>
+<section class="panel" id="llm-ops" role="tabpanel">
+
+
+<div class="kpis">
+  <div class="kpi accent"><div class="n">0</div><div class="l">call sites</div></div>
+  <div class="kpi"><div class="n">0</div><div class="l">providers</div></div>
+  <div class="kpi"><div class="n">11</div><div class="l">distinct models</div></div>
+  <div class="kpi"><div class="n">0</div><div class="l">prompt files</div></div>
+  <div class="kpi good"><div class="n">0</div><div class="l">gaps</div></div>
+</div>
+<div class="callout"><b>How this was found.</b> LLM call sites are found textually by SDK method name: a call made through your own wrapper, by an unrecognized client, or with a model id read from config at runtime will be missed, and a detected parameter is evidence it is passed somewhere in the call, not that it holds on every path.</div>
+
+<h2>Call sites</h2>
+<p class="dim">Where this codebase talks to a model, with the parameters each call passes.</p>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>Site</th><th>Provider</th><th>API</th><th>Model</th><th>Parameters passed</th></tr></thead>
+<tbody></tbody></table></div>
+
+<h2>Models in use</h2>
+<p class="dim">Every string in the codebase that names a deployed model, and where it is written.</p>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>Model</th><th class="num">Mentions</th><th>Written at</th></tr></thead>
+<tbody><tr><td><code>claude-agent-sdk</code></td><td class='num'>2</td><td><code>src/hardy/cli.py:491</code> <code>src/hardy/setup.py:82</code></td></tr>
+<tr><td><code>claude-experimental-9</code></td><td class='num'>7</td><td><code>tests/test_model_command.py:117</code> <code>tests/test_model_command.py:120</code> <code>tests/test_model_command.py:158</code> <code>tests/test_model_command.py:159</code> <code>tests/test_model_command.py:78</code> <span class='dim'>… 2 more</span></td></tr>
+<tr><td><code>claude-haiku-4-5</code></td><td class='num'>14</td><td><code>src/hardy/catalog.py:29</code> <code>tests/test_cancel_races.py:187</code> <code>tests/test_cancel_races.py:265</code> <code>tests/test_chat.py:179</code> <code>tests/test_chat.py:180</code> <span class='dim'>… 9 more</span></td></tr>
+<tr><td><code>claude-opus-4-8</code></td><td class='num'>1</td><td><code>src/hardy/catalog.py:27</code></td></tr>
+<tr><td><code>claude-opus-5</code></td><td class='num'>27</td><td><code>src/hardy/catalog.py:26</code> <code>src/hardy/config.py:13</code> <code>tests/test_catalog.py:14</code> <code>tests/test_catalog.py:9</code> <code>tests/test_doctor.py:26</code> <span class='dim'>… 22 more</span></td></tr>
+<tr><td><code>claude-something-new</code></td><td class='num'>1</td><td><code>tests/test_catalog.py:20</code></td></tr>
+<tr><td><code>claude-sonnet-5</code></td><td class='num'>17</td><td><code>src/hardy/catalog.py:28</code> <code>tests/test_chat.py:197</code> <code>tests/test_chat.py:200</code> <code>tests/test_model_command.py:145</code> <code>tests/test_model_command.py:151</code> <span class='dim'>… 12 more</span></td></tr>
+<tr><td><code>claude.assistant</code></td><td class='num'>1</td><td><code>tests/test_cancel_races.py:272</code></td></tr>
+<tr><td><code>claude.unsettled</code></td><td class='num'>2</td><td><code>src/hardy/staged.py:189</code> <code>tests/test_cancel_races.py:275</code></td></tr>
+<tr><td><code>gpt-5.6-codex</code></td><td class='num'>2</td><td><code>tests/unit/test_domain.py:121</code> <code>tests/unit/test_storage.py:98</code></td></tr>
+<tr><td><code>gpt-test</code></td><td class='num'>21</td><td><code>tests/unit/test_codex_runtime.py:100</code> <code>tests/unit/test_codex_runtime.py:121</code> <code>tests/unit/test_codex_runtime.py:155</code> <code>tests/unit/test_codex_runtime.py:188</code> <code>tests/unit/test_codex_runtime.py:97</code> <span class='dim'>… 16 more</span></td></tr></tbody></table></div>
+
+
+
+
+</section></main>
+<footer class="doc">Generated by code-visualization. Automated tabs: Inventory, Dependencies, Hotspots, LLM Ops. Judgment tabs authored from code reading — every file:line citation verified against commit 3917807. No coverage artifact exists in this repo, so the Coverage tab is absent rather than empty; the test suite was not executed.</footer>
+<div class="viz-tip" id="viz-tip"></div>
+<script>
+/* ============ tabs ============ */
+(function(){
+  const btns=[...document.querySelectorAll('nav.tabs button')];
+  const panels=[...document.querySelectorAll('.panel')];
+  function activate(id,push){
+    btns.forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===id?'true':'false'));
+    panels.forEach(p=>p.classList.toggle('active',p.id===id));
+    if(push){try{history.replaceState(null,'','#'+id)}catch(e){}}
+    window.dispatchEvent(new CustomEvent('tab:shown',{detail:{id}}));
+  }
+  btns.forEach(b=>b.addEventListener('click',()=>activate(b.dataset.tab,true)));
+  const initial=location.hash&&panels.some(p=>'#'+p.id===location.hash)?location.hash.slice(1):(panels[0]&&panels[0].id);
+  if(initial)activate(initial,false);
+  window.addEventListener('hashchange',()=>{const h=location.hash.slice(1);if(panels.some(p=>p.id===h))activate(h,false);});
+})();
+
+/* ============ helpers ============ */
+const cssVar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const tip=document.getElementById('viz-tip');
+function showTip(html,x,y){tip.innerHTML=html;tip.style.display='block';
+  const r=tip.getBoundingClientRect();
+  tip.style.left=Math.min(x+14,innerWidth-r.width-10)+'px';
+  tip.style.top=Math.min(y+14,innerHeight-r.height-10)+'px';}
+function hideTip(){tip.style.display='none'}
+function lerpColor(a,b,t){
+  const pa=hex(a),pb=hex(b);
+  return `rgb(${pa.map((v,i)=>Math.round(v+(pb[i]-v)*t)).join(',')})`;
+  function hex(h){h=h.replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');
+    return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16));}
+}
+function fmt(n){return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e4?(n/1e3).toFixed(0)+'k':n>=1e3?(n/1e3).toFixed(1)+'k':String(n)}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+/* sortable tables */
+document.querySelectorAll('table.sortable').forEach(tb=>{
+  tb.querySelectorAll('thead th').forEach((th,ci)=>{
+    th.addEventListener('click',()=>{
+      const dir=th.classList.contains('asc')?'desc':'asc';
+      tb.querySelectorAll('thead th').forEach(h=>h.classList.remove('asc','desc'));
+      th.classList.add(dir);
+      const rows=[...tb.querySelectorAll('tbody tr')];
+      const val=r=>{const td=r.children[ci];if(!td)return '';
+        const d=td.dataset.sort!==undefined?td.dataset.sort:td.textContent.trim();
+        const n=parseFloat(String(d).replace(/[,%]/g,''));return isNaN(n)?String(d).toLowerCase():n;};
+      rows.sort((a,b)=>{const va=val(a),vb=val(b);
+        const c=(typeof va==='number'&&typeof vb==='number')?va-vb:String(va).localeCompare(String(vb));
+        return dir==='asc'?c:-c;});
+      const tbody=tb.querySelector('tbody');rows.forEach(r=>tbody.appendChild(r));
+    });
+  });
+});
+
+/* pan/zoom for a container holding an inner element (svg group or div) */
+function panZoom(viewport,apply,getState){
+  let drag=null;
+  viewport.addEventListener('wheel',e=>{
+    if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();
+    const s=getState();const f=e.deltaY<0?1.15:1/1.15;
+    const r=viewport.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+    s.x=mx-(mx-s.x)*f; s.y=my-(my-s.y)*f; s.k=Math.max(.15,Math.min(8,s.k*f)); apply();
+  },{passive:false});
+  viewport.addEventListener('mousedown',e=>{
+    if(e.target.closest('.zoombar')||e.target.dataset.draggable)return;
+    drag={sx:e.clientX,sy:e.clientY,ox:getState().x,oy:getState().y};
+    viewport.classList.add('dragging');
+  });
+  window.addEventListener('mousemove',e=>{if(!drag)return;
+    const s=getState();s.x=drag.ox+e.clientX-drag.sx;s.y=drag.oy+e.clientY-drag.sy;apply();});
+  window.addEventListener('mouseup',()=>{drag=null;viewport.classList.remove('dragging')});
+}
+function addZoombar(container,zoomIn,zoomOut,reset){
+  const bar=document.createElement('div');bar.className='zoombar';
+  [['+',zoomIn],['−',zoomOut],['⟲',reset]].forEach(([t,fn])=>{
+    const b=document.createElement('button');b.textContent=t;b.title=t==='⟲'?'Reset view':(t==='+'?'Zoom in':'Zoom out');
+    b.addEventListener('click',fn);bar.appendChild(b);});
+  container.appendChild(bar);
+}
+
+/* ============ force-directed graph ============ */
+/* data: {nodes:[{id,label,group,size,fanIn,fanOut,meta}], links:[{source,target,cycle,weight}], groups:{name:colorKey}} */
+function renderForceGraph(container,data){
+  const W=container.clientWidth||900,H=container.clientHeight||560;
+  const groupNames=[...new Set(data.nodes.map(n=>n.group||''))];
+  const palette=[cssVar('--accent'),cssVar('--good'),cssVar('--warn'),cssVar('--violet'),cssVar('--bad'),'#5ec2c9','#c98fb8','#8fb0c9'];
+  const gcolor={};groupNames.forEach((g,i)=>gcolor[g]=palette[i%palette.length]);
+  const nodes=data.nodes.map(n=>({...n,x:W/2+(Math.random()-0.5)*W*0.7,y:H/2+(Math.random()-0.5)*H*0.7,vx:0,vy:0}));
+  const idx={};nodes.forEach((n,i)=>idx[n.id]=i);
+  const links=data.links.filter(l=>idx[l.source]!==undefined&&idx[l.target]!==undefined)
+    .map(l=>({...l,s:idx[l.source],t:idx[l.target]}));
+  const maxSize=Math.max(1,...nodes.map(n=>n.size||1));
+  const R=n=>6+14*Math.sqrt((n.size||1)/maxSize);
+  /* simulate */
+  const iter=nodes.length>60?220:320;
+  for(let k=0;k<iter;k++){
+    const t=1-k/iter, rep=9000*t+900;
+    for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
+      const a=nodes[i],b=nodes[j];let dx=a.x-b.x,dy=a.y-b.y;let d2=dx*dx+dy*dy||1;
+      if(d2<250000){const f=rep/d2;dx*=f;dy*=f;a.vx+=dx;a.vy+=dy;b.vx-=dx;b.vy-=dy;}
+    }
+    links.forEach(l=>{const a=nodes[l.s],b=nodes[l.t];
+      const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;
+      const want=90+R(a)+R(b);const f=0.02*(d-want)/d;
+      a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f;});
+    nodes.forEach(n=>{
+      n.vx+=(W/2-n.x)*0.0035;n.vy+=(H/2-n.y)*0.0035;
+      n.x+=Math.max(-14,Math.min(14,n.vx));n.y+=Math.max(-14,Math.min(14,n.vy));
+      n.vx*=0.6;n.vy*=0.6;});
+  }
+  /* fit */
+  const xs=nodes.map(n=>n.x),ys=nodes.map(n=>n.y);
+  const pad=60,minx=Math.min(...xs)-pad,maxx=Math.max(...xs)+pad,miny=Math.min(...ys)-pad,maxy=Math.max(...ys)+pad;
+  const fitK=Math.min(W/(maxx-minx),H/(maxy-miny),1.6);
+  const st={k:fitK,x:(W-(maxx+minx)*fitK)/2,y:(H-(maxy+miny)*fitK)/2};
+  const init={...st};
+  const svgNS='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(svgNS,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const defs=document.createElementNS(svgNS,'defs');
+  defs.innerHTML=`<marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="${cssVar('--text-faint')}"/></marker>
+  <marker id="arr-cyc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="${cssVar('--bad')}"/></marker>`;
+  svg.appendChild(defs);
+  const g=document.createElementNS(svgNS,'g');svg.appendChild(g);
+  const apply=()=>g.setAttribute('transform',`translate(${st.x},${st.y}) scale(${st.k})`);
+  const edgeEls=[],nodeEls=[];
+  links.forEach(l=>{
+    const p=document.createElementNS(svgNS,'path');
+    p.setAttribute('stroke',l.cycle?cssVar('--bad'):cssVar('--text-faint'));
+    p.setAttribute('stroke-opacity',l.cycle?'0.9':'0.4');
+    p.setAttribute('stroke-width',l.cycle?2:Math.min(3,0.7+Math.log2(1+(l.weight||1))*0.5));
+    p.setAttribute('fill','none');
+    /* dashed = loaded at runtime (template, prompt, data), not imported */
+    if(l.kind==='resource')p.setAttribute('stroke-dasharray','5 4');
+    p.setAttribute('marker-end',l.cycle?'url(#arr-cyc)':'url(#arr)');
+    g.appendChild(p);edgeEls.push(p);
+  });
+  nodes.forEach(n=>{
+    const grp=document.createElementNS(svgNS,'g');grp.style.cursor='grab';grp.dataset.draggable='1';
+    const c=document.createElementNS(svgNS,'circle');
+    c.setAttribute('r',R(n));c.setAttribute('fill',gcolor[n.group||'']);
+    c.setAttribute('fill-opacity','0.85');c.setAttribute('stroke',cssVar('--bg'));c.setAttribute('stroke-width','1.5');
+    c.dataset.draggable='1';
+    const t=document.createElementNS(svgNS,'text');
+    t.textContent=n.label||n.id;t.setAttribute('font-size','11');t.setAttribute('font-family',cssVar('--mono'));
+    t.setAttribute('fill',cssVar('--text'));t.setAttribute('text-anchor','middle');t.setAttribute('dy',R(n)+13);
+    t.style.pointerEvents='none';
+    grp.appendChild(c);grp.appendChild(t);g.appendChild(grp);nodeEls.push(grp);
+    grp.addEventListener('mouseenter',e=>{
+      showTip(`<b>${esc(n.label||n.id)}</b><br>${n.meta?esc(n.meta)+'<br>':''}fan-in ${n.fanIn??'–'} · fan-out ${n.fanOut??'–'}${n.size?` · ${fmt(n.size)} loc`:''}`,e.clientX,e.clientY);
+      hl(n.id);});
+    grp.addEventListener('mousemove',e=>showTip(tip.innerHTML,e.clientX,e.clientY));
+    grp.addEventListener('mouseleave',()=>{hideTip();hl(null)});
+    let dragN=null;
+    grp.addEventListener('mousedown',e=>{e.stopPropagation();dragN={mx:e.clientX,my:e.clientY,ox:n.x,oy:n.y};});
+    window.addEventListener('mousemove',e=>{if(!dragN)return;
+      n.x=dragN.ox+(e.clientX-dragN.mx)/st.k;n.y=dragN.oy+(e.clientY-dragN.my)/st.k;draw();});
+    window.addEventListener('mouseup',()=>dragN=null);
+  });
+  function hl(id){
+    if(id===null){edgeEls.forEach((p,i)=>p.setAttribute('stroke-opacity',links[i].cycle?'0.9':'0.4'));
+      nodeEls.forEach(el=>el.style.opacity='1');return;}
+    const near=new Set([id]);
+    links.forEach(l=>{if(l.source===id)near.add(l.target);if(l.target===id)near.add(l.source)});
+    edgeEls.forEach((p,i)=>{const l=links[i];
+      p.setAttribute('stroke-opacity',(l.source===id||l.target===id)?'1':'0.08');});
+    nodeEls.forEach((el,i)=>el.style.opacity=near.has(nodes[i].id)?'1':'0.25');
+  }
+  function draw(){
+    links.forEach((l,i)=>{const a=nodes[l.s],b=nodes[l.t];
+      const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;
+      const tx=b.x-dx/d*(R(b)+3),ty=b.y-dy/d*(R(b)+3);
+      const sx=a.x+dx/d*R(a),sy=a.y+dy/d*R(a);
+      const mx=(sx+tx)/2-dy/d*10,my=(sy+ty)/2+dx/d*10;
+      edgeEls[i].setAttribute('d',`M${sx},${sy} Q${mx},${my} ${tx},${ty}`);});
+    nodes.forEach((n,i)=>nodeEls[i].setAttribute('transform',`translate(${n.x},${n.y})`));
+  }
+  draw();apply();
+  container.appendChild(svg);
+  panZoom(container,apply,()=>st);
+  addZoombar(container,
+    ()=>{st.k=Math.min(8,st.k*1.25);apply()},
+    ()=>{st.k=Math.max(.15,st.k/1.25);apply()},
+    ()=>{Object.assign(st,init);apply()});
+  if(groupNames.length>1||data.legendExtra){
+    const leg=document.createElement('div');leg.className='legend';
+    groupNames.forEach(gn=>{leg.innerHTML+=`<span><i class="sw" style="background:${gcolor[gn]}"></i>${esc(gn||'(root)')}</span>`});
+    if(data.legendExtra)leg.innerHTML+=data.legendExtra;
+    container.appendChild(leg);
+  }
+}
+
+/* ============ squarified treemap ============ */
+/* data: {items:[{name,value,metric,meta}], metricLabel, metricMax} — value drives area, metric drives heat color */
+function renderTreemap(container,data){
+  const W=container.clientWidth||900,H=container.clientHeight||520;
+  const items=data.items.filter(d=>d.value>0).sort((a,b)=>b.value-a.value);
+  const total=items.reduce((s,d)=>s+d.value,0)||1;
+  const mmax=data.metricMax??Math.max(1,...items.map(d=>d.metric||0));
+  const rects=[];
+  (function squarify(list,x,y,w,h){
+    if(!list.length)return;
+    if(list.length===1){rects.push({d:list[0],x,y,w,h});return;}
+    let row=[],rest=list.slice(),best=Infinity;
+    while(rest.length){
+      const cand=row.concat(rest[0]);
+      const sum=cand.reduce((s,d)=>s+d.value,0);
+      const side=Math.min(w,h);
+      const scale=(w*h)*(sum/list.reduce((s,d)=>s+d.value,0));
+      const len=scale/side;
+      const worst=Math.max(...cand.map(d=>{
+        const a=(d.value/sum)*side*len;const r=Math.max(len*len/ (a/side*side/ (a/len)||1),1);
+        const iw=(d.value/sum)*side, ratio=Math.max(len/iw,iw/len);return ratio;}));
+      if(worst<=best){best=worst;row=cand;rest.shift();}
+      else break;
+    }
+    const sum=row.reduce((s,d)=>s+d.value,0);
+    const frac=sum/list.reduce((s,d)=>s+d.value,0);
+    if(w>=h){const cw=w*frac;let cy=y;
+      row.forEach(d=>{const ch=h*(d.value/sum);rects.push({d,x,y:cy,w:cw,h:ch});cy+=ch;});
+      squarify(rest,x+cw,y,w-cw,h);
+    }else{const ch=h*frac;let cx=x;
+      row.forEach(d=>{const cw=w*(d.value/sum);rects.push({d,x:cx,y,w:cw,h:ch});cx+=cw;});
+      squarify(rest,x,y+ch,w,h-ch);
+    }
+  })(items,0,0,W,H);
+  const svgNS='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(svgNS,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const lo=cssVar('--heat-lo'),hi=cssVar('--heat-hi');
+  rects.forEach(r=>{
+    const t=Math.pow(Math.min(1,(r.d.metric||0)/mmax),0.6);
+    const g=document.createElementNS(svgNS,'g');
+    const rc=document.createElementNS(svgNS,'rect');
+    rc.setAttribute('x',r.x+1);rc.setAttribute('y',r.y+1);
+    rc.setAttribute('width',Math.max(0,r.w-2));rc.setAttribute('height',Math.max(0,r.h-2));
+    rc.setAttribute('rx',3);rc.setAttribute('fill',lerpColor(lo,hi,t));
+    rc.setAttribute('stroke',cssVar('--bg'));rc.setAttribute('stroke-width','1');
+    g.appendChild(rc);
+    if(r.w>66&&r.h>22){
+      const tx=document.createElementNS(svgNS,'text');
+      const nm=r.d.name.split('/').pop();
+      tx.textContent=nm.length>Math.floor(r.w/6.6)?nm.slice(0,Math.floor(r.w/6.6)-1)+'…':nm;
+      tx.setAttribute('x',r.x+7);tx.setAttribute('y',r.y+16);
+      tx.setAttribute('font-size','11');tx.setAttribute('font-family',cssVar('--mono'));
+      tx.setAttribute('fill',t>0.55?'#fff':cssVar('--text'));tx.style.pointerEvents='none';
+      g.appendChild(tx);
+    }
+    g.addEventListener('mouseenter',e=>{rc.setAttribute('stroke',cssVar('--text'));
+      showTip(`<b>${esc(r.d.name)}</b><br>${esc(data.valueLabel||'size')}: ${fmt(r.d.value)}<br>${esc(data.metricLabel||'metric')}: ${fmt(r.d.metric||0)}${r.d.meta?'<br>'+esc(r.d.meta):''}`,e.clientX,e.clientY);});
+    g.addEventListener('mousemove',e=>showTip(tip.innerHTML,e.clientX,e.clientY));
+    g.addEventListener('mouseleave',()=>{rc.setAttribute('stroke',cssVar('--bg'));hideTip();});
+    svg.appendChild(g);
+  });
+  container.appendChild(svg);
+  const leg=document.createElement('div');leg.className='legend';
+  leg.innerHTML=`<span>area = ${esc(data.valueLabel||'size')}</span><span><i class="sw" style="background:${lo}"></i>low ${esc(data.metricLabel||'')}</span><span><i class="sw" style="background:${hi}"></i>high ${esc(data.metricLabel||'')}</span>`;
+  container.appendChild(leg);
+}
+
+/* ============ auto-init viz blocks ============ */
+document.querySelectorAll('.viz[data-render]').forEach(el=>{
+  const dataEl=el.nextElementSibling;
+  if(!dataEl||dataEl.type!=='application/json')return;
+  let data;try{data=JSON.parse(dataEl.textContent)}catch(e){el.textContent='data parse error';return}
+  const render=()=>{
+    if(el.dataset.done)return;el.dataset.done='1';
+    try{
+      if(el.dataset.render==='forcegraph')renderForceGraph(el,data);
+      else if(el.dataset.render==='treemap')renderTreemap(el,data);
+    }catch(e){el.innerHTML='<p style="padding:16px" class="dim">render error: '+esc(e.message)+'</p>';}
+  };
+  const panel=el.closest('.panel');
+  if(panel&&panel.classList.contains('active'))render();
+  else window.addEventListener('tab:shown',ev=>{if(panel&&ev.detail.id===panel.id)render();});
+});
+
+/* ============ mermaid (lazy per tab, with pan/zoom) ============ */
+(function(){
+  if(!document.querySelector('.mermaid'))return;
+  const s=document.createElement('script');
+  s.src='https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js';
+  s.onload=()=>{
+    if(typeof mermaid==='undefined'){document.querySelectorAll('.mermaid').forEach(n=>{n.style.cssText='white-space:pre;font-family:var(--mono);font-size:12px;padding:14px;overflow-x:auto';});return;}
+    mermaid.initialize({startOnLoad:false,securityLevel:'loose',theme:'base',
+      themeVariables:{
+        primaryColor:cssVar('--surface-2'),primaryTextColor:cssVar('--text'),
+        primaryBorderColor:cssVar('--border-strong'),lineColor:cssVar('--text-dim'),
+        secondaryColor:cssVar('--accent-dim'),tertiaryColor:cssVar('--surface'),
+        background:cssVar('--surface'),mainBkg:cssVar('--surface-2'),
+        nodeTextColor:cssVar('--text'),fontFamily:cssVar('--sans'),fontSize:'14px',
+        actorBkg:cssVar('--surface-2'),actorBorder:cssVar('--accent'),actorTextColor:cssVar('--text'),
+        signalColor:cssVar('--text-dim'),signalTextColor:cssVar('--text'),
+        labelBoxBkgColor:cssVar('--surface-2'),labelTextColor:cssVar('--text'),
+        loopTextColor:cssVar('--text-dim'),noteBkgColor:cssVar('--warn-dim'),noteTextColor:cssVar('--text'),noteBorderColor:cssVar('--warn'),
+        clusterBkg:cssVar('--accent-dim'),clusterBorder:cssVar('--border-strong'),titleColor:cssVar('--text'),
+        edgeLabelBackground:cssVar('--surface')
+      }});
+    async function renderIn(panel){
+      const nodes=[...panel.querySelectorAll('.mermaid:not([data-processed])')];
+      if(!nodes.length)return;
+      try{await mermaid.run({nodes});}catch(e){/* leaves source visible */}
+      nodes.forEach(n=>{
+        const wrap=n.closest('.mermaid-wrap');if(!wrap||wrap.dataset.pz)return;wrap.dataset.pz='1';
+        const vp=wrap.querySelector('.mviewport')||wrap;
+        const svg=n.querySelector('svg');if(!svg)return;
+        svg.style.maxWidth='none';
+        const st={k:1,x:0,y:0},init={k:1,x:0,y:0};
+        const apply=()=>{svg.style.transformOrigin='0 0';svg.style.transform=`translate(${st.x}px,${st.y}px) scale(${st.k})`};
+        panZoom(vp,apply,()=>st);
+        addZoombar(wrap,()=>{st.k=Math.min(8,st.k*1.25);apply()},()=>{st.k=Math.max(.2,st.k/1.25);apply()},()=>{Object.assign(st,init);apply()});
+      });
+    }
+    const active=document.querySelector('.panel.active');if(active)renderIn(active);
+    window.addEventListener('tab:shown',e=>{const p=document.getElementById(e.detail.id);if(p)renderIn(p);});
+  };
+  s.onerror=()=>{document.querySelectorAll('.mermaid').forEach(n=>{n.style.cssText='white-space:pre;font-family:var(--mono);font-size:12px;padding:14px;overflow-x:auto';});};
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>
