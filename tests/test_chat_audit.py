@@ -204,6 +204,63 @@ def test_deleting_a_module_drops_its_audit_record(tmp_path: Path):
     assert state(tmp_path)["audit"] == {}
 
 
+def test_a_guillemet_quoted_declaration_is_auditable(tmp_path: Path):
+    """`theorem «first result»` is ordinary Lean and `declarations` reports it,
+    so the audit has to be able to ask about a name containing a space."""
+    quoted = "import Mathlib\n\ntheorem «first result» : True := by exact True.intro\n"
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": quoted}, "lean")]))
+    chat.send("Save it.")
+    result = results(tmp_path, "save_lean")[-1]
+    assert result["ok"], result["output"]
+    assert state(tmp_path)["audit"]["Main"]["declarations"] == [
+        {"name": "«first result»", "axioms": []}
+    ]
+
+
+def test_a_private_lemma_does_not_make_the_workspace_unsaveable(tmp_path: Path):
+    """Lean mangles a private name so no importing file can reach it, and the
+    audit asks its questions over an import. Asking about one errors, which
+    would refuse every save of a file using the ordinary `private lemma` idiom.
+    """
+    scaffolded = (
+        "import Mathlib\n\n"
+        "private lemma step : True := by exact True.intro\n\n"
+        "theorem HardyTarget : True := by exact True.intro\n"
+    )
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": scaffolded}, "lean")]))
+    chat.send("Save it.")
+    result = results(tmp_path, "save_lean")[-1]
+    assert result["ok"], result["output"]
+    # The exported theorem is audited; the private helper is not asked about,
+    # and does not need to be — anything exported that uses it inherits its axioms.
+    assert state(tmp_path)["audit"]["Main"]["declarations"] == [
+        {"name": "HardyTarget", "axioms": []}
+    ]
+
+
+def test_a_private_theorem_is_refused_rather_than_left_unaudited(tmp_path: Path):
+    """A `theorem` is what the workspace reports as a result, and one nothing
+    outside the module can name can be neither audited nor cited in a writeup.
+    Skipping it silently would leave a documented result nothing checked."""
+    hidden = "import Mathlib\n\nprivate theorem HardyTarget : True := by exact True.intro\n"
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": hidden}, "lean")]))
+    chat.send("Save it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "HardyTarget" in refusal["output"]
+    assert "private" in refusal["output"]
+    assert not saved(tmp_path).exists()
+
+
+def test_a_module_of_only_private_lemmas_is_not_a_clean_audit(tmp_path: Path):
+    """Nothing exported means nothing established, not everything established."""
+    private_only = "import Mathlib\n\nprivate lemma step : True := by exact True.intro\n"
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": private_only}, "lean")]))
+    chat.send("Save it.")
+    assert results(tmp_path, "save_lean")[-1]["ok"]
+    assert state(tmp_path)["audit"]["Main"]["status"] == "not established"
+
+
 def test_check_lean_is_not_gated_by_the_audit(tmp_path: Path):
     """Scratch work is where a model finds out what an axiom costs it."""
     chat = session(tmp_path, FakeChatRuntime([call("check_lean", {"source": HOLED}, "check")]))

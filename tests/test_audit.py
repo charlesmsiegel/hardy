@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from hardy.audit import AxiomReport, Verdict, classify, dependents, describe, parse, unestablished
 
 
@@ -184,8 +186,5 @@ def test_unestablished_is_json_plain_and_says_why():
 def test_a_verdict_is_frozen():
     """The record of what an artifact rests on is not edited after the fact."""
     verdict = Verdict("clean", (), (), (), ())
-    try:
+    with pytest.raises(AttributeError):
         verdict.status = "modulo"
-    except AttributeError:
-        return
-    raise AssertionError("Verdict must be immutable")

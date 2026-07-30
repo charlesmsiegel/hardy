@@ -333,6 +333,21 @@ class MathematicsSession:
         """
         if self.lean.has_holes(source):
             return ToolResult(False, "saved Lean artifacts may not contain sorry or admit", source)
+        found = declarations(source)
+        # A `theorem` is what this workspace reports as a result, and a private
+        # one can be neither audited nor cited: Lean mangles the name out of
+        # reach of any other module, including the file the audit elaborates.
+        # Refused rather than skipped, or a documented result would sit behind
+        # a gate that never ran on it. `private lemma` stays free.
+        hidden = [name for name in found["theorem"] if name in found["private"]]
+        if hidden:
+            return ToolResult(
+                False,
+                f"a private theorem cannot be audited or written up, because no other module can "
+                f"name it: {hidden}. Drop `private`, or state it as a `private lemma` if it is "
+                "scaffolding rather than a result.",
+                source,
+            )
         approved = {item["formal_name"]: " ".join(item["lean_statement"].split()) for item in self.state["assumptions"]}
         # Named `assumed` rather than `declarations`: the module-level function
         # of that name is what reads theorems out of a source.
@@ -524,10 +539,22 @@ class MathematicsSession:
         nothing it depends on moved.
         """
         sources = space.sources()
+        # `declarations` strips comments and rescans the whole file, so it is
+        # asked once per module rather than once per kind.
+        found_in = {module: declarations(sources[module]) for module in modules}
+        # Private declarations are left out because Lean will not let this probe
+        # name one: it elaborates a file that *imports* the module, and a private
+        # name is mangled out of reach from there. Asking anyway is an unknown
+        # identifier, which would refuse every save of a file using the ordinary
+        # `private lemma` idiom. Nothing is lost -- an exported declaration that
+        # uses a private helper reports the helper's axioms as its own.
         declared = {
-            module: declarations(sources[module])["theorem"]
-            + declarations(sources[module])["lemma"]
-            for module in modules
+            module: tuple(
+                name
+                for name in found["theorem"] + found["lemma"]
+                if name not in found["private"]
+            )
+            for module, found in found_in.items()
         }
         # Deduplicated: two `#print axioms` lines for one name read as a
         # duplicated report, which fails closed and would leave a workspace

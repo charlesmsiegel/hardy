@@ -422,18 +422,11 @@ class LeanTools:
         proof = "by\n" + (f"  {tactic}\n" if tactic.strip() else "") + "  trace_state\n  sorry"
         return self._run(self.source(proof))
 
-    def search_declaration(
-        self, name: str, *, imports: Sequence[str] | None = None
-    ) -> LeanToolResult:
-        """Look one declaration up, optionally under imports other than the
-        request's -- the interactive session's placeholder request carries only
-        `Mathlib`, so an axiom supplied by a saved source's own import would
-        otherwise always come back unavailable."""
+    def search_declaration(self, name: str) -> LeanToolResult:
         if not DECLARATION_NAME.fullmatch(name):
             return LeanToolResult(False, "search_declaration accepts one Lean declaration name")
-        wanted = self.request.imports if imports is None else imports
-        lines = "\n".join(f"import {item}" for item in wanted)
-        return self._run(f"{lines}\n\n#check {name}\n#print {name}\n")
+        imports = "\n".join(f"import {item}" for item in self.request.imports)
+        return self._run(f"{imports}\n\n#check {name}\n#print {name}\n")
 
 
 class LeanService:

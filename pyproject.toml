@@ -71,9 +71,6 @@ ignore = ["E501", "UP042"]
 # was installed editable or built into the environment.
 source = ["hardy"]
 branch = true
-# Tool calls run on the SDK's own threads, and a line reached only from one of
-# them would otherwise read as unreached.
-concurrency = ["thread"]
 # `hardy.cas_driver` is the body of a helper *process*: the suite starts it
 # with `subprocess`, so nothing here observes it and its 0% is a limit of the
 # measurement rather than an absence of tests. Left in the report rather than
@@ -86,9 +83,3 @@ skip_covered = true
 # A floor, not a target. It sits just under what the suite measures today, so
 # it catches a change that drops coverage without failing on ordinary drift.
 fail_under = 82
-exclude_also = [
-    # Imported for type checking only; never executed.
-    "if TYPE_CHECKING:",
-    # `Protocol` method bodies. There is nothing in one to exercise.
-    "^\\s*\\.\\.\\.$",
-]

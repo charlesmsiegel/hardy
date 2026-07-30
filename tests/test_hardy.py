@@ -185,11 +185,6 @@ def test_search_declaration_rejects_a_malformed_qualified_name(lean: LeanTools):
     assert lean.search_declaration("Nat.add_comm'").ok
 
 
-def test_search_declaration_can_look_under_other_imports(lean: LeanTools):
-    result = lean.search_declaration("Papers.Smith.main", imports=("Mathlib", "Papers.Smith"))
-    assert "import Papers.Smith" in (result.source or "")
-
-
 def test_the_fake_lean_reports_the_axioms_a_test_asked_for(lean: LeanTools):
     result = lean.run_source(
         "theorem A : True := by exact True.intro -- axioms: propext, sorryAx\n", audit=("axioms A",)

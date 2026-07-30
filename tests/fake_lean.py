@@ -29,6 +29,13 @@ BUILTIN = {"Mathlib", "Init", "Std", "Lean", "Batteries"}
 # a hole, and a test naming it in a marker must not read as a `sorry`.
 HOLE = re.compile(r"\b(sorry|admit)\b")
 MARKER = re.compile(r"--\s*axioms:\s*(.*)")
+EXPORTS = re.compile(r"--\s*exports:\s*(.*)")
+# A declaration another module can name. `private` deliberately makes one that
+# nothing outside this file can reach, which is exactly the visibility a caller
+# building `#print axioms` over an import has to respect.
+DECLARED = re.compile(
+    r"(?m)^\s*(?:(private|protected)\s+)?(?:theorem|lemma)\s+(«[^»\n]+»|\S+)"
+)
 OLEAN_PREFIX = b"olean-fake\n"
 
 argv = sys.argv[1:]
@@ -48,9 +55,18 @@ def marked(text: str) -> list[str]:
     return [item.strip() for item in found.group(1).split(",") if item.strip()] if found else []
 
 
+def listed(pattern: re.Pattern[str], text: str) -> list[str]:
+    found = pattern.search(text)
+    return [item.strip() for item in found.group(1).split(",") if item.strip()] if found else []
+
+
 # What this elaboration would report: what the source itself declares, plus what
 # every workspace module it imports already carried into its olean.
 axioms = marked(source)
+# What an importer of this file would be able to name. Private declarations are
+# left out on purpose: Lean mangles them so no other module can refer to them.
+exports = [name for modifier, name in DECLARED.findall(source) if modifier != "private"]
+visible: list[str] = []
 for line in source.splitlines():
     stripped = line.strip()
     if not stripped.startswith("import "):
@@ -67,21 +83,32 @@ for line in source.splitlines():
     if found is None:
         print(f"{path.name}:1:0: error: unknown module prefix '{name}'")
         raise SystemExit(1)
-    axioms.extend(
-        item for item in marked(found.read_text(encoding="utf-8", errors="replace"))
-        if item not in axioms
-    )
+    carried = found.read_text(encoding="utf-8", errors="replace")
+    axioms.extend(item for item in marked(carried) if item not in axioms)
+    visible.extend(item for item in listed(EXPORTS, carried) if item not in visible)
 
 
 def report_axioms() -> None:
     """Stand in for `#print axioms`, in both of real Lean's two forms."""
-    for name in re.findall(r"#print axioms (\S+)", source):
+    # To end of line, not to the first space: `theorem «first result»` is an
+    # ordinary Lean declaration and `\S+` would report half its name.
+    for name in re.findall(r"(?m)^#print axioms (.+?)\s*$", source):
+        # Asking about a name this file cannot see is an error, not silence --
+        # a stand-in that answered anyway would hide the caller's real bug.
+        # Matched on the last component too, because this stand-in does not
+        # track namespaces and real Lean resolves `Hardy.one` for a `theorem
+        # one` inside `namespace Hardy`. A private declaration never reaches
+        # `exports` at all, so the check that matters here still bites.
+        reachable = set(exports) | set(visible)
+        if name not in reachable and name.rsplit(".", 1)[-1] not in reachable:
+            print(f"{path.name}:1:0: error: unknown identifier '{name}'")
+            raise SystemExit(1)
         if axioms:
             print(f"'{name}' depends on axioms: [{', '.join(axioms)}]")
         else:
             print(f"'{name}' does not depend on any axioms")
     # `#print <name>` on its own prints the declaration Lean resolves.
-    for name in re.findall(r"(?m)^#print (?!axioms )(\S+)", source):
+    for name in re.findall(r"(?m)^#print (?!axioms )(.+?)\s*$", source):
         print(f"axiom {name} : True")
 
 
@@ -91,6 +118,8 @@ def write_olean() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     # The marker rides along so an importer of this module sees the same axioms.
     trailer = f"-- axioms: {', '.join(axioms)}\n".encode() if axioms else b""
+    # And the names an importer may use, for the same reason.
+    trailer += f"-- exports: {', '.join(exports)}\n".encode() if exports else b""
     output.write_bytes(OLEAN_PREFIX + trailer)
 
 
