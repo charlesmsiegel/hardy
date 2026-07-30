@@ -368,3 +368,73 @@ def test_accepted_proof_carries_evidence_that_re_derives_its_digest(tmp_path) ->
         (store.path / 'lean' / 'verification.json').read_text(encoding='utf-8')
     )
     assert saved == result
+
+
+def _verify_reporting(tmp_path, name, report, proof='by rfl'):
+    """Verify a claim named `name` against one Lean information message."""
+    domain = importlib.import_module('hardy.domain')
+    process = importlib.import_module('hardy.process')
+    storage = importlib.import_module('hardy.storage')
+    verifier = importlib.import_module('hardy.verifier')
+    proposal = domain.FormalizationProposal(
+        restatement='Two equals two.',
+        domains=(),
+        quantifiers=(),
+        assumptions=(),
+        interpretation_choices=(),
+        theorem_name=name,
+        binders='',
+        proposition='2 = 2',
+    )
+    environment = domain.EnvironmentIdentity(
+        lean_version='4.32.0',
+        lean_commit='8c9756b',
+        mathlib_revision='81a5d257',
+        lake_manifest_sha256='b' * 64,
+        imports=('Mathlib',),
+    )
+    claim = domain.freeze_claim('Two equals two.', proposal, environment, NOW)
+    store = _store(storage, tmp_path)
+    stdout = json.dumps({'severity': 'information', 'data': report})
+    final = verifier.FinalVerifier(
+        lake=tmp_path / 'lake.exe',
+        lean_project=tmp_path,
+        environment=environment,
+        limits=domain.RunLimits(),
+        runner=lambda spec: _process_result(process, spec, stdout=stdout),
+    )
+    return final.verify(claim, proof, store)
+
+
+def test_a_primed_theorem_name_can_be_audited(tmp_path) -> None:
+    """`\\badd_comm'\\b` never matches, so this used to report no axiom report
+    at all and refuse every primed declaration the kernel had accepted."""
+    result = _verify_reporting(
+        tmp_path,
+        "add_comm'",
+        "'add_comm'' depends on axioms: [propext]",
+    )
+    assert result.verified
+    assert result.axioms == ('propext',)
+
+
+def test_a_duplicated_axiom_report_is_not_resolved_by_position(tmp_path) -> None:
+    """Two reports for one name means something other than Lean printed one."""
+    result = _verify_reporting(
+        tmp_path,
+        'two_eq_two',
+        "'two_eq_two' depends on axioms: [sorryAx]\\n"
+        "'two_eq_two' does not depend on any axioms",
+    )
+    assert not result.verified
+    assert result.reason.value == 'lean_elaboration_failure'
+
+
+def test_a_report_for_another_declaration_is_not_this_ones(tmp_path) -> None:
+    result = _verify_reporting(
+        tmp_path,
+        'two_eq_two',
+        "'Other.two_eq_two' does not depend on any axioms",
+    )
+    assert not result.verified
+    assert result.reason.value == 'lean_elaboration_failure'

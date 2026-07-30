@@ -47,6 +47,25 @@ def test_a_name_is_not_matched_by_a_longer_one_that_contains_it():
     assert parse(output, ("bar",)) is None
 
 
+def test_an_unquoted_report_is_read_too():
+    """Lean quotes the name, but a report is evidence however it is spelled."""
+    assert parse("two_eq_two depends on axioms: [propext]", ("two_eq_two",)) == (
+        AxiomReport("two_eq_two", ("propext",)),
+    )
+
+
+def test_the_bare_form_is_still_bounded_by_the_whole_name():
+    assert parse("Foo.bar depends on axioms: [sorryAx]", ("bar",)) is None
+    assert parse("barn depends on axioms: [sorryAx]", ("bar",)) is None
+
+
+def test_the_quoted_and_bare_forms_do_not_double_count_one_report():
+    """Otherwise every real report would read as a duplicate and fail closed."""
+    assert parse("'T' depends on axioms: [propext]", ("T",)) == (
+        AxiomReport("T", ("propext",)),
+    )
+
+
 def test_a_missing_report_is_not_an_empty_one():
     """Silence must never read as 'depends on nothing'."""
     assert parse("'Other' does not depend on any axioms", ("HardyTarget",)) is None
