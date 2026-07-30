@@ -199,6 +199,12 @@ def cas_command(
 def _batch(args: argparse.Namespace, config: configuration.Config, parser: argparse.ArgumentParser) -> int:
     request = Request.from_dict(json.loads(args.request.read_text(encoding="utf-8")))
     lean = LeanTools(request, config.lean_command, timeout=config.lean_timeout, project=config.lean_project)
+    # Refused here rather than at the first submission. An anonymous `example`
+    # has no name for `#print axioms`, so the audit can never establish anything
+    # about it and the run can never verify -- and finding that out at the end
+    # costs a whole billable model run to reach a conclusion available now.
+    if lean.target_name is None:
+        parser.error(f"batch needs a named theorem or lemma to audit, not: {request.declaration!r}")
     result = run(request, runtime_factory(str(config.model)), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds)
     print(json.dumps(result.as_dict(), indent=2))
     return 0 if result.terminal_reason == "verified" else 1
