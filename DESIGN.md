@@ -32,6 +32,13 @@ Only Lean kernel acceptance justifies “verified.” TeX compilation checks doc
 construction, not mathematical truth. If Hardy cannot finish, it should still
 return useful partial artifacts and state their limits rather than overclaim.
 
+Both formalization grades follow an audit of the axioms Lean reports for each
+graded declaration, not a process exit code. `sorryAx` is fatal and no approval
+can make it an assumption. “Verified modulo listed paper assumptions” is
+reachable only in the interactive path, where a human is present to approve one;
+`prove` and `batch` run unattended and fail closed instead. A report that is
+missing, duplicated, or unreadable is a refusal rather than a pass.
+
 A kernel-verified grade carries the record its verification hash is taken over —
 the frozen claim, the elaborated Lean source, the axioms that source reported,
 and the toolchain that read it — so the hash is derived rather than declared. On
@@ -201,6 +208,16 @@ start) needs none of it.
 The Lean kernel is the authority for formal proof, subject to an audited axiom
 set. Independent faithfulness checks protect the translation from an informal
 claim to Lean. Assumed-paper axioms widen the trust base and must be visible.
+
+The audit runs inside the environment it audits: `#print axioms` is elaborated
+by a Lean environment the submitted source has already had the chance to extend,
+and a source that registers its own elaborator for that syntax can answer the
+audit itself. Moving the audit to a second invocation does not close this — the
+audited module would still have to be imported, and its elaborator extensions
+come with it. The audit therefore establishes that an artifact is not
+*accidentally* unsound; it is not a defence against a source written to subvert
+elaboration, and cannot be one while Lean runs unconfined. Closing it belongs
+with the process isolation deferred below.
 
 The reset intentionally removes the old container sandbox. This is a sequencing
 choice, not a claim that generated Lean, TeX, or computer algebra cells are

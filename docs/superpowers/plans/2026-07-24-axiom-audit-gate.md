@@ -1,5 +1,39 @@
 # Axiom Audit Gate Implementation Plan
 
+> **Status: implemented, with deviations. Read this note before the plan.**
+>
+> The gate is in: `src/hardy/audit.py` parses and classifies, `lean.py` emits the
+> audit lines, and `runner.py`, `chat.py`, and `verifier.py` all grade on it.
+> Tasks 1, 2, 3, 4, and 7 landed close to what is written below. The rest did
+> not, and the plan is left unedited rather than rewritten so the difference is
+> visible:
+>
+> - **The workspace changed shape underneath Task 5.** This plan was written
+>   against a session that saved one `Main.lean` at the workspace root. Lean
+>   sources now live in a tree under `lean/`, saves go through a shadow build,
+>   and a save rebuilds every dependent. So the audit could not ride on the
+>   check's elaboration: the declarations to audit span modules. It runs as one
+>   extra elaboration over the built shadow tree instead, importing the oleans
+>   the build just produced.
+> - **Audit scope is the declarations, not the naming registry.** Every theorem
+>   and lemma in the modules the save rebuilt is audited. The plan's rule that an
+>   empty registry refuses the save is not implemented; `record_name` is not a
+>   precondition of saving, and the existing test ordering stands.
+> - **The interactive path fails closed rather than prompting.** An unapproved
+>   axiom refuses the save and names both the axiom and what needs it, so the
+>   model goes through the existing `request_assumption`. The at-audit approval
+>   prompt (Task 6, `tests/test_approval.py`, `_admit`, `audit.printed`, the
+>   `discovered_statement` lookup and its truncation handling) is **not built**.
+> - **Not built, and still open:** the `save_latex` disclosure gate, the stored
+>   verdict's `source_sha256` binding, registry-change invalidation, and drift
+>   detection on an approved assumption's statement. All of them layer on top of
+>   the gate rather than being part of it.
+>
+> `TerminalReason` gained no `axioms_rejected` member: that string is `batch`'s
+> own terminal reason, and `prove` keeps `UNEXPECTED_AXIOM` for both a hole and
+> an assumption, because it is written to disk and read by things that never
+> import Hardy.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make Hardy's formalization grade a consequence of an audited Lean axiom set rather than of a process exit code, in both the interactive and unattended paths.

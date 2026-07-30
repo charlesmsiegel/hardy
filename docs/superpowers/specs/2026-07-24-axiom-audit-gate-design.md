@@ -1,5 +1,11 @@
 # The axiom audit gate
 
+> **Status: implemented, with deviations.** See the note at the top of
+> `docs/superpowers/plans/2026-07-24-axiom-audit-gate.md` for what landed and
+> what did not. In short: the gate and the fail-closed unattended path are in on
+> all three surfaces; the interactive at-audit approval prompt, the `save_latex`
+> disclosure requirement, and approved-statement drift detection are not.
+
 ## Problem
 
 Hardy claims that only Lean kernel acceptance justifies "verified" and that
