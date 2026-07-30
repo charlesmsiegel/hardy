@@ -45,8 +45,14 @@ HEADER_KEYWORDS = frozenset({"prelude", "module"})
 # Scanned over the whole source rather than line by line, because Lean allows a
 # newline between the keyword and the name and a line-oriented match would lose
 # the declaration entirely.
+# `set_option x y in`, `open Foo in`, `attribute [...] in` -- Lean's way of
+# scoping one command. What follows is an ordinary declaration, and a scanner
+# that stops at the wrapper misses it: an unseen theorem is one the audit never
+# asks about, and an unseen axiom is one whose statement is never compared
+# against what a human approved.
+WRAPPER = r"(?:(?:set_option|open|attribute|universe|variable|section)\b[^\n]*?\sin\s+)*"
 DECLARATION = re.compile(
-    rf"(?m)^[ \t]*(?:@\[[^\]]*\]\s*)*((?:(?:private|protected|nonrec|noncomputable)\s+)*)"
+    rf"(?m)^[ \t]*{WRAPPER}(?:@\[[^\]]*\]\s*)*((?:(?:private|protected|nonrec|noncomputable)\s+)*)"
     rf"(theorem|lemma)\s+({QUALIFIED_NAME})"
 )
 # `private` is the one modifier that changes who can name a declaration: Lean
@@ -213,7 +219,10 @@ def strip_comments(source: str) -> str:
 
 NAMESPACE = re.compile(rf"^namespace\s+({QUALIFIED})$")
 END = re.compile(rf"^end(?:\s+({QUALIFIED}))?$")
-ASSUMPTION = re.compile(rf"^(?:axiom|constant)\s+({QUALIFIED})\s*:(.*)$")
+ASSUMPTION = re.compile(
+    rf"^{WRAPPER}(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|scoped|local)\s+)*"
+    rf"(?:axiom|constant)\s+({QUALIFIED})\s*:(.*)$"
+)
 # Where a declaration stops, so the one before it is not read as running on.
 # Approximate on purpose: over-reading appends text to a statement and the
 # comparison refuses a save that should have passed, which is visible and

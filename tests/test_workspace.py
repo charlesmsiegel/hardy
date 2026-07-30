@@ -387,3 +387,26 @@ def test_a_root_qualified_private_declaration_is_tracked_under_the_same_name():
     found = declarations(source)
     assert found["lemma"] == ("step",)
     assert found["private"] == ("step",)
+
+
+def test_a_wrapped_assumption_is_still_compared():
+    """`set_option ... in axiom` is one command, and a scanner that stopped at
+    the wrapper returned nothing — so the statement was never compared against
+    the one a human approved, and the axiom passed on its name."""
+    assert assumptions("set_option autoImplicit false in axiom trusted : False\n") == (
+        ("trusted", "False"),
+    )
+    assert assumptions("open Nat in axiom trusted : False\n") == (("trusted", "False"),)
+    assert assumptions("@[simp] axiom trusted : False\n") == (("trusted", "False"),)
+
+
+def test_in_inside_a_statement_does_not_look_like_a_wrapper():
+    assert assumptions("axiom h : ∀ x in s, P x\n") == (("h", "∀ x in s, P x"),)
+
+
+def test_a_wrapped_declaration_is_still_audited():
+    """An unseen theorem is one the audit never asks about."""
+    assert declarations("set_option autoImplicit false in theorem T : True := trivial\n")[
+        "theorem"
+    ] == ("T",)
+    assert declarations("open Nat in lemma L : True := trivial\n")["lemma"] == ("L",)
