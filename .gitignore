@@ -20,3 +20,10 @@ lean_project/
 # lean/ and tex/ trees, the .build/ oleans, writeup.pdf, session.json, and
 # transcript.jsonl. Per-run state, never committed.
 .hardy/
+
+# Coverage output. `pyproject.toml` configures it and CI keeps the report as
+# an artifact; the numbers belong to a run, not to the checkout.
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

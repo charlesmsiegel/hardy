@@ -21,16 +21,10 @@ on:
       - ".github/workflows/cas-backends.yml"
 
 jobs:
-  hermetic:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Hermetic suite, with no CAS binary installed
-        run: uv run --extra test pytest -q
-      - name: Lint
-        run: uvx ruff check src tests
-
+  # The hermetic suite and the lint used to run here too. `tests.yml` runs both
+  # on every pull request rather than on this workflow's path filter, and on a
+  # runner with no CAS binary installed either, so keeping them here only meant
+  # running the same suite twice for a CAS-touching change.
   real-backends:
     runs-on: ubuntu-latest
     steps:

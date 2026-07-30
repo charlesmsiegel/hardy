@@ -1,0 +1,34 @@
+# The hermetic suite, on every change rather than on a path filter.
+#
+# `cas-backends.yml` runs the same suite, but only for pull requests that touch
+# the CAS files it lists — so a change to the verifier, the runner, or the
+# interactive session could reach main with nothing having run it. This runs
+# unconditionally, and measures what the suite covers while it is at it.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  hermetic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Hermetic suite, with coverage
+        run: uv run --extra test pytest -q --cov --cov-report=xml --cov-report=html --cov-report=term
+      - name: Lint
+        run: uvx ruff check src tests
+      # Kept whether the run passed or failed: a suite that fell below the floor
+      # is exactly when someone wants to read the report.
+      - name: Keep the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.xml
+            htmlcov/
+          if-no-files-found: error

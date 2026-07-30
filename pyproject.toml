@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8", "pytest-asyncio>=0.24"]
+test = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-cov>=6"]
 # The Codex backend is optional: Hardy runs on the Claude backend alone, and
 # only a ChatGPT-subscription user needs this SDK installed.
 codex = ["openai-codex>=0.144"]
@@ -60,3 +60,35 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # UP042: `str, Enum` is deliberate — these values are written to disk and
 # compared as strings by readers that never import Hardy.
 ignore = ["E501", "UP042"]
+
+# Half of Hardy's code is tests, and until this landed nothing said which of
+# the invariants they cover. `uv run --extra test pytest --cov` writes
+# `coverage.xml` and `htmlcov/`; CI keeps both as artifacts so a reviewer can
+# see what a change did to the measured floor rather than guessing.
+[tool.coverage.run]
+# The importable package, not the source directory: coverage then finds it
+# through the module path and reports the same numbers whether the project
+# was installed editable or built into the environment.
+source = ["hardy"]
+branch = true
+# Tool calls run on the SDK's own threads, and a line reached only from one of
+# them would otherwise read as unreached.
+concurrency = ["thread"]
+# `hardy.cas_driver` is the body of a helper *process*: the suite starts it
+# with `subprocess`, so nothing here observes it and its 0% is a limit of the
+# measurement rather than an absence of tests. Left in the report rather than
+# omitted, because hiding it would raise the headline number by pretending the
+# module is not there.
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# A floor, not a target. It sits just under what the suite measures today, so
+# it catches a change that drops coverage without failing on ordinary drift.
+fail_under = 82
+exclude_also = [
+    # Imported for type checking only; never executed.
+    "if TYPE_CHECKING:",
+    # `Protocol` method bodies. There is nothing in one to exercise.
+    "^\\s*\\.\\.\\.$",
+]
