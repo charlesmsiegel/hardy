@@ -81,11 +81,18 @@ def test_verified_writeup_owns_statuses_signature_axioms_and_identities(tmp_path
     writeup = importlib.import_module('hardy.writeup')
     claim = _claim(domain)
     store = storage.RunStore.create(tmp_path, 'writeup', now=NOW, run_id=RUN_ID)
+    evidence = domain.VerificationEvidence(
+        claim_sha256=claim.content_hash,
+        source_sha256='s' * 64,
+        axioms=('Classical.choice',),
+        toolchain=claim.environment,
+    )
     grades = domain.Grades(
         formal=domain.FormalStatus.KERNEL_VERIFIED,
         faithfulness=domain.FaithfulnessStatus.USER_APPROVED,
         informal=domain.InformalStatus.NOT_INDEPENDENTLY_ASSESSED,
-        verification_sha256='v' * 64,
+        verification_sha256=evidence.digest,
+        verification_evidence=evidence,
     )
     verification = verifier.VerificationResult(
         verified=True,
@@ -93,7 +100,8 @@ def test_verified_writeup_owns_statuses_signature_axioms_and_identities(tmp_path
         axioms=('Classical.choice',),
         diagnostics=(),
         source_sha256='s' * 64,
-        verification_sha256='v' * 64,
+        verification_sha256=evidence.digest,
+        evidence=evidence,
     )
 
     def runner(spec):

@@ -59,7 +59,11 @@ Priority labels are sequencing hints:
 - **Now (implemented) — Linked artifacts:** save the exact Lean statement and proof plus a
   human-readable writeup about the same claim.
 - **Now (implemented) — Honest grades:** independently report formalization status and informal
-  completeness; never infer mathematical validity from compiled prose.
+  completeness; never infer mathematical validity from compiled prose. A
+  kernel-verified grade carries the evidence record its verification hash is
+  derived from — claim, Lean source, axioms, toolchain — and the release audit
+  recomputes that hash from the run directory rather than comparing two copies
+  of it.
 - **Next — Statement faithfulness gate:** use an independent prompt or model to
   compare the user's claim with its Lean formalization before proof search.
 - **Next — Critique workflow:** inspect user, literature, or generated proofs and
