@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from . import audit
 from .chat import provenance
 from .claude_runtime import TurnLimitReached
 from .lean import LeanTools
@@ -36,10 +37,49 @@ def _write_json(path: Path, value: Any) -> None:
     os.replace(temporary, path)
 
 
+def _audited(result: ToolResult, lean: LeanTools) -> tuple[ToolResult, audit.Verdict | None, dict[str, Any] | None]:
+    """A kernel-accepted proof is not yet a verified one.
+
+    Lean's exit code says the file elaborated. It says nothing about what the
+    proof rests on, and a batch run has nobody to approve an assumption, so
+    anything beyond the standard axioms is refused rather than recorded and
+    shipped. The third element is what the record should say when the proof is
+    refused: an audit that could not run is a different fact from one that ran
+    and found something, and both differ from never having audited anything.
+    """
+    name = lean.target_name
+    if name is None:
+        why = "an anonymous `example` cannot be audited; state the claim as a named theorem or lemma"
+        return ToolResult(False, why, result.source), None, audit.unestablished(why)
+    reports = audit.parse(result.output, (name,))
+    if reports is None:
+        why = f"the axiom audit for `{name}` could not be established; remove any #print axioms from the proof, Hardy adds its own"
+        return ToolResult(False, why, result.source), None, audit.unestablished(why)
+    verdict = audit.classify(reports, ())
+    if verdict.status != "clean":
+        why = f"Lean accepted the proof but the axiom audit refused it: {audit.describe(verdict)}"
+        return ToolResult(False, why, result.source), verdict, verdict.as_dict()
+    return result, verdict, None
+
+
+def audit_summary(record: dict[str, Any]) -> str:
+    """How a run with no verified proof describes its axiom record in prose."""
+    if record["status"] == "not audited":
+        return "not audited -- no proof reached the audit"
+    if record["status"] == "not established":
+        return f"not established -- {record['reason']}"
+    refused = list(record["forbidden"]) + list(record["unapproved"])
+    return f"refused: {', '.join(refused)}"
+
+
 def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools, output_dir: Path, *, max_turns: int = 8, wall_seconds: float = 300) -> RunResult:
     output_dir.mkdir(parents=True, exist_ok=True)
     events: list[dict[str, Any]] = []
-    found: dict[str, Any] = {"result": None, "proof": None}
+    found: dict[str, Any] = {"result": None, "proof": None, "verdict": None}
+    # A submission Lean accepted and the audit then refused. Kept so the terminal
+    # reason can say what happened instead of "nothing was submitted", and so the
+    # verdict that refused it survives into the record.
+    refused: dict[str, Any] = {"axioms": False, "record": None}
     # Cancelling the exchange does not stop a Lean check already running on a
     # worker thread, and that thread is waited on during shutdown — so late work
     # can land before the timeout is even caught. The deadline itself decides
@@ -61,12 +101,17 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             elif name == "submit_proof":
                 proof = str(arguments["proof"])
                 result = lean.check_proof(proof, final=True)
+                verdict = None
+                if result.ok:
+                    result, verdict, record = _audited(result, lean)
+                    if not result.ok:
+                        refused["axioms"], refused["record"] = True, record
                 # Judged against the clock rather than a flag: a check that was
                 # still running when the budget expired cannot count, and one
                 # that finished before it can.
                 late = closed.is_set() or time.monotonic() > deadline.get("at", float("inf"))
                 if result.ok and not late:
-                    found["result"], found["proof"] = result, proof
+                    found["result"], found["proof"], found["verdict"] = result, proof, verdict
                 elif result.ok:
                     events.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
             else:
@@ -107,17 +152,31 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     if final:
         reason = "verified"
     elif reason == "completed":
-        reason = "no_proof_submitted"
+        # A proof that elaborated and was then refused is not "no proof submitted".
+        reason = "axioms_rejected" if refused["axioms"] else "no_proof_submitted"
     # The SDK ran the loop, so its own count is the only honest one; counting
     # tool calls here would be a different number wearing the same name.
     turns = getattr(runtime, "turns", None) or 0
 
+    # What the audit decided: the verdict that verified the run, or failing that
+    # the record of what refused it -- which distinguishes an audit that ran and
+    # found something from one that could not be established. "not audited" is
+    # reserved for a run where no submission ever reached the audit at all.
+    verdict = found["verdict"]
     formal = "kernel verified" if final else "not formalized"
     informal = "not assessed"
-    result = RunResult(reason, formal, informal, proof if final else None, final.output if final else "No hole-free proof was accepted.", final.output if final else "not audited", turns, [WARNING])
+    axioms = verdict.as_dict() if final and verdict is not None else refused["record"] or {"status": "not audited"}
+    result = RunResult(reason, formal, informal, proof if final else None, final.output if final else "No hole-free proof was accepted.", axioms, turns, [WARNING])
     if final and proof:
         (output_dir / "proof.lean").write_text(lean.source(proof, audit=True), encoding="utf-8")
-    writeup = f"# Hardy proof result\n\n## Claim\n\n{request.informal_claim}\n\n## Exact Lean statement\n\n```lean\n{request.declaration}\n```\n\n## Grades\n\n- Formalization: **{formal}**\n- Informal completeness: **{informal}**\n\n## Limits\n\n{WARNING}\n"
+    # The grade and what it rests on, together. "kernel verified" beside a
+    # silent axiom section is the claim this gate exists to stop being made.
+    stands_on = (
+        ", ".join(verdict.reports[0].axioms) or "none"
+        if final and verdict is not None and verdict.reports
+        else audit_summary(axioms)
+    )
+    writeup = f"# Hardy proof result\n\n## Claim\n\n{request.informal_claim}\n\n## Exact Lean statement\n\n```lean\n{request.declaration}\n```\n\n## Grades\n\n- Formalization: **{formal}**\n- Informal completeness: **{informal}**\n- Audited axioms: {stands_on}\n\n## Limits\n\n{WARNING}\n"
     if not final:
         writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")

@@ -62,7 +62,10 @@ class RunResult:
     informal_completeness: str
     proof: str | None
     lean_output: str
-    axioms: str
+    # The audit's own verdict, shaped like `audit.Verdict.as_dict()`. It was
+    # the whole Lean stdout blob under this name, which read as an axiom record
+    # while containing nothing anyone had audited.
+    axioms: dict[str, Any]
     turns: int
     warnings: list[str] = field(default_factory=list)
 
