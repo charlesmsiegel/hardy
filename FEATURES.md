@@ -45,10 +45,18 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   audited nor cited in a writeup should not be stated as one. What the audit asks
   about comes from a textual scan of the source, so a declaration a command macro
   or elaborator *generates* — with no literal `theorem` or `lemma` in the file —
-  is not asked about. Such a module records "not established" rather than
-  "clean", so nothing is blessed that was not checked, but neither is it checked.
-  Closing that gap means enumerating a module's declarations from the built Lean
-  environment instead of from its text, which is its own change.
+  is not asked about. A module with no literal declaration at all records "not
+  established"; a module with one literal lemma beside a generated theorem
+  records "clean", and **that verdict covers only the declarations the record
+  names**. It is not a statement about everything the module exports. Closing the
+  gap means enumerating a module's declarations from the built Lean environment
+  instead of from its text, which is its own change.
+- **Now (implemented):** an audit verdict is stamped with the Lean toolchain and
+  project that produced it. Reopening a workspace against a different one reports
+  every earlier verdict as no longer established rather than as current, since
+  the axioms a declaration rests on are a fact about the environment that
+  reported them. A verdict written before verdicts carried a stamp is treated the
+  same way: unknown is not the same as matching.
 - **Now (implemented):** on a real terminal, the session runs through a
   `prompt_toolkit`-backed shell rather than a plain `input()` loop: dim
   ghost-text completion of slash commands as you type, a `/model` selector

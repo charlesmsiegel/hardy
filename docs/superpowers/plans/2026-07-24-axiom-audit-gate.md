@@ -31,8 +31,11 @@
 > - **Known limit — declarations a macro generates are not audited.** What the
 >   audit asks about comes from `declarations()`, a textual scan, so a theorem
 >   produced by a command macro or elaborator with no literal `theorem` in the
->   source is never asked about; the module records "not established" rather than
->   "clean". Closing it means enumerating a module's declarations from the built
+>   source is never asked about. A module with no literal declaration records
+>   "not established"; a *mixed* module — one literal lemma beside a generated
+>   theorem — records "clean" over the declarations the record names, and that
+>   verdict says nothing about the generated one. Closing it means enumerating
+>   a module's declarations from the built
 >   environment, which is a third Lean output format to parse — and the gate
 >   already rests on two whose exact text is unverified against a real toolchain
 >   here. Worth doing on top of a run that has confirmed the first two, not

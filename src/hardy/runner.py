@@ -94,18 +94,28 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
                 proof = str(arguments["proof"])
                 result = lean.check_proof(proof, final=True)
                 verdict = None
+                record = None
+                # Whether Lean accepted it, before the audit had its say. The
+                # audit turns an accepted proof into a refused one, and without
+                # this the late branches below could no longer tell that a
+                # submission had arrived at all.
+                submitted = result.ok
                 if result.ok:
                     result, verdict, record = _audited(result, lean)
-                    if not result.ok:
-                        refused["axioms"], refused["record"] = True, record
                 # Judged against the clock rather than a flag: a check that was
                 # still running when the budget expired cannot count, and one
-                # that finished before it can.
+                # that finished before it can. Asked before either outcome is
+                # kept, not just the good one -- recording a late refusal while
+                # discarding a late acceptance would grade a run that ran out of
+                # time as one that rested on a bad axiom.
                 late = closed.is_set() or time.monotonic() > deadline.get("at", float("inf"))
-                if result.ok and not late:
-                    found["result"], found["proof"], found["verdict"] = result, proof, verdict
+                if late:
+                    if submitted:
+                        events.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
                 elif result.ok:
-                    events.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
+                    found["result"], found["proof"], found["verdict"] = result, proof, verdict
+                elif record is not None:
+                    refused["axioms"], refused["record"] = True, record
             else:
                 result = ToolResult(False, f"unknown tool: {name}")
         except (KeyError, TypeError, ValueError) as error:

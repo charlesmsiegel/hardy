@@ -361,6 +361,35 @@ def test_a_proof_accepted_after_the_deadline_does_not_count(proof_request: Reque
     assert any(event["type"] == "discarded" for event in trajectory["events"])
 
 
+def test_a_proof_refused_after_the_deadline_does_not_count_either(
+    proof_request: Request, lean: LeanTools, tmp_path: Path
+):
+    """The mirror of the test above, and it used to go the other way.
+
+    The audit turns an accepted proof into a refused one, and the refusal was
+    recorded before the clock was consulted -- so a late submission resting on a
+    bad axiom was kept while a late *clean* one was discarded. The run was then
+    graded `axioms_rejected`, saying the model produced something unsound, when
+    what happened is that it ran out of time.
+    """
+
+    class LateRefusal(FakeRuntime):
+        def ask(self, text: str) -> str:
+            time.sleep(0.25)  # the budget expires while "Lean" is working
+            self.context["dispatch"](
+                "submit_proof", {"proof": "by exact True.intro -- axioms: sorryAx"}
+            )
+            raise TimeoutError("the run exceeded its 0.1s wall-clock budget")
+
+    result = run(proof_request, lambda model=None, **c: LateRefusal([], **c), lean, tmp_path, wall_seconds=0.1)
+    assert result.terminal_reason == "wall_clock_limit"
+    assert result.proof is None
+    # Nothing in budget reached the audit, so it must not claim one ran.
+    assert result.axioms == {"status": "not audited"}
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text())
+    assert any(event["type"] == "discarded" for event in trajectory["events"])
+
+
 def test_a_proof_accepted_inside_the_budget_still_counts(proof_request: Request, lean: LeanTools, tmp_path: Path):
     """The guard must not suppress a genuine success that merely preceded a
     slow shutdown."""
