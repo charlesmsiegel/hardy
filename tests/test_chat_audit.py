@@ -147,16 +147,48 @@ def test_a_verdict_from_another_toolchain_is_not_reported_as_current(tmp_path: P
 
 
 def test_a_verdict_written_before_verdicts_were_stamped_is_not_current(tmp_path: Path):
-    """A workspace saved by an older Hardy has no environment on its records.
+    """A workspace saved by an older Hardy has no signature on its records.
     Unknown is not the same as matching."""
     chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": CLEAN}, "lean")]))
     chat.send("Save it.")
     stored = json.loads((tmp_path / "session.json").read_text(encoding="utf-8"))
-    del stored["audit"]["Main"]["environment"]
+    del stored["audit"]["Main"]["signature"]
     (tmp_path / "session.json").write_text(json.dumps(stored), encoding="utf-8")
 
     reopened = session(tmp_path, FakeChatRuntime([]))
     assert reopened._workspace_listing()["audit"]["Main"]["status"] == "not established"
+
+
+def test_a_verdict_expires_when_the_source_changes_outside_a_save(tmp_path: Path):
+    """The toolchain is only one of the things a verdict depends on. Editing the
+    file on disk moves what the audit was about without any save noticing."""
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": CLEAN}, "lean")]))
+    chat.send("Save it.")
+    assert chat._workspace_listing()["audit"]["Main"]["status"] == "clean"
+
+    saved(tmp_path).write_text(CLEAN.replace("True.intro", "True.intro -- edited"), encoding="utf-8")
+    assert chat._workspace_listing()["audit"]["Main"]["status"] == "not established"
+
+
+def test_a_verdict_expires_when_a_module_it_imports_changes(tmp_path: Path):
+    """The signature is recursive, so a change beneath a module expires the
+    verdict above it — which is the case a per-file hash would miss."""
+    base = "import Mathlib\n\nlemma Base.root : True := by exact True.intro\n"
+    top = "import Base\n\ntheorem Top : True := by exact True.intro\n"
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": base, "path": "Base.lean"}, "base"),
+            call("save_lean", {"source": top, "path": "Top.lean"}, "top"),
+        ]),
+    )
+    chat.send("Save both.")
+    assert chat._workspace_listing()["audit"]["Top"]["status"] == "clean"
+
+    saved(tmp_path, "Base.lean").write_text(base.replace("True.intro", "True.intro -- edited"), encoding="utf-8")
+    listing = chat._workspace_listing()["audit"]
+    assert listing["Base"]["status"] == "not established"
+    assert listing["Top"]["status"] == "not established"
 
 
 def test_a_clean_verdict_covers_the_declarations_it_names_and_no_others(tmp_path: Path):

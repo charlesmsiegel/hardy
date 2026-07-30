@@ -24,10 +24,21 @@
 >   model goes through the existing `request_assumption`. The at-audit approval
 >   prompt (Task 6, `tests/test_approval.py`, `_admit`, `audit.printed`, the
 >   `discovered_statement` lookup and its truncation handling) is **not built**.
-> - **Not built, and still open:** the `save_latex` disclosure gate, the stored
->   verdict's `source_sha256` binding, registry-change invalidation, and drift
->   detection on an approved assumption's statement. All of them layer on top of
->   the gate rather than being part of it.
+> - **Not built, and still open:** the `save_latex` disclosure gate, registry-change
+>   invalidation, and drift detection on an approved assumption's statement. All of
+>   them layer on top of the gate rather than being part of it. Two are worth
+>   stating as trust limits rather than backlog, because they bound what a human's
+>   approval means: the gate matches an axiom *name*, so a request that
+>   misdescribes an imported declaration can obtain approval for something other
+>   than what the human read; and a *verified modulo* save is not refused when the
+>   writeup never mentions the assumption. Both are now in `FEATURES.md` and the
+>   trust statement.
+> - **Done, since the plan was written:** the stored verdict's binding to what it
+>   was computed over. A verdict carries the module's build signature -- the same
+>   recursive digest the build cache is keyed on, over the environment, the
+>   module's source, its workspace imports, and the oleans behind its external
+>   ones -- and `read_workspace` reports a verdict whose signature no longer
+>   matches as no longer established.
 > - **Known limit — declarations a macro generates are not audited.** What the
 >   audit asks about comes from `declarations()`, a textual scan, so a theorem
 >   produced by a command macro or elaborator with no literal `theorem` in the

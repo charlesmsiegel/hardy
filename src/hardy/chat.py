@@ -517,8 +517,18 @@ class MathematicsSession:
             LeanWorkspace.discard(shadow)
         # Published after the write, and not before: a verdict stored first
         # would survive a failed commit and describe a tree that never existed.
+        # Stamped with what the module's build inputs hashed to, not merely with
+        # the toolchain: the same signature the build cache is keyed on, which
+        # already folds in the environment, the module's source, everything it
+        # imports inside the workspace, and the olean behind every import
+        # outside it. A verdict is an answer about those inputs and expires with
+        # them.
+        signatures = self.lean_workspace.current_signatures()
         self.state.setdefault("audit", {}).update(
-            {module: {**record, "environment": self._environment} for module, record in records.items()}
+            {
+                module: {**record, "signature": signatures.get(module, "")}
+                for module, record in records.items()
+            }
         )
         self._save_state()
         # Absent from `seen` when the source was byte-identical to what was
@@ -667,25 +677,33 @@ class MathematicsSession:
             for source in sources.values()
         )
 
-    def _still_current(self, record: dict[str, Any]) -> dict[str, Any]:
-        """An audit verdict as it stands in *this* environment.
+    def _still_current(
+        self, module: str, record: dict[str, Any], signatures: dict[str, str]
+    ) -> dict[str, Any]:
+        """An audit verdict as it stands against the tree in front of us.
 
-        The axioms a declaration rests on are a fact about the toolchain,
-        project, and dependencies that reported them. Reopening a workspace
-        against a different Lean invalidates the olean cache and rebuilds, but a
-        stored verdict would otherwise sit in `session.json` and be handed to the
-        model as the module's current audit until some later save happened to
-        cover it again. A verdict written before verdicts carried a stamp has no
-        environment to match, and is treated the same way: unknown, so not
-        current. What it said is kept for reference rather than deleted -- it is
-        the *status* that must not read as a pass.
+        The axioms a declaration rests on are a fact about everything that went
+        into building it: the toolchain and project, the module's own source,
+        the workspace modules it imports, and the oleans behind the imports it
+        takes from outside. Any of those can move without a save -- a file
+        edited on disk, a local Lake project rebuilt, a different Lean -- and a
+        stored verdict would otherwise sit in `session.json` and be handed to
+        the model as the module's current audit until some later save happened
+        to cover it again.
+
+        So the check is the build signature, not the toolchain alone: it already
+        folds in all of that, and it is recursive, so a change beneath a module
+        expires the verdict above it too. A verdict written before verdicts
+        carried a signature has none to match, and is treated the same way:
+        unknown is not current. What it said is kept for reference rather than
+        deleted -- it is the *status* that must not read as a pass.
         """
-        if record.get("environment") == self._environment:
+        if record.get("signature") and record["signature"] == signatures.get(module):
             return record
         return {
             **record,
             "status": "not established",
-            "reason": "recorded under a different Lean toolchain or project; save the module again to establish it here",
+            "reason": "the module's Lean toolchain, source, or dependencies have changed since this was established; save it again",
             "stale": True,
         }
 
@@ -907,6 +925,9 @@ class MathematicsSession:
             if self.tex_root.is_dir()
             else []
         )
+        # Hashed once for the whole listing rather than per module: each call
+        # re-reads every source in the tree.
+        current = self.lean_workspace.current_signatures()
         return {
             "manifest": self.state,
             "lean": lean,
@@ -917,7 +938,7 @@ class MathematicsSession:
             # until a save covers it, and a verdict from another environment is
             # reported as no longer established rather than as current.
             "audit": {
-                module: self._still_current(record)
+                module: self._still_current(module, record, current)
                 for module, record in self.state.get("audit", {}).items()
             },
         }
