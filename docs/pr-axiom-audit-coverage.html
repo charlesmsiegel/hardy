@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>hardy#claude/axiom-audit-coverage-rcfsee — Review</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#faf7f2; --bg-grid:rgba(120,90,60,0.05); --surface:#ffffff; --surface-2:#f2ede4;
+  --border:rgba(90,70,50,0.16); --border-strong:rgba(90,70,50,0.34);
+  --text:#2b2620; --text-dim:#6d6357; --text-faint:#9a8f81;
+  --accent:#8a5a2b; --accent-dim:rgba(138,90,43,0.10);
+  --good:#3e7d4f; --good-dim:rgba(62,125,79,0.11);
+  --warn:#a06b14; --warn-dim:rgba(160,107,20,0.12);
+  --bad:#b04030; --bad-dim:rgba(176,64,48,0.10);
+  --violet:#6a5590;
+  --heat-lo:#e4dccd; --heat-hi:#b04030;
+  --add:#3e7d4f; --add-dim:rgba(62,125,79,0.13);
+  --del:#b04030; --del-dim:rgba(176,64,48,0.12);
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#1c1915; --bg-grid:rgba(220,190,150,0.045); --surface:#26221c; --surface-2:#2f2a22;
+    --border:rgba(220,195,160,0.14); --border-strong:rgba(220,195,160,0.30);
+    --text:#e8e1d5; --text-dim:#a89c8b; --text-faint:#776d5f;
+    --accent:#d3a161; --accent-dim:rgba(211,161,97,0.13);
+    --good:#7bbd8b; --good-dim:rgba(123,189,139,0.13);
+    --warn:#d9a84e; --warn-dim:rgba(217,168,78,0.14);
+    --bad:#dd7a66; --bad-dim:rgba(221,122,102,0.14);
+    --violet:#a893cf;
+    --heat-lo:#3d372c; --heat-hi:#dd7a66;
+    --add:#7bbd8b; --add-dim:rgba(123,189,139,0.14);
+    --del:#dd7a66; --del-dim:rgba(221,122,102,0.14);
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--sans); background:var(--bg); color:var(--text);
+  background-image:linear-gradient(var(--bg-grid) 1px,transparent 1px),linear-gradient(90deg,var(--bg-grid) 1px,transparent 1px);
+  background-size:32px 32px; line-height:1.55; font-size:15px;
+}
+header.doc{padding:34px 28px 0; max-width:1280px; margin:0 auto}
+.doc-label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:8px}
+.doc-label::before{content:"";width:8px;height:8px;background:var(--accent);border-radius:2px;display:inline-block}
+h1.doc-title{font-size:30px;font-weight:700;letter-spacing:-.02em;margin-top:8px}
+.doc-sub{color:var(--text-dim);margin-top:6px;max-width:900px}
+.doc-meta{font-family:var(--mono);font-size:12px;color:var(--text-faint);margin-top:10px}
+nav.tabs{
+  position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--border);
+  margin-top:22px;padding:0 28px;display:flex;gap:2px;overflow-x:auto;
+  max-width:1280px;margin-left:auto;margin-right:auto;scrollbar-width:thin;
+}
+nav.tabs button{
+  appearance:none;background:none;border:none;border-bottom:2px solid transparent;
+  color:var(--text-dim);font-family:var(--mono);font-size:12.5px;letter-spacing:.02em;
+  padding:12px 14px;cursor:pointer;white-space:nowrap;transition:color .15s;
+}
+nav.tabs button:hover{color:var(--text)}
+nav.tabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+nav.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+main{max-width:1280px;margin:0 auto;padding:26px 28px 80px}
+.panel{display:none;animation:fadeUp .25s ease both}
+.panel.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- content primitives ---------- */
+.panel h2{font-size:21px;font-weight:600;letter-spacing:-.01em;margin:26px 0 10px}
+.panel h2:first-child{margin-top:0}
+.panel h3{font-size:16px;font-weight:600;margin:22px 0 8px}
+.panel p{margin:8px 0;max-width:940px;color:var(--text)}
+.panel ul,.panel ol{margin:8px 0 8px 22px;max-width:940px}
+.panel li{margin:4px 0}
+.dim{color:var(--text-dim)} .faint{color:var(--text-faint)}
+code,.mono{font-family:var(--mono);font-size:.92em}
+p code,li code,td code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+pre{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.5;margin:10px 0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin:12px 0}
+.card.hero{border-color:var(--border-strong);background:linear-gradient(180deg,var(--accent-dim),var(--surface) 60%)}
+.grid{display:grid;gap:14px;margin:12px 0}
+.grid.cols-2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+.grid.cols-3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.grid>*{min-width:0}
+.kpis{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;min-width:130px}
+.kpi .n{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi .l{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim);margin-top:2px}
+.kpi.warn .n{color:var(--warn)} .kpi.bad .n{color:var(--bad)} .kpi.good .n{color:var(--good)} .kpi.accent .n{color:var(--accent)}
+.badge{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);vertical-align:1px;white-space:nowrap}
+.badge.good{color:var(--good);background:var(--good-dim);border-color:transparent}
+.badge.warn{color:var(--warn);background:var(--warn-dim);border-color:transparent}
+.badge.bad{color:var(--bad);background:var(--bad-dim);border-color:transparent}
+.badge.accent{color:var(--accent);background:var(--accent-dim);border-color:transparent}
+.badge.neutral{color:var(--text-dim);background:var(--surface-2);border-color:transparent}
+.callout{border-left:3px solid var(--accent);background:var(--accent-dim);border-radius:0 8px 8px 0;padding:12px 16px;margin:12px 0;max-width:940px}
+.callout.warn{border-color:var(--warn);background:var(--warn-dim)}
+.callout.bad{border-color:var(--bad);background:var(--bad-dim)}
+.callout.good{border-color:var(--good);background:var(--good-dim)}
+details{border:1px solid var(--border);border-radius:8px;margin:10px 0;background:var(--surface)}
+details summary{cursor:pointer;padding:10px 16px;font-weight:500;color:var(--text-dim)}
+details[open] summary{border-bottom:1px solid var(--border);color:var(--text)}
+details .body{padding:12px 16px}
+
+/* tables */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;margin:12px 0;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+thead th{
+  position:sticky;top:0;background:var(--surface-2);text-align:left;font-family:var(--mono);
+  font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim);
+  padding:9px 14px;border-bottom:1px solid var(--border-strong);white-space:nowrap;
+}
+tbody td{padding:8px 14px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:break-word}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even){background:color-mix(in srgb,var(--surface-2) 45%,transparent)}
+tbody tr:hover{background:var(--accent-dim)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12.5px}
+table.sortable thead th{cursor:pointer;user-select:none}
+table.sortable thead th::after{content:"↕";opacity:.35;margin-left:6px;font-size:10px}
+table.sortable thead th.asc::after{content:"↑";opacity:1;color:var(--accent)}
+table.sortable thead th.desc::after{content:"↓";opacity:1;color:var(--accent)}
+
+/* CSS bars inside tables */
+.bar{position:relative;background:var(--surface-2);border-radius:4px;height:14px;min-width:120px;overflow:hidden}
+.bar>i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:4px}
+.bar.warn>i{background:var(--warn)} .bar.bad>i{background:var(--bad)} .bar.good>i{background:var(--good)}
+/* diff add/del split bar: use two <i> with classes a and d */
+.dbar{position:relative;display:flex;background:var(--surface-2);border-radius:4px;height:14px;min-width:120px;overflow:hidden}
+.dbar>i.a{background:var(--add)} .dbar>i.d{background:var(--del)}
+.plusminus{font-family:var(--mono);font-size:12px;white-space:nowrap}
+.plusminus .p{color:var(--add)} .plusminus .m{color:var(--del)}
+.diff-snippet{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5;margin:10px 0}
+.diff-snippet .fh{background:var(--surface-2);padding:6px 12px;border-bottom:1px solid var(--border);font-size:11.5px;color:var(--text-dim)}
+.diff-snippet .ln{display:block;padding:1px 12px;white-space:pre}
+.diff-snippet .ln.add{background:var(--add-dim);color:var(--text)}
+.diff-snippet .ln.del{background:var(--del-dim);color:var(--text)}
+.diff-snippet .ln.ctx{color:var(--text-dim)}
+
+/* ---------- viz containers ---------- */
+.viz{position:relative;border:1px solid var(--border);border-radius:10px;background:var(--surface);margin:12px 0;overflow:hidden}
+.viz svg{display:block;width:100%;height:100%}
+.viz .zoombar{position:absolute;top:10px;right:10px;display:flex;gap:6px;z-index:5}
+.viz .zoombar button{width:28px;height:28px;border-radius:6px;border:1px solid var(--border-strong);background:var(--surface-2);color:var(--text);font-family:var(--mono);cursor:pointer;font-size:14px;line-height:1}
+.viz .zoombar button:hover{background:var(--accent-dim);color:var(--accent)}
+.viz .legend{position:absolute;left:12px;bottom:10px;display:flex;flex-wrap:wrap;gap:10px;font-family:var(--mono);font-size:11px;color:var(--text-dim);background:color-mix(in srgb,var(--surface) 80%,transparent);padding:4px 8px;border-radius:6px;max-width:70%}
+.legend .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.viz-tip{position:fixed;pointer-events:none;z-index:200;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:8px;padding:8px 12px;font-family:var(--mono);font-size:12px;color:var(--text);box-shadow:0 6px 24px rgba(0,0,0,.35);display:none;max-width:380px}
+.mermaid-wrap{position:relative;border:1px solid var(--border);border-radius:10px;background:var(--surface);margin:12px 0;overflow:hidden;min-height:120px}
+.mermaid-wrap .mviewport{overflow:hidden;cursor:grab;padding:14px}
+.mermaid-wrap .mviewport.dragging{cursor:grabbing}
+.mermaid{font-family:var(--sans)}
+.mermaid[data-processed="true"]{display:flex;justify-content:center}
+footer.doc{max-width:1280px;margin:0 auto;padding:0 28px 34px;color:var(--text-faint);font-family:var(--mono);font-size:11.5px}
+@media(max-width:720px){header.doc,main,nav.tabs,footer.doc{padding-left:16px;padding-right:16px} h1.doc-title{font-size:24px}}
+</style>
+</head>
+<body>
+<header class="doc">
+  <div class="doc-label">PULL REQUEST REVIEW</div>
+  <h1 class="doc-title">hardy#claude/axiom-audit-coverage-rcfsee — Review</h1>
+  <p class="doc-sub">The axiom audit holds on all three surfaces, and the suite is measured</p>
+  <div class="doc-meta">base main @ 3917807 → claude/axiom-audit-coverage-rcfsee · +3010/−87 · generated 2026-07-30</div>
+</header>
+<nav class="tabs" role="tablist"><button role="tab" data-tab="summary" aria-selected="true" aria-controls="summary">Summary</button>
+<button role="tab" data-tab="footprint" aria-selected="false" aria-controls="footprint">Footprint</button>
+<button role="tab" data-tab="contracts-tests" aria-selected="false" aria-controls="contracts-tests">Contracts &amp; Tests</button>
+<button role="tab" data-tab="blast-radius" aria-selected="false" aria-controls="blast-radius">Blast Radius</button>
+<button role="tab" data-tab="flow-impact" aria-selected="false" aria-controls="flow-impact">Flow Impact</button>
+<button role="tab" data-tab="review-walkthrough" aria-selected="false" aria-controls="review-walkthrough">Review Walkthrough</button></nav>
+<main><section class="panel active" id="summary" role="tabpanel">
+
+<div class="card hero">
+  <h3>What this actually changes</h3>
+  <p>Three commands could report a Lean proof as verified. Only one of them checked what the proof
+  stood on. <code>hardy batch</code> appended <code>#print axioms</code> to its final check and then graded on
+  Lean's <em>process exit status</em> — nothing parsed the report, and the field named <code>axioms</code> in
+  <code>result.json</code> held the whole Lean stdout blob. A proof resting on <code>sorryAx</code>, or on an axiom
+  reached through an import, was written up as <strong>kernel verified</strong>. That is what this change ends.</p>
+  <p>A new <code>hardy.audit</code> parses the report and grades it; <code>batch</code>, <code>chat</code>, and the staged
+  <code>prove</code> verifier all now go through it. Unattended runs fail closed on anything beyond Lean's three
+  axioms. The interactive session gains an audit it never had at all: after the staged tree builds and
+  before anything is committed, Lean is asked what every theorem and lemma in the rebuilt modules
+  depends on, and the save is refused whole on a hole or an unapproved assumption.</p>
+  <p>Separately, the test suite gains coverage measurement: <code>pytest --cov</code>, a floor, a CI job that
+  runs the hermetic suite on <em>every</em> pull request, and a kept artifact.</p>
+</div>
+
+<div class="grid cols-2">
+<div class="card">
+  <h3>Claimed vs. actual</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>Issue's claim</th><th>Verdict</th></tr>
+    <tr><td>The axiom audit holds on one of three surfaces</td><td><span class="badge good">confirmed and fixed</span></td></tr>
+    <tr><td><code>runner.py</code> doesn't contain the word "axiom"</td><td><span class="badge good">confirmed</span> — grading was <code>src/hardy/runner.py</code>'s exit-code path</td></tr>
+    <tr><td><code>hardy chat</code> never emits one</td><td><span class="badge good">confirmed and fixed</span> — <code>src/hardy/chat.py:490</code></td></tr>
+    <tr><td>FEATURES.md claims it on all</td><td><span class="badge good">confirmed and fixed</span> — <code>FEATURES.md:87</code></td></tr>
+    <tr><td>No coverage instrumentation at all</td><td><span class="badge good">confirmed and fixed</span> — <code>pyproject.toml:68</code></td></tr>
+  </table></div>
+</div>
+<div class="card">
+  <h3>Beyond what the issue asked for</h3>
+  <p>Three things the issue did not name, each disclosed rather than slipped in:</p>
+  <ul>
+    <li><strong>A latent verifier bug.</strong> <code>src/hardy/verifier.py</code>'s private matcher used
+      <code>\btheorem_name\b</code>; the trailing apostrophe in <code>add_comm'</code> is not a word character, so
+      <em>every primed declaration the kernel accepted</em> was refused for emitting no axiom report.
+      Fixed by the unification, with a regression test.</li>
+    <li><strong>Universe binders and Unicode.</strong> The batch name derivation split on <code>(</code>, <code>{</code>,
+      and <code>:</code>, turning <code>theorem Foo.{u} …</code> into <code>Foo.</code>, and its identifier pattern was
+      ASCII-only. <code>src/hardy/lean.py:33</code>.</li>
+    <li><strong>CI ran the suite behind a path filter.</strong> A change to the verifier or the runner
+      could reach <code>main</code> with nothing having run it. <code>.github/workflows/tests.yml</code> runs it
+      unconditionally; the duplicated job leaves <code>cas-backends.yml</code>.</li>
+  </ul>
+</div>
+</div>
+
+<div class="card">
+  <h3>Classification: mixed, deliberately — two concerns, cleanly separated by file</h3>
+  <p><strong>Axiom audit</strong> (feature + latent bugfix): <code>src/hardy/audit.py</code>,
+  <code>src/hardy/lean.py</code>, <code>src/hardy/runner.py</code>, <code>src/hardy/chat.py</code>,
+  <code>src/hardy/verifier.py</code>, <code>src/hardy/models.py</code>, both prompt templates, and the four
+  documents. <strong>Coverage</strong> (tooling): <code>pyproject.toml</code>, <code>.gitignore</code>, both
+  workflow files, <code>uv.lock</code>. No file serves both concerns, so the split is reviewable —
+  but they are two changes in one PR, which the issue asked for together.</p>
+</div>
+
+<div class="callout warn">
+  <strong>What did not change, where a reader might expect it to.</strong>
+  <ul>
+    <li><strong>No at-audit approval prompt.</strong> The repo's own spec
+      (<code>docs/superpowers/specs/2026-07-24-axiom-audit-gate-design.md</code>) designs an interactive
+      prompt that asks the human about an axiom the audit discovers, showing the statement Lean
+      reports. This change fails closed instead: the save is refused, the axiom is named, and the
+      model routes through the existing <code>request_assumption</code>. Ergonomics, not soundness —
+      recorded in the plan's status note rather than left implied.</li>
+    <li><strong><code>save_latex</code> does not require disclosure.</strong> A workspace verified only
+      <em>modulo</em> an approved assumption can still be written up without naming it. The spec calls
+      for a gate here; it is not built, and is listed as still open.</li>
+    <li><strong>No approved-statement drift detection.</strong> A name approved once stays approved
+      even if a Mathlib upgrade makes it resolve to a different statement.</li>
+    <li><strong>No <code>TerminalReason</code> member for the batch refusal.</strong> <code>axioms_rejected</code> is
+      <code>batch</code>'s own reason string; <code>prove</code> keeps <code>UNEXPECTED_AXIOM</code> for both a hole and
+      an assumption, deliberately, because that value is written to disk and read by things that
+      never import Hardy.</li>
+  </ul>
+</div>
+
+</section>
+<section class="panel" id="footprint" role="tabpanel">
+
+
+<div class="kpis">
+  <div class="kpi accent"><div class="n">28</div><div class="l">files changed</div></div>
+  <div class="kpi good"><div class="n">+1,602</div><div class="l">additions</div></div>
+  <div class="kpi bad"><div class="n">−87</div><div class="l">deletions</div></div>
+  <div class="kpi"><div class="n">21</div><div class="l">commits</div></div>
+  <div class="kpi bad"><div class="n">9</div><div class="l">directories touched</div></div>
+</div>
+<div class="callout"><b>Footprint shape: shotgun — spread across many directories.</b> A tightly clustered change usually means one concern; a diff smeared across many directories can indicate shotgun surgery — one logical change forced through poorly separated modules — or several unrelated changes bundled into one PR.</div>
+
+<h2>Change map</h2>
+<p class="dim">Area = lines changed · color = heuristic risk score · hover for details.</p>
+<div class="viz" data-render="treemap" style="height:480px"></div>
+<script type="application/json">{"items":[{"name":"src/hardy/audit.py","value":174,"metric":10,"meta":"+174/\u22120 \u00b7 source"},{"name":"src/hardy/lean.py","value":88,"metric":7,"meta":"+75/\u221213 \u00b7 source"},{"name":"pyproject.toml","value":34,"metric":7,"meta":"+33/\u22121 \u00b7 dependencies"},{"name":"src/hardy/chat.py","value":119,"metric":5,"meta":"+117/\u22122 \u00b7 source"},{"name":"ARCHITECTURE.html","value":6,"metric":4,"meta":"+3/\u22123 \u00b7 source"},{"name":"src/hardy/verifier.py","value":46,"metric":3,"meta":"+21/\u221225 \u00b7 source"},{"name":"uv.lock","value":159,"metric":2,"meta":"+159/\u22120 \u00b7 dependencies"},{"name":"src/hardy/runner.py","value":63,"metric":1,"meta":"+57/\u22126 \u00b7 source"},{"name":".github/workflows/tests.yml","value":34,"metric":1,"meta":"+34/\u22120 \u00b7 build/ci"},{"name":".github/workflows/cas-backends.yml","value":14,"metric":1,"meta":"+4/\u221210 \u00b7 build/ci"},{"name":".gitignore","value":7,"metric":1,"meta":"+7/\u22120 \u00b7 source"},{"name":"src/hardy/models.py","value":5,"metric":1,"meta":"+4/\u22121 \u00b7 source"},{"name":"src/hardy/prompts/batch/system.md.j2","value":2,"metric":1,"meta":"+2/\u22120 \u00b7 source"},{"name":"src/hardy/prompts/chat.md.j2","value":2,"metric":1,"meta":"+2/\u22120 \u00b7 source"},{"name":"tests/test_chat_audit.py","value":212,"metric":0,"meta":"+212/\u22120 \u00b7 test"},{"name":"tests/test_audit.py","value":191,"metric":0,"meta":"+191/\u22120 \u00b7 test"},{"name":"tests/test_hardy.py","value":191,"metric":0,"meta":"+191/\u22120 \u00b7 test"},{"name":"tests/fake_lean.py","value":88,"metric":0,"meta":"+77/\u221211 \u00b7 test"},{"name":"tests/unit/test_verifier.py","value":70,"metric":0,"meta":"+70/\u22120 \u00b7 test"},{"name":"docs/superpowers/plans/2026-07-24-axiom-audit-gate.md","value":34,"metric":0,"meta":"+34/\u22120 \u00b7 docs"},{"name":"tests/unit/test_ci_workflow.py","value":34,"metric":0,"meta":"+30/\u22124 \u00b7 test"},{"name":"FEATURES.md","value":33,"metric":0,"meta":"+28/\u22125 \u00b7 docs"},{"name":"README.md","value":25,"metric":0,"meta":"+21/\u22124 \u00b7 docs"},{"name":"tests/unit/test_architecture_doc.py","value":24,"metric":0,"meta":"+24/\u22120 \u00b7 test"},{"name":"DESIGN.md","value":17,"metric":0,"meta":"+17/\u22120 \u00b7 docs"},{"name":"docs/superpowers/specs/2026-07-24-axiom-audit-gate-design.md","value":6,"metric":0,"meta":"+6/\u22120 \u00b7 test"},{"name":"tests/test_chat_workspace.py","value":6,"metric":0,"meta":"+5/\u22121 \u00b7 test"},{"name":"AGENTS.md","value":5,"metric":0,"meta":"+4/\u22121 \u00b7 docs"}],"valueLabel":"lines changed","metricLabel":"risk score"}</script>
+
+<h2>By category</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Category</th><th class="num">Files</th><th class="num">+/−</th><th>Volume</th></tr></thead>
+<tbody><tr><td><span class='badge good'>test</span></td><td class='num'>9</td><td class='num'><span class='plusminus'><span class='p'>+806</span> <span class='m'>−16</span></span></td><td><div class="bar "><i style="width:100.0%"></i></div></td></tr>
+<tr><td><span class='badge accent'>source</span></td><td class='num'>10</td><td class='num'><span class='plusminus'><span class='p'>+462</span> <span class='m'>−50</span></span></td><td><div class="bar "><i style="width:62.3%"></i></div></td></tr>
+<tr><td><span class='badge warn'>dependencies</span></td><td class='num'>2</td><td class='num'><span class='plusminus'><span class='p'>+192</span> <span class='m'>−1</span></span></td><td><div class="bar "><i style="width:23.5%"></i></div></td></tr>
+<tr><td><span class='badge neutral'>docs</span></td><td class='num'>5</td><td class='num'><span class='plusminus'><span class='p'>+104</span> <span class='m'>−10</span></span></td><td><div class="bar "><i style="width:13.9%"></i></div></td></tr>
+<tr><td><span class='badge neutral'>build/ci</span></td><td class='num'>2</td><td class='num'><span class='plusminus'><span class='p'>+38</span> <span class='m'>−10</span></span></td><td><div class="bar "><i style="width:5.8%"></i></div></td></tr></tbody></table></div>
+
+<h2>Files, risk-ordered</h2>
+<p class="dim">Reviewer attention is a budget — spend it top-down. Score combines category weight, risky patterns in added lines, signature changes, and large removals. Heuristic, not verdict.</p>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>File</th><th>Category</th><th class="num">+/−</th><th>Change</th><th class="num">Risk</th><th>Why</th></tr></thead>
+<tbody><tr><td><code>src/hardy/audit.py</code> <span class='badge good'>new</span></td><td><span class='badge accent'>source</span></td><td class='num'><span class='plusminus'><span class='p'>+174</span> <span class='m'>−0</span></span></td><td data-sort='174'><div class='dbar'><i class='a' style='width:82.1%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>10</td><td class='dim' style='font-size:12px'>injection-surface×1, security×2</td></tr><tr><td><code>src/hardy/lean.py</code> </td><td><span class='badge accent'>source</span></td><td class='num'><span class='plusminus'><span class='p'>+75</span> <span class='m'>−13</span></span></td><td data-sort='88'><div class='dbar'><i class='a' style='width:35.4%'></i><i class='d' style='width:6.1%'></i></div></td><td class='num'>7</td><td class='dim' style='font-size:12px'>security×1, signature-change×2</td></tr><tr><td><code>pyproject.toml</code> </td><td><span class='badge warn'>dependencies</span></td><td class='num'><span class='plusminus'><span class='p'>+33</span> <span class='m'>−1</span></span></td><td data-sort='34'><div class='dbar'><i class='a' style='width:15.6%'></i><i class='d' style='width:0.5%'></i></div></td><td class='num'>7</td><td class='dim' style='font-size:12px'>dependencies, concurrency×1, injection-surface×1</td></tr><tr><td><code>src/hardy/chat.py</code> </td><td><span class='badge accent'>source</span></td><td class='num'><span class='plusminus'><span class='p'>+117</span> <span class='m'>−2</span></span></td><td data-sort='119'><div class='dbar'><i class='a' style='width:55.2%'></i><i class='d' style='width:0.9%'></i></div></td><td class='num'>5</td><td class='dim' style='font-size:12px'>transactions×3</td></tr><tr><td><code>ARCHITECTURE.html</code> </td><td><span class='badge accent'>source</span></td><td class='num'><span class='plusminus'><span class='p'>+3</span> <span class='m'>−3</span></span></td><td data-sort='6'><div class='dbar'><i class='a' style='width:1.4%'></i><i class='d' style='width:1.4%'></i></div></td><td class='num'>4</td><td class='dim' style='font-size:12px'>security×1</td></tr><tr><td><code>src/hardy/verifier.py</code> </td><td><span class='badge accent'>source</span></td><td class='num'><span class='plusminus'><span class='p'>+21</span> <span class='m'>−25</span></span></td><td data-sort='46'><div class='dbar'><i class='a' style='width:9.9%'></i><i class='d' style='width:11.8%'></i></div></td><td class='num'>3</td><td class='dim' style='font-size:12px'>removed-symbol×1</td></tr><tr><td><code>uv.lock</code> </td><td><span class='badge warn'>dependencies</span></td><td class='num'><span class='plusminus'><span class='p'>+159</span> <span class='m'>−0</span></span></td><td data-sort='159'><div class='dbar'><i class='a' style='width:75.0%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>2</td><td class='dim' style='font-size:12px'>dependencies</td></tr><tr><td><code>src/hardy/runner.py</code> </td><td><span class='badge accent'>source</span></td><td class='num'><span class='plusminus'><span class='p'>+57</span> <span class='m'>−6</span></span></td><td data-sort='63'><div class='dbar'><i class='a' style='width:26.9%'></i><i class='d' style='width:2.8%'></i></div></td><td class='num'>1</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>.github/workflows/tests.yml</code> <span class='badge good'>new</span></td><td><span class='badge neutral'>build/ci</span></td><td class='num'><span class='plusminus'><span class='p'>+34</span> <span class='m'>−0</span></span></td><td data-sort='34'><div class='dbar'><i class='a' style='width:16.0%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>1</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>.github/workflows/cas-backends.yml</code> </td><td><span class='badge neutral'>build/ci</span></td><td class='num'><span class='plusminus'><span class='p'>+4</span> <span class='m'>−10</span></span></td><td data-sort='14'><div class='dbar'><i class='a' style='width:1.9%'></i><i class='d' style='width:4.7%'></i></div></td><td class='num'>1</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>.gitignore</code> </td><td><span class='badge accent'>source</span></td><td class='num'><span class='plusminus'><span class='p'>+7</span> <span class='m'>−0</span></span></td><td data-sort='7'><div class='dbar'><i class='a' style='width:3.3%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>1</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>src/hardy/models.py</code> </td><td><span class='badge accent'>source</span></td><td class='num'><span class='plusminus'><span class='p'>+4</span> <span class='m'>−1</span></span></td><td data-sort='5'><div class='dbar'><i class='a' style='width:1.9%'></i><i class='d' style='width:0.5%'></i></div></td><td class='num'>1</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>src/hardy/prompts/batch/system.md.j2</code> </td><td><span class='badge accent'>source</span></td><td class='num'><span class='plusminus'><span class='p'>+2</span> <span class='m'>−0</span></span></td><td data-sort='2'><div class='dbar'><i class='a' style='width:0.9%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>1</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>src/hardy/prompts/chat.md.j2</code> </td><td><span class='badge accent'>source</span></td><td class='num'><span class='plusminus'><span class='p'>+2</span> <span class='m'>−0</span></span></td><td data-sort='2'><div class='dbar'><i class='a' style='width:0.9%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>1</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>tests/test_chat_audit.py</code> <span class='badge good'>new</span></td><td><span class='badge good'>test</span></td><td class='num'><span class='plusminus'><span class='p'>+212</span> <span class='m'>−0</span></span></td><td data-sort='212'><div class='dbar'><i class='a' style='width:100.0%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>tests/test_audit.py</code> <span class='badge good'>new</span></td><td><span class='badge good'>test</span></td><td class='num'><span class='plusminus'><span class='p'>+191</span> <span class='m'>−0</span></span></td><td data-sort='191'><div class='dbar'><i class='a' style='width:90.1%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>tests/test_hardy.py</code> </td><td><span class='badge good'>test</span></td><td class='num'><span class='plusminus'><span class='p'>+191</span> <span class='m'>−0</span></span></td><td data-sort='191'><div class='dbar'><i class='a' style='width:90.1%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>tests/fake_lean.py</code> </td><td><span class='badge good'>test</span></td><td class='num'><span class='plusminus'><span class='p'>+77</span> <span class='m'>−11</span></span></td><td data-sort='88'><div class='dbar'><i class='a' style='width:36.3%'></i><i class='d' style='width:5.2%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>tests/unit/test_verifier.py</code> </td><td><span class='badge good'>test</span></td><td class='num'><span class='plusminus'><span class='p'>+70</span> <span class='m'>−0</span></span></td><td data-sort='70'><div class='dbar'><i class='a' style='width:33.0%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>docs/superpowers/plans/2026-07-24-axiom-audit-gate.md</code> </td><td><span class='badge neutral'>docs</span></td><td class='num'><span class='plusminus'><span class='p'>+34</span> <span class='m'>−0</span></span></td><td data-sort='34'><div class='dbar'><i class='a' style='width:16.0%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>tests/unit/test_ci_workflow.py</code> </td><td><span class='badge good'>test</span></td><td class='num'><span class='plusminus'><span class='p'>+30</span> <span class='m'>−4</span></span></td><td data-sort='34'><div class='dbar'><i class='a' style='width:14.2%'></i><i class='d' style='width:1.9%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>FEATURES.md</code> </td><td><span class='badge neutral'>docs</span></td><td class='num'><span class='plusminus'><span class='p'>+28</span> <span class='m'>−5</span></span></td><td data-sort='33'><div class='dbar'><i class='a' style='width:13.2%'></i><i class='d' style='width:2.4%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>README.md</code> </td><td><span class='badge neutral'>docs</span></td><td class='num'><span class='plusminus'><span class='p'>+21</span> <span class='m'>−4</span></span></td><td data-sort='25'><div class='dbar'><i class='a' style='width:9.9%'></i><i class='d' style='width:1.9%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>tests/unit/test_architecture_doc.py</code> </td><td><span class='badge good'>test</span></td><td class='num'><span class='plusminus'><span class='p'>+24</span> <span class='m'>−0</span></span></td><td data-sort='24'><div class='dbar'><i class='a' style='width:11.3%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>DESIGN.md</code> </td><td><span class='badge neutral'>docs</span></td><td class='num'><span class='plusminus'><span class='p'>+17</span> <span class='m'>−0</span></span></td><td data-sort='17'><div class='dbar'><i class='a' style='width:8.0%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>docs/superpowers/specs/2026-07-24-axiom-audit-gate-design.md</code> </td><td><span class='badge good'>test</span></td><td class='num'><span class='plusminus'><span class='p'>+6</span> <span class='m'>−0</span></span></td><td data-sort='6'><div class='dbar'><i class='a' style='width:2.8%'></i><i class='d' style='width:0.0%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>tests/test_chat_workspace.py</code> </td><td><span class='badge good'>test</span></td><td class='num'><span class='plusminus'><span class='p'>+5</span> <span class='m'>−1</span></span></td><td data-sort='6'><div class='dbar'><i class='a' style='width:2.4%'></i><i class='d' style='width:0.5%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr><tr><td><code>AGENTS.md</code> </td><td><span class='badge neutral'>docs</span></td><td class='num'><span class='plusminus'><span class='p'>+4</span> <span class='m'>−1</span></span></td><td data-sort='5'><div class='dbar'><i class='a' style='width:1.9%'></i><i class='d' style='width:0.5%'></i></div></td><td class='num'>0</td><td class='dim' style='font-size:12px'></td></tr></tbody></table></div>
+<details><summary>21 commits in range</summary><div class='body'><ul><li><code>7713987</code> docs: say which surface audits what, and what the audit cannot establish</li><li><code>c61b43c</code> feat: measure what the suite covers, and keep the report</li><li><code>6b12d7a</code> feat: the interactive session audits what a save actually rests on</li><li><code>a30430f</code> refactor: one axiom audit, shared by the verifier</li><li><code>3f82935</code> feat: batch grades on the audited axiom set, not on an exit code</li><li><code>a7de7e0</code> feat: read and grade what Lean says a declaration depends on</li><li><code>ad3a0ac</code> docs: correct four more claims after review round 11</li><li><code>6ebffc4</code> docs: correct three more claims after review round 10</li><li><code>174b11d</code> docs: correct seven more claims after review round 9</li><li><code>afd4d5e</code> docs: fix dangling back-reference in the Inventory caveat</li><li><code>8589211</code> docs: correct five more claims after review round 8</li><li><code>ae79ed9</code> docs: correct five more claims after review round 7</li><li><code>fab9d98</code> docs: three languages, not two, produce config.toml</li><li><code>2cd65ef</code> docs: correct five ownership and validation claims in the atlas</li><li><code>3548ba5</code> docs: correct the offline fallback claim and scope two invariants</li><li><code>cc0477e</code> docs: fix a fabricated import chain and three flattened claims</li><li><code>a745e58</code> docs: close three remaining scope gaps from fourth review</li><li><code>8473e26</code> docs: correct six ownership and scope claims from third review</li><li><code>241a9fe</code> docs: correct nine more atlas overclaims from second review</li><li><code>dd07bf6</code> docs: correct atlas claims found in review</li><li><code>6d12107</code> docs: add generated codebase atlas</li></ul></div></details>
+
+
+</section>
+<section class="panel" id="contracts-tests" role="tabpanel">
+
+
+<div class='callout bad'><b>2 contract-surface files touched</b> (schema, API definitions, dependency manifests). These outlive the code that reads them and deserve several times the scrutiny of internal changes.</div>
+<div class="tbl-wrap"><table><thead><tr><th>File</th><th>Kind</th><th class="num">+/−</th></tr></thead><tbody><tr><td><code>pyproject.toml</code></td><td><span class='badge warn'>dependencies</span></td><td class='num'><span class='plusminus'><span class='p'>+33</span> <span class='m'>−1</span></span></td></tr><tr><td><code>uv.lock</code></td><td><span class='badge warn'>dependencies</span></td><td class='num'><span class='plusminus'><span class='p'>+159</span> <span class='m'>−0</span></span></td></tr></tbody></table></div>
+<h2>Changed signatures</h2>
+<p class="dim">Every caller of these symbols inherits the new contract — the Blast Radius tab lists them.</p>
+<div class="tbl-wrap"><table><thead><tr><th>File</th><th>Symbol</th><th>Old → new</th></tr></thead><tbody><tr><td><code>src/hardy/lean.py</code></td><td><code>run_source</code> <span class='badge warn'>public?</span></td><td><div class='diff-snippet' style='margin:0'><span class='ln del'>- def run_source(self, source: str, *, env: dict[str, str] | None = None) -&gt; LeanToolResult:</span><span class='ln add'>+ def run_source(</span></div></td></tr><tr><td><code>src/hardy/lean.py</code></td><td><code>search_declaration</code> <span class='badge warn'>public?</span></td><td><div class='diff-snippet' style='margin:0'><span class='ln del'>- def search_declaration(self, name: str) -&gt; LeanToolResult:</span><span class='ln add'>+ def search_declaration(</span></div></td></tr></tbody></table></div><h3>Removed symbols</h3>
+<div class="tbl-wrap"><table><thead><tr><th>File</th><th>Symbol</th><th>Removed definition</th></tr></thead><tbody><tr><td><code>src/hardy/verifier.py</code></td><td><code>_parse_axiom_report</code> <span class='badge neutral'>internal</span></td><td><div class='diff-snippet' style='margin:0'><span class='ln del'>- def _parse_axiom_report(</span></div></td></tr></tbody></table></div>
+
+<h2>Prompt &amp; model contracts</h2>
+<p class="dim">Files this codebase loads at runtime, and the model settings it calls with. Resource edges are found textually: a quoted path is an edge only when it resolves to a file that exists. Paths assembled entirely at runtime (no literal segment) are invisible, and a resolved string is evidence of a reference, not proof the file is loaded on every code path.</p>
+
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>Prompt / template changed</th><th class="num">+/−</th><th>Loaded at</th></tr></thead>
+<tbody><tr><td><code>.github/workflows/cas-backends.yml</code></td><td class='num'><span class='plusminus'><span class='p'>+4</span> <span class='m'>−10</span></span></td><td><code>tests/unit/test_ci_workflow.py:34</code></td></tr><tr><td><code>.github/workflows/tests.yml</code></td><td class='num'><span class='plusminus'><span class='p'>+34</span> <span class='m'>−0</span></span></td><td><code>tests/unit/test_ci_workflow.py:46</code></td></tr><tr><td><code>ARCHITECTURE.html</code></td><td class='num'><span class='plusminus'><span class='p'>+3</span> <span class='m'>−3</span></span></td><td><code>tests/unit/test_architecture_doc.py:13</code></td></tr><tr><td><code>DESIGN.md</code></td><td class='num'><span class='plusminus'><span class='p'>+17</span> <span class='m'>−0</span></span></td><td><code>ARCHITECTURE.html:63</code></td></tr><tr><td><code>FEATURES.md</code></td><td class='num'><span class='plusminus'><span class='p'>+28</span> <span class='m'>−5</span></span></td><td><code>ARCHITECTURE.html:63</code> <code>tests/unit/test_architecture_doc.py:37</code></td></tr><tr><td><code>pyproject.toml</code></td><td class='num'><span class='plusminus'><span class='p'>+33</span> <span class='m'>−1</span></span></td><td><code>tests/unit/test_ci_workflow.py:63</code></td></tr><tr><td><code>src/hardy/chat.py</code></td><td class='num'><span class='plusminus'><span class='p'>+117</span> <span class='m'>−2</span></span></td><td><code>.github/workflows/cas-backends.yml:14</code> <code>docs/codemap.html:510</code> <code>tests/unit/test_ci_workflow.py:12</code></td></tr><tr><td><code>src/hardy/lean.py</code></td><td class='num'><span class='plusminus'><span class='p'>+75</span> <span class='m'>−13</span></span></td><td><code>docs/codemap.html:510</code></td></tr><tr><td><code>src/hardy/models.py</code></td><td class='num'><span class='plusminus'><span class='p'>+4</span> <span class='m'>−1</span></span></td><td><code>docs/codemap.html:510</code></td></tr><tr><td><code>src/hardy/runner.py</code></td><td class='num'><span class='plusminus'><span class='p'>+57</span> <span class='m'>−6</span></span></td><td><code>docs/codemap.html:510</code></td></tr><tr><td><code>src/hardy/verifier.py</code></td><td class='num'><span class='plusminus'><span class='p'>+21</span> <span class='m'>−25</span></span></td><td><code>docs/codemap.html:510</code></td></tr><tr><td><code>tests/fake_lean.py</code></td><td class='num'><span class='plusminus'><span class='p'>+77</span> <span class='m'>−11</span></span></td><td><code>tests/test_cancel_races.py:58</code> <code>tests/test_chat.py:85</code> <code>tests/test_hardy.py:55</code></td></tr></tbody></table></div>
+
+<h2>Test delta</h2>
+<p class="dim">Match is heuristic: a changed test counts as covering a source file if it shares a name stem or mentions the file's changed symbols. 7 of 10 changed source files have matching test changes.</p>
+<div class='callout warn'><b>3 changed source files have no corresponding test change.</b> A modified conditional with untouched tests means the tests never pinned that behavior down — the change is effectively unverified.</div>
+<div class="tbl-wrap"><table class="sortable"><thead><tr><th>Changed file — no test change found</th><th class="num">+/−</th><th>Risk signals</th></tr></thead><tbody><tr><td><code>.gitignore</code></td><td class='num'><span class='plusminus'><span class='p'>+7</span> <span class='m'>−0</span></span></td><td class='dim'>—</td></tr><tr><td><code>src/hardy/prompts/batch/system.md.j2</code></td><td class='num'><span class='plusminus'><span class='p'>+2</span> <span class='m'>−0</span></span></td><td class='dim'>—</td></tr><tr><td><code>src/hardy/prompts/chat.md.j2</code></td><td class='num'><span class='plusminus'><span class='p'>+2</span> <span class='m'>−0</span></span></td><td class='dim'>—</td></tr></tbody></table></div>
+
+<h2>Measured coverage of changed files</h2>
+<p class="dim">From <code>/home/user/hardy/coverage.xml</code> (cobertura); rendered, not re-run.</p>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>Changed file</th><th class="num">Line coverage</th></tr></thead>
+<tbody><tr><td><code>src/hardy/audit.py</code></td><td class='num'>100%</td></tr><tr><td><code>src/hardy/lean.py</code></td><td class='num'>90%</td></tr><tr><td><code>src/hardy/chat.py</code></td><td class='num'>88%</td></tr><tr><td><code>ARCHITECTURE.html</code></td><td class='num'><span class='badge warn'>not measured</span></td></tr><tr><td><code>src/hardy/verifier.py</code></td><td class='num'>89%</td></tr><tr><td><code>src/hardy/runner.py</code></td><td class='num'>92%</td></tr><tr><td><code>.gitignore</code></td><td class='num'><span class='badge warn'>not measured</span></td></tr><tr><td><code>src/hardy/models.py</code></td><td class='num'>94%</td></tr><tr><td><code>src/hardy/prompts/batch/system.md.j2</code></td><td class='num'><span class='badge warn'>not measured</span></td></tr><tr><td><code>src/hardy/prompts/chat.md.j2</code></td><td class='num'><span class='badge warn'>not measured</span></td></tr></tbody></table></div>
+
+
+
+</section>
+<section class="panel" id="blast-radius" role="tabpanel">
+
+
+<div class="kpis">
+  <div class="kpi accent"><div class="n">18</div><div class="l">changed symbols traced</div></div>
+  <div class="kpi bad"><div class="n">9</div><div class="l">untouched caller files (non-test)</div></div>
+  <div class="kpi"><div class="n">8</div><div class="l">untouched test caller files</div></div>
+</div>
+<div class='callout warn'><b>5 changed symbols reach non-test call sites this PR never touched.</b> Those callers silently inherit the new behavior — they are where regressions hide, and their absence from the diff means no reviewer will look at them unless prompted. Verify each untouched caller still holds its assumptions. The list is name-matched, so same-named symbols from unrelated modules may appear in it; confirm each caller actually uses the changed definition before acting.</div>
+
+<h2>Caller graph</h2>
+<p class="dim">Arrows point from caller to changed definition. Node color: changed in this diff vs untouched. Matching is textual (<code>name(</code> / <code>.name</code>) — precise enough to point a reviewer, not a proof.</p>
+<div class="viz" data-render="forcegraph" style="height:560px"></div>
+<script type="application/json">{"nodes":[{"id":"src/hardy/audit.py","label":"audit.py","group":"changed","size":6,"meta":"in this diff"},{"id":"tests/test_audit.py","label":"test_audit.py","group":"changed","size":40,"meta":"in this diff"},{"id":"src/hardy/models.py","label":"models.py","group":"changed","size":3,"meta":"in this diff"},{"id":"src/hardy/runner.py","label":"runner.py","group":"changed","size":15,"meta":"in this diff"},{"id":"src/hardy/chat.py","label":"chat.py","group":"changed","size":19,"meta":"in this diff"},{"id":"src/hardy/claude_runtime.py","label":"claude_runtime.py","group":"untouched caller","size":2,"meta":"NOT in this diff"},{"id":"src/hardy/cli.py","label":"cli.py","group":"untouched caller","size":3,"meta":"NOT in this diff"},{"id":"src/hardy/cas.py","label":"cas.py","group":"untouched caller","size":2,"meta":"NOT in this diff"},{"id":"src/hardy/verifier.py","label":"verifier.py","group":"changed","size":2,"meta":"in this diff"},{"id":"src/hardy/tui/plain.py","label":"plain.py","group":"untouched caller","size":2,"meta":"NOT in this diff"},{"id":"src/hardy/tui/shell.py","label":"shell.py","group":"untouched caller","size":2,"meta":"NOT in this diff"},{"id":"tests/fake_sentinel_cas_echo.py","label":"fake_sentinel_cas_echo.py","group":"test (untouched)","size":2,"meta":"NOT in this diff"},{"id":"tests/tui/test_dispatch.py","label":"test_dispatch.py","group":"test (untouched)","size":11,"meta":"NOT in this diff"},{"id":"tests/unit/test_cas_classify.py","label":"test_cas_classify.py","group":"test (untouched)","size":10,"meta":"NOT in this diff"},{"id":"tests/unit/test_cas_sentinel_echo.py","label":"test_cas_sentinel_echo.py","group":"test (untouched)","size":2,"meta":"NOT in this diff"},{"id":"tests/test_workspace.py","label":"test_workspace.py","group":"test (untouched)","size":3,"meta":"NOT in this diff"},{"id":"src/hardy/doctor.py","label":"doctor.py","group":"untouched caller","size":3,"meta":"NOT in this diff"},{"id":"src/hardy/tui/handlers.py","label":"handlers.py","group":"untouched caller","size":3,"meta":"NOT in this diff"},{"id":"tests/test_catalog.py","label":"test_catalog.py","group":"test (untouched)","size":3,"meta":"NOT in this diff"},{"id":"tests/tui/nested_render.py","label":"nested_render.py","group":"test (untouched)","size":2,"meta":"NOT in this diff"},{"id":"src/hardy/lean.py","label":"lean.py","group":"changed","size":4,"meta":"in this diff"},{"id":"tests/test_doctor.py","label":"test_doctor.py","group":"test (untouched)","size":3,"meta":"NOT in this diff"},{"id":"tests/unit/test_ci_workflow.py","label":"test_ci_workflow.py","group":"changed","size":2,"meta":"in this diff"},{"id":"tests/test_hardy.py","label":"test_hardy.py","group":"changed","size":20,"meta":"in this diff"},{"id":"tests/test_chat_audit.py","label":"test_chat_audit.py","group":"changed","size":2,"meta":"in this diff"},{"id":"tests/test_chat_workspace.py","label":"test_chat_workspace.py","group":"changed","size":4,"meta":"in this diff"}],"links":[{"source":"tests/test_audit.py","target":"src/hardy/audit.py","weight":28},{"source":"src/hardy/models.py","target":"src/hardy/audit.py","weight":2},{"source":"src/hardy/runner.py","target":"src/hardy/audit.py","weight":10},{"source":"src/hardy/chat.py","target":"src/hardy/audit.py","weight":13},{"source":"src/hardy/claude_runtime.py","target":"src/hardy/audit.py","weight":1},{"source":"src/hardy/cli.py","target":"src/hardy/audit.py","weight":1},{"source":"src/hardy/cas.py","target":"src/hardy/audit.py","weight":1},{"source":"src/hardy/verifier.py","target":"src/hardy/audit.py","weight":1},{"source":"src/hardy/tui/plain.py","target":"src/hardy/audit.py","weight":1},{"source":"src/hardy/tui/shell.py","target":"src/hardy/audit.py","weight":1},{"source":"tests/fake_sentinel_cas_echo.py","target":"src/hardy/audit.py","weight":1},{"source":"tests/tui/test_dispatch.py","target":"src/hardy/audit.py","weight":10},{"source":"tests/unit/test_cas_classify.py","target":"src/hardy/audit.py","weight":9},{"source":"tests/unit/test_cas_sentinel_echo.py","target":"src/hardy/audit.py","weight":1},{"source":"tests/test_workspace.py","target":"src/hardy/audit.py","weight":2},{"source":"src/hardy/doctor.py","target":"src/hardy/audit.py","weight":1},{"source":"src/hardy/tui/handlers.py","target":"src/hardy/audit.py","weight":2},{"source":"tests/test_catalog.py","target":"src/hardy/audit.py","weight":2},{"source":"tests/tui/nested_render.py","target":"src/hardy/audit.py","weight":1},{"source":"src/hardy/chat.py","target":"src/hardy/lean.py","weight":3},{"source":"src/hardy/cli.py","target":"src/hardy/lean.py","weight":1},{"source":"src/hardy/runner.py","target":"src/hardy/lean.py","weight":3},{"source":"tests/test_audit.py","target":"src/hardy/lean.py","weight":11},{"source":"tests/test_doctor.py","target":"src/hardy/lean.py","weight":2},{"source":"tests/unit/test_ci_workflow.py","target":"src/hardy/lean.py","weight":1},{"source":"tests/test_hardy.py","target":"src/hardy/lean.py","weight":19},{"source":"tests/test_chat_audit.py","target":"src/hardy/lean.py","weight":1},{"source":"src/hardy/doctor.py","target":"src/hardy/lean.py","weight":1},{"source":"tests/test_chat_workspace.py","target":"src/hardy/lean.py","weight":3}]}</script>
+<h2>Symbols, ordered by untouched callers</h2>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>Symbol</th><th>Defined in</th><th class="num">Caller files</th><th class="num">Untouched (non-test)</th><th class="num">In tests</th><th>Untouched callers</th></tr></thead>
+<tbody><tr><td><code>classify</code></td><td><code>src/hardy/audit.py</code></td><td class='num'>11</td><td class='num' style=color:var(--bad);font-weight:600>3</td><td class='num'>4</td><td><details><summary>3 untouched caller files</summary><div class='body'><ul><li><code>src/hardy/cas.py</code></li><li><code>src/hardy/tui/plain.py</code></li><li><code>src/hardy/tui/shell.py</code></li></ul></div></details></td></tr><tr><td><code>as_dict</code></td><td><code>src/hardy/audit.py</code></td><td class='num'>7</td><td class='num' style=color:var(--bad);font-weight:600>2</td><td class='num'>0</td><td><details><summary>2 untouched caller files</summary><div class='body'><ul><li><code>src/hardy/claude_runtime.py</code></li><li><code>src/hardy/cli.py</code></li></ul></div></details></td></tr><tr><td><code>describe</code></td><td><code>src/hardy/audit.py</code></td><td class='num'>7</td><td class='num' style=color:var(--bad);font-weight:600>2</td><td class='num'>2</td><td><details><summary>2 untouched caller files</summary><div class='body'><ul><li><code>src/hardy/tui/handlers.py</code></li><li><code>src/hardy/doctor.py</code></li></ul></div></details></td></tr><tr><td><code>report</code></td><td><code>src/hardy/lean.py</code></td><td class='num'>6</td><td class='num' style=color:var(--bad);font-weight:600>1</td><td class='num'>1</td><td><details><summary>1 untouched caller file</summary><div class='body'><ul><li><code>src/hardy/cli.py</code></li></ul></div></details></td></tr><tr><td><code>run_source</code></td><td><code>src/hardy/lean.py</code></td><td class='num'>4</td><td class='num' style=color:var(--bad);font-weight:600>1</td><td class='num'>0</td><td><details><summary>1 untouched caller file</summary><div class='body'><ul><li><code>src/hardy/doctor.py</code></li></ul></div></details></td></tr><tr><td><code>Verdict</code></td><td><code>src/hardy/audit.py</code></td><td class='num'>4</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>dependents</code></td><td><code>src/hardy/audit.py</code></td><td class='num'>3</td><td class='num'>0</td><td class='num'>1</td><td></td></tr><tr><td><code>unestablished</code></td><td><code>src/hardy/audit.py</code></td><td class='num'>3</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>target_name</code></td><td><code>src/hardy/lean.py</code></td><td class='num'>3</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>with_audit</code></td><td><code>src/hardy/lean.py</code></td><td class='num'>3</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>AxiomReport</code></td><td><code>src/hardy/audit.py</code></td><td class='num'>2</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>summarise</code></td><td><code>src/hardy/audit.py</code></td><td class='num'>2</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>search_declaration</code></td><td><code>src/hardy/lean.py</code></td><td class='num'>2</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>_reports_for</code></td><td><code>src/hardy/audit.py</code></td><td class='num'>1</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>_approved_assumptions</code></td><td><code>src/hardy/chat.py</code></td><td class='num'>1</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>_audit_tree</code></td><td><code>src/hardy/chat.py</code></td><td class='num'>1</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>_audited</code></td><td><code>src/hardy/runner.py</code></td><td class='num'>1</td><td class='num'>0</td><td class='num'>0</td><td></td></tr><tr><td><code>_parse_axiom_report</code> <span class='badge bad'>removed</span></td><td><code>src/hardy/verifier.py</code></td><td class='num'>0</td><td class='num'>0</td><td class='num'>0</td><td></td></tr></tbody></table></div>
+
+<h2>Runtime resources changed</h2>
+<div class="callout warn"><b>12 loaded files edited</b> —
+templates, prompts or data this codebase reads at runtime. 7 loading sites outside this diff
+inherit the new content with nothing in the diff to review. Resource edges are found textually: a quoted path is an edge only when it resolves to a file that exists. Paths assembled entirely at runtime (no literal segment) are invisible, and a resolved string is evidence of a reference, not proof the file is loaded on every code path.</div>
+<div class="tbl-wrap"><table class="sortable">
+<thead><tr><th>Changed file</th><th class="num">Loaders</th><th class="num">Untouched</th><th>Loaded at</th></tr></thead>
+<tbody><tr><td><code>.github/workflows/cas-backends.yml</code></td><td class='num'>1</td><td class='num'>0</td><td></td></tr><tr><td><code>.github/workflows/tests.yml</code></td><td class='num'>1</td><td class='num'>0</td><td></td></tr><tr><td><code>ARCHITECTURE.html</code></td><td class='num'>1</td><td class='num'>0</td><td></td></tr><tr><td><code>DESIGN.md</code></td><td class='num'>1</td><td class='num'>0</td><td></td></tr><tr><td><code>FEATURES.md</code></td><td class='num'>2</td><td class='num'>0</td><td></td></tr><tr><td><code>pyproject.toml</code></td><td class='num'>1</td><td class='num'>0</td><td></td></tr><tr><td><code>src/hardy/chat.py</code></td><td class='num'>3</td><td class='num' style=color:var(--bad);font-weight:600>1</td><td><code>docs/codemap.html:510</code></td></tr><tr><td><code>src/hardy/lean.py</code></td><td class='num'>1</td><td class='num' style=color:var(--bad);font-weight:600>1</td><td><code>docs/codemap.html:510</code></td></tr><tr><td><code>src/hardy/models.py</code></td><td class='num'>1</td><td class='num' style=color:var(--bad);font-weight:600>1</td><td><code>docs/codemap.html:510</code></td></tr><tr><td><code>src/hardy/runner.py</code></td><td class='num'>1</td><td class='num' style=color:var(--bad);font-weight:600>1</td><td><code>docs/codemap.html:510</code></td></tr><tr><td><code>src/hardy/verifier.py</code></td><td class='num'>1</td><td class='num' style=color:var(--bad);font-weight:600>1</td><td><code>docs/codemap.html:510</code></td></tr><tr><td><code>tests/fake_lean.py</code></td><td class='num'>3</td><td class='num' style=color:var(--bad);font-weight:600>2</td><td><code>tests/test_cancel_races.py:58</code> <code>tests/test_chat.py:85</code></td></tr></tbody></table></div>
+
+
+
+</section>
+<section class="panel" id="flow-impact" role="tabpanel">
+
+<div class="card">
+  <h3>Flow 1 — <code>hardy batch</code> accepts a proof</h3>
+  <p>The change inserts one decision between "Lean exited 0" and "kernel verified". Everything
+  before it is unchanged.</p>
+</div>
+
+<div class="grid cols-2">
+<div class="card">
+  <h3>Before</h3>
+  <div class="mermaid-wrap"><div class="mviewport"><pre class="mermaid">
+sequenceDiagram
+  participant M as Model
+  participant R as runner.dispatch
+  participant L as Lean
+  M->>R: submit_proof(proof)
+  R->>L: elaborate + "#print axioms T"
+  L-->>R: exit 0, report printed
+  Note over R: report never read
+  R->>R: found = result
+  R-->>M: ok
+  Note over R: formalization = "kernel verified"<br/>axioms = raw stdout blob
+  </pre></div></div>
+</div>
+<div class="card">
+  <h3>After</h3>
+  <div class="mermaid-wrap"><div class="mviewport"><pre class="mermaid">
+sequenceDiagram
+  participant M as Model
+  participant R as runner.dispatch
+  participant L as Lean
+  participant A as hardy.audit
+  M->>R: submit_proof(proof)
+  R->>L: elaborate + "#print axioms T"
+  L-->>R: exit 0, report printed
+  R->>A: parse(result.report, name)
+  alt no name, or no single readable report
+    A-->>R: None
+    R-->>M: refused, reason recorded
+  else verdict not clean
+    A-->>R: forbidden / unapproved
+    R-->>M: refused, verdict recorded
+  else clean
+    A-->>R: verdict
+    R->>R: found = result, verdict
+    R-->>M: ok
+  end
+  </pre></div></div>
+</div>
+</div>
+
+<div class="card">
+  <h3>What moved</h3>
+  <ul>
+    <li><strong>New gate</strong> between elaboration and acceptance — <code>src/hardy/runner.py:40</code>.
+      It reads <code>result.report</code>, not <code>result.output</code>: the latter is cut to its trailing
+      12&nbsp;000 characters for the model, and grading on that would refuse a proof whose report was
+      merely truncated (<code>src/hardy/lean.py:110</code>).</li>
+    <li><strong>New terminal reason</strong> <code>axioms_rejected</code>, reached only when a submission
+      elaborated and was then refused — <code>src/hardy/runner.py:146</code>. It does not swallow
+      "nothing was submitted", and <code>wall_clock_limit</code> / <code>turn_limit</code> / <code>runtime_error</code>
+      still take precedence.</li>
+    <li><strong>Changed record shape.</strong> <code>RunResult.axioms</code> goes from <code>str</code> to
+      <code>dict</code> — <code>src/hardy/models.py:66</code>. It now distinguishes three facts the blob
+      collapsed: a verdict, an audit attempted but not established, and no submission having
+      reached the audit.</li>
+    <li><strong>Ordering is unchanged</strong> around the wall-clock deadline: the audit runs inside
+      the <code>submit_proof</code> branch, and <code>late</code> is still computed after it, so a proof that
+      finished inside the budget still counts and one that did not still does not.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Flow 2 — <code>hardy chat</code> saves a Lean file</h3>
+  <p>The audit is the last gate before <code>commit()</code>, so a refusal leaves the workspace byte-identical.</p>
+  <div class="mermaid-wrap"><div class="mviewport"><pre class="mermaid">
+flowchart TB
+  A["save_lean(source)"] --> B["path + documentation ratchet"]
+  B --> C["_final_gates: holes, declared axioms"]
+  C --> D["stage shadow tree"]
+  D --> E["build module + every dependent"]
+  E --> F["registered names still resolve"]
+  F --> G["NEW: _audit_tree over the built shadow"]
+  G -->|"forbidden"| R1["refuse: a hole cannot be approved"]
+  G -->|"unapproved"| R2["refuse: name the axiom and who needs it"]
+  G -->|"unreadable"| R3["refuse: audit not established"]
+  G -->|"clean or modulo"| H["commit()"]
+  H --> I["record a verdict per module"]
+  </pre></div></div>
+</div>
+
+<div class="card">
+  <h3>What moved</h3>
+  <ul>
+    <li><strong>One extra Lean run per save</strong> — <code>src/hardy/chat.py:549</code>. It imports the
+      oleans the shadow build just produced rather than re-elaborating their source, but it is a
+      real cost, and the test that pinned "one compile, zero extra elaborations" is updated to
+      "one compile, one audit" rather than deleted (<code>tests/test_chat_workspace.py:147</code>).</li>
+    <li><strong>Scope is the rebuilt set, not the edited file</strong> — <code>src/hardy/chat.py:520</code>.
+      A dependent inherits whatever the edit brought in, so editing a helper re-audits every
+      theorem above it. This is the case the tests exercise at
+      <code>tests/test_chat_audit.py:111</code>.</li>
+    <li><strong>The verdict is published after the write</strong>, not before —
+      <code>src/hardy/chat.py:494</code>. A record stored first would survive a failed commit and
+      describe a tree that never existed.</li>
+    <li><strong>Records are per module</strong>, so a scaffolding save elsewhere cannot erase what an
+      earlier save established, and <code>delete_file</code> drops the record with the module
+      (<code>src/hardy/chat.py:846</code>).</li>
+    <li><strong><code>check_lean</code> is untouched.</strong> Scratch work is where a model finds out what
+      an axiom would cost it, so it is not gated.</li>
+  </ul>
+</div>
+
+</section>
+<section class="panel" id="review-walkthrough" role="tabpanel">
+
+<div class="card hero">
+  <h3>Verdict: mergeable. No must-fix found; four should-fix items, all of them scope
+  boundaries the change states rather than hides.</h3>
+  <p>The core claim holds: a batch proof can no longer be graded <em>kernel verified</em> without an
+  audited axiom set, and every uncertainty refuses. The riskiest thing here is not the audit — it
+  is that the audit is now a <em>gate</em>, so a false refusal is a new way for Hardy to stop working.
+  The paragraphs below are ordered by how much I would want a second pair of eyes on them.</p>
+</div>
+
+<div class="card">
+  <h3>Per-file verdicts, risk order</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>File</th><th>Verdict</th><th>What to check</th></tr>
+    <tr><td><code>src/hardy/audit.py</code></td><td><span class="badge good">sound</span></td>
+      <td>Every branch is exercised; the file measures 100% line coverage. The regexes are the whole
+      risk surface — see the two callouts below.</td></tr>
+    <tr><td><code>src/hardy/chat.py</code></td><td><span class="badge warn">watch the cost</span></td>
+      <td>One extra Mathlib-importing elaboration per save. Correct, disclosed, and the invariant
+      test was updated rather than deleted — but on a real toolchain this is seconds, not
+      milliseconds, and no one has measured it against real Mathlib.</td></tr>
+    <tr><td><code>src/hardy/lean.py</code></td><td><span class="badge good">an improvement</span></td>
+      <td>Two signature changes, both additive keyword-only parameters. <code>DECLARATION_NAME</code> got
+      both stricter and wider at once — the tightening is the part to check.</td></tr>
+    <tr><td><code>src/hardy/verifier.py</code></td><td><span class="badge good">fixes a real bug</span></td>
+      <td>Loses its private parser. The only behavior change beyond the bug fix is that a
+      <em>duplicated</em> report now fails closed here too.</td></tr>
+    <tr><td><code>src/hardy/runner.py</code></td><td><span class="badge good">sound</span></td>
+      <td>The gate sits before the deadline check, so budget semantics are unchanged.</td></tr>
+    <tr><td><code>pyproject.toml</code></td><td><span class="badge good">sound</span></td>
+      <td>One new test-only dependency. The floor is 82 against a measured 83.1.</td></tr>
+    <tr><td><code>.github/workflows/*</code></td><td><span class="badge good">a net gain</span></td>
+      <td>The suite now runs on every PR instead of behind a CAS path filter.</td></tr>
+  </table></div>
+</div>
+
+<div class="callout bad">
+  <strong>The tightening in <code>DECLARATION_NAME</code> is a behavior change to an existing tool, and it is
+  the one place this diff can refuse something it used to accept.</strong>
+  <div class="diff-snippet"><div class="fh">src/hardy/lean.py — lines 29–35</div>
+  <span class="ln del">-DECLARATION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")</span>
+  <span class="ln add">+_COMPONENT = r"[^\W\d][\w']*"</span>
+  <span class="ln add">+DECLARATION_NAME = re.compile(rf"{_COMPONENT}(?:\.{_COMPONENT})*")</span>
+  </div>
+  <p>This pattern gates <code>search_declaration</code> (<code>src/hardy/lean.py:425</code>) and
+  <code>LeanService.inspect_declarations</code> / <code>search_declarations</code>
+  (<code>src/hardy/lean.py:458</code>). <code>Foo..bar</code> and <code>Foo.</code> are now refused where they were
+  accepted — correct, they are not names — and <code>α</code>, <code>x₁</code>, <code>Nat.add_comm'</code> now pass
+  where they were refused. The refusal direction is the risk: a model searching for a name Lean
+  itself would accept but this pattern does not now gets a tool error. Guillemet-quoted
+  «escaped identifiers» are the known example, and are refused deliberately.
+  Covered by <code>tests/test_hardy.py:181</code>.</p>
+</div>
+
+<div class="callout warn">
+  <strong>The parser tolerates Lean's unquoted form, which is a widening of what counts as evidence.</strong>
+  <div class="diff-snippet"><div class="fh">src/hardy/audit.py — lines 66–68</div>
+  <span class="ln add">+    escaped = re.escape(name)</span>
+  <span class="ln add">+    quoted = rf"(?:'{escaped}'|(?&lt;![\w'.]){escaped}(?![\w']))"</span>
+  <span class="ln add">+    listed = re.findall(rf"{quoted}\s+depends on axioms:\s*\[([^][]*)\]", output)</span>
+  </div>
+  <p>Real Lean quotes the name. The bare alternative exists because the repo's own verifier
+  fixtures use the unquoted form, and dropping tolerance would have meant rewriting them on a
+  guess about a version. The two alternatives are mutually exclusive — the quote is what the bare
+  form's lookbehind excludes — so this cannot turn one report into two
+  (<code>tests/test_audit.py:64</code>). The residual question is whether a model could <em>print</em> a
+  bare lookalike line. It could not do so profitably: Lean's own report would still appear, and
+  two reports for one name is a refusal (<code>tests/test_audit.py:76</code>). What defeats this is the
+  elaborator-override path, which the change documents as out of reach rather than claiming to
+  close (<code>DESIGN.md:205</code>).</p>
+</div>
+
+<div class="card">
+  <h3>Asymmetry checklist — only rows that apply</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>Opened…</th><th>…closed?</th><th>Verdict</th></tr>
+    <tr><td>Shadow workspace staged for the audit</td>
+      <td><code>LeanWorkspace.discard</code> in the same <code>finally</code> that already covered the build; the
+        new early return sits inside the <code>try</code> (<code>src/hardy/chat.py:490</code>)</td>
+      <td><span class="badge good">released on every path</span></td></tr>
+    <tr><td>State written: <code>state["audit"]</code></td>
+      <td>Dropped per module by <code>delete_file</code> (<code>src/hardy/chat.py:846</code>); refreshed for
+        every rebuilt module on each save, and never for a module nothing rebuilt — which is
+        sound only because <code>affected</code> is the edited module plus all dependents</td>
+      <td><span class="badge good">invalidated</span></td></tr>
+    <tr><td>New serialization: <code>RunResult.axioms</code> <code>str</code> → <code>dict</code></td>
+      <td><strong>No migration.</strong> An old <code>result.json</code> holds a string under this key</td>
+      <td><span class="badge warn">see below</span></td></tr>
+    <tr><td>New session key <code>state["audit"]</code></td>
+      <td><code>setdefault</code> on write, <code>.get(…, {})</code> on read — a session written before this
+        change opens without it (<code>src/hardy/chat.py:293</code>)</td>
+      <td><span class="badge good">back-compatible</span></td></tr>
+    <tr><td>New refusal path in <code>submit_proof</code></td>
+      <td>Refusal text names the axiom and reaches the model as a tool result
+        (<code>tests/test_hardy.py:227</code>); both prompts now describe the gate</td>
+      <td><span class="badge good">handled, not swallowed</span></td></tr>
+    <tr><td>New config: coverage floor</td>
+      <td>Defaulted (82), validated by CI on every PR, documented in <code>README.md:258</code> and
+        <code>AGENTS.md:13</code></td>
+      <td><span class="badge good">closed</span></td></tr>
+    <tr><td>Symbol removed: <code>verifier._parse_axiom_report</code></td>
+      <td>Private, single call site, replaced in the same commit; blast radius reports no other
+        caller</td>
+      <td><span class="badge good">no callers left behind</span></td></tr>
+  </table></div>
+</div>
+
+<div class="callout warn">
+  <strong><code>RunResult.axioms</code> changed type with no migration, and the field is written to disk.</strong>
+  <div class="diff-snippet"><div class="fh">src/hardy/models.py — lines 62–67</div>
+  <span class="ln del">-    axioms: str</span>
+  <span class="ln add">+    axioms: dict[str, Any]</span>
+  </div>
+  <p>Anything reading an old <code>hardy-output/result.json</code> gets a string where it now expects an
+  object. Nothing in this repo does — <code>src/hardy/writeup.py:187</code> reads the <em>staged</em>
+  <code>VerificationResult.axioms</code>, which is untouched, and the acceptance consistency checks do not
+  look at this field. The exposure is an external reader of a batch run's output. Given that the
+  old value was an unparsed stdout blob nobody could have consumed structurally, I judge this
+  acceptable and worth calling out in the PR body rather than versioning.</p>
+</div>
+
+<div class="card">
+  <h3>Invariant impact</h3>
+  <ul>
+    <li><strong>Strengthened, and this is the point:</strong> "only Lean kernel acceptance justifies
+      verified" was enforced on one surface and is now enforced on three, through one parser and
+      one allowlist (<code>src/hardy/audit.py:22</code>). <code>verifier.ALLOWED_AXIOMS</code> is kept as an alias
+      of <code>audit.STANDARD</code> so the two cannot drift apart.</li>
+    <li><strong>New invariant to maintain:</strong> every name Hardy interpolates into
+      <code>#print axioms</code> must be a name Lean will accept. Two places produce one —
+      <code>LeanTools.target_name</code> from a frozen request, and <code>workspace.declarations</code> from a
+      saved source. They use <em>different</em> patterns (<code>src/hardy/lean.py:33</code> refuses
+      guillemets; <code>src/hardy/workspace.py:35</code> allows them). That is intentional — a request's
+      declaration head and a saved file's declarations are different inputs — but it is now a
+      coupling nothing type-checks, and the guillemet case is only covered by
+      <code>tests/test_chat_audit.py:207</code>.</li>
+    <li><strong>Weakened nowhere.</strong> No existing gate was relaxed. <code>_final_gates</code>' textual
+      axiom check is kept as a cheap pre-check rather than replaced, which is the right order:
+      it costs nothing and the audit costs a Lean run.</li>
+    <li><strong>New failure mode:</strong> "the audit could not be established" now refuses saves and
+      submissions that previously succeeded. Every path that produces it is tested
+      (<code>tests/test_hardy.py:297</code>, <code>tests/test_chat_audit.py:150</code>), and all of them are
+      genuine uncertainty — but a Lean version that changes the report's wording would brick both
+      surfaces until the parser was updated. That is the intended trade (fail closed), and it is
+      worth stating in the PR body so nobody is surprised by it in the field.</li>
+  </ul>
+</div>
+
+<div class="card hero">
+  <h3>Action list</h3>
+  <p><strong>Must fix:</strong> none found.</p>
+  <p><strong>Should fix / decide before merge</strong></p>
+  <ol>
+    <li><strong>Confirm the report wording against a real Lean.</strong> The whole gate rests on
+      <code>'Name' depends on axioms: [...]</code> and <code>'Name' does not depend on any axioms</code>. The
+      hermetic suite proves the parser, not the format. <code>tests/integration/test_verifier_real.py</code>
+      is the test that would catch a mismatch and it is <code>real_toolchain</code>-marked, so CI never
+      runs it. <span class="badge warn">unverified here</span></li>
+    <li><strong>Measure the interactive save against real Mathlib.</strong> One extra elaboration per
+      save is fine in theory because it imports oleans; nobody has timed it
+      (<code>src/hardy/chat.py:549</code>).</li>
+    <li><strong>Accept or reject the type change</strong> on <code>RunResult.axioms</code> without a version
+      bump (<code>src/hardy/models.py:66</code>).</li>
+    <li><strong>Decide whether the deferred items get issues.</strong> The <code>save_latex</code> disclosure
+      gate and approved-statement drift detection are recorded in the plan's status note, not in
+      the tracker.</li>
+  </ol>
+  <p><strong>Nits</strong></p>
+  <ul>
+    <li><code>src/hardy/chat.py:577</code> names only <code>verdict.forbidden[0]</code>'s dependents. Harmless
+      while <code>FORBIDDEN</code> holds one entry; would silently under-report if it grew.</li>
+    <li>The coverage floor sits 1.1 points under the measured value. Tight enough that an
+      unrelated refactor could trip it, loose enough that it is doing its job.</li>
+  </ul>
+</div>
+
+</section></main>
+<footer class="doc">Generated by pr-visualization. Automated tabs: Footprint, Contracts &amp; Tests, Blast Radius (heuristic, name-based). Judgment tabs authored from diff reading — citations verified against the branch head.</footer>
+<div class="viz-tip" id="viz-tip"></div>
+<script>
+/* ============ tabs ============ */
+(function(){
+  const btns=[...document.querySelectorAll('nav.tabs button')];
+  const panels=[...document.querySelectorAll('.panel')];
+  function activate(id,push){
+    btns.forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===id?'true':'false'));
+    panels.forEach(p=>p.classList.toggle('active',p.id===id));
+    if(push){try{history.replaceState(null,'','#'+id)}catch(e){}}
+    window.dispatchEvent(new CustomEvent('tab:shown',{detail:{id}}));
+  }
+  btns.forEach(b=>b.addEventListener('click',()=>activate(b.dataset.tab,true)));
+  const initial=location.hash&&panels.some(p=>'#'+p.id===location.hash)?location.hash.slice(1):(panels[0]&&panels[0].id);
+  if(initial)activate(initial,false);
+  window.addEventListener('hashchange',()=>{const h=location.hash.slice(1);if(panels.some(p=>p.id===h))activate(h,false);});
+})();
+
+/* ============ helpers ============ */
+const cssVar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const tip=document.getElementById('viz-tip');
+function showTip(html,x,y){tip.innerHTML=html;tip.style.display='block';
+  const r=tip.getBoundingClientRect();
+  tip.style.left=Math.min(x+14,innerWidth-r.width-10)+'px';
+  tip.style.top=Math.min(y+14,innerHeight-r.height-10)+'px';}
+function hideTip(){tip.style.display='none'}
+function lerpColor(a,b,t){
+  const pa=hex(a),pb=hex(b);
+  return `rgb(${pa.map((v,i)=>Math.round(v+(pb[i]-v)*t)).join(',')})`;
+  function hex(h){h=h.replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');
+    return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16));}
+}
+function fmt(n){return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e4?(n/1e3).toFixed(0)+'k':n>=1e3?(n/1e3).toFixed(1)+'k':String(n)}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+/* sortable tables */
+document.querySelectorAll('table.sortable').forEach(tb=>{
+  tb.querySelectorAll('thead th').forEach((th,ci)=>{
+    th.addEventListener('click',()=>{
+      const dir=th.classList.contains('asc')?'desc':'asc';
+      tb.querySelectorAll('thead th').forEach(h=>h.classList.remove('asc','desc'));
+      th.classList.add(dir);
+      const rows=[...tb.querySelectorAll('tbody tr')];
+      const val=r=>{const td=r.children[ci];if(!td)return '';
+        const d=td.dataset.sort!==undefined?td.dataset.sort:td.textContent.trim();
+        const n=parseFloat(String(d).replace(/[,%]/g,''));return isNaN(n)?String(d).toLowerCase():n;};
+      rows.sort((a,b)=>{const va=val(a),vb=val(b);
+        const c=(typeof va==='number'&&typeof vb==='number')?va-vb:String(va).localeCompare(String(vb));
+        return dir==='asc'?c:-c;});
+      const tbody=tb.querySelector('tbody');rows.forEach(r=>tbody.appendChild(r));
+    });
+  });
+});
+
+/* pan/zoom for a container holding an inner element (svg group or div) */
+function panZoom(viewport,apply,getState){
+  let drag=null;
+  viewport.addEventListener('wheel',e=>{
+    if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();
+    const s=getState();const f=e.deltaY<0?1.15:1/1.15;
+    const r=viewport.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+    s.x=mx-(mx-s.x)*f; s.y=my-(my-s.y)*f; s.k=Math.max(.15,Math.min(8,s.k*f)); apply();
+  },{passive:false});
+  viewport.addEventListener('mousedown',e=>{
+    if(e.target.closest('.zoombar')||e.target.dataset.draggable)return;
+    drag={sx:e.clientX,sy:e.clientY,ox:getState().x,oy:getState().y};
+    viewport.classList.add('dragging');
+  });
+  window.addEventListener('mousemove',e=>{if(!drag)return;
+    const s=getState();s.x=drag.ox+e.clientX-drag.sx;s.y=drag.oy+e.clientY-drag.sy;apply();});
+  window.addEventListener('mouseup',()=>{drag=null;viewport.classList.remove('dragging')});
+}
+function addZoombar(container,zoomIn,zoomOut,reset){
+  const bar=document.createElement('div');bar.className='zoombar';
+  [['+',zoomIn],['−',zoomOut],['⟲',reset]].forEach(([t,fn])=>{
+    const b=document.createElement('button');b.textContent=t;b.title=t==='⟲'?'Reset view':(t==='+'?'Zoom in':'Zoom out');
+    b.addEventListener('click',fn);bar.appendChild(b);});
+  container.appendChild(bar);
+}
+
+/* ============ force-directed graph ============ */
+/* data: {nodes:[{id,label,group,size,fanIn,fanOut,meta}], links:[{source,target,cycle,weight}], groups:{name:colorKey}} */
+function renderForceGraph(container,data){
+  const W=container.clientWidth||900,H=container.clientHeight||560;
+  const groupNames=[...new Set(data.nodes.map(n=>n.group||''))];
+  const palette=[cssVar('--accent'),cssVar('--good'),cssVar('--warn'),cssVar('--violet'),cssVar('--bad'),'#5ec2c9','#c98fb8','#8fb0c9'];
+  const gcolor={};groupNames.forEach((g,i)=>gcolor[g]=palette[i%palette.length]);
+  const nodes=data.nodes.map(n=>({...n,x:W/2+(Math.random()-0.5)*W*0.7,y:H/2+(Math.random()-0.5)*H*0.7,vx:0,vy:0}));
+  const idx={};nodes.forEach((n,i)=>idx[n.id]=i);
+  const links=data.links.filter(l=>idx[l.source]!==undefined&&idx[l.target]!==undefined)
+    .map(l=>({...l,s:idx[l.source],t:idx[l.target]}));
+  const maxSize=Math.max(1,...nodes.map(n=>n.size||1));
+  const R=n=>6+14*Math.sqrt((n.size||1)/maxSize);
+  /* simulate */
+  const iter=nodes.length>60?220:320;
+  for(let k=0;k<iter;k++){
+    const t=1-k/iter, rep=9000*t+900;
+    for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
+      const a=nodes[i],b=nodes[j];let dx=a.x-b.x,dy=a.y-b.y;let d2=dx*dx+dy*dy||1;
+      if(d2<250000){const f=rep/d2;dx*=f;dy*=f;a.vx+=dx;a.vy+=dy;b.vx-=dx;b.vy-=dy;}
+    }
+    links.forEach(l=>{const a=nodes[l.s],b=nodes[l.t];
+      const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;
+      const want=90+R(a)+R(b);const f=0.02*(d-want)/d;
+      a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f;});
+    nodes.forEach(n=>{
+      n.vx+=(W/2-n.x)*0.0035;n.vy+=(H/2-n.y)*0.0035;
+      n.x+=Math.max(-14,Math.min(14,n.vx));n.y+=Math.max(-14,Math.min(14,n.vy));
+      n.vx*=0.6;n.vy*=0.6;});
+  }
+  /* fit */
+  const xs=nodes.map(n=>n.x),ys=nodes.map(n=>n.y);
+  const pad=60,minx=Math.min(...xs)-pad,maxx=Math.max(...xs)+pad,miny=Math.min(...ys)-pad,maxy=Math.max(...ys)+pad;
+  const fitK=Math.min(W/(maxx-minx),H/(maxy-miny),1.6);
+  const st={k:fitK,x:(W-(maxx+minx)*fitK)/2,y:(H-(maxy+miny)*fitK)/2};
+  const init={...st};
+  const svgNS='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(svgNS,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const defs=document.createElementNS(svgNS,'defs');
+  defs.innerHTML=`<marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="${cssVar('--text-faint')}"/></marker>
+  <marker id="arr-cyc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="${cssVar('--bad')}"/></marker>`;
+  svg.appendChild(defs);
+  const g=document.createElementNS(svgNS,'g');svg.appendChild(g);
+  const apply=()=>g.setAttribute('transform',`translate(${st.x},${st.y}) scale(${st.k})`);
+  const edgeEls=[],nodeEls=[];
+  links.forEach(l=>{
+    const p=document.createElementNS(svgNS,'path');
+    p.setAttribute('stroke',l.cycle?cssVar('--bad'):cssVar('--text-faint'));
+    p.setAttribute('stroke-opacity',l.cycle?'0.9':'0.4');
+    p.setAttribute('stroke-width',l.cycle?2:Math.min(3,0.7+Math.log2(1+(l.weight||1))*0.5));
+    p.setAttribute('fill','none');
+    /* dashed = loaded at runtime (template, prompt, data), not imported */
+    if(l.kind==='resource')p.setAttribute('stroke-dasharray','5 4');
+    p.setAttribute('marker-end',l.cycle?'url(#arr-cyc)':'url(#arr)');
+    g.appendChild(p);edgeEls.push(p);
+  });
+  nodes.forEach(n=>{
+    const grp=document.createElementNS(svgNS,'g');grp.style.cursor='grab';grp.dataset.draggable='1';
+    const c=document.createElementNS(svgNS,'circle');
+    c.setAttribute('r',R(n));c.setAttribute('fill',gcolor[n.group||'']);
+    c.setAttribute('fill-opacity','0.85');c.setAttribute('stroke',cssVar('--bg'));c.setAttribute('stroke-width','1.5');
+    c.dataset.draggable='1';
+    const t=document.createElementNS(svgNS,'text');
+    t.textContent=n.label||n.id;t.setAttribute('font-size','11');t.setAttribute('font-family',cssVar('--mono'));
+    t.setAttribute('fill',cssVar('--text'));t.setAttribute('text-anchor','middle');t.setAttribute('dy',R(n)+13);
+    t.style.pointerEvents='none';
+    grp.appendChild(c);grp.appendChild(t);g.appendChild(grp);nodeEls.push(grp);
+    grp.addEventListener('mouseenter',e=>{
+      showTip(`<b>${esc(n.label||n.id)}</b><br>${n.meta?esc(n.meta)+'<br>':''}fan-in ${n.fanIn??'–'} · fan-out ${n.fanOut??'–'}${n.size?` · ${fmt(n.size)} loc`:''}`,e.clientX,e.clientY);
+      hl(n.id);});
+    grp.addEventListener('mousemove',e=>showTip(tip.innerHTML,e.clientX,e.clientY));
+    grp.addEventListener('mouseleave',()=>{hideTip();hl(null)});
+    let dragN=null;
+    grp.addEventListener('mousedown',e=>{e.stopPropagation();dragN={mx:e.clientX,my:e.clientY,ox:n.x,oy:n.y};});
+    window.addEventListener('mousemove',e=>{if(!dragN)return;
+      n.x=dragN.ox+(e.clientX-dragN.mx)/st.k;n.y=dragN.oy+(e.clientY-dragN.my)/st.k;draw();});
+    window.addEventListener('mouseup',()=>dragN=null);
+  });
+  function hl(id){
+    if(id===null){edgeEls.forEach((p,i)=>p.setAttribute('stroke-opacity',links[i].cycle?'0.9':'0.4'));
+      nodeEls.forEach(el=>el.style.opacity='1');return;}
+    const near=new Set([id]);
+    links.forEach(l=>{if(l.source===id)near.add(l.target);if(l.target===id)near.add(l.source)});
+    edgeEls.forEach((p,i)=>{const l=links[i];
+      p.setAttribute('stroke-opacity',(l.source===id||l.target===id)?'1':'0.08');});
+    nodeEls.forEach((el,i)=>el.style.opacity=near.has(nodes[i].id)?'1':'0.25');
+  }
+  function draw(){
+    links.forEach((l,i)=>{const a=nodes[l.s],b=nodes[l.t];
+      const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;
+      const tx=b.x-dx/d*(R(b)+3),ty=b.y-dy/d*(R(b)+3);
+      const sx=a.x+dx/d*R(a),sy=a.y+dy/d*R(a);
+      const mx=(sx+tx)/2-dy/d*10,my=(sy+ty)/2+dx/d*10;
+      edgeEls[i].setAttribute('d',`M${sx},${sy} Q${mx},${my} ${tx},${ty}`);});
+    nodes.forEach((n,i)=>nodeEls[i].setAttribute('transform',`translate(${n.x},${n.y})`));
+  }
+  draw();apply();
+  container.appendChild(svg);
+  panZoom(container,apply,()=>st);
+  addZoombar(container,
+    ()=>{st.k=Math.min(8,st.k*1.25);apply()},
+    ()=>{st.k=Math.max(.15,st.k/1.25);apply()},
+    ()=>{Object.assign(st,init);apply()});
+  if(groupNames.length>1||data.legendExtra){
+    const leg=document.createElement('div');leg.className='legend';
+    groupNames.forEach(gn=>{leg.innerHTML+=`<span><i class="sw" style="background:${gcolor[gn]}"></i>${esc(gn||'(root)')}</span>`});
+    if(data.legendExtra)leg.innerHTML+=data.legendExtra;
+    container.appendChild(leg);
+  }
+}
+
+/* ============ squarified treemap ============ */
+/* data: {items:[{name,value,metric,meta}], metricLabel, metricMax} — value drives area, metric drives heat color */
+function renderTreemap(container,data){
+  const W=container.clientWidth||900,H=container.clientHeight||520;
+  const items=data.items.filter(d=>d.value>0).sort((a,b)=>b.value-a.value);
+  const total=items.reduce((s,d)=>s+d.value,0)||1;
+  const mmax=data.metricMax??Math.max(1,...items.map(d=>d.metric||0));
+  const rects=[];
+  (function squarify(list,x,y,w,h){
+    if(!list.length)return;
+    if(list.length===1){rects.push({d:list[0],x,y,w,h});return;}
+    let row=[],rest=list.slice(),best=Infinity;
+    while(rest.length){
+      const cand=row.concat(rest[0]);
+      const sum=cand.reduce((s,d)=>s+d.value,0);
+      const side=Math.min(w,h);
+      const scale=(w*h)*(sum/list.reduce((s,d)=>s+d.value,0));
+      const len=scale/side;
+      const worst=Math.max(...cand.map(d=>{
+        const a=(d.value/sum)*side*len;const r=Math.max(len*len/ (a/side*side/ (a/len)||1),1);
+        const iw=(d.value/sum)*side, ratio=Math.max(len/iw,iw/len);return ratio;}));
+      if(worst<=best){best=worst;row=cand;rest.shift();}
+      else break;
+    }
+    const sum=row.reduce((s,d)=>s+d.value,0);
+    const frac=sum/list.reduce((s,d)=>s+d.value,0);
+    if(w>=h){const cw=w*frac;let cy=y;
+      row.forEach(d=>{const ch=h*(d.value/sum);rects.push({d,x,y:cy,w:cw,h:ch});cy+=ch;});
+      squarify(rest,x+cw,y,w-cw,h);
+    }else{const ch=h*frac;let cx=x;
+      row.forEach(d=>{const cw=w*(d.value/sum);rects.push({d,x:cx,y,w:cw,h:ch});cx+=cw;});
+      squarify(rest,x,y+ch,w,h-ch);
+    }
+  })(items,0,0,W,H);
+  const svgNS='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(svgNS,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const lo=cssVar('--heat-lo'),hi=cssVar('--heat-hi');
+  rects.forEach(r=>{
+    const t=Math.pow(Math.min(1,(r.d.metric||0)/mmax),0.6);
+    const g=document.createElementNS(svgNS,'g');
+    const rc=document.createElementNS(svgNS,'rect');
+    rc.setAttribute('x',r.x+1);rc.setAttribute('y',r.y+1);
+    rc.setAttribute('width',Math.max(0,r.w-2));rc.setAttribute('height',Math.max(0,r.h-2));
+    rc.setAttribute('rx',3);rc.setAttribute('fill',lerpColor(lo,hi,t));
+    rc.setAttribute('stroke',cssVar('--bg'));rc.setAttribute('stroke-width','1');
+    g.appendChild(rc);
+    if(r.w>66&&r.h>22){
+      const tx=document.createElementNS(svgNS,'text');
+      const nm=r.d.name.split('/').pop();
+      tx.textContent=nm.length>Math.floor(r.w/6.6)?nm.slice(0,Math.floor(r.w/6.6)-1)+'…':nm;
+      tx.setAttribute('x',r.x+7);tx.setAttribute('y',r.y+16);
+      tx.setAttribute('font-size','11');tx.setAttribute('font-family',cssVar('--mono'));
+      tx.setAttribute('fill',t>0.55?'#fff':cssVar('--text'));tx.style.pointerEvents='none';
+      g.appendChild(tx);
+    }
+    g.addEventListener('mouseenter',e=>{rc.setAttribute('stroke',cssVar('--text'));
+      showTip(`<b>${esc(r.d.name)}</b><br>${esc(data.valueLabel||'size')}: ${fmt(r.d.value)}<br>${esc(data.metricLabel||'metric')}: ${fmt(r.d.metric||0)}${r.d.meta?'<br>'+esc(r.d.meta):''}`,e.clientX,e.clientY);});
+    g.addEventListener('mousemove',e=>showTip(tip.innerHTML,e.clientX,e.clientY));
+    g.addEventListener('mouseleave',()=>{rc.setAttribute('stroke',cssVar('--bg'));hideTip();});
+    svg.appendChild(g);
+  });
+  container.appendChild(svg);
+  const leg=document.createElement('div');leg.className='legend';
+  leg.innerHTML=`<span>area = ${esc(data.valueLabel||'size')}</span><span><i class="sw" style="background:${lo}"></i>low ${esc(data.metricLabel||'')}</span><span><i class="sw" style="background:${hi}"></i>high ${esc(data.metricLabel||'')}</span>`;
+  container.appendChild(leg);
+}
+
+/* ============ auto-init viz blocks ============ */
+document.querySelectorAll('.viz[data-render]').forEach(el=>{
+  const dataEl=el.nextElementSibling;
+  if(!dataEl||dataEl.type!=='application/json')return;
+  let data;try{data=JSON.parse(dataEl.textContent)}catch(e){el.textContent='data parse error';return}
+  const render=()=>{
+    if(el.dataset.done)return;el.dataset.done='1';
+    try{
+      if(el.dataset.render==='forcegraph')renderForceGraph(el,data);
+      else if(el.dataset.render==='treemap')renderTreemap(el,data);
+    }catch(e){el.innerHTML='<p style="padding:16px" class="dim">render error: '+esc(e.message)+'</p>';}
+  };
+  const panel=el.closest('.panel');
+  if(panel&&panel.classList.contains('active'))render();
+  else window.addEventListener('tab:shown',ev=>{if(panel&&ev.detail.id===panel.id)render();});
+});
+
+/* ============ mermaid (lazy per tab, with pan/zoom) ============ */
+(function(){
+  if(!document.querySelector('.mermaid'))return;
+  const s=document.createElement('script');
+  s.src='https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js';
+  s.onload=()=>{
+    if(typeof mermaid==='undefined'){document.querySelectorAll('.mermaid').forEach(n=>{n.style.cssText='white-space:pre;font-family:var(--mono);font-size:12px;padding:14px;overflow-x:auto';});return;}
+    mermaid.initialize({startOnLoad:false,securityLevel:'loose',theme:'base',
+      themeVariables:{
+        primaryColor:cssVar('--surface-2'),primaryTextColor:cssVar('--text'),
+        primaryBorderColor:cssVar('--border-strong'),lineColor:cssVar('--text-dim'),
+        secondaryColor:cssVar('--accent-dim'),tertiaryColor:cssVar('--surface'),
+        background:cssVar('--surface'),mainBkg:cssVar('--surface-2'),
+        nodeTextColor:cssVar('--text'),fontFamily:cssVar('--sans'),fontSize:'14px',
+        actorBkg:cssVar('--surface-2'),actorBorder:cssVar('--accent'),actorTextColor:cssVar('--text'),
+        signalColor:cssVar('--text-dim'),signalTextColor:cssVar('--text'),
+        labelBoxBkgColor:cssVar('--surface-2'),labelTextColor:cssVar('--text'),
+        loopTextColor:cssVar('--text-dim'),noteBkgColor:cssVar('--warn-dim'),noteTextColor:cssVar('--text'),noteBorderColor:cssVar('--warn'),
+        clusterBkg:cssVar('--accent-dim'),clusterBorder:cssVar('--border-strong'),titleColor:cssVar('--text'),
+        edgeLabelBackground:cssVar('--surface')
+      }});
+    async function renderIn(panel){
+      const nodes=[...panel.querySelectorAll('.mermaid:not([data-processed])')];
+      if(!nodes.length)return;
+      try{await mermaid.run({nodes});}catch(e){/* leaves source visible */}
+      nodes.forEach(n=>{
+        const wrap=n.closest('.mermaid-wrap');if(!wrap||wrap.dataset.pz)return;wrap.dataset.pz='1';
+        const vp=wrap.querySelector('.mviewport')||wrap;
+        const svg=n.querySelector('svg');if(!svg)return;
+        svg.style.maxWidth='none';
+        const st={k:1,x:0,y:0},init={k:1,x:0,y:0};
+        const apply=()=>{svg.style.transformOrigin='0 0';svg.style.transform=`translate(${st.x}px,${st.y}px) scale(${st.k})`};
+        panZoom(vp,apply,()=>st);
+        addZoombar(wrap,()=>{st.k=Math.min(8,st.k*1.25);apply()},()=>{st.k=Math.max(.2,st.k/1.25);apply()},()=>{Object.assign(st,init);apply()});
+      });
+    }
+    const active=document.querySelector('.panel.active');if(active)renderIn(active);
+    window.addEventListener('tab:shown',e=>{const p=document.getElementById(e.detail.id);if(p)renderIn(p);});
+  };
+  s.onerror=()=>{document.querySelectorAll('.mermaid').forEach(n=>{n.style.cssText='white-space:pre;font-family:var(--mono);font-size:12px;padding:14px;overflow-x:auto';});};
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>

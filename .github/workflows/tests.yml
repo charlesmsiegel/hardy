@@ -31,4 +31,7 @@ jobs:
           path: |
             coverage.xml
             htmlcov/
-          if-no-files-found: error
+          # A warning, not an error: the suite can fail before coverage writes
+          # anything, and turning that into a second red step would bury the
+          # first, which is the one that says what actually went wrong.
+          if-no-files-found: warn

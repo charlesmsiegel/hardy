@@ -31,14 +31,18 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
 - **Now (implemented):** introducing an axiom pauses for human approval and records
   its exact formal/informal statements, reason, and source identity. Existing local
   Lean modules remain available through ordinary imports in the launch project.
-- **Now (implemented):** saving Lean audits every theorem and lemma in the modules
-  the save rebuilt — the edited one and everything importing it, since a dependent
-  inherits whatever the edit brought in. An axiom reached through an import counts
-  even though nothing in the saved file declares it, which is exactly what the
-  older text-only gate could not see. `sorryAx` is refused outright and is never
-  offered for approval; an unapproved assumption refuses the save and names both
-  the axiom and the declarations that need it. The verdict is recorded per module
-  and reported by `read_workspace`.
+- **Now (implemented):** saving Lean audits every *exported* theorem and lemma in
+  the modules the save rebuilt — the edited one and everything importing it, since
+  a dependent inherits whatever the edit brought in. An axiom reached through an
+  import counts even though nothing in the saved file declares it, which is exactly
+  what the older text-only gate could not see. `sorryAx` is refused outright and is
+  never offered for approval; an unapproved assumption refuses the save and names
+  both the axiom and the declarations that need it. The verdict is recorded per
+  module and reported by `read_workspace`. A `private lemma` is scaffolding and is
+  not asked about — Lean mangles the name beyond the reach of the file the audit
+  elaborates, and anything exported that uses one reports its axioms anyway — while
+  a `private theorem` is refused outright, since a result that can be neither
+  audited nor cited in a writeup should not be stated as one.
 - **Now (implemented):** on a real terminal, the session runs through a
   `prompt_toolkit`-backed shell rather than a plain `input()` loop: dim
   ghost-text completion of slash commands as you type, a `/model` selector

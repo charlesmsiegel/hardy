@@ -46,9 +46,14 @@ HEADER_KEYWORDS = frozenset({"prelude", "module"})
 # newline between the keyword and the name and a line-oriented match would lose
 # the declaration entirely.
 DECLARATION = re.compile(
-    rf"(?m)^[ \t]*(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|nonrec|noncomputable)\s+)*"
+    rf"(?m)^[ \t]*(?:@\[[^\]]*\]\s*)*((?:(?:private|protected|nonrec|noncomputable)\s+)*)"
     rf"(theorem|lemma)\s+({QUALIFIED_NAME})"
 )
+# `private` is the one modifier that changes who can name a declaration: Lean
+# mangles the name so no importing module can reach it. Anything that has to
+# address a declaration from outside its own file -- the axiom audit does --
+# needs to know which ones those are.
+PRIVATE = re.compile(r"(?:^|\s)private(?:\s|$)")
 NAMESPACE = re.compile(rf"^\s*namespace\s+({QUALIFIED_NAME})\s*$")
 # `section` may be anonymous, and `end` may be bare -- both are ordinary Lean.
 SECTION = re.compile(rf"^\s*section(?:\s+({QUALIFIED_NAME}))?\s*$")
@@ -201,8 +206,14 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
     make one theorem look like two, and a caller counting what still owes a
     writeup would then demand two of them -- see `name_aliases` for the other
     half of this, which is that a *reader* of the registry must accept either.
+
+    The `private` key repeats whichever of those names carried the `private`
+    modifier. It is a subset of the other two rather than a fourth kind, so a
+    caller that only wants "what is declared here" can keep ignoring it, and
+    one that has to *name* a declaration from another module -- which Lean will
+    not let it do for a private one -- can leave those out.
     """
-    found: dict[str, list[str]] = {"theorem": [], "lemma": []}
+    found: dict[str, list[str]] = {"theorem": [], "lemma": [], "private": []}
     # Comments first: Lean reads `/-- explanation -/ theorem result ...` as a
     # declaration, and a scanner that saw the leading slash would miss it --
     # so the theorem would never be recorded and never owe a writeup.
@@ -248,8 +259,11 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
     for match in DECLARATION.finditer(text):
         index = bisect_right(starts, match.start()) - 1
         prefix = prefixes[index] if 0 <= index < len(prefixes) else ()
-        kind, name = match.group(1), match.group(2)
-        found[kind].append(".".join((*prefix, name)) if prefix else name)
+        modifiers, kind, name = match.group(1), match.group(2), match.group(3)
+        qualified = ".".join((*prefix, name)) if prefix else name
+        found[kind].append(qualified)
+        if PRIVATE.search(modifiers):
+            found["private"].append(qualified)
     return {kind: tuple(names) for kind, names in found.items()}
 
 

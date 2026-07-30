@@ -145,6 +145,33 @@ def test_declarations_see_through_attributes_and_modifiers():
     assert declarations(source)["theorem"] == ("one",)
 
 
+def test_private_declarations_are_reported_as_a_subset_of_the_others():
+    """A caller that has to *name* a declaration from another module cannot
+    name a private one -- Lean mangles it out of reach."""
+    source = (
+        "@[simp]\nprivate theorem hidden : True := trivial\n"
+        "private lemma step : True := trivial\n"
+        "protected theorem shown : True := trivial\n"
+        "theorem plain : True := trivial\n"
+    )
+    found = declarations(source)
+    assert found["theorem"] == ("hidden", "shown", "plain")
+    assert found["lemma"] == ("step",)
+    # `protected` changes how a name is written, not who may write it.
+    assert found["private"] == ("hidden", "step")
+
+
+def test_a_private_declaration_inside_a_namespace_is_reported_qualified():
+    source = "namespace Hardy\nprivate lemma step : True := trivial\nend Hardy\n"
+    assert declarations(source)["private"] == ("Hardy.step",)
+
+
+def test_a_declaration_named_private_is_not_a_private_declaration():
+    """`theorem private_key` shares a prefix with the modifier and nothing else."""
+    source = "theorem privateThing : True := trivial\nlemma private_step : True := trivial\n"
+    assert declarations(source)["private"] == ()
+
+
 def test_a_trailing_comment_does_not_hide_an_import():
     """`import Basic -- shared definitions` is a legal header line.
 
