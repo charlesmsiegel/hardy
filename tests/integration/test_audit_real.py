@@ -2,8 +2,13 @@
 
 The hermetic suite proves the parser. It cannot prove that Lean still *emits*
 what the parser expects, and the whole gate rests on two sentences of Lean's
-output. These run only with the pinned toolchain built, which is the point:
-they are the tests that would catch a report whose wording moved.
+output. These run only with a real toolchain present, which is the point: they
+are the tests that would catch a report whose wording moved.
+
+They ask for core Lean alone, so a bare Lake project is enough to run them and
+CI can provision one in seconds. Written against the `Mathlib` a request
+defaults to, they skipped everywhere -- including in CI -- and a skipped test
+reads as coverage while proving nothing.
 """
 
 import shutil
@@ -25,7 +30,16 @@ def _tools(declaration: str) -> LeanTools:
         pytest.skip('lake is not installed')
     if not (LEAN_PROJECT / 'lake-manifest.json').exists():
         pytest.skip('the pinned Lean project is not built; run `hardy setup`')
-    request = Request.from_dict({'declaration': declaration, 'informal_claim': 'a claim'})
+    # `Init` rather than the `Mathlib` a request defaults to. What these probe is
+    # the wording of Lean's own `#print axioms`, and every declaration below is
+    # core: `rfl`, `Classical.choice`, `sorryAx`. Requiring Mathlib would mean a
+    # multi-gigabyte download before any of it could run, which is how these came
+    # to skip everywhere and prove nothing. A Mathlib-backed run would answer a
+    # different question -- whether importing it changes what is reported -- and
+    # belongs in its own, much heavier job.
+    request = Request.from_dict(
+        {'declaration': declaration, 'informal_claim': 'a claim', 'imports': ['Init']}
+    )
     return LeanTools(
         request, (lake, 'env', 'lean'), timeout=120, project=LEAN_PROJECT
     )

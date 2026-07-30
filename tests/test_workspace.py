@@ -372,3 +372,18 @@ def test_gathering_an_assumption_stops_at_the_next_declaration():
     that should have passed."""
     assert assumptions("axiom a :\n  True\ntheorem T : True := trivial\n") == (("a", "True"),)
     assert assumptions("axiom a :\n  True\n@[simp] theorem T : True := trivial\n") == (("a", "True"),)
+
+
+def test_a_root_qualified_declaration_escapes_its_namespace():
+    """`_root_.bar` inside `namespace Foo` declares `bar`, not `Foo._root_.bar`.
+    Keeping the marker made the audit ask about a name Lean never declared, and
+    the module could never be saved."""
+    source = "namespace Foo\n\ntheorem _root_.bar : True := trivial\n\nend Foo\n"
+    assert declarations(source)["theorem"] == ("bar",)
+
+
+def test_a_root_qualified_private_declaration_is_tracked_under_the_same_name():
+    source = "namespace Foo\nprivate lemma _root_.step : True := trivial\nend Foo\n"
+    found = declarations(source)
+    assert found["lemma"] == ("step",)
+    assert found["private"] == ("step",)

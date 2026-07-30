@@ -385,7 +385,14 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
         index = bisect_right(starts, match.start()) - 1
         prefix = prefixes[index] if 0 <= index < len(prefixes) else ()
         modifiers, kind, name = match.group(1), match.group(2), match.group(3)
-        qualified = ".".join((*prefix, name)) if prefix else name
+        # `_root_.` is how a declaration says it is not in the namespace it sits
+        # in, so the prefix must be dropped rather than prepended. Kept as
+        # `Foo._root_.bar`, the audit asks `#print axioms` about a name Lean
+        # never declared, and an otherwise valid module can never be saved.
+        if name.startswith("_root_."):
+            qualified = name.removeprefix("_root_.")
+        else:
+            qualified = ".".join((*prefix, name)) if prefix else name
         found[kind].append(qualified)
         if PRIVATE.search(modifiers):
             found["private"].append(qualified)
