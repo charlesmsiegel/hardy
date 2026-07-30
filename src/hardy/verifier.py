@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import model_validator
 
+from . import audit
 from .domain import (
     EnvironmentIdentity,
     FrozenClaim,
@@ -30,8 +31,10 @@ from .lean import LeanDiagnostic, elaborate, render_theorem
 from .process import ProcessResult, ProcessSpec, run_process
 from .storage import RunStore
 
-# Lean's own foundations. Everything else is an assumption someone made.
-ALLOWED_AXIOMS = frozenset({"propext", "Quot.sound", "Classical.choice"})
+# Lean's own foundations. Everything else is an assumption someone made. Kept
+# as a name here because readers and tests reach for it; `hardy.audit` owns the
+# set, so the three surfaces cannot drift into disagreeing about it.
+ALLOWED_AXIOMS = audit.STANDARD
 FORBIDDEN_TOKEN = re.compile(
     r"(?<![A-Za-z0-9_-￿])"
     r"(sorryAx|sorry|admit|axiom|opaque|by\?)"
@@ -175,25 +178,34 @@ class FinalVerifier:
                 "Fresh Lean verification did not accept the reconstructed source",
                 diagnostics,
             )
-        axioms = _parse_axiom_report(diagnostics, claim.proposal.theorem_name)
-        if axioms is None:
-            # A silent axiom report is not an absence of axioms.
+        reports = audit.parse(
+            "\n".join(item.message for item in diagnostics), (claim.proposal.theorem_name,)
+        )
+        if reports is None:
+            # A silent axiom report is not an absence of axioms, and neither is
+            # a duplicated one -- Hardy will not pick a winner between two.
             return _failure(
                 store,
                 source,
                 source_sha,
                 TerminalReason.LEAN_ELABORATION_FAILURE,
-                "Fresh Lean verification did not emit an axiom report",
+                "Fresh Lean verification did not emit a single readable axiom report",
                 diagnostics,
             )
-        unexpected = tuple(axiom for axiom in axioms if axiom not in ALLOWED_AXIOMS)
-        if unexpected:
+        axioms = reports[0].axioms
+        # No approved assumptions: a staged run is nobody's place to widen the
+        # trust base, so `sorryAx` and every non-standard axiom are refused
+        # alike. They keep one terminal reason because that string is written to
+        # disk and read by things that never import Hardy; the message says
+        # which was found.
+        verdict = audit.classify(reports, ())
+        if verdict.status != "clean":
             return _failure(
                 store,
                 source,
                 source_sha,
                 TerminalReason.UNEXPECTED_AXIOM,
-                "Unexpected axioms: " + ", ".join(unexpected),
+                "Unexpected axioms: " + ", ".join(verdict.forbidden + verdict.unapproved),
                 diagnostics,
                 axioms,
             )
@@ -266,22 +278,6 @@ def _failure(
         verification_sha256=None,
     )
     return _save_failure(store, source, result)
-
-
-def _parse_axiom_report(
-    diagnostics: tuple[LeanDiagnostic, ...], theorem_name: str
-) -> tuple[str, ...] | None:
-    prefix = re.compile(rf"\b{re.escape(theorem_name)}\b")
-    for diagnostic in diagnostics:
-        message = diagnostic.message
-        if not prefix.search(message):
-            continue
-        if "does not depend on any axioms" in message:
-            return ()
-        match = re.search(r"depends on axioms:\s*\[([^]]*)\]", message)
-        if match is not None:
-            return tuple(item.strip() for item in match.group(1).split(",") if item.strip())
-    return None
 
 
 def _strip_comments_and_strings(source: str) -> str:

@@ -58,11 +58,17 @@ def _reports_for(output: str, name: str) -> list[tuple[str, ...]]:
     is ordinary in Mathlib, so a generic capture finds nothing at all in
     `'add_comm'' depends on axioms: [...]`.
 
+    Lean quotes the name; the bare form is accepted too, bounded so that `bar`
+    does not match inside `Foo.bar`. The two alternatives cannot both match one
+    report -- the quote itself is what the bare form's lookbehind excludes --
+    so tolerating the second cannot turn one report into two.
+
     The list body excludes brackets rather than being non-greedy across them,
     so a report whose closing `]` was cut off by truncation matches nothing and
     fails closed, instead of swallowing the next declaration's report.
     """
-    quoted = re.escape(f"'{name}'")
+    escaped = re.escape(name)
+    quoted = rf"(?:'{escaped}'|(?<![\w'.]){escaped}(?![\w']))"
     listed = re.findall(rf"{quoted}\s+depends on axioms:\s*\[([^][]*)\]", output)
     empty = re.findall(rf"{quoted}\s+does not depend on any axioms", output)
     bodies = [tuple(item.strip() for item in body.split(",") if item.strip()) for body in listed]
