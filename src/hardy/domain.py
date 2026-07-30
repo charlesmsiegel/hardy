@@ -148,6 +148,33 @@ class DocumentStatus(str, Enum):
     NOT_ATTEMPTED = "not_attempted"
 
 
+class VerificationEvidence(FrozenModel):
+    """What a kernel-verified grade stands on, and what its digest is taken over.
+
+    `verification_sha256` is this record's digest, so it is derived rather than
+    declared: anyone holding the run's artifacts can rebuild the record and
+    recompute the number. Every component is separately checkable against the
+    run directory — the claim hash against `formalization.json`, the source
+    hash against `lean/Main.lean`, the toolchain against the frozen claim — so
+    a grade that names evidence names something a reader can go and audit.
+    """
+
+    claim_sha256: str
+    source_sha256: str
+    axioms: tuple[str, ...]
+    toolchain: EnvironmentIdentity
+
+    @property
+    def digest(self) -> str:
+        canonical = json.dumps(
+            self.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+
 class Grades(FrozenModel):
     """Orthogonal grades. A compiled document never implies a proved theorem."""
 
@@ -157,11 +184,30 @@ class Grades(FrozenModel):
     document: DocumentStatus = DocumentStatus.NOT_ATTEMPTED
     known_gaps: tuple[str, ...] = ()
     verification_sha256: str | None = None
+    verification_evidence: VerificationEvidence | None = None
 
     @model_validator(mode="after")
     def require_verification_evidence(self) -> Grades:
-        if self.formal is FormalStatus.KERNEL_VERIFIED and not self.verification_sha256:
-            raise ValueError("kernel_verified requires final verification evidence")
+        """Tie the formal grade to evidence a reader can re-derive.
+
+        The digest alone proved nothing: any 64 characters satisfied a
+        non-empty check, so `kernel_verified` was self-asserted. Carrying the
+        record the digest is taken over makes the claim recomputable here and
+        on every read-back, and the biconditional keeps the two grades that
+        have no evidence — `partial` and `not_formalized` — from carrying a
+        hash that would read as one.
+        """
+        verified = self.formal is FormalStatus.KERNEL_VERIFIED
+        if self.verification_evidence is None:
+            if verified:
+                raise ValueError("kernel_verified requires final verification evidence")
+            if self.verification_sha256 is not None:
+                raise ValueError("verification_sha256 without the evidence it is taken over")
+            return self
+        if not verified:
+            raise ValueError("verification evidence without a kernel_verified grade")
+        if self.verification_sha256 != self.verification_evidence.digest:
+            raise ValueError("verification_sha256 does not match its evidence")
         return self
 
 

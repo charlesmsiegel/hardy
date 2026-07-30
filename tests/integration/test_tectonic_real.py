@@ -14,6 +14,7 @@ from hardy.domain import (
     FormalStatus,
     Grades,
     InformalStatus,
+    VerificationEvidence,
     freeze_claim,
 )
 from hardy.storage import RunStore
@@ -105,19 +106,27 @@ def test_real_tectonic_compiles_verified_and_partial_writeups(tmp_path) -> None:
         tmp_path, 'verified', now=NOW, run_id=verified_id
     )
     partial_store = RunStore.create(tmp_path, 'partial', now=NOW, run_id=partial_id)
+    evidence = VerificationEvidence(
+        claim_sha256=claim.content_hash,
+        source_sha256='s' * 64,
+        axioms=(),
+        toolchain=claim.environment,
+    )
     verification = VerificationResult(
         verified=True,
         reason=None,
         axioms=(),
         diagnostics=(),
         source_sha256='s' * 64,
-        verification_sha256='v' * 64,
+        verification_sha256=evidence.digest,
+        evidence=evidence,
     )
     verified_grades = Grades(
         formal=FormalStatus.KERNEL_VERIFIED,
         faithfulness=FaithfulnessStatus.USER_APPROVED,
         informal=InformalStatus.NOT_INDEPENDENTLY_ASSESSED,
-        verification_sha256='v' * 64,
+        verification_sha256=evidence.digest,
+        verification_evidence=evidence,
     )
     partial_grades = Grades(
         formal=FormalStatus.PARTIAL,

@@ -1,9 +1,10 @@
+import hashlib
 import json
 from importlib.resources import files
 from pathlib import Path
 
 from hardy.acceptance import run_deterministic_experiment, validate_run_consistency
-from hardy.domain import FormalStatus
+from hardy.domain import FormalStatus, FrozenClaim
 
 
 def _config(runs_root, limits=None):
@@ -52,3 +53,139 @@ def test_manifest_consistency_audits_verified_source_document_and_trajectory(
 
     issues = validate_run_consistency(result.run_dir, result.manifest)
     assert any('hash mismatch: lean/Main.lean' in issue for issue in issues)
+
+
+def _forge(manifest, **evidence_overrides):
+    """A manifest whose kernel_verified grade is internally consistent and false.
+
+    Every check the domain models can make passes: the digest is a real hash of
+    a real evidence record. Only the run directory says otherwise.
+    """
+    from hardy.domain import Grades, VerificationEvidence
+
+    evidence = manifest.grades.verification_evidence
+    forged = VerificationEvidence(
+        **{**evidence.model_dump(), **evidence_overrides}
+    )
+    return manifest.model_copy(
+        update={
+            'grades': Grades(
+                **{
+                    **manifest.grades.model_dump(),
+                    'verification_sha256': forged.digest,
+                    'verification_evidence': forged,
+                }
+            )
+        }
+    )
+
+
+def _rewrite(run_dir, manifest):
+    (run_dir / 'manifest.json').write_text(
+        json.dumps(manifest.model_dump(mode='json'), indent=2, sort_keys=True) + '\n',
+        encoding='utf-8',
+    )
+    return manifest
+
+
+def test_verified_grade_names_evidence_that_re_derives_from_the_run(tmp_path) -> None:
+    from hardy.domain import VerificationEvidence
+    from hardy.verifier import VerificationResult
+
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    evidence = result.manifest.grades.verification_evidence
+    claim_path = result.run_dir / 'formalization.json'
+    claim = FrozenClaim.model_validate_json(claim_path.read_text(encoding='utf-8'))
+    main = result.run_dir / 'lean' / 'Main.lean'
+    saved = VerificationResult.model_validate_json(
+        (result.run_dir / 'lean' / 'verification.json').read_text(encoding='utf-8')
+    )
+
+    assert result.manifest.grades.verification_sha256 == evidence.digest
+    assert saved.evidence == evidence
+    assert (
+        VerificationEvidence(
+            claim_sha256=claim.content_hash,
+            source_sha256=hashlib.sha256(main.read_bytes()).hexdigest(),
+            axioms=saved.axioms,
+            toolchain=claim.environment,
+        ).digest
+        == result.manifest.grades.verification_sha256
+    )
+
+
+def test_audit_rejects_a_verified_grade_whose_evidence_names_another_claim(
+    tmp_path,
+) -> None:
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    forged = _rewrite(result.run_dir, _forge(result.manifest, claim_sha256='a' * 64))
+
+    issues = validate_run_consistency(result.run_dir, forged)
+
+    assert any('names a different Frozen Claim' in issue for issue in issues)
+    assert any(
+        'graded verification evidence differs from lean/verification.json' in issue
+        for issue in issues
+    )
+
+
+def test_audit_rejects_a_verified_grade_whose_evidence_names_another_source(
+    tmp_path,
+) -> None:
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    forged = _rewrite(result.run_dir, _forge(result.manifest, source_sha256='s' * 64))
+
+    issues = validate_run_consistency(result.run_dir, forged)
+
+    assert any('Lean source hash differs from verification' in issue for issue in issues)
+    assert any(
+        'graded verification evidence differs from lean/verification.json' in issue
+        for issue in issues
+    )
+
+
+def test_audit_reports_a_tampered_verification_record_instead_of_crashing(
+    tmp_path,
+) -> None:
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    verification_path = result.run_dir / 'lean' / 'verification.json'
+    payload = json.loads(verification_path.read_text(encoding='utf-8'))
+    payload['axioms'] = ['sorryAx']
+    verification_path.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+
+    issues = validate_run_consistency(result.run_dir, result.manifest)
+
+    assert any('not a self-consistent verification record' in issue for issue in issues)
+
+
+def test_audit_rejects_verification_evidence_admitting_an_unexpected_axiom(
+    tmp_path,
+) -> None:
+    from hardy.verifier import VerificationResult
+
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    forged_manifest = _rewrite(result.run_dir, _forge(result.manifest, axioms=('sorryAx',)))
+    evidence = forged_manifest.grades.verification_evidence
+    verification_path = result.run_dir / 'lean' / 'verification.json'
+    saved = VerificationResult.model_validate_json(
+        verification_path.read_text(encoding='utf-8')
+    )
+    verification_path.write_text(
+        json.dumps(
+            saved.model_copy(
+                update={
+                    'axioms': evidence.axioms,
+                    'verification_sha256': evidence.digest,
+                    'evidence': evidence,
+                }
+            ).model_dump(mode='json'),
+            indent=2,
+            sort_keys=True,
+        )
+        + '\n',
+        encoding='utf-8',
+    )
+
+    issues = validate_run_consistency(result.run_dir, forged_manifest)
+
+    assert any('unexpected axioms: sorryAx' in issue for issue in issues)

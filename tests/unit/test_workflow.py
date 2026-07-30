@@ -46,6 +46,28 @@ def _environment(domain):
     )
 
 
+def _accept(verifier_module, domain, store, claim, source):
+    """Record an acceptance the way the real verifier does — digest derived."""
+    identity = store.write_text(PurePosixPath('lean/Main.lean'), source)
+    evidence = domain.VerificationEvidence(
+        claim_sha256=claim.content_hash,
+        source_sha256=identity.sha256,
+        axioms=(),
+        toolchain=claim.environment,
+    )
+    result = verifier_module.VerificationResult(
+        verified=True,
+        reason=None,
+        axioms=(),
+        diagnostics=(),
+        source_sha256=identity.sha256,
+        verification_sha256=evidence.digest,
+        evidence=evidence,
+    )
+    store.write_json(PurePosixPath('lean/verification.json'), result)
+    return result
+
+
 def _lean_result(domain, lean, process, success=True):
     child = process.ProcessResult(
         argv=('lake', 'env', 'lean'),
@@ -162,20 +184,13 @@ def _scripted_controller(
             state.verifier_calls += 1
             success = proof_results.pop(0) if proof_results else False
             if success:
-                store.write_text(
-                    PurePosixPath('lean/Main.lean'),
-                    'theorem two_eq_two : 2 = 2 :=\nby rfl\n',
+                return _accept(
+                    verifier_module,
+                    domain,
+                    store,
+                    claim,
+                    'theorem two_eq_two : 2 = 2 :=\nby rfl\n#print axioms two_eq_two\n',
                 )
-                result = verifier_module.VerificationResult(
-                    verified=True,
-                    reason=None,
-                    axioms=(),
-                    diagnostics=(),
-                    source_sha256='s' * 64,
-                    verification_sha256='v' * 64,
-                )
-                store.write_json(PurePosixPath('lean/verification.json'), result)
-                return result
             store.write_text(PurePosixPath('lean/last-attempt.lean'), proof_body)
             result = verifier_module.VerificationResult(
                 verified=False,
@@ -291,18 +306,13 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
                     source_sha256='f' * 64,
                     verification_sha256=None,
                 )
-            source = 'theorem two_eq_two : 2 = 2 :=\nby rfl\n'
-            store.write_text(PurePosixPath('lean/Main.lean'), source)
-            result = verifier_module.VerificationResult(
-                verified=True,
-                reason=None,
-                axioms=(),
-                diagnostics=(),
-                source_sha256='s' * 64,
-                verification_sha256='v' * 64,
+            return _accept(
+                verifier_module,
+                domain,
+                store,
+                claim,
+                'theorem two_eq_two : 2 = 2 :=\nby rfl\n#print axioms two_eq_two\n',
             )
-            store.write_json(PurePosixPath('lean/verification.json'), result)
-            return result
 
     def build_document(claim, content, grades, verification, identities, store, **kwargs):
         tex = store.write_text(PurePosixPath('writeup/paper.tex'), 'verified paper')

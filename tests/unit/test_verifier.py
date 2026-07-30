@@ -1,3 +1,4 @@
+import hashlib
 import importlib
 import json
 from datetime import UTC, datetime
@@ -5,6 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 
 NOW = datetime(2026, 7, 24, tzinfo=UTC)
 RUN_ID = UUID('12345678-1234-5678-1234-567812345678')
@@ -264,3 +266,105 @@ def test_verifier_fails_closed_for_process_and_axiom_failures(
     assert (store.path / 'lean' / 'last-attempt.lean').exists()
     assert (store.path / 'lean' / 'verification.json').exists()
     assert not (store.path / 'lean' / 'Main.lean').exists()
+
+
+def test_verification_result_rejects_a_verified_record_with_no_evidence(tmp_path) -> None:
+    domain = importlib.import_module('hardy.domain')
+    verifier = importlib.import_module('hardy.verifier')
+
+    with pytest.raises(ValidationError, match='evidence'):
+        verifier.VerificationResult(
+            verified=True,
+            reason=None,
+            axioms=(),
+            diagnostics=(),
+            source_sha256='s' * 64,
+            verification_sha256='v' * 64,
+        )
+
+    evidence = domain.VerificationEvidence(
+        claim_sha256='a' * 64,
+        source_sha256='s' * 64,
+        axioms=(),
+        toolchain=_claim(domain).environment,
+    )
+    with pytest.raises(ValidationError, match='evidence'):
+        verifier.VerificationResult(
+            verified=True,
+            reason=None,
+            axioms=(),
+            diagnostics=(),
+            source_sha256='s' * 64,
+            verification_sha256='v' * 64,
+            evidence=evidence,
+        )
+    with pytest.raises(ValidationError, match='evidence'):
+        verifier.VerificationResult(
+            verified=True,
+            reason=None,
+            axioms=('Classical.choice',),
+            diagnostics=(),
+            source_sha256='s' * 64,
+            verification_sha256=evidence.digest,
+            evidence=evidence,
+        )
+
+
+def test_rejected_verification_result_rejects_evidence(tmp_path) -> None:
+    domain = importlib.import_module('hardy.domain')
+    verifier = importlib.import_module('hardy.verifier')
+    evidence = domain.VerificationEvidence(
+        claim_sha256='a' * 64,
+        source_sha256='s' * 64,
+        axioms=(),
+        toolchain=_claim(domain).environment,
+    )
+
+    with pytest.raises(ValidationError, match='evidence'):
+        verifier.VerificationResult(
+            verified=False,
+            reason=domain.TerminalReason.LEAN_ELABORATION_FAILURE,
+            axioms=(),
+            diagnostics=(),
+            source_sha256='s' * 64,
+            verification_sha256=evidence.digest,
+            evidence=evidence,
+        )
+
+
+def test_accepted_proof_carries_evidence_that_re_derives_its_digest(tmp_path) -> None:
+    domain = importlib.import_module('hardy.domain')
+    process = importlib.import_module('hardy.process')
+    storage = importlib.import_module('hardy.storage')
+    verifier = importlib.import_module('hardy.verifier')
+    claim = _claim(domain)
+    store = _store(storage, tmp_path)
+    message = json.dumps(
+        {
+            'severity': 'information',
+            'data': 'two_eq_two depends on axioms: [propext, Classical.choice]',
+        }
+    )
+    final = verifier.FinalVerifier(
+        lake=tmp_path / 'lake.exe',
+        lean_project=tmp_path / 'lean-project',
+        environment=claim.environment,
+        limits=domain.RunLimits(),
+        runner=lambda spec: _process_result(process, spec, stdout=message),
+    )
+
+    result = final.verify(claim, 'by rfl', store)
+
+    assert result.verified
+    assert result.evidence is not None
+    assert result.evidence.claim_sha256 == claim.content_hash
+    assert result.evidence.toolchain == claim.environment
+    assert result.evidence.axioms == ('propext', 'Classical.choice')
+    assert result.evidence.source_sha256 == result.source_sha256
+    assert result.verification_sha256 == result.evidence.digest
+    source = (store.path / 'lean' / 'Main.lean').read_bytes()
+    assert result.evidence.source_sha256 == hashlib.sha256(source).hexdigest()
+    saved = verifier.VerificationResult.model_validate_json(
+        (store.path / 'lean' / 'verification.json').read_text(encoding='utf-8')
+    )
+    assert saved == result

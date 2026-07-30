@@ -356,6 +356,7 @@ class ProveWorkflow:
                 ),
                 known_gaps=gaps,
                 verification_sha256=(verification.verification_sha256 if verified else None),
+                verification_evidence=(verification.evidence if verified else None),
             )
             try:
                 content = runtime.run_structured(

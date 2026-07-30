@@ -32,6 +32,13 @@ Only Lean kernel acceptance justifies “verified.” TeX compilation checks doc
 construction, not mathematical truth. If Hardy cannot finish, it should still
 return useful partial artifacts and state their limits rather than overclaim.
 
+A kernel-verified grade carries the record its verification hash is taken over —
+the frozen claim, the elaborated Lean source, the axioms that source reported,
+and the toolchain that read it — so the hash is derived rather than declared. On
+read-back the grade is recomputed from the run's own artifacts instead of
+believed. What no amount of hashing establishes is that Lean ran at all: the
+axiom list is the one component with no second witness in the run directory.
+
 ## Core workflows
 
 - **Explore** is the primary interactive shell: the human and model develop ideas

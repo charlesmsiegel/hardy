@@ -11,10 +11,11 @@ not a theorem.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
+
+from pydantic import model_validator
 
 from .domain import (
     EnvironmentIdentity,
@@ -22,6 +23,7 @@ from .domain import (
     FrozenModel,
     RunLimits,
     TerminalReason,
+    VerificationEvidence,
     freeze_claim,
 )
 from .lean import LeanDiagnostic, elaborate, render_theorem
@@ -49,13 +51,31 @@ class VerificationResult(FrozenModel):
     diagnostics: tuple[LeanDiagnostic, ...]
     source_sha256: str
     verification_sha256: str | None
+    evidence: VerificationEvidence | None = None
 
+    @model_validator(mode="after")
+    def digest_must_derive_from_evidence(self) -> VerificationResult:
+        """Refuse an acceptance whose digest is asserted rather than computed.
 
-class _VerifiedProof(FrozenModel):
-    claim_sha256: str
-    source_sha256: str
-    axioms: tuple[str, ...]
-    toolchain: EnvironmentIdentity
+        This is what makes `lean/verification.json` worth reading back: the
+        file cannot say `verified` and then name a digest that its own
+        evidence does not produce, or name evidence that disagrees with the
+        source and axioms recorded beside it.
+        """
+        if not self.verified:
+            if self.evidence is not None or self.verification_sha256 is not None:
+                raise ValueError("a rejected proof carries no verification evidence")
+            return self
+        if self.evidence is None:
+            raise ValueError("an accepted proof requires verification evidence")
+        if (
+            self.evidence.source_sha256 != self.source_sha256
+            or self.evidence.axioms != self.axioms
+        ):
+            raise ValueError("verification evidence disagrees with the recorded source or axioms")
+        if self.verification_sha256 != self.evidence.digest:
+            raise ValueError("verification_sha256 does not match its evidence")
+        return self
 
 
 class FinalVerifier:
@@ -75,7 +95,7 @@ class FinalVerifier:
         self._runner = runner
 
     def verify(self, claim: FrozenClaim, proof_body: str, store: RunStore) -> VerificationResult:
-        source = _verification_source(claim, proof_body)
+        source = verification_source(claim, proof_body)
         source_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
         # The claim must still hash to what it hashed to when it was approved,
         # and must still be the environment this verifier is running.
@@ -178,32 +198,27 @@ class FinalVerifier:
                 axioms,
             )
 
-        proof = _VerifiedProof(
+        evidence = VerificationEvidence(
             claim_sha256=claim.content_hash,
             source_sha256=source_sha,
             axioms=axioms,
             toolchain=self._environment,
         )
-        evidence = json.dumps(
-            proof.model_dump(mode="json"),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
         result = VerificationResult(
             verified=True,
             reason=None,
             axioms=axioms,
             diagnostics=diagnostics,
             source_sha256=source_sha,
-            verification_sha256=hashlib.sha256(evidence).hexdigest(),
+            verification_sha256=evidence.digest,
+            evidence=evidence,
         )
         store.write_text(PurePosixPath("lean/Main.lean"), source)
         store.write_json(PurePosixPath("lean/verification.json"), result)
         return result
 
 
-def _verification_source(claim: FrozenClaim, proof_body: str) -> str:
+def verification_source(claim: FrozenClaim, proof_body: str) -> str:
     theorem = render_theorem(claim, proof_body)
     return f"{theorem}\n#print axioms {claim.proposal.theorem_name}\n"
 

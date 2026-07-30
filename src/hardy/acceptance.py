@@ -24,6 +24,8 @@ from types import SimpleNamespace
 from typing import Literal
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from .codex_runtime import ProofSubmission
 from .config import Config
 from .domain import (
@@ -35,11 +37,12 @@ from .domain import (
     FrozenModel,
     RunManifest,
     TerminalReason,
+    VerificationEvidence,
 )
-from .lean import LeanCheckResult, render_theorem
+from .lean import LeanCheckResult
 from .process import ProcessResult
 from .prompts import PROMPT_SET_SHA256
-from .verifier import VerificationResult
+from .verifier import ALLOWED_AXIOMS, VerificationResult, verification_source
 from .workflow import ProveRequest, ProveWorkflow
 from .writeup import RunIdentities, WriteupContent, build_writeup
 
@@ -152,20 +155,36 @@ class _DeterministicLean:
 
 
 class _DeterministicVerifier:
+    """A stand-in for Lean that still has to produce real evidence.
+
+    It does not verify anything — no kernel runs — and the fixture it feeds is
+    self-consistency, not mathematics. What it cannot do is invent the
+    verification digest: like the real verifier it builds the evidence record
+    from the claim and the source it actually wrote, so the run it produces is
+    one `validate_run_consistency` can genuinely re-derive.
+    """
+
     def __init__(self, outcome: Literal["verified", "exhausted"]) -> None:
         self.outcome = outcome
 
     def verify(self, claim, proof_body, store) -> VerificationResult:
-        source = render_theorem(claim, proof_body)
+        source = verification_source(claim, proof_body)
         source_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
         if self.outcome == "verified":
+            evidence = VerificationEvidence(
+                claim_sha256=claim.content_hash,
+                source_sha256=source_sha,
+                axioms=(),
+                toolchain=claim.environment,
+            )
             result = VerificationResult(
                 verified=True,
                 reason=None,
                 axioms=(),
                 diagnostics=(),
                 source_sha256=source_sha,
-                verification_sha256="v" * 64,
+                verification_sha256=evidence.digest,
+                evidence=evidence,
             )
             store.write_text(PurePosixPath("lean/Main.lean"), source)
         else:
@@ -254,6 +273,93 @@ def run_deterministic_experiment(
     return DeterministicRun(manifest=manifest, run_dir=created.pop())
 
 
+def _verification_record_issues(
+    verification_path: Path,
+    graded: VerificationEvidence,
+) -> list[str]:
+    """Check `lean/verification.json` against the evidence the grade names."""
+    try:
+        verification = VerificationResult.model_validate_json(
+            verification_path.read_text(encoding="utf-8")
+        )
+    except ValidationError:
+        # The record derives its own digest, so one that will not load is
+        # tampering or corruption — an audit finding, not a crash.
+        return ["lean/verification.json is not a self-consistent verification record"]
+    if not verification.verified:
+        return ["verification.json is not verified"]
+    if verification.evidence != graded:
+        return ["graded verification evidence differs from lean/verification.json"]
+    return []
+
+
+def _verified_run_issues(
+    manifest: RunManifest,
+    claim: FrozenClaim | None,
+    main: Path,
+    verification_path: Path,
+) -> list[str]:
+    """Check a `kernel_verified` grade against the evidence it is taken over.
+
+    The grade carries a digest, and the digest is a hash of a record — the
+    claim it was proved from, the Lean source that was elaborated, the axioms
+    that source reported, and the toolchain that read it. Comparing the two
+    copies of the digest proved nothing, because whatever wrote one wrote the
+    other. So the record itself is compared against what the run left on disk:
+    a manifest whose evidence names a different claim, a source it does not
+    hash to, a toolchain nobody ran, or an axiom Hardy does not allow is
+    reported instead of believed.
+
+    What this still cannot do is re-run Lean. The axioms are the one component
+    with no independent witness in the run directory, so they are checked for
+    being permissible rather than for being true.
+    """
+    issues: list[str] = []
+    evidence = manifest.grades.verification_evidence
+    if evidence is None:
+        # Unreachable for a manifest that validated, and reported rather than
+        # assumed: this function's job is to say what is wrong, not to trust.
+        issues.append("verified grade carries no verification evidence")
+        return issues
+    if not verification_path.exists():
+        issues.append("verified run has no lean/verification.json")
+    else:
+        issues.extend(_verification_record_issues(verification_path, evidence))
+    unexpected = tuple(axiom for axiom in evidence.axioms if axiom not in ALLOWED_AXIOMS)
+    if unexpected:
+        issues.append("verification evidence admits unexpected axioms: " + ", ".join(unexpected))
+    if claim is None:
+        issues.append("verified run has no Frozen Claim behind its verification evidence")
+    else:
+        if evidence.claim_sha256 != claim.content_hash:
+            issues.append("verification evidence names a different Frozen Claim")
+        if evidence.toolchain != claim.environment:
+            issues.append("verification evidence names a different toolchain")
+    if not main.exists():
+        issues.append("verified run has no lean/Main.lean")
+        return issues
+    if hashlib.sha256(main.read_bytes()).hexdigest() != evidence.source_sha256:
+        issues.append("Lean source hash differs from verification")
+    if claim is not None:
+        issues.extend(_lean_source_issues(main.read_text(encoding="utf-8"), claim))
+    return issues
+
+
+def _lean_source_issues(source: str, claim: FrozenClaim) -> list[str]:
+    """Check the elaborated source states the frozen claim and audits its axioms."""
+    issues = []
+    binders = " " + claim.proposal.binders.strip() if claim.proposal.binders.strip() else ""
+    signature = (
+        f"theorem {claim.proposal.theorem_name}{binders} : "
+        f"{claim.proposal.proposition.strip()} :="
+    )
+    if signature not in source:
+        issues.append("Lean source signature differs from Frozen Claim")
+    if not source.rstrip().endswith(f"#print axioms {claim.proposal.theorem_name}"):
+        issues.append("Lean source does not end with the axiom report the evidence records")
+    return issues
+
+
 def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str, ...]:
     """Report every way a run's artifacts disagree with each other."""
     issues = []
@@ -298,34 +404,7 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
     main = run_dir / "lean" / "Main.lean"
     verification_path = run_dir / "lean" / "verification.json"
     if manifest.grades.formal is FormalStatus.KERNEL_VERIFIED:
-        if not main.exists():
-            issues.append("verified run has no lean/Main.lean")
-        if not verification_path.exists():
-            issues.append("verified run has no lean/verification.json")
-        else:
-            verification = VerificationResult.model_validate_json(
-                verification_path.read_text(encoding="utf-8")
-            )
-            if not verification.verified:
-                issues.append("verification.json is not verified")
-            if verification.verification_sha256 != manifest.grades.verification_sha256:
-                issues.append("verification evidence differs from grades")
-            if main.exists():
-                actual_source = hashlib.sha256(main.read_bytes()).hexdigest()
-                if actual_source != verification.source_sha256:
-                    issues.append("Lean source hash differs from verification")
-                if claim is not None:
-                    binders = (
-                        " " + claim.proposal.binders.strip()
-                        if claim.proposal.binders.strip()
-                        else ""
-                    )
-                    signature = (
-                        f"theorem {claim.proposal.theorem_name}{binders} : "
-                        f"{claim.proposal.proposition.strip()} :="
-                    )
-                    if signature not in main.read_text(encoding="utf-8"):
-                        issues.append("Lean source signature differs from Frozen Claim")
+        issues.extend(_verified_run_issues(manifest, claim, main, verification_path))
     elif main.exists():
         issues.append("non-verified run unexpectedly has lean/Main.lean")
     tex = run_dir / "writeup" / "paper.tex"
