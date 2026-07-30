@@ -31,6 +31,14 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
 - **Now (implemented):** introducing an axiom pauses for human approval and records
   its exact formal/informal statements, reason, and source identity. Existing local
   Lean modules remain available through ordinary imports in the launch project.
+- **Now (implemented):** saving Lean audits every theorem and lemma in the modules
+  the save rebuilt — the edited one and everything importing it, since a dependent
+  inherits whatever the edit brought in. An axiom reached through an import counts
+  even though nothing in the saved file declares it, which is exactly what the
+  older text-only gate could not see. `sorryAx` is refused outright and is never
+  offered for approval; an unapproved assumption refuses the save and names both
+  the axiom and the declarations that need it. The verdict is recorded per module
+  and reported by `read_workspace`.
 - **Now (implemented):** on a real terminal, the session runs through a
   `prompt_toolkit`-backed shell rather than a plain `input()` loop: dim
   ghost-text completion of slash commands as you type, a `/model` selector
@@ -80,9 +88,22 @@ Priority labels are sequencing hints:
   search available declarations.
 - **Now (implemented):** preserve the original statement and reject completed artifacts that use
   `sorry` or `admit`.
-- **Now (implemented):** audit `#print axioms`; distinguish standard axioms,
-  forbidden `sorryAx`, and explicitly declared paper assumptions. A missing
-  axiom report fails the run rather than reading as an absence of axioms.
+- **Now (implemented):** audit `#print axioms` on all three surfaces, through one
+  shared parser and one shared allowlist, and let the grade follow the audited
+  axiom set rather than a process exit code. Standard axioms, forbidden
+  `sorryAx`, and human-approved assumptions are distinguished. A report that is
+  missing, duplicated, or cut off mid-list fails the run rather than reading as
+  an absence of axioms, and so does a claim stated as an anonymous `example`,
+  which has no name to print axioms for. `hardy prove` and `hardy batch` fail
+  closed — nobody is present to widen the trust base — and `hardy chat` refuses
+  the save and names the axiom, so the model can go through `request_assumption`
+  for it.
+- **Known gap:** the audit is elaborated by a Lean environment the audited source
+  has already had the chance to extend, so a source that registers its own
+  elaborator for `#print axioms` can answer it. What the audit establishes is
+  that an artifact is not *accidentally* unsound; it is not a defence against a
+  source written to subvert elaboration, and cannot be one while Lean runs
+  unconfined. Closing it belongs with the deferred process isolation, not here.
 - **Next:** incremental proving with `sorry`-backed sketches while ensuring only
   the final grade requires a hole-free proof.
 - **Later:** persistent REPL sessions, warm worker pools, pristine reset per run,
@@ -247,8 +268,10 @@ Priority labels are sequencing hints:
 - **Next:** benchmark loaders that preserve statements and imports exactly; pure
   benchmark mode skips formalization and writeup generation.
 - **Next:** fail-closed anti-cheat: reconstruct the statement, scan live code for
-  holes, audit axioms, and flag suspicious computational closers in source and
-  trajectories.
+  holes, and flag suspicious computational closers in source and trajectories.
+  Auditing axioms is done; what belongs here is the harder half — an audit that
+  the audited source cannot answer for itself, which needs the deferred process
+  isolation rather than a change to the parser.
 - **Next:** certified pass@1/pass@k at fixed budget, provisional results kept
   separate, cost and Lean CPU per solve, makespan, utilization, failure kinds, and
   per-domain breakdowns.

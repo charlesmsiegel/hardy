@@ -43,13 +43,21 @@ CAS result.
 Alongside it, `hardy prove` stages a single claim explicitly: Hardy proposes a
 formalization, you approve or revise it, the approved statement is frozen under
 a hash, a proof is sought against that frozen statement, and an independent
-verifier rebuilds and rechecks the result before anything is graded. That
-verifier reads `#print axioms`, so a proof standing on `sorryAx` or on an
-undeclared axiom is reported as such rather than as a theorem. `hardy accept`
+verifier rebuilds and rechecks the result before anything is graded. `hardy accept`
 runs the checked-in acceptance problems and cross-checks the artifacts they
 produce; with `--force-budget-exhaustion-test` it exercises the whole pipeline
 with no model, no network, and no toolchain. The earlier one-shot proof
 experiment remains available as `hardy batch`, but is secondary.
+
+All three surfaces read `#print axioms` through the same parser, so a proof
+standing on `sorryAx` or on an axiom nobody approved is reported as such rather
+than as a theorem — including one reached through an import, which nothing in
+the source itself declares. Elaborating is not the same as being verified, and
+a report Hardy cannot read is a refusal rather than a pass. `prove` and `batch`
+run unattended and so refuse anything beyond Lean's own three axioms; a saved
+interactive artifact can rest on an assumption a human approved, and says which.
+The one thing this cannot establish is stated in [DESIGN.md](DESIGN.md): the
+audit is elaborated by an environment the audited source could have extended.
 
 ## Models and authentication
 
@@ -173,7 +181,10 @@ an undocumented theorem is always allowed; only *adding* a new one is gated.
 The manifest links Lean declaration names to LaTeX labels and records every
 user-approved assumption, exact Lean statement, informal rendering, reason, and
 source. Hardy must ask before adding an assumption; declining it does not widen
-the formal trust base. Imports resolve through the configured `lean_project`,
+the formal trust base. It also records, per Lean module, what the audit found
+that module's theorems and lemmas to actually rest on the last time a save
+covered it — which `read_workspace` reports back, so the model can say what its
+own tree stands on rather than remember. Imports resolve through the configured `lean_project`,
 which the installer points at the shared Mathlib project; set it to your own
 Lake project — in the config file or with `--lean-project` — to import your own
 Lean modules. Without it, Lean runs in the current directory as before.
