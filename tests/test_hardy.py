@@ -205,6 +205,114 @@ def test_the_fake_lean_reports_no_axioms_without_a_marker(lean: LeanTools):
     assert "'A' does not depend on any axioms" in result.output
 
 
+def test_a_kernel_accepted_proof_with_sorry_ax_is_not_verified(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    """The exit code says elaboration succeeded. The axiom set says it is a hole."""
+    result = run(proof_request, factory([
+        call("submit_proof", {"proof": "by exact True.intro -- axioms: sorryAx"}),
+    ]), lean, tmp_path, max_turns=2)
+    assert result.terminal_reason == "axioms_rejected"
+    assert result.formalization == "not formalized"
+    assert result.proof is None
+    assert not (tmp_path / "proof.lean").exists()
+    # The audit ran and refused. Recording "not audited" would say it never ran.
+    recorded = json.loads((tmp_path / "result.json").read_text())["axioms"]
+    assert recorded["status"] == "rejected"
+    assert recorded["forbidden"] == ["sorryAx"]
+
+
+def test_an_unapproved_axiom_is_refused_unattended(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    """No human is here to widen the trust base, so nothing widens it."""
+    result = run(proof_request, factory([
+        call("submit_proof", {"proof": "by exact True.intro -- axioms: Papers.Smith.main"}),
+    ]), lean, tmp_path, max_turns=2)
+    assert result.terminal_reason == "axioms_rejected"
+    assert result.axioms["unapproved"] == ["Papers.Smith.main"]
+
+
+def test_the_model_is_told_which_axiom_was_refused(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    """A refusal it cannot act on is a dead end rather than feedback."""
+    run(proof_request, factory([
+        call("submit_proof", {"proof": "by exact True.intro -- axioms: Papers.Smith.main"}),
+    ]), lean, tmp_path, max_turns=2)
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text())
+    refusal = [event for event in trajectory["events"] if event["type"] == "tool"][-1]["result"]
+    assert not refusal["ok"]
+    assert "Papers.Smith.main" in refusal["output"]
+
+
+def test_a_clean_audit_still_verifies_and_is_recorded(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    result = run(proof_request, factory([
+        call("submit_proof", {"proof": "by exact True.intro -- axioms: propext, Classical.choice"}),
+    ]), lean, tmp_path, max_turns=2)
+    assert result.terminal_reason == "verified"
+    assert result.formalization == "kernel verified"
+    recorded = json.loads((tmp_path / "result.json").read_text())["axioms"]
+    assert recorded["status"] == "clean"
+    assert recorded["declarations"] == [
+        {"name": "HardyTarget", "axioms": ["propext", "Classical.choice"]}
+    ]
+    # The writeup carries the grade and what it rests on together.
+    assert "Audited axioms: propext, Classical.choice" in (tmp_path / "writeup.md").read_text()
+
+
+def test_the_writeup_says_why_a_refused_run_was_not_graded(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    run(proof_request, factory([
+        call("submit_proof", {"proof": "by exact True.intro -- axioms: sorryAx"}),
+    ]), lean, tmp_path, max_turns=2)
+    assert "Audited axioms: refused: sorryAx" in (tmp_path / "writeup.md").read_text()
+
+
+def test_the_writeup_of_a_clean_proof_with_no_axioms_says_none(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    run(proof_request, factory([
+        call("submit_proof", {"proof": "by exact True.intro"}),
+    ]), lean, tmp_path, max_turns=2)
+    assert "Audited axioms: none" in (tmp_path / "writeup.md").read_text()
+
+
+def test_a_run_with_no_submission_is_still_no_proof_submitted(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    """`axioms_rejected` must not swallow the case where nothing was offered."""
+    result = run(proof_request, factory([{"role": "assistant", "content": "I think it works."}]), lean, tmp_path, max_turns=1)
+    assert result.terminal_reason == "no_proof_submitted"
+    assert json.loads((tmp_path / "result.json").read_text())["axioms"] == {"status": "not audited"}
+
+
+def test_a_proof_lean_never_accepted_is_not_an_axiom_rejection(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    """The audit never ran here, so the record must not say it did."""
+    result = run(proof_request, factory([
+        call("submit_proof", {"proof": "by exact False.elim (by contradiction)"}),
+    ]), lean, tmp_path, max_turns=2)
+    assert result.terminal_reason == "no_proof_submitted"
+    assert result.axioms == {"status": "not audited"}
+
+
+def test_an_anonymous_example_cannot_be_verified(tmp_path: Path, lean: LeanTools):
+    """Nothing can print an example's axioms, so nothing can grade it."""
+    request = Request.from_dict({"declaration": "example : True", "informal_claim": "True is true."})
+    anonymous = LeanTools(request, lean.lean_command)
+    result = run(request, factory([call("submit_proof", {"proof": "by exact True.intro"})]), anonymous, tmp_path, max_turns=2)
+    assert result.terminal_reason == "axioms_rejected"
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text())
+    refusal = [event for event in trajectory["events"] if event["type"] == "tool"][-1]["result"]
+    assert "named theorem" in refusal["output"]
+    # An audit that could not run is not the same fact as no audit at all.
+    assert result.axioms["status"] == "not established"
+    assert "example" in result.axioms["reason"]
+
+
+def test_a_missing_axiom_report_refuses_rather_than_reading_as_clean(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    """Lean accepted the file but said nothing about the axioms. Fail closed."""
+    silent = LeanTools(proof_request, lean.lean_command)
+    # The audit line is what Hardy appends; a source it never reaches leaves the
+    # report missing, which is exactly the shape a truncated tail produces.
+    silent.with_audit = staticmethod(lambda source, targets: source)
+    result = run(proof_request, factory([
+        call("submit_proof", {"proof": "by exact True.intro"}),
+    ]), silent, tmp_path, max_turns=2)
+    assert result.terminal_reason == "axioms_rejected"
+    assert result.axioms["status"] == "not established"
+    assert "could not be established" in result.axioms["reason"]
+
+
 def test_the_trajectory_records_the_providers_turn_count(proof_request: Request, lean: LeanTools, tmp_path: Path):
     """Counting tool calls here would be a different number wearing the name."""
 

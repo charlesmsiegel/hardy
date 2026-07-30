@@ -1,1 +1,3 @@
 Prove the exact Lean statement. Use the tools for kernel feedback. Never change the statement. Submit a sorry-free proof when ready.
+
+Elaborating is not enough. Hardy asks Lean what your submitted proof depends on and refuses anything beyond `propext`, `Classical.choice`, and `Quot.sound`. `sorryAx` is a hole and is always refused. Nobody is here to approve an assumption, so an imported axiom is a dead end rather than a shortcut: prove the statement outright or report that you could not. Do not add `#print axioms` yourself — Hardy appends its own, and a second report makes the audit unreadable and refuses the submission.
