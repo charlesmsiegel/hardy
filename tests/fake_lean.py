@@ -94,14 +94,15 @@ def write_olean() -> None:
     output.write_bytes(OLEAN_PREFIX + trailer)
 
 
-# A file that only imports and asks questions: the shape the interactive axiom
-# audit sends, over a workspace that is already built.
+# A file that only imports and asks questions elaborates on its own -- real
+# Lean is perfectly happy with a header and a `#print`, and that is the shape
+# the interactive axiom audit sends over a workspace that is already built.
 body = [
     line.strip()
     for line in source.splitlines()
     if line.strip() and not line.strip().startswith(("import ", "#", "--"))
 ]
-if not body and "#print" in source:
+if not body:
     report_axioms()
     raise SystemExit(0)
 

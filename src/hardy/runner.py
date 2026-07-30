@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from . import audit
 from .chat import provenance
 from .claude_runtime import TurnLimitReached
-from .lean import LeanTools
+from .lean import LeanToolResult, LeanTools
 from .models import Request, RunResult, ToolResult
 from .prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
 
@@ -37,7 +37,7 @@ def _write_json(path: Path, value: Any) -> None:
     os.replace(temporary, path)
 
 
-def _audited(result: ToolResult, lean: LeanTools) -> tuple[ToolResult, audit.Verdict | None, dict[str, Any] | None]:
+def _audited(result: LeanToolResult, lean: LeanTools) -> tuple[ToolResult, audit.Verdict | None, dict[str, Any] | None]:
     """A kernel-accepted proof is not yet a verified one.
 
     Lean's exit code says the file elaborated. It says nothing about what the
@@ -51,7 +51,9 @@ def _audited(result: ToolResult, lean: LeanTools) -> tuple[ToolResult, audit.Ver
     if name is None:
         why = "an anonymous `example` cannot be audited; state the claim as a named theorem or lemma"
         return ToolResult(False, why, result.source), None, audit.unestablished(why)
-    reports = audit.parse(result.output, (name,))
+    # The whole report, not the tail a model is shown: an audit graded on a
+    # truncated report would refuse a proof for a line that was merely cut off.
+    reports = audit.parse(result.report, (name,))
     if reports is None:
         why = f"the axiom audit for `{name}` could not be established; remove any #print axioms from the proof, Hardy adds its own"
         return ToolResult(False, why, result.source), None, audit.unestablished(why)
@@ -60,16 +62,6 @@ def _audited(result: ToolResult, lean: LeanTools) -> tuple[ToolResult, audit.Ver
         why = f"Lean accepted the proof but the axiom audit refused it: {audit.describe(verdict)}"
         return ToolResult(False, why, result.source), verdict, verdict.as_dict()
     return result, verdict, None
-
-
-def audit_summary(record: dict[str, Any]) -> str:
-    """How a run with no verified proof describes its axiom record in prose."""
-    if record["status"] == "not audited":
-        return "not audited -- no proof reached the audit"
-    if record["status"] == "not established":
-        return f"not established -- {record['reason']}"
-    refused = list(record["forbidden"]) + list(record["unapproved"])
-    return f"refused: {', '.join(refused)}"
 
 
 def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools, output_dir: Path, *, max_turns: int = 8, wall_seconds: float = 300) -> RunResult:
@@ -174,7 +166,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     stands_on = (
         ", ".join(verdict.reports[0].axioms) or "none"
         if final and verdict is not None and verdict.reports
-        else audit_summary(axioms)
+        else audit.summarise(axioms)
     )
     writeup = f"# Hardy proof result\n\n## Claim\n\n{request.informal_claim}\n\n## Exact Lean statement\n\n```lean\n{request.declaration}\n```\n\n## Grades\n\n- Formalization: **{formal}**\n- Informal completeness: **{informal}**\n- Audited axioms: {stands_on}\n\n## Limits\n\n{WARNING}\n"
     if not final:

@@ -8,10 +8,11 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
+from . import audit
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
@@ -289,6 +290,8 @@ class MathematicsSession:
     def _read_state(self) -> dict[str, Any]:
         if self.state_path.exists():
             return json.loads(self.state_path.read_text(encoding="utf-8"))
+        # `audit` is absent until the first save; a workspace written before the
+        # audit existed has none either, and neither may read as a clean one.
         return {"schema_version": 1, "names": [], "assumptions": []}
 
     def _save_state(self) -> None:
@@ -481,12 +484,116 @@ class MathematicsSession:
             lost = self._missing_registered_names(shadow.sources())
             if lost:
                 return ToolResult(False, f"this save would drop registered names from the workspace: {lost}", source)
+            # Last, because it is the only gate that costs another Lean run,
+            # and still before `commit`: a refused audit must leave the
+            # workspace exactly as it was.
+            audited = self._audit_tree(shadow, affected)
+            if isinstance(audited, ToolResult):
+                return audited
+            records, note = audited
             commit()
         finally:
             LeanWorkspace.discard(shadow)
+        # Published after the write, and not before: a verdict stored first
+        # would survive a failed commit and describe a tree that never existed.
+        self.state.setdefault("audit", {}).update(records)
+        self._save_state()
         # Absent from `seen` when the source was byte-identical to what was
         # already built, so the cache skipped it. Nothing was wrong with it.
-        return seen.get(module, ToolResult(True, "unchanged; already built", source))
+        result = seen.get(module, ToolResult(True, "unchanged; already built", source))
+        return ToolResult(result.ok, f"{result.output}\n\naxiom audit: {note}", result.source)
+
+    def _approved_assumptions(self) -> set[str]:
+        return {item["formal_name"] for item in self.state["assumptions"]}
+
+    def _audit_tree(
+        self, space: LeanWorkspace, modules: Sequence[str]
+    ) -> ToolResult | tuple[dict[str, dict[str, Any]], str]:
+        """What the built modules actually rest on: a record each, or a refusal.
+
+        The textual gate in `_final_gates` sees an `axiom` written into the
+        source in front of it and nothing else. An axiom reached through an
+        import is invisible to it, and that is the case a saved artifact can
+        be wrong about while looking right, so Lean is asked directly.
+
+        Asked over the staged tree, before anything is committed, and over
+        every module the save rebuilt rather than only the one it edited: a
+        dependent inherits whatever the edit brought in, so its own claim
+        changed too even though its source did not. Which is also why a module
+        outside that set keeps its earlier record rather than being dropped --
+        nothing it depends on moved.
+        """
+        sources = space.sources()
+        declared = {
+            module: declarations(sources[module])["theorem"]
+            + declarations(sources[module])["lemma"]
+            for module in modules
+        }
+        # Deduplicated: two `#print axioms` lines for one name read as a
+        # duplicated report, which fails closed and would leave a workspace
+        # that could never be saved again.
+        names = list(dict.fromkeys(name for module in modules for name in declared[module]))
+        empty = {
+            module: audit.unestablished(f"no theorem or lemma is declared in {module}")
+            for module in modules
+            if not declared[module]
+        }
+        if not names:
+            # Nothing here claims to be a result, so there is nothing to grade.
+            # Recorded as an audit that did not run rather than as a clean one.
+            return empty, f"not established -- no theorem or lemma is declared in {list(modules)}"
+        # One elaboration over the built tree: the modules are already oleans,
+        # so this imports rather than re-elaborates them.
+        probe = "".join(f"import {module}\n" for module in modules)
+        result = self.lean.run_source(
+            probe,
+            env={"LEAN_PATH": space.lean_path()},
+            audit=tuple(f"axioms {name}" for name in names),
+        )
+        if not result.ok:
+            return ToolResult(
+                False,
+                f"the axiom audit could not run over the saved tree, so nothing was written:\n{result.output}",
+            )
+        # The whole report, not the tail a model is shown: a tree with more
+        # declarations than the observation window would otherwise be refused
+        # for a report that was merely cut off.
+        reports = audit.parse(result.report, tuple(names))
+        if reports is None:
+            return ToolResult(
+                False,
+                "the axiom audit could not be established for "
+                f"{names}, so nothing was written. Remove any #print axioms from your source; Hardy adds its own.",
+            )
+        approved = self._approved_assumptions()
+        verdict = audit.classify(reports, approved)
+        if verdict.forbidden:
+            # Before anything else, and never offered for approval: a hole is
+            # not an assumption and no human can make it one.
+            return ToolResult(
+                False,
+                f"the axiom audit refused this save: {audit.describe(verdict)}. "
+                f"{list(audit.dependents(reports, verdict.forbidden[0]))} depend on a hole, which cannot be approved.",
+            )
+        if verdict.unapproved:
+            needed = {
+                axiom: list(audit.dependents(reports, axiom)) for axiom in verdict.unapproved
+            }
+            return ToolResult(
+                False,
+                f"the axiom audit refused this save: {audit.describe(verdict)}. "
+                f"These assumptions reached through imports have not been approved: {needed}. "
+                "Call request_assumption for each before saving work that rests on it.",
+            )
+        # A record per module rather than one for the save, so a later save
+        # elsewhere in the tree cannot overwrite what this one established.
+        found = {report.declaration: report for report in reports}
+        records = dict(empty)
+        for module in modules:
+            if declared[module]:
+                covering = [found[name] for name in declared[module]]
+                records[module] = audit.classify(covering, approved).as_dict()
+        return records, audit.describe(verdict)
 
     def _build_imports(self, space: LeanWorkspace, source: str) -> BuildFailure | ToolResult | None:
         """Make the workspace modules a candidate imports importable."""
@@ -694,6 +801,10 @@ class MathematicsSession:
             "lean": lean,
             "tex": tex,
             "undocumented_theorems": list(self._undocumented()),
+            # What each saved module was found to rest on, so the model can
+            # report it rather than having to remember it. A module is absent
+            # until a save covers it.
+            "audit": self.state.get("audit", {}),
         }
 
     def _read_file(self, path: str) -> ToolResult:
@@ -729,6 +840,10 @@ class MathematicsSession:
             # is that an undocumented theorem can always be walked away from.
             lost = self._missing_registered_names(shadow.sources())
             commit()
+            # The audit record goes with the module. Left behind it would
+            # describe declarations the workspace no longer has.
+            if self.state.get("audit", {}).pop(module, None) is not None:
+                self._save_state()
             if lost:
                 self.state["names"] = [
                     item for item in self.state["names"] if item["formal_name"] not in lost
