@@ -28,6 +28,15 @@
 >   verdict's `source_sha256` binding, registry-change invalidation, and drift
 >   detection on an approved assumption's statement. All of them layer on top of
 >   the gate rather than being part of it.
+> - **Known limit — a guillemet axiom name containing a comma or a bracket.**
+>   `audit.parse` splits the reported list on `,` and bounds it with `[…]`, so an
+>   axiom named `«paper,main»` reads as two axioms and `«paper]main»` matches no
+>   report at all. Both fail closed. Not fixed here, because a guillemet-named
+>   *axiom* does not work anywhere else either: `_final_gates`' approval scan is
+>   ASCII-only (`chat.py:354`) and never sees one, so a nesting-aware parser in
+>   the most safety-critical function in the audit would fix one link of a chain
+>   that is broken further up. Making guillemet axioms work end to end is its own
+>   change; guillemet *declarations* are supported and tested.
 >
 > `TerminalReason` gained no `axioms_rejected` member: that string is `batch`'s
 > own terminal reason, and `prove` keeps `UNEXPECTED_AXIOM` for both a hole and

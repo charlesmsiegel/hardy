@@ -235,8 +235,35 @@ def test_nested_block_comments_close_at_the_right_place():
 
 
 def test_a_comment_marker_inside_a_string_is_not_a_comment():
+    """The literal is blanked, so the `--` cannot start a comment and cannot
+    swallow the rest of the line either. What matters is that nothing after it
+    on the line is lost."""
     source = 'def s := "-- not a comment"\n'
-    assert strip_comments(source) == source
+    stripped = strip_comments(source)
+    assert stripped.startswith('def s := ')
+    assert len(stripped) == len(source)
+    assert '-- not a comment' not in stripped
+
+
+def test_a_declaration_inside_a_string_literal_is_not_a_declaration():
+    """It is not one, and a caller that has to name every declaration would ask
+    Lean about something that does not exist and refuse the file forever."""
+    source = (
+        'def blurb : String := "\ntheorem fake : True := trivial\n"\n\n'
+        'theorem real : True := trivial\n'
+    )
+    assert declarations(source)["theorem"] == ("real",)
+
+
+def test_blanking_a_string_keeps_the_lines_lined_up():
+    source = 'def s := "one\ntwo\nthree"\ntheorem real : True := trivial\n'
+    assert len(strip_comments(source).splitlines()) == len(source.splitlines())
+
+
+def test_an_escaped_quote_does_not_end_a_string_early():
+    """Otherwise the text after it would read as code again."""
+    source = 'def s := "a \\" theorem sneaky : True"\ntheorem real : True := trivial\n'
+    assert declarations(source)["theorem"] == ("real",)
 
 
 def test_strip_comments_keeps_the_lines_lined_up():

@@ -108,9 +108,14 @@ def strip_comments(source: str) -> str:
     every regex about comments separately.
 
     Comments are replaced by spaces rather than removed so that line and
-    column positions still line up with the source a reader has open. String
-    literals are respected, or a `"-- "` inside one would blank the rest of a
-    real line.
+    column positions still line up with the source a reader has open.
+
+    String literals are blanked rather than merely skipped, for the same reason
+    and in the other direction: a `--` inside one must not start a comment, and
+    a line reading `theorem fake : True` inside a multiline string must not be
+    reported as a declaration. It is not one, and a caller that has to *name*
+    every declaration -- the axiom audit does -- would ask Lean about something
+    that does not exist and refuse the file forever.
     """
     out = list(source)
     index = 0
@@ -134,14 +139,24 @@ def strip_comments(source: str) -> str:
             index += 1
             continue
         if character == '"':
+            out[index] = " "
             index += 1
             while index < length:
                 if source[index] == "\\":
+                    # The escape and whatever it escapes, both blanked -- but a
+                    # newline stays a newline, or every position after a
+                    # line-continuation would shift.
+                    for offset in (0, 1):
+                        if index + offset < length and source[index + offset] != "\n":
+                            out[index + offset] = " "
                     index += 2
                     continue
                 if source[index] == '"':
+                    out[index] = " "
                     index += 1
                     break
+                if source[index] != "\n":
+                    out[index] = " "
                 index += 1
             continue
         if source.startswith("/-", index):

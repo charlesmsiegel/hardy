@@ -67,6 +67,10 @@ axioms = marked(source)
 # left out on purpose: Lean mangles them so no other module can refer to them.
 exports = [name for modifier, name in DECLARED.findall(source) if modifier != "private"]
 visible: list[str] = []
+# Names two different imported modules both export. Lean cannot resolve one of
+# those unqualified, so asking about it is an error rather than a coin toss --
+# and a stand-in that picked a winner would hide a caller that must not ask.
+ambiguous: set[str] = set()
 for line in source.splitlines():
     stripped = line.strip()
     if not stripped.startswith("import "):
@@ -85,7 +89,11 @@ for line in source.splitlines():
         raise SystemExit(1)
     carried = found.read_text(encoding="utf-8", errors="replace")
     axioms.extend(item for item in marked(carried) if item not in axioms)
-    visible.extend(item for item in listed(EXPORTS, carried) if item not in visible)
+    for item in listed(EXPORTS, carried):
+        if item in visible:
+            ambiguous.add(item)
+        else:
+            visible.append(item)
 
 
 def report_axioms() -> None:
@@ -100,6 +108,9 @@ def report_axioms() -> None:
         # one` inside `namespace Hardy`. A private declaration never reaches
         # `exports` at all, so the check that matters here still bites.
         reachable = set(exports) | set(visible)
+        if name in ambiguous or name.rsplit(".", 1)[-1] in ambiguous:
+            print(f"{path.name}:1:0: error: ambiguous, possible interpretations '{name}'")
+            raise SystemExit(1)
         if name not in reachable and name.rsplit(".", 1)[-1] not in reachable:
             print(f"{path.name}:1:0: error: unknown identifier '{name}'")
             raise SystemExit(1)
