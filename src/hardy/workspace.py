@@ -103,6 +103,48 @@ def module_path(name: str) -> PurePosixPath:
     return PurePosixPath(*name.split(".")).with_suffix(".lean")
 
 
+def _scope_prefixes(lines: list[str]) -> list[tuple[str, ...]]:
+    """The namespace prefix in force at each line of an already-stripped source.
+
+    Both kinds of scope, because a bare `end` closes whichever is innermost and
+    only a namespace contributes to a name. Tracking namespaces alone would let
+    `section ... end` pop a namespace that is still open, and every later
+    declaration would be recorded under a name Lean never gave it.
+
+    One copy, shared by the declaration scan and the assumption scan. They had
+    a walk each, and the pair drifted twice: the second defined its own
+    `NAMESPACE`/`END` that silently replaced the first's at import time --
+    dropping indented and guillemet-quoted namespaces from *both* -- and never
+    popped on a bare `end`, so every axiom after one was qualified by a
+    namespace that had closed.
+    """
+    scope: list[tuple[str, str | None]] = []
+    prefixes: list[tuple[str, ...]] = []
+    for line in lines:
+        opening = NAMESPACE.match(line)
+        section = SECTION.match(line)
+        if opening:
+            scope.append(("namespace", opening.group(1)))
+        elif section:
+            scope.append(("section", section.group(1)))
+        else:
+            closing = END.match(line)
+            if closing:
+                name = closing.group(1)
+                if name is None:
+                    if scope:
+                        scope.pop()
+                else:
+                    # A named `end` closes that scope and anything still open
+                    # inside it.
+                    for index in range(len(scope) - 1, -1, -1):
+                        if scope[index][1] == name:
+                            del scope[index:]
+                            break
+        prefixes.append(tuple(item for kind, item in scope if kind == "namespace" and item))
+    return prefixes
+
+
 def _raw_string_opener(source: str, index: int) -> int | None:
     """The hash count of a raw-string opener at `index`, or None.
 
@@ -217,11 +259,9 @@ def strip_comments(source: str) -> str:
     return "".join(out)
 
 
-NAMESPACE = re.compile(rf"^namespace\s+({QUALIFIED})$")
-END = re.compile(rf"^end(?:\s+({QUALIFIED}))?$")
 ASSUMPTION = re.compile(
     rf"^{WRAPPER}(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|scoped|local)\s+)*"
-    rf"(?:axiom|constant)\s+({QUALIFIED})\s*:(.*)$"
+    rf"(?:axiom|constant)\s+({QUALIFIED_NAME})\s*:(.*)$"
 )
 # Where a declaration stops, so the one before it is not read as running on.
 # Approximate on purpose: over-reading appends text to a statement and the
@@ -242,13 +282,9 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
     A flat scan reads `namespace Foo ... axiom bar` as `bar`, but Lean reports
     it as `Foo.bar`. With one gate checking the short name and the audit
     checking the qualified one, no single approval could satisfy both and the
-    module could not be saved at all. Tracking the namespace stack gives both
-    gates the same name.
-
-    `end` without a name closes a `section`, which does not qualify anything, so
-    only a named `end` matching the open namespace pops. A mismatched one is
-    left alone rather than guessed at: Lean will reject the file anyway, and
-    unwinding on a guess could qualify a later axiom wrongly.
+    module could not be saved at all. The scope walk is shared with
+    `declarations` so both gates agree on the name, and so the two cannot drift
+    apart again -- which they did, twice, when this kept its own.
 
     A statement is gathered across lines, because `axiom trusted :` with its
     type on the next line is ordinary Lean and a line-anchored read of it
@@ -257,28 +293,20 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
     on its name alone. A wrapped statement fared no better: it was truncated at
     the first newline and then failed a comparison it should have passed.
     """
-    stripped = strip_comments(source).splitlines()
-    stack: list[str] = []
+    lines = strip_comments(source).splitlines()
+    prefixes = _scope_prefixes(lines)
     found: list[tuple[str, str]] = []
     index = 0
-    while index < len(stripped):
-        text = stripped[index].strip()
-        index += 1
-        opened = NAMESPACE.match(text)
-        if opened:
-            stack.append(opened.group(1))
+    while index < len(lines):
+        declared = ASSUMPTION.match(lines[index].strip())
+        if declared is None:
+            index += 1
             continue
-        closed = END.match(text)
-        if closed:
-            if closed.group(1) and stack and stack[-1] == closed.group(1):
-                stack.pop()
-            continue
-        declared = ASSUMPTION.match(text)
-        if not declared:
-            continue
+        prefix = prefixes[index]
         name, parts = declared.group(1), [declared.group(2).strip()]
-        while index < len(stripped):
-            following = stripped[index].strip()
+        index += 1
+        while index < len(lines):
+            following = lines[index].strip()
             if not following or COMMAND.match(following):
                 break
             parts.append(following)
@@ -288,7 +316,7 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
         if name.startswith("_root_."):
             found.append((name.removeprefix("_root_."), statement))
         else:
-            found.append((".".join([*stack, name]), statement))
+            found.append((".".join((*prefix, name)) if prefix else name, statement))
     return tuple(found)
 
 
@@ -354,33 +382,7 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
     text = strip_comments(source)
     lines = text.splitlines()
 
-    # Both kinds of scope, because a bare `end` closes whichever is innermost
-    # and only a namespace contributes to a name. Tracking namespaces alone
-    # would let `section ... end` pop a namespace that is still open, and every
-    # later declaration would then be recorded under a name Lean never gave it.
-    scope: list[tuple[str, str | None]] = []
-    prefixes: list[tuple[str, ...]] = []
-    for line in lines:
-        opening = NAMESPACE.match(line)
-        if opening:
-            scope.append(("namespace", opening.group(1)))
-        elif SECTION.match(line):
-            scope.append(("section", SECTION.match(line).group(1)))
-        else:
-            closing = END.match(line)
-            if closing:
-                name = closing.group(1)
-                if name is None:
-                    if scope:
-                        scope.pop()
-                else:
-                    # A named `end` closes that scope and anything still open
-                    # inside it.
-                    for index in range(len(scope) - 1, -1, -1):
-                        if scope[index][1] == name:
-                            del scope[index:]
-                            break
-        prefixes.append(tuple(item for kind, item in scope if kind == "namespace" and item))
+    prefixes = _scope_prefixes(lines)
 
     # Declarations are matched over the whole text so a name on the line after
     # its keyword is still found, then attributed to the scope open at the line

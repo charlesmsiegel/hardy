@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+# What a request's declaration may open with. Attributes and modifiers come
+# before the keyword in ordinary Lean, and this is the earliest of the three
+# places that had to be taught so -- the head grammar in `hardy.lean` never saw
+# a decorated declaration, because this refused it first.
+DECLARATION_KEYWORD = re.compile(
+    r"^(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|nonrec|unsafe|partial|scoped|local)\s+)*"
+    r"(?:theorem|lemma|example)(?:\s|$)"
+)
 
 
 @dataclass(frozen=True)
@@ -15,7 +25,11 @@ class Request:
         declaration = str(value["declaration"]).strip()
         if ":=" in declaration:
             raise ValueError("declaration must contain the statement only, not ':='")
-        if not declaration.startswith(("theorem ", "lemma ", "example ")):
+        # Read through what may precede the keyword rather than demanding it
+        # come first. `@[simp] theorem T` and `protected theorem T` are ordinary
+        # Lean, and refusing them here made the head grammar's tolerance of both
+        # unreachable -- the request never got that far.
+        if not DECLARATION_KEYWORD.match(declaration):
             raise ValueError("declaration must begin with theorem, lemma, or example")
         imports = tuple(str(item).strip() for item in value.get("imports", ["Mathlib"]))
         if not imports or any(not item for item in imports):

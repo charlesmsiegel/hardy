@@ -152,6 +152,25 @@ def test_the_target_name_survives_a_missing_space_before_the_colon():
     assert LeanTools(request, ("true",)).target_name == "Tight"
 
 
+def test_a_decorated_declaration_is_not_anonymous():
+    """`@[simp] theorem T` is ordinary Lean. With the keyword required first
+    there was no name to print, so `batch` refused it before any model turn."""
+    for declaration in ("@[simp] theorem T : True", "protected theorem T : True",
+                        "nonrec theorem T : True"):
+        request = Request.from_dict({"declaration": declaration, "informal_claim": "x"})
+        assert LeanTools(request, ("true",)).target_name == "T", declaration
+
+
+def test_a_guillemet_declaration_name_is_not_anonymous():
+    """The interactive workspace declares and audits `theorem «first result»`,
+    and `hardy.audit` reads a report for it. Only `batch` could not: the head
+    grammar refused guillemets, so this was rejected as an anonymous example."""
+    request = Request.from_dict(
+        {"declaration": "theorem «first result» : True", "informal_claim": "x"}
+    )
+    assert LeanTools(request, ("true",)).target_name == "«first result»"
+
+
 def test_explicit_universe_binders_are_not_part_of_the_name():
     """`#print axioms Foo.` is not a command, so `Foo.{u}` must yield `Foo`."""
     request = Request.from_dict(

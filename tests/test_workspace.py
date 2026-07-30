@@ -410,3 +410,28 @@ def test_a_wrapped_declaration_is_still_audited():
         "theorem"
     ] == ("T",)
     assert declarations("open Nat in lemma L : True := trivial\n")["lemma"] == ("L",)
+
+
+def test_an_indented_namespace_still_qualifies():
+    """The assumption scan once defined its own `NAMESPACE`/`END`, which
+    replaced these at import time and dropped the leading-whitespace tolerance —
+    quietly, and for the declaration scan as well."""
+    source = "namespace Foo\n  namespace Bar\n  theorem T : True := trivial\n  end Bar\nend Foo\n"
+    assert declarations(source)["theorem"] == ("Foo.Bar.T",)
+
+
+def test_an_escaped_namespace_still_qualifies():
+    source = "namespace «my scope»\ntheorem T : True := trivial\nend «my scope»\n"
+    assert declarations(source)["theorem"] == ("«my scope».T",)
+
+
+def test_a_bare_end_closes_a_namespace_for_assumptions_too():
+    """Not popping left every later axiom qualified by a namespace that had
+    closed, and neither spelling could satisfy both the gate and the audit."""
+    source = "namespace Foo\naxiom a : True\nend\naxiom b : False\n"
+    assert assumptions(source) == (("Foo.a", "True"), ("b", "False"))
+
+
+def test_a_section_inside_a_namespace_does_not_close_it_for_assumptions():
+    source = "namespace Foo\nsection\naxiom a : True\nend\naxiom b : False\nend Foo\n"
+    assert assumptions(source) == (("Foo.a", "True"), ("Foo.b", "False"))
