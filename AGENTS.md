@@ -10,7 +10,10 @@ is brought up.
 
 To work on the code: `scripts/install.sh` sets up a full environment,
 `uv run --extra test pytest` runs the hermetic suite, and `hardy doctor` reports
-what a machine is still missing.
+what a machine is still missing. Add `--cov` to measure what the suite reaches;
+it writes `coverage.xml` and `htmlcov/index.html`, and fails below the floor in
+`pyproject.toml`. CI runs the same command on every pull request and keeps the
+report.
 
 ## Repository rules
 

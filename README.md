@@ -244,6 +244,12 @@ recorded digest before installing it. Global options such as
 `--model`, `--lean-command`, and `--latex-command` go before the subcommand. Use
 `uv run --extra test pytest` for the hermetic suite, which substitutes fake model,
 Lean, and LaTeX processes and does not establish a real Mathlib installation.
+Adding `--cov` measures what that suite reaches, writes `coverage.xml` and
+`htmlcov/index.html`, and fails below the floor recorded in `pyproject.toml`;
+CI runs it on every pull request and keeps the report as an artifact. One
+number it reports is a measurement limit rather than a gap: `hardy/cas_driver.py`
+is the body of a helper process the suite starts with `subprocess`, so nothing
+in the harness observes it running.
 
 ## Documentation
 
