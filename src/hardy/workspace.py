@@ -487,6 +487,22 @@ class LeanWorkspace:
             signatures[module] = digest.hexdigest()
         return signatures
 
+    def current_signatures(self) -> dict[str, str]:
+        """What every module's build inputs hash to *now*.
+
+        Computed rather than read back from the index: the index records what a
+        module was last built at, so comparing a stored value against it would
+        agree with itself after the toolchain changed and nothing had rebuilt
+        yet. Recomputing asks the question a caller actually has -- are this
+        module's inputs still the ones some earlier answer was about -- and
+        because `_signatures` is recursive, a change anywhere beneath a module
+        changes its answer too.
+        """
+        sources = self.sources()
+        if not sources:
+            return {}
+        return self._signatures(sources, build_order(sources, tuple(sources)))
+
     def build_modules(self, targets: Collection[str]) -> BuildFailure | None:
         """Compile `targets` and whatever they need, dependencies first.
 

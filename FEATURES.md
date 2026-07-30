@@ -31,6 +31,22 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
 - **Now (implemented):** introducing an axiom pauses for human approval and records
   its exact formal/informal statements, reason, and source identity. Existing local
   Lean modules remain available through ordinary imports in the launch project.
+- **Known limit — an approval binds a name, not the statement behind it.** The
+  audit matches the axiom names Lean reports against the names a human approved.
+  The `lean_statement` shown at approval time is what the *model* said the
+  declaration says; Hardy does not ask Lean for the imported declaration's actual
+  type and compare. So a request that misdescribes an imported axiom can obtain
+  approval for something other than what the human read, and an approval survives
+  a later change to the type under that name. Binding approval to the type Lean
+  reports — and re-checking it — is the drift detection the design calls for and
+  this does not yet do.
+- **Known limit — a *verified modulo* Lean save does not require the writeup to
+  say so.** The per-module verdict records the assumption, and `request_assumption`
+  records a LaTeX name for it, but nothing refuses the save when the writeup tree
+  never mentions it. The writeup ratchet gates adding a new `theorem`, not
+  disclosing an assumption, so a compiled document can read as unconditional while
+  the qualification lives in `session.json`. The `save_latex` disclosure gate in
+  the design is what closes this.
 - **Now (implemented):** saving Lean audits every *exported* theorem and lemma in
   the modules the save rebuilt — the edited one and everything importing it, since
   a dependent inherits whatever the edit brought in. An axiom reached through an
