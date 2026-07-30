@@ -106,6 +106,17 @@ class LeanToolResult(ToolResult):
     observation_truncated: bool = False
     source_sha256: str | None = None
 
+    @property
+    def report(self) -> str:
+        """Everything Lean said, whole.
+
+        `output` is what a model reads and is cut to its trailing
+        `output_limit` characters. An audit graded on that would refuse a
+        perfectly good tree once its declarations outnumbered the window, so
+        the audit reads the structured diagnostics instead.
+        """
+        return render_diagnostics(self.diagnostics)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "ok": self.ok,

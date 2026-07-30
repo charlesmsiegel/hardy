@@ -259,7 +259,7 @@ def test_the_writeup_says_why_a_refused_run_was_not_graded(tmp_path: Path, proof
     run(proof_request, factory([
         call("submit_proof", {"proof": "by exact True.intro -- axioms: sorryAx"}),
     ]), lean, tmp_path, max_turns=2)
-    assert "Audited axioms: refused: sorryAx" in (tmp_path / "writeup.md").read_text()
+    assert "Audited axioms: forbidden ['sorryAx']" in (tmp_path / "writeup.md").read_text()
 
 
 def test_the_writeup_of_a_clean_proof_with_no_axioms_says_none(tmp_path: Path, proof_request: Request, lean: LeanTools):

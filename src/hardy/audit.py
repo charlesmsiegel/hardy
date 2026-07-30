@@ -143,14 +143,32 @@ def unestablished(reason: str) -> dict[str, Any]:
     }
 
 
-def describe(verdict: Verdict) -> str:
-    if not verdict.reports:
-        return "no declaration was audited"
+def summarise(record: dict[str, Any]) -> str:
+    """A one-line reading of an audit record, in whichever state it is in.
+
+    Takes the stored dict rather than a `Verdict` because the two states that
+    are not verdicts at all -- an audit nothing reached, and one that could not
+    be established -- have to read as sentences too, and a caller holding a
+    record read back from disk has no `Verdict` to offer.
+    """
+    status = record["status"]
+    if status == "not audited":
+        return "not audited -- nothing reached the audit"
+    if status == "not established":
+        return f"not established -- {record['reason']}"
     parts = []
-    if verdict.forbidden:
-        parts.append(f"forbidden {list(verdict.forbidden)}")
-    if verdict.unapproved:
-        parts.append(f"unapproved {list(verdict.unapproved)}")
-    if verdict.assumed:
-        parts.append(f"approved assumptions {list(verdict.assumed)}")
-    return "; ".join(parts) or "standard axioms only"
+    if record["forbidden"]:
+        parts.append(f"forbidden {list(record['forbidden'])}")
+    if record["unapproved"]:
+        parts.append(f"unapproved {list(record['unapproved'])}")
+    if record["assumed"]:
+        parts.append(f"approved assumptions {list(record['assumed'])}")
+    if parts:
+        return "; ".join(parts)
+    # Nothing named either way: every axiom was standard, or -- the case a
+    # reader must not confuse with it -- there was no declaration to report on.
+    return "standard axioms only" if record["declarations"] else "no declaration was audited"
+
+
+def describe(verdict: Verdict) -> str:
+    return summarise(verdict.as_dict())

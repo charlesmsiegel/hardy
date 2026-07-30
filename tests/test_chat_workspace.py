@@ -123,6 +123,10 @@ def test_a_save_elaborates_the_file_exactly_once(tmp_path: Path):
     An earlier arrangement pre-checked the source and then compiled it again in
     the shadow build, elaborating the same file twice. With Mathlib imported
     that is tens of seconds spent twice over for one save.
+
+    The audit's own run is the one deliberate exception, and it imports the
+    oleans the build just produced rather than elaborating their source again.
+    One compile of the file, one audit over the built tree, and nothing else.
     """
     runtime = FakeChatRuntime([
         call("save_lean", {"path": "Basic.lean", "source": BASIC}),
@@ -144,7 +148,7 @@ def test_a_save_elaborates_the_file_exactly_once(tmp_path: Path):
     chat.lean.run_source = counted_run
     chat.send("Save one file.")
     assert (tmp_path / "lean" / "Basic.lean").exists()
-    assert counts == {"compile": 1, "elaborate": 0}
+    assert counts == {"compile": 1, "elaborate": 1}
 
 
 def test_an_unelaborable_save_never_reaches_lean(tmp_path: Path):
