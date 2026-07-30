@@ -24,7 +24,7 @@ from typing import Any, Literal
 from .domain import EnvironmentIdentity, FrozenClaim, FrozenModel, RunLimits
 from .models import Request, ToolResult
 from .process import ProcessResult, ProcessSpec, run_process
-from .workspace import QUALIFIED_NAME
+from .workspace import QUALIFIED_NAME, declared_name
 
 HOLE = re.compile(r"\b(sorry|admit)\b")
 # A Lean declaration name: identifier components joined by dots. Stricter than
@@ -319,9 +319,13 @@ class LeanTools:
 
         An anonymous example has no name, so nothing can print its axioms --
         which is why it cannot be graded rather than graded leniently.
+
+        Normalised the same way the workspace scanner does: `theorem _root_.bar`
+        is reported by Lean as `bar`, and searching its output for `_root_.bar`
+        found nothing and failed the proof for an unestablished audit.
         """
         found = DECLARATION_HEAD.match(self.request.declaration)
-        return found.group(1) if found else None
+        return declared_name(found.group(1)) if found else None
 
     @staticmethod
     def with_audit(source: str, targets: Sequence[str]) -> str:

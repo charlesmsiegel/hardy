@@ -432,3 +432,11 @@ def test_reaching_the_turn_bound_is_a_limit_not_a_provider_failure(proof_request
 
     result = run(proof_request, lambda model=None, **c: Bounded([], **c), lean, tmp_path, max_turns=2)
     assert result.terminal_reason == "turn_limit"
+
+
+def test_a_root_qualified_batch_target_is_reported_as_lean_names_it():
+    """Lean declares `theorem _root_.bar` as `bar`, so searching its report for
+    `_root_.bar` found nothing and failed the proof for an unestablished audit.
+    The workspace scanner normalised this; the batch target path did not."""
+    request = Request.from_dict({"declaration": "theorem _root_.bar : True", "informal_claim": "x"})
+    assert LeanTools(request, ("true",)).target_name == "bar"

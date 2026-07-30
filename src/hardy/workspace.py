@@ -103,6 +103,20 @@ def module_path(name: str) -> PurePosixPath:
     return PurePosixPath(*name.split(".")).with_suffix(".lean")
 
 
+def declared_name(name: str, prefix: tuple[str, ...] = ()) -> str:
+    """The name Lean will report for a declaration written as `name`.
+
+    `_root_.` is how a declaration says it is not in the namespace it sits in,
+    so the prefix is dropped rather than prepended -- kept, the audit asks
+    `#print axioms` about a name Lean never declared, and the module can never
+    be saved. One function because three callers need this answer and each one
+    that grew its own copy became a bug.
+    """
+    if name.startswith("_root_."):
+        return name.removeprefix("_root_.")
+    return ".".join((*prefix, name)) if prefix else name
+
+
 def _scope_prefixes(lines: list[str]) -> list[tuple[str, ...]]:
     """The namespace prefix in force at each line of an already-stripped source.
 
@@ -205,6 +219,18 @@ def strip_comments(source: str) -> str:
                 out[index] = " "
             index += 1
             continue
+        if character == "«":
+            # A guillemet-quoted identifier is one token, and `--` inside it is
+            # part of the name. Blanking from there left `theorem «result` and
+            # no declaration at all, so the module recorded "not established"
+            # and saved anyway -- an ordinary literal theorem slipping past both
+            # the audit and the writeup ratchet. Copied through rather than
+            # blanked, because unlike a string this *is* the name the scan needs.
+            closing = source.find("»", index + 1)
+            newline = source.find("\n", index + 1)
+            if closing != -1 and (newline == -1 or closing < newline):
+                index = closing + 1
+                continue
         raw = _raw_string_opener(source, index)
         if raw is not None:
             # `r"..."`, `r#"..."#`, `r##"..."##`. A backslash is an ordinary
@@ -312,11 +338,7 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
             parts.append(following)
             index += 1
         statement = " ".join(part for part in parts if part)
-        # `_root_.` is how a source says "not in this namespace".
-        if name.startswith("_root_."):
-            found.append((name.removeprefix("_root_."), statement))
-        else:
-            found.append((".".join((*prefix, name)) if prefix else name, statement))
+        found.append((declared_name(name, prefix), statement))
     return tuple(found)
 
 
@@ -396,14 +418,7 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
         index = bisect_right(starts, match.start()) - 1
         prefix = prefixes[index] if 0 <= index < len(prefixes) else ()
         modifiers, kind, name = match.group(1), match.group(2), match.group(3)
-        # `_root_.` is how a declaration says it is not in the namespace it sits
-        # in, so the prefix must be dropped rather than prepended. Kept as
-        # `Foo._root_.bar`, the audit asks `#print axioms` about a name Lean
-        # never declared, and an otherwise valid module can never be saved.
-        if name.startswith("_root_."):
-            qualified = name.removeprefix("_root_.")
-        else:
-            qualified = ".".join((*prefix, name)) if prefix else name
+        qualified = declared_name(name, prefix)
         found[kind].append(qualified)
         if PRIVATE.search(modifiers):
             found["private"].append(qualified)
