@@ -435,3 +435,26 @@ def test_a_bare_end_closes_a_namespace_for_assumptions_too():
 def test_a_section_inside_a_namespace_does_not_close_it_for_assumptions():
     source = "namespace Foo\nsection\naxiom a : True\nend\naxiom b : False\nend Foo\n"
     assert assumptions(source) == (("Foo.a", "True"), ("Foo.b", "False"))
+
+
+def test_a_comment_marker_inside_an_escaped_name_is_part_of_the_name():
+    """`theorem «result--unchecked»` is one token. Blanking from the `--` left
+    no declaration at all, so the module recorded "not established" and saved
+    anyway — an ordinary literal theorem past both the audit and the ratchet."""
+    assert declarations("theorem «result--unchecked» : True := trivial\n")["theorem"] == (
+        "«result--unchecked»",
+    )
+    assert declarations("theorem «a/-b» : True := trivial\n")["theorem"] == ("«a/-b»",)
+    assert assumptions("axiom «trusted--x» : False\n") == (("«trusted--x»", "False"),)
+
+
+def test_a_real_comment_after_an_escaped_name_is_still_a_comment():
+    stripped = strip_comments("theorem «ok» : True := trivial -- gone\n")
+    assert "«ok»" in stripped
+    assert "gone" not in stripped
+
+
+def test_an_unterminated_guillemet_does_not_swallow_the_file():
+    assert declarations("theorem «oops : True\ntheorem after : True := trivial\n")[
+        "theorem"
+    ] == ("after",)
