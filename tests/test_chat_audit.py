@@ -170,6 +170,22 @@ def test_a_verdict_expires_when_the_source_changes_outside_a_save(tmp_path: Path
     assert chat._workspace_listing()["audit"]["Main"]["status"] == "not established"
 
 
+def test_the_workspace_can_still_be_listed_when_the_tree_is_cyclic(tmp_path: Path):
+    """Files edited on disk can form a cycle, and this listing is how the model
+    finds out and repairs it — so it must not be the thing that fails. Signing
+    verdicts made the signature computation unconditional, which broke exactly
+    the case the signature exists to notice."""
+    a = "import Mathlib\n\ntheorem A : True := by exact True.intro\n"
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": a, "path": "A.lean"}, "a")]))
+    chat.send("Save it.")
+    saved(tmp_path, "A.lean").write_text("import B\n\ntheorem A : True := by exact True.intro\n")
+    saved(tmp_path, "B.lean").write_text("import A\n\ntheorem B : True := by exact True.intro\n")
+
+    listing = chat._workspace_listing()
+    assert [entry["module"] for entry in listing["lean"]]
+    assert listing["audit"]["A"]["status"] == "not established"
+
+
 def test_a_verdict_expires_when_a_module_it_imports_changes(tmp_path: Path):
     """The signature is recursive, so a change beneath a module expires the
     verdict above it — which is the case a per-file hash would miss."""
@@ -208,6 +224,31 @@ def test_a_clean_verdict_covers_the_declarations_it_names_and_no_others(tmp_path
     assert recorded["status"] == "clean"
     # Not a bare status: the names it was established over travel with it.
     assert [item["name"] for item in recorded["declarations"]] == ["HardyTarget"]
+
+
+def test_an_assumption_inside_a_namespace_needs_only_one_approval(tmp_path: Path):
+    """The textual gate read `namespace Foo; axiom bar` as `bar` while Lean
+    reports `Foo.bar`. Approving `bar` cleared the gate and was refused by the
+    audit; approving `Foo.bar` was refused by the gate. Neither approval could
+    save the module, and there was no third option.
+    """
+    source = (
+        "import Mathlib\n\nnamespace Foo\n\naxiom bar : True\n\n"
+        "theorem HardyTarget : True := by exact True.intro -- axioms: Foo.bar\n\nend Foo\n"
+    )
+    approval = dict(APPROVAL, formal_name="Foo.bar", lean_statement="True")
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("request_assumption", approval, "ask"),
+            call("save_lean", {"source": source}, "lean"),
+        ]),
+        approvals=[True],
+    )
+    chat.send("Approve it, then save.")
+    result = results(tmp_path, "save_lean")[-1]
+    assert result["ok"], result["output"]
+    assert state(tmp_path)["audit"]["Main"]["status"] == "modulo"
 
 
 def test_a_declined_assumption_still_blocks_the_save(tmp_path: Path):

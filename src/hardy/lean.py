@@ -44,7 +44,18 @@ DECLARATION_NAME = re.compile(QUALIFIED)
 # splitting on `(`, `{`, and `:` turns `theorem Foo.{u} (a : Sort u) : True`
 # into `Foo.`, and `#print axioms Foo.` is not a command, so a
 # universe-polymorphic request could never verify.
-DECLARATION_HEAD = re.compile(rf"\s*(?:theorem|lemma)\s+({DECLARATION_NAME.pattern})")
+# What may stand between the start of a declaration and its keyword. Without
+# these, `@[simp] theorem T` had no name to print, so `batch` refused it as
+# anonymous before spending a single model turn -- and `@[simp]` on a theorem is
+# ordinary Lean, as are `protected` and `nonrec`. The attribute body is matched
+# without nesting, which is an approximation: an attribute containing its own
+# `]` simply fails to match, leaving the previous behaviour rather than a wrong
+# name.
+_ATTRIBUTES = r"(?:@\[[^\]]*\]\s*)*"
+_MODIFIERS = r"(?:(?:private|protected|noncomputable|nonrec|unsafe|partial|scoped|local)\s+)*"
+DECLARATION_HEAD = re.compile(
+    rf"\s*{_ATTRIBUTES}{_MODIFIERS}(?:theorem|lemma)\s+({DECLARATION_NAME.pattern})"
+)
 
 # Lean's own output is bounded generously; what a model is shown is bounded
 # tightly. The two limits answer different questions.
