@@ -24,21 +24,26 @@ from typing import Any, Literal
 from .domain import EnvironmentIdentity, FrozenClaim, FrozenModel, RunLimits
 from .models import Request, ToolResult
 from .process import ProcessResult, ProcessSpec, run_process
-from .workspace import QUALIFIED
+from .workspace import QUALIFIED_NAME
 
 HOLE = re.compile(r"\b(sorry|admit)\b")
 # A Lean declaration name: identifier components joined by dots. Stricter than
 # `[A-Za-z_][A-Za-z0-9_'.]*`, which admits `Foo..bar` and `Foo.`, and wider --
 # `\w` is Unicode-aware here, so `α`, `x₁`, and `Nat.add_comm'` all pass, as
 # Lean identifiers are not ASCII. An approximation of Lean's grammar, not a
-# reimplementation of it: French-quoted «escaped identifiers» are refused.
+# reimplementation of it.
 #
 # Shared with the workspace scanner rather than restated. Kept apart, the two
 # drifted: this one omitted the `!` and `?` that end `List.head!` and
 # `Option.get?`, so those names failed the validators below and a `theorem
 # solve!` was frozen as `solve` -- leaving `#print axioms solve`, an unknown
 # identifier, and a proof that could never verify.
-DECLARATION_NAME = re.compile(QUALIFIED)
+#
+# Guillemets included, which this once refused. `theorem «first result»` is a
+# name the interactive workspace declares and audits, and `hardy.audit` reads a
+# report for it; only `batch` could not, rejecting the request as anonymous
+# before a single model turn. Refusing here bought nothing but the asymmetry.
+DECLARATION_NAME = re.compile(QUALIFIED_NAME)
 # Where a name Hardy will interpolate into `#print axioms` comes from: the head
 # of the declaration the request froze. Matched rather than split apart --
 # splitting on `(`, `{`, and `:` turns `theorem Foo.{u} (a : Sort u) : True`
