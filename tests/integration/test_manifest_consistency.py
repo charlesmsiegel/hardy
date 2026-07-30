@@ -189,3 +189,28 @@ def test_audit_rejects_verification_evidence_admitting_an_unexpected_axiom(
     issues = validate_run_consistency(result.run_dir, forged_manifest)
 
     assert any('unexpected axioms: sorryAx' in issue for issue in issues)
+
+
+def test_audit_rejects_a_manifest_toolchain_the_frozen_claim_does_not_name(
+    tmp_path,
+) -> None:
+    """The manifest's environment is the field a reader quotes to reproduce a
+    run, and nothing hashes it. The claim's environment is inside the claim
+    hash, so the two disagreeing is detectable — and was not detected.
+    """
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    assert validate_run_consistency(result.run_dir, result.manifest) == ()
+    drifted = result.manifest.model_copy(
+        update={
+            'environment': result.manifest.environment.model_copy(
+                update={'mathlib_revision': 'f' * 40}
+            )
+        }
+    )
+    _rewrite(result.run_dir, drifted)
+
+    issues = validate_run_consistency(result.run_dir, drifted)
+
+    assert any(
+        'manifest environment differs from the Frozen Claim' in issue for issue in issues
+    )

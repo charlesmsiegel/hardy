@@ -42,7 +42,12 @@ from .domain import (
 from .lean import LeanCheckResult
 from .process import ProcessResult
 from .prompts import PROMPT_SET_SHA256
-from .verifier import ALLOWED_AXIOMS, VerificationResult, verification_source
+from .verifier import (
+    ALLOWED_AXIOMS,
+    VerificationResult,
+    axiom_report_line,
+    verification_source,
+)
 from .workflow import ProveRequest, ProveWorkflow
 from .writeup import RunIdentities, WriteupContent, build_writeup
 
@@ -355,7 +360,7 @@ def _lean_source_issues(source: str, claim: FrozenClaim) -> list[str]:
     )
     if signature not in source:
         issues.append("Lean source signature differs from Frozen Claim")
-    if not source.rstrip().endswith(f"#print axioms {claim.proposal.theorem_name}"):
+    if not source.rstrip().endswith(axiom_report_line(claim.proposal.theorem_name)):
         issues.append("Lean source does not end with the axiom report the evidence records")
     return issues
 
@@ -383,6 +388,11 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
         claim = FrozenClaim.model_validate_json(claim_path.read_text(encoding="utf-8"))
         if claim.content_hash != manifest.claim_sha256:
             issues.append("Frozen Claim hash differs from manifest")
+        # The manifest's own toolchain is what a reader quotes to reproduce a
+        # result, and it is covered by no hash of its own. The claim's is, so
+        # the two disagreeing means one of them is not what ran.
+        if manifest.environment != claim.environment:
+            issues.append("manifest environment differs from the Frozen Claim")
     elif manifest.claim_sha256 is not None:
         issues.append("formalization.json is missing")
     trajectory = run_dir / "trajectory.jsonl"
