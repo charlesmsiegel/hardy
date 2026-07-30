@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -390,8 +391,18 @@ class MathematicsSession:
         # understand, so the inherited variable is used instead.
         if len(command) >= 2 and Path(command[0]).stem == "lake" and command[1] == "env":
             try:
+                # Asked through the interpreter already running rather than
+                # `printenv`, which is a Unix coreutil and absent on native
+                # Windows -- a documented way to run Hardy. There, the probe
+                # failed and every external import fell back to the inherited
+                # variable, which lacks Lake's computed package paths: each one
+                # stamped `missing`, so a rebuilt dependency left the signature
+                # unchanged and a stale verdict read as current.
                 probe = subprocess.run(
-                    [command[0], "env", "printenv", "LEAN_PATH"],
+                    [
+                        command[0], "env", sys.executable, "-c",
+                        "import os, sys; sys.stdout.write(os.environ.get('LEAN_PATH', ''))",
+                    ],
                     cwd=self._lean_project or Path.cwd(),
                     capture_output=True, text=True, timeout=60, check=False,
                 )

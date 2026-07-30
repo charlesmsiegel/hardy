@@ -61,8 +61,11 @@ def test_real_lean_reports_no_axioms_in_the_form_the_parser_expects() -> None:
 def test_real_lean_names_a_standard_axiom_the_proof_actually_used() -> None:
     """A proof that reaches for choice must report it, or the allowlist is
     checking something the kernel is not."""
-    tools = _tools('theorem HardyTarget (h : Nonempty Nat) : Nat')
-    result = tools.check_proof('Classical.choice h', final=True)
+    # A `theorem` must be a proposition -- `: Nat` is a type error, which is
+    # what this test said before anything ever ran it. Excluded middle is the
+    # ordinary way to reach choice, and reaches it through core Lean alone.
+    tools = _tools('theorem HardyTarget (p : Prop) : p ∨ ¬p')
+    result = tools.check_proof('Classical.em p', final=True)
 
     assert result.ok, result.output
     reports = parse(result.report, ('HardyTarget',))
