@@ -24,6 +24,7 @@ from typing import Any, Literal
 from .domain import EnvironmentIdentity, FrozenClaim, FrozenModel, RunLimits
 from .models import Request, ToolResult
 from .process import ProcessResult, ProcessSpec, run_process
+from .workspace import QUALIFIED
 
 HOLE = re.compile(r"\b(sorry|admit)\b")
 # A Lean declaration name: identifier components joined by dots. Stricter than
@@ -31,8 +32,13 @@ HOLE = re.compile(r"\b(sorry|admit)\b")
 # `\w` is Unicode-aware here, so `α`, `x₁`, and `Nat.add_comm'` all pass, as
 # Lean identifiers are not ASCII. An approximation of Lean's grammar, not a
 # reimplementation of it: French-quoted «escaped identifiers» are refused.
-_COMPONENT = r"[^\W\d][\w']*"
-DECLARATION_NAME = re.compile(rf"{_COMPONENT}(?:\.{_COMPONENT})*")
+#
+# Shared with the workspace scanner rather than restated. Kept apart, the two
+# drifted: this one omitted the `!` and `?` that end `List.head!` and
+# `Option.get?`, so those names failed the validators below and a `theorem
+# solve!` was frozen as `solve` -- leaving `#print axioms solve`, an unknown
+# identifier, and a proof that could never verify.
+DECLARATION_NAME = re.compile(QUALIFIED)
 # Where a name Hardy will interpolate into `#print axioms` comes from: the head
 # of the declaration the request froze. Matched rather than split apart --
 # splitting on `(`, `{`, and `:` turns `theorem Foo.{u} (a : Sort u) : True`

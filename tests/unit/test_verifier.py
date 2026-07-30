@@ -59,6 +59,13 @@ def _process_result(process, spec, *, stdout='', returncode=0, timed_out=False, 
         'by exact sorryAx _ true',
         'by\n  axiom invented : False\n  trivial',
         'by\n  opaque invented : True := True.intro\n  trivial',
+        # A raw string ending in a backslash. `\` is an ordinary character in
+        # `r"..."`, so the literal ends at that quote -- but the scanner read it
+        # as an escape, ran on, and blanked the `sorry` below out of existence.
+        'by\n  have h := r"a\\"\n  sorry',
+        # `r#"..."#` exists so the body may hold a bare `"`. Ending the literal
+        # there left the rest of the line looking like code, and vice versa.
+        'by\n  have h := r#"a " b"#\n  sorry',
     ),
 )
 def test_verifier_rejects_holes_and_declarations_before_running_lean(

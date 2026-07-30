@@ -97,6 +97,25 @@ def module_path(name: str) -> PurePosixPath:
     return PurePosixPath(*name.split(".")).with_suffix(".lean")
 
 
+def _raw_string_opener(source: str, index: int) -> int | None:
+    """The hash count of a raw-string opener at `index`, or None.
+
+    Lean writes raw strings `r"..."`, `r#"..."#`, `r##"..."##`. The `r` must be
+    a token of its own -- `for"` is not an opener -- so the character before it
+    may not continue an identifier.
+    """
+    if source[index] != "r":
+        return None
+    if index and (source[index - 1].isalnum() or source[index - 1] in "_'!?."):
+        return None
+    hashes = 0
+    while index + 1 + hashes < len(source) and source[index + 1 + hashes] == "#":
+        hashes += 1
+    if index + 1 + hashes >= len(source) or source[index + 1 + hashes] != '"':
+        return None
+    return hashes
+
+
 def strip_comments(source: str) -> str:
     """`source` with its comments blanked out, line structure preserved.
 
@@ -137,6 +156,25 @@ def strip_comments(source: str) -> str:
             if character != "\n":
                 out[index] = " "
             index += 1
+            continue
+        raw = _raw_string_opener(source, index)
+        if raw is not None:
+            # `r"..."`, `r#"..."#`, `r##"..."##`. A backslash is an ordinary
+            # character here, and the literal ends only at a quote followed by
+            # the same run of hashes -- so a bare `"` inside `r#"..."#` does not
+            # end it, and a trailing `\` does not escape the one that does.
+            closer = '"' + "#" * raw
+            for offset in range(1 + raw + 1):
+                out[index + offset] = " "
+            index += 1 + raw + 1
+            while index < length and not source.startswith(closer, index):
+                if source[index] != "\n":
+                    out[index] = " "
+                index += 1
+            for offset in range(len(closer)):
+                if index + offset < length:
+                    out[index + offset] = " "
+            index = min(index + len(closer), length)
             continue
         if character == '"':
             out[index] = " "

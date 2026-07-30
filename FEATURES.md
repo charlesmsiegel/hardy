@@ -42,7 +42,13 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   not asked about — Lean mangles the name beyond the reach of the file the audit
   elaborates, and anything exported that uses one reports its axioms anyway — while
   a `private theorem` is refused outright, since a result that can be neither
-  audited nor cited in a writeup should not be stated as one.
+  audited nor cited in a writeup should not be stated as one. What the audit asks
+  about comes from a textual scan of the source, so a declaration a command macro
+  or elaborator *generates* — with no literal `theorem` or `lemma` in the file —
+  is not asked about. Such a module records "not established" rather than
+  "clean", so nothing is blessed that was not checked, but neither is it checked.
+  Closing that gap means enumerating a module's declarations from the built Lean
+  environment instead of from its text, which is its own change.
 - **Now (implemented):** on a real terminal, the session runs through a
   `prompt_toolkit`-backed shell rather than a plain `input()` loop: dim
   ghost-text completion of slash commands as you type, a `/model` selector
