@@ -139,6 +139,17 @@ def test_an_approved_axiom_downgrades_to_modulo():
     assert verdict.unapproved == ()
 
 
+def test_a_native_decide_proof_is_refused_unattended():
+    """`native_decide` closes a goal by trusting the compiler, and Lean records
+    that as `Lean.ofReduceBool`. It is not one of Lean's three, so a batch or
+    staged run refuses it — a real consequence of this gate, pinned here so
+    nobody has to rediscover it from a failing run.
+    """
+    verdict = classify([report("propext", "Lean.ofReduceBool", "Lean.trustCompiler")], ())
+    assert verdict.status == "rejected"
+    assert verdict.unapproved == ("Lean.ofReduceBool", "Lean.trustCompiler")
+
+
 def test_sorry_ax_is_rejected_even_when_someone_approved_it():
     """A hole is not an assumption, and no approval can make it one."""
     verdict = classify([report("sorryAx")], {"sorryAx"})

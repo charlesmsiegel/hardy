@@ -101,7 +101,10 @@ Priority labels are sequencing hints:
   which has no name to print axioms for. `hardy prove` and `hardy batch` fail
   closed — nobody is present to widen the trust base — and `hardy chat` refuses
   the save and names the axiom, so the model can go through `request_assumption`
-  for it.
+  for it. One consequence is worth stating rather than rediscovering from a
+  failed run: a proof closed by `native_decide` depends on `Lean.ofReduceBool`
+  and `Lean.trustCompiler`, neither of which is one of Lean's three, so it is
+  refused unattended and needs an approved assumption interactively.
 - **Known gap:** the audit is elaborated by a Lean environment the audited source
   has already had the chance to extend, so a source that registers its own
   elaborator for `#print axioms` can answer it. What the audit establishes is
