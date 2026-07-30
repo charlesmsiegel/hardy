@@ -125,7 +125,7 @@ def test_run_manifest_has_stable_phase_and_terminal_reason_values() -> None:
         terminal_reason=None,
     )
 
-    assert manifest.schema_version == 1
+    assert manifest.schema_version == 2
     assert manifest.phase.value == 'setup'
     assert domain.TerminalReason.STATEMENT_MISMATCH.value == 'statement_mismatch'
 

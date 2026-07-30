@@ -218,9 +218,14 @@ class FinalVerifier:
         return result
 
 
+def axiom_report_line(theorem_name: str) -> str:
+    """The line whose Lean output an evidence record's axiom list comes from."""
+    return f"#print axioms {theorem_name}"
+
+
 def verification_source(claim: FrozenClaim, proof_body: str) -> str:
     theorem = render_theorem(claim, proof_body)
-    return f"{theorem}\n#print axioms {claim.proposal.theorem_name}\n"
+    return f"{theorem}\n{axiom_report_line(claim.proposal.theorem_name)}\n"
 
 
 def _signature_violation(claim: FrozenClaim) -> str | None:

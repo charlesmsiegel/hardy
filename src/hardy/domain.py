@@ -212,9 +212,13 @@ class Grades(FrozenModel):
 
 
 class RunManifest(BaseModel):
+    # `extra="forbid"` makes every added field a breaking read, so the version
+    # moves whenever the shape does. 2 added `grades.verification_evidence`:
+    # a version-1 manifest graded `kernel_verified` names a hash with nothing
+    # behind it, which is exactly what this version stopped accepting.
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     run_id: UUID
     created_at: datetime
     phase: RunPhase
