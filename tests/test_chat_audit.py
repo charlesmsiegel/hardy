@@ -125,6 +125,59 @@ def test_a_registered_theorem_that_vanishes_is_still_caught(tmp_path: Path):
     assert "Vanished" in refusal["output"]
 
 
+def test_a_verdict_from_another_toolchain_is_not_reported_as_current(tmp_path: Path):
+    """The verdict says what Lean reported under one toolchain and project.
+    Reopening against another rebuilds the oleans but left the old verdict in
+    `session.json`, and `read_workspace` handed it to the model as the module's
+    current audit until some later save happened to cover it again.
+    """
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": CLEAN}, "lean")]))
+    chat.send("Save it.")
+    assert state(tmp_path)["audit"]["Main"]["status"] == "clean"
+
+    reopened = session(tmp_path, FakeChatRuntime([]), lean_command=("different-lean",))
+    record = reopened._workspace_listing()["audit"]["Main"]
+    assert record["status"] == "not established"
+    assert record["stale"] is True
+    # What it said is kept for reference; it is the status that must not pass.
+    assert record["declarations"]
+
+    same = session(tmp_path, FakeChatRuntime([]))
+    assert same._workspace_listing()["audit"]["Main"]["status"] == "clean"
+
+
+def test_a_verdict_written_before_verdicts_were_stamped_is_not_current(tmp_path: Path):
+    """A workspace saved by an older Hardy has no environment on its records.
+    Unknown is not the same as matching."""
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": CLEAN}, "lean")]))
+    chat.send("Save it.")
+    stored = json.loads((tmp_path / "session.json").read_text(encoding="utf-8"))
+    del stored["audit"]["Main"]["environment"]
+    (tmp_path / "session.json").write_text(json.dumps(stored), encoding="utf-8")
+
+    reopened = session(tmp_path, FakeChatRuntime([]))
+    assert reopened._workspace_listing()["audit"]["Main"]["status"] == "not established"
+
+
+def test_a_clean_verdict_covers_the_declarations_it_names_and_no_others(tmp_path: Path):
+    """A known limit, pinned so it is examined rather than assumed.
+
+    What the audit asks about comes from a textual scan, so a declaration a
+    command macro generates is not asked about. A module with *no* literal
+    declaration records "not established" — but one with a literal lemma beside
+    a generated theorem records "clean", and that verdict covers only the
+    literal one. The record names the declarations it covers, which is the only
+    thing making the scope readable; closing the gap means enumerating a
+    module's exports from the built environment.
+    """
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": CLEAN}, "lean")]))
+    chat.send("Save it.")
+    recorded = state(tmp_path)["audit"]["Main"]
+    assert recorded["status"] == "clean"
+    # Not a bare status: the names it was established over travel with it.
+    assert [item["name"] for item in recorded["declarations"]] == ["HardyTarget"]
+
+
 def test_a_declined_assumption_still_blocks_the_save(tmp_path: Path):
     chat = session(
         tmp_path,
@@ -197,6 +250,37 @@ def test_two_siblings_may_share_a_declaration_name(tmp_path: Path):
     assert results(tmp_path, "save_lean")[-1]["ok"], results(tmp_path, "save_lean")[-1]["output"]
 
     # Now edit the base. Both siblings rebuild, so both are audited.
+    chat.runtime.script = [
+        call("save_lean", {"source": base.replace("True.intro", "True.intro -- touched"),
+                           "path": "Base.lean"}, "again"),
+    ]
+    chat.send("Edit the base.")
+    result = results(tmp_path, "save_lean")[-1]
+    assert result["ok"], result["output"]
+    assert state(tmp_path)["audit"]["A"]["status"] == "clean"
+    assert state(tmp_path)["audit"]["B"]["status"] == "clean"
+
+
+def test_two_siblings_may_collide_on_something_that_is_not_a_theorem(tmp_path: Path):
+    """The audit targets are distinct here — `stepA` and `stepB` — but both
+    modules define a root-level `helper`. A grouping check that looked only at
+    the names being audited saw no collision, ran the combined probe, and hit
+    the duplicate anyway. The clash can be in a def, a structure, an instance;
+    the probe retries per module rather than trying to name the kinds.
+    """
+    base = "import Mathlib\n\nlemma Base.root : True := by exact True.intro\n"
+    sibling = "import Base\n\ndef helper : Nat := 0\n\nlemma step{tag} : True := by exact True.intro\n"
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": base, "path": "Base.lean"}, "base"),
+            call("save_lean", {"source": sibling.format(tag="A"), "path": "A.lean"}, "a"),
+            call("save_lean", {"source": sibling.format(tag="B"), "path": "B.lean"}, "b"),
+        ]),
+    )
+    chat.send("Save the base and both siblings.")
+    assert results(tmp_path, "save_lean")[-1]["ok"], results(tmp_path, "save_lean")[-1]["output"]
+
     chat.runtime.script = [
         call("save_lean", {"source": base.replace("True.intro", "True.intro -- touched"),
                            "path": "Base.lean"}, "again"),

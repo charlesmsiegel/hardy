@@ -184,11 +184,17 @@ class MathematicsSession:
         # never builds Lean should never pay for it.
         self._search_path: tuple[Path, ...] | None = None
         self._external_stamps: dict[str, str] = {}
+        # Kept on the session as well as handed to the workspace: it invalidates
+        # the olean cache there, and stamps each audit verdict here. A verdict
+        # describes what Lean reported under one toolchain and project, and
+        # reopening a workspace against another does not make it false so much
+        # as no longer about anything the session can see.
+        self._environment = _toolchain_identity(lean_command, lean_project)
         self.lean_workspace = LeanWorkspace(
             workspace / LEAN_DIR,
             workspace / BUILD_DIR,
             self._compile_module,
-            environment=_toolchain_identity(lean_command, lean_project),
+            environment=self._environment,
             external=self._external_stamp,
         )
         self._migrate_layout()
@@ -511,7 +517,9 @@ class MathematicsSession:
             LeanWorkspace.discard(shadow)
         # Published after the write, and not before: a verdict stored first
         # would survive a failed commit and describe a tree that never existed.
-        self.state.setdefault("audit", {}).update(records)
+        self.state.setdefault("audit", {}).update(
+            {module: {**record, "environment": self._environment} for module, record in records.items()}
+        )
         self._save_state()
         # Absent from `seen` when the source was byte-identical to what was
         # already built, so the cache skipped it. Nothing was wrong with it.
@@ -566,48 +574,33 @@ class MathematicsSession:
             # Nothing here claims to be a result, so there is nothing to grade.
             # Recorded as an audit that did not run rather than as a clean one.
             return empty, f"not established -- no theorem or lemma is declared in {list(modules)}"
-        # Two modules that never import each other may each declare a root-level
-        # `step`, and both build. One probe importing both puts that name in
-        # scope twice, and Lean will not print an ambiguous one -- so a save
-        # Lean accepts would be refused. Modules that share a name are probed
-        # apart; the ordinary case, where every name is distinct, keeps its
-        # single elaboration.
-        shared = len(names) != sum(len(declared[module]) for module in modules)
-        groups = [[module] for module in modules] if shared else [list(modules)]
-        reports: list[audit.AxiomReport] = []
-        covering: dict[str, list[audit.AxiomReport]] = {}
-        for group in groups:
-            wanted = list(dict.fromkeys(name for module in group for name in declared[module]))
-            if not wanted:
-                continue
-            # The modules are already oleans, so this imports rather than
-            # re-elaborates them.
-            probe = "".join(f"import {module}\n" for module in group)
-            result = self.lean.run_source(
-                probe,
-                env={"LEAN_PATH": space.lean_path()},
-                audit=tuple(f"axioms {name}" for name in wanted),
-            )
-            if not result.ok:
-                return ToolResult(
-                    False,
-                    f"the axiom audit could not run over the saved tree, so nothing was written:\n{result.output}",
-                )
-            # The whole report, not the tail a model is shown: a tree with more
-            # declarations than the observation window would otherwise be
-            # refused for a report that was merely cut off.
-            answered = audit.parse(result.report, tuple(wanted))
-            if answered is None:
-                return ToolResult(
-                    False,
-                    "the axiom audit could not be established for "
-                    f"{wanted}, so nothing was written. Remove any #print axioms from your source; Hardy adds its own.",
-                )
-            reports.extend(answered)
-            by_name = {report.declaration: report for report in answered}
-            for module in group:
-                if declared[module]:
-                    covering[module] = [by_name[name] for name in declared[module]]
+        # Modules that never import each other may each declare a root-level
+        # `step`, or a `def helper`, or anything else at the same name, and both
+        # build. One probe importing all of them brings those together, and Lean
+        # will not resolve a name that now means two things -- so a save Lean
+        # accepts would be refused.
+        #
+        # Which names collide is not knowable from the audit targets: the clash
+        # can be in a `def`, a `structure`, an `instance`, anything a module
+        # exports. Rather than enumerate the kinds and still miss one, the cheap
+        # probe is tried first and a failure is retried per module. That is
+        # correct for every collision without naming any of them, and costs the
+        # extra elaborations only on the trees that need them. Nothing is
+        # loosened: each retry still asks about every declaration and still
+        # requires a clean report, so a tree that is genuinely broken refuses
+        # either way.
+        attempts: list[list[list[str]]] = [[list(modules)]]
+        if len(modules) > 1:
+            attempts.append([[module] for module in modules])
+        for index, groups in enumerate(attempts):
+            outcome = self._probe_groups(space, groups, declared)
+            if not isinstance(outcome, ToolResult):
+                reports, covering = outcome
+                break
+            if index == len(attempts) - 1:
+                return outcome
+        else:  # pragma: no cover - `attempts` is never empty
+            return ToolResult(False, "the axiom audit had nothing to run")
         approved = self._approved_assumptions()
         verdict = audit.classify(reports, approved)
         if verdict.forbidden:
@@ -673,6 +666,73 @@ class MathematicsSession:
             re.search(rf"(?<![\w'.]){re.escape(formal_name)}(?![\w'])", source)
             for source in sources.values()
         )
+
+    def _still_current(self, record: dict[str, Any]) -> dict[str, Any]:
+        """An audit verdict as it stands in *this* environment.
+
+        The axioms a declaration rests on are a fact about the toolchain,
+        project, and dependencies that reported them. Reopening a workspace
+        against a different Lean invalidates the olean cache and rebuilds, but a
+        stored verdict would otherwise sit in `session.json` and be handed to the
+        model as the module's current audit until some later save happened to
+        cover it again. A verdict written before verdicts carried a stamp has no
+        environment to match, and is treated the same way: unknown, so not
+        current. What it said is kept for reference rather than deleted -- it is
+        the *status* that must not read as a pass.
+        """
+        if record.get("environment") == self._environment:
+            return record
+        return {
+            **record,
+            "status": "not established",
+            "reason": "recorded under a different Lean toolchain or project; save the module again to establish it here",
+            "stale": True,
+        }
+
+    def _probe_groups(
+        self,
+        space: LeanWorkspace,
+        groups: list[list[str]],
+        declared: dict[str, tuple[str, ...]],
+    ) -> tuple[list[audit.AxiomReport], dict[str, list[audit.AxiomReport]]] | ToolResult:
+        """Ask Lean what each group's declarations rest on.
+
+        One elaboration per group. The modules are already oleans, so this
+        imports rather than re-elaborates them.
+        """
+        reports: list[audit.AxiomReport] = []
+        covering: dict[str, list[audit.AxiomReport]] = {}
+        for group in groups:
+            wanted = list(dict.fromkeys(name for module in group for name in declared[module]))
+            if not wanted:
+                continue
+            probe = "".join(f"import {module}\n" for module in group)
+            result = self.lean.run_source(
+                probe,
+                env={"LEAN_PATH": space.lean_path()},
+                audit=tuple(f"axioms {name}" for name in wanted),
+            )
+            if not result.ok:
+                return ToolResult(
+                    False,
+                    f"the axiom audit could not run over the saved tree, so nothing was written:\n{result.output}",
+                )
+            # The whole report, not the tail a model is shown: a tree with more
+            # declarations than the observation window would otherwise be
+            # refused for a report that was merely cut off.
+            answered = audit.parse(result.report, tuple(wanted))
+            if answered is None:
+                return ToolResult(
+                    False,
+                    "the axiom audit could not be established for "
+                    f"{wanted}, so nothing was written. Remove any #print axioms from your source; Hardy adds its own.",
+                )
+            reports.extend(answered)
+            by_name = {report.declaration: report for report in answered}
+            for module in group:
+                if declared[module]:
+                    covering[module] = [by_name[name] for name in declared[module]]
+        return reports, covering
 
     def _missing_registered_names(self, sources: dict[str, str]) -> list[str]:
         """Registered formal names that survive nowhere in a tree.
@@ -854,8 +914,12 @@ class MathematicsSession:
             "undocumented_theorems": list(self._undocumented()),
             # What each saved module was found to rest on, so the model can
             # report it rather than having to remember it. A module is absent
-            # until a save covers it.
-            "audit": self.state.get("audit", {}),
+            # until a save covers it, and a verdict from another environment is
+            # reported as no longer established rather than as current.
+            "audit": {
+                module: self._still_current(record)
+                for module, record in self.state.get("audit", {}).items()
+            },
         }
 
     def _read_file(self, path: str) -> ToolResult:

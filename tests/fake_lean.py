@@ -36,6 +36,13 @@ EXPORTS = re.compile(r"--\s*exports:\s*(.*)")
 DECLARED = re.compile(
     r"(?m)^\s*(?:(private|protected)\s+)?(?:theorem|lemma)\s+(«[^»\n]+»|\S+)"
 )
+# Everything else a module puts in the environment under a global name. Not a
+# `#print axioms` target, but it still occupies the name -- two imported modules
+# defining the same `helper` collide exactly as two theorems would, and a
+# stand-in that only tracked theorems could not fail on that.
+DEFINED = re.compile(
+    r"(?m)^\s*(?:(private|protected)\s+)?(?:def|abbrev|structure|instance)\s+(«[^»\n]+»|\S+)"
+)
 OLEAN_PREFIX = b"olean-fake\n"
 
 argv = sys.argv[1:]
@@ -65,11 +72,17 @@ def listed(pattern: re.Pattern[str], text: str) -> list[str]:
 axioms = marked(source)
 # What an importer of this file would be able to name. Private declarations are
 # left out on purpose: Lean mangles them so no other module can refer to them.
-exports = [name for modifier, name in DECLARED.findall(source) if modifier != "private"]
+exports = [
+    name
+    for modifier, name in DECLARED.findall(source) + DEFINED.findall(source)
+    if modifier != "private"
+]
 visible: list[str] = []
-# Names two different imported modules both export. Lean cannot resolve one of
-# those unqualified, so asking about it is an error rather than a coin toss --
-# and a stand-in that picked a winner would hide a caller that must not ask.
+# Names two different imported modules both export. Lean's environment maps a
+# name to one declaration, so importing both is an error where the duplicate is
+# found -- not later, at whichever name the importer happens to mention. A
+# stand-in that only complained when the duplicate was *queried* would answer
+# happily for a probe that real Lean refuses to start.
 ambiguous: set[str] = set()
 for line in source.splitlines():
     stripped = line.strip()
@@ -95,6 +108,13 @@ for line in source.splitlines():
         else:
             visible.append(item)
 
+if ambiguous:
+    print(
+        f"{path.name}:1:0: error: import failed, environment already contains "
+        f"'{sorted(ambiguous)[0]}'"
+    )
+    raise SystemExit(1)
+
 
 def report_axioms() -> None:
     """Stand in for `#print axioms`, in both of real Lean's two forms."""
@@ -108,9 +128,6 @@ def report_axioms() -> None:
         # one` inside `namespace Hardy`. A private declaration never reaches
         # `exports` at all, so the check that matters here still bites.
         reachable = set(exports) | set(visible)
-        if name in ambiguous or name.rsplit(".", 1)[-1] in ambiguous:
-            print(f"{path.name}:1:0: error: ambiguous, possible interpretations '{name}'")
-            raise SystemExit(1)
         if name not in reachable and name.rsplit(".", 1)[-1] not in reachable:
             print(f"{path.name}:1:0: error: unknown identifier '{name}'")
             raise SystemExit(1)

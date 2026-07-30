@@ -77,12 +77,12 @@ def factory(runtime_class, script):
     return make
 
 
-def session(tmp_path: Path, runtime: FakeChatRuntime, approvals=()) -> MathematicsSession:
+def session(tmp_path: Path, runtime: FakeChatRuntime, approvals=(), lean_command=None) -> MathematicsSession:
     answers = iter(approvals)
     return MathematicsSession(
         tmp_path,
         factory(type(runtime), runtime.script),
-        (sys.executable, str(Path(__file__).with_name("fake_lean.py"))),
+        lean_command or (sys.executable, str(Path(__file__).with_name("fake_lean.py"))),
         (sys.executable, str(Path(__file__).with_name("fake_latex.py"))),
         lambda proposal: next(answers),
     )
