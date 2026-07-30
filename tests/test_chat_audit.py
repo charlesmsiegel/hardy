@@ -83,6 +83,48 @@ def test_an_approved_assumption_saves_and_is_graded_modulo(tmp_path: Path):
     assert state(tmp_path)["audit"]["Main"]["status"] == "modulo"
 
 
+def test_approving_an_imported_assumption_does_not_brick_the_workspace(tmp_path: Path):
+    """The refusal tells the model to call `request_assumption`. That records a
+    naming-registry entry, and the registry guard demands every registered name
+    survive somewhere in the tree — which an axiom reached through an import
+    never does. Every later save was then refused, with no tool to undo it.
+
+    The name deliberately appears in no source here. The other tests in this
+    file drive the fake Lean with an `-- axioms:` marker, which puts the axiom's
+    name in the file and hides exactly this.
+    """
+    approval = dict(APPROVAL, formal_name="Papers.Smith.elsewhere")
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("request_assumption", approval, "ask"),
+            call("save_lean", {"source": CLEAN}, "lean"),
+        ]),
+        approvals=[True],
+    )
+    chat.send("Approve it, then save.")
+    result = results(tmp_path, "save_lean")[-1]
+    assert result["ok"], result["output"]
+    assert saved(tmp_path).exists()
+
+
+def test_a_registered_theorem_that_vanishes_is_still_caught(tmp_path: Path):
+    """The exemption above is for approved assumptions only. A theorem the
+    registry points at must still be required to exist."""
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("record_name", {"formal_name": "Vanished", "latex_name": "thm:v",
+                                 "description": "not in any file"}, "name"),
+            call("save_lean", {"source": CLEAN}, "lean"),
+        ]),
+    )
+    chat.send("Register something absent, then save.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "Vanished" in refusal["output"]
+
+
 def test_a_declined_assumption_still_blocks_the_save(tmp_path: Path):
     chat = session(
         tmp_path,
@@ -133,6 +175,57 @@ def test_the_audit_covers_a_module_the_save_did_not_touch(tmp_path: Path):
     assert not refusal["ok"]
     assert "HardyTarget" in refusal["output"], "the dependent's own audit must be reported"
     assert "-- axioms" not in saved(tmp_path, "Helper.lean").read_text()
+
+
+def test_two_siblings_may_share_a_declaration_name(tmp_path: Path):
+    """`A` and `B` both import `Base` and both declare a root-level `step`.
+    Neither breaks the other — they never import each other — but a single probe
+    importing both puts `step` in scope twice, and Lean will not print an
+    ambiguous name. Editing `Base` must not refuse a workspace Lean accepts.
+    """
+    base = "import Mathlib\n\nlemma Base.root : True := by exact True.intro\n"
+    sibling = "import Base\n\nlemma step : True := by exact True.intro\n"
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": base, "path": "Base.lean"}, "base"),
+            call("save_lean", {"source": sibling, "path": "A.lean"}, "a"),
+            call("save_lean", {"source": sibling, "path": "B.lean"}, "b"),
+        ]),
+    )
+    chat.send("Save the base and both siblings.")
+    assert results(tmp_path, "save_lean")[-1]["ok"], results(tmp_path, "save_lean")[-1]["output"]
+
+    # Now edit the base. Both siblings rebuild, so both are audited.
+    chat.runtime.script = [
+        call("save_lean", {"source": base.replace("True.intro", "True.intro -- touched"),
+                           "path": "Base.lean"}, "again"),
+    ]
+    chat.send("Edit the base.")
+    result = results(tmp_path, "save_lean")[-1]
+    assert result["ok"], result["output"]
+    assert state(tmp_path)["audit"]["A"]["status"] == "clean"
+    assert state(tmp_path)["audit"]["B"]["status"] == "clean"
+
+
+def test_a_shared_name_is_still_audited_rather_than_skipped(tmp_path: Path):
+    """Splitting the probe must not lose the finding it exists to make."""
+    base = "import Mathlib\n\nlemma Base.root : True := by exact True.intro\n"
+    clean_sibling = "import Base\n\nlemma step : True := by exact True.intro\n"
+    poisoned = clean_sibling.rstrip() + " -- axioms: Papers.Smith.main\n"
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": base, "path": "Base.lean"}, "base"),
+            call("save_lean", {"source": clean_sibling, "path": "A.lean"}, "a"),
+            call("save_lean", {"source": poisoned, "path": "B.lean"}, "b"),
+        ]),
+    )
+    chat.send("Save the base and both siblings.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "Papers.Smith.main" in refusal["output"]
+    assert not saved(tmp_path, "B.lean").exists()
 
 
 def test_a_file_declaring_no_theorem_has_nothing_to_audit(tmp_path: Path):

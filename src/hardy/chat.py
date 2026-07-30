@@ -556,9 +556,6 @@ class MathematicsSession:
             )
             for module, found in found_in.items()
         }
-        # Deduplicated: two `#print axioms` lines for one name read as a
-        # duplicated report, which fails closed and would leave a workspace
-        # that could never be saved again.
         names = list(dict.fromkeys(name for module in modules for name in declared[module]))
         empty = {
             module: audit.unestablished(f"no theorem or lemma is declared in {module}")
@@ -569,29 +566,48 @@ class MathematicsSession:
             # Nothing here claims to be a result, so there is nothing to grade.
             # Recorded as an audit that did not run rather than as a clean one.
             return empty, f"not established -- no theorem or lemma is declared in {list(modules)}"
-        # One elaboration over the built tree: the modules are already oleans,
-        # so this imports rather than re-elaborates them.
-        probe = "".join(f"import {module}\n" for module in modules)
-        result = self.lean.run_source(
-            probe,
-            env={"LEAN_PATH": space.lean_path()},
-            audit=tuple(f"axioms {name}" for name in names),
-        )
-        if not result.ok:
-            return ToolResult(
-                False,
-                f"the axiom audit could not run over the saved tree, so nothing was written:\n{result.output}",
+        # Two modules that never import each other may each declare a root-level
+        # `step`, and both build. One probe importing both puts that name in
+        # scope twice, and Lean will not print an ambiguous one -- so a save
+        # Lean accepts would be refused. Modules that share a name are probed
+        # apart; the ordinary case, where every name is distinct, keeps its
+        # single elaboration.
+        shared = len(names) != sum(len(declared[module]) for module in modules)
+        groups = [[module] for module in modules] if shared else [list(modules)]
+        reports: list[audit.AxiomReport] = []
+        covering: dict[str, list[audit.AxiomReport]] = {}
+        for group in groups:
+            wanted = list(dict.fromkeys(name for module in group for name in declared[module]))
+            if not wanted:
+                continue
+            # The modules are already oleans, so this imports rather than
+            # re-elaborates them.
+            probe = "".join(f"import {module}\n" for module in group)
+            result = self.lean.run_source(
+                probe,
+                env={"LEAN_PATH": space.lean_path()},
+                audit=tuple(f"axioms {name}" for name in wanted),
             )
-        # The whole report, not the tail a model is shown: a tree with more
-        # declarations than the observation window would otherwise be refused
-        # for a report that was merely cut off.
-        reports = audit.parse(result.report, tuple(names))
-        if reports is None:
-            return ToolResult(
-                False,
-                "the axiom audit could not be established for "
-                f"{names}, so nothing was written. Remove any #print axioms from your source; Hardy adds its own.",
-            )
+            if not result.ok:
+                return ToolResult(
+                    False,
+                    f"the axiom audit could not run over the saved tree, so nothing was written:\n{result.output}",
+                )
+            # The whole report, not the tail a model is shown: a tree with more
+            # declarations than the observation window would otherwise be
+            # refused for a report that was merely cut off.
+            answered = audit.parse(result.report, tuple(wanted))
+            if answered is None:
+                return ToolResult(
+                    False,
+                    "the axiom audit could not be established for "
+                    f"{wanted}, so nothing was written. Remove any #print axioms from your source; Hardy adds its own.",
+                )
+            reports.extend(answered)
+            by_name = {report.declaration: report for report in answered}
+            for module in group:
+                if declared[module]:
+                    covering[module] = [by_name[name] for name in declared[module]]
         approved = self._approved_assumptions()
         verdict = audit.classify(reports, approved)
         if verdict.forbidden:
@@ -614,12 +630,9 @@ class MathematicsSession:
             )
         # A record per module rather than one for the save, so a later save
         # elsewhere in the tree cannot overwrite what this one established.
-        found = {report.declaration: report for report in reports}
         records = dict(empty)
-        for module in modules:
-            if declared[module]:
-                covering = [found[name] for name in declared[module]]
-                records[module] = audit.classify(covering, approved).as_dict()
+        for module, reported in covering.items():
+            records[module] = audit.classify(reported, approved).as_dict()
         return records, audit.describe(verdict)
 
     def _build_imports(self, space: LeanWorkspace, source: str) -> BuildFailure | ToolResult | None:
@@ -662,11 +675,22 @@ class MathematicsSession:
         )
 
     def _missing_registered_names(self, sources: dict[str, str]) -> list[str]:
-        """Registered formal names that survive nowhere in a tree."""
+        """Registered formal names that survive nowhere in a tree.
+
+        An approved assumption is exempt. This guard exists so a *workspace
+        declaration* cannot vanish while the registry still points at it, and an
+        axiom reached through an import was never a workspace declaration --
+        `request_assumption` registers the name a human approved, nothing writes
+        it into a file, and demanding one refused every later save with no tool
+        to undo it. The exemption is deliberately narrow: a registered theorem
+        that disappears is still caught.
+        """
+        approved = self._approved_assumptions()
         return [
             item["formal_name"]
             for item in self.state["names"]
-            if not self._resolves(item["formal_name"], sources)
+            if item["formal_name"] not in approved
+            and not self._resolves(item["formal_name"], sources)
         ]
 
     def _labels(self) -> set[str]:
