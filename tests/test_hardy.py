@@ -122,6 +122,89 @@ def test_a_missing_lean_project_is_reported_clearly(tmp_path: Path, proof_reques
 
 
 
+def test_audit_lines_are_appended_for_each_requested_target(lean: LeanTools):
+    source = lean.with_audit(
+        "import Mathlib\n\ntheorem A : True := trivial\n",
+        ("axioms A", "axioms B", "Papers.Smith.main"),
+    )
+    assert source.endswith("#print axioms A\n#print axioms B\n#print Papers.Smith.main\n")
+    assert "theorem A : True := trivial" in source
+
+
+def test_with_audit_leaves_a_source_alone_when_nothing_is_asked(lean: LeanTools):
+    original = "import Mathlib\n\ntheorem A : True := trivial\n"
+    assert lean.with_audit(original, ()) == original
+
+
+def test_an_anonymous_example_has_no_auditable_name(proof_request: Request):
+    named = LeanTools(proof_request, ("true",))
+    assert named.target_name == "HardyTarget"
+    anonymous = LeanTools(
+        Request.from_dict({"declaration": "example : True", "informal_claim": "x"}), ("true",)
+    )
+    assert anonymous.target_name is None
+    # And nothing can be printed about it, so no audit line is emitted.
+    assert "#print" not in anonymous.source("by exact True.intro", audit=True)
+
+
+def test_the_target_name_survives_a_missing_space_before_the_colon():
+    request = Request.from_dict({"declaration": "theorem Tight: True", "informal_claim": "x"})
+    assert LeanTools(request, ("true",)).target_name == "Tight"
+
+
+def test_explicit_universe_binders_are_not_part_of_the_name():
+    """`#print axioms Foo.` is not a command, so `Foo.{u}` must yield `Foo`."""
+    request = Request.from_dict(
+        {"declaration": "theorem Foo.{u} (a : Sort u) : True", "informal_claim": "x"}
+    )
+    assert LeanTools(request, ("true",)).target_name == "Foo"
+
+
+def test_a_qualified_primed_name_survives_intact():
+    request = Request.from_dict(
+        {"declaration": "lemma Nat.add_comm' (a : Nat) : True", "informal_claim": "x"}
+    )
+    assert LeanTools(request, ("true",)).target_name == "Nat.add_comm'"
+
+
+def test_unicode_declaration_names_are_auditable():
+    """Lean identifiers are not ASCII; `theorem α : True` is a valid request."""
+    for declaration, expected in [
+        ("theorem α : True", "α"),
+        ("theorem x₁ : True", "x₁"),
+        ("lemma α.β : True", "α.β"),
+    ]:
+        request = Request.from_dict({"declaration": declaration, "informal_claim": "x"})
+        assert LeanTools(request, ("true",)).target_name == expected
+
+
+def test_search_declaration_rejects_a_malformed_qualified_name(lean: LeanTools):
+    """`Foo..bar` and `Foo.` are not names, though the old pattern allowed them."""
+    assert not lean.search_declaration("Foo..bar").ok
+    assert not lean.search_declaration("Foo.").ok
+    assert lean.search_declaration("Nat.add_comm'").ok
+
+
+def test_search_declaration_can_look_under_other_imports(lean: LeanTools):
+    result = lean.search_declaration("Papers.Smith.main", imports=("Mathlib", "Papers.Smith"))
+    assert "import Papers.Smith" in (result.source or "")
+
+
+def test_the_fake_lean_reports_the_axioms_a_test_asked_for(lean: LeanTools):
+    result = lean.run_source(
+        "theorem A : True := by exact True.intro -- axioms: propext, sorryAx\n", audit=("axioms A",)
+    )
+    assert result.ok
+    assert "'A' depends on axioms: [propext, sorryAx]" in result.output
+
+
+def test_the_fake_lean_reports_no_axioms_without_a_marker(lean: LeanTools):
+    result = lean.run_source(
+        "theorem A : True := by exact True.intro\n", audit=("axioms A",)
+    )
+    assert "'A' does not depend on any axioms" in result.output
+
+
 def test_the_trajectory_records_the_providers_turn_count(proof_request: Request, lean: LeanTools, tmp_path: Path):
     """Counting tool calls here would be a different number wearing the name."""
 

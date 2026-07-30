@@ -16,7 +16,7 @@ import hashlib
 import json
 import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -26,7 +26,19 @@ from .models import Request, ToolResult
 from .process import ProcessResult, ProcessSpec, run_process
 
 HOLE = re.compile(r"\b(sorry|admit)\b")
-DECLARATION_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
+# A Lean declaration name: identifier components joined by dots. Stricter than
+# `[A-Za-z_][A-Za-z0-9_'.]*`, which admits `Foo..bar` and `Foo.`, and wider --
+# `\w` is Unicode-aware here, so `α`, `x₁`, and `Nat.add_comm'` all pass, as
+# Lean identifiers are not ASCII. An approximation of Lean's grammar, not a
+# reimplementation of it: French-quoted «escaped identifiers» are refused.
+_COMPONENT = r"[^\W\d][\w']*"
+DECLARATION_NAME = re.compile(rf"{_COMPONENT}(?:\.{_COMPONENT})*")
+# Where a name Hardy will interpolate into `#print axioms` comes from: the head
+# of the declaration the request froze. Matched rather than split apart --
+# splitting on `(`, `{`, and `:` turns `theorem Foo.{u} (a : Sort u) : True`
+# into `Foo.`, and `#print axioms Foo.` is not a command, so a
+# universe-polymorphic request could never verify.
+DECLARATION_HEAD = re.compile(rf"\s*(?:theorem|lemma)\s+({DECLARATION_NAME.pattern})")
 
 # Lean's own output is bounded generously; what a model is shown is bounded
 # tightly. The two limits answer different questions.
@@ -268,13 +280,35 @@ class LeanTools:
         self.max_output_bytes = max_output_bytes
         self._runner = runner
 
+    @property
+    def target_name(self) -> str | None:
+        """The declaration Lean can be asked about, or None for an `example`.
+
+        An anonymous example has no name, so nothing can print its axioms --
+        which is why it cannot be graded rather than graded leniently.
+        """
+        found = DECLARATION_HEAD.match(self.request.declaration)
+        return found.group(1) if found else None
+
+    @staticmethod
+    def with_audit(source: str, targets: Sequence[str]) -> str:
+        """Ask Lean about each target, in the same elaboration.
+
+        A target is whatever follows `#print`: `axioms Foo` for an axiom set,
+        or a bare name to print a declaration. Appended last so the answers
+        survive the tail truncation in `_observe`, and so a proof's own output
+        cannot follow them.
+        """
+        if not targets:
+            return source
+        lines = "\n".join(f"#print {target}" for target in targets)
+        return f"{source.rstrip()}\n\n{lines}\n"
+
     def source(self, proof: str, *, audit: bool = False) -> str:
         imports = "\n".join(f"import {name}" for name in self.request.imports)
-        suffix = ""
-        if audit and not self.request.declaration.startswith("example "):
-            name = self.request.declaration.split()[1].split("(")[0].split("{")[0]
-            suffix = f"\n\n#print axioms {name}"
-        return f"{imports}\n\n{self.request.declaration} := {proof.strip()}{suffix}\n"
+        body = f"{imports}\n\n{self.request.declaration} := {proof.strip()}\n"
+        name = self.target_name
+        return self.with_audit(body, (f"axioms {name}",)) if audit and name else body
 
     def _run(
         self,
@@ -331,9 +365,19 @@ class LeanTools:
     def has_holes(source: str) -> bool:
         return HOLE.search(source) is not None
 
-    def run_source(self, source: str, *, env: dict[str, str] | None = None) -> LeanToolResult:
-        """Run a complete Lean source file, without claiming it is hole-free."""
-        return self._run(source, env=env)
+    def run_source(
+        self,
+        source: str,
+        *,
+        env: dict[str, str] | None = None,
+        audit: Sequence[str] = (),
+    ) -> LeanToolResult:
+        """Run a complete Lean source file, without claiming it is hole-free.
+
+        `audit` holds `#print` targets, so a caller can ask for both an axiom
+        set (`axioms Foo`) and a declaration (`Bar`) in one elaboration.
+        """
+        return self._run(self.with_audit(source, audit), env=env)
 
     def compile_module(
         self, source_root: Path, build_root: Path, source_file: Path
@@ -367,11 +411,18 @@ class LeanTools:
         proof = "by\n" + (f"  {tactic}\n" if tactic.strip() else "") + "  trace_state\n  sorry"
         return self._run(self.source(proof))
 
-    def search_declaration(self, name: str) -> LeanToolResult:
+    def search_declaration(
+        self, name: str, *, imports: Sequence[str] | None = None
+    ) -> LeanToolResult:
+        """Look one declaration up, optionally under imports other than the
+        request's -- the interactive session's placeholder request carries only
+        `Mathlib`, so an axiom supplied by a saved source's own import would
+        otherwise always come back unavailable."""
         if not DECLARATION_NAME.fullmatch(name):
             return LeanToolResult(False, "search_declaration accepts one Lean declaration name")
-        imports = "\n".join(f"import {item}" for item in self.request.imports)
-        return self._run(f"{imports}\n\n#check {name}\n#print {name}\n")
+        wanted = self.request.imports if imports is None else imports
+        lines = "\n".join(f"import {item}" for item in wanted)
+        return self._run(f"{lines}\n\n#check {name}\n#print {name}\n")
 
 
 class LeanService:
