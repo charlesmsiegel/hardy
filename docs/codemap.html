@@ -186,7 +186,7 @@ footer.doc{max-width:1280px;margin:0 auto;padding:0 28px 34px;color:var(--text-f
 <tr><td><code>hardy prove</code></td><td><code>src/hardy/cli.py:618</code></td><td>The staged run: formalize → human approval → prove → independent verification → writeup, producing a graded <code>RunManifest</code>.</td></tr>
 <tr><td><code>hardy accept</code></td><td><code>src/hardy/cli.py:624</code></td><td>Runs the checked-in acceptance problems (<code>src/hardy/acceptance_problems.json</code>) through the same staged path.</td></tr>
 <tr><td><code>hardy doctor</code></td><td><code>src/hardy/cli.py:616</code></td><td>Per-prerequisite health report; distinguishes a missing tool from a broken one and checks the Claude CLI is signed in, not merely installed.</td></tr>
-<tr><td><code>hardy setup</code></td><td><code>src/hardy/cli.py:627</code></td><td>Discovers, installs and records the pinned toolchain (elan/lake, Mathlib project, TeX, config file).</td></tr>
+<tr><td><code>hardy setup</code></td><td><code>src/hardy/cli.py:627</code></td><td>Discovers and records the pinned toolchain (elan/lake, Mathlib project, TeX, config file). It <em>installs</em> only on Windows — the non-Windows branches for both elan and Tectonic just print instructions telling you to run a platform installer from <code>scripts/</code> or your package manager (<code>src/hardy/cli.py:320-339</code>). The shell installers under <code>scripts/</code> are what actually install on Linux and macOS.</td></tr>
 <tr><td><code>hardy batch</code></td><td><code>src/hardy/cli.py:633</code></td><td>The earlier one-shot proof experiment, kept deliberately as a dependency smoke path (<code>src/hardy/runner.py</code>).</td></tr>
 <tr><td>MCP stdio server</td><td><code>src/hardy/mcp_server.py:185</code></td><td>Serves the same bounded Lean and CAS tools to clients other than the in-process agent SDK.</td></tr>
 <tr><td><code>python -m hardy</code></td><td><code>src/hardy/__main__.py</code></td><td>Same as the <code>hardy</code> console script.</td></tr>
@@ -564,6 +564,10 @@ sequenceDiagram
     W->>S: finalize SETUP_FAILURE / AUTHENTICATION_FAILURE
   end
   loop up to formalization_proposals
+    W->>W: active budget spent?
+    opt yes
+      W->>W: remember TIMEOUT_BUDGET_EXHAUSTED, break
+    end
     W->>R: run_structured("formalization")
     R-->>W: FormalizationProposal
     W->>W: freeze_claim → temporary hash
@@ -572,11 +576,17 @@ sequenceDiagram
       W->>S: append formalization.rejected
     else elaborates
       W->>U: show_formalization + choose_approval
-      U-->>W: approve / revise / cancel
+      alt cancel
+        W->>S: finalize USER_REJECTION
+      else revise
+        W->>W: carry revision into next proposal
+      else approve
+        W->>W: break to PROVING
+      end
     end
   end
   alt no approved claim
-    W->>S: finalize MALFORMED_MODEL_OUTPUT
+    W->>S: finalize with the remembered reason,<br/>else MALFORMED_MODEL_OUTPUT
   end
   W->>W: re-freeze persisted claim, assert hash matches
   loop up to official_checks
@@ -599,6 +609,9 @@ sequenceDiagram
 </div>
 <div class="callout warn">
   <strong>Seven exits, ten hand-threaded arguments.</strong> <code>run()</code> is 311 lines (<code>src/hardy/workflow.py:128-438</code>) and every exit calls <code>_finalize</code> with the same ten values — <code>request, terminal, store, state, created_at, active_started, user_wait, grades, reason, claim</code> (<code>src/hardy/workflow.py:439-451</code>, seven call sites). <code>active_started</code> and <code>user_wait</code> in particular are a hand-rolled stopwatch: every exit must subtract user wait from active elapsed correctly, and nothing structurally prevents a future eighth exit from getting it wrong.
+</div>
+<div class="callout">
+  <strong>Three different ways to leave formalization without a claim, and the reason is preserved.</strong> A user choosing <code>cancel</code> finalizes immediately as <code>USER_REJECTION</code> (<code>src/hardy/workflow.py:248-260</code>). An expired active budget sets <code>TIMEOUT_BUDGET_EXHAUSTED</code> and breaks (<code>src/hardy/workflow.py:206-209</code>). Only a genuinely exhausted proposal budget falls through to <code>MALFORMED_MODEL_OUTPUT</code>, and the <code>terminal_reason or …</code> at <code>src/hardy/workflow.py:287-292</code> is what keeps an earlier reason from being overwritten. Worth reading before trusting a persisted terminal reason: the distinction is real and easy to flatten.
 </div>
 <div class="callout warn">
   <strong>Budget checks happen at loop tops, not during work.</strong> Both loops test elapsed time before starting an attempt (<code>src/hardy/workflow.py:200-204</code>, <code>:311-320</code>). A single proof attempt that overruns cannot be interrupted by the <code>active_seconds</code> budget — only by the per-process Lean timeout. A run can therefore exceed <code>active_seconds</code> by up to one attempt's duration, and the recorded timing will say so honestly, but the budget is a floor on granularity rather than a ceiling on wall time.
@@ -819,8 +832,12 @@ sequenceDiagram
 
 <h2>Boundary violations &amp; cycle semantics</h2>
 <div class="callout warn">
-  <strong>The one real file cycle: <code>cli.py → tui/__init__.py → tui/plain.py → tui/shell.py → tui/stream.py → cli.py</code>.</strong> It is broken at runtime by function-local imports (<code>src/hardy/tui/__init__.py:31-33</code> and <code>:46-47</code>), and the reason is documented at <code>src/hardy/tui/__init__.py:20-26</code>: the shell must exist <em>before</em> the session does, because the session needs an axiom-approval callback and that callback runs through whichever <code>Ui</code> ends up live. So <code>tui</code> depends on <code>cli</code> for <code>confirm_assumption</code>, and <code>cli</code> depends on <code>tui</code> to start a session.
-  <p>The fix is small and structural: <code>confirm_assumption</code> (<code>src/hardy/cli.py:27-60</code>) depends only on the <code>Ui</code> port, not on anything else in <code>cli</code>. Moving it into <code>tui/</code> — next to <code>src/hardy/tui/ports.py</code>, where its only dependency lives — collapses the cycle and removes the need for deferred imports. That the current arrangement is deliberate and commented makes it a design debt rather than a bug, but a lazy import is a cycle you have agreed to stop noticing.</p>
+  <strong>One design-meaningful back edge, inside a five-file strongly-connected group.</strong> The Dependencies tab lists that group as <code>src/hardy/cli.py</code>, <code>src/hardy/tui/__init__.py</code>, <code>src/hardy/tui/plain.py</code>, <code>src/hardy/tui/shell.py</code> and <code>src/hardy/tui/stream.py</code> — an alphabetically sorted set of members, <em>not</em> a path, so it should not be read as a chain of imports. Only one edge in it is a design decision.
+  <ul>
+    <li><strong>The real one.</strong> <code>src/hardy/tui/__init__.py</code> imports <code>cli</code> inside two functions (<code>src/hardy/tui/__init__.py:31</code>, <code>:46</code>) while <code>src/hardy/cli.py</code> imports <code>tui.ports</code> at module level (<code>src/hardy/cli.py:24</code>) and <code>tui</code> itself inside a function (<code>src/hardy/cli.py:86</code>). The reason is documented at <code>src/hardy/tui/__init__.py:20-26</code>: the shell must exist <em>before</em> the session does, because the session needs an axiom-approval callback and that callback runs through whichever <code>Ui</code> ends up live.</li>
+    <li><strong>The other three are ordinary Python.</strong> <code>src/hardy/tui/plain.py</code>, <code>src/hardy/tui/shell.py</code> and <code>src/hardy/tui/stream.py</code> each say <code>from . import …</code> (<code>src/hardy/tui/plain.py:13</code>, <code>src/hardy/tui/shell.py:51</code>, <code>src/hardy/tui/stream.py:20</code>), which counts as an edge to the package initializer — and the initializer imports <code>plain</code> and <code>shell</code> back. A package importing its own submodules is not a design problem. There is no <code>src/hardy/tui/stream.py</code> &rarr; <code>src/hardy/cli.py</code> edge at all: stream.py imports only <code>transcript</code>.</li>
+  </ul>
+  <p>The fix for the one that matters is small and structural: <code>confirm_assumption</code> (<code>src/hardy/cli.py:27-60</code>) depends only on the <code>Ui</code> port and <code>Choice</code>, not on anything else in <code>cli</code>. Moving it into <code>tui/</code> — next to <code>src/hardy/tui/ports.py</code>, where its only dependency lives — removes the back edge and the need for deferred imports. That the current arrangement is deliberate and commented makes it a design debt rather than a bug, but a lazy import is a cycle you have agreed to stop noticing.</p>
 </div>
 <div class="callout">
   <strong>The reported <code>src/hardy ↔ prompts ↔ tui</code> module cycle is the flat-package artifact.</strong> With 30 files in one directory, "module" and "package" coincide, so any subpackage importing back into the core (<code>prompts</code> imports <code>..domain</code>; <code>tui</code> imports <code>..cli</code>) reads as a cycle at module granularity. Only the <code>tui ↔ cli</code> half is a real one; <code>prompts → domain</code> is a leaf importing a leaf.
@@ -899,7 +916,7 @@ sequenceDiagram
   <strong>Timeouts exist everywhere except the one place the project says it covers.</strong> Lean (<code>lean_process_seconds</code>), TeX (<code>tex_process_seconds</code>), CAS cells and CAS sessions all have process bounds in <code>RunLimits</code> (<code>src/hardy/domain.py:26-42</code>). For the model call, which the SDK's loop owns, Hardy built its own wall clock — <code>_within_budget</code> wraps the exchange in <code>asyncio.wait_for</code> and records that Hardy enforced the stop (<code>src/hardy/claude_runtime.py:322-331</code>). On staged <code>prove</code> that code never runs: <code>wall_seconds</code> is left <code>None</code> at construction (<code>src/hardy/staged.py:145-152</code>), so the guard takes its unbounded branch, and <code>run()</code> only tests the budget between attempts (<code>src/hardy/workflow.py:311-320</code>). A provider request that hangs holds the run open indefinitely. The <code>batch</code> path, which does pass a bound (<code>src/hardy/runner.py:85</code>), even records <code>"wall_clock_enforced_by": "hardy"</code> in its trajectory — the claim is true there and only there.
 </div>
 <div class="callout warn">
-  <strong>Every harness failure is filed against the model runtime.</strong> <code>run()</code> classifies <code>KeyboardInterrupt</code> specifically, then labels everything else <code>AGENT_RUNTIME_FAILURE</code> (<code>src/hardy/workflow.py:405-424</code>) — including failures in persistence, claim reloading, Lean setup, verification and writeup construction, none of which are the runtime's fault. <code>TerminalReason.INTERNAL_ERROR</code> exists for exactly this and is referenced nowhere outside its own declaration (<code>src/hardy/domain.py:125</code>). For a project whose purpose is honest experiment records, a terminal reason that misattributes blame is a data-quality bug, not a cosmetic one.
+  <strong>Every harness failure is filed against the model runtime.</strong> <code>run()</code> classifies <code>KeyboardInterrupt</code> specifically, then labels everything else <code>AGENT_RUNTIME_FAILURE</code> (<code>src/hardy/workflow.py:405-424</code>) — including failures in persistence, claim reloading, Lean setup, verification and writeup construction, none of which are the runtime's fault. <code>TerminalReason.INTERNAL_ERROR</code> exists for exactly this and is referenced nowhere outside its own declaration (<code>src/hardy/domain.py:125</code>). It is one of two dead members: <code>PROOF_INCOMPLETE</code> (<code>src/hardy/domain.py:117</code>) is also never produced, appearing only in a serialization test (<code>tests/unit/test_storage.py:100</code>) — so 12 of the 14 declared reasons can actually reach a manifest. For a project whose purpose is honest experiment records, a terminal reason that misattributes blame is a data-quality bug, not a cosmetic one.
 </div>
 <div class="callout">
   <strong>Secret redaction is key-name based.</strong> <code>storage._redact</code> (<code>src/hardy/storage.py:159-170</code>) replaces values whose <em>key</em> matches a secret pattern, recursing through dicts and lists. A credential appearing inside a free-text value — a model message, a Lean error, a subprocess stderr — is not caught, and trajectories record all three. Reasonable for a local-first tool; worth knowing before any run directory is shared.
@@ -968,7 +985,7 @@ sequenceDiagram
 <tr><td>A model's proposed formalization</td><td><code>FormalizationProposal</code></td><td><code>src/hardy/domain.py:45-53</code></td><td><span class="badge good">consistent</span></td></tr>
 <tr><td>A paper assumption admitted as a Lean axiom</td><td><code>assumption</code> (state, tool) / <code>assumed</code> (parsed) / <code>axiom</code> (Lean) / <code>Assume</code> (docs)</td><td><code>src/hardy/chat.py:333-339</code>, <code>src/hardy/cli.py:27</code>, <code>DESIGN.md:157</code></td><td><span class="badge warn">four registers</span> Defensible — each name belongs to its own layer — but a reader tracing the feature crosses all four.</td></tr>
 <tr><td>The four orthogonal result grades</td><td><code>FormalStatus</code>, <code>FaithfulnessStatus</code>, <code>InformalStatus</code>, <code>DocumentStatus</code></td><td><code>src/hardy/domain.py:128-165</code></td><td><span class="badge warn">one grade missing</span> DESIGN.md's "verified modulo listed paper assumptions" has no enum member — see Invariants.</td></tr>
-<tr><td>Why a run stopped</td><td><code>TerminalReason</code></td><td><code>src/hardy/domain.py:111-125</code></td><td><span class="badge warn">one dead member</span> — 13 of 14 are recorded somewhere; <code>INTERNAL_ERROR</code> has no reference outside its own declaration, because the broad handler files harness failures as <code>AGENT_RUNTIME_FAILURE</code> instead. See Invariants.</td></tr>
+<tr><td>Why a run stopped</td><td><code>TerminalReason</code></td><td><code>src/hardy/domain.py:111-125</code></td><td><span class="badge warn">two dead members</span> — 12 of 14 are ever produced. <code>INTERNAL_ERROR</code> has no reference outside its declaration, because the broad handler files harness failures as <code>AGENT_RUNTIME_FAILURE</code> instead; <code>PROOF_INCOMPLETE</code> appears only in its declaration and in a serialization test (<code>tests/unit/test_storage.py:100</code>). See Invariants.</td></tr>
 <tr><td>The multi-file Lean tree</td><td><code>LeanWorkspace</code>, <code>workspace</code>, <code>.hardy/</code></td><td><code>src/hardy/workspace.py:329</code>, <code>src/hardy/config.py:19</code></td><td><span class="badge good">consistent</span></td></tr>
 <tr><td>One computer-algebra input</td><td><code>cell</code>, <code>CellRecord</code>, <code>CellOutcome</code></td><td><code>src/hardy/cas.py:66-124</code></td><td><span class="badge good">consistent</span> — notebook vocabulary, used correctly.</td></tr>
 <tr><td>A CAS log epoch after a reset</td><td><code>segment</code></td><td><code>src/hardy/cas.py:909</code>, <code>:1375</code></td><td><span class="badge good">clear</span> — the reset boundary is itself a <code>CellRecord</code> carrying the new segment.</td></tr>
