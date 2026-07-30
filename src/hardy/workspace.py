@@ -211,6 +211,49 @@ def strip_comments(source: str) -> str:
     return "".join(out)
 
 
+NAMESPACE = re.compile(rf"^namespace\s+({QUALIFIED})$")
+END = re.compile(rf"^end(?:\s+({QUALIFIED}))?$")
+ASSUMPTION = re.compile(rf"^(?:axiom|constant)\s+({QUALIFIED})\s*:\s*(.+?)$")
+
+
+def assumptions(source: str) -> tuple[tuple[str, str], ...]:
+    """Axioms a source declares, under the names Lean will report them by.
+
+    A flat scan reads `namespace Foo ... axiom bar` as `bar`, but Lean reports
+    it as `Foo.bar`. With one gate checking the short name and the audit
+    checking the qualified one, no single approval could satisfy both and the
+    module could not be saved at all. Tracking the namespace stack gives both
+    gates the same name.
+
+    `end` without a name closes a `section`, which does not qualify anything, so
+    only a named `end` matching the open namespace pops. A mismatched one is
+    left alone rather than guessed at: Lean will reject the file anyway, and
+    unwinding on a guess could qualify a later axiom wrongly.
+    """
+    stack: list[str] = []
+    found: list[tuple[str, str]] = []
+    for line in strip_comments(source).splitlines():
+        text = line.strip()
+        opened = NAMESPACE.match(text)
+        if opened:
+            stack.append(opened.group(1))
+            continue
+        closed = END.match(text)
+        if closed:
+            if closed.group(1) and stack and stack[-1] == closed.group(1):
+                stack.pop()
+            continue
+        declared = ASSUMPTION.match(text)
+        if declared:
+            name, statement = declared.group(1), declared.group(2).strip()
+            # `_root_.` is how a source says "not in this namespace".
+            if name.startswith("_root_."):
+                found.append((name.removeprefix("_root_."), statement))
+            else:
+                found.append((".".join([*stack, name]), statement))
+    return tuple(found)
+
+
 def parse_imports(source: str) -> tuple[str, ...]:
     """The modules a source file imports.
 

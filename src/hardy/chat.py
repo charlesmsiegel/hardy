@@ -25,6 +25,7 @@ from .workspace import (
     ImportCycle,
     LeanWorkspace,
     WorkspacePathError,
+    assumptions,
     declarations,
     dependents,
     internal_imports,
@@ -355,10 +356,10 @@ class MathematicsSession:
                 source,
             )
         approved = {item["formal_name"]: " ".join(item["lean_statement"].split()) for item in self.state["assumptions"]}
-        # Named `assumed` rather than `declarations`: the module-level function
-        # of that name is what reads theorems out of a source.
-        assumed = re.findall(r"(?m)^\s*(?:axiom|constant)\s+([A-Za-z_][A-Za-z0-9_'.]*)\s*:\s*(.+?)\s*$", source)
-        for name, statement in assumed:
+        # Qualified by the namespace they sit in, so this gate and the audit
+        # ask about the same name. A flat scan called it `bar` while Lean
+        # reported `Foo.bar`, and no single approval could satisfy both.
+        for name, statement in assumptions(source):
             if approved.get(name) != " ".join(statement.split()):
                 return ToolResult(False, f"unapproved or altered assumption `{name}`; use request_assumption first", source)
         return None
@@ -927,7 +928,15 @@ class MathematicsSession:
         )
         # Hashed once for the whole listing rather than per module: each call
         # re-reads every source in the tree.
-        current = self.lean_workspace.current_signatures()
+        try:
+            current = self.lean_workspace.current_signatures()
+        except ImportCycle:
+            # Files edited directly on disk can form a cycle, and this listing is
+            # how the model finds out and repairs it -- so it must not be the
+            # thing that fails. No signatures means nothing matches, which marks
+            # every verdict unestablished: correct for a tree that cannot be
+            # ordered, let alone built.
+            current = {}
         return {
             "manifest": self.state,
             "lean": lean,
