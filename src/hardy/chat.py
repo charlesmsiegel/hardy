@@ -33,6 +33,7 @@ from .workspace import (
     module_name,
     module_path,
     safe_relative,
+    unreadable_assumptions,
 )
 
 # Where the two artifact trees live inside a workspace. A session written
@@ -362,6 +363,16 @@ class MathematicsSession:
         for name, statement in assumptions(source):
             if approved.get(name) != " ".join(statement.split()):
                 return ToolResult(False, f"unapproved or altered assumption `{name}`; use request_assumption first", source)
+        # An axiom the scan could not read is refused rather than skipped. It
+        # cannot be compared against an approval -- the type Lean gives
+        # `axiom Sneaky (P : Prop) : P` is `∀ P : Prop, P`, which is not the
+        # text after the colon -- and skipping it let one pass unremarked.
+        # `request_assumption` produces neither binders nor universe
+        # parameters, so this refuses only shapes the approval flow cannot
+        # reach.
+        unreadable = unreadable_assumptions(source)
+        if unreadable:
+            return ToolResult(False, f"could not read `{unreadable[0]}` as `axiom NAME : STATEMENT`; an assumption must be approved by request_assumption and then declared in exactly that shape, without binders or universe parameters", source)
         return None
 
     def _run_lean_source(self, source: str) -> ToolResult:

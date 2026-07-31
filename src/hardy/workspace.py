@@ -285,22 +285,15 @@ def strip_comments(source: str) -> str:
     return "".join(out)
 
 
-# Universe parameters and binders sit between an axiom's name and its colon:
-# `axiom Sneaky.{u} : Sort u` and `axiom Sneaky (n : Nat) : False` are both
-# ordinary Lean. Without them here the line did not match at all, and
-# `assumptions` skips what it cannot match -- so an axiom wearing either was
-# never offered for approval and never refused. It is matched now so that it is
-# *seen*; the statement captured is the one after the colon, which cannot equal
-# an approval of the whole type, so a binder form is refused rather than guessed
-# at. Being refused is the point: it is a shape the approval flow does not
-# produce, and the alternative was passing unremarked.
 ASSUMPTION = re.compile(
     rf"^{WRAPPER}(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|scoped|local)\s+)*"
-    rf"(?:axiom|constant)\s+({QUALIFIED_NAME})"
-    r"(?:\.\{[^}]*\})?"
-    r"(?:\s*(?:\([^)]*\)|\{[^}]*\}|\[[^\]]*\]|⦃[^⦄]*⦄))*"
-    rf"\s*:(.*)$"
+    rf"(?:axiom|constant)\s+({QUALIFIED_NAME})\s*:(.*)$"
 )
+# The keyword itself, for finding an axiom this pattern cannot read. The
+# boundary is `IDENTIFIER`'s alphabet with `!` and `?`, so `axiom?` and `get!`
+# are names rather than keywords, and the guillemets go with them because
+# `def «axiom» : Nat` names a declaration rather than making one.
+AXIOM_KEYWORD = re.compile(r"(?<![\w'!?.«])(?:axiom|constant)(?![\w'!?»])")
 # Where a declaration stops, so the one before it is not read as running on.
 # Approximate on purpose: over-reading appends text to a statement and the
 # comparison refuses a save that should have passed, which is visible and
@@ -351,6 +344,36 @@ def assumptions(source: str) -> tuple[tuple[str, str], ...]:
             index += 1
         statement = " ".join(part for part in parts if part)
         found.append((declared_name(name, prefix), statement))
+    return tuple(found)
+
+
+def unreadable_assumptions(source: str) -> tuple[str, ...]:
+    """Lines declaring an axiom that `assumptions` cannot read, verbatim.
+
+    `assumptions` skips a line it fails to match, which is the wrong direction
+    for a gate: an axiom wearing binders (`axiom Sneaky (n : Nat) : False`) or
+    universe parameters (`axiom Sneaky.{u} : Sort u`) simply passed, offered
+    for approval by nobody and refused by nobody.
+
+    Matching those shapes instead is worse, and was tried. The statement Lean
+    gives `axiom Sneaky (P : Prop) : P` is `∀ P : Prop, P`, not the `P` after
+    the colon, so comparing the tail accepts it against an approval of `P` --
+    reading a declaration the gate cannot reconstruct is how a materially
+    stronger axiom comes to look checked. Nothing here reconstructs a type.
+
+    So they are reported, and the caller refuses the save. `request_assumption`
+    never produces a binder or a universe parameter, so refusing one costs a
+    shape the approval flow cannot reach anyway, and the model is told what to
+    write instead. Any *other* unreadable spelling -- a binder type holding
+    nested delimiters, whatever Lean grows next -- lands here too, because this
+    asks whether the line parsed rather than whether it matched some list of
+    known-bad forms.
+    """
+    found: list[str] = []
+    for line in strip_comments(source).splitlines():
+        text = line.strip()
+        if AXIOM_KEYWORD.search(text) and ASSUMPTION.match(text) is None:
+            found.append(text)
     return tuple(found)
 
 
