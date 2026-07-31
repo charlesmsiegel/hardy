@@ -19,6 +19,7 @@ from hardy.workspace import (
     parse_imports,
     safe_relative,
     strip_comments,
+    unreadable_assumptions,
 )
 
 
@@ -361,18 +362,41 @@ def test_an_assumption_with_its_type_on_the_next_line_is_still_read():
     assert assumptions("axiom trusted :\n  False\n") == (("trusted", "False"),)
 
 
-def test_an_assumption_wearing_binders_or_universes_is_still_seen():
-    """`axiom Sneaky (n : Nat) : False` and `axiom Sneaky.{u} : Sort u` are
-    ordinary Lean that did not match at all, and `assumptions` skips what it
-    cannot match — so either one was never offered for approval and never
-    refused. Seen now: the statement captured is the part after the colon,
-    which cannot equal an approval of the whole type, so the save is refused
-    rather than passed unremarked."""
-    assert assumptions("axiom Sneaky (n : Nat) : False") == (("Sneaky", "False"),)
-    assert assumptions("axiom Sneaky {α : Type} : False") == (("Sneaky", "False"),)
-    assert assumptions("axiom Sneaky [Inhabited Nat] : False") == (("Sneaky", "False"),)
-    assert assumptions("axiom Sneaky.{u} : Sort u") == (("Sneaky", "Sort u"),)
-    assert assumptions("axiom Sneaky.{u, v} (n : Nat) : Sort u") == (("Sneaky", "Sort u"),)
+def test_an_assumption_wearing_binders_or_universes_is_refused_not_skipped():
+    """`assumptions` skips a line it cannot match, which is the wrong direction
+    for a gate: an axiom wearing binders or universe parameters was offered for
+    approval by nobody and refused by nobody.
+
+    Matching those shapes instead is worse, and was tried. Lean gives
+    `axiom Sneaky (P : Prop) : P` the type `∀ P : Prop, P`, not the `P` after
+    the colon, so comparing the tail accepts it against an approval of `P`.
+    Nothing reconstructs a type here; the line is reported unreadable and the
+    save is refused."""
+    for source in (
+        "axiom Sneaky (n : Nat) : False",
+        "axiom Sneaky {α : Type} : False",
+        "axiom Sneaky (P : Prop) : P",
+        "axiom Sneaky (f : Nat → (Nat × Nat)) : False",
+        "axiom Sneaky.{u} : Sort u",
+    ):
+        assert assumptions(source) == (), source
+        assert unreadable_assumptions(source) == (source,), source
+
+
+def test_a_readable_assumption_is_not_reported_unreadable():
+    """The other half: what the approval flow does produce must pass cleanly,
+    including a statement wrapped onto the next line, and a keyword that is
+    part of a name or sits inside a string must not be read as a declaration
+    at all."""
+    for source in (
+        "axiom Ok : True",
+        "private axiom Ok : True",
+        "axiom Ok :\n  ∀ n : Nat, n = n\n",
+        "theorem axiom? : True := trivial",
+        'def s := "axiom Foo : Bar"',
+        "def «axiom» : Nat := 1",
+    ):
+        assert unreadable_assumptions(source) == (), source
 
 
 def test_a_wrapped_assumption_is_gathered_rather_than_truncated():
