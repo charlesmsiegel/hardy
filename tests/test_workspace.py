@@ -361,6 +361,20 @@ def test_an_assumption_with_its_type_on_the_next_line_is_still_read():
     assert assumptions("axiom trusted :\n  False\n") == (("trusted", "False"),)
 
 
+def test_an_assumption_wearing_binders_or_universes_is_still_seen():
+    """`axiom Sneaky (n : Nat) : False` and `axiom Sneaky.{u} : Sort u` are
+    ordinary Lean that did not match at all, and `assumptions` skips what it
+    cannot match — so either one was never offered for approval and never
+    refused. Seen now: the statement captured is the part after the colon,
+    which cannot equal an approval of the whole type, so the save is refused
+    rather than passed unremarked."""
+    assert assumptions("axiom Sneaky (n : Nat) : False") == (("Sneaky", "False"),)
+    assert assumptions("axiom Sneaky {α : Type} : False") == (("Sneaky", "False"),)
+    assert assumptions("axiom Sneaky [Inhabited Nat] : False") == (("Sneaky", "False"),)
+    assert assumptions("axiom Sneaky.{u} : Sort u") == (("Sneaky", "Sort u"),)
+    assert assumptions("axiom Sneaky.{u, v} (n : Nat) : Sort u") == (("Sneaky", "Sort u"),)
+
+
 def test_a_wrapped_assumption_is_gathered_rather_than_truncated():
     """Truncating at the newline failed a comparison that should have passed."""
     source = "axiom trusted : ∀ n : Nat,\n  n = n\n"
