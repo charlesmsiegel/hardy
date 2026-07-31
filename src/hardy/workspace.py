@@ -285,9 +285,21 @@ def strip_comments(source: str) -> str:
     return "".join(out)
 
 
+# Universe parameters and binders sit between an axiom's name and its colon:
+# `axiom Sneaky.{u} : Sort u` and `axiom Sneaky (n : Nat) : False` are both
+# ordinary Lean. Without them here the line did not match at all, and
+# `assumptions` skips what it cannot match -- so an axiom wearing either was
+# never offered for approval and never refused. It is matched now so that it is
+# *seen*; the statement captured is the one after the colon, which cannot equal
+# an approval of the whole type, so a binder form is refused rather than guessed
+# at. Being refused is the point: it is a shape the approval flow does not
+# produce, and the alternative was passing unremarked.
 ASSUMPTION = re.compile(
     rf"^{WRAPPER}(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|scoped|local)\s+)*"
-    rf"(?:axiom|constant)\s+({QUALIFIED_NAME})\s*:(.*)$"
+    rf"(?:axiom|constant)\s+({QUALIFIED_NAME})"
+    r"(?:\.\{[^}]*\})?"
+    r"(?:\s*(?:\([^)]*\)|\{[^}]*\}|\[[^\]]*\]|⦃[^⦄]*⦄))*"
+    rf"\s*:(.*)$"
 )
 # Where a declaration stops, so the one before it is not read as running on.
 # Approximate on purpose: over-reading appends text to a statement and the
