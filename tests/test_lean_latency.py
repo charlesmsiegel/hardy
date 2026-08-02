@@ -664,6 +664,37 @@ def test_the_host_that_produced_the_durations_is_recorded(tmp_path: Path):
     assert cost.machine in "\n".join(describe(cost))
 
 
+def test_the_cpu_model_distinguishes_hosts_the_architecture_cannot(monkeypatch):
+    """Same OS, kernel, arch and core count, a decade apart in single-core
+    speed — enough to reverse the verdict, and identical provenance without
+    the model. `platform.processor()` returns `x86_64` on Linux, the same
+    string as `machine()`, so it adds nothing exactly where it is needed."""
+    from hardy import latency as latency_module
+
+    monkeypatch.setattr(latency_module.platform, "processor", lambda: "x86_64")
+    monkeypatch.setattr(latency_module.platform, "machine", lambda: "x86_64")
+    model = latency_module.cpu_model()
+    # Whatever this host is, it must not be the architecture echoed back.
+    assert model != "x86_64"
+    assert model  # either a real model name, or the honest admission
+
+    # A platform that does name its processor is taken at its word.
+    monkeypatch.setattr(latency_module.platform, "processor", lambda: "Apple M3 Pro")
+    assert latency_module.cpu_model() == "Apple M3 Pro"
+
+
+def test_an_unidentifiable_cpu_is_admitted_not_faked(monkeypatch, tmp_path: Path):
+    """Repeating the architecture as if it were a model would be worse than
+    saying nothing, because only the second can be caught."""
+    from hardy import latency as latency_module
+
+    monkeypatch.setattr(latency_module.platform, "processor", lambda: "x86_64")
+    monkeypatch.setattr(latency_module.platform, "machine", lambda: "x86_64")
+    # No /proc/cpuinfo to fall back on, as on macOS.
+    monkeypatch.setattr(latency_module, "Path", lambda *a: tmp_path / "absent")
+    assert latency_module.cpu_model() == "cpu model unrecorded"
+
+
 def test_an_unrecorded_machine_is_named_rather_than_omitted():
     cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
     assert "machine: (unrecorded)" in "\n".join(describe(cost))
