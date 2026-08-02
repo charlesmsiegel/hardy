@@ -13,20 +13,27 @@ from .process import INTERRUPT_GRACE_SECONDS, child_creation, kill_group, termin
 
 
 def _escalate_after_grace(child, entry, settled) -> None:
-    """Terminate a compile that was asked to stop and did not.
+    """Stop a compile that was asked to stop and did not.
 
-    Waits for the stop rather than for the compiler, then gives it the same
-    grace `run_process` gives every other child before taking the group down.
+    Waits for the stop rather than for the compiler, then walks the same
+    ladder `run_process` walks for every other child: the grace, then the
+    group's SIGTERM, then SIGKILL for a tree that ignored that too. Stopping at
+    SIGTERM would leave the main thread blocked in `communicate` until the full
+    compile timeout, which is the wait the press was meant to end.
+
     Returns as soon as `settled` is set, so an ordinary compile costs it
-    nothing.
+    nothing but one 50ms wait.
     """
-    while not settled.wait(0.05):
-        if not entry.interrupted.is_set():
-            continue
-        if settled.wait(INTERRUPT_GRACE_SECONDS):
+    while not entry.interrupted.is_set() and not entry.escalated.is_set():
+        if settled.wait(0.05):
             return
-        terminate_group(child)
+    # The second press skips the grace: that is what it buys.
+    if not entry.escalated.is_set() and settled.wait(INTERRUPT_GRACE_SECONDS):
         return
+    terminate_group(child)
+    if settled.wait(0 if entry.escalated.is_set() else 2):
+        return
+    kill_group(child)
 
 
 # Fragments are `\input` from one document, and that document is what a

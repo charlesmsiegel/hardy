@@ -60,12 +60,18 @@ while pending:
 # genuinely exist rather than guess how long that takes.
 SLOW = re.search(r"%\s*slow:\s*([0-9.]+)", source)
 if SLOW:
-    if re.search(r"%\s*deaf\b", source):
+    DEAF = re.search(r"%\s*deaf(:\s*(\S+))?", source)
+    if DEAF:
         # Refuses the interrupt, as a compiler sitting in a C loop would. The
-        # grace has to run out and the group has to be terminated.
+        # grace has to run out and the group has to be terminated. `% deaf:
+        # sigterm` refuses that too, so only SIGKILL is left -- which is the
+        # rung of the ladder a watcher that stopped at SIGTERM never reached.
         import signal
 
-        for name in ("SIGINT", "SIGBREAK"):
+        refused = ["SIGINT", "SIGBREAK"]
+        if (DEAF.group(2) or "") == "sigterm":
+            refused.append("SIGTERM")
+        for name in refused:
             handled = getattr(signal, name, None)
             if handled is not None:
                 signal.signal(handled, signal.SIG_IGN)
