@@ -9,6 +9,7 @@ or failed rather than returning a shorter list that reads as complete.
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 
@@ -549,6 +550,24 @@ def test_only_the_names_the_goal_bound_are_wildcarded() -> None:
     assert retrieval.search_query('h : a very long type\n  continuing here\n⊢ f h') == '⊢ f _'
 
 
+def test_a_local_name_inside_a_string_literal_is_left_alone() -> None:
+    """Textual substitution changed the proposition rather than the query.
+
+    `⊢ x = "x"` became `⊢ _ = "_"`, which is a different statement about a
+    different string -- and both searches would rank premises for it perfectly
+    happily. Silently searching the wrong thing is worse than failing to search.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    assert retrieval.search_query('x : String\n⊢ x = "x"') == '⊢ _ = "x"'
+    assert retrieval.search_query('s : String\n⊢ f s "s" s = "s s"') == '⊢ f _ "s" _ = "s s"'
+    # An escaped quote does not end the literal it appears in.
+    assert retrieval.search_query('x : String\n⊢ x = "a \\" x"') == '⊢ _ = "a \\" x"'
+    # A char literal was already safe: `'` is an identifier character in Lean,
+    # so the quote before it blocks the match.
+    assert retrieval.search_query("c : Char\n⊢ c = 'c'") == "⊢ _ = 'c'"
+
+
 def test_a_goal_written_in_dot_notation_is_not_desugared_and_does_not_pretend_to_be() -> None:
     """A known limit, pinned so nobody reads silence as support.
 
@@ -565,6 +584,56 @@ def test_a_goal_written_in_dot_notation_is_not_desugared_and_does_not_pretend_to
     assert retrieval.search_query('xs : List ℕ\n⊢ xs.reverse.reverse = xs') == (
         '⊢ _.reverse.reverse = _'
     )
+
+
+def test_the_premises_are_bound_to_the_record_that_validates_them() -> None:
+    """Otherwise the digest covered only how the ranking was made, not what it
+    said: names, scores and source ranks could be swapped wholesale and every
+    check still passed.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm'), _record('Nat.mul_comm')])
+
+    ranking = _retriever(retrieval, [lean]).rank('_ + _ = _ + _')
+    payload = json.loads(ranking.model_dump_json())
+
+    assert retrieval.PremiseRanking.model_validate(payload).premises == ranking.premises
+    for swapped in (
+        [payload['premises'][0] | {'name': 'Not.returned'}],
+        [payload['premises'][0] | {'score': 99.0}],
+        list(reversed(payload['premises'])),
+        [],
+    ):
+        with pytest.raises(ValidationError):
+            retrieval.PremiseRanking.model_validate(payload | {'premises': swapped})
+
+
+def test_a_bounded_ranking_keeps_the_digest_of_the_premises_it_was_cut_from() -> None:
+    """Bounding for the observation budget legitimately drops premises, so the
+    digest cannot describe what is left -- and recomputing it would stamp a
+    hash over a list no search produced. The truncated view says it is one, and
+    the artifact it names holds the ranking the digest is actually over.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm'), _record('Nat.mul_comm')])
+
+    ranking = _retriever(retrieval, [lean]).rank('_ + _ = _ + _')
+    cut = ranking.model_copy(
+        update={
+            'premises': ranking.premises[:1],
+            'observation_truncated': True,
+            'output_artifact': 'process/mcp-result-0.json',
+        }
+    )
+
+    revalidated = retrieval.PremiseRanking.model_validate(json.loads(cut.model_dump_json()))
+    assert revalidated.observation_truncated
+    assert revalidated.provenance.premises_sha256 == ranking.provenance.premises_sha256
+    # A truncated ranking must still name where the whole one went.
+    with pytest.raises(ValidationError):
+        retrieval.PremiseRanking.model_validate(
+            json.loads(cut.model_dump_json()) | {'output_artifact': None}
+        )
 
 
 def test_the_provenance_hashes_what_was_searched_as_well_as_what_was_asked() -> None:
@@ -682,6 +751,11 @@ def test_the_corpus_identity_names_the_toolchain_that_will_actually_run(tmp_path
 
     service.lean_project = tmp_path
     (tmp_path / 'lean-toolchain').write_text('leanprover/lean4:v4.32.0\n', encoding='utf-8')
+    manifest = b'{"packages": []}'
+    (tmp_path / 'lake-manifest.json').write_bytes(manifest)
+    service.environment = service.environment.model_copy(
+        update={'lake_manifest_sha256': hashlib.sha256(manifest).hexdigest()}
+    )
     verified = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
 
     assert verified.identity.pinned
@@ -694,6 +768,37 @@ def test_the_corpus_identity_names_the_toolchain_that_will_actually_run(tmp_path
     (tmp_path / 'lean-toolchain').write_text('leanprover/lean4:v4.33.0\n', encoding='utf-8')
     moved = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
     assert moved.identity.corpus != corpus
+
+
+def test_a_project_that_is_not_the_one_the_claim_was_frozen_against_is_not_pinned(
+    tmp_path,
+) -> None:
+    """`load_runtime` takes the project from `HARDY_CONFIG` and the environment
+    identity from the frozen claim, and never checks that they are the same
+    thing. So `#find` can run in one Lake project while the corpus identity
+    names another -- a ranking claiming to be replayable against a corpus it
+    did not search.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean_module = importlib.import_module('hardy.lean')
+    domain = importlib.import_module('hardy.domain')
+    manifest = b'{"packages": [{"name": "mathlib", "rev": "81a5d257"}]}'
+
+    service = _Service(domain, lean_module)
+    service.lean_project = tmp_path
+    (tmp_path / 'lean-toolchain').write_text('leanprover/lean4:v4.32.0\n', encoding='utf-8')
+    (tmp_path / 'lake-manifest.json').write_bytes(manifest)
+
+    # The claim's environment names a manifest hash of 'b' * 64, which is not
+    # this project's, so the toolchain being readable is not enough.
+    assert not retrieval.LeanSearchSource(service, limits=domain.RunLimits()).identity.pinned
+
+    service.environment = service.environment.model_copy(
+        update={'lake_manifest_sha256': hashlib.sha256(manifest).hexdigest()}
+    )
+    matched = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
+
+    assert matched.identity.pinned
 
 
 def test_the_lean_source_reports_an_unsuccessful_search_as_no_answer() -> None:
