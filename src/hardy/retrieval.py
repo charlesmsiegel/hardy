@@ -324,7 +324,29 @@ class LoogleSource:
 
     @property
     def worst_case_seconds(self) -> float:
-        return self._timeout
+        """Twice the deadline, because that is what can actually elapse.
+
+        `_fetch_url` bounds the transfer by a monotonic deadline, but the read
+        it is sitting in when the deadline passes is bounded only by the socket
+        timeout -- so a request admitted at deadline-minus-epsilon can still
+        block for one more socket operation, and `timeout` seconds is a bound
+        the code cannot keep.
+
+        Reporting the intended number rather than the true one would be the
+        same defect the metering exists to prevent: the admission check spends
+        this figure, so a figure that flatters the source lets one call overrun
+        the run's budget after being let through. Better to admit against what
+        can happen and let the source look expensive, because it is.
+
+        Tightening it instead would need one of two things Hardy does not have.
+        Re-arming the socket timeout per read reaches through `response.fp.raw`
+        to a private socket, and `http.client.HTTPResponse` offers no public
+        equivalent. A short per-read timeout is worse than useless here: the
+        public Loogle spends ~19s computing before it sends a first byte, so a
+        timeout small enough to tighten this bound would fail every ordinary
+        pattern query outright.
+        """
+        return 2 * self._timeout
 
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
         url = f"{self._endpoint}?{urlencode({'q': goal})}"

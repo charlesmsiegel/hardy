@@ -44,7 +44,15 @@ class RunLimits(FrozenModel):
     # refuses the next call rather than interrupting one in flight. Wall-clock
     # seconds across the whole run -- a remote index spends its CPU elsewhere,
     # and how long Hardy waits is the part Hardy can enforce.
-    retrieval_seconds: int = 300
+    #
+    # Sized against what a source may cost rather than what it usually costs,
+    # because admission is what spends this. A ranking worst-cases at Lean's
+    # 30s plus Loogle's 60 (see `LoogleSource.worst_case_seconds`), so 600
+    # guarantees six rounds where a typical round -- a few seconds of `#find`
+    # and ~19s of Loogle -- fits two dozen. It was 300 while Loogle's bound was
+    # believed to be 30s; correcting the bound without correcting this would
+    # have quietly halved how much retrieval a proving stage gets.
+    retrieval_seconds: int = 600
 
 
 class FormalizationProposal(FrozenModel):
