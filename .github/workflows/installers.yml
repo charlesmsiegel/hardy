@@ -88,8 +88,11 @@ jobs:
           test -x "$prefix/venv/bin/hardy" || { echo "no hardy in the environment" >&2; exit 1; }
           test -d "$prefix/installers/scripts" || { echo "the release installers were not unpacked" >&2; exit 1; }
           # A release install has no source tree and leaves no download behind.
+          # No lean project either, which is how this run knows --skip-mathlib
+          # arrived: without it the job would be an hour into a Mathlib build.
           test ! -e "$prefix/src" || { echo "a source tree was fetched; the release path was not taken" >&2; exit 1; }
           test ! -e "$prefix/download" || { echo "the download directory was left behind" >&2; exit 1; }
+          test ! -e "$prefix/lean" || { echo "--skip-mathlib did not take effect" >&2; exit 1; }
           # Installed as a wheel means the package lives in site-packages, not
           # in some tree on disk that a later `git pull` could move.
           "$prefix/venv/bin/python" - <<'PY'
@@ -213,8 +216,11 @@ jobs:
           foreach ($required in @('venv\Scripts\hardy.exe', 'bin\hardy.cmd', 'installers\scripts\install-windows.ps1')) {
             if (-not (Test-Path (Join-Path $prefix $required))) { throw "$required is missing" }
           }
-          # A release install fetches no source tree and leaves nothing half-done.
-          foreach ($forbidden in @('src', 'download', 'installers.new')) {
+          # A release install fetches no source tree and leaves nothing
+          # half-done. `lean` is also how this run knows the switches survived
+          # the hand-off: a copy that lost -SkipMathlib would be an hour into a
+          # multi-gigabyte Mathlib build instead of here.
+          foreach ($forbidden in @('src', 'download', 'installers.new', 'lean')) {
             if (Test-Path (Join-Path $prefix $forbidden)) { throw "$forbidden should not exist after a release install" }
           }
           $config = Join-Path $env:APPDATA 'hardy\config.toml'

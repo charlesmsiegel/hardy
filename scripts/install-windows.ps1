@@ -57,6 +57,12 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# Captured here, at script scope, because $PSBoundParameters inside a function
+# is that function's own — empty for one that takes no parameters. Handing over
+# to the release's installer with this lost would silently drop -Yes, and with
+# it -SkipMathlib, and start a multi-gigabyte Mathlib build nobody asked for.
+$ScriptParameters = $PSBoundParameters
+
 $RepoRoot = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { '' }
 $Venv = Join-Path $Prefix 'venv'
 $LeanProject = Join-Path $Prefix 'lean'
@@ -216,8 +222,8 @@ function Invoke-ReleaseInstaller {
 
     # Everything this copy was asked for, passed to the one that will do it.
     $forward = @()
-    foreach ($name in $PSBoundParameters.Keys) {
-        $value = $PSBoundParameters[$name]
+    foreach ($name in $ScriptParameters.Keys) {
+        $value = $ScriptParameters[$name]
         if ($value -is [System.Management.Automation.SwitchParameter]) {
             if ($value.IsPresent) { $forward += "-$name" }
         }
