@@ -371,9 +371,23 @@ honest partial result.
 
 The retained one-shot harness and its fake-process tests exercise this contract on
 a trivial theorem. The primary interactive shell additionally has fake-process
-coverage for linked Lean/LaTeX artifacts and assumption approval. What remains is
-an actual, recorded model + pinned Mathlib/LaTeX run on a nontrivial exploration,
-plus pinning toolchain identities rather than accepting caller-provided commands.
+coverage for linked Lean/LaTeX artifacts and assumption approval.
+
+`hardy batch` has since been run against a real Claude subscription and a real
+Mathlib, on a trivial theorem, and `tests/integration/test_batch_live.py` keeps
+that exercise repeatable behind `HARDY_LIVE=1`. All three terminal paths behaved:
+a real model chose `submit_proof` and reached `verified` with a kernel-checked
+`proof.lean` carrying its `#print axioms` line; a false statement was refused
+rather than graded; and a starved budget recorded `wall_clock_limit` rather than
+a provider error. Two things only a real run could show: the provider's turn
+count arrives with its final result, so a run the clock cancels has no count at
+all, and Hardy's wall clock cancels the exchange without killing a Lean check
+already running — so `elapsed_seconds` legitimately exceeds `wall_seconds`.
+
+What remains is an actual, recorded model + pinned Mathlib/LaTeX run on a
+nontrivial exploration, the same treatment for the staged `hardy prove` workflow
+and its document pipeline, plus pinning toolchain identities rather than
+accepting caller-provided commands.
 
 ## Staged proving, verification, and acceptance
 

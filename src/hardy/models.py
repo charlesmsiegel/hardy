@@ -80,7 +80,10 @@ class RunResult:
     # the whole Lean stdout blob under this name, which read as an axiom record
     # while containing nothing anyone had audited.
     axioms: dict[str, Any]
-    turns: int
+    # The provider's own turn count, or None when it never reported one -- which
+    # is what a run cancelled by the wall clock looks like. Not an int with a
+    # zero default: 0 claims a run that took no turns.
+    turns: int | None
     warnings: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:

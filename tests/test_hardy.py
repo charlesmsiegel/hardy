@@ -362,6 +362,29 @@ def test_running_out_of_wall_clock_is_not_a_provider_failure(proof_request: Requ
     assert result.terminal_reason == "wall_clock_limit"
 
 
+def test_a_provider_that_never_reported_a_count_leaves_the_turn_count_unknown(
+    proof_request: Request, lean: LeanTools, tmp_path: Path
+):
+    """The count belongs to the SDK's final result, which a cut-short run never gets.
+
+    Observed against a real subscription: with `--wall-seconds 5`, the record
+    said `"turns": 0` beside a trajectory holding a `tool_use` and a completed
+    `tool` event. Zero is a measurement, and that one was never taken.
+    """
+
+    class Stalling(FakeRuntime):
+        turns = None
+
+        def ask(self, text: str) -> str:
+            self.context["dispatch"]("inspect_goal", {})
+            raise TimeoutError("the run exceeded its 1s wall-clock budget")
+
+    result = run(proof_request, lambda model=None, **c: Stalling([], **c), lean, tmp_path, wall_seconds=1)
+    assert result.terminal_reason == "wall_clock_limit"
+    assert result.turns is None
+    assert json.loads((tmp_path / "result.json").read_text())["turns"] is None
+
+
 def test_a_proof_accepted_after_the_deadline_does_not_count(proof_request: Request, lean: LeanTools, tmp_path: Path):
     """Cancelling the exchange does not stop a Lean check already running, so a
     late success must not turn an expired run into a verified one."""
