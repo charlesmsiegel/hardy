@@ -147,7 +147,9 @@ Priority labels are sequencing hints:
 - **Now (implemented):** `hardy latency` measures the fixed import cost one Lean
   call pays — the imports elaborated with no proof body — and, given the call
   count and wall time of an observed run, reports the share a warm pool would
-  recover: `prelude × (calls − 1)`. It withholds the verdict rather than
+  recover: `prelude × (calls − workers)`, where `--workers` is the size of the
+  hypothetical pool and defaults to a single persistent process. It withholds
+  the verdict rather than
   guessing — with no observed run to compare against, when enough probes hit
   the deadline that the median falls among the censored ones, and when the
   prelude and the run contradict each other by describing more time than the

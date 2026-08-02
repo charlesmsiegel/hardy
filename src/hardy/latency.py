@@ -12,16 +12,23 @@ proof body, and a warm process still pays it in full. So the question "does
 latency warrant a pool" is not the wall time of a call, which conflates the two,
 but the share of a run that is prelude:
 
-    recoverable = prelude * (calls - 1)
+    recoverable = prelude * (calls - workers)
 
 `ProcessResult.duration_ms` already times whole calls, which is the conflated
 number. What was missing is the prelude on its own, and it is measured the only
 way that isolates it: elaborate a source that carries the imports and nothing
 else.
 
-The `calls - 1` is the part worth checking. A warm pool still pays the first
-import -- somebody has to -- so ten calls recover nine preludes. Crediting it
-with ten is the difference between a warranted pool and an imagined one.
+The `- workers` is the part worth checking. Every warm process pays its own
+first import -- somebody has to -- so ten calls against one persistent process
+recover nine preludes, and against a pool of four they recover six. Crediting a
+pool with all ten, or crediting a four-worker pool with nine, is the difference
+between a warranted pool and an imagined one. `workers` defaults to 1, the
+single persistent process, which is the cheapest thing #54 could mean.
+
+The estimate is sequential throughout: it says how much prelude time disappears,
+not how much wall clock a concurrent pool would save, which depends on a
+critical path this command does not observe.
 """
 
 from __future__ import annotations
@@ -37,7 +44,7 @@ from pathlib import Path
 from pydantic import NonNegativeInt
 
 from .domain import EnvironmentIdentity, FrozenModel
-from .lean import Elaboration, elaborate
+from .lean import DECLARATION_NAME, Elaboration, elaborate
 from .process import ProcessResult, ProcessSpec, run_process
 
 # How many probes a measurement takes when the caller does not say. The first
@@ -167,7 +174,17 @@ def import_probe(imports: tuple[str, ...]) -> str:
     Deliberately not `doctor.MATHLIB_PROBE`, which closes `2 + 2 = 4`: that
     probe answers "is Mathlib usable", and its `norm_num` would be timed as if
     it were part of the fixed cost.
+
+    Each name must be a module name, checked against the workspace scanner's
+    own grammar rather than a new one. These values are interpolated straight
+    into Lean source, so a name carrying a newline appends whatever follows it
+    -- `Mathlib\\n#eval expensiveThing` elaborates that expression and has its
+    cost reported as import time, which is the one number this command exists
+    to state honestly.
     """
+    for name in imports:
+        if not DECLARATION_NAME.fullmatch(name):
+            raise ValueError(f"not a Lean module name: {name!r}")
     return "".join(f"import {name}\n" for name in imports)
 
 
@@ -183,6 +200,12 @@ class WarmPoolEstimate(FrozenModel):
     # probe can describe the same calls. Defaults to `import_ms`, so an
     # estimate built from a bare number behaves as before.
     floor_ms: NonNegativeInt | None = None
+    # How many warm processes the hypothetical pool would hold. #54 asks for a
+    # *pool*, and a pool of N pays the prelude N times, not once: ten calls
+    # across four workers avoid six imports, not nine. Defaulting to 1 keeps
+    # the single-persistent-process reading, which is the cheapest thing to
+    # build and the one the estimate originally assumed without saying so.
+    workers: int = 1
     # How far apart the probes fell (slowest minus fastest). The fastest of a
     # handful of samples is not a physical lower bound -- a real call can beat
     # it -- so the observed spread stands in for that uncertainty rather than a
@@ -194,6 +217,12 @@ class WarmPoolEstimate(FrozenModel):
     def recoverable_ms(self) -> int:
         """Prelude time a pool would not have paid.
 
+        `calls - workers`, because every worker in the pool pays its own first
+        import. At one worker that is the familiar `calls - 1`; at four, ten
+        calls avoid six imports rather than nine, and a model that always
+        subtracted one would credit a four-worker pool with three imports
+        nobody avoids.
+
         Deliberately uncapped. Clamping this to `total_ms` was worse than the
         arithmetic it hid: inputs that contradict each other -- a prelude
         measured against Mathlib set beside a run whose calls mostly imported
@@ -202,7 +231,7 @@ class WarmPoolEstimate(FrozenModel):
         available. `is_consistent` detects that instead, and the report
         refuses rather than rounding a contradiction into evidence.
         """
-        return max(0, self.calls - 1) * self.import_ms
+        return max(0, self.calls - self.workers) * self.import_ms
 
     @property
     def observed_prelude_ms(self) -> int:
@@ -347,7 +376,7 @@ class ImportCost(FrozenModel):
             return None
         return int(statistics.mean(observed[position] for position in middle))
 
-    def estimate(self, *, calls: int, total_ms: int) -> WarmPoolEstimate:
+    def estimate(self, *, calls: int, total_ms: int, workers: int = 1) -> WarmPoolEstimate:
         median = self.median_ms
         if median is None:
             raise ValueError(
@@ -362,6 +391,7 @@ class ImportCost(FrozenModel):
             # read as a mismatch.
             floor_ms=min(self.samples_ms),
             spread_ms=max(self.samples_ms) - min(self.samples_ms),
+            workers=workers,
         )
 
 
@@ -443,6 +473,7 @@ def describe(
     calls: int | None = None,
     total_ms: int | None = None,
     threshold: float = DEFAULT_THRESHOLD,
+    workers: int = 1,
 ) -> list[str]:
     """Render a measurement, and a verdict only when one was asked for.
 
@@ -545,7 +576,7 @@ def describe(
             "a warm pool recovers the prelude on every call after the first."
         )
         return lines
-    estimate = cost.estimate(calls=calls, total_ms=total_ms)
+    estimate = cost.estimate(calls=calls, total_ms=total_ms, workers=workers)
     lines.append("")
     lines.append(f"observed run: {calls} Lean call(s) in {total_ms / 1000:.2f}s")
     # The one assumption the tool cannot check. `--calls` is taken to count
@@ -589,9 +620,13 @@ def describe(
     # Both percentages share one precision, chosen so the printed share never
     # reads as meeting a threshold the verdict below says it missed.
     places = _decimal_places(estimate.recoverable_fraction, threshold)
+    pool = (
+        "a single warm process" if workers == 1 else f"a warm pool of {workers} workers"
+    )
     lines.append(
-        f"a warm pool would recover {estimate.recoverable_ms / 1000:.2f}s "
-        f"({estimate.recoverable_fraction:.{places}%} of the run)"
+        f"{pool} would recover {estimate.recoverable_ms / 1000:.2f}s "
+        f"({estimate.recoverable_fraction:.{places}%} of the run), sequentially — "
+        f"{calls} calls minus {workers} first import(s)"
     )
     warranted = estimate.warrants_warm_pool(threshold=threshold)
     verdict = "warranted" if warranted else "not warranted"
@@ -601,10 +636,19 @@ def describe(
     # precision -- and then the report shows two equal numbers above a verdict
     # that distinguishes them. An explicit `>=` or `<` cannot contradict.
     relation = ">=" if warranted else "<"
-    lines.append(
-        f"{estimate.recoverable_fraction:.{places}%} {relation} "
-        f"{threshold:.{places}%} threshold: {verdict}"
-    )
+    shown = f"{estimate.recoverable_fraction:.{places}%}"
+    limit = f"{threshold:.{places}%}"
+    if shown == limit:
+        # Beyond the precision cap the two operands render identically, and
+        # `24.960000% < 24.960000%` is false as printed however right the
+        # relation is. One operand is dropped rather than repeated as its own
+        # contradiction.
+        lines.append(
+            f"{shown} is {'at or above' if warranted else 'below'} the threshold "
+            f"(they differ by less than the digits shown): {verdict}"
+        )
+    else:
+        lines.append(f"{shown} {relation} {limit} threshold: {verdict}")
     return lines
 
 
@@ -614,6 +658,7 @@ def report(
     calls: int | None = None,
     total_ms: int | None = None,
     threshold: float = DEFAULT_THRESHOLD,
+    workers: int = 1,
 ) -> int:
     """Print the measurement; exit nonzero when it could not answer.
 
@@ -622,10 +667,13 @@ def report(
     a real verdict were the same outcome, which is precisely the confusion this
     command exists to prevent.
     """
-    for line in describe(cost, calls=calls, total_ms=total_ms, threshold=threshold):
+    for line in describe(
+        cost, calls=calls, total_ms=total_ms, threshold=threshold, workers=workers
+    ):
         print(line)
     if cost.median_ms is None:
         return 1
     if calls is not None and total_ms is not None:
-        return 0 if cost.estimate(calls=calls, total_ms=total_ms).is_consistent else 1
+        estimate = cost.estimate(calls=calls, total_ms=total_ms, workers=workers)
+        return 0 if estimate.is_consistent else 1
     return 0

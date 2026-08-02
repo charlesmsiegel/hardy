@@ -655,6 +655,15 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     if args.repeats < 1:
         print("--repeats must be at least 1")
         return 2
+    if args.workers < 1:
+        print("--workers must be at least 1")
+        return 2
+    # Both or neither. One alone produced a report that asked for the other and
+    # still exited 0, so a script could not tell an unanswered verdict from a
+    # real one -- and it asked only after paying for every probe.
+    if (args.calls is None) != (args.total_seconds is None):
+        print("--calls and --total-seconds are given together or not at all")
+        return 2
     project = config.lean_project if config.lean_project is not None else Path.cwd()
     # A deleted project makes `Popen` raise `FileNotFoundError` for the working
     # directory, which would otherwise be reported as a missing Lean; a project
@@ -700,7 +709,11 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
         print(str(error))
         return 2
     return latency.report(
-        cost, calls=args.calls, total_ms=total_ms, threshold=args.threshold
+        cost,
+        calls=args.calls,
+        total_ms=total_ms,
+        threshold=args.threshold,
+        workers=args.workers,
     )
 
 
@@ -731,6 +744,9 @@ def build_parser() -> argparse.ArgumentParser:
     measure.add_argument("--repeats", type=int, default=latency.DEFAULT_REPEATS, help=f"probes to time (default {latency.DEFAULT_REPEATS})")
     measure.add_argument("--calls", type=int, help="Lean calls in an observed run that imported the probed set, for a verdict")
     measure.add_argument("--total-seconds", type=float, help="wall time of that observed run, for a verdict")
+    # A pool of N pays the prelude N times, not once: #54 asks for a pool of
+    # workers, and the estimate credited exactly one first import regardless.
+    measure.add_argument("--workers", type=int, default=1, help="warm processes the hypothetical pool would hold (default 1)")
     measure.add_argument("--threshold", type=float, default=latency.DEFAULT_THRESHOLD, help=f"recoverable share that warrants a pool (default {latency.DEFAULT_THRESHOLD})")
     # Its own bound rather than `lean_timeout`: the probe exists because a
     # Mathlib import is slow, and the ordinary 30s check timeout would kill
