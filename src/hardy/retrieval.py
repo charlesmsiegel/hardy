@@ -41,6 +41,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 from typing import Literal, Protocol
@@ -81,6 +82,17 @@ RANKER = "reciprocal-rank-fusion/1"
 # How many candidates each source is asked for, per premise the answer holds.
 # Fusion needs to see past the cutoff to find agreement there; see `rank`.
 CANDIDATE_DEPTH = 3
+# And never fewer than this, because the multiplier alone cannot fix a short
+# answer. A premise two sources both rank at `r` scores 2/(RRF_K + r), which
+# beats the best a single source can offer -- 1/(RRF_K + 1) -- for every r up
+# to RRF_K. So looking RRF_K + 1 deep is exactly sufficient for two sources,
+# and at r = RRF_K + 2 the shared premise genuinely has lost.
+FUSION_DEPTH_FLOOR = RRF_K + 1
+
+# HTTP statuses that mean the service is unwell rather than that Hardy asked it
+# the wrong thing. Everything else in 4xx says the request was refused on its
+# merits, which is the endpoint's contract having moved.
+TRANSIENT_STATUSES = frozenset({408, 429})
 
 SourceKind = Literal["lean_search", "loogle", "embedding"]
 
@@ -231,6 +243,13 @@ class PremiseRanking(FrozenModel):
         """
         if self.provenance_sha256 != self.provenance.digest:
             raise ValueError("provenance_sha256 does not match the provenance it names")
+        # The provenance hashes the goal, so the goal beside it must be that
+        # goal. Unchecked, a ranking read back with a swapped `goal` passed
+        # every integrity check here while offering its premises as answers to
+        # a question nobody asked -- the one substitution all of this exists to
+        # make impossible.
+        if hashlib.sha256(self.goal.encode("utf-8")).hexdigest() != self.provenance.goal_sha256:
+            raise ValueError("goal does not hash to the goal_sha256 its provenance records")
         if self.complete != self._complete(self.provenance):
             raise ValueError("`complete` disagrees with the sources the provenance names")
         if self.reproducible != self._reproducible(self.provenance):
@@ -392,7 +411,22 @@ def _fetch_url(url: str, timeout: float) -> bytes:
     """
     deadline = time.monotonic() + timeout
     request = urllib.request.Request(url, headers={"User-Agent": "Hardy/0.1"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed https endpoint
+    try:
+        opened = urllib.request.urlopen(request, timeout=timeout)  # noqa: S310 - fixed https endpoint
+    except urllib.error.HTTPError as error:
+        # A refused request and an unwell service are different findings. 5xx,
+        # 408 and 429 say the service is having a bad day; the rest of 4xx says
+        # this request was wrong, which is the endpoint's contract having moved
+        # -- and that is precisely what the live test must fail on rather than
+        # skip past.
+        if error.code >= 500 or error.code in TRANSIENT_STATUSES:
+            raise RetrievalTransportError(
+                f"Loogle is unavailable: HTTP {error.code} {error.reason}"
+            ) from error
+        raise RetrievalError(
+            f"Loogle rejected the request with HTTP {error.code} {error.reason}"
+        ) from error
+    with opened as response:
         chunks: list[bytes] = []
         received = 0
         # One byte past the limit, so an oversized body is detected rather than
@@ -475,11 +509,17 @@ class PremiseRetriever:
         if not 1 <= limit <= 50:
             raise ValueError("a premise ranking holds between 1 and 50 premises")
 
-        # Deeper than the answer is long. A premise both sources rank just past
-        # the cutoff outscores one that only a single source found -- 2/(60+11)
-        # beats 1/(60+1) -- so truncating each source at `limit` before fusing
-        # would throw away exactly the agreement the fusion exists to find.
-        depth = min(limit * CANDIDATE_DEPTH, MAX_HITS)
+        # Deeper than the answer is long, and never shallower than the floor.
+        # A premise both sources rank past the cutoff outscores one that only a
+        # single source found, so truncating each source at `limit` before
+        # fusing would throw away exactly the agreement the fusion exists to
+        # find -- and for a short answer the multiplier is no better, which is
+        # what `FUSION_DEPTH_FLOOR` is derived to fix. Costless in requests:
+        # each source is asked once either way and only the parsing goes
+        # deeper. `LeanSearchSource` still clamps to the 20 that
+        # `search_declarations` accepts, so its half of the fusion stays
+        # partial by that limit rather than by this one.
+        depth = min(max(limit * CANDIDATE_DEPTH, FUSION_DEPTH_FLOOR), MAX_HITS)
         started = self._clock()
         spent = 0.0
         exhausted = False
