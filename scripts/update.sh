@@ -192,6 +192,10 @@ install_into_environment() {
 	fi
 }
 
+# Which of the two the call above is about to run. Not the installer's answer:
+# that one asks what created the environment, and this one asks what is here.
+update_installer() { if have uv; then printf uv; else printf pip; fi; }
+
 
 # The step that matters for an editable install. The code is already current;
 # this is what turns a newly declared dependency into an installed one.
@@ -218,7 +222,7 @@ update_from_release() {
 	# the wheel's name is the whole answer to whether there is anything to do.
 	# Changing repositories is the exception, and reinstall_arguments says so.
 	local reinstall
-	reinstall="$(reinstall_arguments)"
+	reinstall="$(reinstall_arguments "$(update_installer)")"
 	# shellcheck disable=SC2086  # deliberately unquoted: empty means no flag
 	install_into_environment --upgrade $reinstall "$wheel" ||
 		fail "could not install $(basename "$wheel") into $VENV"
