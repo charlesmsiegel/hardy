@@ -158,7 +158,37 @@ def machine_identity() -> str:
     -- opposite verdicts from provenance that looks identical. For a report
     whose entire content is a duration, the host is not context but data.
     """
-    return f"{platform.platform()} {platform.machine()} x{os.cpu_count() or '?'}"
+    return (
+        f"{platform.platform()} {platform.machine()} "
+        f"x{os.cpu_count() or '?'} [{cpu_model()}]"
+    )
+
+
+def cpu_model() -> str:
+    """The processor's own name for itself, or an honest admission.
+
+    Two hosts can share an OS, kernel, architecture and logical CPU count and
+    still be a decade apart in single-core speed, which is enough to reverse
+    the verdict. `platform.processor()` is not the answer on its own: on Linux
+    it returns `x86_64` -- the same string as `platform.machine()` -- so it
+    adds nothing exactly where it is most needed.
+
+    Linux keeps the real name in `/proc/cpuinfo`. Where neither source gives
+    something distinguishable, including macOS (whose brand string lives behind
+    a `sysctl` call this is not worth spawning a process for), the report says
+    the model is unrecorded rather than repeating the architecture as if it
+    were one.
+    """
+    reported = platform.processor()
+    if reported and reported != platform.machine():
+        return reported
+    try:
+        for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    except (OSError, IndexError):
+        pass
+    return "cpu model unrecorded"
 
 
 def _first_complaint(elaboration: Elaboration) -> str | None:
