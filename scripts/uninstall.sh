@@ -170,7 +170,9 @@ hardy_uninstall_main() {
 	# What a release install leaves behind instead of a source tree: the
 	# installer scripts it was run from, and any half-finished download.
 	drop "the fetched installers" "$HARDY_HOME/installers"
+	drop "the installers an update displaced" "$HARDY_HOME/installers.previous"
 	drop "an interrupted download" "$HARDY_HOME/download"
+	drop "an interrupted installer refresh" "$HARDY_HOME/installers.new"
 	remove_path_entries
 
 	if wanted "$REMOVE_LEAN_PROJECT" "Remove the Lean project at $LEAN_PROJECT ($(human_size "$LEAN_PROJECT"))? Rebuilding it is a multi-gigabyte download." "$LEAN_PROJECT"; then

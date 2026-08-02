@@ -188,13 +188,18 @@ the environment, Lean project, config file, and verification step are shared.
 Installing Hardy means putting a released wheel into a virtual environment, not
 obtaining a copy of the repository. A tagged release publishes the wheel beside
 a `SHA256SUMS` manifest and a bundle of the installer scripts themselves, so a
-machine holding nothing but one downloaded script can fetch the rest of the
-installer and then the wheel, and refuses anything whose digest the release does
-not vouch for. The scripts and the wheel come from the same release, which is
-why the bundle exists at all: installers taken from `main` against a wheel from
-a release are two versions that need not agree. A clone is still the developer's
-path — run from one, the installers install that tree editable — and remains the
-fallback for a fork or a branch, which have no release to download.
+machine holding nothing but one downloaded script fetches the rest of the
+installer, hands over to it, and it fetches the wheel — refusing anything whose
+digest the release does not vouch for, installers included, since those are code
+about to run as the user. The scripts and the wheel come from the same release,
+which is why the bundle exists at all: installers taken from `main` against a
+wheel from a release are two versions that need not agree, and the same reason
+makes the updater replace the retained scripts alongside the wheel. Published
+assets are never rewritten, so a version number is a complete answer to what is
+installed. A clone is still the developer's path — run from one, the installers
+install that tree editable — and remains the fallback for a fork or a branch,
+which have no release to download. Naming a release and failing to get it is an
+error rather than an invitation to install a branch instead.
 
 Three installers tested only by hand are three installers that are usually
 broken, and the Windows one shipped once without ever having been executed. Each
