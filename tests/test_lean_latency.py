@@ -679,7 +679,15 @@ def test_a_fractional_deadline_survives_the_report():
     Rounding rendered `--timeout 0.4` as "deadline 0s" and `1.5` as "2s",
     misstating both the configuration and the bound it implies.
     """
-    for seconds, shown in ((0.4, "deadline 0.4s"), (1.5, "deadline 1.5s"), (300.0, "deadline 300s")):
+    # Six significant digits is not enough either: `:g` rendered 123456.789
+    # as "123457", losing 0.211s of a bound that is a censored sample's
+    # entire content.
+    for seconds, shown in (
+        (0.4, "deadline 0.4s"),
+        (1.5, "deadline 1.5s"),
+        (300.0, "deadline 300.0s"),
+        (123456.789, "deadline 123456.789s"),
+    ):
         cost = ImportCost(imports=("Mathlib",), samples_ms=(1,), timeout_seconds=seconds)
         assert shown in "\n".join(describe(cost))
 
@@ -1023,7 +1031,7 @@ def test_the_deadline_travels_with_a_censored_measurement(tmp_path: Path):
         timeout_seconds=300, repeats=1, runner=runner_for([12_000]),
     )
     assert cost.timeout_seconds == 300
-    assert "deadline 300s" in "\n".join(describe(cost))
+    assert "deadline 300.0s" in "\n".join(describe(cost))
 
 
 def test_too_few_probes_withholds_the_verdict_rather_than_footnoting_it():

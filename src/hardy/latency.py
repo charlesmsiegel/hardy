@@ -634,11 +634,15 @@ def describe(
         )
     lines.append(f"machine: {cost.machine or '(unrecorded)'}")
     lines.append(f"import set: {imports}")
-    # `:g`, not `:.0f`: the deadline is a censored sample's entire lower bound,
-    # and rounding it rendered `--timeout 0.4` as "deadline 0s" and `1.5` as
-    # "2s" -- misreporting both the configuration and the bound it implies.
+    # `repr`, not `:.0f` and not `:g`. The deadline is a censored sample's
+    # entire lower bound, so a rounded one misreports both the configuration
+    # and the bound it implies: `:.0f` rendered `--timeout 0.4` as "0s", and
+    # `:g` -- brought in to fix that -- still caps at six significant digits
+    # and renders `123456.789` as "123457". `repr` of a float is the shortest
+    # string that reads back as the same value, which is what a recorded
+    # configuration has to be.
     deadline = (
-        "" if cost.timeout_seconds is None else f" (deadline {cost.timeout_seconds:g}s)"
+        "" if cost.timeout_seconds is None else f" (deadline {cost.timeout_seconds!r}s)"
     )
     lines.append(
         f"probes: {len(cost.samples_ms)} ok, {cost.timeouts} timed out, "
