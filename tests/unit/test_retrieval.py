@@ -216,6 +216,27 @@ def test_a_source_failing_in_a_way_nobody_predicted_does_not_take_the_ranking_wi
     assert 'not executable' in (broken.detail or '')
 
 
+def test_the_declared_worst_case_covers_the_read_the_deadline_cannot_stop() -> None:
+    """The admission check spends this number, so it has to be the true bound.
+
+    A request admitted just before its deadline can still sit in one more
+    socket read, which the socket timeout bounds and the deadline does not.
+    Declaring the intended figure would let one call overrun the run's budget
+    after passing the very check that exists to stop it.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    source = retrieval.LoogleSource(timeout=30.0, fetch=lambda url, timeout: b'{"hits": []}')
+
+    assert source.worst_case_seconds == 60.0
+    # And it is the deadline, not the doubled figure, that is handed to fetch.
+    seen: list[float] = []
+    retrieval.LoogleSource(
+        timeout=30.0, fetch=lambda url, timeout: (seen.append(timeout), b'{"hits": []}')[1]
+    ).search('x', 5)
+    assert seen == [30.0]
+
+
 def test_a_response_that_never_stops_arriving_is_cut_off_at_its_deadline(monkeypatch) -> None:
     """`urlopen(timeout=...)` bounds each socket operation, not the transfer. A
     server dripping a byte at a time keeps `read` alive forever, which made the
@@ -553,7 +574,10 @@ def test_the_goal_is_sent_to_loogle_as_a_query_parameter() -> None:
     source.search('_ + _ = _ + _', 10)
 
     assert seen == [('https://example.invalid/json?q=_+%2B+_+%3D+_+%2B+_', 7.0)]
-    assert source.worst_case_seconds == 7.0
+    # Twice the deadline: the read in flight when the deadline passes is
+    # bounded by the socket timeout, not by the deadline, and the budget is
+    # admitted against what can happen rather than what was intended.
+    assert source.worst_case_seconds == 14.0
 
 
 def test_a_transport_failure_becomes_an_outcome_rather_than_an_escaping_exception() -> None:
