@@ -396,6 +396,7 @@ class MathematicsSession:
         if self._search_path is not None:
             return self._search_path
         found: list[Path] = []
+        stopped = False
         command = self._lean_command
         # Only Lake can be asked this. Any other command -- a bare `lean`, or a
         # stand-in under test -- would be handed arguments it does not
@@ -422,6 +423,7 @@ class MathematicsSession:
                     timeout=60,
                 )
                 out = probe.stdout
+                stopped = probe.interrupted or probe.timed_out
                 # A probe that was stopped has no answer: reading its partial
                 # output would silently narrow `LEAN_PATH` and stamp every
                 # external import `missing`.
@@ -431,6 +433,16 @@ class MathematicsSession:
                 found = []
         if not found:
             found = [Path(part) for part in os.environ.get("LEAN_PATH", "").split(os.pathsep) if part]
+        if stopped:
+            # Answered by nobody: the probe was interrupted, so `found` is the
+            # inherited `LEAN_PATH` fallback rather than Lake's computed one.
+            # Caching that would be durable damage rather than a slow turn --
+            # a configured project's package paths would be missing, every
+            # external import would stamp `missing`, and once those signatures
+            # are committed a rebuilt dependency no longer invalidates the
+            # build. Returned for this call and not remembered, so the next
+            # turn asks Lake again.
+            return tuple(found)
         self._search_path = tuple(found)
         return self._search_path
 

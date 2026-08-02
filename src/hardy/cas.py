@@ -1647,6 +1647,23 @@ class CasSession:
             started = time.monotonic()
             outcome = self._send(record.source, self._cell_seconds())
             self.charge(time.monotonic() - started)
+            # A replay Hardy signalled establishes nothing about the log, and
+            # an `ok` is the dangerous case rather than the safe one: a cell
+            # that caught the signal can skip a mutation and still print what
+            # it printed before, so `reproduces` would pass over a namespace
+            # that differs -- and every later cell would be built on it.
+            #
+            # Left retryable rather than poisoned. Poisoning says the accepted
+            # cells no longer describe a state that can be rebuilt, and nothing
+            # here has shown that: the user simply stopped the rebuild. The
+            # kernel is dropped, so the next cell tries again.
+            if outcome.signalled or outcome.status == "interrupted":
+                self._drop_kernel()
+                raise CasError(
+                    "the CAS rebuild was interrupted before it finished. Nothing is "
+                    "lost -- the saved cells are intact, and the next cell rebuilds "
+                    "from them again."
+                )
             if outcome.status != "ok":
                 self._drop_kernel()
                 self.state = "poisoned"

@@ -188,7 +188,11 @@ Priority labels are sequencing hints:
   basis every turn is not affordable.
 - **Now (implemented):** a rebuild after a kernel death compares every replayed
   cell against its record and poisons the session on divergence. Running
-  without error is not the same as recovering.
+  without error is not the same as recovering. A replay Hardy signalled is
+  refused whatever it answered -- an `ok` most of all, since a cell that caught
+  the stop can skip a mutation and still print what it printed before -- and
+  the session is left retryable rather than poisoned, because a press says
+  nothing about whether the log still describes a reachable state.
 - **Now (implemented):** export writes a backend-native script and an `.ipynb`,
   replays the cells in a fresh kernel, compares stdout, stderr, and value repr,
   and records a per-cell verdict in both artifacts plus an `export.json` naming

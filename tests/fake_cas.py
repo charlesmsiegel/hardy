@@ -104,6 +104,28 @@ def answer(source: str) -> dict:
         with contextlib.suppress(KeyboardInterrupt):
             time.sleep(120)
         return {"status": "ok", "stdout": "", "stderr": "", "value_repr": "swallowed"}
+    if _matches(word, "catcher"):
+        # `swallow`, but only from its second process onwards. A cell has to be
+        # accepted before a rebuild will replay it, and a cell that blocks
+        # until pressed cannot be accepted -- so the first run answers at once
+        # and leaves its marker behind, and every later run finds the marker,
+        # announces itself under a name of its own, and waits to be signalled.
+        # The answer is the same either way, which is the whole point: the
+        # replay reproduces the recorded output while the namespace it was
+        # supposed to rebuild took a different path.
+        _, _, raw = word.partition(" ")
+        marker = pathlib.Path(raw.strip())
+        if marker.exists():
+            with contextlib.suppress(KeyboardInterrupt):
+                # Inside the suppression, so a press landing between the
+                # announcement and the sleep is caught like any other.
+                marker.with_name(marker.name + ".replay").write_text(
+                    "ready", encoding="utf-8"
+                )
+                time.sleep(120)
+        else:
+            marker.write_text("ready", encoding="utf-8")
+        return {"status": "ok", "stdout": "", "stderr": "", "value_repr": "caught"}
     if word == "slow":
         # Long enough to be measurable against a budget, short enough that a
         # test replaying it a few times still finishes quickly. Falls through

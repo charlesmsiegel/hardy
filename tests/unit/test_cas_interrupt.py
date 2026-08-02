@@ -13,7 +13,9 @@ from __future__ import annotations
 import threading
 import time
 
-from hardy.cas import CasSession
+import pytest
+
+from hardy.cas import CasError, CasSession
 
 
 def _press_when_running(session: CasSession, ready, expect_in_flight: bool = True) -> None:
@@ -405,5 +407,71 @@ def test_escalating_does_not_block_the_caller_on_a_deaf_kernel(cas_session, tmp_
         # SIGKILL cannot be caught, so this is the cost of reaping a child --
         # not the two seconds a SIGTERM-first teardown spends being polite.
         assert spent[0] < 1.0
+    finally:
+        session.close()
+
+
+def test_an_interrupted_rebuild_is_retryable_rather_than_poisoned(cas_session, tmp_path) -> None:
+    """Esc during a rebuild says nothing about the log.
+
+    Poisoning means the accepted cells no longer describe a state that can be
+    reconstructed, and refuses every later cell until a reset. A press has not
+    shown that -- the user simply stopped the replay -- so the session stays
+    retryable and the next cell rebuilds again.
+    """
+    session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
+    try:
+        session.execute("a")
+        session.execute("b")
+        # Kill the kernel so the next cell has to rebuild from the accepted log.
+        session._drop_kernel()
+        assert session.state == "dead"
+
+        # A press lands while the rebuild is replaying. Pressed with nothing in
+        # flight, it is held and spent on the first cell the replay sends.
+        session.interrupt()
+        with pytest.raises(CasError, match="rebuild was interrupted"):
+            session.execute("c")
+        assert session.state != "poisoned", "a press poisoned a log that never diverged"
+
+        # And the rebuild really is retryable.
+        session.resume()
+        record = session.execute("c")
+        assert record.status == "ok"
+        assert [item.source for item in session.accepted()] == ["a", "b", "c"]
+    finally:
+        session.close()
+
+
+def test_a_signalled_replay_never_counts_as_reproducing(cas_session, tmp_path) -> None:
+    """A cell that catches the signal can skip a mutation and still print what
+    it printed before, so `reproduces` would pass over a namespace that
+    differs -- and every later cell would be built on it."""
+    session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
+    try:
+        marker = tmp_path / "cell-ran"
+        source = f"catcher {marker}"
+        record = session.execute(source)
+        # It answered normally with nobody pressing anything, so it is in the
+        # accepted log -- which is what a rebuild replays.
+        assert record.accepted is True
+        assert [item.source for item in session.accepted()] == [source]
+
+        session._drop_kernel()
+        # The replay announces itself under a name of its own, so the press
+        # lands on the replayed cell rather than on the run already recorded.
+        threading.Thread(
+            target=_press_when_running,
+            args=(session, tmp_path / "cell-ran.replay"),
+            daemon=True,
+        ).start()
+
+        with pytest.raises(CasError, match="rebuild was interrupted"):
+            session.execute("b")
+        # The replay printed exactly what the record says, and it still does
+        # not count: it was signalled, so the namespace it left behind is not
+        # the one the log describes.
+        assert session.state == "dead"
+        assert [item.source for item in session.accepted()] == [source]
     finally:
         session.close()
