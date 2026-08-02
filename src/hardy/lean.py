@@ -482,6 +482,17 @@ class LeanService:
         """
         return self._environment
 
+    @property
+    def lean_project(self) -> Path:
+        """The Lake project every answer here is elaborated in.
+
+        Public alongside `environment` because the project holds the
+        `lean-toolchain` pin, and that file is the only local evidence of which
+        compiler actually runs -- which premise retrieval needs before it can
+        call a ranking replayable.
+        """
+        return self._lean_project
+
     def check_proof(self, claim: FrozenClaim, proof_body: str) -> LeanCheckResult:
         return self._check_source(render_theorem(claim, proof_body))
 
