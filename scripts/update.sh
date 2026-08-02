@@ -6,9 +6,12 @@
 #   scripts/update.sh --mathlib          # and refresh Mathlib
 #   scripts/update.sh --toolchain        # and update elan's Lean toolchains
 #
-# The install is editable, so new *code* is live the moment the source tree
-# moves. New *dependencies* are not, which is the whole reason this exists: a
-# release that adds one is otherwise a working checkout and a broken command.
+# There are two kinds of installation and this updates either. An install made
+# from the published release has no source tree: it fetches the newest released
+# wheel and puts it in the virtual environment. An install made from a clone is
+# editable, so new *code* is live the moment the tree moves; new *dependencies*
+# are not, which is the whole reason that path exists — a release that adds one
+# is otherwise a working checkout and a broken command.
 #
 # Mathlib is left alone unless asked for. It is a multi-gigabyte rebuild and
 # almost never what someone updating Hardy itself is after.
@@ -41,22 +44,28 @@ esac
 UPDATE_MATHLIB=0
 UPDATE_TOOLCHAIN=0
 SOURCE_TREE=""
+UPDATE_FROM=""
 
 usage() {
 	cat <<EOF
 Usage: $0 [options]
 
-Updates Hardy in place: pulls the source tree, reinstalls it so that any new
-dependency is picked up, and runs \`hardy doctor\`.
+Updates Hardy in place and runs \`hardy doctor\`. An install made from the
+published release moves to the newest release; one made from a clone has its
+tree pulled and reinstalled, so that a newly declared dependency is picked up.
 
 Options:
   --yes, -y        non-interactive; accept every step
   --mathlib        also run lake update, cache get, and build in $LEAN_PROJECT
   --toolchain      also run elan self update and elan update
   --source DIR     the Hardy source tree to pull (default: wherever the
-                   installed environment says its code lives)
+                   installed environment says its code lives; an install from
+                   a release has none, and is updated from the release)
   --prefix DIR     where Hardy is installed (default $HARDY_HOME)
   -h, --help       show this message
+
+Environment: HARDY_VERSION selects a release tag to move to instead of the
+current one.
 EOF
 }
 
@@ -98,15 +107,22 @@ discover_source_tree() {
 	printf '%s\n' "$found"
 }
 
-resolve_source_tree() {
+# Which of the two installations this is. An editable install resolves back to
+# a source tree; a release install does not, and that absence is the answer
+# rather than a fault to report.
+resolve_update_source() {
 	if [ -n "$SOURCE_TREE" ]; then
 		[ -f "$SOURCE_TREE/pyproject.toml" ] || fail "$SOURCE_TREE does not look like the Hardy repository"
+		UPDATE_FROM=source
 		return 0
 	fi
 	[ -x "$VENV/bin/python" ] ||
 		fail "no Hardy installation at $HARDY_HOME; run scripts/install.sh first, or pass --source"
-	SOURCE_TREE="$(discover_source_tree)" ||
-		fail "the environment at $VENV does not point at a source tree; pass --source DIR"
+	if SOURCE_TREE="$(discover_source_tree)"; then
+		UPDATE_FROM=source
+	else
+		UPDATE_FROM=release
+	fi
 }
 
 update_source() {
@@ -134,19 +150,37 @@ update_source() {
 	fi
 }
 
-# The step that matters. The code is editable and therefore already current;
+# The environment may have been created by uv, which leaves no pip inside it,
+# so prefer uv wherever it is on the machine — as the installer did.
+install_into_environment() {
+	if have uv; then
+		uv pip install --python "$VENV/bin/python" "$@"
+	else
+		"$VENV/bin/python" -m pip install --upgrade pip >/dev/null 2>&1 || true
+		"$VENV/bin/python" -m pip install "$@"
+	fi
+}
+
+# The step that matters for an editable install. The code is already current;
 # this is what turns a newly declared dependency into an installed one.
 update_environment() {
 	step "Reinstalling dependencies into $VENV"
-	if have uv; then
-		uv pip install --python "$VENV/bin/python" -e "$SOURCE_TREE" ||
-			fail "could not reinstall Hardy into $VENV"
-	else
-		"$VENV/bin/python" -m pip install --upgrade pip >/dev/null 2>&1 || true
-		"$VENV/bin/python" -m pip install -e "$SOURCE_TREE" ||
-			fail "could not reinstall Hardy into $VENV"
-	fi
+	install_into_environment -e "$SOURCE_TREE" || fail "could not reinstall Hardy into $VENV"
 	say "dependencies are current"
+}
+
+# There is no source tree to pull here: the wheel named by the release manifest
+# is both the new code and the new dependency list.
+update_from_release() {
+	local wheel directory="$HARDY_HOME/download"
+	step "Updating Hardy from $(release_base_url)"
+	rm -rf "$directory"
+	wheel="$(download_release_asset .whl "$directory")"
+	say "verified $(basename "$wheel") against the release manifest"
+	install_into_environment --upgrade "$wheel" ||
+		fail "could not install $(basename "$wheel") into $VENV"
+	say "installed $(basename "$wheel")"
+	rm -rf "$directory"
 }
 
 update_toolchain() {
@@ -189,9 +223,13 @@ verify_update() {
 
 hardy_update_main() {
 	parse_update_arguments "$@"
-	resolve_source_tree
-	update_source
-	update_environment
+	resolve_update_source
+	if [ "$UPDATE_FROM" = release ]; then
+		update_from_release
+	else
+		update_source
+		update_environment
+	fi
 	update_toolchain
 	update_mathlib
 	verify_update

@@ -21,6 +21,15 @@ LEAN_PROJECT="$HARDY_HOME/lean"
 LEAN_PACKAGE=hardymath
 MATHLIB_TOOLCHAIN="leanprover-community/mathlib4:lean-toolchain"
 
+HARDY_REPO_URL="${HARDY_REPO_URL:-https://github.com/charlesmsiegel/hardy}"
+# Which release to install: a tag, or empty for whatever is current.
+HARDY_VERSION="${HARDY_VERSION:-}"
+# Where Hardy's code comes from. `release` downloads the published wheel and
+# needs no source tree at all; `source` installs the tree this script came from,
+# editable, which is what a developer running it from a clone wants. Empty means
+# "decide from what is actually here" — see resolve_install_source.
+INSTALL_FROM="${HARDY_INSTALL_FROM:-}"
+
 ASSUME_YES=0
 SKIP_MATHLIB=0
 SKIP_LATEX=0
@@ -71,12 +80,15 @@ Options:
   --skip-latex      do not install a TeX distribution
   --full-latex      install the full TeX distribution instead of a LaTeX subset
   --no-config       do not write $HARDY_CONFIG
+  --from-release    install the published wheel even when run from a clone
+  --from-source     install this source tree, editable (the default from a clone)
   --prefix DIR      where Hardy keeps its venv and Lean project (default $HARDY_HOME)
   --bin-dir DIR     where the \`hardy\` command is linked (default $HARDY_BIN_DIR)
   -h, --help        show this message
 
 Environment: HARDY_MODEL, when set, is written to the config file without
 prompting. Authentication is your Claude Code login, not an API key.
+HARDY_VERSION selects a release tag to install instead of the current one.
 EOF
 }
 
@@ -88,6 +100,8 @@ parse_arguments() {
 		--skip-latex) SKIP_LATEX=1 ;;
 		--full-latex) FULL_LATEX=1 ;;
 		--no-config) WRITE_CONFIG=0 ;;
+		--from-release) INSTALL_FROM=release ;;
+		--from-source) INSTALL_FROM=source ;;
 		--prefix)
 			[ $# -ge 2 ] || fail "--prefix needs a directory"
 			HARDY_HOME="$2"
@@ -120,6 +134,95 @@ check_disk_space() {
 	if [ "$available" -lt "$needed" ]; then
 		warn "less than ${needed}G free; Mathlib's cache alone is several gigabytes"
 		confirm "Continue anyway?" || fail "stopped: not enough free disk space"
+	fi
+}
+
+# --- releases ---------------------------------------------------------------
+#
+# Installing Hardy means putting a released wheel into a virtual environment,
+# not obtaining a copy of the repository. Everything a machine needs is reached
+# through one directory of release assets, and nothing downloaded from it is
+# used before its digest has been checked against the manifest.
+
+# Where the release assets live. HARDY_RELEASE_BASE_URL replaces the location
+# wholesale, which is how the installer's own CI exercises this path against a
+# release it built moments earlier, before one has ever been published.
+release_base_url() {
+	if [ -n "${HARDY_RELEASE_BASE_URL:-}" ]; then
+		printf '%s' "${HARDY_RELEASE_BASE_URL%/}"
+	elif [ -n "$HARDY_VERSION" ]; then
+		printf '%s/releases/download/%s' "$HARDY_REPO_URL" "$HARDY_VERSION"
+	else
+		printf '%s/releases/latest/download' "$HARDY_REPO_URL"
+	fi
+}
+
+# Linux ships coreutils' sha256sum and macOS ships shasum; nothing ships both
+# reliably, and a machine with neither cannot verify a download at all.
+file_sha256() {
+	if have sha256sum; then
+		sha256sum "$1" | cut -d' ' -f1
+	elif have shasum; then
+		shasum -a 256 "$1" | cut -d' ' -f1
+	else
+		return 1
+	fi
+}
+
+# Find one asset in a SHA256SUMS manifest by the end of its name, printing
+# "<digest> <name>". The version lives in the filename, so this is also how the
+# installer learns which release it is about to install without being told.
+release_asset() {
+	local manifest="$1" suffix="$2" digest name
+	while read -r digest name; do
+		# sha256sum marks binary-mode entries with a leading asterisk.
+		name="${name#\*}"
+		case "$name" in
+		*"$suffix")
+			printf '%s %s\n' "$digest" "$name"
+			return 0
+			;;
+		esac
+	done <"$manifest"
+	return 1
+}
+
+# Download one asset and refuse it unless it matches the manifest. The wheel is
+# code that will run as this user, so a machine with no way to check the digest
+# stops here rather than installing something it could not verify.
+download_release_asset() {
+	local suffix="$1" directory="$2" base entry digest name actual
+	base="$(release_base_url)"
+	have curl || fail "curl is required to install Hardy from a release"
+	mkdir -p "$directory"
+	curl -fsSL "$base/SHA256SUMS" -o "$directory/SHA256SUMS" ||
+		fail "could not fetch $base/SHA256SUMS — is there a published release yet? (HARDY_VERSION selects one, --from-source installs a clone instead)"
+	entry="$(release_asset "$directory/SHA256SUMS" "$suffix")" ||
+		fail "the release at $base has no $suffix asset"
+	digest="${entry%% *}"
+	name="${entry#* }"
+	curl -fsSL "$base/$name" -o "$directory/$name" || fail "could not download $base/$name"
+	actual="$(file_sha256 "$directory/$name")" ||
+		fail "neither sha256sum nor shasum is available, so $name cannot be verified"
+	[ "$actual" = "$digest" ] ||
+		fail "checksum mismatch for $name: the release says $digest, the download is $actual"
+	printf '%s\n' "$directory/$name"
+}
+
+# `release` unless there is a source tree here to install, which is what a
+# developer running this from a clone means. An unpacked installer bundle is
+# not one: it carries scripts/ and no pyproject.toml, precisely so that a
+# machine with no clone lands on the release.
+resolve_install_source() {
+	case "$INSTALL_FROM" in
+	release | source) return 0 ;;
+	"") ;;
+	*) fail "HARDY_INSTALL_FROM must be 'release' or 'source', not '$INSTALL_FROM'" ;;
+	esac
+	if [ -n "${REPO_ROOT:-}" ] && [ -e "$REPO_ROOT/pyproject.toml" ]; then
+		INSTALL_FROM=source
+	else
+		INSTALL_FROM=release
 	fi
 }
 
@@ -167,20 +270,51 @@ ensure_python() {
 	install_uv_python
 }
 
+# One installer for both kinds of environment: `uv pip` when the private Python
+# came from uv, the environment's own pip otherwise.
+environment_install() {
+	if [ "$USE_UV" = 1 ]; then
+		uv pip install --python "$VENV/bin/python" "$@"
+	else
+		"$VENV/bin/python" -m pip install "$@"
+	fi
+}
+
 create_environment() {
 	step "Installing Hardy into $VENV"
 	mkdir -p "$HARDY_HOME"
 	if [ "$USE_UV" = 1 ]; then
 		uv venv --python 3.12 "$VENV"
-		uv pip install --python "$VENV/bin/python" -e "$REPO_ROOT"
 	else
 		"$PYTHON" -m venv --upgrade-deps "$VENV" 2>/dev/null || "$PYTHON" -m venv "$VENV" ||
 			fail "could not create a virtual environment (on Debian/Ubuntu install python3-venv)"
 		"$VENV/bin/python" -m pip install --upgrade pip
-		"$VENV/bin/python" -m pip install -e "$REPO_ROOT"
 	fi
+	case "$INSTALL_FROM" in
+	release) install_released_wheel ;;
+	*) install_source_tree ;;
+	esac
 	[ -x "$VENV/bin/hardy" ] || fail "the hardy command was not installed into $VENV"
+}
+
+install_source_tree() {
+	[ -e "$REPO_ROOT/pyproject.toml" ] ||
+		fail "no Hardy source tree at $REPO_ROOT to install; drop --from-source to install the published release"
+	environment_install -e "$REPO_ROOT" || fail "could not install Hardy from $REPO_ROOT"
 	say "installed hardy (editable, from $REPO_ROOT)"
+}
+
+# The download lands under HARDY_HOME rather than in a temporary directory: a
+# wheel that failed verification is worth being able to look at, and the next
+# run replaces it either way.
+install_released_wheel() {
+	local wheel directory="$HARDY_HOME/download"
+	rm -rf "$directory"
+	wheel="$(download_release_asset .whl "$directory")"
+	say "verified $(basename "$wheel") against the release manifest"
+	environment_install "$wheel" || fail "could not install $(basename "$wheel") into $VENV"
+	say "installed hardy from $(basename "$wheel")"
+	rm -rf "$directory"
 }
 
 ensure_path_entry() {
@@ -390,6 +524,7 @@ $(printf '\033[1mHardy is installed.\033[0m')
 
   command      $HARDY_BIN_DIR/hardy
   environment  $VENV
+  installed    $([ "$INSTALL_FROM" = source ] && printf 'editable, from %s' "$REPO_ROOT" || printf 'from the published release')
   lean project ${LEAN_PROJECT}${skipped_suffix}
   config       $HARDY_CONFIG
 
@@ -416,8 +551,13 @@ EOF
 
 hardy_install_main() {
 	parse_arguments "$@"
+	resolve_install_source
 	step "Installing Hardy on $(os_label)"
-	say "repository: $REPO_ROOT"
+	if [ "$INSTALL_FROM" = source ]; then
+		say "source tree: $REPO_ROOT"
+	else
+		say "release: $(release_base_url)"
+	fi
 	check_disk_space
 	ensure_python
 	create_environment

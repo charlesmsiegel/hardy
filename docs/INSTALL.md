@@ -2,7 +2,12 @@
 
 One command takes a clean machine to a working `hardy`. The installers are
 written so that a machine with none of the prerequisites — no Python, no Lean,
-no LaTeX — reaches an interactive session in a single run.
+no LaTeX, and no clone — reaches an interactive session in a single run.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/charlesmsiegel/hardy/main/scripts/install.sh | sh
+hardy
+```
 
 | Platform | Command |
 | --- | --- |
@@ -11,35 +16,55 @@ no LaTeX — reaches an interactive session in a single run.
 | Windows | `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1` |
 | Any POSIX shell | `scripts/install.sh` — detects the OS and runs the right one |
 
-```sh
-git clone https://github.com/charlesmsiegel/hardy
-cd hardy
-scripts/install.sh          # add --yes for an unattended run
-hardy
-```
-
 Windows needs no WSL: the PowerShell installer uses winget and elan's official
 Windows release directly.
 
+Every one of these is exercised on a real runner of its own operating system on
+every change to Hardy, from a single downloaded script, so a broken installer is
+the project's problem before it is yours.
+
 ## Without cloning first
 
-Installing Hardy means installing its source tree, so an installer run on its
-own fetches the repository into `~/.local/share/hardy/src` (or
-`%LOCALAPPDATA%\hardy\src`) and continues from there. Both of these work:
+Installing Hardy means putting a released wheel into a virtual environment, so
+nothing here needs the repository. An installer run on its own fetches the
+installer bundle from Hardy's latest release into
+`~/.local/share/hardy/installers`, downloads the released wheel, checks its
+SHA-256 against the release's `SHA256SUMS`, and installs that. A wheel whose
+digest does not match is refused rather than installed. All of these work:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/charlesmsiegel/hardy/main/scripts/install.sh | sh
 bash ~/Downloads/install-macos.sh          # a copy saved from the browser
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
 ```
 
-Run a downloaded script with `bash` or `sh` as shown. A browser strips the
+Run a downloaded POSIX script with `bash` or `sh` as shown. A browser strips the
 executable bit, so double-clicking it in Finder or a file manager opens it in a
 text editor instead of running it — one common way for an install to appear to
 do nothing at all.
 
-`HARDY_REPO_URL` and `HARDY_REPO_REF` choose what gets fetched, which is how to
-install from a fork or a branch. Delete `~/.local/share/hardy/src` to force a
-fresh copy; an existing one is reused as it is.
+`HARDY_VERSION=v0.1.0` installs a particular release instead of the current one.
+The installer bundle is re-fetched on every run, so the scripts and the wheel
+always come from the same release.
+
+## From a clone, a fork, or a branch
+
+Run from a checkout, the installers install *that tree*, editable — which is
+what working on Hardy wants, since `git pull` then updates `hardy` too:
+
+```sh
+git clone https://github.com/charlesmsiegel/hardy
+cd hardy
+scripts/install.sh          # add --yes for an unattended run
+```
+
+`--from-release` (`-FromRelease`) installs the published wheel even from a
+checkout, and `--from-source` (`-FromSource`) is the other way round.
+
+`HARDY_REPO_REF` names a branch or tag to install from the repository rather
+than from a release, and `HARDY_REPO_URL` points at a fork. Either one takes the
+repository path: the tree is fetched to `~/.local/share/hardy/src` and installed
+editable, exactly as a clone is.
 
 ## What the installers do
 
@@ -50,10 +75,11 @@ installer is cheap and safe.
    `dnf`/`yum`, `pacman`, `zypper`, `apk`), Homebrew, or winget. When no system
    Python is new enough, the POSIX installers fall back to a private
    [uv](https://astral.sh/uv)-managed Python 3.12.
-2. **Hardy itself** — an editable install into a dedicated virtual environment,
-   with the `hardy` command linked into your `PATH`. The install points at your
-   clone, so keep the clone where it is (`git pull` then updates `hardy` too);
-   re-run the installer after moving it.
+2. **Hardy itself** — the released wheel, verified against the release manifest,
+   installed into a dedicated virtual environment with the `hardy` command
+   linked into your `PATH`. Run from a checkout it is an editable install of
+   that tree instead, so keep the clone where it is (`git pull` then updates
+   `hardy` too) and re-run the installer after moving it.
 3. **`lake`** — installed through [elan](https://github.com/leanprover/elan),
    the Lean toolchain manager, which supplies `lake`, `lean`, and `elan`.
 4. **A shared Mathlib project** — a Lake project pinned to Mathlib's own
@@ -76,6 +102,7 @@ installer is cheap and safe.
 | | Linux / macOS | Windows |
 | --- | --- | --- |
 | Virtual environment | `~/.local/share/hardy/venv` | `%LOCALAPPDATA%\hardy\venv` |
+| Fetched installers | `~/.local/share/hardy/installers` | the script you ran |
 | Lean project | `~/.local/share/hardy/lean` | `%LOCALAPPDATA%\hardy\lean` |
 | `hardy` command | `~/.local/bin/hardy` | `%LOCALAPPDATA%\hardy\bin\hardy.cmd` |
 | Config file | `~/.config/hardy/config.toml` | `%APPDATA%\hardy\config.toml` |
@@ -93,6 +120,8 @@ curl, TeX), which are the only steps that use `sudo`.
 | `--skip-latex` | `-SkipLatex` | Do not install TeX |
 | `--full-latex` | `-FullLatex` | Full TeX Live / MacTeX / TeX Live instead of the subset |
 | `--no-config` | `-NoConfig` | Do not write a config file |
+| `--from-release` | `-FromRelease` | Install the published wheel even from a checkout |
+| `--from-source` | `-FromSource` | Install this source tree, editable |
 | `--prefix DIR` | `-Prefix DIR` | Where the virtual environment and Lean project live |
 | `--bin-dir DIR` | `-BinDir DIR` | Where the `hardy` command is placed |
 
@@ -145,10 +174,17 @@ scripts/update.sh                 # Linux, macOS
 powershell -ExecutionPolicy Bypass -File scripts\update-windows.ps1
 ```
 
-Pulls the source tree, reinstalls it, and runs `doctor`. Hardy is installed
-editable, so new *code* is already live once the tree moves; the reinstall is
-what picks up a newly declared *dependency*, which is otherwise a current
-checkout and a broken `hardy` command.
+There are two kinds of installation and this updates either, then runs `doctor`.
+
+An install made **from a release** has no source tree: the updater downloads the
+newest released wheel, checks it against the release manifest, and installs it.
+`HARDY_VERSION` moves to a particular release instead.
+
+An install made **from a checkout** is editable, so new *code* is already live
+once the tree moves; the reinstall is what picks up a newly declared
+*dependency*, which is otherwise a current checkout and a broken `hardy`
+command. Which one you have is found by asking the installed environment where
+its own code lives, rather than by a record that could go stale.
 
 Mathlib and the Lean toolchain are left alone by default — refreshing Mathlib is
 a multi-gigabyte rebuild, and rarely what updating Hardy is about.
@@ -159,10 +195,9 @@ a multi-gigabyte rebuild, and rarely what updating Hardy is about.
 | `--toolchain` | `-Toolchain` | also `elan self update` and `elan update` |
 | `--source DIR` | `-Source DIR` | update this tree instead of the installed one |
 
-The source tree is found by asking the installed environment where its own code
-lives, so it works whether you installed from a clone or let the installer fetch
-one. An install made from a downloaded archive has no history to pull; re-run
-the installer to get a newer copy.
+An install made from a downloaded repository archive is the one case with
+neither: it is editable, but has no history to pull. Re-run the installer to get
+a newer copy.
 
 ## Uninstalling
 
@@ -171,9 +206,10 @@ scripts/uninstall.sh              # Linux, macOS
 powershell -ExecutionPolicy Bypass -File scripts\uninstall-windows.ps1
 ```
 
-Removes the virtual environment, the fetched source tree, the `hardy` command,
-and the PATH lines the installer added. Before touching anything expensive to
-rebuild or personal, it asks:
+Removes the virtual environment, whatever the installer fetched (the installer
+bundle of a release install, or a source tree), the `hardy` command, and the
+PATH lines the installer added. Before touching anything expensive to rebuild or
+personal, it asks:
 
 | Asked about | Kept unless you say otherwise |
 | --- | --- |
@@ -198,6 +234,14 @@ line you wrote yourself for the same directory is left alone.
 instead of running it from a terminal (see [Without cloning
 first](#without-cloning-first)). Run `bash path/to/install-macos.sh` and read
 the output; every failure path prints a reason before exiting.
+
+**`could not fetch .../SHA256SUMS`** — the installer found no release to install
+from. Check your network, or install from a checkout instead
+(`git clone …; scripts/install.sh`).
+
+**`checksum mismatch`** — what was downloaded is not what the release vouches
+for, and the installer stopped rather than install it. Re-run it; if it happens
+again, the download is being interfered with somewhere between you and GitHub.
 
 **`hardy: command not found`** — the command directory was added to your shell
 profile, but the current shell predates it. Open a new terminal, or

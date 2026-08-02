@@ -3,14 +3,17 @@
     Updates an existing Hardy installation on Windows. No WSL required.
 
 .DESCRIPTION
-    Pulls the source tree, reinstalls it so that any newly declared dependency
-    is picked up, and runs `hardy doctor`. Run it from PowerShell:
+    Updates Hardy in place and runs `hardy doctor`. Run it from PowerShell:
 
         powershell -ExecutionPolicy Bypass -File scripts\update-windows.ps1
 
-    The install is editable, so new code is live as soon as the source tree
-    moves. New dependencies are not, which is the reason this exists: a release
-    that adds one otherwise leaves a current checkout and a broken command.
+    There are two kinds of installation and this updates either. An install made
+    from the published release has no source tree: it downloads the newest
+    released wheel, checks it against the release manifest, and installs that.
+    An install made from a checkout is editable, so new code is live as soon as
+    the tree moves; new dependencies are not, which is the reason that path
+    exists — a release that adds one otherwise leaves a current checkout and a
+    broken command.
 
     Mathlib is left alone unless -Mathlib is given. It is a multi-gigabyte
     rebuild and rarely what someone updating Hardy itself wants.
@@ -46,6 +49,8 @@ Set-StrictMode -Version Latest
 $Venv = Join-Path $Prefix 'venv'
 $VenvPython = Join-Path $Venv 'Scripts\python.exe'
 $LeanProject = Join-Path $Prefix 'lean'
+$RepoUrl = if ($env:HARDY_REPO_URL) { $env:HARDY_REPO_URL } else { 'https://github.com/charlesmsiegel/hardy' }
+$ReleaseVersion = if ($env:HARDY_VERSION) { $env:HARDY_VERSION } else { '' }
 
 function Write-Step($message) { Write-Host "`n==> $message" -ForegroundColor Cyan }
 function Write-Detail($message) { Write-Host "    $message" }
@@ -60,9 +65,48 @@ function Confirm-Step($question) {
     return ($reply -eq '' -or $reply -match '^(y|yes)$')
 }
 
+# These four mirror install-windows.ps1. They are duplicated rather than shared
+# because install-windows.ps1 must run as a single downloaded file, with no
+# scripts\lib beside it to dot-source; the test suite checks that both copies
+# still verify what they download.
+function Get-ReleaseBaseUrl {
+    if ($env:HARDY_RELEASE_BASE_URL) { return $env:HARDY_RELEASE_BASE_URL.TrimEnd('/') }
+    if ($ReleaseVersion) { return "$RepoUrl/releases/download/$ReleaseVersion" }
+    return "$RepoUrl/releases/latest/download"
+}
+
+function Find-ReleaseAsset($manifest, $suffix) {
+    foreach ($line in [System.IO.File]::ReadAllLines($manifest)) {
+        $fields = $line.Trim() -split '\s+', 2
+        if ($fields.Count -ne 2) { continue }
+        $name = $fields[1].Trim().TrimStart('*')
+        if ($name.EndsWith($suffix)) { return @{ Digest = $fields[0]; Name = $name } }
+    }
+    return $null
+}
+
+function Save-ReleaseAsset($suffix, $directory) {
+    $base = Get-ReleaseBaseUrl
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $manifest = Join-Path $directory 'SHA256SUMS'
+    try { Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest -UseBasicParsing }
+    catch { Stop-Update "could not fetch $base/SHA256SUMS - is there a published release yet? (HARDY_VERSION selects one)" }
+    $asset = Find-ReleaseAsset $manifest $suffix
+    if (-not $asset) { Stop-Update "the release at $base has no $suffix asset" }
+    $path = Join-Path $directory $asset.Name
+    try { Invoke-WebRequest -Uri "$base/$($asset.Name)" -OutFile $path -UseBasicParsing }
+    catch { Stop-Update "could not download $base/$($asset.Name)" }
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLower()
+    if ($actual -ne $asset.Digest.ToLower()) {
+        Stop-Update "checksum mismatch for $($asset.Name): the release says $($asset.Digest), the download is $actual"
+    }
+    return $path
+}
+
 # Ask the installed environment where its own code is, rather than keeping a
 # record that could go stale: an editable install resolves the package back to
-# the tree it was installed from, clone or fetched copy alike.
+# the tree it was installed from. A release install resolves to no tree at all,
+# and that absence is the answer rather than a fault to report.
 function Get-SourceTree {
     if ($Source) {
         if (-not (Test-Path (Join-Path $Source 'pyproject.toml'))) {
@@ -75,9 +119,23 @@ function Get-SourceTree {
     }
     $found = & $VenvPython -c 'import hardy, pathlib; print(pathlib.Path(hardy.__file__).resolve().parents[2])' 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $found -or -not (Test-Path (Join-Path $found 'pyproject.toml'))) {
-        Stop-Update "the environment at $Venv does not point at a source tree; pass -Source DIR"
+        return ''
     }
     return $found
+}
+
+# There is no source tree here: the wheel named by the release manifest is both
+# the new code and the new dependency list.
+function Update-FromRelease {
+    Write-Step "Updating Hardy from $(Get-ReleaseBaseUrl)"
+    $directory = Join-Path $Prefix 'download'
+    Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
+    $wheel = Save-ReleaseAsset '.whl' $directory
+    Write-Detail "verified $(Split-Path -Leaf $wheel) against the release manifest"
+    & $VenvPython -m pip install --upgrade $wheel
+    if ($LASTEXITCODE -ne 0) { Stop-Update "could not install $(Split-Path -Leaf $wheel) into $Venv" }
+    Write-Detail "installed $(Split-Path -Leaf $wheel)"
+    Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
 }
 
 function Update-Source($tree) {
@@ -160,8 +218,13 @@ function Test-Update {
 }
 
 $tree = Get-SourceTree
-Update-Source $tree
-Update-Environment $tree
+if ($tree) {
+    Update-Source $tree
+    Update-Environment $tree
+}
+else {
+    Update-FromRelease
+}
 Update-Toolchain
 Update-Mathlib
 Test-Update

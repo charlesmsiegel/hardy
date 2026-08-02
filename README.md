@@ -123,21 +123,26 @@ the loop, and Hardy cannot make those decisions while it does not run one.
 
 ## Install
 
-One command takes a clean machine — no Python, no Lean, no LaTeX — to a working
-`hardy`. Each installer installs what is missing and skips what is not: Python
-3.11+, `lake` (via elan), a shared Mathlib project, `pdflatex`, and Hardy itself.
+One command takes a clean machine — no Python, no Lean, no LaTeX, and no clone —
+to a working `hardy`. Each installer installs what is missing and skips what is
+not: Python 3.11+, `lake` (via elan), a shared Mathlib project, `pdflatex`, and
+Hardy itself.
 
 ```sh
-git clone https://github.com/charlesmsiegel/hardy
-cd hardy
-scripts/install.sh          # or scripts/install-linux.sh, scripts/install-macos.sh
+curl -fsSL https://raw.githubusercontent.com/charlesmsiegel/hardy/main/scripts/install.sh | sh
 hardy
 ```
 
-On Windows, run `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1`.
-WSL is not required. Without a clone, an installer run on its own fetches the
-repository itself, so `curl -fsSL .../scripts/install.sh | sh` also works. Expect the Mathlib step to download several gigabytes and
-take 10–30 minutes; `--skip-mathlib` omits it if you have your own Lake project.
+That fetches the installers from Hardy's latest release, downloads the released
+wheel, checks it against the release's own manifest, and installs it. From a
+clone, `scripts/install.sh` instead installs the clone itself, editable, which
+is what working on Hardy wants.
+
+On Windows, run `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1`,
+with or without a clone. WSL is not required. Every installer is exercised on a
+real runner of its own operating system in CI. Expect the Mathlib step to
+download several gigabytes and take 10–30 minutes; `--skip-mathlib` omits it if
+you have your own Lake project.
 
 The installer asks for a model identity and stores it in
 `~/.config/hardy/config.toml` (`%APPDATA%\hardy\config.toml` on Windows). It also

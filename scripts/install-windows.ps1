@@ -5,15 +5,23 @@
 .DESCRIPTION
     Takes a clean Windows machine to a working `hardy` command: Python, the Lean
     toolchain (elan/lake), a Mathlib project, pdflatex, and Hardy itself. Run it
-    from PowerShell in the repository:
+    from PowerShell, in a clone or on its own:
 
         powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
 
-    Winget installs Python, Git, and MiKTeX; elan comes from its official
-    release, exactly as on Linux and macOS.
+    No clone is required. Run from a checkout it installs that tree, editable;
+    run on its own it downloads Hardy's published wheel, checks it against the
+    release manifest, and installs that. Winget installs Python, Git, and
+    MiKTeX; elan comes from its official release, exactly as on Linux and macOS.
 
 .PARAMETER Yes
     Non-interactive: accept every install and skip the configuration prompts.
+
+.PARAMETER FromRelease
+    Install the published wheel even when run from a checkout.
+
+.PARAMETER FromSource
+    Install this source tree, editable. The default when run from a checkout.
 
 .PARAMETER SkipMathlib
     Install lake but do not create or build the shared Mathlib project.
@@ -40,6 +48,8 @@ param(
     [switch]$SkipLatex,
     [switch]$FullLatex,
     [switch]$NoConfig,
+    [switch]$FromRelease,
+    [switch]$FromSource,
     [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'hardy'),
     [string]$BinDir = (Join-Path $env:LOCALAPPDATA 'hardy\bin')
 )
@@ -55,6 +65,13 @@ $MathlibToolchain = 'leanprover-community/mathlib4:lean-toolchain'
 $ConfigPath = if ($env:HARDY_CONFIG) { $env:HARDY_CONFIG } else { Join-Path $env:APPDATA 'hardy\config.toml' }
 $ConfiguredModel = ''
 $Python = ''
+$RepoUrl = if ($env:HARDY_REPO_URL) { $env:HARDY_REPO_URL } else { 'https://github.com/charlesmsiegel/hardy' }
+# Which release to install: a tag, or empty for whatever is current.
+$ReleaseVersion = if ($env:HARDY_VERSION) { $env:HARDY_VERSION } else { '' }
+# 'release' downloads the published wheel and needs no source tree at all;
+# 'source' installs the tree this script came from, editable. Resolve-InstallSource
+# decides between them from what is actually here.
+$InstallFrom = ''
 
 function Write-Step($message) { Write-Host "`n==> $message" -ForegroundColor Cyan }
 function Write-Detail($message) { Write-Host "    $message" }
@@ -118,12 +135,84 @@ function Get-Python {
     return $null
 }
 
-# Installing Hardy means installing this source tree, so a copy of the script
-# downloaded on its own (or run through `iex`) fetches the repository and
-# re-execs from there.
+# --- releases ---------------------------------------------------------------
+#
+# Installing Hardy means putting a released wheel into a virtual environment,
+# not obtaining a copy of the repository. Nothing downloaded here is used before
+# its digest has been checked against the release's own manifest.
+
+# HARDY_RELEASE_BASE_URL replaces the location wholesale, which is how the
+# installer's own CI exercises this path against a release it built moments
+# earlier, before one has ever been published.
+function Get-ReleaseBaseUrl {
+    if ($env:HARDY_RELEASE_BASE_URL) { return $env:HARDY_RELEASE_BASE_URL.TrimEnd('/') }
+    if ($ReleaseVersion) { return "$RepoUrl/releases/download/$ReleaseVersion" }
+    return "$RepoUrl/releases/latest/download"
+}
+
+# Find one asset in a SHA256SUMS manifest by the end of its name. The version is
+# in the filename, so this is also how the installer learns which release it is
+# about to install without being told.
+function Find-ReleaseAsset($manifest, $suffix) {
+    foreach ($line in [System.IO.File]::ReadAllLines($manifest)) {
+        $fields = $line.Trim() -split '\s+', 2
+        if ($fields.Count -ne 2) { continue }
+        # sha256sum marks binary-mode entries with a leading asterisk.
+        $name = $fields[1].Trim().TrimStart('*')
+        if ($name.EndsWith($suffix)) { return @{ Digest = $fields[0]; Name = $name } }
+    }
+    return $null
+}
+
+# Download one asset and refuse it unless it matches the manifest. The wheel is
+# code that will run as this user, so a mismatch stops the install.
+function Save-ReleaseAsset($suffix, $directory) {
+    $base = Get-ReleaseBaseUrl
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $manifest = Join-Path $directory 'SHA256SUMS'
+    try { Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest -UseBasicParsing }
+    catch { Stop-Install "could not fetch $base/SHA256SUMS - is there a published release yet? (HARDY_VERSION selects one, -FromSource installs a checkout instead)" }
+    $asset = Find-ReleaseAsset $manifest $suffix
+    if (-not $asset) { Stop-Install "the release at $base has no $suffix asset" }
+    $path = Join-Path $directory $asset.Name
+    try { Invoke-WebRequest -Uri "$base/$($asset.Name)" -OutFile $path -UseBasicParsing }
+    catch { Stop-Install "could not download $base/$($asset.Name)" }
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLower()
+    if ($actual -ne $asset.Digest.ToLower()) {
+        Stop-Install "checksum mismatch for $($asset.Name): the release says $($asset.Digest), the download is $actual"
+    }
+    return $path
+}
+
+# A checkout is what a developer running this from one means. Anything else has
+# no source to install and takes the release; naming HARDY_REPO_REF asks for the
+# repository instead, which is how a fork or a branch is installed.
+function Resolve-InstallSource {
+    if ($FromRelease -and $FromSource) { Stop-Install '-FromRelease and -FromSource cannot both be given' }
+    $checkout = [bool]($RepoRoot -and (Test-Path (Join-Path $RepoRoot 'pyproject.toml')))
+    if ($FromRelease) { $script:InstallFrom = 'release'; return }
+    if ($FromSource) {
+        if (-not ($checkout -or $env:HARDY_REPO_REF)) {
+            Stop-Install "-FromSource was asked for, but there is no Hardy source tree at $RepoRoot"
+        }
+        $script:InstallFrom = 'source'
+        return
+    }
+    if ($env:HARDY_INSTALL_FROM) {
+        if ($env:HARDY_INSTALL_FROM -notin @('release', 'source')) {
+            Stop-Install "HARDY_INSTALL_FROM must be 'release' or 'source', not '$($env:HARDY_INSTALL_FROM)'"
+        }
+        $script:InstallFrom = $env:HARDY_INSTALL_FROM
+        return
+    }
+    $script:InstallFrom = if ($checkout -or $env:HARDY_REPO_REF) { 'source' } else { 'release' }
+}
+
+# Only reached on the source path with no checkout here — HARDY_REPO_REF naming
+# a fork or a branch, which has no release to download from.
 function Initialize-Repository {
     if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot 'pyproject.toml'))) { return $false }
-    $url = if ($env:HARDY_REPO_URL) { $env:HARDY_REPO_URL } else { 'https://github.com/charlesmsiegel/hardy' }
+    $url = $RepoUrl
     $reference = if ($env:HARDY_REPO_REF) { $env:HARDY_REPO_REF } else { 'main' }
     $source = Join-Path $Prefix 'src'
     if (-not (Test-Path (Join-Path $source 'pyproject.toml'))) {
@@ -180,10 +269,25 @@ function New-Environment {
     if ($LASTEXITCODE -ne 0) { Stop-Install 'could not create the virtual environment' }
     $venvPython = Join-Path $Venv 'Scripts\python.exe'
     & $venvPython -m pip install --upgrade pip
-    & $venvPython -m pip install -e $RepoRoot
-    if ($LASTEXITCODE -ne 0) { Stop-Install 'pip install failed' }
+    if ($script:InstallFrom -eq 'release') {
+        # The download lands under the prefix rather than in a temporary
+        # directory: a wheel that failed verification is worth being able to
+        # look at, and the next run replaces it either way.
+        $directory = Join-Path $Prefix 'download'
+        Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
+        $wheel = Save-ReleaseAsset '.whl' $directory
+        Write-Detail "verified $(Split-Path -Leaf $wheel) against the release manifest"
+        & $venvPython -m pip install $wheel
+        if ($LASTEXITCODE -ne 0) { Stop-Install "could not install $(Split-Path -Leaf $wheel) into $Venv" }
+        Write-Detail "installed hardy from $(Split-Path -Leaf $wheel)"
+        Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
+    }
+    else {
+        & $venvPython -m pip install -e $RepoRoot
+        if ($LASTEXITCODE -ne 0) { Stop-Install 'pip install failed' }
+        Write-Detail "installed hardy (editable, from $RepoRoot)"
+    }
     if (-not (Test-Path (Join-Path $Venv 'Scripts\hardy.exe'))) { Stop-Install "the hardy command was not installed into $Venv" }
-    Write-Detail "installed hardy (editable, from $RepoRoot)"
 }
 
 function Add-Shim {
@@ -402,6 +506,7 @@ function Write-Summary {
 
   command      $(Join-Path $BinDir 'hardy.cmd')
   environment  $Venv
+  installed    $(if ($script:InstallFrom -eq 'source') { "editable, from $RepoRoot" } else { 'from the published release' })
   lean project $LeanProject$(if ($SkipMathlib) { ' (skipped)' })
   config       $ConfigPath
 
@@ -419,8 +524,14 @@ Open a new terminal first, so that $BinDir is on your PATH.
 }
 
 Write-Step "Installing Hardy on Windows ($([Environment]::OSVersion.Version))"
-Initialize-Repository | Out-Null
-Write-Detail "repository: $RepoRoot"
+Resolve-InstallSource
+if ($script:InstallFrom -eq 'source') {
+    Initialize-Repository | Out-Null
+    Write-Detail "source tree: $RepoRoot"
+}
+else {
+    Write-Detail "release: $(Get-ReleaseBaseUrl)"
+}
 Install-Prerequisites
 New-Environment
 Add-Shim

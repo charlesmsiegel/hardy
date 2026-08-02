@@ -124,6 +124,8 @@ if ($All) {
 Remove-Part 'the hardy command' (Join-Path $BinDir 'hardy.cmd')
 Remove-Part 'the virtual environment' $Venv
 Remove-Part 'the fetched source tree' $SourceTree
+# What a release install leaves behind instead of a source tree.
+Remove-Part 'an interrupted download' (Join-Path $Prefix 'download')
 Remove-PathEntry
 
 if (Test-Wanted $RemoveLeanProject "Remove the Lean project at $LeanProject ($(Get-FolderSize $LeanProject))? Rebuilding it is a multi-gigabyte download." $LeanProject) {

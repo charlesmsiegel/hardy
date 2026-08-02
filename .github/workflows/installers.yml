@@ -1,0 +1,234 @@
+# Every installer, on a real runner of the operating system it is written for.
+#
+# Three installers tested only by hand are three installers that are usually
+# broken; the Windows one shipped once without ever having been executed. So
+# each job here is a machine with nothing installed on it running the installer
+# the way a stranger would: one downloaded script, no clone, no WSL.
+#
+# There is no published release to install from on a pull request — and there
+# would be nothing to catch a break *before* the release if there were. Each job
+# therefore builds the release artifacts from the commit under test, serves them
+# over the loopback interface, and points the installer at that with
+# HARDY_RELEASE_BASE_URL. What runs is the real download-and-verify path, not a
+# stand-in for it.
+#
+# Mathlib and TeX are skipped. Mathlib's cache is several gigabytes and 10-30
+# minutes, larger than a runner's free disk on some images; TeX is gigabytes
+# more. What is left is everything the installers actually get wrong: Python
+# discovery, the virtual environment, the wheel, the command shim, PATH, elan,
+# the config file, and whether the installed `hardy` runs at all.
+name: Installers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  posix:
+    name: ${{ matrix.script }} on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: install-linux.sh
+          - os: macos-latest
+            script: install-macos.sh
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build the release this run will install
+        run: |
+          set -euo pipefail
+          uv build --out-dir release
+          tar czf release/hardy-installers.tar.gz scripts
+          python - <<'PY' > release/SHA256SUMS
+          import hashlib, pathlib
+          for path in sorted(pathlib.Path("release").iterdir()):
+              if path.name != "SHA256SUMS":
+                  print(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
+          PY
+          cat release/SHA256SUMS
+
+      # The server and the install share a step, so nothing depends on a
+      # background process outliving one.
+      - name: Install from nothing but one downloaded script
+        run: |
+          set -euo pipefail
+          python -m http.server 8000 --directory release --bind 127.0.0.1 >/dev/null 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 50); do
+            curl -fsS http://127.0.0.1:8000/SHA256SUMS >/dev/null 2>&1 && break
+            sleep 0.2
+          done
+          # A stranger's starting state: the one script, and nothing else. No
+          # clone, no scripts/lib beside it — it has to fetch the rest itself.
+          standalone="$RUNNER_TEMP/standalone"
+          mkdir -p "$standalone"
+          cp "scripts/${{ matrix.script }}" "$standalone/"
+          cd "$standalone"
+          HARDY_RELEASE_BASE_URL=http://127.0.0.1:8000 HARDY_MODEL=claude-opus-5 \
+            bash "./${{ matrix.script }}" --yes --skip-mathlib --skip-latex
+
+      - name: The installer fetched the installers, and installed the wheel
+        run: |
+          set -euo pipefail
+          prefix="$HOME/.local/share/hardy"
+          test -x "$prefix/venv/bin/hardy" || { echo "no hardy in the environment" >&2; exit 1; }
+          test -d "$prefix/installers/scripts" || { echo "the release installers were not unpacked" >&2; exit 1; }
+          # A release install has no source tree and leaves no download behind.
+          test ! -e "$prefix/src" || { echo "a source tree was fetched; the release path was not taken" >&2; exit 1; }
+          test ! -e "$prefix/download" || { echo "the download directory was left behind" >&2; exit 1; }
+          # Installed as a wheel means the package lives in site-packages, not
+          # in some tree on disk that a later `git pull` could move.
+          "$prefix/venv/bin/python" - <<'PY'
+          import pathlib, hardy
+          location = pathlib.Path(hardy.__file__).resolve()
+          assert "site-packages" in location.parts, f"hardy was not installed as a wheel: {location}"
+          print(location)
+          PY
+
+      # The strongest thing that can be asserted without a model, a network, or
+      # a Lean toolchain: the deterministic acceptance run drives the whole
+      # pipeline and writes artifacts, which also proves the wheel carried the
+      # prompt templates and problem set that an editable install reads off disk.
+      - name: The installed command runs
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v hardy
+          hardy --help > /dev/null
+          hardy accept --force-budget-exhaustion-test
+          # Informational: doctor cannot pass with Mathlib and TeX skipped.
+          hardy doctor || true
+
+      - name: Update, then uninstall, the installation that is really there
+        run: |
+          set -euo pipefail
+          prefix="$HOME/.local/share/hardy"
+          python -m http.server 8000 --directory release --bind 127.0.0.1 >/dev/null 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 50); do
+            curl -fsS http://127.0.0.1:8000/SHA256SUMS >/dev/null 2>&1 && break
+            sleep 0.2
+          done
+          # Run from the bundle the installer fetched, which also establishes
+          # that the bundle carries a runnable updater. An install with no
+          # source tree has to update from the release rather than fail looking
+          # for one.
+          HARDY_RELEASE_BASE_URL=http://127.0.0.1:8000 \
+            bash "$prefix/installers/scripts/update.sh" --yes
+          # From the checkout, not the bundle: the uninstaller removes the
+          # directory it would otherwise be running out of.
+          bash scripts/uninstall.sh --yes
+          test ! -e "$prefix/venv" || { echo "the environment survived uninstall" >&2; exit 1; }
+          test ! -e "$prefix/installers" || { echo "the installers survived uninstall" >&2; exit 1; }
+
+  windows:
+    name: install-windows.ps1 on windows-latest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+
+      # The PowerShell the rest of this job runs. Parsing it first turns a
+      # syntax error into one clear failure rather than an installer that dies
+      # halfway through a real machine.
+      - name: The installer scripts parse
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($script in @('install-windows.ps1', 'update-windows.ps1', 'uninstall-windows.ps1')) {
+            $errors = $null; $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path "scripts\$script"), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) { $errors | ForEach-Object { $_.Message }; throw "$script does not parse" }
+            Write-Host "$script parses"
+          }
+
+      - name: Build the release this run will install
+        run: |
+          set -euo pipefail
+          uv build --out-dir release
+          tar czf release/hardy-installers.tar.gz scripts
+          python - <<'PY' > release/SHA256SUMS
+          import hashlib, pathlib
+          for path in sorted(pathlib.Path("release").iterdir()):
+              if path.name != "SHA256SUMS":
+                  print(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
+          PY
+          cat release/SHA256SUMS
+
+      - name: Install from nothing but one downloaded script, no WSL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $server = Start-Process -PassThru -WindowStyle Hidden -FilePath python `
+            -ArgumentList '-m', 'http.server', '8000', '--directory', 'release', '--bind', '127.0.0.1'
+          try {
+            foreach ($attempt in 1..50) {
+              try { Invoke-WebRequest -Uri 'http://127.0.0.1:8000/SHA256SUMS' -UseBasicParsing | Out-Null; break }
+              catch { Start-Sleep -Milliseconds 200 }
+            }
+            # A stranger's starting state: the one script and nothing else.
+            $standalone = Join-Path $env:RUNNER_TEMP 'standalone'
+            New-Item -ItemType Directory -Force -Path $standalone | Out-Null
+            Copy-Item 'scripts\install-windows.ps1' $standalone
+            $env:HARDY_RELEASE_BASE_URL = 'http://127.0.0.1:8000'
+            $env:HARDY_MODEL = 'claude-opus-5'
+            & powershell -ExecutionPolicy Bypass -File (Join-Path $standalone 'install-windows.ps1') `
+              -Yes -SkipMathlib -SkipLatex
+            if ($LASTEXITCODE -ne 0) { throw "the installer exited $LASTEXITCODE" }
+          }
+          finally { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }
+
+      - name: The installed command runs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prefix = Join-Path $env:LOCALAPPDATA 'hardy'
+          foreach ($required in @('venv\Scripts\hardy.exe', 'bin\hardy.cmd')) {
+            if (-not (Test-Path (Join-Path $prefix $required))) { throw "$required is missing" }
+          }
+          # A release install fetches no source tree and leaves no download.
+          foreach ($forbidden in @('src', 'download')) {
+            if (Test-Path (Join-Path $prefix $forbidden)) { throw "$forbidden should not exist after a release install" }
+          }
+          $config = Join-Path $env:APPDATA 'hardy\config.toml'
+          if (-not (Test-Path $config)) { throw 'no config file was written' }
+          # The config the installer generated has to be one Hardy can read:
+          # an unknown key here makes every later invocation fail outright.
+          & (Join-Path $prefix 'bin\hardy.cmd') --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'hardy --help failed' }
+          & (Join-Path $prefix 'bin\hardy.cmd') accept --force-budget-exhaustion-test
+          if ($LASTEXITCODE -ne 0) { throw 'the deterministic acceptance run failed' }
+          & (Join-Path $prefix 'bin\hardy.cmd') doctor   # informational; Mathlib and TeX were skipped
+
+      # These have skipped on every machine the project has ever run them on,
+      # because none of them had PowerShell. This is the one that does.
+      - name: The installer test suite, on Windows
+        run: uv run --extra test pytest -q tests/test_install_scripts.py
+
+      - name: Uninstall the installation that is really there
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $prefix = Join-Path $env:LOCALAPPDATA 'hardy'
+          & powershell -ExecutionPolicy Bypass -File 'scripts\uninstall-windows.ps1' -Yes
+          if ($LASTEXITCODE -ne 0) { throw "the uninstaller exited $LASTEXITCODE" }
+          if (Test-Path (Join-Path $prefix 'venv')) { throw 'the environment survived uninstall' }

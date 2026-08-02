@@ -349,6 +349,12 @@ Priority labels are sequencing hints:
   `scripts/install-macos.sh`, `scripts/install-windows.ps1`, dispatched by
   `scripts/install.sh`) takes a machine with no prerequisites to a working
   `hardy` in a single run. WSL is never required.
+- **Now (implemented):** installation needs no clone. A tagged release publishes
+  the wheel, the source distribution, an installer bundle, and a `SHA256SUMS`
+  manifest; an installer run on its own fetches the bundle, then downloads the
+  wheel and refuses it unless its digest matches the manifest. Run from a clone,
+  the installers install that tree editable instead. `scripts/update.sh` moves a
+  release install to the newest release and pulls a clone install.
 - **Now (implemented):** the installers add what is missing and skip what is
   present: Python 3.11+, `lake` through elan, a shared Lake project with
   Mathlib's prebuilt cache, `pdflatex`, and Hardy in its own virtual environment.
@@ -358,10 +364,14 @@ Priority labels are sequencing hints:
 - **Now (implemented):** a configured `lean_project` lets `hardy` run from any
   directory, and `hardy doctor` checks Lean, Mathlib, LaTeX, and model
   configuration, and reports whether the Claude Code CLI is signed in rather than merely present.
+- **Now (implemented):** each installer runs end to end on a real runner of its
+  own operating system on every pull request, from a single downloaded script
+  with no clone, against a release built from the commit under test. Mathlib and
+  TeX are skipped there for time and disk; everything else — Python discovery,
+  the environment, the wheel, the shim, PATH, elan, the config file, and a
+  deterministic acceptance run of the installed command — is exercised.
 - **Next:** pin the Lean toolchain, Mathlib revision, and TeX package set by
   identity so an installation is reproducible and can be recorded in results.
-- **Later:** publish a released package so installation does not require a clone,
-  and cover each installer on real Linux, macOS, and Windows runners in CI.
 
 ## Safety and operations
 
