@@ -251,9 +251,11 @@ Priority labels are sequencing hints:
   by the same press. It runs on a worker rather than on the terminal's event
   loop, which is what leaves the loop free to read the Esc that stops it, and
   Esc reaches a command in flight as well as a turn. The input box stays live
-  while a cell runs, so a second command and a model turn are both refused for
-  the duration: two cells at once would interleave in the one locked kernel the
-  human and the model share.
+  while a cell runs, so a second cell and a model turn are both refused for the
+  duration: two cells at once would interleave in the one locked kernel the
+  human and the model share. The commands marked safe in flight -- `/status`,
+  `/help`, `/clear`, `/exit` -- still run, as they do during a model turn, and
+  are the one class of command that does *not* lift a stop already in force.
 - **Now (implemented):** within one Hardy process, `cas_session_seconds` bounds
   total CAS wall clock rather than only the cells a caller asked for. A rebuild
   after a kernel death and the fresh-kernel replay an export verifies itself

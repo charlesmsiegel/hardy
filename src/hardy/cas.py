@@ -810,22 +810,24 @@ class _Kernel:
         wait would freeze the UI -- for exactly as long as the press was made
         to avoid waiting.
         """
+        # The group, whether or not the interpreter still leads it. A cell that
+        # shelled out leaves its helpers in the group, and an interpreter that
+        # took the signal and exited leaves them there with no leader -- still
+        # running, and still holding the pipes this session drains. Gating on
+        # `poll()` would skip exactly that case, which is why the shared group
+        # helpers do not gate on it either.
+        if immediate:
+            kill_group(self.process)
+        else:
+            terminate_group(self.process)
         if self.process.poll() is None:
-            # The group: a cell that shelled out has children of its own, and
-            # stopping the interpreter while they keep running would leave them
-            # orphaned against a kernel that no longer exists.
-            if immediate:
+            try:
+                # SIGKILL cannot be caught, so the immediate path is only ever
+                # waiting to reap; the polite one is waiting on the child.
+                self.process.wait(timeout=0 if immediate else 2)
+            except subprocess.TimeoutExpired:
                 kill_group(self.process)
-                # SIGKILL cannot be caught or ignored, so this returns as soon
-                # as the child is reaped rather than waiting on its goodwill.
                 self.process.wait()
-            else:
-                terminate_group(self.process)
-                try:
-                    self.process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    kill_group(self.process)
-                    self.process.wait()
         for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
             if stream is not None:
                 with contextlib.suppress(OSError):

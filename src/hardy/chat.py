@@ -409,16 +409,29 @@ class MathematicsSession:
                 # variable, which lacks Lake's computed package paths: each one
                 # stamped `missing`, so a rebuilt dependency left the signature
                 # unchanged and a stale verdict read as current.
-                probe = subprocess.run(
+                # Registered like every other child Hardy starts. It is a
+                # probe, but it is `lake` -- it can stall on a lock or a
+                # network fetch, and an unregistered stall is a sixty-second
+                # wait that Esc cannot touch.
+                probe = subprocess.Popen(
                     [
                         command[0], "env", sys.executable, "-c",
                         "import os, sys; sys.stdout.write(os.environ.get('LEAN_PATH', ''))",
                     ],
                     cwd=self._lean_project or Path.cwd(),
-                    capture_output=True, text=True, timeout=60, check=False,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    **process.child_creation(),
                 )
-                if probe.returncode == 0:
-                    found = [Path(part) for part in probe.stdout.strip().split(os.pathsep) if part]
+                with process.tracked(probe) as entry:
+                    try:
+                        out, _ = probe.communicate(timeout=60)
+                    except subprocess.TimeoutExpired:
+                        process.kill_group(probe)
+                        probe.communicate()
+                        raise
+                    stopped = entry.interrupted.is_set()
+                if probe.returncode == 0 and not stopped:
+                    found = [Path(part) for part in out.strip().split(os.pathsep) if part]
             except (OSError, subprocess.SubprocessError):
                 found = []
         if not found:
