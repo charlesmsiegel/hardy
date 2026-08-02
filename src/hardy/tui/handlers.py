@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
-from .. import catalog, doctor
+from .. import catalog, doctor, process
 from .. import config as configuration
 from ..cas import CasError
 from ..cas_export import export_session
@@ -56,7 +56,16 @@ async def handle_clear(ui: Ui, argument: str, state: State) -> State:
 
 async def handle_doctor(ui: Ui, argument: str, state: State) -> State:
     # run_checks spawns subprocesses. Awaiting it inline would freeze the box.
-    checks = await asyncio.to_thread(doctor.run_checks, state.config)
+    try:
+        checks = await asyncio.to_thread(doctor.run_checks, state.config)
+    except asyncio.CancelledError:
+        # Cancelling the await does not stop the worker, and the probes are in
+        # process groups of their own -- so a Ctrl+C typed at the terminal
+        # reaches Hardy and not them. Without this, `--plain`'s shutdown waits
+        # on the executor thread while a probe runs out its 30-120 second
+        # limit, which is the wait the guarded run exists to end.
+        process.interrupt_children()
+        raise
     for line in doctor.describe(checks):
         ui.write(f"  {line}")
     return state

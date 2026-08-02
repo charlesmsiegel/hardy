@@ -246,7 +246,9 @@ returns, so a long Lean check reports what it is doing instead of going quiet.
 
 Esc cancels an in-flight turn: the model stops, no further tool call runs, and
 the Lean, LaTeX, or computer algebra process it started is interrupted rather
-than left running to its timeout. A computer algebra cell that answers the
+than left running to its timeout — with one exception: the fresh kernel and the
+script an export runs to check itself belong to a session built for that export,
+and are bounded only by their own limits. A computer algebra cell that answers the
 interrupt costs only itself: the kernel and every value in it survive. One that
 does not answer within a couple of seconds is stopped the way the timeout
 stopped it, and the state goes with it; a second Esc skips that wait and kills

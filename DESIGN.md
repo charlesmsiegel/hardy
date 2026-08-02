@@ -234,7 +234,8 @@ The interactive session's one new runtime dependency is `prompt_toolkit`: a
 real terminal input layer, needed for ghost-text command completion, a
 `/model` selector, and Esc-to-cancel without blocking the input box on
 a synchronous `input()` call while a turn is in flight. Esc stops the model and
-interrupts the children the turn started; a second press escalates from
+interrupts the children the turn started -- excepting the two an export runs
+inside a session of its own, which keep only their own limits; a second press escalates from
 interrupt to kill, because an interrupt is a request and a child that ignores
 it would otherwise leave the user with nothing further to press. It is confined to two
 modules (`hardy/tui/select.py` and `hardy/tui/shell.py`); everything else in
