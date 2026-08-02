@@ -128,6 +128,9 @@ Remove-Part 'the fetched source tree' $SourceTree
 Remove-Part 'the fetched installers' (Join-Path $Prefix 'installers')
 Remove-Part 'an interrupted download' (Join-Path $Prefix 'download')
 Remove-Part 'an interrupted installer refresh' (Join-Path $Prefix 'installers.new')
+# An update interrupted mid-swap leaves this behind, and it is a runnable
+# installer bundle: reporting success with one still on disk would be a lie.
+Remove-Part 'the installers an update displaced' (Join-Path $Prefix 'installers.previous')
 Remove-Part 'the recorded release origin' (Join-Path $Prefix 'release-origin')
 Remove-PathEntry
 

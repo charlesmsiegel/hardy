@@ -158,9 +158,13 @@ check_disk_space() {
 # record, or at nothing.
 release_origin_file() { printf '%s/release-origin' "$HARDY_HOME"; }
 
+# The repository actually used, not the variable's default: re-running the
+# retained installer on a fork's installation resolves to that fork, and writing
+# HARDY_REPO_URL here would replace the record with the official repository and
+# send the next update somewhere else.
 record_release_origin() {
 	mkdir -p "$HARDY_HOME"
-	printf 'repo=%s\n' "$HARDY_REPO_URL" >"$(release_origin_file)"
+	printf 'repo=%s\n' "$(release_repo_url)" >"$(release_origin_file)"
 }
 
 recorded_repo_url() {
@@ -404,22 +408,28 @@ install_source_tree() {
 # wheel that failed verification is worth being able to look at, and the next
 # run replaces it either way.
 install_released_wheel() {
-	local wheel directory="$HARDY_HOME/download"
+	local wheel staged=0 directory="$HARDY_HOME/download"
 	rm -rf "$directory"
+	# A standalone install was bootstrapped and already has the installers. A
+	# --from-release install run from a checkout was not, and without them the
+	# installation's updater and uninstaller would live in a checkout that is
+	# free to be deleted or moved.
+	#
+	# Staged before the wheel is fetched, not after: staging leaves its manifest
+	# behind for the wheel to be found in, so both artifacts come from one
+	# release rather than from two resolutions of `latest` minutes apart, and
+	# neither is put in place before both have been verified.
+	if [ ! -e "$HARDY_HOME/installers/scripts/lib/common.sh" ]; then
+		stage_installers
+		staged=1
+	fi
 	wheel="$(download_release_asset .whl "$directory")"
 	say "verified $(basename "$wheel") against the release manifest"
 	environment_install "$wheel" || fail "could not install $(basename "$wheel") into $VENV"
 	say "installed hardy from $(basename "$wheel")"
 	rm -rf "$directory"
 	record_release_origin
-	# A standalone install was bootstrapped and already has these. A
-	# --from-release install run from a checkout was not, and without them the
-	# installation's updater and uninstaller would live in a checkout that is
-	# free to be deleted or moved.
-	if [ ! -e "$HARDY_HOME/installers/scripts/lib/common.sh" ]; then
-		stage_installers
-		commit_installers
-	fi
+	if [ "$staged" = 1 ]; then commit_installers; fi
 }
 
 ensure_path_entry() {

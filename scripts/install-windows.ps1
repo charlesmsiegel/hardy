@@ -152,9 +152,12 @@ function Get-Python {
 # updater running later has none of the environment the installer was given.
 $ReleaseOrigin = Join-Path $Prefix 'release-origin'
 
+# The repository actually used, not the variable's default: re-running the
+# retained installer on a fork's installation resolves to that fork, and writing
+# $RepoUrl here would replace the record with the official repository.
 function Save-ReleaseOrigin {
     New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
-    Write-Utf8File $ReleaseOrigin "repo=$RepoUrl`r`n"
+    Write-Utf8File $ReleaseOrigin "repo=$(Get-ReleaseRepoUrl)`r`n"
 }
 
 # Chosen now, else whatever this installation was made from, else Hardy's own.
