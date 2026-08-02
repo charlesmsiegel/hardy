@@ -77,6 +77,21 @@ jobs:
       # every existing installation quietly on the old code while reporting
       # success. Recovering a publish that failed before it uploaded anything is
       # the one thing this allows.
+      # `gh release create` invents a tag on the default branch when the one it
+      # is given does not exist, so a workflow_dispatch input naming a *branch*
+      # would attach artifacts built from that branch to a tag pointing
+      # somewhere else — a release whose recorded source is a fiction.
+      - name: The ref released from must already be a tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1 || {
+            echo "error: $TAG is not a tag in this repository; releases are cut from tags only." >&2
+            exit 1
+          }
+
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -92,6 +107,7 @@ jobs:
             gh release upload "$TAG" dist/*
           else
             gh release create "$TAG" dist/* \
+              --verify-tag \
               --title "Hardy $TAG" \
               --generate-notes
           fi

@@ -71,8 +71,14 @@ checkout, and `--from-source` (`-FromSource`) is the other way round.
 `HARDY_REPO_REF` names a branch or a tag, which only the repository can serve,
 so setting it takes the repository path: that tree is fetched to
 `~/.local/share/hardy/src` and installed editable, exactly as a clone is. It
-outranks everything else, and is always re-fetched, so changing the ref cannot
-silently reinstall the previous one.
+outranks the release selectors, and is always re-fetched, so changing the ref
+cannot silently reinstall the previous one.
+
+It does not override a checkout. Running an installer from a source tree
+installs *that tree* — the ref chooses what to fetch when there is nothing here
+to install, and quietly replacing a developer's working copy with some other
+revision would be a worse surprise than ignoring the variable. To install a ref
+while standing in a checkout, run the installer from somewhere else.
 
 `HARDY_REPO_URL` points at a different repository — a fork — and moves both its
 releases and its archives. On its own it installs that fork's latest release; if

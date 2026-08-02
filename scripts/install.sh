@@ -43,7 +43,7 @@ hardy_fetch_installers() {
 		return 2
 	fi
 	if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
-		printf 'error: the installer bundle at %s does not match that release manifest\n' "$release_base" >&2
+		printf 'error: the installer bundle at %s does not match that release manifest\n' "$release_shown" >&2
 		return 2
 	fi
 	tar xz -C "$staging/tree" -f "$staging/download/bundle.tar.gz" 2>/dev/null || return 1
@@ -79,6 +79,10 @@ if [ ! -e "$directory/install-linux.sh" ]; then
 	else
 		release_base="$HARDY_REPO_URL/releases/latest/download"
 	fi
+	# A private fork's URL can carry credentials; what goes on screen and into a
+	# CI log is the URL without them.
+	release_shown="$(printf '%s' "$release_base" | sed -e 's#://[^/@]*@#://***@#')"
+	repo_shown="$(printf '%s' "$HARDY_REPO_URL" | sed -e 's#://[^/@]*@#://***@#')"
 	# Naming a release means that release. Quietly installing a branch in its
 	# place would put code nobody asked for on the machine, under a version
 	# number saying otherwise.
@@ -99,7 +103,7 @@ if [ ! -e "$directory/install-linux.sh" ]; then
 		status=1
 		named_a_release=0
 	else
-		printf '==> Fetching the Hardy installers from %s\n' "$release_base"
+		printf '==> Fetching the Hardy installers from %s\n' "$release_shown"
 		if hardy_fetch_installers "$hardy_home"; then source_root="$installers/tree"; else status=$?; fi
 	fi
 	if [ "$status" != 0 ]; then
@@ -110,7 +114,7 @@ if [ ! -e "$directory/install-linux.sh" ]; then
 		# bundle exists to prevent.
 		rm -rf "$installers"
 		if [ "$status" = 2 ] || [ "$named_a_release" = 1 ]; then
-			printf 'error: could not install the release at %s, and will not install something else in its place.\nUnset HARDY_VERSION to take whatever the repository has instead.\n' "$release_base" >&2
+			printf 'error: could not install the release at %s, and will not install something else in its place.\nUnset HARDY_VERSION to take whatever the repository has instead.\n' "$release_shown" >&2
 			exit 1
 		fi
 	fi
@@ -129,26 +133,30 @@ if [ ! -e "$directory/install-linux.sh" ]; then
 		rm -rf "$staging"
 		mkdir -p "$staging"
 		fetched=0
-		if command -v curl >/dev/null 2>&1; then
+		# git first when it is here: a clone records the ref and the commit it
+		# resolved to, so what was installed can still be said afterwards. An
+		# unpacked archive keeps neither, and is the fallback for the clean
+		# machine that has no git yet.
+		if command -v git >/dev/null 2>&1; then
+			git clone --depth 1 --branch "$HARDY_REPO_REF" "$HARDY_REPO_URL" "$staging" && fetched=1
+		fi
+		if [ "$fetched" = 0 ] && command -v curl >/dev/null 2>&1; then
+			rm -rf "$staging"
+			mkdir -p "$staging"
 			# A ref may be a branch or a tag, GitHub keeps the two in separate
-			# namespaces, and a clean machine has no git to ask which this is.
+			# namespaces, and a machine with no git cannot ask which this is.
 			for namespace in heads tags; do
 				curl -fsSL "$HARDY_REPO_URL/archive/refs/$namespace/$HARDY_REPO_REF.tar.gz" 2>/dev/null |
 					tar xz -C "$staging" --strip-components=1 2>/dev/null && fetched=1
 				if [ "$fetched" = 1 ]; then break; fi
 			done
 		fi
-		if [ "$fetched" = 0 ] && command -v git >/dev/null 2>&1; then
-			rm -rf "$staging"
-			mkdir -p "$staging"
-			git clone --depth 1 --branch "$HARDY_REPO_REF" "$HARDY_REPO_URL" "$staging" && fetched=1
-		fi
 		if [ "$fetched" = 1 ] && [ -e "$staging/scripts/install-linux.sh" ]; then
 			rm -rf "$source_root"
 			mv "$staging" "$source_root"
 		else
 			rm -rf "$staging"
-			printf 'error: could not fetch the Hardy installers from %s, nor the repository at %s (ref %s).\nCheck your network, or clone the repository yourself and run scripts/%s from the clone.\n' "$release_base" "$HARDY_REPO_URL" "$HARDY_REPO_REF" install.sh >&2
+			printf 'error: could not fetch the Hardy installers from %s, nor the repository at %s (ref %s).\nCheck your network, or clone the repository yourself and run scripts/%s from the clone.\n' "$release_shown" "$repo_shown" "$HARDY_REPO_REF" install.sh >&2
 			exit 1
 		fi
 	fi
