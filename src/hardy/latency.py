@@ -26,6 +26,9 @@ with ten is the difference between a warranted pool and an imagined one.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import statistics
 from collections.abc import Callable
 from pathlib import Path
@@ -47,6 +50,64 @@ DEFAULT_REPEATS = 3
 # recovers under a quarter of a run buys less than the process-death recovery,
 # pristine-reset, and snapshot machinery in #54 costs to carry.
 DEFAULT_THRESHOLD = 0.25
+
+
+# `Lean (version 4.32.0, commit 8c9756b28d64, Release)`. Both halves are
+# required below: an identity carrying one and inventing the other is the
+# failure this whole helper exists to avoid.
+LEAN_VERSION = re.compile(r"version (?P<version>[^\s,)]+), commit (?P<commit>[0-9a-fA-F]+)")
+
+
+def probe_toolchain(
+    command: tuple[str, ...],
+    project: Path,
+    *,
+    timeout_seconds: float = 60.0,
+    runner: Callable[[ProcessSpec], ProcessResult] = run_process,
+) -> EnvironmentIdentity | None:
+    """Identify the Lean that is about to be probed, or return None.
+
+    Deliberately not `cli._environment_identity`, which is where this started
+    and which is wrong here: its `lean_version` and `lean_commit` are literal
+    constants, correct for the staged path whose Lean is fixed, and false for
+    this command whose `--lean-command` is configurable. A report attributing
+    someone else's compiler to Lean 4.32.0 is worse evidence than one
+    admitting it does not know, because only the second can be caught.
+
+    So the version is asked of the binary actually being invoked, and the
+    Mathlib revision is read from the manifest actually on disk. If either is
+    unavailable or unparseable this returns None and the report says
+    `unrecorded` -- the identity is never partially invented.
+    """
+    manifest_path = project / "lake-manifest.json"
+    try:
+        raw = manifest_path.read_bytes()
+        manifest = json.loads(raw)
+        mathlib = next(item for item in manifest["packages"] if item["name"] == "mathlib")
+        revision = str(mathlib["rev"])
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return None
+    try:
+        version = runner(
+            ProcessSpec(
+                argv=(*command, "--version"),
+                cwd=project,
+                timeout_seconds=timeout_seconds,
+                max_output_bytes=64 * 1024,
+                env={},
+            )
+        )
+    except OSError:
+        return None
+    found = LEAN_VERSION.search(f"{version.stdout}\n{version.stderr}")
+    if version.returncode != 0 or found is None:
+        return None
+    return EnvironmentIdentity(
+        lean_version=found.group("version"),
+        lean_commit=found.group("commit"),
+        mathlib_revision=revision,
+        lake_manifest_sha256=hashlib.sha256(raw).hexdigest(),
+    )
 
 
 def import_probe(imports: tuple[str, ...]) -> str:
