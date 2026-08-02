@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import platform
 import re
 import shlex
 import statistics
@@ -145,6 +147,18 @@ def probe_toolchain(
             lake_manifest_sha256=hashlib.sha256(raw).hexdigest(),
         )
     )
+
+
+def machine_identity() -> str:
+    """The host, because this measurement is nothing but wall-clock time.
+
+    Every other identity here pins *what* was elaborated. None of them pin how
+    fast the machine doing it was, and the same Lean, Mathlib, and manifest
+    produce a 12s prelude on a workstation and a 40s one on a small CI runner
+    -- opposite verdicts from provenance that looks identical. For a report
+    whose entire content is a duration, the host is not context but data.
+    """
+    return f"{platform.platform()} {platform.machine()} x{os.cpu_count() or '?'}"
 
 
 def _first_complaint(elaboration: Elaboration) -> str | None:
@@ -334,6 +348,8 @@ class ImportCost(FrozenModel):
     environment: EnvironmentIdentity | None = None
     # Why there is no identity, when there is none.
     identity_note: str | None = None
+    # The host that produced these durations. See `machine_identity`.
+    machine: str | None = None
 
     @property
     def failures(self) -> int:
@@ -445,6 +461,7 @@ def measure_import_cost(
         command=argv,
         project=str(cwd),
         timeout_seconds=timeout_seconds,
+        machine=machine_identity(),
         diagnostic=diagnostic,
         environment=environment,
         identity_note=identity_note,
@@ -511,6 +528,7 @@ def describe(
             "source identity: (unverified — the revisions above are declared, not hashed; "
             "edited local modules or rebuilt packages are not detected)"
         )
+    lines.append(f"machine: {cost.machine or '(unrecorded)'}")
     lines.append(f"import set: {imports}")
     # `:g`, not `:.0f`: the deadline is a censored sample's entire lower bound,
     # and rounding it rendered `--timeout 0.4` as "deadline 0s" and `1.5` as
