@@ -63,6 +63,7 @@ DEFAULT_LOOGLE_TIMEOUT = 30.0
 # field bounded again after. Neither number needs to be generous -- a premise
 # ranking reads names and types, and nothing here executes any of it.
 MAX_RESPONSE_BYTES = 1024 * 1024
+READ_CHUNK_BYTES = 64 * 1024
 MAX_SIGNATURE_CHARACTERS = 512
 MAX_HITS = 200
 
@@ -86,6 +87,17 @@ SourceKind = Literal["lean_search", "loogle", "embedding"]
 
 class RetrievalError(RuntimeError):
     """A source could not answer. Recorded against that source, never hidden."""
+
+
+class RetrievalTransportError(RetrievalError):
+    """The service never answered: unreachable, refused, or too slow.
+
+    Split from its parent because the two failures mean opposite things to a
+    reader. A service being down says nothing about anyone's code; a response
+    Hardy cannot read says the contract moved. `rank` records both as one thing
+    -- a source that did not answer -- but the live contract test skips on this
+    one and must fail on the other, which is the whole reason it exists.
+    """
 
 
 class IndexIdentity(FrozenModel):
@@ -321,7 +333,7 @@ class LoogleSource:
         except RetrievalError:
             raise
         except Exception as error:  # noqa: BLE001 - any transport failure is one outcome
-            raise RetrievalError(f"Loogle request failed: {error}") from error
+            raise RetrievalTransportError(f"Loogle request failed: {error}") from error
         if len(body) > MAX_RESPONSE_BYTES:
             raise RetrievalError(f"Loogle response too large: over {MAX_RESPONSE_BYTES} bytes")
         try:
@@ -344,11 +356,37 @@ class LoogleSource:
 
 
 def _fetch_url(url: str, timeout: float) -> bytes:
+    """Read the whole response under one deadline, not one timeout per read.
+
+    `urlopen(timeout=...)` bounds each blocking socket operation, which is not
+    the same promise: a server dripping a byte at a time resets it on every
+    read and keeps `read()` alive indefinitely. That would make this source's
+    declared `worst_case_seconds` a fiction, and the admission check that
+    protects the run's retrieval budget is built entirely on that number.
+
+    So the body is read in chunks against a monotonic deadline. The residual is
+    one socket operation: a transfer can overshoot by however long the last
+    `read` blocks, which the socket timeout bounds in turn.
+    """
+    deadline = time.monotonic() + timeout
     request = urllib.request.Request(url, headers={"User-Agent": "Hardy/0.1"})
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed https endpoint
+        chunks: list[bytes] = []
+        received = 0
         # One byte past the limit, so an oversized body is detected rather than
         # silently truncated into something that parses as a shorter answer.
-        return response.read(MAX_RESPONSE_BYTES + 1)
+        wanted = MAX_RESPONSE_BYTES + 1
+        while received < wanted:
+            if time.monotonic() >= deadline:
+                raise RetrievalTransportError(
+                    f"Loogle exceeded its {timeout:g}s deadline with {received} bytes read"
+                )
+            chunk = response.read(min(READ_CHUNK_BYTES, wanted - received))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            received += len(chunk)
+    return b"".join(chunks)
 
 
 def _records_from_hits(hits: list, limit: int) -> tuple[DeclarationRecord, ...]:
@@ -453,8 +491,19 @@ class PremiseRetriever:
             results: tuple[DeclarationRecord, ...] = ()
             try:
                 results = source.search(goal, depth)
-            except (RetrievalError, ValueError) as error:
-                detail = str(error)
+            except Exception as error:  # noqa: BLE001 - one source failing is an outcome, not the end
+                # Every way a source can fail, not the two that were foreseen.
+                # `lake` losing its execute bit raises `PermissionError`, and
+                # letting that escape would discard the other sources' results
+                # along with the provenance that exists to report the failure --
+                # turning one broken source into no ranking at all.
+                # A `RetrievalError` already reads as a sentence; anything else
+                # is named, because "not executable" alone says nothing.
+                detail = (
+                    str(error)
+                    if isinstance(error, RetrievalError)
+                    else f"{type(error).__name__}: {error}"
+                )
             seconds = max(0.0, self._clock() - started - spent)
             spent += seconds
             outcomes.append(

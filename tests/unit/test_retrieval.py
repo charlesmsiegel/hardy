@@ -197,6 +197,71 @@ def test_a_source_that_failed_is_named_rather_than_quietly_dropped() -> None:
     assert [premise.name for premise in ranking.premises] == ['Nat.add_comm']
 
 
+def test_a_source_failing_in_a_way_nobody_predicted_does_not_take_the_ranking_with_it() -> None:
+    """`lake` losing its execute bit raises `PermissionError`, which is neither
+    a `RetrievalError` nor a `ValueError`. Letting it escape `rank` threw away
+    the other sources' results *and* the provenance that exists to say a source
+    failed -- the one outcome this module is built to never produce.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean = FakeSource(_pinned(retrieval), error=PermissionError('lake: not executable'))
+    loogle = FakeSource(_unpinned(retrieval), [_record('Nat.mul_comm')])
+
+    ranking = _retriever(retrieval, [lean, loogle]).rank('_ + _ = _ + _')
+
+    assert [premise.name for premise in ranking.premises] == ['Nat.mul_comm']
+    assert not ranking.complete
+    broken = next(item for item in ranking.provenance.sources if item.identity.name == 'lean-find')
+    assert not broken.answered
+    assert 'not executable' in (broken.detail or '')
+
+
+def test_a_response_that_never_stops_arriving_is_cut_off_at_its_deadline(monkeypatch) -> None:
+    """`urlopen(timeout=...)` bounds each socket operation, not the transfer. A
+    server dripping a byte at a time keeps `read` alive forever, which made the
+    declared `worst_case_seconds` a fiction and let one call outlast the whole
+    run budget the admission check exists to protect.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    now = iter([float(tick) for tick in range(200)])
+
+    class Dribbling:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exception):
+            return False
+
+        def read(self, size):
+            return b'0'
+
+    monkeypatch.setattr(retrieval.time, 'monotonic', lambda: next(now))
+    monkeypatch.setattr(retrieval.urllib.request, 'urlopen', lambda *a, **k: Dribbling())
+
+    with pytest.raises(retrieval.RetrievalTransportError, match='deadline'):
+        retrieval._fetch_url('https://example.invalid/json', 5.0)
+
+
+def test_a_service_that_did_not_answer_is_distinguished_from_one_that_answered_badly() -> None:
+    """Both are failures for the ranking, and only one of them means Loogle
+    changed its contract. The live test skips on the first and must not skip on
+    the second, so they cannot be the same exception.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    def unreachable(url, timeout):
+        raise TimeoutError('the read operation timed out')
+
+    with pytest.raises(retrieval.RetrievalTransportError):
+        retrieval.LoogleSource(fetch=unreachable).search('x', 10)
+    shape = retrieval.LoogleSource(fetch=lambda url, timeout: b'{"count": 0}')
+    with pytest.raises(retrieval.RetrievalError) as raised:
+        shape.search('x', 10)
+    assert not isinstance(raised.value, retrieval.RetrievalTransportError)
+    # Both still reach `rank` as one kind of thing: a source that did not answer.
+    assert issubclass(retrieval.RetrievalTransportError, retrieval.RetrievalError)
+
+
 def test_retrieval_time_is_metered_and_a_source_that_would_overrun_is_not_started() -> None:
     """Metered like the official proof checks: the budget refuses the call.
 
