@@ -587,6 +587,32 @@ def test_a_field_label_is_not_a_use_of_the_local_that_shares_its_name() -> None:
     assert retrieval.search_query('x : Nat\n⊢ f (y := x) = x') == '⊢ f (y := _) = _'
 
 
+def test_a_corpus_revision_that_can_move_is_refused() -> None:
+    """The escape hatch accepted any string, which re-made the `stable`/
+    `nightly` mistake one field over: a branch or tag can be repointed under
+    the identity that named it. A git object name is the content."""
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    for movable in ('master', 'main', 'v4.32.0', 'nightly', 'not-hex-at-all'):
+        with pytest.raises(ValueError, match='git object name'):
+            retrieval.LoogleSource(corpus_revision=movable)
+    assert retrieval.LoogleSource(corpus_revision='81a5d25').identity.pinned
+    assert retrieval.LoogleSource(corpus_revision='81a5d257c8e410db227a6665ed08f64fea08e997')
+
+
+def test_a_local_inside_string_interpolation_is_still_a_local() -> None:
+    """`s!"{x}"` is not literal text all the way through -- the braces hold an
+    expression. A plain `"{x}"` is literal, braces included, so the prefix has
+    to be read rather than assumed."""
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    assert retrieval.search_query('x : Nat\n⊢ s!"{x}" = "0"') == '⊢ s!"{_}" = "0"'
+    assert retrieval.search_query('x : Nat\n⊢ m!"a {x} b" = c') == '⊢ m!"a {_} b" = c'
+    # The round-seven guarantee, unchanged: an ordinary literal is not touched,
+    # braces or no braces.
+    assert retrieval.search_query('x : Nat\n⊢ "{x}" = "x"') == '⊢ "{x}" = "x"'
+
+
 def test_a_self_hosted_loogle_can_name_the_corpus_it_serves() -> None:
     """The endpoint is configurable so a project can run its own against a
     pinned Mathlib -- and hard-coding `pinned=False` made that configuration
