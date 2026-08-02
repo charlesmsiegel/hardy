@@ -128,6 +128,7 @@ Remove-Part 'the fetched source tree' $SourceTree
 Remove-Part 'the fetched installers' (Join-Path $Prefix 'installers')
 Remove-Part 'an interrupted download' (Join-Path $Prefix 'download')
 Remove-Part 'an interrupted installer refresh' (Join-Path $Prefix 'installers.new')
+Remove-Part 'the recorded release origin' (Join-Path $Prefix 'release-origin')
 Remove-PathEntry
 
 if (Test-Wanted $RemoveLeanProject "Remove the Lean project at $LeanProject ($(Get-FolderSize $LeanProject))? Rebuilding it is a multi-gigabyte download." $LeanProject) {

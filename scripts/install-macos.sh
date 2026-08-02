@@ -49,7 +49,11 @@ hardy_fetch_installers() {
 		return 2
 	fi
 	tar xz -C "$target" -f "$target/bundle.tar.gz" 2>/dev/null || return 1
-	rm -f "$target/bundle.tar.gz" "$target/SHA256SUMS"
+	rm -f "$target/bundle.tar.gz"
+	# Kept, and handed to the installer that runs next. It names the versioned
+	# assets, so the wheel comes from the release these scripts came from even
+	# if another is published while prerequisites are being installed.
+	export HARDY_RELEASE_MANIFEST="$target/SHA256SUMS"
 	[ -e "$target/scripts/lib/common.sh" ] || return 1
 }
 

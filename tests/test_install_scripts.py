@@ -712,7 +712,8 @@ def test_an_update_replaces_the_installers_it_is_running_out_of(tmp_path: Path):
     publish_installer_bundle(release, "release N+1")
     with serving(release) as base:
         result = run_with_common(
-            "refresh_installers", tmp_path, HARDY_HOME=str(home), HARDY_RELEASE_BASE_URL=base
+            "stage_installers; commit_installers", tmp_path,
+            HARDY_HOME=str(home), HARDY_RELEASE_BASE_URL=base,
         )
     assert result.returncode == 0, result.stdout + result.stderr
     assert (installers / "scripts/install-linux.sh").read_text(encoding="utf-8").count("release N+1")
@@ -725,12 +726,105 @@ def test_an_install_with_no_retained_installers_has_none_to_refresh(tmp_path: Pa
     """A clone install keeps no installers directory, and an update of one must
     not invent it — nor reach for a release it was never going to install."""
     result = run_with_common(
-        "refresh_installers", tmp_path,
+        "stage_installers; commit_installers", tmp_path,
         HARDY_HOME=str(tmp_path / "hardy"),
         HARDY_RELEASE_BASE_URL="http://127.0.0.1:1/unreachable",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / "hardy/installers").exists()
+
+
+@posix_only
+def test_an_installation_is_updated_from_the_repository_it_came_from(tmp_path: Path):
+    """Installing from a fork's release and then updating must not walk the
+    installation over to the official repository. The updater has none of the
+    environment the installer was given, so the installer records it."""
+    home = tmp_path / "hardy"
+    recorded = run_with_common(
+        "record_release_origin; unset HARDY_REPO_URL HARDY_REPO_URL_CHOSEN; "
+        'HARDY_REPO_URL="https://github.com/charlesmsiegel/hardy"; HARDY_REPO_URL_CHOSEN=""; '
+        "release_base_url",
+        tmp_path, HARDY_HOME=str(home), HARDY_REPO_URL="https://example.invalid/fork",
+    )
+    assert recorded.returncode == 0, recorded.stderr
+    assert recorded.stdout == "https://example.invalid/fork/releases/latest/download"
+
+    # Choosing one now still wins over what was recorded then.
+    chosen = run_with_common(
+        "release_base_url", tmp_path,
+        HARDY_HOME=str(home), HARDY_REPO_URL="https://example.invalid/other",
+    )
+    assert chosen.stdout == "https://example.invalid/other/releases/latest/download"
+
+
+def update_probe() -> str:
+    """The Python the updater runs to classify an installation, as shipped."""
+    source = (SCRIPTS / "update.sh").read_text(encoding="utf-8")
+    return source.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+
+
+def environment_with_metadata(root: Path, editable_at: Path | None) -> Path:
+    """An environment carrying hardy-prover's metadata and an unimportable package.
+
+    Unimportable on purpose: a checkout mid-edit, or one whose newly declared
+    dependency is not installed yet, is exactly when someone runs the updater.
+    """
+    import json
+    import sys
+
+    venv = root / "venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+    site = next((venv / "lib").glob("python*/site-packages"))
+    info = site / "hardy_prover-0.1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: hardy-prover\nVersion: 0.1.0\n", encoding="utf-8"
+    )
+    if editable_at is not None:
+        (info / "direct_url.json").write_text(
+            json.dumps({"url": editable_at.as_uri(), "dir_info": {"editable": True}}), encoding="utf-8"
+        )
+    (site / "hardy").mkdir()
+    (site / "hardy" / "__init__.py").write_text("this is not python at all\n", encoding="utf-8")
+    return venv
+
+
+@posix_only
+def test_a_checkout_that_cannot_be_imported_is_still_a_checkout(tmp_path: Path):
+    """Classifying by `import hardy` would call a broken editable install a
+    release install, and the updater would replace the developer's checkout
+    with a published wheel."""
+    tree = tmp_path / "checkout"
+    tree.mkdir()
+    (tree / "pyproject.toml").write_text('[project]\nname = "hardy-prover"\n', encoding="utf-8")
+    venv = environment_with_metadata(tmp_path, editable_at=tree)
+    result = subprocess.run(
+        [str(venv / "bin/python"), "-c", update_probe()], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == str(tree)
+
+
+@posix_only
+def test_a_wheel_install_says_so_and_a_missing_one_is_not_guessed_at(tmp_path: Path):
+    """No direct_url.json is what a wheel install looks like; no distribution at
+    all is a broken environment, and answering either question wrongly picks the
+    wrong thing to do to it."""
+    wheel = environment_with_metadata(tmp_path / "wheel", editable_at=None)
+    installed = subprocess.run(
+        [str(wheel / "bin/python"), "-c", update_probe()], capture_output=True, text=True
+    )
+    assert installed.returncode == 3, installed.stdout + installed.stderr
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    import sys
+
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(empty / "venv")], check=True)
+    missing = subprocess.run(
+        [str(empty / "venv/bin/python"), "-c", update_probe()], capture_output=True, text=True
+    )
+    assert missing.returncode == 1, missing.stdout + missing.stderr
 
 
 def test_the_release_publishes_exactly_what_the_installers_ask_for():

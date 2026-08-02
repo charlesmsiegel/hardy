@@ -97,14 +97,37 @@ parse_update_arguments() {
 	LEAN_PROJECT="$HARDY_HOME/lean"
 }
 
-# Ask the installed environment where its own code is rather than keeping a
-# record that could go stale: an editable install resolves the package back to
-# the tree it was installed from, whether that was a clone or the fetched copy.
+# Ask the installed environment what kind of installation it is, rather than
+# keeping a record that could go stale. Read from the distribution's own
+# metadata and not by importing Hardy: a checkout that cannot be imported right
+# now — a syntax error mid-edit, a dependency not yet installed — is still an
+# editable install, and answering "release" for it would replace the developer's
+# checkout with a published wheel.
+#
+# Prints the tree for an editable install; exits 3 for a wheel install, and 1
+# when there is no Hardy in the environment to ask.
 discover_source_tree() {
-	local found
-	found="$("$VENV/bin/python" -c 'import hardy, pathlib; print(pathlib.Path(hardy.__file__).resolve().parents[2])' 2>/dev/null)" || return 1
-	[ -n "$found" ] && [ -f "$found/pyproject.toml" ] || return 1
-	printf '%s\n' "$found"
+	"$VENV/bin/python" - <<'PY'
+import json, pathlib, sys
+from importlib import metadata
+
+try:
+    distribution = metadata.distribution("hardy-prover")
+except metadata.PackageNotFoundError:
+    raise SystemExit(1)
+
+# pip records this for anything installed from a local path or a URL; a wheel
+# install from a file has one too, so `editable` is what distinguishes them.
+recorded = distribution.read_text("direct_url.json")
+if recorded:
+    direct = json.loads(recorded)
+    if direct.get("dir_info", {}).get("editable") and direct.get("url", "").startswith("file://"):
+        tree = pathlib.Path(direct["url"][len("file://"):])
+        if (tree / "pyproject.toml").is_file():
+            print(tree)
+            raise SystemExit(0)
+raise SystemExit(3)
+PY
 }
 
 # Which of the two installations this is. An editable install resolves back to
@@ -118,11 +141,13 @@ resolve_update_source() {
 	fi
 	[ -x "$VENV/bin/python" ] ||
 		fail "no Hardy installation at $HARDY_HOME; run scripts/install.sh first, or pass --source"
-	if SOURCE_TREE="$(discover_source_tree)"; then
-		UPDATE_FROM=source
-	else
-		UPDATE_FROM=release
-	fi
+	local status=0
+	SOURCE_TREE="$(discover_source_tree)" || status=$?
+	case "$status" in
+	0) UPDATE_FROM=source ;;
+	3) UPDATE_FROM=release ;;
+	*) fail "the environment at $VENV has no Hardy in it to update; re-run scripts/install.sh, or pass --source DIR" ;;
+	esac
 }
 
 update_source() {
@@ -175,6 +200,10 @@ update_from_release() {
 	local wheel directory="$HARDY_HOME/download"
 	step "Updating Hardy from $(release_base_url)"
 	rm -rf "$directory"
+	# Both artifacts in hand, verified, before either is put in place. A bundle
+	# that fails to download after the wheel had already moved would leave
+	# release N's updater and uninstaller minding release N+1.
+	stage_installers
 	wheel="$(download_release_asset .whl "$directory")"
 	say "verified $(basename "$wheel") against the release manifest"
 	# --upgrade, not --force-reinstall: a published release is never rewritten
@@ -185,7 +214,7 @@ update_from_release() {
 		fail "could not install $(basename "$wheel") into $VENV"
 	say "installed $(basename "$wheel")"
 	rm -rf "$directory"
-	refresh_installers
+	commit_installers
 }
 
 update_toolchain() {
