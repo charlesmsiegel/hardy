@@ -222,7 +222,12 @@ Priority labels are sequencing hints:
   The signal is platform-correct -- `SIGINT` to the child's own process group
   on POSIX, `CTRL_BREAK_EVENT` to a group created for it on Windows -- and the
   driver answers it rather than dying, so an interrupted cell costs one cell
-  and the namespace survives. Like an errored cell it is recorded, reported,
+  and the namespace survives. A stop that reaches the kernel before the cell
+  does is answered without running it, rather than being swallowed between
+  cells and leaving the cell to run on with the press already spent; a
+  `KeyboardInterrupt` the cell raised itself is still the ordinary error it
+  always was, because the parent knows whether it asked for one and the driver
+  does not. Like an errored cell it is recorded, reported,
   and never accepted: it did not finish, and it may have changed the namespace
   on its way to being stopped, so what it left is outside the set a replay and
   an export rebuild from. A kernel that will not answer within a short grace --
