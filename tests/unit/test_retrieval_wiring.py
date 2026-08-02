@@ -47,6 +47,9 @@ class _Source:
         self.worst_case_seconds = 1.0
         self._results = results
 
+    def query_for(self, query):
+        return query
+
     def search(self, goal, limit):
         return tuple(self._results)
 
