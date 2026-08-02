@@ -263,6 +263,37 @@ def test_a_response_that_never_stops_arriving_is_cut_off_at_its_deadline(monkeyp
         retrieval._fetch_url('https://example.invalid/json', 5.0)
 
 
+def test_an_endpoint_that_rejects_the_request_is_drift_rather_than_downtime(monkeypatch) -> None:
+    """404 and 400 mean the request was wrong, which is the endpoint's contract
+    having moved -- exactly what the live test exists to notice. Filing those
+    under transport left it skipping on the drift it was written to catch, one
+    level up from the last time.
+
+    5xx, 408 and 429 stay transport: those say the service is unwell, not that
+    Hardy is asking it the wrong thing.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    error_module = importlib.import_module('urllib.error')
+
+    def failing(status):
+        def urlopen(*arguments, **keywords):
+            raise error_module.HTTPError('https://loogle.invalid/json', status, 'no', {}, None)
+
+        return urlopen
+
+    for status in (400, 404, 410):
+        monkeypatch.setattr(retrieval.urllib.request, 'urlopen', failing(status))
+        with pytest.raises(retrieval.RetrievalError) as raised:
+            retrieval._fetch_url('https://loogle.invalid/json', 5.0)
+        assert not isinstance(raised.value, retrieval.RetrievalTransportError), status
+        assert str(status) in str(raised.value)
+
+    for status in (408, 429, 500, 503):
+        monkeypatch.setattr(retrieval.urllib.request, 'urlopen', failing(status))
+        with pytest.raises(retrieval.RetrievalTransportError):
+            retrieval._fetch_url('https://loogle.invalid/json', 5.0)
+
+
 def test_a_service_that_did_not_answer_is_distinguished_from_one_that_answered_badly() -> None:
     """Both are failures for the ranking, and only one of them means Loogle
     changed its contract. The live test skips on the first and must not skip on
@@ -368,9 +399,49 @@ def test_fusion_sees_deeper_than_the_number_of_premises_it_returns() -> None:
 
     ranking = _retriever(retrieval, [lean, loogle]).rank('_ + _ = _ + _', limit=3)
 
-    assert lean.calls == [('_ + _ = _ + _', retrieval.CANDIDATE_DEPTH * 3)]
+    asked = lean.calls[0][1]
+    assert asked > 3 and asked >= retrieval.FUSION_DEPTH_FLOOR
     assert ranking.premises[0].name == 'Both.found'
     assert len(ranking.premises) == 3
+
+
+def test_a_ranking_cannot_be_read_back_under_a_goal_it_was_not_computed_for() -> None:
+    """The provenance hashes the goal, and nothing checked the two agreed. A
+    ranking whose top-level `goal` was swapped passed every integrity check
+    while presenting its premises as answers to a question nobody asked.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')])
+
+    ranking = _retriever(retrieval, [lean]).rank('_ + _ = _ + _')
+    payload = json.loads(ranking.model_dump_json())
+
+    assert retrieval.PremiseRanking.model_validate(payload).goal == '_ + _ = _ + _'
+    with pytest.raises(ValidationError):
+        retrieval.PremiseRanking.model_validate(payload | {'goal': '_ * _ = _ * _'})
+
+
+def test_fusion_looks_deep_enough_even_for_a_one_premise_answer() -> None:
+    """A multiplier cannot fix this; only a floor can.
+
+    A premise both sources rank at `r` scores 2/(60+r), which beats the best a
+    single source can offer -- 1/(60+1) -- for every r up to 61. So a cutoff of
+    `limit * 3` hid the winner whenever the answer was short: at limit=1 it
+    looked three deep and a shared fourth-place premise never reached fusion.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    def listing(prefix):
+        return [_record(f'{prefix}.{index}') for index in range(3)] + [_record('Both.found')]
+
+    lean = FakeSource(_pinned(retrieval), listing('Lean'))
+    loogle = FakeSource(_unpinned(retrieval), listing('Loogle'))
+
+    ranking = _retriever(retrieval, [lean, loogle]).rank('_ + _ = _ + _', limit=1)
+
+    assert lean.calls == [('_ + _ = _ + _', retrieval.FUSION_DEPTH_FLOOR)]
+    assert retrieval.FUSION_DEPTH_FLOOR == retrieval.RRF_K + 1
+    assert [premise.name for premise in ranking.premises] == ['Both.found']
 
 
 def test_a_ranking_records_what_each_source_spent() -> None:
