@@ -124,6 +124,14 @@ incremental state, and proof-state snapshots are optimizations to add when measu
 latency warrants them. Each run begins from a known environment, preserves the
 original statement, rejects `sorry` in completed proofs, and audits dependencies.
 
+That condition is now measurable rather than rhetorical. `hardy latency` times the
+**prelude** — process start plus `import Mathlib`, elaborated with no proof body, so
+the fixed cost is isolated from the work a warm process would still pay. A pool
+recovers the prelude on every call after the first, so the decision is the share
+`prelude × (calls − 1)` takes of a run, not the wall time of any single call. The
+`− 1` is the load-bearing part: a warm pool still pays one import, and crediting it
+with all of them is what makes an unwarranted pool look warranted.
+
 ### 5. Computer algebra
 
 Lean answers whether a proof is correct. It does not help decide what is worth
