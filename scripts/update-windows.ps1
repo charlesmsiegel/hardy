@@ -189,11 +189,21 @@ function Update-FromRelease {
     $staged = Request-Installers
     $wheel = Save-ReleaseAsset '.whl' $directory
     Write-Detail "verified $(Split-Path -Leaf $wheel) against the release manifest"
-    # --upgrade, not --force-reinstall: a published release is never rewritten
-    # (the release workflow refuses to replace the assets of one), so the
-    # version in the wheel's name is the whole answer to whether there is
-    # anything to do here.
-    & $VenvPython -m pip install --upgrade $wheel
+    # --upgrade alone, ordinarily: a published release is never rewritten (the
+    # release workflow refuses to replace the assets of one), so the version in
+    # the wheel's name is the whole answer to whether there is anything to do.
+    # Moving to a fork whose wheel carries the same version is the exception --
+    # a different wheel under the same number, which --upgrade would skip while
+    # the origin record and the installers moved.
+    $recorded = ''
+    if (Test-Path -LiteralPath $ReleaseOrigin) {
+        foreach ($line in [System.IO.File]::ReadAllLines($ReleaseOrigin)) {
+            if ($line.StartsWith('repo=')) { $recorded = $line.Substring(5).Trim() }
+        }
+    }
+    $arguments = @('-m', 'pip', 'install', '--upgrade')
+    if ((Get-ReleaseRepoUrl) -ne $recorded) { $arguments += '--force-reinstall' }
+    & $VenvPython @arguments $wheel
     if ($LASTEXITCODE -ne 0) { Stop-Update "could not install $(Split-Path -Leaf $wheel) into $Venv" }
     Write-Detail "installed $(Split-Path -Leaf $wheel)"
     Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
