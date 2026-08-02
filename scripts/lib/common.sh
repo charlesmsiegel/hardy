@@ -21,6 +21,10 @@ LEAN_PROJECT="$HARDY_HOME/lean"
 LEAN_PACKAGE=hardymath
 MATHLIB_TOOLCHAIN="leanprover-community/mathlib4:lean-toolchain"
 
+# Whether the repository was chosen or merely defaulted. An install records the
+# repository its release came from, and only an explicit choice now may override
+# what the installation already says about itself.
+HARDY_REPO_URL_CHOSEN="${HARDY_REPO_URL:+1}"
 HARDY_REPO_URL="${HARDY_REPO_URL:-https://github.com/charlesmsiegel/hardy}"
 # Which release to install: a tag, or empty for whatever is current.
 HARDY_VERSION="${HARDY_VERSION:-}"
@@ -144,16 +148,46 @@ check_disk_space() {
 # through one directory of release assets, and nothing downloaded from it is
 # used before its digest has been checked against the manifest.
 
+# Which repository this installation's releases come from. Recorded at install
+# time so that an install made from a fork is updated from that fork: the
+# updater running later has none of the environment the installer was given, and
+# without this would quietly move the installation to the official repository.
+RELEASE_ORIGIN="$HARDY_HOME/release-origin"
+
+record_release_origin() {
+	mkdir -p "$HARDY_HOME"
+	printf 'repo=%s\n' "$HARDY_REPO_URL" >"$RELEASE_ORIGIN"
+}
+
+recorded_repo_url() {
+	[ -r "$RELEASE_ORIGIN" ] || return 1
+	sed -n 's/^repo=//p' "$RELEASE_ORIGIN" | head -1 | grep . || return 1
+}
+
+# The repository to reach for: chosen now, else whatever this installation was
+# made from, else Hardy's own.
+release_repo_url() {
+	if [ -n "$HARDY_REPO_URL_CHOSEN" ]; then
+		printf '%s' "$HARDY_REPO_URL"
+	else
+		recorded_repo_url 2>/dev/null || printf '%s' "$HARDY_REPO_URL"
+	fi
+}
+
 # Where the release assets live. HARDY_RELEASE_BASE_URL replaces the location
 # wholesale, which is how the installer's own CI exercises this path against a
-# release it built moments earlier, before one has ever been published.
+# release it built moments earlier, before one has ever been published. It is
+# deliberately not recorded: it names a place for one run, where the repository
+# names where this installation's code comes from for good.
 release_base_url() {
+	local repository
+	repository="$(release_repo_url)"
 	if [ -n "${HARDY_RELEASE_BASE_URL:-}" ]; then
 		printf '%s' "${HARDY_RELEASE_BASE_URL%/}"
 	elif [ -n "$HARDY_VERSION" ]; then
-		printf '%s/releases/download/%s' "$HARDY_REPO_URL" "$HARDY_VERSION"
+		printf '%s/releases/download/%s' "$repository" "$HARDY_VERSION"
 	else
-		printf '%s/releases/latest/download' "$HARDY_REPO_URL"
+		printf '%s/releases/latest/download' "$repository"
 	fi
 }
 
@@ -195,8 +229,15 @@ download_release_asset() {
 	base="$(release_base_url)"
 	have curl || fail "curl is required to install Hardy from a release"
 	mkdir -p "$directory"
-	curl -fsSL "$base/SHA256SUMS" -o "$directory/SHA256SUMS" ||
-		fail "could not fetch $base/SHA256SUMS — is there a published release yet? (HARDY_VERSION selects one, --from-source installs a clone instead)"
+	# The manifest the bootstrap already fetched, when there is one. It names
+	# the versioned assets, so reusing it keeps one install run on one release
+	# even if another is published while prerequisites are being installed.
+	if [ -n "${HARDY_RELEASE_MANIFEST:-}" ] && [ -r "${HARDY_RELEASE_MANIFEST}" ]; then
+		cp "$HARDY_RELEASE_MANIFEST" "$directory/SHA256SUMS"
+	else
+		curl -fsSL "$base/SHA256SUMS" -o "$directory/SHA256SUMS" ||
+			fail "could not fetch $base/SHA256SUMS — is there a published release yet? (HARDY_VERSION selects one, --from-source installs a clone instead)"
+	fi
 	entry="$(release_asset "$directory/SHA256SUMS" "$suffix")" ||
 		fail "the release at $base has no $suffix asset"
 	digest="${entry%% *}"
@@ -213,10 +254,15 @@ download_release_asset() {
 # what updates and removes it later. They have to move with the wheel: after an
 # update to release N+1, release N's uninstaller would otherwise be the one that
 # runs, knowing nothing of any path N+1 introduced.
-refresh_installers() {
+# Downloaded, verified and unpacked, but not yet in place. Staging is separate
+# from committing so that an update can have both artifacts in hand before it
+# changes either: a bundle that fails here leaves the old installers *and* the
+# old wheel, where a failure after the wheel had moved would leave release N's
+# uninstaller looking at release N+1 — the skew the bundle exists to prevent.
+stage_installers() {
 	local target="$HARDY_HOME/installers" staging="$HARDY_HOME/installers.new" bundle
 	[ -d "$target" ] || return 0
-	step "Refreshing the installers in $target"
+	step "Fetching the installers for this release"
 	# Last run's displaced copy, cleared now rather than at the end: this script
 	# may be running out of the directory about to be replaced.
 	rm -rf "$target.previous" "$staging"
@@ -225,11 +271,20 @@ refresh_installers() {
 	tar xz -C "$staging/tree" -f "$bundle" || fail "could not unpack $(basename "$bundle")"
 	[ -e "$staging/tree/scripts/lib/common.sh" ] ||
 		fail "$(basename "$bundle") does not carry the Hardy installers"
-	# Swapped whole. A half-written installers directory is worse than an old one.
+	say "verified $(basename "$bundle") against the release manifest"
+	# One manifest for both artifacts, so an update cannot take its installers
+	# from one release and its wheel from the next.
+	export HARDY_RELEASE_MANIFEST="$staging/download/SHA256SUMS"
+}
+
+# Swapped whole. A half-written installers directory is worse than an old one.
+commit_installers() {
+	local target="$HARDY_HOME/installers" staging="$HARDY_HOME/installers.new"
+	[ -d "$staging/tree" ] || return 0
 	mv "$target" "$target.previous"
 	mv "$staging/tree" "$target"
 	rm -rf "$staging"
-	say "the installers now match the installed release"
+	say "the installers in $target now match the installed release"
 }
 
 # `release` unless there is a source tree here to install, which is what a
@@ -293,6 +348,18 @@ ensure_python() {
 	install_uv_python
 }
 
+# Every path from here needs curl — elan's installer is fetched with it, and so
+# is the release. A minimal image can carry Python 3.11 and no curl at all, and
+# ensure_python leaves the prerequisite hook unrun when it finds a Python it
+# likes, so asking for it here is what keeps the promise to install what is
+# missing rather than complaining about it.
+ensure_curl() {
+	have curl && return 0
+	step "Installing curl"
+	os_install_prerequisites
+	have curl || fail "curl is required to download elan and Hardy's release; install it and re-run"
+}
+
 # One installer for both kinds of environment: `uv pip` when the private Python
 # came from uv, the environment's own pip otherwise.
 environment_install() {
@@ -338,6 +405,7 @@ install_released_wheel() {
 	environment_install "$wheel" || fail "could not install $(basename "$wheel") into $VENV"
 	say "installed hardy from $(basename "$wheel")"
 	rm -rf "$directory"
+	record_release_origin
 }
 
 ensure_path_entry() {
@@ -583,6 +651,7 @@ hardy_install_main() {
 	fi
 	check_disk_space
 	ensure_python
+	ensure_curl
 	create_environment
 	link_command
 	ensure_elan

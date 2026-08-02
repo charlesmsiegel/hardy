@@ -147,13 +147,37 @@ function Get-Python {
 # not obtaining a copy of the repository. Nothing downloaded here is used before
 # its digest has been checked against the release's own manifest.
 
+# Which repository this installation's releases come from. Recorded at install
+# time so that an install made from a fork is updated from that fork: the
+# updater running later has none of the environment the installer was given.
+$ReleaseOrigin = Join-Path $Prefix 'release-origin'
+
+function Save-ReleaseOrigin {
+    New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
+    Write-Utf8File $ReleaseOrigin "repo=$RepoUrl`r`n"
+}
+
+# Chosen now, else whatever this installation was made from, else Hardy's own.
+function Get-ReleaseRepoUrl {
+    if ($env:HARDY_REPO_URL) { return $env:HARDY_REPO_URL }
+    if (Test-Path -LiteralPath $ReleaseOrigin) {
+        foreach ($line in [System.IO.File]::ReadAllLines($ReleaseOrigin)) {
+            if ($line.StartsWith('repo=')) { return $line.Substring(5).Trim() }
+        }
+    }
+    return $RepoUrl
+}
+
 # HARDY_RELEASE_BASE_URL replaces the location wholesale, which is how the
 # installer's own CI exercises this path against a release it built moments
-# earlier, before one has ever been published.
+# earlier, before one has ever been published. It is deliberately not recorded:
+# it names a place for one run, where the repository names where this
+# installation's code comes from for good.
 function Get-ReleaseBaseUrl {
     if ($env:HARDY_RELEASE_BASE_URL) { return $env:HARDY_RELEASE_BASE_URL.TrimEnd('/') }
-    if ($ReleaseVersion) { return "$RepoUrl/releases/download/$ReleaseVersion" }
-    return "$RepoUrl/releases/latest/download"
+    $repository = Get-ReleaseRepoUrl
+    if ($ReleaseVersion) { return "$repository/releases/download/$ReleaseVersion" }
+    return "$repository/releases/latest/download"
 }
 
 # Find one asset in a SHA256SUMS manifest by the end of its name. The version is
@@ -171,18 +195,38 @@ function Find-ReleaseAsset($manifest, $suffix) {
 }
 
 # Download one asset and refuse it unless it matches the manifest. The wheel is
-# code that will run as this user, so a mismatch stops the install.
-function Save-ReleaseAsset($suffix, $directory) {
+# code that will run as this user, so a mismatch stops the install — always,
+# whatever $required says. $required false means only that an unreachable
+# release is answered with $null instead of an exit, so the caller can fall back
+# to the repository when no particular release was asked for.
+function Save-ReleaseAsset($suffix, $directory, $required = $true) {
     $base = Get-ReleaseBaseUrl
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     $manifest = Join-Path $directory 'SHA256SUMS'
-    try { Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest -UseBasicParsing }
-    catch { Stop-Install "could not fetch $base/SHA256SUMS - is there a published release yet? (HARDY_VERSION selects one, -FromSource installs a checkout instead)" }
+    # The manifest the hand-off already fetched, when there is one. It names the
+    # versioned assets, so reusing it keeps one install run on one release even
+    # if another is published while prerequisites are being installed.
+    if ($env:HARDY_RELEASE_MANIFEST -and (Test-Path -LiteralPath $env:HARDY_RELEASE_MANIFEST)) {
+        Copy-Item -LiteralPath $env:HARDY_RELEASE_MANIFEST -Destination $manifest -Force
+    }
+    else {
+        try { Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile $manifest -UseBasicParsing }
+        catch {
+            if (-not $required) { return $null }
+            Stop-Install "could not fetch $base/SHA256SUMS - is there a published release yet? (HARDY_VERSION selects one, -FromSource installs a checkout instead)"
+        }
+    }
     $asset = Find-ReleaseAsset $manifest $suffix
-    if (-not $asset) { Stop-Install "the release at $base has no $suffix asset" }
+    if (-not $asset) {
+        if (-not $required) { return $null }
+        Stop-Install "the release at $base has no $suffix asset"
+    }
     $path = Join-Path $directory $asset.Name
     try { Invoke-WebRequest -Uri "$base/$($asset.Name)" -OutFile $path -UseBasicParsing }
-    catch { Stop-Install "could not download $base/$($asset.Name)" }
+    catch {
+        if (-not $required) { return $null }
+        Stop-Install "could not download $base/$($asset.Name)"
+    }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLower()
     if ($actual -ne $asset.Digest.ToLower()) {
         Stop-Install "checksum mismatch for $($asset.Name): the release says $($asset.Digest), the download is $actual"
@@ -208,7 +252,18 @@ function Invoke-ReleaseInstaller {
     $installers = Join-Path $Prefix 'installers'
     $staging = Join-Path $Prefix 'installers.new'
     Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
-    $bundle = Save-ReleaseAsset 'hardy-installers.tar.gz' (Join-Path $staging 'download')
+    # Required only when a particular release was asked for. Otherwise an
+    # unreachable release means there is not one yet, which is the state before
+    # the first is published, and the repository is where Hardy comes from --
+    # the same fallback all three POSIX bootstraps take.
+    $named = [bool]($env:HARDY_VERSION -or $env:HARDY_RELEASE_BASE_URL)
+    $bundle = Save-ReleaseAsset 'hardy-installers.tar.gz' (Join-Path $staging 'download') $named
+    if (-not $bundle) {
+        Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+        Write-Warn "no release to install from at $(Get-ReleaseBaseUrl); falling back to the repository"
+        $script:InstallFrom = 'source'
+        return
+    }
     Write-Detail "verified $(Split-Path -Leaf $bundle) against the release manifest"
     $tree = Join-Path $staging 'tree'
     New-Item -ItemType Directory -Force -Path $tree | Out-Null
@@ -216,9 +271,11 @@ function Invoke-ReleaseInstaller {
     if ($LASTEXITCODE -ne 0) { Stop-Install "could not unpack $(Split-Path -Leaf $bundle)" }
     $handoff = Join-Path $tree 'scripts\install-windows.ps1'
     if (-not (Test-Path $handoff)) { Stop-Install 'the release installer bundle carries no install-windows.ps1' }
+    Copy-Item -LiteralPath (Join-Path $staging 'download\SHA256SUMS') -Destination (Join-Path $tree 'SHA256SUMS') -Force
     Remove-Item -Recurse -Force $installers -ErrorAction SilentlyContinue
     Move-Item $tree $installers
     Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+    $env:HARDY_RELEASE_MANIFEST = Join-Path $installers 'SHA256SUMS'
 
     # Everything this copy was asked for, passed to the one that will do it.
     $forward = @()
@@ -332,6 +389,7 @@ function New-Environment {
         if ($LASTEXITCODE -ne 0) { Stop-Install "could not install $(Split-Path -Leaf $wheel) into $Venv" }
         Write-Detail "installed hardy from $(Split-Path -Leaf $wheel)"
         Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
+        Save-ReleaseOrigin
     }
     else {
         & $venvPython -m pip install -e $RepoRoot
@@ -576,13 +634,15 @@ Open a new terminal first, so that $BinDir is on your PATH.
 
 Write-Step "Installing Hardy on Windows ($([Environment]::OSVersion.Version))"
 Resolve-InstallSource
+# The hand-off may find there is no release to install from and choose the
+# repository instead, so what it decided is read after it has run, not before.
+if ($script:InstallFrom -eq 'release') { Invoke-ReleaseInstaller }
 if ($script:InstallFrom -eq 'source') {
     Initialize-Repository | Out-Null
     Write-Detail "source tree: $RepoRoot"
 }
 else {
     Write-Detail "release: $(Get-ReleaseBaseUrl)"
-    Invoke-ReleaseInstaller
 }
 Install-Prerequisites
 New-Environment

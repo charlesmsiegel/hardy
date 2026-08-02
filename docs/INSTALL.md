@@ -76,7 +76,11 @@ silently reinstall the previous one.
 
 `HARDY_REPO_URL` points at a different repository — a fork — and moves both its
 releases and its archives. On its own it installs that fork's latest release; if
-the fork publishes none, add `HARDY_REPO_REF=main` to install its code instead.
+the fork publishes none, the repository is the fallback, exactly as it is before
+Hardy's own first release. The repository an installation came from is recorded
+in `~/.local/share/hardy/release-origin` (`%LOCALAPPDATA%\hardy\release-origin`)
+and reused by the updater, so a fork's installation keeps following that fork
+without having to be told again.
 
 ## What the installers do
 
@@ -114,7 +118,8 @@ installer is cheap and safe.
 | | Linux / macOS | Windows |
 | --- | --- | --- |
 | Virtual environment | `~/.local/share/hardy/venv` | `%LOCALAPPDATA%\hardy\venv` |
-| Fetched installers | `~/.local/share/hardy/installers` | the script you ran |
+| Fetched installers | `~/.local/share/hardy/installers` | `%LOCALAPPDATA%\hardy\installers` |
+| Recorded release origin | `~/.local/share/hardy/release-origin` | `%LOCALAPPDATA%\hardy\release-origin` |
 | Lean project | `~/.local/share/hardy/lean` | `%LOCALAPPDATA%\hardy\lean` |
 | `hardy` command | `~/.local/bin/hardy` | `%LOCALAPPDATA%\hardy\bin\hardy.cmd` |
 | Config file | `~/.config/hardy/config.toml` | `%APPDATA%\hardy\config.toml` |

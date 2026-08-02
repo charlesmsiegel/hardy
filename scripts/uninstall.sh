@@ -173,6 +173,7 @@ hardy_uninstall_main() {
 	drop "the installers an update displaced" "$HARDY_HOME/installers.previous"
 	drop "an interrupted download" "$HARDY_HOME/download"
 	drop "an interrupted installer refresh" "$HARDY_HOME/installers.new"
+	drop "the recorded release origin" "$HARDY_HOME/release-origin"
 	remove_path_entries
 
 	if wanted "$REMOVE_LEAN_PROJECT" "Remove the Lean project at $LEAN_PROJECT ($(human_size "$LEAN_PROJECT"))? Rebuilding it is a multi-gigabyte download." "$LEAN_PROJECT"; then
