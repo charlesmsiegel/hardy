@@ -157,8 +157,13 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         # A proof that elaborated and was then refused is not "no proof submitted".
         reason = "axioms_rejected" if refused["axioms"] else "no_proof_submitted"
     # The SDK ran the loop, so its own count is the only honest one; counting
-    # tool calls here would be a different number wearing the same name.
-    turns = getattr(runtime, "turns", None) or 0
+    # tool calls here would be a different number wearing the same name. It
+    # arrives with the SDK's final result, which a run the wall clock cut short
+    # never receives -- so the count stays unset, and `None` says that. It used
+    # to be flattened to 0, which reads as a measurement: a real 5-second run
+    # recorded `"turns": 0` beside a trajectory holding the tool call the model
+    # had already made.
+    turns = getattr(runtime, "turns", None)
 
     # What the audit decided: the verdict that verified the run, or failing that
     # the record of what refused it -- which distinguishes an audit that ran and
