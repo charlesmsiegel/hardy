@@ -86,11 +86,16 @@ def test_the_mcp_server_answers_a_ranking_and_bounds_it(tmp_path) -> None:
 
     ranking = server.rank_premises('_ + _ = _ + _')
 
-    assert [premise.name for premise in ranking.premises] == ['Huge.result']
+    # The premise is dropped rather than shown with a cut signature: a
+    # shortened Lean type can read as a complete one while saying something
+    # else, and the model cannot open the artifact to check.
+    assert ranking.premises == ()
     assert ranking.observation_truncated
     assert ranking.output_artifact is not None
     assert len(ranking.model_dump_json().encode('utf-8')) <= 1_300
     assert (store.path / ranking.output_artifact).exists()
+    whole = json.loads((store.path / ranking.output_artifact).read_text(encoding='utf-8'))
+    assert whole['premises'][0]['signature'] == 'x' * 10_000
     # Bounding rewrites the premises, so the digest must still describe the
     # provenance the bounded value carries rather than the one it was cut from.
     assert ranking.provenance_sha256 == ranking.provenance.digest

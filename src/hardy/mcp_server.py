@@ -146,10 +146,12 @@ class LeanToolRuntime:
         if len(result.model_dump_json().encode("utf-8")) <= self.observation_bytes:
             return result
         artifact = self._write_full_result(result)
-        premises = [
-            premise.model_copy(update={"signature": premise.signature[:256]})
-            for premise in result.premises
-        ]
+        # Signatures are *not* shortened, which the earlier code did before
+        # dropping anything. A cut Lean type can still read as a complete one
+        # while saying something else, and the model cannot open the artifact
+        # to find out -- the same reason an over-long declaration name is
+        # discarded rather than trimmed. Fewer premises, each of them true.
+        premises = list(result.premises)
         while True:
             bounded = result.model_copy(
                 update={
