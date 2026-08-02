@@ -113,6 +113,29 @@ def test_frozen_claim_records_statement_and_environment_identity() -> None:
     assert claim.environment.mathlib_revision == '81a5d257'
 
 
+def test_a_manifest_version_identifies_one_shape_including_its_nested_ones() -> None:
+    """`RunLimits` is strict and nested inside the manifest, so a limit added
+    without moving the version leaves one number naming two incompatible
+    shapes: a reader built against the older version rejects the newer file.
+    Version 2 was itself bumped for a nested addition, `grades.
+    verification_evidence`, which is the precedent this follows.
+    """
+    domain = importlib.import_module('hardy.domain')
+
+    written = domain.RunManifest(
+        run_id=UUID(int=1),
+        created_at=datetime(2026, 7, 24, tzinfo=UTC),
+        phase=domain.RunPhase.SETUP,
+        model='gpt-5.6-codex',
+        prompt_set_sha256='c' * 64,
+    ).model_dump(mode='json')
+
+    assert 'retrieval_seconds' in written['limits']
+    assert written['schema_version'] == 3
+    with pytest.raises(ValidationError):
+        domain.RunLimits(**{**written['limits'], 'a_limit_from_the_future': 1})
+
+
 def test_run_manifest_has_stable_phase_and_terminal_reason_values() -> None:
     domain = importlib.import_module('hardy.domain')
 
@@ -125,7 +148,7 @@ def test_run_manifest_has_stable_phase_and_terminal_reason_values() -> None:
         terminal_reason=None,
     )
 
-    assert manifest.schema_version == 2
+    assert manifest.schema_version == 3
     assert manifest.phase.value == 'setup'
     assert domain.TerminalReason.STATEMENT_MISMATCH.value == 'statement_mismatch'
 

@@ -543,7 +543,12 @@ def test_the_lean_source_searches_the_environment_the_run_is_frozen_under() -> N
     source = retrieval.LeanSearchSource(service, limits=domain.RunLimits(lean_process_seconds=30))
 
     assert [record.name for record in source.search('_ + _ = _ + _', 5)] == ['Nat.add_comm']
-    assert source.worst_case_seconds == 30.0
+    # The Lean deadline plus what `run_process` may spend stopping a child that
+    # reached it: one bounded `wait` and one bounded `join` per output reader.
+    # Declaring the deadline alone let an admitted search overrun the budget.
+    process = importlib.import_module('hardy.process')
+    assert source.worst_case_seconds == 30.0 + process.MAX_TEARDOWN_SECONDS
+    assert process.MAX_TEARDOWN_SECONDS == process.TEARDOWN_SECONDS * 3
     # Every toolchain identity that can move a `#find` result, `lean_commit`
     # included: two builds can display one version and be different Leans.
     for identity in ('81a5d257', '4.32.0', '8c9756b', 'b' * 64):

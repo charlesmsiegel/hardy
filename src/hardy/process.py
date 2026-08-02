@@ -44,6 +44,15 @@ RUNTIME_ENVIRONMENT_KEYS = {
 }
 
 
+# How long a child gets to die politely, and how long each output reader gets
+# to finish afterwards. Named because a caller reasoning about a deadline needs
+# to know the deadline is not the end of the story: stopping a child that
+# overran costs time too, and `MAX_TEARDOWN_SECONDS` is what that can add.
+TEARDOWN_SECONDS = 2
+# One `wait` for the terminated child, then one `join` per output reader.
+MAX_TEARDOWN_SECONDS = TEARDOWN_SECONDS * 3
+
+
 class ProcessSpec(FrozenModel):
     argv: tuple[str, ...]
     cwd: Path
@@ -113,12 +122,12 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
     if child.poll() is None:
         child.terminate()
         try:
-            child.wait(timeout=2)
+            child.wait(timeout=TEARDOWN_SECONDS)
         except subprocess.TimeoutExpired:
             child.kill()
             child.wait()
     for reader in readers:
-        reader.join(timeout=2)
+        reader.join(timeout=TEARDOWN_SECONDS)
 
     output_overflow = overflow.is_set()
     # A child Hardy stopped has no meaningful exit status, so the result says so

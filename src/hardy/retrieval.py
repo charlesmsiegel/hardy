@@ -51,6 +51,7 @@ from pydantic import model_validator
 
 from .domain import FrozenModel, RunLimits
 from .lean import DECLARATION_NAME, DeclarationRecord
+from .process import MAX_TEARDOWN_SECONDS
 
 # Loogle's public instance. The endpoint is configurable because a project that
 # cares about reproducibility will want to run its own against a pinned Mathlib.
@@ -301,7 +302,16 @@ class LeanSearchSource:
 
     @property
     def worst_case_seconds(self) -> float:
-        return float(self._limits.lean_process_seconds)
+        """The Lean deadline plus what it costs to stop a child that reached it.
+
+        `run_process` bounds the search, and then bounds the *teardown*
+        separately: a `wait` on the terminated child and a `join` on each output
+        reader. Declaring only the deadline was the same defect
+        `LoogleSource.worst_case_seconds` documents in the other direction -- a
+        search admitted with exactly its deadline left could overrun the run's
+        budget by the teardown, having passed the check meant to stop it.
+        """
+        return float(self._limits.lean_process_seconds) + MAX_TEARDOWN_SECONDS
 
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
         # `search_declarations` takes 1..20; the retriever's limit is the
