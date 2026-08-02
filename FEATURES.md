@@ -322,10 +322,21 @@ Priority labels are sequencing hints:
 
 ## Retrieval and memory
 
-- **Later:** rank premises for the current goal using built-in search and Loogle,
-  then add a versioned embedding index and persistent retrieval service.
-- **Later:** meter retrieval CPU and include model, tokenizer, pooling, corpus, and
-  index identities in provenance.
+- **Now (implemented):** `rank_premises` ranks declarations for a goal by fusing
+  Lean's own `#find` with Loogle, offered on both the in-process staged tools and
+  the MCP server. Every ranking carries the provenance of each source that was
+  asked — what it searched, whether it answered, and what it spent — under a
+  digest a reader can recompute, and reports whether it can be replayed at all:
+  Lean's search runs in the environment the run is frozen under, while the public
+  Loogle tracks a Mathlib it does not name.
+- **Now (implemented):** retrieval is metered against `retrieval_seconds` like any
+  other run budget — a source that could outlast what is left is never started,
+  and the ranking says which source was skipped rather than returning a shorter
+  list that reads as complete. Wall-clock rather than CPU: a remote index spends
+  its CPU elsewhere, and how long Hardy waits is what Hardy can enforce.
+- **Later:** a versioned embedding index served by a persistent retrieval service.
+  `IndexIdentity` already requires the model, tokenizer, pooling, corpus, and
+  index identities of any embedding source, and no source carries one yet.
 - **Later:** store proved lemmas, successful tactic patterns, and domain lessons
   with provenance, deduplication, supersession, and portability checks.
 - **Later:** contamination-aware recall; benchmark transfer only on held-out

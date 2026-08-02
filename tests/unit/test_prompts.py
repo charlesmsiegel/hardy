@@ -49,6 +49,7 @@ def test_versioned_proof_prompt_freezes_the_statement_and_names_every_tool() -> 
         'lean_check_scratch',
         'lean_inspect_declarations',
         'lean_search_declarations',
+        'rank_premises',
     ):
         assert tool in text
     assert 'complete Lean term placed after :=' in text
@@ -118,8 +119,8 @@ def test_the_recorded_prompt_set_is_the_one_that_was_reviewed():
     this pin in the same commit — a deliberate act, not a side effect.
     """
     prompts = importlib.import_module("hardy.prompts")
-    assert prompts.PROMPT_SET_VERSION == "2026-07-24.2"
-    assert prompts.PROMPT_SET_SHA256 == "39982211d71d9e7f1151db5af90cc8b8e94777636e9257d06241efe611d3ed32"
+    assert prompts.PROMPT_SET_VERSION == "2026-08-02.1"
+    assert prompts.PROMPT_SET_SHA256 == "7ec02ba21dbf43030c0584482a03481fd8731d9efe3efa825fa21c2737d00616"
 
 
 def test_each_entry_point_sends_the_template_rather_than_its_own_copy():

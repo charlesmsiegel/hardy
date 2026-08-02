@@ -388,6 +388,7 @@ def _environment_identity(config: configuration.Config) -> Any:
 
 def build_prove_workflow(config: configuration.Config, config_path: Path, *, backend: str = "claude"):
     """Assemble the staged workflow around the chosen backend."""
+    from . import retrieval
     from .lean import LeanService
     from .mcp_server import LeanToolRuntime
     from .prompts import PROMPT_SET_SHA256
@@ -469,6 +470,9 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
                 store=store,
                 official_checks=config.limits.official_checks,
                 observation_bytes=config.limits.model_observation_bytes,
+                # One retriever per proving stage, because the retrieval budget
+                # is spent across the stage rather than per call.
+                retriever=retrieval.build_retriever(lean, config.limits),
             ),
             cas_runtime=cas_runtime,
             cas_directory=cas_directory,

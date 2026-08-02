@@ -473,6 +473,15 @@ class LeanService:
         self._limits = limits
         self._runner = runner
 
+    @property
+    def environment(self) -> EnvironmentIdentity:
+        """The pinned toolchain every answer here was computed against.
+
+        Public because it is the corpus identity of `search_declarations`, and
+        premise retrieval has to be able to name what it searched.
+        """
+        return self._environment
+
     def check_proof(self, claim: FrozenClaim, proof_body: str) -> LeanCheckResult:
         return self._check_source(render_theorem(claim, proof_body))
 

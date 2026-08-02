@@ -26,6 +26,7 @@ from .cas_tools import CasCellResult, CasStateResult, CasToolRuntime, build_runt
 from .config import load as load_config
 from .domain import FrozenClaim, freeze_claim
 from .lean import DeclarationInspection, DeclarationSearch, LeanCheckResult, LeanService
+from .retrieval import PremiseRanking, PremiseRetriever, build_retriever
 from .storage import RunStore
 
 mcp = FastMCP("Hardy Lean Tools", json_response=True)
@@ -40,13 +41,23 @@ class LeanToolRuntime:
         store: RunStore,
         official_checks: int,
         observation_bytes: int,
+        retriever: PremiseRetriever | None = None,
     ) -> None:
         self.claim = claim
         self.service = service
         self.store = store
         self.remaining_official_checks = official_checks
         self.observation_bytes = observation_bytes
+        # Optional because a machine can be configured without one; the tool
+        # then says there is no retrieval rather than ranking an empty list,
+        # which a model would read as "no such lemma exists".
+        self.retriever = retriever
         self._artifact_sequence = 0
+
+    def rank_premises(self, goal: str, limit: int) -> PremiseRanking:
+        if self.retriever is None:
+            raise ValueError("no premise retrieval is configured for this run")
+        return self.bound_ranking(self.retriever.rank(goal, limit))
 
     def check_proof(self, claim_id: str, proof_body: str) -> LeanCheckResult:
         if claim_id != self.claim.content_hash:
@@ -122,6 +133,36 @@ class LeanToolRuntime:
         if len(bounded.model_dump_json().encode("utf-8")) > self.observation_bytes:
             raise ValueError("model observation budget is smaller than the result envelope")
         return bounded
+
+    def bound_ranking(self, result: PremiseRanking) -> PremiseRanking:
+        """Fit a ranking into the observation budget by dropping premises only.
+
+        Never by trimming the provenance. The digest is taken over that record,
+        so a record cut to fit would either stop matching its digest or, worse,
+        be re-stamped -- leaving a hash over something that never produced a
+        ranking. Premises are what a shorter answer legitimately means, and the
+        artifact holds the whole thing either way.
+        """
+        if len(result.model_dump_json().encode("utf-8")) <= self.observation_bytes:
+            return result
+        artifact = self._write_full_result(result)
+        premises = [
+            premise.model_copy(update={"signature": premise.signature[:256]})
+            for premise in result.premises
+        ]
+        while True:
+            bounded = result.model_copy(
+                update={
+                    "premises": tuple(premises),
+                    "observation_truncated": True,
+                    "output_artifact": artifact,
+                }
+            )
+            if len(bounded.model_dump_json().encode("utf-8")) <= self.observation_bytes:
+                return bounded
+            if not premises:
+                raise ValueError("model observation budget is smaller than the result envelope")
+            premises.pop()
 
     def _write_full_result(self, result: Any) -> str:
         path = PurePosixPath(f"process/mcp-result-{self._artifact_sequence}.json")
@@ -208,17 +249,19 @@ def load_runtime(environ: Mapping[str, str]) -> LeanToolRuntime:
         or claim.imports != claim.environment.imports
     ):
         raise ValueError("Frozen Claim hash or imports do not match")
+    service = LeanService(
+        lake=config.lake,
+        lean_project=config.lean_project,
+        environment=claim.environment,
+        limits=config.limits,
+    )
     runtime = LeanToolRuntime(
         claim=claim,
-        service=LeanService(
-            lake=config.lake,
-            lean_project=config.lean_project,
-            environment=claim.environment,
-            limits=config.limits,
-        ),
+        service=service,
         store=RunStore(run_dir, UUID(int=0)),
         official_checks=config.limits.official_checks,
         observation_bytes=config.limits.model_observation_bytes,
+        retriever=build_retriever(service, config.limits),
     )
     configure_runtime(runtime)
 
@@ -272,6 +315,17 @@ def lean_search_declarations(query: str, limit: int = 10) -> DeclarationSearch:
     """Search the pinned Lean environment for declarations."""
     runtime = _configured()
     return runtime.bound_search(runtime.service.search_declarations(query, limit))
+
+
+@mcp.tool()
+def rank_premises(goal: str, limit: int = 10) -> PremiseRanking:
+    """Rank the declarations most likely to help with one goal.
+
+    Fuses Lean's own search with Loogle. The answer carries the provenance of
+    every source that was asked, and says whether the ranking can be replayed:
+    Loogle tracks a Mathlib it does not name, so a ranking it shaped cannot.
+    """
+    return _configured().rank_premises(goal, limit)
 
 
 def main() -> None:

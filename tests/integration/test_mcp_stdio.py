@@ -19,7 +19,7 @@ NOW = datetime(2026, 7, 24, tzinfo=UTC)
 
 
 @pytest.mark.real_toolchain
-def test_stdio_server_lists_four_tools_and_checks_valid_and_invalid_proofs(
+def test_stdio_server_lists_its_tools_and_checks_valid_and_invalid_proofs(
     tmp_path,
 ) -> None:
     lake = shutil.which('lake')
@@ -80,6 +80,7 @@ def test_stdio_server_lists_four_tools_and_checks_valid_and_invalid_proofs(
                 'lean_check_scratch',
                 'lean_inspect_declarations',
                 'lean_search_declarations',
+                'rank_premises',
             }
             valid = await session.call_tool(
                 'lean_check_proof',

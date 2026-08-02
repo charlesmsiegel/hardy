@@ -46,7 +46,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "real_toolchain: invokes a real installed binary — pinned Lean, Tectonic, Singular, or Macaulay2",
-    "live: invokes a billable model or installer",
+    "live: invokes a billable model, an installer, or a third-party service over the network",
 ]
 
 [tool.ruff]
