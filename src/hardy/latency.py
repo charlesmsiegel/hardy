@@ -108,12 +108,24 @@ def manifest_binds(command: tuple[str, ...]) -> bool:
     project's manifest then attributes the latency to a toolchain that did not
     produce it.
 
-    Sufficient rather than exact, deliberately. A wrapper that happens to call
-    lake correctly is reported as unverified, which costs a line of hedging;
-    the reverse error would state a revision nobody checked, which is the kind
-    of confident wrongness the rest of this module exists to avoid.
+    The whole command is matched, not its first word. Checking only `argv[0]`
+    claimed to be conservative and was the opposite: `lake env env
+    LEAN_PATH=/other/project/... lean` starts with lake, imports from somewhere
+    else entirely, and was reported as bound. Only the exact `lake env lean`
+    shape establishes the binding, because anything between `env` and `lean` is
+    free to replace the environment lake just constructed.
+
+    So a wrapper, or a longer lake invocation that may well be correct, is
+    reported as unverified -- a line of hedging. The error in the other
+    direction states a revision nobody checked, which is the confident
+    wrongness the rest of this module exists to avoid.
     """
-    return bool(command) and Path(command[0]).name.lower() in {"lake", "lake.exe"}
+    if len(command) != 3 or command[1] != "env":
+        return False
+    return (
+        Path(command[0]).name.lower() in {"lake", "lake.exe"}
+        and Path(command[2]).name.lower() in {"lean", "lean.exe"}
+    )
 
 
 def probe_toolchain(
