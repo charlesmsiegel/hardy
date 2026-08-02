@@ -616,6 +616,15 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     against a different Mathlib is not the cost this harness pays.
     """
     imports = tuple(args.imports or ("Mathlib",))
+    # Checked here, not where the probe source is rendered. `import_probe` is
+    # called inside `measure_import_cost`, which runs after the toolchain probe
+    # has already spent up to a full deadline on a `--version` that may stall —
+    # so a malformed module name paid 300s before being told it was malformed.
+    try:
+        latency.import_probe(imports)
+    except ValueError as error:
+        print(str(error))
+        return 2
     # Checked before probing, not after: each probe pays a full Mathlib import,
     # and rejecting a negative --calls once minutes have been spent is a
     # traceback where a usage error belongs. Checked before the conversion
@@ -625,7 +634,12 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
         print("--calls cannot be negative")
         return 2
     if args.total_seconds is not None and (
-        not math.isfinite(args.total_seconds) or args.total_seconds < 0
+        not math.isfinite(args.total_seconds)
+        or args.total_seconds < 0
+        # Finite is not enough: 1e308 passes, and 1e308 * 1000 is `inf`, so the
+        # conversion to milliseconds below raised OverflowError where a usage
+        # error belonged.
+        or not math.isfinite(args.total_seconds * 1_000)
     ):
         print("--total-seconds must be a finite, non-negative number of seconds")
         return 2

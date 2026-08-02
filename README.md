@@ -147,7 +147,8 @@ HARDY_MODEL=claude-opus-5 scripts/install.sh --yes
 mode.
 
 `hardy latency` answers a narrower question: how much of a Lean call is the fixed
-`import Mathlib` prelude that a warm process pool would only pay once. Given the
+`import Mathlib` prelude that a warm process pool would pay only once per worker
+(`--workers`, one by default). Given the
 call count and wall time of a run it reports the share such a pool would recover,
 which is the evidence the deferred worker pool is waiting on rather than a
 reason to build one.
