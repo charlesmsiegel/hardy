@@ -135,12 +135,12 @@ if (Test-Wanted $RemoveLeanProject "Remove the Lean project at $LeanProject ($(G
 }
 elseif (Test-Path -LiteralPath $LeanProject) { Keep-Part 'the Lean project' $LeanProject }
 
-if (Test-Wanted $RemoveConfig "Remove the config file at $ConfigPath? It holds your model choice." $ConfigPath) {
+if (Test-Wanted $RemoveConfig "Remove the config file at ${ConfigPath}? It holds your model choice." $ConfigPath) {
     Remove-Part 'the config' $ConfigPath
 }
 elseif (Test-Path -LiteralPath $ConfigPath) { Keep-Part 'the config' $ConfigPath }
 
-if (Test-Wanted $RemoveToolchain "Remove elan and the Lean toolchain at $ElanHome? Other Lean projects on this machine use it too." $ElanHome) {
+if (Test-Wanted $RemoveToolchain "Remove elan and the Lean toolchain at ${ElanHome}? Other Lean projects on this machine use it too." $ElanHome) {
     Remove-Part 'elan and the Lean toolchain' $ElanHome
 }
 elseif (Test-Path -LiteralPath $ElanHome) { Keep-Part 'elan and the Lean toolchain' $ElanHome }

@@ -5,6 +5,7 @@ import functools
 import hashlib
 import http.server
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -289,6 +290,24 @@ def test_the_windows_installer_writes_files_without_a_byte_order_mark(tmp_path: 
         assert not path.read_bytes().startswith(b"\xef\xbb\xbf"), f"{path.name} starts with a UTF-8 BOM"
     # Appending must leave the file readable, and on its own line.
     assert config_file.read_text(encoding="utf-8").splitlines() == ['model = "m"', 'lean_project = "p"']
+
+
+@pytest.mark.parametrize("script", POWERSHELL_SCRIPTS, ids=lambda p: p.name)
+def test_no_interpolated_name_swallows_the_punctuation_after_it(script: Path):
+    """`"delete $Path? "` asks PowerShell for a variable named `Path?`.
+
+    Under Set-StrictMode that is a terminating error, and it is invisible to
+    every check short of running the line: the parser accepts it, and the
+    script gets all the way to the prompt before dying. `${Path}?` is the fix.
+    It cost the uninstaller its last two questions, on a script whose questions
+    had never been asked on any machine.
+    """
+    offenders = [
+        line.strip()
+        for line in script.read_text(encoding="utf-8").splitlines()
+        if re.search(r"\$[A-Za-z_][A-Za-z0-9_]*\?", line)
+    ]
+    assert not offenders, f"the name runs into the punctuation after it; use ${{Name}}: {offenders}"
 
 
 @pytest.mark.parametrize("script", POWERSHELL_SCRIPTS, ids=lambda p: p.name)
