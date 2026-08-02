@@ -40,10 +40,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Literal, Protocol
 from urllib.parse import urlencode
 
@@ -70,9 +72,14 @@ MAX_SIGNATURE_CHARACTERS = 512
 MAX_HITS = 200
 
 # The query is one bounded line, matching what `LeanService.search_declarations`
-# will accept: a goal that Lean would refuse is refused here, before it costs
-# any source a call.
-MAX_GOAL_CHARACTERS = 512
+# will accept: a query Lean would refuse is refused here, before it costs any
+# source a call. The goal it is derived from may be longer, because Lean prints
+# a goal with its hypotheses and that is the form a model has to hand.
+MAX_QUERY_CHARACTERS = 512
+MAX_GOAL_CHARACTERS = 4_096
+# What Lean puts before a goal's conclusion, and what Loogle and `#find` both
+# accept at the head of a conclusion pattern.
+TURNSTILE = "⊢"
 
 # Reciprocal rank fusion. The sources return ordered names and no comparable
 # scores -- `#find` reports matches, Loogle reports hits -- so rank is the only
@@ -188,6 +195,9 @@ class RetrievalProvenance(FrozenModel):
     """Everything that produced one ranking, as a record its digest is taken over."""
 
     goal_sha256: str
+    # What was actually sent to the sources, which a goal carrying hypotheses
+    # is not. The digest has to cover the question that was asked.
+    query_sha256: str
     ranker: str
     sources: tuple[SourceOutcome, ...]
 
@@ -204,6 +214,10 @@ class RetrievalProvenance(FrozenModel):
 
 class PremiseRanking(FrozenModel):
     goal: str
+    # The line the sources were given. Equal to `goal` unless the goal arrived
+    # in Lean's display form, in which case this is its conclusion and the
+    # hypotheses were dropped -- visible here rather than implied.
+    query: str
     premises: tuple[RankedPremise, ...]
     provenance: RetrievalProvenance
     provenance_sha256: str
@@ -251,6 +265,8 @@ class PremiseRanking(FrozenModel):
         # make impossible.
         if hashlib.sha256(self.goal.encode("utf-8")).hexdigest() != self.provenance.goal_sha256:
             raise ValueError("goal does not hash to the goal_sha256 its provenance records")
+        if hashlib.sha256(self.query.encode("utf-8")).hexdigest() != self.provenance.query_sha256:
+            raise ValueError("query does not hash to the query_sha256 its provenance records")
         if self.complete != self._complete(self.provenance):
             raise ValueError("`complete` disagrees with the sources the provenance names")
         if self.reproducible != self._reproducible(self.provenance):
@@ -282,8 +298,31 @@ class LeanSearchSource:
         self._limits = limits
 
     @property
+    def _toolchain_pin(self) -> str | None:
+        """What `elan` will actually start, read from the project it runs in.
+
+        `cli._environment_identity` supplies `lean_version` and `lean_commit`
+        as string literals -- they are asserted, not measured -- so a corpus
+        identity resting on them alone would promise a replayable ranking on
+        evidence nobody checked. The project's `lean-toolchain` is the file
+        `elan` obeys, and `chat.py` reads it for this same reason: cheaper than
+        running Lean to ask, and it is what decides the answer.
+
+        None when there is no project or the pin cannot be read. That is a
+        state to report, not a reason to refuse to search.
+        """
+        project = getattr(self._service, "lean_project", None)
+        if project is None:
+            return None
+        try:
+            return (Path(project) / "lean-toolchain").read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+
+    @property
     def identity(self) -> SourceIdentity:
         environment = self._service.environment
+        toolchain = self._toolchain_pin
         return SourceIdentity(
             name="lean-find",
             kind="lean_search",
@@ -295,9 +334,13 @@ class LeanSearchSource:
             corpus=(
                 f"Mathlib {environment.mathlib_revision} / "
                 f"Lean {environment.lean_version} ({environment.lean_commit}) / "
-                f"manifest {environment.lake_manifest_sha256}"
+                f"manifest {environment.lake_manifest_sha256} / "
+                f"toolchain {toolchain or 'unverified'}"
             ),
-            pinned=True,
+            # Pinned only with evidence of which compiler answers. Without the
+            # pin file the declared Lean version is a constant in `cli.py`, and
+            # a ranking resting on it cannot promise to replay.
+            pinned=toolchain is not None,
         )
 
     @property
@@ -490,6 +533,75 @@ def _records_from_hits(hits: list, limit: int) -> tuple[DeclarationRecord, ...]:
     return tuple(records)
 
 
+def search_query(goal: str) -> str:
+    """The one line a search can take, out of what Lean prints as a goal.
+
+    `open_goals` comes back from a proof check in Lean's display form --
+    hypotheses on their own lines, then a turnstile and the conclusion -- and
+    that is the form a model has in hand when it wants to know what lemma it is
+    missing. Refusing it made the tool unusable on its most natural input.
+
+    Two mechanical steps, neither of them a guess about the mathematics:
+
+    1. Take the conclusion. The first one, not the last: Lean prints the goal
+       being worked on ahead of the ones queued behind it.
+    2. Wildcard the locals. `⊢ n + m = m + n` sent as written gets `Unknown
+       identifier ``n``` back from Loogle -- measured, not predicted -- because
+       `n` names a hypothesis and means nothing outside this goal. The
+       hypothesis lines say exactly which names are local, so replacing those
+       with `_` is reading Lean's own binder display rather than interpreting
+       it, and `⊢ _ + _ = _ + _` is the pattern both searches want.
+
+    What is *not* attempted is turning `h : n < m` into a constraint on the
+    pattern. That would be a guess about what the caller meant, and a wrong one
+    produces a confidently wrong ranking. So the hypotheses inform which names
+    are free and are otherwise dropped -- lossy in a way the caller can see,
+    because the ranking reports the query beside the goal it came from.
+
+    Nor is dot notation desugared. `xs.reverse` means `List.reverse xs`, and
+    recovering that needs the type of `xs` and a model of how Lean elaborates
+    projections, which is an elaborator living in the wrong module. Such a goal
+    becomes a pattern the searches reject, and a rejected search is recorded as
+    a source that did not answer -- the honest outcome, and a much better one
+    than a ranking of whatever a mangled query happened to match.
+
+    Text with no hypothesis lines is already a pattern and passes through.
+    """
+    lines = [line.strip() for line in goal.strip().splitlines() if line.strip()]
+    if not lines:
+        return ""
+    conclusion = next((line for line in lines if line.startswith(TURNSTILE)), lines[0])
+    # Longest first, so `xs` is not half-replaced by a shorter `x`.
+    for name in sorted(_local_names(lines), key=len, reverse=True):
+        # Asymmetric on purpose. The lookbehind refuses `.` so the tail of a
+        # qualified global -- `Foo.n` where `n` is also a local -- survives
+        # whole. The lookahead allows it, because `xs.reverse` *is* the local
+        # `xs` under projection and must become `_.reverse`; leaving it earns a
+        # guaranteed `Unknown identifier`, which is worse than a pattern a
+        # search might not like.
+        conclusion = re.sub(rf"(?<![\w'.!?]){re.escape(name)}(?![\w'!?])", "_", conclusion)
+    return conclusion
+
+
+def _local_names(lines: Sequence[str]) -> set[str]:
+    """The hypothesis names Lean bound above the turnstile.
+
+    A hypothesis line reads `names... : type`, and several names can share one
+    type (`n m : ℕ`). Anything before the first turnstile that does not look
+    like a binding -- a wrapped type continuing onto its own line, say -- is
+    skipped rather than guessed at.
+    """
+    names: set[str] = set()
+    for line in lines:
+        if line.startswith(TURNSTILE):
+            break
+        head, separator, _ = line.partition(" : ")
+        if not separator:
+            continue
+        names.update(part for part in head.split() if DECLARATION_NAME.fullmatch(part))
+    return names
+
+
 class PremiseRetriever:
     """Asks every configured source about a goal and fuses one order from them."""
 
@@ -514,8 +626,14 @@ class PremiseRetriever:
         return max(0.0, self._limits.retrieval_seconds - self._spent)
 
     def rank(self, goal: str, limit: int = 10) -> PremiseRanking:
-        if not 1 <= len(goal) <= MAX_GOAL_CHARACTERS or "\n" in goal or "\r" in goal:
-            raise ValueError("a retrieval goal must be one line of at most 512 characters")
+        if not 1 <= len(goal) <= MAX_GOAL_CHARACTERS:
+            raise ValueError(f"a retrieval goal must be 1 to {MAX_GOAL_CHARACTERS} characters")
+        query = search_query(goal)
+        if not 1 <= len(query) <= MAX_QUERY_CHARACTERS:
+            raise ValueError(
+                f"no searchable line of at most {MAX_QUERY_CHARACTERS} characters could be "
+                "taken from this goal"
+            )
         if not 1 <= limit <= 50:
             raise ValueError("a premise ranking holds between 1 and 50 premises")
 
@@ -562,7 +680,7 @@ class PremiseRetriever:
             detail: str | None = None
             results: tuple[DeclarationRecord, ...] = ()
             try:
-                results = source.search(goal, depth)
+                results = source.search(query, depth)
             except Exception as error:  # noqa: BLE001 - one source failing is an outcome, not the end
                 # Every way a source can fail, not the two that were foreseen.
                 # `lake` losing its execute bit raises `PermissionError`, and
@@ -625,11 +743,13 @@ class PremiseRetriever:
         self._spent += spent
         provenance = RetrievalProvenance(
             goal_sha256=hashlib.sha256(goal.encode("utf-8")).hexdigest(),
+            query_sha256=hashlib.sha256(query.encode("utf-8")).hexdigest(),
             ranker=RANKER,
             sources=tuple(outcomes),
         )
         return PremiseRanking(
             goal=goal,
+            query=query,
             premises=tuple(premises[:limit]),
             provenance=provenance,
             provenance_sha256=provenance.digest,

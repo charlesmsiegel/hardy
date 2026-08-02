@@ -495,19 +495,123 @@ def test_an_embedding_source_must_name_the_index_that_produced_it() -> None:
         )
 
 
-def test_a_goal_that_is_not_one_bounded_line_is_refused_before_any_source_runs() -> None:
+def test_a_goal_hardy_cannot_turn_into_one_query_is_refused_before_any_source_runs() -> None:
     retrieval = importlib.import_module('hardy.retrieval')
     lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')])
     retriever = _retriever(retrieval, [lean])
 
-    for goal in ('', 'x\ny', 'x' * 513):
+    for goal in ('', '   ', 'x' * 513, 'y' * 5_000):
         with pytest.raises(ValueError):
             retriever.rank(goal)
     assert lean.calls == []
 
 
+def test_a_goal_as_lean_prints_it_is_searched_by_its_conclusion() -> None:
+    """`open_goals` comes back from `lean_check_proof` as Lean displays it:
+    hypotheses on their own lines, then a turnstile. Refusing that outright
+    made the tool unusable on its most natural input -- a model holding a goal
+    had to reword it before Hardy would look at anything.
+
+    The conclusion is taken and its locals become wildcards. Sending `n` as
+    written earns `Unknown identifier ``n``` from Loogle -- the name means
+    nothing outside the goal that bound it -- so the hypothesis lines are read
+    for which names are local, and for nothing else.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')])
+    retriever = _retriever(retrieval, [lean])
+
+    ranking = retriever.rank('n m : ℕ\nh : n < m\n⊢ n + m = m + n')
+
+    assert lean.calls == [('⊢ _ + _ = _ + _', retrieval.FUSION_DEPTH_FLOOR)]
+    assert ranking.query == '⊢ _ + _ = _ + _'
+    assert ranking.goal == 'n m : ℕ\nh : n < m\n⊢ n + m = m + n'
+    # A pattern with no hypotheses is already a query and passes through whole.
+    assert retriever.rank('_ + _ = _ + _').query == '_ + _ = _ + _'
+    assert retriever.rank('⊢ True').query == '⊢ True'
+
+
+def test_only_the_names_the_goal_bound_are_wildcarded() -> None:
+    """A local name is meaningless to a search; a global one is the whole point
+    of searching. Replacing `Nat.add` because a hypothesis happened to be
+    called `Nat` would throw away the only anchor the query has.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    assert retrieval.search_query('xs : List ℕ\n⊢ xs.reverse.reverse = xs') == (
+        '⊢ _.reverse.reverse = _'
+    )
+    # `n` is bound, `Nat.succ` is not, and `nm` is neither `n` nor `m`.
+    assert retrieval.search_query('n : ℕ\nnm : ℕ\n⊢ Nat.succ n = n + nm') == (
+        '⊢ Nat.succ _ = _ + _'
+    )
+    # A wrapped type continuing on its own line binds nothing.
+    assert retrieval.search_query('h : a very long type\n  continuing here\n⊢ f h') == '⊢ f _'
+
+
+def test_a_goal_written_in_dot_notation_is_not_desugared_and_does_not_pretend_to_be() -> None:
+    """A known limit, pinned so nobody reads silence as support.
+
+    `xs.reverse` means `List.reverse xs`, and recovering that needs the type of
+    `xs` and a model of how Lean elaborates projections -- an elaborator inside
+    a retrieval module, which is well past what this can do soundly. So the
+    local is wildcarded like any other and the query goes out as it is;
+    measured against the live service, Loogle answers `Unknown identifier
+    ``«_».reverse.reverse```, which lands in the provenance as a source that
+    did not answer rather than as a ranking of the wrong thing.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    assert retrieval.search_query('xs : List ℕ\n⊢ xs.reverse.reverse = xs') == (
+        '⊢ _.reverse.reverse = _'
+    )
+
+
+def test_the_provenance_hashes_what_was_searched_as_well_as_what_was_asked() -> None:
+    """Two different goals can reduce to one query, and the ranking answers the
+    query. A digest over the goal alone would not describe what produced it.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')])
+
+    ranking = _retriever(retrieval, [lean]).rank('h : n < m\n⊢ n + m = m + n')
+    payload = json.loads(ranking.model_dump_json())
+
+    assert retrieval.PremiseRanking.model_validate(payload).query == '⊢ n + m = m + n'
+    with pytest.raises(ValidationError):
+        retrieval.PremiseRanking.model_validate(payload | {'query': '⊢ something else'})
+
+
+def test_the_budget_is_scoped_to_the_retriever_and_says_so() -> None:
+    """A known limit, pinned rather than left for someone to discover.
+
+    Spend lives on the retriever, so a second MCP server started against the
+    same run directory begins with a full allowance. `official_checks` in
+    `LeanToolRuntime` is scoped exactly the same way and has been since it was
+    written; persisting either one is a change to how a run records its own
+    consumption, and belongs with both of them at once rather than half-done
+    here.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    domain = importlib.import_module('hardy.domain')
+    readings = iter([0.0, 4.0])
+    lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')])
+
+    first = _retriever(retrieval, [lean], seconds=5, clock=lambda: next(readings))
+    first.rank('_ + _ = _ + _')
+    assert first.seconds_remaining == pytest.approx(1.0)
+
+    restarted = retrieval.PremiseRetriever(
+        sources=[lean], limits=domain.RunLimits(retrieval_seconds=5), clock=lambda: 0.0
+    )
+
+    assert restarted.seconds_remaining == 5.0
+
+
 class _Service:
     """A `LeanService` as far as retrieval is concerned."""
+
+    lean_project = None
 
     def __init__(self, domain, lean_module, *, success=True, timed_out=False, results=()):
         self.environment = domain.EnvironmentIdentity(
@@ -558,6 +662,40 @@ def test_the_lean_source_searches_the_environment_the_run_is_frozen_under() -> N
     assert service.calls == [('_ + _ = _ + _', 5), ('_ + _ = _ + _', 20)]
 
 
+def test_the_corpus_identity_names_the_toolchain_that_will_actually_run(tmp_path) -> None:
+    """`cli._environment_identity` hard-codes `lean_version` and `lean_commit`,
+    so those two fields are asserted rather than measured. Claiming `pinned` on
+    them alone would be the exact failure this module exists to prevent: a
+    ranking promising it can be replayed on evidence nobody checked.
+
+    The project's `lean-toolchain` is what `elan` pins the compiler with, and
+    `chat.py` already reads it for this reason. Without it there is no evidence
+    of which Lean runs, so the source is not pinned.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean_module = importlib.import_module('hardy.lean')
+    domain = importlib.import_module('hardy.domain')
+
+    service = _Service(domain, lean_module)
+    unverified = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
+    assert not unverified.identity.pinned
+
+    service.lean_project = tmp_path
+    (tmp_path / 'lean-toolchain').write_text('leanprover/lean4:v4.32.0\n', encoding='utf-8')
+    verified = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
+
+    assert verified.identity.pinned
+    corpus = verified.identity.corpus
+    assert 'leanprover/lean4:v4.32.0' in corpus
+    # A project pinned to a different compiler is a different corpus, even with
+    # the same Mathlib manifest beside it. Captured above rather than compared
+    # against `verified.identity` again -- the identity is read from the file
+    # each time, so both sides would see the rewrite.
+    (tmp_path / 'lean-toolchain').write_text('leanprover/lean4:v4.33.0\n', encoding='utf-8')
+    moved = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
+    assert moved.identity.corpus != corpus
+
+
 def test_the_lean_source_reports_an_unsuccessful_search_as_no_answer() -> None:
     """`#find` that timed out returned no results, which is not the same as
     there being none -- and the ranking must not present it as the latter."""
@@ -584,7 +722,6 @@ def test_the_lean_source_reports_an_unsuccessful_search_as_no_answer() -> None:
             )
 
     source = retrieval.LeanSearchSource(Service(), limits=domain.RunLimits())
-    assert source.identity.pinned
     assert '81a5d257' in source.identity.corpus
     with pytest.raises(retrieval.RetrievalError):
         source.search('_ + _ = _ + _', 5)

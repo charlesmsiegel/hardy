@@ -74,7 +74,7 @@ def test_the_mcp_server_answers_a_ranking_and_bounds_it(tmp_path) -> None:
             service=object(),
             store=store,
             official_checks=1,
-            observation_bytes=1_024,
+            observation_bytes=1_200,
             retriever=_retriever(
                 retrieval, [lean.DeclarationRecord(name='Huge.result', signature='x' * 10_000)]
             ),
@@ -86,7 +86,7 @@ def test_the_mcp_server_answers_a_ranking_and_bounds_it(tmp_path) -> None:
     assert [premise.name for premise in ranking.premises] == ['Huge.result']
     assert ranking.observation_truncated
     assert ranking.output_artifact is not None
-    assert len(ranking.model_dump_json().encode('utf-8')) <= 1_024
+    assert len(ranking.model_dump_json().encode('utf-8')) <= 1_200
     assert (store.path / ranking.output_artifact).exists()
     # Bounding rewrites the premises, so the digest must still describe the
     # provenance the bounded value carries rather than the one it was cut from.
@@ -163,7 +163,7 @@ def test_a_malformed_retrieval_call_is_an_answer_rather_than_a_traceback(tmp_pat
         store=None, lean_runtime_factory=lambda claim: runtime
     )._dispatcher(runtime)
 
-    result = dispatch('rank_premises', {'goal': 'a\nb'})
+    result = dispatch('rank_premises', {'goal': 'x' * 5_000})
 
     assert not result.ok
-    assert 'one line' in result.output
+    assert 'characters' in result.output
