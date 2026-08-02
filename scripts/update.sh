@@ -191,6 +191,18 @@ install_into_environment() {
 	fi
 }
 
+# "Already the same version" is only an answer while the wheels come from the
+# same place. Moving an installation to a fork whose wheel carries the same
+# version is a different wheel, and --upgrade alone would report success and
+# change nothing while the origin record and the installers moved.
+reinstall_arguments() {
+	local recorded
+	recorded="$(recorded_repo_url 2>/dev/null || printf '')"
+	[ "$(release_repo_url)" = "$recorded" ] && return 0
+	# uv and pip spell the same idea differently.
+	if have uv; then printf '%s' --reinstall; else printf '%s' --force-reinstall; fi
+}
+
 # The step that matters for an editable install. The code is already current;
 # this is what turns a newly declared dependency into an installed one.
 update_environment() {
@@ -211,11 +223,14 @@ update_from_release() {
 	stage_installers
 	wheel="$(download_release_asset .whl "$directory")"
 	say "verified $(basename "$wheel") against the release manifest"
-	# --upgrade, not --force-reinstall: a published release is never rewritten
-	# (the release workflow refuses to replace the assets of one), so the
-	# version in the wheel's name is the whole answer to whether there is
-	# anything to do here.
-	install_into_environment --upgrade "$wheel" ||
+	# --upgrade alone, ordinarily: a published release is never rewritten (the
+	# release workflow refuses to replace the assets of one), so the version in
+	# the wheel's name is the whole answer to whether there is anything to do.
+	# Changing repositories is the exception, and reinstall_arguments says so.
+	local reinstall
+	reinstall="$(reinstall_arguments)"
+	# shellcheck disable=SC2086  # deliberately unquoted: empty means no flag
+	install_into_environment --upgrade $reinstall "$wheel" ||
 		fail "could not install $(basename "$wheel") into $VENV"
 	say "installed $(basename "$wheel")"
 	rm -rf "$directory"

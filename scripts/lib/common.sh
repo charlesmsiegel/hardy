@@ -162,9 +162,18 @@ release_origin_file() { printf '%s/release-origin' "$HARDY_HOME"; }
 # retained installer on a fork's installation resolves to that fork, and writing
 # HARDY_REPO_URL here would replace the record with the official repository and
 # send the next update somewhere else.
+# Mode 600 before anything is written, as the config file is: a private fork's
+# URL can carry credentials (https://user:token@host/repo), and this file sits
+# in a directory other local users can walk into.
 record_release_origin() {
+	local record repository
+	record="$(release_origin_file)"
+	# Resolved before the file is emptied: the answer may be *in* that file.
+	repository="$(release_repo_url)"
 	mkdir -p "$HARDY_HOME"
-	printf 'repo=%s\n' "$(release_repo_url)" >"$(release_origin_file)"
+	: >"$record"
+	chmod 600 "$record"
+	printf 'repo=%s\n' "$repository" >>"$record"
 }
 
 recorded_repo_url() {

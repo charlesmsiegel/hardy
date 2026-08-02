@@ -245,11 +245,13 @@ function Save-ReleaseAsset($suffix, $directory, $required = $true) {
 # marks the copy that was fetched, which must not fetch again.
 function Invoke-ReleaseInstaller {
     if ($env:HARDY_INSTALLER_HANDED_OFF) { return }
-    # tar ships with Windows 10 1803 and later; without it, this copy installs
-    # the release itself rather than refusing to install at all.
+    # tar ships with Windows 10 1803 and Server 2019 and later. Installing the
+    # wheel anyway would put a release on the machine with no updater or
+    # uninstaller beside it, and on a reinstall would pair a new wheel with the
+    # retained scripts of an older release — the skew this hand-off exists to
+    # prevent. Refusing says which one thing is missing.
     if (-not (Test-Command 'tar')) {
-        Write-Warn 'tar is not available, so this script cannot hand over to the release installers; continuing with its own'
-        return
+        Stop-Install 'tar is required to unpack the release installers, and is not on this machine. It ships with Windows 10 1803 and Server 2019 and later; on an older one, install Hardy from a checkout instead (git clone, then scripts\install-windows.ps1).'
     }
     Write-Step "Fetching the Hardy installers from $(Get-ReleaseBaseUrl)"
     $installers = Join-Path $Prefix 'installers'

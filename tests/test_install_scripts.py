@@ -901,6 +901,10 @@ def test_an_installation_is_updated_from_the_repository_it_came_from(tmp_path: P
         "repo=https://example.invalid/fork"
     )
 
+    # A private fork's URL can carry credentials, and this file sits in a
+    # directory other local users can walk into.
+    assert (home / "release-origin").stat().st_mode & 0o077 == 0
+
 
 def update_probe() -> str:
     """The Python the updater runs to classify an installation, as shipped."""
