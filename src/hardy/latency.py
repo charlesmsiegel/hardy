@@ -573,7 +573,8 @@ def describe(
         lines.append("")
         lines.append(
             "for a verdict, re-run with --calls and --total-seconds from an observed run: "
-            "a warm pool recovers the prelude on every call after the first."
+            "a warm pool recovers every call's prelude except the one each worker "
+            "pays on its first."
         )
         return lines
     estimate = cost.estimate(calls=calls, total_ms=total_ms, workers=workers)

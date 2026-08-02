@@ -127,8 +127,9 @@ original statement, rejects `sorry` in completed proofs, and audits dependencies
 That condition is now measurable rather than rhetorical. `hardy latency` times the
 **prelude** — process start plus `import Mathlib`, elaborated with no proof body, so
 the fixed cost is isolated from the work a warm process would still pay. A pool
-recovers the prelude on every call after the first, so the decision is the share
-`prelude × (calls − workers)` takes of a run, not the wall time of any single call.
+recovers every call's prelude except the one each worker pays on its first, so the
+decision is the share `prelude × (calls − workers)` takes of a run, not the wall
+time of any single call.
 The `− workers` is the load-bearing part: every warm process pays its own first
 import, so a single persistent process recovers all but one and a pool of four
 recovers all but four. Crediting a pool with imports nobody avoids is what makes

@@ -818,6 +818,39 @@ def test_a_withheld_verdict_exits_nonzero():
     assert report(clean) == 0
 
 
+def test_a_bad_import_is_refused_before_the_toolchain_probe(tmp_path: Path, capsys, monkeypatch):
+    """`import_probe` runs inside `measure_import_cost`, after the toolchain
+    probe has already had a full deadline to stall in — so a malformed module
+    name could cost 300s before being told it was malformed."""
+    from hardy import cli
+
+    project = tmp_path / "lean_project"
+    project.mkdir()
+    started = []
+    monkeypatch.setattr(cli.latency, "probe_toolchain", lambda *a, **k: started.append(1))
+    monkeypatch.setattr(cli.latency, "measure_import_cost", lambda *a, **k: started.append(1))
+    args = cli.build_parser().parse_args(["latency", "--import", "Mathlib\n#eval (2^30)"])
+    assert cli.run_latency(args, _config_for(tmp_path, project)) == 2
+    assert "not a Lean module name" in capsys.readouterr().out
+    assert started == []
+
+
+def test_a_total_that_overflows_when_scaled_is_a_usage_error(tmp_path: Path, capsys, monkeypatch):
+    """`1e308` is finite; `1e308 * 1000` is not, and `round(inf)` raised
+    OverflowError where a usage error belonged."""
+    from hardy import cli
+
+    project = tmp_path / "lean_project"
+    project.mkdir()
+    started = []
+    monkeypatch.setattr(cli.latency, "probe_toolchain", lambda *a, **k: started.append(1))
+    monkeypatch.setattr(cli.latency, "measure_import_cost", lambda *a, **k: started.append(1))
+    args = cli.build_parser().parse_args(["latency", "--calls", "1", "--total-seconds", "1e308"])
+    assert cli.run_latency(args, _config_for(tmp_path, project)) == 2
+    assert "finite, non-negative" in capsys.readouterr().out
+    assert started == []
+
+
 def test_half_an_observed_run_is_refused_before_probing(tmp_path: Path, capsys, monkeypatch):
     """One of the pair produced a report asking for the other and still exited
     0, so a script could not tell an unanswered verdict from a real one — and
