@@ -95,6 +95,12 @@ IMMUTABLE_TOOLCHAIN = re.compile(
     r":(?:v\d+\.\d+\.\d+(?:-[\w.]+)?|nightly-\d{4}-\d{2}-\d{2})\Z"
 )
 
+# And the same demand of a self-hosted Loogle's declared corpus. A git object
+# name is immutable because it *is* the content; `master`, a branch or a tag can
+# all be repointed under the identity that named them. Accepting any nonempty
+# string would have re-made the `stable`/`nightly` mistake one field over.
+IMMUTABLE_REVISION = re.compile(r"\A[0-9a-f]{7,40}\Z")
+
 # Reciprocal rank fusion. The sources return ordered names and no comparable
 # scores -- `#find` reports matches, Loogle reports hits -- so rank is the only
 # signal they share, and 60 is the constant the method is usually stated with.
@@ -528,6 +534,11 @@ class LoogleSource:
         # anyone would use it. Declared by the caller because nothing in the
         # protocol reports it -- an unverified claim, but the operator's rather
         # than Hardy's, and the revision it names travels in the corpus.
+        if corpus_revision is not None and not IMMUTABLE_REVISION.fullmatch(corpus_revision):
+            raise ValueError(
+                "a Loogle corpus revision must be a git object name (7-40 hex characters); "
+                "a branch or tag can be repointed under the identity that named it"
+            )
         self._corpus_revision = corpus_revision
         self._fetch = fetch or _fetch_url
 
@@ -770,16 +781,32 @@ DISPLAYED_LOCAL = re.compile(r"[^\s:()]*✝[^\s:()]*")
 
 # A Lean string literal, with backslash escapes: an escaped quote does not end
 # it, so `"a \" x"` is one literal rather than two fragments and a stray `x`.
-STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
+# The optional `s!`/`m!`/`f!` prefix is captured because those strings are not
+# literal all the way through -- see `_substitute_outside_literals`.
+STRING_LITERAL = re.compile(r'(s!|m!|f!)?"(?:[^"\\]|\\.)*"')
+# What an interpolated string holds between its literal parts: an expression,
+# in which a local means what it means everywhere else.
+INTERPOLATION = re.compile(r"\{[^{}]*\}")
 
 
 def _substitute_outside_literals(text: str, pattern: str) -> str:
-    """Wildcard matches of `pattern`, leaving string literals untouched."""
+    """Wildcard matches of `pattern`, leaving string literals untouched.
+
+    Except inside interpolation. `s!"{x}"` is not literal text all the way
+    through -- the braces hold an expression, and a local named there means
+    exactly what it means outside the quotes. A plain `"{x}"` really is
+    literal, braces and all, which is why the prefix is read rather than
+    assumed: substituting into every braced group would undo the reason
+    literals are skipped at all.
+    """
     pieces = []
     read = 0
     for literal in STRING_LITERAL.finditer(text):
         pieces.append(re.sub(pattern, "_", text[read : literal.start()]))
-        pieces.append(literal.group(0))
+        body = literal.group(0)
+        if literal.group(1):
+            body = INTERPOLATION.sub(lambda hole: re.sub(pattern, "_", hole.group(0)), body)
+        pieces.append(body)
         read = literal.end()
     pieces.append(re.sub(pattern, "_", text[read:]))
     return "".join(pieces)
