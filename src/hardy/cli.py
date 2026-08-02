@@ -685,6 +685,13 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     except FileNotFoundError:
         print(f"Lean executable not found: {config.lean_command[0]}")
         return 1
+    except OSError as error:
+        # Not only FileNotFoundError. A command that exists but is not
+        # executable raises PermissionError, and a wrong-format binary raises
+        # OSError; both escaped as tracebacks, past a toolchain probe that had
+        # already caught the identical failure and written down why.
+        print(f"Lean command could not be run ({config.lean_command[0]}): {error}")
+        return 1
     except ValueError as error:
         print(str(error))
         return 2

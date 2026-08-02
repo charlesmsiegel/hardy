@@ -558,6 +558,57 @@ def test_a_genuinely_impossible_run_is_still_refused_on_the_floor():
     assert cost.estimate(calls=100, total_ms=50_000).is_consistent is False
 
 
+def test_the_floor_is_widened_by_how_far_the_probes_disagreed():
+    """The minimum of three samples is not a physical lower bound.
+
+    Ten observed calls at 10s inside a 105s run are compatible, but an
+    unadjusted 11s fastest probe computes a 110s floor and reports that the
+    calls imported different modules. The probes' own spread stands in for
+    that uncertainty, rather than a tolerance constant picked to fit.
+    """
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(11_000, 12_000, 13_000))
+    estimate = cost.estimate(calls=10, total_ms=109_000)
+    assert estimate.floor_ms == 11_000
+    assert estimate.spread_ms == 2_000
+    # 11s widened down by the 2s spread, ten times over. Unadjusted this would
+    # be 110s, just over the run, and refused as an import mismatch.
+    assert estimate.floor_prelude_ms == 90_000
+    assert estimate.is_consistent is True
+
+
+def test_a_median_saving_that_overruns_the_run_is_still_refused_on_its_own_terms():
+    """The two checks answer different questions, and the second still binds.
+
+    Ten calls in a 105s run clear the widened floor — the calls may well have
+    been faster than any probe — but the 12s median implies a 108s saving,
+    which is over 100% of the run and cannot be reported whatever the cause.
+    The refusal says that, rather than claiming the imports differ.
+    """
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(11_000, 12_000, 13_000))
+    estimate = cost.estimate(calls=10, total_ms=105_000)
+    assert estimate.floor_prelude_ms == 90_000  # the floor is satisfied
+    assert estimate.recoverable_ms == 108_000  # the saving is not
+    assert estimate.is_consistent is False
+    text = "\n".join(describe(cost, calls=10, total_ms=105_000))
+    assert "more time than the run took" in text
+    assert "did not all pay this prelude" not in text
+
+
+def test_a_single_sample_has_no_spread_and_keeps_the_plain_floor():
+    """Nothing to disagree, so nothing to widen by."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(60_000,))
+    estimate = cost.estimate(calls=2, total_ms=100_000)
+    assert estimate.spread_ms == 0
+    assert estimate.floor_prelude_ms == 120_000
+    assert estimate.is_consistent is False
+
+
+def test_widening_the_floor_still_catches_a_real_mismatch():
+    """A different import set overruns by far more than probe noise."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(11_000, 12_000, 13_000))
+    assert cost.estimate(calls=100, total_ms=50_000).is_consistent is False
+
+
 def test_a_saving_larger_than_the_run_is_refused_however_cheap_the_floor():
     """Judging feasibility on the floor alone removed the median's only bound.
 
@@ -567,7 +618,9 @@ def test_a_saving_larger_than_the_run_is_refused_however_cheap_the_floor():
     """
     cost = ImportCost(imports=("Mathlib",), samples_ms=(1_000, 100_000, 100_000))
     estimate = cost.estimate(calls=2, total_ms=3_000)
-    assert estimate.floor_prelude_ms == 2_000
+    # Probes this far apart widen the floor away entirely, so the floor check
+    # cannot object; the saving is what catches it.
+    assert estimate.floor_prelude_ms == 0
     assert estimate.recoverable_ms == 100_000
     assert estimate.is_consistent is False
     with pytest.raises(ValueError, match="contradict"):
@@ -589,13 +642,36 @@ def test_a_fractional_deadline_survives_the_report():
         assert shown in "\n".join(describe(cost))
 
 
-def test_the_identity_admits_it_does_not_pin_local_sources():
-    """Editing a locally-imported module changes latency while every recorded
-    identity stays byte-identical, so the gap is stated rather than implied."""
+def test_the_identity_admits_the_revisions_are_declared_not_hashed():
+    """"Pins dependencies" overclaimed: a rebuilt `.lake/packages/mathlib`
+    changes the oleans and the latency while the manifest rev and digest stay
+    identical, so the disclaimer covers built artifacts, not only local
+    modules."""
     cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,), environment=_identity())
     text = "\n".join(describe(cost))
-    assert "source identity: (unrecorded" in text
-    assert "not local modules" in text
+    assert "source identity: (unverified" in text
+    assert "declared, not hashed" in text
+    assert "rebuilt packages are not detected" in text
+
+
+def test_a_command_that_cannot_be_executed_is_reported_not_raised(tmp_path: Path, capsys, monkeypatch):
+    """`FileNotFoundError` alone missed it: a present-but-unexecutable command
+    raises `PermissionError`, which escaped as a traceback past a probe that
+    had already caught the same failure."""
+    from hardy import cli
+    from hardy.latency import ToolchainProbe
+
+    project = tmp_path / "lean_project"
+    project.mkdir()
+
+    def boom(*a, **k):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(cli.latency, "probe_toolchain", lambda *a, **k: ToolchainProbe(reason="x"))
+    monkeypatch.setattr(cli.latency, "measure_import_cost", boom)
+    args = cli.build_parser().parse_args(["latency"])
+    assert cli.run_latency(args, _config_for(tmp_path, project)) == 1
+    assert "could not be run" in capsys.readouterr().out
 
 
 def test_the_verdict_line_renders_the_relation_from_exact_values():
