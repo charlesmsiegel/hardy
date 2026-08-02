@@ -198,6 +198,10 @@ class RetrievalProvenance(FrozenModel):
     # What was actually sent to the sources, which a goal carrying hypotheses
     # is not. The digest has to cover the question that was asked.
     query_sha256: str
+    # And what came back. Without it the record described how a ranking was
+    # made and not what it said, so premises could be swapped wholesale --
+    # names, scores, source ranks -- and every check still passed.
+    premises_sha256: str
     ranker: str
     sources: tuple[SourceOutcome, ...]
 
@@ -210,6 +214,17 @@ class RetrievalProvenance(FrozenModel):
             sort_keys=True,
         ).encode("utf-8")
         return hashlib.sha256(canonical).hexdigest()
+
+
+def premises_digest(premises: Sequence[RankedPremise]) -> str:
+    """The digest a ranking's premises are bound by, in their ranked order."""
+    canonical = json.dumps(
+        [premise.model_dump(mode="json") for premise in premises],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 class PremiseRanking(FrozenModel):
@@ -267,6 +282,16 @@ class PremiseRanking(FrozenModel):
             raise ValueError("goal does not hash to the goal_sha256 its provenance records")
         if hashlib.sha256(self.query.encode("utf-8")).hexdigest() != self.provenance.query_sha256:
             raise ValueError("query does not hash to the query_sha256 its provenance records")
+        # Only for a whole ranking. Bounding drops premises on purpose, so the
+        # digest cannot describe what is left -- and recomputing it there would
+        # stamp a hash over a list no search produced, which is the one thing
+        # `bound_ranking` exists to avoid. A truncated view says so and names
+        # the artifact holding the ranking the digest is over.
+        if self.observation_truncated:
+            if not self.output_artifact:
+                raise ValueError("a truncated ranking must name the artifact holding the whole one")
+        elif premises_digest(self.premises) != self.provenance.premises_sha256:
+            raise ValueError("premises do not hash to the premises_sha256 its provenance records")
         if self.complete != self._complete(self.provenance):
             raise ValueError("`complete` disagrees with the sources the provenance names")
         if self.reproducible != self._reproducible(self.provenance):
@@ -320,9 +345,30 @@ class LeanSearchSource:
             return None
 
     @property
+    def _manifest_matches(self) -> bool:
+        """Whether the project about to be searched is the frozen one.
+
+        `mcp_server.load_runtime` takes the project from `HARDY_CONFIG` and the
+        environment identity from the claim on disk, and never checks that they
+        describe the same thing -- so `#find` can run in one Lake project while
+        the corpus identity names another. Hashing the manifest beside the
+        toolchain pin is the check that was missing, and it is the same number
+        `EnvironmentIdentity` already carries.
+        """
+        project = getattr(self._service, "lean_project", None)
+        if project is None:
+            return False
+        try:
+            manifest = (Path(project) / "lake-manifest.json").read_bytes()
+        except OSError:
+            return False
+        return hashlib.sha256(manifest).hexdigest() == self._service.environment.lake_manifest_sha256
+
+    @property
     def identity(self) -> SourceIdentity:
         environment = self._service.environment
         toolchain = self._toolchain_pin
+        frozen = self._manifest_matches
         return SourceIdentity(
             name="lean-find",
             kind="lean_search",
@@ -334,13 +380,16 @@ class LeanSearchSource:
             corpus=(
                 f"Mathlib {environment.mathlib_revision} / "
                 f"Lean {environment.lean_version} ({environment.lean_commit}) / "
-                f"manifest {environment.lake_manifest_sha256} / "
+                f"manifest {environment.lake_manifest_sha256}"
+                f"{'' if frozen else ' (NOT the project searched)'} / "
                 f"toolchain {toolchain or 'unverified'}"
             ),
-            # Pinned only with evidence of which compiler answers. Without the
-            # pin file the declared Lean version is a constant in `cli.py`, and
-            # a ranking resting on it cannot promise to replay.
-            pinned=toolchain is not None,
+            # Pinned only with evidence of *which* compiler answers and *which*
+            # corpus it answers over. Without the pin file the declared Lean
+            # version is a constant in `cli.py`; without a matching manifest the
+            # declared Mathlib belongs to some other project. Either way the
+            # ranking cannot promise to replay.
+            pinned=toolchain is not None and frozen,
         )
 
     @property
@@ -353,6 +402,15 @@ class LeanSearchSource:
         `LoogleSource.worst_case_seconds` documents in the other direction -- a
         search admitted with exactly its deadline left could overrun the run's
         budget by the teardown, having passed the check meant to stop it.
+
+        Not a hard maximum, and this is the honest limit of it: after `kill()`,
+        `run_process` reaps with an unbounded `child.wait()`, so a child wedged
+        in uninterruptible I/O blocks past any figure declared here. Bounding
+        that wait would trade a rare hang for a leaked zombie in a path shared
+        by Lean, Tectonic and the CAS kernel, which is a decision for that
+        module rather than a side effect of this one. So: the bound under the
+        assumption that a killed process dies, said out loud rather than
+        implied.
         """
         return float(self._limits.lean_process_seconds) + MAX_TEARDOWN_SECONDS
 
@@ -573,14 +631,38 @@ def search_query(goal: str) -> str:
     conclusion = next((line for line in lines if line.startswith(TURNSTILE)), lines[0])
     # Longest first, so `xs` is not half-replaced by a shorter `x`.
     for name in sorted(_local_names(lines), key=len, reverse=True):
+        # Outside string literals only. `⊢ x = "x"` is a statement about the
+        # string "x", and rewriting the literal too turned it into a statement
+        # about something else -- which both searches would then rank premises
+        # for, perfectly confidently. Char literals need no such care: `'` is an
+        # identifier character in Lean, so the quote already blocks the match.
         # Asymmetric on purpose. The lookbehind refuses `.` so the tail of a
         # qualified global -- `Foo.n` where `n` is also a local -- survives
         # whole. The lookahead allows it, because `xs.reverse` *is* the local
         # `xs` under projection and must become `_.reverse`; leaving it earns a
         # guaranteed `Unknown identifier`, which is worse than a pattern a
         # search might not like.
-        conclusion = re.sub(rf"(?<![\w'.!?]){re.escape(name)}(?![\w'!?])", "_", conclusion)
+        conclusion = _substitute_outside_literals(
+            conclusion, rf"(?<![\w'.!?]){re.escape(name)}(?![\w'!?])"
+        )
     return conclusion
+
+
+# A Lean string literal, with backslash escapes: an escaped quote does not end
+# it, so `"a \" x"` is one literal rather than two fragments and a stray `x`.
+STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+def _substitute_outside_literals(text: str, pattern: str) -> str:
+    """Wildcard matches of `pattern`, leaving string literals untouched."""
+    pieces = []
+    read = 0
+    for literal in STRING_LITERAL.finditer(text):
+        pieces.append(re.sub(pattern, "_", text[read : literal.start()]))
+        pieces.append(literal.group(0))
+        read = literal.end()
+    pieces.append(re.sub(pattern, "_", text[read:]))
+    return "".join(pieces)
 
 
 def _local_names(lines: Sequence[str]) -> set[str]:
@@ -742,6 +824,7 @@ class PremiseRetriever:
 
         self._spent += spent
         provenance = RetrievalProvenance(
+            premises_sha256=premises_digest(premises[:limit]),
             goal_sha256=hashlib.sha256(goal.encode("utf-8")).hexdigest(),
             query_sha256=hashlib.sha256(query.encode("utf-8")).hexdigest(),
             ranker=RANKER,
