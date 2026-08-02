@@ -15,7 +15,25 @@ import time
 
 import pytest
 
+from hardy import cas as cas_module
 from hardy.cas import CasError, CasSession
+
+
+@pytest.fixture
+def patient_grace(monkeypatch):
+    """Give an answering kernel longer than the two seconds a user gets.
+
+    The grace is a product decision: someone who pressed Esc should not sit
+    wondering whether anything happened. Two seconds is generous on an idle
+    machine and tight on a CI runner sharing two cores with the rest of the
+    suite under coverage -- and a kernel that answers a moment late is dropped
+    exactly as a deaf one is, which is what these tests would then see.
+
+    Used only where the claim is that an interrupted kernel *answers and
+    survives*. The tests that pin the grace itself are the ones where the
+    kernel refuses to answer at all, and they keep the real one.
+    """
+    monkeypatch.setattr(cas_module, "INTERRUPT_GRACE_SECONDS", 30.0)
 
 
 def _press_when_running(session: CasSession, ready, expect_in_flight: bool = True) -> None:
@@ -40,7 +58,9 @@ def _press_when_running(session: CasSession, ready, expect_in_flight: bool = Tru
     assert reached is expect_in_flight
 
 
-def test_an_interrupted_cell_leaves_the_kernel_and_its_namespace_alive(cas_session, tmp_path) -> None:
+def test_an_interrupted_cell_leaves_the_kernel_and_its_namespace_alive(
+    cas_session, tmp_path, patient_grace
+) -> None:
     session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
     try:
         session.execute("a")
@@ -60,7 +80,7 @@ def test_an_interrupted_cell_leaves_the_kernel_and_its_namespace_alive(cas_sessi
         # The whole point: the kernel is still there, and so is everything the
         # earlier cells put in it. `c` is the third cell the kernel counted,
         # which it can only answer from state it still has.
-        assert session.state != "dead"
+        assert session.state != "dead", record.restart_note
         # The stop stays in force until something lifts it, as a turn does:
         # every later cell of a cancelled turn is stopped too, deliberately.
         session.resume()
@@ -70,7 +90,9 @@ def test_an_interrupted_cell_leaves_the_kernel_and_its_namespace_alive(cas_sessi
         session.close()
 
 
-def test_an_interrupt_does_not_wait_out_the_cell_limit(cas_session, tmp_path) -> None:
+def test_an_interrupt_does_not_wait_out_the_cell_limit(
+    cas_session, tmp_path, patient_grace
+) -> None:
     session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
     try:
         # Warms the kernel, so this measures the interrupt being answered
@@ -93,7 +115,7 @@ def test_an_interrupt_does_not_wait_out_the_cell_limit(cas_session, tmp_path) ->
         # that it answered. Asserted that way rather than on the clock, which
         # under a loaded suite can drift past the grace without anything having
         # waited for it.
-        assert session.state != "dead"
+        assert session.state != "dead", record.restart_note
         assert time.monotonic() - started < 30
     finally:
         session.close()
@@ -179,7 +201,7 @@ def test_interrupting_an_idle_session_reports_that_it_reached_nothing(cas_sessio
         session.close()
 
 
-def test_a_press_that_lands_before_the_cell_still_stops_it(cas_session) -> None:
+def test_a_press_that_lands_before_the_cell_still_stops_it(cas_session, patient_grace) -> None:
     """The window between arming and writing the frame.
 
     A press landing there used to reach a driver that was still idle: the
@@ -200,7 +222,7 @@ def test_a_press_that_lands_before_the_cell_still_stops_it(cas_session) -> None:
         assert record.status == "interrupted"
         # Answered rather than killed after the grace: a dropped kernel is what
         # spending the grace looks like, so a live one is the evidence.
-        assert session.state != "dead"
+        assert session.state != "dead", record.restart_note
         assert time.monotonic() - started < 30
         session.resume()
         assert session.execute("c").value_repr == "2"
