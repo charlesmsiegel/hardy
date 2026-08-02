@@ -161,6 +161,12 @@ class WarmPoolEstimate(FrozenModel):
     # probe can describe the same calls. Defaults to `import_ms`, so an
     # estimate built from a bare number behaves as before.
     floor_ms: NonNegativeInt | None = None
+    # How far apart the probes fell (slowest minus fastest). The fastest of a
+    # handful of samples is not a physical lower bound -- a real call can beat
+    # it -- so the observed spread stands in for that uncertainty rather than a
+    # tolerance constant invented here. Zero for a single sample, which makes
+    # the check behave exactly as the unadjusted floor.
+    spread_ms: NonNegativeInt = 0
 
     @property
     def recoverable_ms(self) -> int:
@@ -188,17 +194,22 @@ class WarmPoolEstimate(FrozenModel):
 
     @property
     def floor_prelude_ms(self) -> int:
-        """The most conservative reading of what each call must have cost.
+        """The least the observed calls could plausibly have spent on preludes.
 
-        The median is a point estimate over a handful of noisy probes, and
-        treating it as an exact per-call lower bound rejected compatible
-        evidence: a 12s median against ten calls whose preludes happened to
-        run at 11s inside a 115s run fails `120s <= 115s` while nothing is
-        actually wrong. The fastest probe observed is the defensible floor --
-        no call can have imported the same modules faster than the fastest
-        time anyone measured for them.
+        Not `calls x median`: a median over a handful of noisy probes is a
+        point estimate, and treating it as an exact per-call cost rejected
+        compatible evidence. Not `calls x fastest` either, which was the same
+        mistake one step smaller -- the minimum of three samples is not a
+        physical floor, and a run whose calls merely beat it (10s calls against
+        an 11s fastest probe) was reported as importing different modules.
+
+        So the fastest sample is widened by how far the samples themselves
+        disagreed. The uncertainty comes from the measurement rather than from
+        a tolerance constant chosen to make a particular case pass, and it
+        collapses to the plain minimum when there is nothing to disagree.
         """
-        return self.calls * (self.floor_ms if self.floor_ms is not None else self.import_ms)
+        fastest = self.floor_ms if self.floor_ms is not None else self.import_ms
+        return self.calls * max(0, fastest - self.spread_ms)
 
     @property
     def is_consistent(self) -> bool:
@@ -208,8 +219,9 @@ class WarmPoolEstimate(FrozenModel):
 
         The run must have been able to afford a prelude on every call --
         `calls`, not `calls - 1`, because the observed run was unpooled and
-        paid for the first import too. Judged against the *fastest* probe, so
-        ordinary measurement noise is not reported as an import mismatch.
+        paid for the first import too. Judged against a floor widened by the
+        probes' own spread, so ordinary measurement noise is not reported as
+        an import mismatch.
 
         And the saving must fit inside the run. Relaxing the first condition to
         the floor removed the only bound the median was under: with samples of
@@ -317,8 +329,10 @@ class ImportCost(FrozenModel):
             calls=calls,
             total_ms=total_ms,
             # The saving is estimated from the median; feasibility is judged
-            # against the fastest probe, so noise is not read as a mismatch.
+            # against the fastest probe widened by the spread, so noise is not
+            # read as a mismatch.
             floor_ms=min(self.samples_ms),
+            spread_ms=max(self.samples_ms) - min(self.samples_ms),
         )
 
 
@@ -435,11 +449,16 @@ def describe(
         lines.append(f"lean: {cost.environment.lean_version} ({cost.environment.lean_commit})")
         lines.append(f"mathlib: {cost.environment.mathlib_revision}")
         lines.append(f"lake-manifest sha256: {cost.environment.lake_manifest_sha256}")
-        # The manifest pins dependencies, and nothing here pins the root
-        # project's own files. Editing a locally-imported module changes the
-        # latency without changing any identity above it, so the limit is
-        # stated rather than left for a reader to infer from what is absent.
-        lines.append("source identity: (unrecorded — pins dependencies, not local modules)")
+        # What the lines above actually establish is what a manifest *declares*
+        # — not what is on disk. A locally-imported module, or an edited and
+        # rebuilt `.lake/packages/mathlib`, changes the oleans and the latency
+        # while every identity above stays byte-identical. Saying "pins
+        # dependencies" overclaimed exactly that gap, so the disclaimer now
+        # covers the built artifacts too rather than only local modules.
+        lines.append(
+            "source identity: (unverified — the revisions above are declared, not hashed; "
+            "edited local modules or rebuilt packages are not detected)"
+        )
     lines.append(f"import set: {imports}")
     # `:g`, not `:.0f`: the deadline is a censored sample's entire lower bound,
     # and rounding it rendered `--timeout 0.4` as "deadline 0s" and `1.5` as
