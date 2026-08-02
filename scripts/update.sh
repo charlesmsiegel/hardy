@@ -215,7 +215,7 @@ update_environment() {
 # is both the new code and the new dependency list.
 update_from_release() {
 	local wheel directory="$HARDY_HOME/download"
-	step "Updating Hardy from $(release_base_url)"
+	step "Updating Hardy from $(redacted "$(release_base_url)")"
 	rm -rf "$directory"
 	# Both artifacts in hand, verified, before either is put in place. A bundle
 	# that fails to download after the wheel had already moved would leave

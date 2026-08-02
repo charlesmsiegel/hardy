@@ -51,6 +51,11 @@ fail() {
 }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# A private fork's URL can carry credentials (https://user:token@host/repo).
+# They belong in the request and nowhere else — not in the terminal, and not in
+# a CI log, which is likely to outlive the token.
+redacted() { printf '%s' "$1" | sed -e 's#://[^/@]*@#://***@#'; }
+
 confirm() {
 	[ "$ASSUME_YES" = 1 ] && return 0
 	[ -t 0 ] || return 0
@@ -244,8 +249,9 @@ release_asset() {
 # code that will run as this user, so a machine with no way to check the digest
 # stops here rather than installing something it could not verify.
 download_release_asset() {
-	local suffix="$1" directory="$2" base entry digest name actual
+	local suffix="$1" directory="$2" base shown entry digest name actual
 	base="$(release_base_url)"
+	shown="$(redacted "$base")"
 	have curl || fail "curl is required to install Hardy from a release"
 	mkdir -p "$directory"
 	# The manifest the bootstrap already fetched, when there is one. It names
@@ -255,13 +261,13 @@ download_release_asset() {
 		cp "$HARDY_RELEASE_MANIFEST" "$directory/SHA256SUMS"
 	else
 		curl -fsSL "$base/SHA256SUMS" -o "$directory/SHA256SUMS" ||
-			fail "could not fetch $base/SHA256SUMS — is there a published release yet? (HARDY_VERSION selects one, --from-source installs a clone instead)"
+			fail "could not fetch $shown/SHA256SUMS — is there a published release yet? (HARDY_VERSION selects one, --from-source installs a clone instead)"
 	fi
 	entry="$(release_asset "$directory/SHA256SUMS" "$suffix")" ||
-		fail "the release at $base has no $suffix asset"
+		fail "the release at $shown has no $suffix asset"
 	digest="${entry%% *}"
 	name="${entry#* }"
-	curl -fsSL "$base/$name" -o "$directory/$name" || fail "could not download $base/$name"
+	curl -fsSL "$base/$name" -o "$directory/$name" || fail "could not download $shown/$name"
 	actual="$(file_sha256 "$directory/$name")" ||
 		fail "neither sha256sum nor shasum is available, so $name cannot be verified"
 	[ "$actual" = "$digest" ] ||
@@ -690,7 +696,7 @@ hardy_install_main() {
 	if [ "$INSTALL_FROM" = source ]; then
 		say "source tree: $REPO_ROOT"
 	else
-		say "release: $(release_base_url)"
+		say "release: $(redacted "$(release_base_url)")"
 	fi
 	check_disk_space
 	ensure_python
