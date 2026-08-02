@@ -7,6 +7,8 @@ all that it does not overstate what a warm pool would recover.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -216,6 +218,91 @@ def test_a_missing_manifest_is_named_rather_than_passed_over():
     cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,), command=("lean",))
     text = "\n".join(describe(cost))
     assert "toolchain identity: (unrecorded" in text
+
+
+def test_the_identity_names_the_lean_that_was_actually_invoked(tmp_path: Path):
+    """Reusing the staged-run helper attributed every measurement to its pins.
+
+    `_environment_identity` hard-codes lean_version="4.32.0", which is right
+    where the toolchain is fixed and false here, where `--lean-command` picks
+    the compiler. A report naming a version nobody verified is worse evidence
+    than one admitting it does not know.
+    """
+    from hardy.latency import probe_toolchain
+
+    manifest = tmp_path / "lake-manifest.json"
+    manifest.write_text(
+        json.dumps({"packages": [{"name": "mathlib", "rev": "deadbeef"}]}), encoding="utf-8"
+    )
+
+    def run(spec: ProcessSpec) -> ProcessResult:
+        assert spec.argv[-1] == "--version"
+        return ProcessResult(
+            argv=spec.argv,
+            cwd=spec.cwd,
+            returncode=0,
+            stdout="Lean (version 4.99.0, commit abc123def, Release)\n",
+            stderr="",
+            duration_ms=5,
+            timed_out=False,
+            output_overflow=False,
+        )
+
+    identity = probe_toolchain(("lean",), tmp_path, runner=run)
+    assert identity is not None
+    # The invoked compiler's version, not the staged path's constant.
+    assert identity.lean_version == "4.99.0"
+    assert identity.lean_commit == "abc123def"
+    assert identity.mathlib_revision == "deadbeef"
+    assert identity.lake_manifest_sha256 == hashlib.sha256(manifest.read_bytes()).hexdigest()
+
+
+def test_an_unidentifiable_toolchain_yields_no_identity_rather_than_half_of_one(tmp_path: Path):
+    """Never partially invented: absent provenance can be caught, false cannot."""
+    from hardy.latency import probe_toolchain
+
+    def run(spec: ProcessSpec) -> ProcessResult:
+        return ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=0, stdout="some other compiler\n",
+            stderr="", duration_ms=5, timed_out=False, output_overflow=False,
+        )
+
+    # No manifest at all.
+    assert probe_toolchain(("lean",), tmp_path, runner=run) is None
+
+    (tmp_path / "lake-manifest.json").write_text(
+        json.dumps({"packages": [{"name": "mathlib", "rev": "deadbeef"}]}), encoding="utf-8"
+    )
+    # Manifest present, but the compiler does not identify itself.
+    assert probe_toolchain(("lean",), tmp_path, runner=run) is None
+
+
+def test_non_finite_bounds_are_refused_before_probing(tmp_path: Path, capsys, monkeypatch):
+    """`nan` and `inf` both slip past a `<= 0` check.
+
+    `--timeout inf` then builds a deadline `time.monotonic()` never reaches,
+    so a stalled probe runs forever inside a command whose whole contract is
+    that every call is bounded; `--total-seconds nan` reaches `round()` and
+    exits with a traceback instead of a usage error.
+    """
+    from hardy import cli
+
+    project = tmp_path / "lean_project"
+    project.mkdir()
+    probed = []
+    monkeypatch.setattr(cli.latency, "measure_import_cost", lambda *a, **k: probed.append(1))
+    monkeypatch.setattr(cli.latency, "probe_toolchain", lambda *a, **k: None)
+
+    for flag, value, message in (
+        ("--timeout", "inf", "--timeout must be a finite, positive"),
+        ("--timeout", "nan", "--timeout must be a finite, positive"),
+        ("--total-seconds", "nan", "--total-seconds must be a finite, non-negative"),
+        ("--total-seconds", "inf", "--total-seconds must be a finite, non-negative"),
+    ):
+        args = cli.build_parser().parse_args(["latency", flag, value])
+        assert cli.run_latency(args, _config_for(tmp_path, project)) == 2
+        assert message in capsys.readouterr().out
+    assert probed == []
 
 
 def test_an_unusable_threshold_is_refused_before_probing(tmp_path: Path, capsys, monkeypatch):
@@ -459,7 +546,7 @@ def test_invalid_observed_run_values_are_refused_before_any_probe_runs(tmp_path:
 
     args = cli.build_parser().parse_args(["latency", "--total-seconds", "-5"])
     assert cli.run_latency(args, _config_for(tmp_path, project)) == 2
-    assert "--total-seconds cannot be negative" in capsys.readouterr().out
+    assert "--total-seconds must be a finite, non-negative" in capsys.readouterr().out
     assert probed == []
 
 

@@ -620,19 +620,27 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     against a different Mathlib is not the cost this harness pays.
     """
     imports = tuple(args.imports or ("Mathlib",))
-    total_ms = None if args.total_seconds is None else round(args.total_seconds * 1_000)
     # Checked before probing, not after: each probe pays a full Mathlib import,
     # and rejecting a negative --calls once minutes have been spent is a
-    # traceback where a usage error belongs.
+    # traceback where a usage error belongs. Checked before the conversion
+    # below too -- `round(nan)` raises ValueError and `round(inf)` raises
+    # OverflowError, so converting first turns a usage error into a traceback.
     if args.calls is not None and args.calls < 0:
         print("--calls cannot be negative")
         return 2
-    if total_ms is not None and total_ms < 0:
-        print("--total-seconds cannot be negative")
+    if args.total_seconds is not None and (
+        not math.isfinite(args.total_seconds) or args.total_seconds < 0
+    ):
+        print("--total-seconds must be a finite, non-negative number of seconds")
         return 2
-    if args.timeout <= 0:
-        print("--timeout must be positive")
+    # Finite, not merely positive: `nan` and `inf` both pass `<= 0`, and
+    # `run_process` then builds a deadline that `time.monotonic()` can never
+    # reach, so a stalled probe would run forever inside a command whose entire
+    # contract is that every call is bounded.
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        print("--timeout must be a finite, positive number of seconds")
         return 2
+    total_ms = None if args.total_seconds is None else round(args.total_seconds * 1_000)
     # A threshold argparse accepts as a float but that no share can be compared
     # against meaningfully: negative makes every run "warranted" including one
     # recovering nothing, NaN fails every comparison so nothing is ever
@@ -649,14 +657,14 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     if not project.is_dir():
         print(f"Lean project directory not found: {project}")
         return 1
-    # Best effort: the pinned Lean and Mathlib identities are what make a
-    # copied result reproducible, but a bare Lean with no Lake manifest is
-    # still a legitimate thing to measure. Recorded when readable, reported as
-    # unrecorded when not — never guessed.
-    try:
-        environment = _environment_identity(config)
-    except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError):
-        environment = None
+    # Asked of the Lean actually being invoked, not `_environment_identity`,
+    # whose version and commit are constants pinned for the staged path and
+    # would misattribute a `--lean-command` pointing at a different compiler.
+    # Returns None when the toolchain cannot be identified, and the report then
+    # says so rather than naming a version nobody verified.
+    environment = latency.probe_toolchain(
+        config.lean_command, project, timeout_seconds=args.timeout
+    )
     try:
         cost = latency.measure_import_cost(
             imports,
