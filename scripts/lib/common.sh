@@ -408,7 +408,7 @@ install_source_tree() {
 # wheel that failed verification is worth being able to look at, and the next
 # run replaces it either way.
 install_released_wheel() {
-	local wheel staged=0 directory="$HARDY_HOME/download"
+	local wheel directory="$HARDY_HOME/download"
 	rm -rf "$directory"
 	# The bootstrap fetches the bundle itself and hands the manifest over, and
 	# that is the only case where the installers on disk are already this
@@ -421,9 +421,8 @@ install_released_wheel() {
 	# behind for the wheel to be found in, so both artifacts come from one
 	# release rather than from two resolutions of `latest` minutes apart, and
 	# neither is put in place before both have been verified.
-	if [ "${HARDY_RELEASE_MANIFEST:-}" != "$HARDY_HOME/installers/SHA256SUMS" ]; then
+	if [ "${HARDY_RELEASE_MANIFEST:-}" != "$HARDY_HOME/installers.new/download/SHA256SUMS" ]; then
 		stage_installers
-		staged=1
 	fi
 	wheel="$(download_release_asset .whl "$directory")"
 	say "verified $(basename "$wheel") against the release manifest"
@@ -431,7 +430,9 @@ install_released_wheel() {
 	say "installed hardy from $(basename "$wheel")"
 	rm -rf "$directory"
 	record_release_origin
-	if [ "$staged" = 1 ]; then commit_installers; fi
+	# Last, and only now: until the wheel is in, the installers on disk are the
+	# ones that match what is installed.
+	commit_installers
 }
 
 ensure_path_entry() {

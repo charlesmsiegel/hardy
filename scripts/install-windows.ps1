@@ -278,11 +278,11 @@ function Invoke-ReleaseInstaller {
     if ($LASTEXITCODE -ne 0) { Stop-Install "could not unpack $(Split-Path -Leaf $bundle)" }
     $handoff = Join-Path $tree 'scripts\install-windows.ps1'
     if (-not (Test-Path $handoff)) { Stop-Install 'the release installer bundle carries no install-windows.ps1' }
-    Copy-Item -LiteralPath (Join-Path $staging 'download\SHA256SUMS') -Destination (Join-Path $tree 'SHA256SUMS') -Force
-    Remove-Item -Recurse -Force $installers -ErrorAction SilentlyContinue
-    Move-Item $tree $installers
-    Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
-    $env:HARDY_RELEASE_MANIFEST = Join-Path $installers 'SHA256SUMS'
+    # Left staged. The retained installers of an existing installation are not
+    # replaced until the wheel they came with is installed, or a failure after
+    # this would leave release N's wheel under release N+1's updater.
+    # Complete-ReleaseInstallers does the swap once the wheel is in.
+    $env:HARDY_RELEASE_MANIFEST = Join-Path $staging 'download\SHA256SUMS'
 
     # Everything this copy was asked for, passed to the one that will do it.
     $forward = @()
@@ -294,9 +294,20 @@ function Invoke-ReleaseInstaller {
         else { $forward += @("-$name", [string]$value) }
     }
     $env:HARDY_INSTALLER_HANDED_OFF = '1'
-    Write-Detail "handing over to $(Join-Path $installers 'scripts\install-windows.ps1')"
-    & powershell -ExecutionPolicy Bypass -File (Join-Path $installers 'scripts\install-windows.ps1') @forward
+    Write-Detail "handing over to $handoff"
+    & powershell -ExecutionPolicy Bypass -File $handoff @forward
     exit $LASTEXITCODE
+}
+
+# Swapped whole, and only once the wheel is installed.
+function Complete-ReleaseInstallers {
+    $tree = Join-Path $Prefix 'installers.new\tree'
+    if (-not (Test-Path $tree)) { return }
+    $installers = Join-Path $Prefix 'installers'
+    Remove-Item -Recurse -Force $installers -ErrorAction SilentlyContinue
+    Move-Item $tree $installers
+    Remove-Item -Recurse -Force (Join-Path $Prefix 'installers.new') -ErrorAction SilentlyContinue
+    Write-Detail "the installers in $installers now match the installed release"
 }
 
 # A checkout is what a developer running this from one means. Anything else has
@@ -330,30 +341,48 @@ function Initialize-Repository {
     $url = $RepoUrl
     $reference = if ($env:HARDY_REPO_REF) { $env:HARDY_REPO_REF } else { 'main' }
     $source = Join-Path $Prefix 'src'
-    if (-not (Test-Path (Join-Path $source 'pyproject.toml'))) {
-        Write-Step "Fetching Hardy into $source"
-        Remove-Item -Recurse -Force $source -ErrorAction SilentlyContinue
-        New-Item -ItemType Directory -Force -Path $source | Out-Null
-        if (Test-Command 'git') {
-            & git clone --depth 1 --branch $reference $url $source
-            if ($LASTEXITCODE -ne 0) { Stop-Install "git clone of $url failed" }
-        }
-        else {
-            $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("hardy-src-" + [System.Guid]::NewGuid().ToString('N'))
-            New-Item -ItemType Directory -Force -Path $staging | Out-Null
-            try {
-                $archive = Join-Path $staging 'hardy.zip'
-                Invoke-WebRequest -Uri "$url/archive/refs/heads/$reference.zip" -OutFile $archive -UseBasicParsing
-                Expand-Archive -Path $archive -DestinationPath $staging -Force
-                # GitHub archives wrap everything in a <repo>-<ref> directory.
-                $extracted = Get-ChildItem -Directory $staging | Select-Object -First 1
-                if (-not $extracted) { Stop-Install "the downloaded archive from $url was empty" }
-                Copy-Item -Path (Join-Path $extracted.FullName '*') -Destination $source -Recurse -Force
-            }
-            finally { Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue }
-        }
+    # Always re-fetched, and into a sibling: reusing whatever is already there
+    # would reinstall the previous ref after the selector changed, and deleting
+    # it first would break an editable installation if the fetch then failed.
+    $staging = "$source.new"
+    Write-Step "Fetching Hardy into $source (ref $reference)"
+    Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $staging | Out-Null
+    if (Test-Command 'git') {
+        & git clone --depth 1 --branch $reference $url $staging
+        if ($LASTEXITCODE -ne 0) { Stop-Install "git clone of $url (ref $reference) failed" }
     }
-    if (-not (Test-Path (Join-Path $source 'pyproject.toml'))) { Stop-Install "$source does not look like the Hardy repository" }
+    else {
+        $download = Join-Path ([System.IO.Path]::GetTempPath()) ("hardy-src-" + [System.Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path $download | Out-Null
+        try {
+            $archive = Join-Path $download 'hardy.zip'
+            # A ref may be a branch or a tag, and GitHub keeps the two in
+            # separate namespaces; a machine with no git cannot ask which.
+            $fetched = $false
+            foreach ($namespace in @('heads', 'tags')) {
+                try {
+                    Invoke-WebRequest -Uri "$url/archive/refs/$namespace/$reference.zip" -OutFile $archive -UseBasicParsing
+                    $fetched = $true
+                    break
+                }
+                catch { continue }
+            }
+            if (-not $fetched) { Stop-Install "could not download $url (ref $reference)" }
+            Expand-Archive -Path $archive -DestinationPath $download -Force
+            # GitHub archives wrap everything in a <repo>-<ref> directory.
+            $extracted = Get-ChildItem -Directory $download | Select-Object -First 1
+            if (-not $extracted) { Stop-Install "the downloaded archive from $url was empty" }
+            Copy-Item -Path (Join-Path $extracted.FullName '*') -Destination $staging -Recurse -Force
+        }
+        finally { Remove-Item -Recurse -Force $download -ErrorAction SilentlyContinue }
+    }
+    if (-not (Test-Path (Join-Path $staging 'pyproject.toml'))) {
+        Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+        Stop-Install "what was fetched from $url (ref $reference) is not the Hardy repository"
+    }
+    Remove-Item -Recurse -Force $source -ErrorAction SilentlyContinue
+    Move-Item $staging $source
     $script:RepoRoot = $source
     return $true
 }
@@ -397,6 +426,7 @@ function New-Environment {
         Write-Detail "installed hardy from $(Split-Path -Leaf $wheel)"
         Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
         Save-ReleaseOrigin
+        Complete-ReleaseInstallers
     }
     else {
         & $venvPython -m pip install -e $RepoRoot

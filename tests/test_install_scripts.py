@@ -665,7 +665,10 @@ def test_one_downloaded_script_fetches_the_rest_of_the_installer_from_the_releas
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Fetching the Hardy installers" in result.stdout
     assert "ran the release installers" in result.stdout
-    assert (tmp_path / "hardy/installers/scripts/lib/common.sh").exists()
+    # Staged, not yet in place: the retained installers of an existing
+    # installation are only replaced once the wheel they came with is in, and
+    # the stub stands in for the installer that would have done that.
+    assert (tmp_path / "hardy/installers.new/tree/scripts/lib/common.sh").exists()
     assert not (tmp_path / "hardy/src").exists(), "the repository was fetched despite a usable release"
 
 
@@ -727,7 +730,7 @@ def test_the_installers_are_kept_beside_the_installation_they_manage(tmp_path: P
             _arguments=["--prefix", str(prefix)],
         )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (prefix / "installers/scripts/lib/common.sh").exists()
+    assert (prefix / "installers.new/tree/scripts/lib/common.sh").exists()
 
 
 @posix_only
