@@ -93,6 +93,27 @@ class ToolchainProbe(FrozenModel):
 
     identity: EnvironmentIdentity | None = None
     reason: str | None = None
+    # Whether the Mathlib revision can be said to describe what the command
+    # actually imported. See `manifest_binds`.
+    manifest_bound: bool = False
+
+
+def manifest_binds(command: tuple[str, ...]) -> bool:
+    """Whether this command necessarily resolves imports through the project.
+
+    `lake env lean`, run in the project directory, does: lake constructs the
+    `LEAN_PATH` from that project's manifest, so the revision on disk is the
+    revision elaborated. A bare `lean`, or a wrapper, does not -- its
+    `LEAN_PATH` may point at another Mathlib entirely, and reading the
+    project's manifest then attributes the latency to a toolchain that did not
+    produce it.
+
+    Sufficient rather than exact, deliberately. A wrapper that happens to call
+    lake correctly is reported as unverified, which costs a line of hedging;
+    the reverse error would state a revision nobody checked, which is the kind
+    of confident wrongness the rest of this module exists to avoid.
+    """
+    return bool(command) and Path(command[0]).name.lower() in {"lake", "lake.exe"}
 
 
 def probe_toolchain(
@@ -148,6 +169,7 @@ def probe_toolchain(
     if found is None or commit is None:
         return ToolchainProbe(reason=f"{command[0]} --version named no version and commit")
     return ToolchainProbe(
+        manifest_bound=manifest_binds(command),
         identity=EnvironmentIdentity(
             lean_version=found.group("version"),
             lean_commit=commit.group("commit"),
@@ -399,6 +421,8 @@ class ImportCost(FrozenModel):
     environment: EnvironmentIdentity | None = None
     # Why there is no identity, when there is none.
     identity_note: str | None = None
+    # Whether the recorded Mathlib revision describes what was imported.
+    manifest_bound: bool = False
     # The host that produced these durations. See `machine_identity`.
     machine: str | None = None
 
@@ -476,6 +500,7 @@ def measure_import_cost(
     repeats: int = DEFAULT_REPEATS,
     environment: EnvironmentIdentity | None = None,
     identity_note: str | None = None,
+    manifest_bound: bool = False,
     runner: Callable[[ProcessSpec], ProcessResult] = run_process,
 ) -> ImportCost:
     """Time the prelude by elaborating the imports alone, `repeats` times.
@@ -526,6 +551,7 @@ def measure_import_cost(
         diagnostic=diagnostic,
         environment=environment,
         identity_note=identity_note,
+        manifest_bound=manifest_bound,
     )
 
 
@@ -577,7 +603,12 @@ def describe(
         lines.append(f"toolchain identity: (unrecorded — {cost.identity_note or 'unknown'})")
     else:
         lines.append(f"lean: {cost.environment.lean_version} ({cost.environment.lean_commit})")
-        lines.append(f"mathlib: {cost.environment.mathlib_revision}")
+        bound = (
+            ""
+            if cost.manifest_bound
+            else " (unverified — this command may resolve imports outside the project)"
+        )
+        lines.append(f"mathlib: {cost.environment.mathlib_revision}{bound}")
         lines.append(f"lake-manifest sha256: {cost.environment.lake_manifest_sha256}")
         # What the lines above actually establish is what a manifest *declares*
         # — not what is on disk. A locally-imported module, or an edited and
