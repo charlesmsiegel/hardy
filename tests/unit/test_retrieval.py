@@ -222,6 +222,71 @@ def test_retrieval_time_is_metered_and_a_source_that_would_overrun_is_not_starte
     assert ranking.seconds_spent == pytest.approx(4.0)
 
 
+def test_the_budget_is_spent_across_the_run_rather_than_refilled_per_call() -> None:
+    """The retriever is deliberately shared across a proving stage, so a
+    per-call budget was no budget at all: a model calling `rank_premises` in a
+    loop could spend an arbitrary multiple of what the run was frozen under.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    readings = iter([0.0, 4.0, 4.0])
+    lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')], worst_case_seconds=4.0)
+    retriever = _retriever(retrieval, [lean], seconds=5, clock=lambda: next(readings))
+
+    first = retriever.rank('_ + _ = _ + _')
+    second = retriever.rank('_ * _ = _ * _')
+
+    assert not first.budget_exhausted
+    assert first.run_seconds_remaining == pytest.approx(1.0)
+    # 4 of the 5 seconds are gone, and this source may take 4 more.
+    assert second.budget_exhausted
+    assert second.premises == ()
+    assert second.run_seconds_remaining == pytest.approx(1.0)
+    assert len(lean.calls) == 1
+
+
+def test_whether_a_ranking_is_complete_and_replayable_survives_serialization() -> None:
+    """The tool contract promises both, and a Python property is not part of
+    the JSON a model actually receives. Stored and revalidated instead, the way
+    `provenance_sha256` is, so neither can be asserted into existence either.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')])
+    loogle = FakeSource(_unpinned(retrieval), [_record('Nat.mul_comm')])
+
+    ranking = _retriever(retrieval, [lean, loogle]).rank('_ + _ = _ + _')
+    payload = json.loads(ranking.model_dump_json())
+
+    assert payload['complete'] is True
+    assert payload['reproducible'] is False
+    assert retrieval.PremiseRanking.model_validate(payload).premises == ranking.premises
+    for field, wrong in (('complete', False), ('reproducible', True)):
+        with pytest.raises(ValidationError):
+            retrieval.PremiseRanking.model_validate(payload | {field: wrong})
+
+
+def test_fusion_sees_deeper_than_the_number_of_premises_it_returns() -> None:
+    """A result both sources rank past the cutoff outscores one that only a
+    single source put first: 2/(60+5) beats 1/(60+1). Asking each source for
+    only `limit` results threw those away -- which is the agreement the fusion
+    exists to find.
+
+    `Both.found` is fifth on both lists, so a three-premise answer that only
+    looked three deep would never see it and would lead with `Lean.only`.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    def listing(prefix):
+        return [_record(f'{prefix}.{index}') for index in range(4)] + [_record('Both.found')]
+
+    lean = FakeSource(_pinned(retrieval), listing('Lean'))
+    loogle = FakeSource(_unpinned(retrieval), listing('Loogle'))
+
+    ranking = _retriever(retrieval, [lean, loogle]).rank('_ + _ = _ + _', limit=3)
+
+    assert lean.calls == [('_ + _ = _ + _', retrieval.CANDIDATE_DEPTH * 3)]
+    assert ranking.premises[0].name == 'Both.found'
+    assert len(ranking.premises) == 3
+
+
 def test_a_ranking_records_what_each_source_spent() -> None:
     retrieval = importlib.import_module('hardy.retrieval')
     readings = iter([0.0, 1.5, 2.0])
@@ -322,7 +387,10 @@ def test_the_lean_source_searches_the_environment_the_run_is_frozen_under() -> N
 
     assert [record.name for record in source.search('_ + _ = _ + _', 5)] == ['Nat.add_comm']
     assert source.worst_case_seconds == 30.0
-    assert '81a5d257' in source.identity.corpus and '4.32.0' in source.identity.corpus
+    # Every toolchain identity that can move a `#find` result, `lean_commit`
+    # included: two builds can display one version and be different Leans.
+    for identity in ('81a5d257', '4.32.0', '8c9756b', 'b' * 64):
+        assert identity in source.identity.corpus
     # `search_declarations` accepts 1..20, and a ranking may ask for more.
     source.search('_ + _ = _ + _', 40)
     assert service.calls == [('_ + _ = _ + _', 5), ('_ + _ = _ + _', 20)]
@@ -449,9 +517,20 @@ def test_a_response_that_is_not_a_json_object_is_refused() -> None:
         retrieval.LoogleSource(fetch=lambda url, timeout: b'<html>502</html>').search('x', 10)
     with pytest.raises(retrieval.RetrievalError, match='not a JSON object'):
         retrieval.LoogleSource(fetch=lambda url, timeout: b'[1, 2]').search('x', 10)
-    assert retrieval.LoogleSource(fetch=lambda url, timeout: b'{"hits": "nope"}').search(
-        'x', 10
-    ) == ()
+
+
+def test_a_response_carrying_no_usable_hit_list_is_a_failed_source() -> None:
+    """`{"hits": "nope"}` is Loogle's contract having changed or broken, and
+    reading it as an empty result would file a protocol failure under "found
+    nothing" -- leaving the ranking `complete` on a source that never answered.
+    An actually empty `hits` is still an answer.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    for body in (b'{"hits": "nope"}', b'{"count": 0}', b'{"hits": {"a": 1}}'):
+        with pytest.raises(retrieval.RetrievalError, match='hits'):
+            retrieval.LoogleSource(fetch=lambda url, timeout, body=body: body).search('x', 10)
+    assert retrieval.LoogleSource(fetch=lambda url, timeout: b'{"hits": []}').search('x', 10) == ()
 
 
 def test_loogle_returns_no_more_hits_than_were_asked_for() -> None:
