@@ -241,7 +241,9 @@ def test_the_identity_names_the_lean_that_was_actually_invoked(tmp_path: Path):
             argv=spec.argv,
             cwd=spec.cwd,
             returncode=0,
-            stdout="Lean (version 4.99.0, commit abc123def, Release)\n",
+            # The real shape, target triple and all: requiring `, commit` to
+            # follow the version directly failed on every actual Lean build.
+            stdout="Lean (version 4.99.0, x86_64-unknown-linux-gnu, commit abc123def, Release)\n",
             stderr="",
             duration_ms=5,
             timed_out=False,
@@ -476,6 +478,53 @@ def test_the_reported_share_never_contradicts_the_verdict_beside_it():
     text = "\n".join(describe(cost, calls=2, total_ms=10_000, threshold=0.25))
     assert "24.9% of the run" in text
     assert "not warranted" in text
+
+
+def test_precision_widens_only_as_far_as_the_comparison_needs():
+    """One fixed precision cannot serve every share.
+
+    24.96% rounds to "25.0%" at one decimal, which reads as meeting the 25%
+    threshold that the verdict underneath says it missed. The precision widens
+    until the printed number lands on its true side of the line -- and stays
+    narrow when nothing is close.
+    """
+    near = ImportCost(imports=("Mathlib",), samples_ms=(2_496,))
+    text = "\n".join(describe(near, calls=2, total_ms=10_000, threshold=0.25))
+    assert "24.96% of the run" in text
+    assert "25.00% threshold" in text
+    assert "not warranted" in text
+
+    # Nothing near the line, so one decimal still suffices.
+    far = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    plain = "\n".join(describe(far, calls=10, total_ms=150_000, threshold=0.25))
+    assert "72.0% of the run" in plain
+    assert "25.0% threshold" in plain
+
+
+def test_the_observed_run_must_afford_a_prelude_on_every_call():
+    """The run being described was unpooled, so it paid the prelude `calls`
+    times, not `calls - 1`. Testing consistency against the saving conflated
+    the two and admitted arithmetically impossible evidence."""
+    # Two calls at a 60s prelude need 120s of preludes alone, inside a 100s run.
+    estimate = WarmPoolEstimate(import_ms=60_000, calls=2, total_ms=100_000)
+    assert estimate.observed_prelude_ms == 120_000
+    assert estimate.is_consistent is False
+    with pytest.raises(ValueError, match="contradict"):
+        estimate.warrants_warm_pool()
+
+    text = "\n".join(
+        describe(ImportCost(imports=("Mathlib",), samples_ms=(60_000,)), calls=2, total_ms=100_000)
+    )
+    assert "did not all pay this prelude" in text
+    assert "warranted" not in text
+
+
+def test_a_run_that_exactly_affords_its_preludes_is_still_consistent():
+    """The boundary belongs on the accepting side: a run whose whole duration
+    was preludes is degenerate but not impossible."""
+    estimate = WarmPoolEstimate(import_ms=50_000, calls=2, total_ms=100_000)
+    assert estimate.is_consistent is True
+    assert estimate.recoverable_ms == 50_000
 
 
 def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys, monkeypatch):
