@@ -6,6 +6,7 @@ import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--ignore-interrupt', action='store_true')
+parser.add_argument('--ignore-terminate', action='store_true')
 parser.add_argument('--stdout')
 parser.add_argument('--stderr')
 parser.add_argument('--echo')
@@ -26,6 +27,14 @@ if args.ignore_interrupt:
         handled = getattr(signal, name, None)
         if handled is not None:
             signal.signal(handled, signal.SIG_IGN)
+
+if args.ignore_terminate:
+    # Deaf to the polite teardown as well, so only SIGKILL is left: the last
+    # rung of the ladder, which nothing else in these fixtures forces Hardy on
+    # to.
+    handled = getattr(signal, 'SIGTERM', None)
+    if handled is not None:
+        signal.signal(handled, signal.SIG_IGN)
 
 if args.sleep:
     time.sleep(args.sleep)

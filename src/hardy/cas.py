@@ -871,6 +871,14 @@ class CasSession:
         # `interrupt` refuses unless a cell is actually out there.
         self._in_flight = threading.Event()
         self._interrupted = threading.Event()
+        # The window between the frame being built and the kernel having read
+        # it. The write is to a pipe, so a kernel that has stopped reading --
+        # the deaf one this whole change exists for -- lets a large enough cell
+        # fill the buffer and block it. Nothing is in flight yet, so `interrupt`
+        # has nothing to ask; but `escalate` does, because killing the kernel
+        # is what ends the write, and without that a session could hang there
+        # with no deadline running and no press that could reach it.
+        self._sending = threading.Event()
         # Held across "write the frame and arm the flag" and across "decide
         # whether to signal", so the two cannot interleave. Without it a press
         # landing between the two reached a driver that was still idle: the
@@ -1264,7 +1272,17 @@ class CasSession:
             # stop the *next* cell, which nobody asked to stop.
             self._interrupted.clear()
             frame = self.backend.frame(source, nonce, self._stop_level > 0)
-            sent = kernel.send(frame)
+            self._sending.set()
+        # Outside the lock. `write` to a full pipe blocks until the kernel
+        # reads, and `interrupt` and `escalate` are called from the terminal's
+        # own event loop -- so holding the lock across the write would let a
+        # kernel that has stopped reading freeze the interface, with the cell's
+        # deadline not yet running and the one press that could end it unable
+        # to be delivered. A press landing in this window is remembered in
+        # `_stop_level` and spent below, at the level it was asked at.
+        sent = kernel.send(frame)
+        with self._signal_lock:
+            self._sending.clear()
             self._in_flight.set()
             # A stop asked for before this cell existed still applies to it:
             # the press was aimed at the work, and the work is now this. It
@@ -1279,6 +1297,21 @@ class CasSession:
                     kernel.interrupt()
         try:
             if not sent:
+                if self._interrupted.is_set():
+                    # The write failed because the second press killed the
+                    # kernel out from under it -- which is what ends a write to
+                    # a kernel that has stopped reading. Hardy stopped this, so
+                    # the record says so; `kernel_died` would blame the
+                    # toolchain for what Esc did.
+                    return CellOutcome(
+                        status="interrupted",
+                        stderr=(
+                            "the kernel was not reading its input, so the cell was "
+                            "never sent; it was stopped and its state is gone"
+                        ),
+                        kernel_lost=True,
+                        signalled=True,
+                    )
                 return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
             deadline = time.monotonic() + limit
             # The frame, not the source: an echoing interpreter echoes the
@@ -1428,10 +1461,16 @@ class CasSession:
         holding a dead child it still believed in. The stop is remembered
         either way, so a cell about to go out is stopped rather than the press
         being lost.
+
+        A cell still being *written* counts as running here, though `interrupt`
+        refuses it: a kernel that has stopped reading blocks the write with no
+        deadline yet running, and killing it is what ends that write. There is
+        nothing for the first press to ask of a kernel that is not listening,
+        and this is the press that does not ask.
         """
         with self._signal_lock:
             self._stop_level = _INSISTED
-            if not self._in_flight.is_set():
+            if not (self._in_flight.is_set() or self._sending.is_set()):
                 return False
             kernel = self._kernel
             if kernel is None:

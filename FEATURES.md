@@ -241,6 +241,24 @@ Priority labels are sequencing hints:
   a cell inside a C loop that never returns to its interpreter -- is stopped
   the way the timeout stopped it, and the record says the state went with it.
   A second Esc escalates to that immediately rather than waiting the grace out.
+  A kernel wedged *between* cells -- one that answered and then stopped reading
+  its input -- is the one case the first press cannot reach: a cell whose frame
+  outgrows the pipe buffer blocks in the write, with no deadline yet running
+  and nothing in flight to ask anything of. The write is made outside the lock
+  that orders sends against signals, so the interface stays live and the second
+  press kills the kernel, which is what ends the write; the cell is recorded as
+  one Hardy stopped rather than as a kernel that fell over on its own.
+- **Now (implemented):** the escalation follows the process *group*, so a
+  wrapper that exits while the compiler it started keeps the captured pipes --
+  `lake` and `latexmk` both do this -- is still stopped rather than waited out.
+  A press landing after the leader has gone does not mark the run as
+  interrupted on its own, since a child that finished a moment earlier earned
+  its result; it starts the ladder, and the record is written if and when the
+  ladder actually has to stop something. A `KeyboardInterrupt` at a
+  synchronous caller -- `hardy doctor` run as a command, with no cancellation
+  wrapper around it -- kills the probe's group on the way out, since the
+  group Hardy created for it is precisely what the terminal's own signal
+  cannot reach.
 - **Known gap:** on Windows the escalation reaches the process Hardy started
   and not the tree beneath it. The *interrupt* does reach the tree --
   `CTRL_BREAK_EVENT` is delivered to a process group -- but terminating and

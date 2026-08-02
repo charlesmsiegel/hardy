@@ -189,6 +189,14 @@ class _Running:
     def __init__(self, child: subprocess.Popen) -> None:
         self.child = child
         self.interrupted = threading.Event()
+        # That a stop was asked of this child at all, whatever its leader was
+        # doing at the time. `interrupted` is the *record* and is set only for
+        # a leader still running, so a child that finished a moment before the
+        # press keeps the result it earned; but a leader can exit while the
+        # compiler it started holds the pipes open, and there the work is very
+        # much still going. Escalation keys on this, so the ladder is walked
+        # for the group rather than for the leader.
+        self.asked = threading.Event()
         # The second press. Read by `run_process`'s wait, which otherwise sits
         # out the grace the *first* press started -- so a child deaf to both
         # signals would take the grace and then another two seconds to die,
@@ -233,11 +241,11 @@ def tracked(child: subprocess.Popen):
         # *recorded* as stopped if it was still running. A child that finished
         # between the spawn and this line produced a real result, and marking
         # it would throw away a Lean check that passed.
+        entry.asked.set()
         if child.poll() is None:
             entry.interrupted.set()
-            if arriving_into >= _INSISTED:
-                entry.escalated.set()
         if arriving_into >= _INSISTED:
+            entry.escalated.set()
             terminate_group(child)
         else:
             signal_interrupt(child)
@@ -272,6 +280,7 @@ def interrupt_children() -> int:
         # a successful compile and report that it never finished. The signal
         # still goes out either way, because the group can outlive its leader.
         running = entry.child.poll() is None
+        entry.asked.set()
         signal_interrupt(entry.child)
         if running:
             entry.interrupted.set()
@@ -292,10 +301,14 @@ def stop_children() -> int:
         entries = list(_RUNNING)
     for entry in entries:
         running = entry.child.poll() is None
+        entry.asked.set()
+        # Escalation is about the group, not the leader: a wrapper that has
+        # already exited leaves nothing to terminate, and the descendant still
+        # holding the pipes is exactly what this press is for.
+        entry.escalated.set()
         terminate_group(entry.child)
         if running:
             entry.interrupted.set()
-            entry.escalated.set()
     return len(entries)
 
 
@@ -363,6 +376,18 @@ def run_guarded(
             timed_out = True
             kill_group(child)
             stdout, stderr = child.communicate()
+        except BaseException:
+            # A Ctrl+C at a *synchronous* caller: `hardy doctor` run as a
+            # command has no cancellation wrapper around `run_checks`, so the
+            # KeyboardInterrupt simply unwinds through here. The probe is in a
+            # process group of its own, which is what keeps the terminal's own
+            # signal off it -- so nothing else is going to stop it, and
+            # unwinding without killing the group leaves it running out its
+            # 30-120 second limit after Hardy has gone.
+            kill_group(child)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                child.wait(timeout=TEARDOWN_SECONDS)
+            raise
         finally:
             settled.set()
             watcher.join(timeout=1)
@@ -387,13 +412,19 @@ def _escalate_after_grace(child: subprocess.Popen, entry: _Running, settled: thr
     and a press landing inside the grace would sit out the whole of the grace
     it was pressed to skip.
     """
-    while not entry.interrupted.is_set() and not entry.escalated.is_set():
+    while not entry.asked.is_set() and not entry.escalated.is_set():
         if settled.wait(0.05):
             return
     if _settled_within(settled, entry, INTERRUPT_GRACE_SECONDS):
         return
+    # Whatever the leader was doing when the press landed, something in its
+    # group is still holding the pipes `communicate` is waiting on -- so this
+    # run is one Hardy stopped, and its output is whatever had arrived by the
+    # time it did. Recorded here rather than at the press, because until the
+    # grace ran out the child still had every chance to finish on its own.
+    entry.interrupted.set()
     terminate_group(child)
-    if _settled_within(settled, entry, 2):
+    if _settled_within(settled, entry, TEARDOWN_SECONDS):
         return
     kill_group(child)
 
@@ -497,8 +528,9 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
         # land at the same time.
         interrupted = entry.interrupted.is_set()
         escalated = entry.escalated.is_set()
+        asked = entry.asked.is_set()
 
-    if child.poll() is not None and (interrupted or overflow.is_set()):
+    if child.poll() is not None and (asked or overflow.is_set()):
         # The leader is gone but Hardy is what stopped this run, so the signal
         # it took may have been taken by the wrapper alone. Sweep the group for
         # the compiler that ignored it and would otherwise be left orphaned.
