@@ -529,13 +529,34 @@ class Shell:
         def _abandon(event) -> None:
             if not self._state.turn_running:
                 return
+            if self._abandoned:
+                # The turn was already stopped, so this press is about the
+                # child that has not taken the hint. Asking twice is how a user
+                # says they would rather lose the kernel's state than keep
+                # waiting for it.
+                stopped = self._escalate_turn()
+                self.write(
+                    "stopped waiting; the processes still running were killed, and a "
+                    "computer algebra session among them has lost its state"
+                    if stopped
+                    else "nothing left to stop; the turn is already cancelled",
+                    style="warning",
+                )
+                return
             # A real cancellation now, and the wording says only what is still
-            # true. The model stops and no further tool call runs; a Lean or
-            # LaTeX process already started is left to finish, because killing
-            # it halfway would leave worse behind in the workspace than letting
-            # it end. Tool work that already wrote a file has written it.
-            self._cancel_turn()
-            self.write("cancelled; work a tool had already started may still finish")
+            # true. The model stops, no further tool call runs, and the child
+            # processes in flight are asked to stop -- a Lean elaboration, a
+            # Tectonic compile, the cell a CAS kernel is grinding on. What is
+            # still not promised is the workspace: a tool call that already
+            # wrote a file has written it, and an interrupted child leaves
+            # behind whatever it had got to.
+            stopped = self._cancel_turn()
+            self.write(
+                "cancelled; interrupted the work in flight -- esc again to stop "
+                "waiting and kill it"
+                if stopped
+                else "cancelled; work a tool had already started may still finish"
+            )
 
         @keys.add("c-d")
         def _leave(event) -> None:
@@ -601,18 +622,36 @@ class Shell:
         if session is not None and hasattr(session, "record_abandonment"):
             session.record_abandonment(reason)
 
-    def _cancel_turn(self) -> None:
-        """Stop the turn in flight. Idempotent, like the abandonment record."""
+    def _cancel_turn(self) -> int:
+        """Stop the turn in flight. Idempotent, like the abandonment record.
+
+        Returns how many child processes were asked to stop, so the notice can
+        say what the press reached instead of describing work in general.
+        """
         if self._abandoned:
-            return
+            return 0
         self._abandoned = True
         session = self._state.session
         if session is not None and hasattr(session, "cancel"):
-            session.cancel("user_pressed_escape")
-        elif session is not None and hasattr(session, "record_abandonment"):
+            # `cancel` gained a return value when Esc gained the power to
+            # interrupt. A session predating that answers `None`, which is not
+            # a count and must not be reported as one.
+            stopped = session.cancel("user_pressed_escape")
+            return stopped if isinstance(stopped, int) else 0
+        if session is not None and hasattr(session, "record_abandonment"):
             # A session too old to be told to stop. Say so honestly rather
             # than claiming a cancellation that did not happen.
             session.record_abandonment("user_pressed_escape")
+        return 0
+
+    def _escalate_turn(self) -> int:
+        """Kill what the interrupt did not stop. The second Esc."""
+        session = self._state.session
+        escalate = getattr(session, "escalate", None)
+        if escalate is None:
+            return 0
+        stopped = escalate()
+        return stopped if isinstance(stopped, int) else 0
 
     def _drain(
         self,

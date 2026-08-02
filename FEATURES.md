@@ -77,9 +77,10 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   `prompt_toolkit`-backed shell rather than a plain `input()` loop: dim
   ghost-text completion of slash commands as you type, a `/model` selector
   (arrow keys or a row number), and Esc that really cancels an in-flight turn:
-  the model stops and no further tool call runs, though work already begun is
-  left to finish rather than killed halfway, and a reply that lands anyway is
-  printed and labelled. Without a TTY, or with `--plain`/`HARDY_PLAIN`/
+  the model stops, no further tool call runs, and the child processes already
+  running are interrupted rather than left to their timeouts. A second Esc
+  escalates from interrupt to kill. A file a tool call already wrote stays
+  written, and a reply that lands anyway is printed and labelled. Without a TTY, or with `--plain`/`HARDY_PLAIN`/
   `TERM=dumb`, or if the terminal session fails to start, the same commands and
   banner run through a line-based session instead.
 - **Now (implemented):** model output is streamed as it is produced rather than printed only
@@ -216,8 +217,24 @@ Priority labels are sequencing hints:
   those cells enter the same log, replay, and export as the model's.
 - **Now (implemented):** an absent backend registers no tools on any binding,
   rather than advertising calls that can only fail.
-- **Known gap:** no interrupt. A runaway cell is stopped only by its timeout,
-  which kills the kernel and costs the accumulated state. Tracked in issue #33.
+- **Now (implemented):** Esc interrupts the cell in flight instead of leaving
+  a runaway to its timeout, which killed the kernel and cost every value in it.
+  The signal is platform-correct -- `SIGINT` to the child's own process group
+  on POSIX, `CTRL_BREAK_EVENT` to a group created for it on Windows -- and the
+  driver answers it rather than dying, so an interrupted cell costs one cell
+  and the namespace survives. Like an errored cell it is recorded, reported,
+  and never accepted: it did not finish, and it may have changed the namespace
+  on its way to being stopped, so what it left is outside the set a replay and
+  an export rebuild from. A kernel that will not answer within a short grace --
+  a cell inside a C loop that never returns to its interpreter -- is stopped
+  the way the timeout stopped it, and the record says the state went with it.
+  A second Esc escalates to that immediately rather than waiting the grace out.
+- **Known gap:** the same interrupt reaches Lean and Tectonic, which are
+  one-shot children and simply stop. Only the CAS kernel is persistent enough
+  for an interrupt to *preserve* anything, and only the SymPy driver turns the
+  signal into a framed reply; Singular and Macaulay2 are asked to resynchronise
+  within the grace and dropped when they do not, so on those backends Esc
+  usually costs the kernel as the timeout did.
 - **Now (implemented):** within one Hardy process, `cas_session_seconds` bounds
   total CAS wall clock rather than only the cells a caller asked for. A rebuild
   after a kernel death and the fresh-kernel replay an export verifies itself

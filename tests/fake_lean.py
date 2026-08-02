@@ -54,6 +54,19 @@ for index, item in enumerate(argv):
 path = pathlib.Path(argv[-1])
 source = path.read_text(encoding="utf-8")
 
+# `-- slow: 30` makes this stand-in grind, so a test can stop it. Real Lean
+# elaborating against Mathlib is the child Esc exists for, and a check that
+# returns instantly cannot stand in for one. The touch file is how a test waits
+# for the child to genuinely exist rather than guessing at a delay.
+slow = re.search(r"--\s*slow:\s*([0-9.]+)", source)
+if slow:
+    import time
+
+    ready = re.search(r"--\s*ready:\s*(\S+)", source)
+    if ready:
+        pathlib.Path(ready.group(1)).write_text("ready", encoding="utf-8")
+    time.sleep(float(slow.group(1)))
+
 search = [part for part in os.environ.get("LEAN_PATH", "").split(os.pathsep) if part]
 
 

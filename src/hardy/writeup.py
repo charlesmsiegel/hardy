@@ -118,6 +118,11 @@ def build_writeup(
             process.returncode == 0
             and not process.timed_out
             and not process.output_overflow
+            # Stated rather than left to `returncode`, alongside the other two
+            # ways Hardy stops a child: a compile nobody let finish can still
+            # leave a readable PDF from an earlier pass in the output
+            # directory, and that is not this document compiling.
+            and not process.interrupted
             and pdf_path.exists()
             and pdf_path.read_bytes().startswith(b"%PDF-")
         )

@@ -244,7 +244,12 @@ can end a line with a trailing `\` instead. The reply is drawn as the model
 writes it, and each tool call is announced when it starts rather than when it
 returns, so a long Lean check reports what it is doing instead of going quiet.
 
-Esc cancels an in-flight turn: the model stops and no further tool call runs.
+Esc cancels an in-flight turn: the model stops, no further tool call runs, and
+the Lean, LaTeX, or computer algebra process it started is interrupted rather
+than left running to its timeout. An interrupted computer algebra cell keeps
+its kernel and the values in it; a second Esc gives up on the interrupt and
+kills what did not stop, which costs that state. A file a tool call already
+wrote stays written.
 What it cannot undo is work already begun — a Lean, LaTeX, or computer algebra
 process already running is left to finish rather than killed halfway, and
 anything such a call has already written stays written. A reply that lands

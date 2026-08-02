@@ -5,11 +5,22 @@ long, print without end, or die. Every child Hardy starts goes through this
 module so a run's time and output budgets are enforced in one place, and so
 child output is decoded as UTF-8 rather than by whatever the host's locale
 happens to be. Lean prints `⊢` and `∀`; a Windows console codepage cannot.
+
+Time and output are not the only bounds. A child can also be told to stop
+before either is reached -- that is what Esc does -- so this module also owns
+the one platform-correct way to signal a child, and the register of which
+children are currently running. `cas.py` drives a persistent kernel that this
+module's `run_process` never sees, and it borrows `child_creation` and
+`signal_interrupt` from here rather than reimplementing the platform detail: the
+kernel is owned by its session, which is what interrupts it.
 """
 
 from __future__ import annotations
 
+import contextlib
+import ctypes
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -52,6 +63,141 @@ TEARDOWN_SECONDS = 2
 # One `wait` for the terminated child, then one `join` per output reader.
 MAX_TEARDOWN_SECONDS = TEARDOWN_SECONDS * 3
 
+# What a child gets between being asked to stop and being made to. Long enough
+# for Lean to unwind and for a CAS kernel to turn the signal into a traceback
+# and answer with it; short enough that a user who pressed Esc does not sit
+# through it wondering whether anything happened.
+INTERRUPT_GRACE_SECONDS = 2.0
+
+
+def child_creation() -> dict[str, object]:
+    """The spawn arguments that make a child signallable, per platform.
+
+    POSIX: the child leads a process group of its own (`process_group=0` is
+    `setpgid(0, 0)` in the child, 3.11+). Signalling that group reaches the
+    tree, which is what the interrupt actually has to hit -- `lake` runs
+    `lean`, and stopping the wrapper while the compiler grinds on would stop
+    nothing. It also means a Ctrl+C typed at a terminal no longer reaches the
+    child incidentally, as a shared group used to let it: Hardy delivers the
+    interrupt itself now, from `--plain`'s `KeyboardInterrupt` handler as much
+    as from Esc, so the child stops because Hardy decided it should and not
+    because of where the tty happened to aim.
+
+    Windows: `CREATE_NEW_PROCESS_GROUP` is what makes `CTRL_BREAK_EVENT`
+    deliverable at all, and the group id is the child's pid. `CREATE_NO_WINDOW`
+    is deliberately *not* combined with it when Hardy has a console of its own:
+    that flag gives the child a separate console, and `GenerateConsoleCtrlEvent`
+    -- which is what `os.kill` becomes here -- can only reach a group sharing
+    the caller's console. A console child launched from a console parent
+    inherits it and opens no window, so nothing flashes. Only when Hardy has no
+    console to share (a GUI host, `pythonw`) is `CREATE_NO_WINDOW` worth having,
+    and there an interrupt cannot be delivered by any flag combination -- so
+    `signal_interrupt` reports that it failed and the caller escalates.
+    """
+    if os.name != "nt":
+        return {"process_group": 0}
+    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    if not _has_console():
+        flags |= getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return {"creationflags": flags}
+
+
+def _has_console() -> bool:
+    """Whether this process owns a console a child could share. Windows only."""
+    try:
+        return bool(ctypes.windll.kernel32.GetConsoleWindow())  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return False
+
+
+def signal_interrupt(child: subprocess.Popen) -> bool:
+    """Ask one child to stop, the way its platform expects to be asked.
+
+    Reports whether the signal was *delivered*, not whether the child obeyed --
+    nothing here can promise the second. A child that ignores the interrupt, or
+    a Windows host with no console to signal through, is the caller's problem
+    to escalate, and every caller in Hardy escalates the same way the timeout
+    already did: terminate, then kill.
+    """
+    if child.poll() is not None:
+        # Already gone. `poll` also keeps the pid reserved as a zombie until it
+        # is waited on, so what follows cannot land on a recycled pid.
+        return False
+    try:
+        if os.name == "nt":
+            # The group, addressed by the pid of the child that leads it.
+            # `CTRL_C_EVENT` cannot be aimed at a specific new group at all;
+            # `CTRL_BREAK_EVENT` is the one that can.
+            os.kill(child.pid, signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+        else:
+            # The group, not the child: `child_creation` made the child its own
+            # group leader, so its pgid is its pid and its own children are in
+            # there with it. If the group is somehow gone, this raises rather
+            # than falling back on Hardy's own group.
+            os.killpg(child.pid, signal.SIGINT)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+class _Running:
+    """One child of `run_process`, and whether a stop has been asked of it."""
+
+    def __init__(self, child: subprocess.Popen) -> None:
+        self.child = child
+        self.interrupted = threading.Event()
+
+
+_RUNNING: set[_Running] = set()
+_RUNNING_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _tracked(child: subprocess.Popen):
+    entry = _Running(child)
+    with _RUNNING_LOCK:
+        _RUNNING.add(entry)
+    try:
+        yield entry
+    finally:
+        with _RUNNING_LOCK:
+            _RUNNING.discard(entry)
+
+
+def interrupt_children() -> int:
+    """Ask every child now running under `run_process` to stop.
+
+    Returns how many were asked, so a caller can say whether an Esc reached
+    anything at all. The persistent CAS kernel is deliberately not in this
+    register: it is owned by its session, which knows whether a cell is in
+    flight and what the reply means, and signalling it from here as well would
+    interrupt it twice.
+    """
+    with _RUNNING_LOCK:
+        entries = list(_RUNNING)
+    for entry in entries:
+        entry.interrupted.set()
+        signal_interrupt(entry.child)
+    return len(entries)
+
+
+def stop_children() -> int:
+    """Stop waiting for the interrupt to be taken, and terminate. Returns how many.
+
+    The escalation behind `interrupt_children`, for a child that will not stop
+    being asked. It leaves the interrupt flag set, so the run is still reported
+    as one Hardy stopped rather than as a child that exited on its own; all it
+    changes is that the grace is not waited out.
+    """
+    with _RUNNING_LOCK:
+        entries = list(_RUNNING)
+    for entry in entries:
+        entry.interrupted.set()
+        if entry.child.poll() is None:
+            with contextlib.suppress(OSError):
+                entry.child.terminate()
+    return len(entries)
+
 
 class ProcessSpec(FrozenModel):
     argv: tuple[str, ...]
@@ -70,6 +216,9 @@ class ProcessResult(FrozenModel):
     timed_out: bool
     output_overflow: bool
     duration_ms: int
+    # Defaulted, because a `runner` seam in a test constructs these by hand and
+    # a run nobody interrupted is the overwhelmingly common case.
+    interrupted: bool = False
 
 
 def run_process(spec: ProcessSpec) -> ProcessResult:
@@ -82,7 +231,7 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        **child_creation(),
     )
     stdout = bytearray()
     stderr = bytearray()
@@ -111,13 +260,27 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
 
     deadline = started + spec.timeout_seconds
     timed_out = False
-    while child.poll() is None:
-        if overflow.is_set():
-            break
-        if time.monotonic() >= deadline:
-            timed_out = True
-            break
-        time.sleep(0.005)
+    # Set the moment an interrupt is asked for, not when it is spawned: the
+    # grace is time to react to the signal, and it would be no such thing if it
+    # had been counting down since before the signal was sent.
+    grace_deadline: float | None = None
+    with _tracked(child) as entry:
+        while child.poll() is None:
+            if overflow.is_set():
+                break
+            now = time.monotonic()
+            if entry.interrupted.is_set() and grace_deadline is None:
+                grace_deadline = now + INTERRUPT_GRACE_SECONDS
+            if grace_deadline is not None and now >= grace_deadline:
+                break
+            if now >= deadline:
+                timed_out = True
+                break
+            time.sleep(0.005)
+        # Read inside the register, so a stop asked for at the very last moment
+        # is still reported as one rather than as a clean exit that happened to
+        # land at the same time.
+        interrupted = entry.interrupted.is_set()
 
     if child.poll() is None:
         child.terminate()
@@ -131,17 +294,22 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
 
     output_overflow = overflow.is_set()
     # A child Hardy stopped has no meaningful exit status, so the result says so
-    # rather than reporting the signal as if the toolchain had decided it.
-    interrupted = timed_out or output_overflow
+    # rather than reporting the signal as if the toolchain had decided it. An
+    # interrupted child is stopped by Hardy too, even when it obeys promptly
+    # enough to exit on its own: `-SIGINT` is not a verdict Lean reached about
+    # the source, and reading it as one would report a cancelled check as a
+    # failed proof.
+    stopped = timed_out or output_overflow or interrupted
     return ProcessResult(
         argv=spec.argv,
         cwd=spec.cwd,
-        returncode=None if interrupted else child.returncode,
+        returncode=None if stopped else child.returncode,
         stdout=_decode_output(bytes(stdout)),
         stderr=_decode_output(bytes(stderr)),
         timed_out=timed_out,
         output_overflow=output_overflow,
         duration_ms=round((time.monotonic() - started) * 1_000),
+        interrupted=interrupted,
     )
 
 
