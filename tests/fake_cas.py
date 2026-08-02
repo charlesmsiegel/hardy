@@ -88,6 +88,13 @@ def answer(source: str) -> dict:
     if _matches(word, "hang"):
         _announce(word)
         time.sleep(120)
+    if _matches(word, "swallow"):
+        # Catches the interrupt and answers as though nothing happened, which
+        # a library that uses `KeyboardInterrupt` to unwind can genuinely do.
+        _announce(word)
+        with contextlib.suppress(KeyboardInterrupt):
+            time.sleep(120)
+        return {"status": "ok", "stdout": "", "stderr": "", "value_repr": "swallowed"}
     if word == "slow":
         # Long enough to be measurable against a budget, short enough that a
         # test replaying it a few times still finishes quickly. Falls through
@@ -163,17 +170,24 @@ def main() -> None:
         # and kill the kernel, and those gaps are exactly where a press that
         # arrived with the frame tends to land.
         try:
-            source = json.loads(payload.decode("utf-8")).get("source", "")
-            if PENDING_INTERRUPT:
-                PENDING_INTERRUPT = False
-                reply = _interrupted()
-            else:
-                reply = answer(source)
+            request = json.loads(payload.decode("utf-8"))
+            source = request.get("source", "")
+            held = PENDING_INTERRUPT
+            PENDING_INTERRUPT = False
+            # `held` without `stopping` is a stop that arrived after the last
+            # reply was flushed, aimed at a cell already over. Hardy says it no
+            # longer wants one, so this cell runs.
+            stop_this = held and request.get("stopping", True)
+            reply = _interrupted() if stop_this else answer(source)
         except KeyboardInterrupt:
             # As `cas_driver.run_cell` does: the cell is abandoned and *the
             # kernel answers*, which is what leaves the session's state intact.
             PENDING_INTERRUPT = False
             reply = _interrupted()
+        # Deferring again before the reply is written, as `cas_driver.main`
+        # does: the stretch between the cell ending and the loop coming round
+        # would otherwise run under the raising handler with no cell to abandon.
+        _handle_stops_by(_remember)
         reply = clip(reply, limit)
         encoded = json.dumps(reply).encode("utf-8")
         stdout.write(f"{len(encoded):0{HEADER_BYTES}d}".encode("ascii"))

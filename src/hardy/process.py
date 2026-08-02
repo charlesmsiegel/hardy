@@ -181,11 +181,16 @@ def kill_group(child: subprocess.Popen) -> None:
 
 
 class _Running:
-    """One tracked child, and whether a stop has been asked of it."""
+    """One tracked child, and how hard a stop has been asked of it."""
 
     def __init__(self, child: subprocess.Popen) -> None:
         self.child = child
         self.interrupted = threading.Event()
+        # The second press. Read by `run_process`'s wait, which otherwise sits
+        # out the grace the *first* press started -- so a child deaf to both
+        # signals would take the grace and then another two seconds to die,
+        # while the terminal had already said the waiting was over.
+        self.escalated = threading.Event()
 
 
 _RUNNING: set[_Running] = set()
@@ -223,6 +228,7 @@ def tracked(child: subprocess.Popen):
     if arriving_into:
         entry.interrupted.set()
         if arriving_into >= _INSISTED:
+            entry.escalated.set()
             terminate_group(child)
         else:
             signal_interrupt(child)
@@ -270,6 +276,7 @@ def stop_children() -> int:
         entries = list(_RUNNING)
     for entry in entries:
         entry.interrupted.set()
+        entry.escalated.set()
         terminate_group(entry.child)
     return len(entries)
 
@@ -356,6 +363,11 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
             if overflow.is_set():
                 break
             now = time.monotonic()
+            if entry.escalated.is_set():
+                # The second press. Straight to the teardown below, which
+                # kills rather than waiting out a grace the user has already
+                # declined to wait for.
+                break
             if entry.interrupted.is_set() and grace_deadline is None:
                 grace_deadline = now + INTERRUPT_GRACE_SECONDS
             if grace_deadline is not None and now >= grace_deadline:
@@ -368,14 +380,18 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
         # is still reported as one rather than as a clean exit that happened to
         # land at the same time.
         interrupted = entry.interrupted.is_set()
+        escalated = entry.escalated.is_set()
 
     if child.poll() is None:
         # The group, not the leader: a wrapper that exits on SIGTERM while the
         # compiler it started keeps running would leave the work orphaned and
         # the budget this module exists to enforce meaningless.
         terminate_group(child)
+        # A child that has already had its SIGTERM and stayed is not given
+        # another two seconds to think about it: that wait is what the second
+        # press bought its way out of.
         try:
-            child.wait(timeout=TEARDOWN_SECONDS)
+            child.wait(timeout=0 if escalated else TEARDOWN_SECONDS)
         except subprocess.TimeoutExpired:
             kill_group(child)
             child.wait()

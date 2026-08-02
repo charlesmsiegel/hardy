@@ -225,7 +225,19 @@ async def handle_cas(ui: Ui, argument: str, state: State) -> State:
         # while the same cell sent by the model was interruptible. `/cas` is
         # already refused while anything else is in flight, so nothing else
         # can reach the kernel during the await.
-        result = await asyncio.to_thread(cas.run, source, author="human")
+        try:
+            result = await asyncio.to_thread(cas.run, source, author="human")
+        except asyncio.CancelledError:
+            # Cancelling the *await* does not stop the worker: `to_thread` has
+            # no way to reach into the thread it handed the call to. Esc goes
+            # through the shell's own interrupt path, but Ctrl+C, `/exit`, and
+            # `--plain`'s `KeyboardInterrupt` cancel this task instead -- and
+            # without a signal the cell runs on, so `CasSession.close` blocks on
+            # the session lock and `asyncio.run` blocks joining its executor.
+            # Both surfaces would sit there until `cas_cell_seconds`, which is
+            # the wait this whole change exists to remove.
+            cas.session.interrupt()
+            raise
         if result.restart_note:
             ui.write(result.restart_note)
         for stream in (result.stdout, result.stderr):
