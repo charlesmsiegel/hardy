@@ -682,15 +682,15 @@ def test_a_command_that_cannot_be_executed_is_reported_not_raised(tmp_path: Path
 
 
 def test_the_verdict_line_renders_the_relation_from_exact_values():
-    """Widening precision can always be defeated by a close enough threshold.
+    """The relation comes from the exact comparison, not the printed digits.
 
-    At a 24.9600001% threshold against a 24.96% share every precision collides,
-    so the report would show two equal numbers above a verdict distinguishing
-    them. The `<` comes from the exact comparison and cannot contradict.
+    Where the two operands do render distinguishably this is the form used;
+    the case where they collide beyond the precision cap is covered by
+    `test_operands_that_render_identically_are_not_printed_as_an_inequality`.
     """
     cost = ImportCost(imports=("Mathlib",), samples_ms=(2_496,))
-    text = "\n".join(describe(cost, calls=2, total_ms=10_000, threshold=0.249600001))
-    assert " < " in text
+    text = "\n".join(describe(cost, calls=2, total_ms=10_000, threshold=0.25))
+    assert "24.96% < 25.00% threshold" in text
     assert "not warranted" in text
 
     warranted = "\n".join(describe(cost, calls=2, total_ms=10_000, threshold=0.1))
@@ -718,6 +718,54 @@ def test_a_failed_probe_keeps_one_diagnostic_to_explain_itself(tmp_path: Path):
     assert cost.diagnostic is not None
     assert "Mathlibb" in cost.diagnostic
     assert "unknown module prefix 'Mathlibb'" in "\n".join(describe(cost))
+
+
+def test_a_module_name_carrying_lean_source_is_refused():
+    """`--import` is interpolated straight into the probe.
+
+    `Mathlib\\n#eval expensiveThing` elaborates that expression and has its
+    cost reported as import time — arbitrary work dressed as the one number
+    this command exists to state honestly.
+    """
+    with pytest.raises(ValueError, match="not a Lean module name"):
+        import_probe(("Mathlib\n#eval (2^30)",))
+    with pytest.raises(ValueError, match="not a Lean module name"):
+        import_probe(("Mathlib; #check Nat",))
+    # Ordinary dotted module names still pass.
+    assert import_probe(("Mathlib.Data.Nat.Basic",)) == "import Mathlib.Data.Nat.Basic\n"
+
+
+def test_every_worker_in_a_pool_pays_its_own_first_import():
+    """#54 asks for a pool, and a pool of N pays the prelude N times.
+
+    Ten calls across four workers avoid six imports, not nine; crediting one
+    first import regardless would hand a four-worker pool three imports that
+    nobody avoids.
+    """
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    assert cost.estimate(calls=10, total_ms=200_000).recoverable_ms == 108_000
+    assert cost.estimate(calls=10, total_ms=200_000, workers=4).recoverable_ms == 72_000
+    # A pool with a worker per call recovers nothing at all.
+    assert cost.estimate(calls=4, total_ms=200_000, workers=4).recoverable_ms == 0
+
+
+def test_the_report_names_the_pool_shape_it_costed():
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    single = "\n".join(describe(cost, calls=10, total_ms=200_000))
+    assert "a single warm process" in single
+    pooled = "\n".join(describe(cost, calls=10, total_ms=200_000, workers=4))
+    assert "a warm pool of 4 workers" in pooled
+    assert "10 calls minus 4 first import(s)" in pooled
+
+
+def test_operands_that_render_identically_are_not_printed_as_an_inequality():
+    """`24.960000% < 24.960000%` is false as printed, however right the
+    relation is; one operand is dropped rather than repeated."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(2_496,))
+    text = "\n".join(describe(cost, calls=2, total_ms=10_000, threshold=0.2496000001))
+    assert "24.960000% < 24.960000%" not in text
+    assert "below the threshold" in text
+    assert "not warranted" in text
 
 
 def test_a_plain_text_failure_is_still_explained(tmp_path: Path):
@@ -768,6 +816,25 @@ def test_a_withheld_verdict_exits_nonzero():
     assert report(clean, calls=100, total_ms=50_000) == 1
     # No observed run requested at all is not a failure to answer.
     assert report(clean) == 0
+
+
+def test_half_an_observed_run_is_refused_before_probing(tmp_path: Path, capsys, monkeypatch):
+    """One of the pair produced a report asking for the other and still exited
+    0, so a script could not tell an unanswered verdict from a real one — and
+    it only asked after paying for every probe."""
+    from hardy import cli
+    from hardy.latency import ToolchainProbe
+
+    project = tmp_path / "lean_project"
+    project.mkdir()
+    started = []
+    monkeypatch.setattr(cli.latency, "probe_toolchain", lambda *a, **k: started.append(1) or ToolchainProbe())
+    monkeypatch.setattr(cli.latency, "measure_import_cost", lambda *a, **k: started.append(1))
+    for argv in (["latency", "--calls", "10"], ["latency", "--total-seconds", "150"]):
+        args = cli.build_parser().parse_args(argv)
+        assert cli.run_latency(args, _config_for(tmp_path, project)) == 2
+        assert "given together or not at all" in capsys.readouterr().out
+    assert started == []
 
 
 def test_the_contradiction_quotes_the_bound_its_total_was_computed_from():
