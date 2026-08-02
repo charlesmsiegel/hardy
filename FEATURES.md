@@ -351,10 +351,13 @@ Priority labels are sequencing hints:
   `hardy` in a single run. WSL is never required.
 - **Now (implemented):** installation needs no clone. A tagged release publishes
   the wheel, the source distribution, an installer bundle, and a `SHA256SUMS`
-  manifest; an installer run on its own fetches the bundle, then downloads the
-  wheel and refuses it unless its digest matches the manifest. Run from a clone,
-  the installers install that tree editable instead. `scripts/update.sh` moves a
-  release install to the newest release and pulls a clone install.
+  manifest; an installer run on its own fetches the bundle, hands over to it, and
+  it downloads the wheel. Neither the bundle nor the wheel is used unless its
+  digest matches the manifest, and a named release that cannot be fetched is an
+  error rather than grounds for installing a branch instead. Run from a clone,
+  the installers install that tree editable. `scripts/update.sh` moves a release
+  install to the newest release — replacing the retained installer scripts along
+  with the wheel — and pulls a clone install.
 - **Now (implemented):** the installers add what is missing and skip what is
   present: Python 3.11+, `lake` through elan, a shared Lake project with
   Mathlib's prebuilt cache, `pdflatex`, and Hardy in its own virtual environment.

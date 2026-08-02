@@ -184,6 +184,51 @@ function Save-ReleaseAsset($suffix, $directory) {
     return $path
 }
 
+# The POSIX installers cannot run at all without scripts\lib beside them, so
+# they fetch the release's own installer scripts and hand over to those. This
+# file needs nothing beside it — and would therefore install a release using
+# whatever logic the copy on disk happens to have, which is the version skew the
+# bundle exists to prevent. So it hands over too. HARDY_INSTALLER_HANDED_OFF
+# marks the copy that was fetched, which must not fetch again.
+function Invoke-ReleaseInstaller {
+    if ($env:HARDY_INSTALLER_HANDED_OFF) { return }
+    # tar ships with Windows 10 1803 and later; without it, this copy installs
+    # the release itself rather than refusing to install at all.
+    if (-not (Test-Command 'tar')) {
+        Write-Warn 'tar is not available, so this script cannot hand over to the release installers; continuing with its own'
+        return
+    }
+    Write-Step "Fetching the Hardy installers from $(Get-ReleaseBaseUrl)"
+    $installers = Join-Path $Prefix 'installers'
+    $staging = Join-Path $Prefix 'installers.new'
+    Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+    $bundle = Save-ReleaseAsset 'hardy-installers.tar.gz' (Join-Path $staging 'download')
+    Write-Detail "verified $(Split-Path -Leaf $bundle) against the release manifest"
+    $tree = Join-Path $staging 'tree'
+    New-Item -ItemType Directory -Force -Path $tree | Out-Null
+    & tar -xzf $bundle -C $tree
+    if ($LASTEXITCODE -ne 0) { Stop-Install "could not unpack $(Split-Path -Leaf $bundle)" }
+    $handoff = Join-Path $tree 'scripts\install-windows.ps1'
+    if (-not (Test-Path $handoff)) { Stop-Install 'the release installer bundle carries no install-windows.ps1' }
+    Remove-Item -Recurse -Force $installers -ErrorAction SilentlyContinue
+    Move-Item $tree $installers
+    Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+
+    # Everything this copy was asked for, passed to the one that will do it.
+    $forward = @()
+    foreach ($name in $PSBoundParameters.Keys) {
+        $value = $PSBoundParameters[$name]
+        if ($value -is [System.Management.Automation.SwitchParameter]) {
+            if ($value.IsPresent) { $forward += "-$name" }
+        }
+        else { $forward += @("-$name", [string]$value) }
+    }
+    $env:HARDY_INSTALLER_HANDED_OFF = '1'
+    Write-Detail "handing over to $(Join-Path $installers 'scripts\install-windows.ps1')"
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $installers 'scripts\install-windows.ps1') @forward
+    exit $LASTEXITCODE
+}
+
 # A checkout is what a developer running this from one means. Anything else has
 # no source to install and takes the release; naming HARDY_REPO_REF asks for the
 # repository instead, which is how a fork or a branch is installed.
@@ -531,6 +576,7 @@ if ($script:InstallFrom -eq 'source') {
 }
 else {
     Write-Detail "release: $(Get-ReleaseBaseUrl)"
+    Invoke-ReleaseInstaller
 }
 Install-Prerequisites
 New-Environment

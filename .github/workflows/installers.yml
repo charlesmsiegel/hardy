@@ -132,9 +132,15 @@ jobs:
             bash "$prefix/installers/scripts/update.sh" --yes
           # From the checkout, not the bundle: the uninstaller removes the
           # directory it would otherwise be running out of.
+          # The updater replaces the retained installers alongside the wheel, so
+          # that release N's uninstaller is not the one that runs after N+1.
+          test -e "$prefix/installers/scripts/uninstall.sh" ||
+            { echo "the installers were not refreshed by the update" >&2; exit 1; }
           bash scripts/uninstall.sh --yes
           test ! -e "$prefix/venv" || { echo "the environment survived uninstall" >&2; exit 1; }
-          test ! -e "$prefix/installers" || { echo "the installers survived uninstall" >&2; exit 1; }
+          for gone in installers installers.previous installers.new download; do
+            test ! -e "$prefix/$gone" || { echo "$gone survived uninstall" >&2; exit 1; }
+          done
 
   windows:
     name: install-windows.ps1 on windows-latest
@@ -202,11 +208,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $prefix = Join-Path $env:LOCALAPPDATA 'hardy'
-          foreach ($required in @('venv\Scripts\hardy.exe', 'bin\hardy.cmd')) {
+          # The installers directory proves the hand-off happened: the copied
+          # script fetched the release's own installers and ran those.
+          foreach ($required in @('venv\Scripts\hardy.exe', 'bin\hardy.cmd', 'installers\scripts\install-windows.ps1')) {
             if (-not (Test-Path (Join-Path $prefix $required))) { throw "$required is missing" }
           }
-          # A release install fetches no source tree and leaves no download.
-          foreach ($forbidden in @('src', 'download')) {
+          # A release install fetches no source tree and leaves nothing half-done.
+          foreach ($forbidden in @('src', 'download', 'installers.new')) {
             if (Test-Path (Join-Path $prefix $forbidden)) { throw "$forbidden should not exist after a release install" }
           }
           $config = Join-Path $env:APPDATA 'hardy\config.toml'
@@ -217,18 +225,42 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'hardy --help failed' }
           & (Join-Path $prefix 'bin\hardy.cmd') accept --force-budget-exhaustion-test
           if ($LASTEXITCODE -ne 0) { throw 'the deterministic acceptance run failed' }
-          & (Join-Path $prefix 'bin\hardy.cmd') doctor   # informational; Mathlib and TeX were skipped
+          # Informational, and it cannot pass with Mathlib and TeX skipped. Its
+          # exit code is the step's unless the step ends on one of its own.
+          & (Join-Path $prefix 'bin\hardy.cmd') doctor
+          Write-Host "doctor exited $LASTEXITCODE, with Mathlib and TeX skipped"
+          exit 0
 
       # These have skipped on every machine the project has ever run them on,
       # because none of them had PowerShell. This is the one that does.
       - name: The installer test suite, on Windows
         run: uv run --extra test pytest -q tests/test_install_scripts.py
 
-      - name: Uninstall the installation that is really there
+      - name: Update, then uninstall, the installation that is really there
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $prefix = Join-Path $env:LOCALAPPDATA 'hardy'
+          $server = Start-Process -PassThru -WindowStyle Hidden -FilePath python `
+            -ArgumentList '-m', 'http.server', '8000', '--directory', 'release', '--bind', '127.0.0.1'
+          try {
+            foreach ($attempt in 1..50) {
+              try { Invoke-WebRequest -Uri 'http://127.0.0.1:8000/SHA256SUMS' -UseBasicParsing | Out-Null; break }
+              catch { Start-Sleep -Milliseconds 200 }
+            }
+            $env:HARDY_RELEASE_BASE_URL = 'http://127.0.0.1:8000'
+            # Run from the bundle the installer fetched, which also establishes
+            # that the bundle carries a runnable updater. An install with no
+            # source tree has to update from the release rather than fail
+            # looking for one.
+            & powershell -ExecutionPolicy Bypass -File (Join-Path $prefix 'installers\scripts\update-windows.ps1') -Yes
+            if ($LASTEXITCODE -ne 0) { throw "the updater exited $LASTEXITCODE" }
+          }
+          finally { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }
+          # From the checkout, not the bundle: the uninstaller removes the
+          # directory it would otherwise be running out of.
           & powershell -ExecutionPolicy Bypass -File 'scripts\uninstall-windows.ps1' -Yes
           if ($LASTEXITCODE -ne 0) { throw "the uninstaller exited $LASTEXITCODE" }
-          if (Test-Path (Join-Path $prefix 'venv')) { throw 'the environment survived uninstall' }
+          foreach ($gone in @('venv', 'installers')) {
+            if (Test-Path (Join-Path $prefix $gone)) { throw "$gone survived uninstall" }
+          }

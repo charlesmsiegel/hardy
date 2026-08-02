@@ -527,20 +527,30 @@ def test_an_unreadable_install_source_is_refused_rather_than_guessed(tmp_path: P
     assert "release" in result.stderr and "source" in result.stderr
 
 
-def installer_bundle(path: Path, marker: str) -> None:
-    """A `hardy-installers.tar.gz` whose install-linux.sh only announces itself.
+def publish_installer_bundle(release: Path, marker: str, *, corrupt: bool = False) -> None:
+    """A release carrying `hardy-installers.tar.gz` and a manifest for it.
 
-    The bootstrap's job is to fetch the rest of the installer and hand over to
-    it; what it hands over to is the part being stubbed here, so that the test
-    stops at the handover instead of installing Hardy onto the test machine.
+    The bundle's install-linux.sh only announces itself: the bootstrap's job is
+    to fetch the rest of the installer and hand over to it, so the test stops at
+    the handover instead of installing Hardy onto the machine running it.
     """
-    staging = path.parent / "bundle"
-    scripts = staging / "scripts"
+    release.mkdir(parents=True, exist_ok=True)
+    scripts = release / "bundle/scripts"
     (scripts / "lib").mkdir(parents=True, exist_ok=True)
     (scripts / "lib" / "common.sh").write_text("# stub\n", encoding="utf-8")
-    (scripts / "install-linux.sh").write_text(f"#!/usr/bin/env bash\necho '{marker}'\n", encoding="utf-8")
-    with tarfile.open(path, "w:gz") as bundle:
-        bundle.add(scripts, arcname="scripts")
+    for name in ("install-linux.sh", "install-macos.sh"):
+        (scripts / name).write_text(f"#!/usr/bin/env bash\necho '{marker}'\n", encoding="utf-8")
+    bundle = release / "hardy-installers.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(scripts, arcname="scripts")
+    digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
+    if corrupt:
+        # Still a valid tarball, and still not the one the release vouches for:
+        # a partially replaced release looks exactly like this.
+        with tarfile.open(bundle, "w:gz") as archive:
+            archive.add(scripts, arcname="scripts")
+            archive.add(scripts / "lib/common.sh", arcname="scripts/extra.sh")
+    (release / "SHA256SUMS").write_text(f"{digest}  {bundle.name}\n", encoding="utf-8")
 
 
 def run_standalone(script: str, tmp_path: Path, **environment: str) -> subprocess.CompletedProcess:
@@ -575,8 +585,7 @@ def test_one_downloaded_script_fetches_the_rest_of_the_installer_from_the_releas
     only file present.
     """
     release = tmp_path / "release"
-    release.mkdir()
-    installer_bundle(release / "hardy-installers.tar.gz", "ran the release installers")
+    publish_installer_bundle(release, "ran the release installers")
     with serving(release) as base:
         result = run_standalone(script, tmp_path, HARDY_RELEASE_BASE_URL=base)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -588,12 +597,42 @@ def test_one_downloaded_script_fetches_the_rest_of_the_installer_from_the_releas
 
 @posix_only
 @pytest.mark.parametrize("script", ["install.sh", "install-linux.sh"])
-def test_with_neither_a_release_nor_a_repository_the_installer_says_both(tmp_path: Path, script: str):
-    """Two failed fetches must not read as one: whoever is looking at this needs
-    to know the release was tried as well as the repository."""
+def test_an_installer_bundle_the_release_does_not_vouch_for_is_not_run(tmp_path: Path, script: str):
+    """These are scripts about to run as this user. A bundle that does not match
+    the manifest stops the install outright — falling back to the repository
+    would quietly install something else instead of reporting the problem."""
+    release = tmp_path / "release"
+    publish_installer_bundle(release, "ran the release installers", corrupt=True)
+    with serving(release) as base:
+        result = run_standalone(script, tmp_path, HARDY_RELEASE_BASE_URL=base)
+    assert result.returncode != 0
+    assert "does not match that release manifest" in result.stderr
+    assert "ran the release installers" not in result.stdout
+    assert not (tmp_path / "hardy/src").exists(), "the repository was fetched after a bad bundle"
+
+
+@posix_only
+@pytest.mark.parametrize("script", ["install.sh", "install-linux.sh"])
+def test_a_named_release_is_never_quietly_replaced_by_a_branch(tmp_path: Path, script: str):
+    """`HARDY_VERSION=v0.1.0` asks for v0.1.0. Installing whatever is on main
+    when that fetch fails would put unasked-for code on the machine under a
+    version number saying otherwise."""
     result = run_standalone(
-        script, tmp_path, HARDY_RELEASE_BASE_URL="http://127.0.0.1:1/unreachable"
+        script, tmp_path, HARDY_VERSION="v9.9.9", HARDY_REPO_URL="http://127.0.0.1:1/unreachable"
     )
+    assert result.returncode != 0
+    assert "will not install something else in its place" in result.stderr
+    assert "v9.9.9" in result.stderr
+    assert not (tmp_path / "hardy/src").exists()
+
+
+@posix_only
+@pytest.mark.parametrize("script", ["install.sh", "install-linux.sh"])
+def test_with_neither_a_release_nor_a_repository_the_installer_says_both(tmp_path: Path, script: str):
+    """No release named and none published is the state Hardy is in before its
+    first one, so the repository is still tried. Two failed fetches must not
+    read as one: whoever is looking at this needs to know about both."""
+    result = run_standalone(script, tmp_path, HARDY_REPO_URL="http://127.0.0.1:1/unreachable")
     assert result.returncode != 0
     assert "could not fetch the Hardy installers" in result.stderr
     assert "clone the repository yourself" in result.stderr
@@ -605,8 +644,7 @@ def test_a_named_ref_takes_the_repository_rather_than_a_release(tmp_path: Path):
     release to download. Reaching for one anyway would install the wrong Hardy.
     """
     release = tmp_path / "release"
-    release.mkdir()
-    installer_bundle(release / "hardy-installers.tar.gz", "ran the release installers")
+    publish_installer_bundle(release, "ran the release installers")
     with serving(release) as base:
         result = run_standalone(
             "install-linux.sh", tmp_path, HARDY_RELEASE_BASE_URL=base, HARDY_REPO_REF="some-branch"
@@ -614,6 +652,65 @@ def test_a_named_ref_takes_the_repository_rather_than_a_release(tmp_path: Path):
     assert result.returncode != 0
     assert "ran the release installers" not in result.stdout
     assert "some-branch" in result.stderr
+    assert not (tmp_path / "hardy/installers").exists()
+
+
+@posix_only
+@pytest.mark.parametrize("namespace", ["heads", "tags"])
+def test_a_repository_ref_may_be_a_branch_or_a_tag(tmp_path: Path, namespace: str):
+    """A clean machine has no git to ask which namespace a ref lives in, and
+    GitHub keeps branches and tags apart. The documentation permits either."""
+    archive = tmp_path / "repository"
+    tree = archive / "hardy-x/scripts/lib"
+    tree.mkdir(parents=True)
+    (tree / "common.sh").write_text("# stub\n", encoding="utf-8")
+    (tree.parent / "install-linux.sh").write_text(
+        "#!/usr/bin/env bash\necho 'ran the repository installers'\n", encoding="utf-8"
+    )
+    (archive / f"archive/refs/{namespace}").mkdir(parents=True)
+    with tarfile.open(archive / f"archive/refs/{namespace}/some-ref.tar.gz", "w:gz") as bundle:
+        bundle.add(archive / "hardy-x", arcname="hardy-x")
+    with serving(archive) as base:
+        result = run_standalone(
+            "install-linux.sh", tmp_path, HARDY_REPO_URL=base, HARDY_REPO_REF="some-ref"
+        )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ran the repository installers" in result.stdout
+
+
+@posix_only
+def test_an_update_replaces_the_installers_it_is_running_out_of(tmp_path: Path):
+    """The scripts a release install keeps are what updates and removes it next
+    time. Left behind, release N's uninstaller would be the one that runs after
+    N+1, knowing nothing of any path N+1 introduced."""
+    home = tmp_path / "hardy"
+    installers = home / "installers"
+    (installers / "scripts/lib").mkdir(parents=True)
+    (installers / "scripts/lib/common.sh").write_text("# release N\n", encoding="utf-8")
+    (installers / "stale").write_text("from release N\n", encoding="utf-8")
+
+    release = tmp_path / "release"
+    publish_installer_bundle(release, "release N+1")
+    with serving(release) as base:
+        result = run_with_common(
+            "refresh_installers", tmp_path, HARDY_HOME=str(home), HARDY_RELEASE_BASE_URL=base
+        )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (installers / "scripts/install-linux.sh").read_text(encoding="utf-8").count("release N+1")
+    assert not (installers / "stale").exists(), "the previous release's files survived the swap"
+    assert not (home / "installers.new").exists(), "a half-finished swap was left behind"
+
+
+@posix_only
+def test_an_install_with_no_retained_installers_has_none_to_refresh(tmp_path: Path):
+    """A clone install keeps no installers directory, and an update of one must
+    not invent it — nor reach for a release it was never going to install."""
+    result = run_with_common(
+        "refresh_installers", tmp_path,
+        HARDY_HOME=str(tmp_path / "hardy"),
+        HARDY_RELEASE_BASE_URL="http://127.0.0.1:1/unreachable",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / "hardy/installers").exists()
 
 

@@ -209,6 +209,29 @@ download_release_asset() {
 	printf '%s\n' "$directory/$name"
 }
 
+# A release install keeps the installer scripts it was run from, and they are
+# what updates and removes it later. They have to move with the wheel: after an
+# update to release N+1, release N's uninstaller would otherwise be the one that
+# runs, knowing nothing of any path N+1 introduced.
+refresh_installers() {
+	local target="$HARDY_HOME/installers" staging="$HARDY_HOME/installers.new" bundle
+	[ -d "$target" ] || return 0
+	step "Refreshing the installers in $target"
+	# Last run's displaced copy, cleared now rather than at the end: this script
+	# may be running out of the directory about to be replaced.
+	rm -rf "$target.previous" "$staging"
+	bundle="$(download_release_asset hardy-installers.tar.gz "$staging/download")"
+	mkdir -p "$staging/tree"
+	tar xz -C "$staging/tree" -f "$bundle" || fail "could not unpack $(basename "$bundle")"
+	[ -e "$staging/tree/scripts/lib/common.sh" ] ||
+		fail "$(basename "$bundle") does not carry the Hardy installers"
+	# Swapped whole. A half-written installers directory is worse than an old one.
+	mv "$target" "$target.previous"
+	mv "$staging/tree" "$target"
+	rm -rf "$staging"
+	say "the installers now match the installed release"
+}
+
 # `release` unless there is a source tree here to install, which is what a
 # developer running this from a clone means. An unpacked installer bundle is
 # not one: it carries scripts/ and no pyproject.toml, precisely so that a

@@ -132,10 +132,43 @@ function Update-FromRelease {
     Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
     $wheel = Save-ReleaseAsset '.whl' $directory
     Write-Detail "verified $(Split-Path -Leaf $wheel) against the release manifest"
+    # --upgrade, not --force-reinstall: a published release is never rewritten
+    # (the release workflow refuses to replace the assets of one), so the
+    # version in the wheel's name is the whole answer to whether there is
+    # anything to do here.
     & $VenvPython -m pip install --upgrade $wheel
     if ($LASTEXITCODE -ne 0) { Stop-Update "could not install $(Split-Path -Leaf $wheel) into $Venv" }
     Write-Detail "installed $(Split-Path -Leaf $wheel)"
     Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
+    Update-Installers
+}
+
+# The installers a release install keeps are what updates and removes it later,
+# so they move with the wheel: after an update to release N+1, release N's
+# uninstaller would otherwise be the one that runs.
+function Update-Installers {
+    $installers = Join-Path $Prefix 'installers'
+    if (-not (Test-Path $installers)) { return }
+    if (-not (Test-Command 'tar')) {
+        Write-Warn "tar is not available; $installers still holds the previous release's scripts"
+        return
+    }
+    Write-Step "Refreshing the installers in $installers"
+    $staging = Join-Path $Prefix 'installers.new'
+    Remove-Item -Recurse -Force $staging, (Join-Path $Prefix 'installers.previous') -ErrorAction SilentlyContinue
+    $bundle = Save-ReleaseAsset 'hardy-installers.tar.gz' (Join-Path $staging 'download')
+    $tree = Join-Path $staging 'tree'
+    New-Item -ItemType Directory -Force -Path $tree | Out-Null
+    & tar -xzf $bundle -C $tree
+    if ($LASTEXITCODE -ne 0) { Stop-Update "could not unpack $(Split-Path -Leaf $bundle)" }
+    if (-not (Test-Path (Join-Path $tree 'scripts\install-windows.ps1'))) {
+        Stop-Update "$(Split-Path -Leaf $bundle) does not carry the Hardy installers"
+    }
+    # Swapped whole. A half-written installers directory is worse than an old one.
+    Move-Item $installers (Join-Path $Prefix 'installers.previous')
+    Move-Item $tree $installers
+    Remove-Item -Recurse -Force $staging, (Join-Path $Prefix 'installers.previous') -ErrorAction SilentlyContinue
+    Write-Detail 'the installers now match the installed release'
 }
 
 function Update-Source($tree) {

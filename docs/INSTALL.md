@@ -28,9 +28,10 @@ the project's problem before it is yours.
 Installing Hardy means putting a released wheel into a virtual environment, so
 nothing here needs the repository. An installer run on its own fetches the
 installer bundle from Hardy's latest release into
-`~/.local/share/hardy/installers`, downloads the released wheel, checks its
-SHA-256 against the release's `SHA256SUMS`, and installs that. A wheel whose
-digest does not match is refused rather than installed. All of these work:
+`~/.local/share/hardy/installers` (`%LOCALAPPDATA%\hardy\installers`), hands over
+to those scripts, and they download the released wheel and install it. Both
+downloads are checked against the release's own `SHA256SUMS`, and anything whose
+digest does not match is refused rather than used. All of these work:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/charlesmsiegel/hardy/main/scripts/install.sh | sh
@@ -47,6 +48,12 @@ do nothing at all.
 The installer bundle is re-fetched on every run, so the scripts and the wheel
 always come from the same release.
 
+Naming a release means that release: when `HARDY_VERSION` (or
+`HARDY_RELEASE_BASE_URL`) is set and that release cannot be installed, the
+installer stops rather than quietly putting a branch on the machine under a
+version number that says otherwise. With neither set — the state Hardy is in
+before its first release — it falls back to the repository and says so.
+
 ## From a clone, a fork, or a branch
 
 Run from a checkout, the installers install *that tree*, editable — which is
@@ -61,10 +68,15 @@ scripts/install.sh          # add --yes for an unattended run
 `--from-release` (`-FromRelease`) installs the published wheel even from a
 checkout, and `--from-source` (`-FromSource`) is the other way round.
 
-`HARDY_REPO_REF` names a branch or tag to install from the repository rather
-than from a release, and `HARDY_REPO_URL` points at a fork. Either one takes the
-repository path: the tree is fetched to `~/.local/share/hardy/src` and installed
-editable, exactly as a clone is.
+`HARDY_REPO_REF` names a branch or a tag, which only the repository can serve,
+so setting it takes the repository path: that tree is fetched to
+`~/.local/share/hardy/src` and installed editable, exactly as a clone is. It
+outranks everything else, and is always re-fetched, so changing the ref cannot
+silently reinstall the previous one.
+
+`HARDY_REPO_URL` points at a different repository — a fork — and moves both its
+releases and its archives. On its own it installs that fork's latest release; if
+the fork publishes none, add `HARDY_REPO_REF=main` to install its code instead.
 
 ## What the installers do
 
@@ -178,7 +190,9 @@ There are two kinds of installation and this updates either, then runs `doctor`.
 
 An install made **from a release** has no source tree: the updater downloads the
 newest released wheel, checks it against the release manifest, and installs it.
-`HARDY_VERSION` moves to a particular release instead.
+`HARDY_VERSION` moves to a particular release instead. The installer scripts kept
+under `~/.local/share/hardy/installers` are replaced at the same time, so the
+updater and uninstaller on disk always match the release that is installed.
 
 An install made **from a checkout** is editable, so new *code* is already live
 once the tree moves; the reinstall is what picks up a newly declared

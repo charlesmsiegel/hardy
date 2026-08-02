@@ -177,10 +177,15 @@ update_from_release() {
 	rm -rf "$directory"
 	wheel="$(download_release_asset .whl "$directory")"
 	say "verified $(basename "$wheel") against the release manifest"
+	# --upgrade, not --force-reinstall: a published release is never rewritten
+	# (the release workflow refuses to replace the assets of one), so the
+	# version in the wheel's name is the whole answer to whether there is
+	# anything to do here.
 	install_into_environment --upgrade "$wheel" ||
 		fail "could not install $(basename "$wheel") into $VENV"
 	say "installed $(basename "$wheel")"
 	rm -rf "$directory"
+	refresh_installers
 }
 
 update_toolchain() {
