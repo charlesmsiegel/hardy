@@ -192,8 +192,15 @@ logged-out machine fails here rather than on your first question.
 
 ## Updating
 
+From a checkout, these are in it. An installation made **from a release** has
+no checkout — the installers it was run from are kept beside it, and that is
+where its updater lives:
+
 ```sh
-scripts/update.sh                 # Linux, macOS
+~/.local/share/hardy/installers/scripts/update.sh          # Linux, macOS
+powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\hardy\installers\scripts\update-windows.ps1"
+
+scripts/update.sh                 # from a checkout: Linux, macOS
 powershell -ExecutionPolicy Bypass -File scripts\update-windows.ps1
 ```
 
@@ -226,8 +233,14 @@ a newer copy.
 
 ## Uninstalling
 
+The same two places as the updater — beside the installation for a release
+install, in the checkout for a source one:
+
 ```sh
-scripts/uninstall.sh              # Linux, macOS
+~/.local/share/hardy/installers/scripts/uninstall.sh       # Linux, macOS
+powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\hardy\installers\scripts\uninstall-windows.ps1"
+
+scripts/uninstall.sh              # from a checkout: Linux, macOS
 powershell -ExecutionPolicy Bypass -File scripts\uninstall-windows.ps1
 ```
 

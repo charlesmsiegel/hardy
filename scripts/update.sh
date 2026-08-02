@@ -38,6 +38,7 @@ EOF
 	;;
 esac
 
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/common.sh
 . "$script_directory/lib/common.sh"
 
@@ -191,17 +192,6 @@ install_into_environment() {
 	fi
 }
 
-# "Already the same version" is only an answer while the wheels come from the
-# same place. Moving an installation to a fork whose wheel carries the same
-# version is a different wheel, and --upgrade alone would report success and
-# change nothing while the origin record and the installers moved.
-reinstall_arguments() {
-	local recorded
-	recorded="$(recorded_repo_url 2>/dev/null || printf '')"
-	[ "$(release_repo_url)" = "$recorded" ] && return 0
-	# uv and pip spell the same idea differently.
-	if have uv; then printf '%s' --reinstall; else printf '%s' --force-reinstall; fi
-}
 
 # The step that matters for an editable install. The code is already current;
 # this is what turns a newly declared dependency into an installed one.

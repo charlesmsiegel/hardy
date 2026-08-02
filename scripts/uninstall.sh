@@ -37,6 +37,7 @@ EOF
 	;;
 esac
 
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/common.sh
 . "$script_directory/lib/common.sh"
 

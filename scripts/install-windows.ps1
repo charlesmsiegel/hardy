@@ -171,6 +171,22 @@ function Get-ReleaseRepoUrl {
     return $RepoUrl
 }
 
+# A re-run of the retained installer meets an environment that already has a
+# wheel in it. "Already the same version" is only an answer while the wheels come
+# from the same place: moving an installation to a fork whose wheel carries the
+# same version is a different wheel under the same number, and pip would report
+# success and change nothing while the origin record and the installers moved.
+function Get-ReinstallArguments {
+    $recorded = ''
+    if (Test-Path -LiteralPath $ReleaseOrigin) {
+        foreach ($line in [System.IO.File]::ReadAllLines($ReleaseOrigin)) {
+            if ($line.StartsWith('repo=')) { $recorded = $line.Substring(5).Trim() }
+        }
+    }
+    if ((Get-ReleaseRepoUrl) -eq $recorded) { return @() }
+    return @('--force-reinstall')
+}
+
 # HARDY_RELEASE_BASE_URL replaces the location wholesale, which is how the
 # installer's own CI exercises this path against a release it built moments
 # earlier, before one has ever been published. It is deliberately not recorded:
@@ -423,7 +439,8 @@ function New-Environment {
         Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
         $wheel = Save-ReleaseAsset '.whl' $directory
         Write-Detail "verified $(Split-Path -Leaf $wheel) against the release manifest"
-        & $venvPython -m pip install $wheel
+        $arguments = @('-m', 'pip', 'install') + (Get-ReinstallArguments)
+        & $venvPython @arguments $wheel
         if ($LASTEXITCODE -ne 0) { Stop-Install "could not install $(Split-Path -Leaf $wheel) into $Venv" }
         Write-Detail "installed hardy from $(Split-Path -Leaf $wheel)"
         Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
