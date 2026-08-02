@@ -229,12 +229,21 @@ Priority labels are sequencing hints:
   a cell inside a C loop that never returns to its interpreter -- is stopped
   the way the timeout stopped it, and the record says the state went with it.
   A second Esc escalates to that immediately rather than waiting the grace out.
-- **Known gap:** the same interrupt reaches Lean and Tectonic, which are
-  one-shot children and simply stop. Only the CAS kernel is persistent enough
-  for an interrupt to *preserve* anything, and only the SymPy driver turns the
-  signal into a framed reply; Singular and Macaulay2 are asked to resynchronise
-  within the grace and dropped when they do not, so on those backends Esc
-  usually costs the kernel as the timeout did.
+- **Known gap:** the same interrupt reaches Lean, LaTeX, and Tectonic, which
+  are one-shot children and simply stop. Only the CAS kernel is persistent
+  enough for an interrupt to *preserve* anything, and only the SymPy driver
+  turns the signal into a framed reply; Singular and Macaulay2 are asked to
+  resynchronise within the grace and dropped when they do not, so on those
+  backends Esc usually costs the kernel as the timeout did.
+- **Known gap:** two children are still out of Esc's reach, both belonging to
+  `cas_export`: the script it runs to check the export, and the fresh kernel it
+  replays in. They live on a `CasSession` built for the export and discarded
+  with it, so an export is bounded only by its own limits.
+- **Known gap:** a cell the *human* starts with `/cas` is not interruptible.
+  Commands run on the terminal's event loop rather than on a worker, so a long
+  cell blocks the loop that would have to read the Esc, and the key handler
+  only acts while a model turn is running. A runaway human cell still costs
+  `cas_cell_seconds` and the kernel with it.
 - **Now (implemented):** within one Hardy process, `cas_session_seconds` bounds
   total CAS wall clock rather than only the cells a caller asked for. A rebuild
   after a kernel death and the fresh-kernel replay an export verifies itself

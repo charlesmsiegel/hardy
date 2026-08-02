@@ -108,19 +108,24 @@ def test_explicit_child_environment_values_are_available(tmp_path) -> None:
     assert result.stdout == 'HARDY_VISIBLE=yes\n'
 
 
-def _interrupt_once_running(process, deadline: float = 5.0) -> None:
-    """Ask, from another thread, as Esc does. Waits for a child to exist first.
-
-    The register is what `interrupt_children` reads, so polling it rather than
-    sleeping a fixed amount is what keeps this from racing the spawn on a slow
-    machine -- and from passing vacuously by interrupting nothing at all.
-    """
+def _await_file(path, deadline: float = 10.0) -> None:
+    """Wait for the child to say it has got where the test needs it."""
     end = time.monotonic() + deadline
-    while time.monotonic() < end:
-        if process.interrupt_children():
-            return
+    while time.monotonic() < end and not path.exists():
         time.sleep(0.01)
-    raise AssertionError('no child was ever registered to interrupt')
+    assert path.exists(), f'the child never wrote {path}'
+
+
+def _press_escape(process) -> int:
+    """Press Esc once, from another thread, as the shell does.
+
+    Deliberately called once and never polled. `interrupt_children` leaves the
+    stop in force, so a child that registers a moment later is stopped on
+    arrival and there is nothing to poll *for* -- while polling would re-arm
+    the stop over and over, including long after this test is done, and kill
+    the children of whatever runs next.
+    """
+    return process.interrupt_children()
 
 
 def test_an_interrupt_stops_a_child_long_before_its_timeout(tmp_path) -> None:
@@ -131,7 +136,7 @@ def test_an_interrupt_stops_a_child_long_before_its_timeout(tmp_path) -> None:
         timeout_seconds=30,
         max_output_bytes=4_096,
     )
-    threading.Thread(target=_interrupt_once_running, args=(process,), daemon=True).start()
+    threading.Thread(target=_press_escape, args=(process,), daemon=True).start()
 
     result = process.run_process(spec)
 
@@ -165,10 +170,8 @@ def test_a_child_that_ignores_the_interrupt_is_still_stopped(tmp_path) -> None:
         # Waiting for the handler to be *installed* is the whole point. An
         # interrupt delivered during interpreter startup kills the child
         # outright, and the escalation this test exists for never runs.
-        end = time.monotonic() + 10
-        while time.monotonic() < end and not ready.exists():
-            time.sleep(0.01)
-        _interrupt_once_running(process)
+        _await_file(ready)
+        assert _press_escape(process) == 1, 'the child was not registered'
 
     threading.Thread(target=interrupt_once_it_is_deaf, daemon=True).start()
 
@@ -205,10 +208,8 @@ def test_output_survives_an_interrupt(tmp_path) -> None:
     )
 
     def interrupt_after_it_speaks() -> None:
-        end = time.monotonic() + 10
-        while time.monotonic() < end and not ready.exists():
-            time.sleep(0.01)
-        _interrupt_once_running(process)
+        _await_file(ready)
+        assert _press_escape(process) == 1, 'the child was not registered'
 
     threading.Thread(target=interrupt_after_it_speaks, daemon=True).start()
 
@@ -269,10 +270,8 @@ def test_stop_children_terminates_a_child_that_refused_the_interrupt(tmp_path) -
     )
 
     def press_twice() -> None:
-        end = time.monotonic() + 10
-        while time.monotonic() < end and not ready.exists():
-            time.sleep(0.01)
-        _interrupt_once_running(process)
+        _await_file(ready)
+        assert _press_escape(process) == 1, 'the child was not registered'
         # The second press, without waiting out the grace the first started.
         assert process.stop_children() == 1
 
@@ -286,3 +285,50 @@ def test_stop_children_terminates_a_child_that_refused_the_interrupt(tmp_path) -
     assert not result.timed_out
     assert result.returncode is None
     assert result.duration_ms < 1_500
+
+
+def test_a_child_that_starts_after_the_press_is_stopped_too(tmp_path) -> None:
+    """The window between the cancellation gate and the spawn.
+
+    A tool call admitted a moment before Esc has already passed the check that
+    would have refused it, and its subprocess is not registered yet -- so a
+    one-time sweep of the register finds nothing, and the child then runs to
+    its full timeout with the press already spent. The stop stays in force so
+    it is caught on arrival instead.
+    """
+    process = importlib.import_module('hardy.process')
+    spec = process.ProcessSpec(
+        argv=(sys.executable, str(EMITTER), '--sleep', '30'),
+        cwd=tmp_path,
+        timeout_seconds=30,
+        max_output_bytes=4_096,
+    )
+
+    # Pressed before the child exists at all, and reaching nothing.
+    assert process.interrupt_children() == 0
+
+    result = process.run_process(spec)
+
+    assert result.interrupted
+    assert not result.timed_out
+    assert result.duration_ms < 10_000
+
+
+def test_the_next_turn_is_allowed_to_run(tmp_path) -> None:
+    """The other half: a stop that outlived the turn it belonged to would kill
+    the next turn's first child on sight."""
+    process = importlib.import_module('hardy.process')
+    spec = process.ProcessSpec(
+        argv=(sys.executable, str(EMITTER), '--stdout', 'done'),
+        cwd=tmp_path,
+        timeout_seconds=10,
+        max_output_bytes=4_096,
+    )
+    process.interrupt_children()
+
+    process.resume_children()
+    result = process.run_process(spec)
+
+    assert not result.interrupted
+    assert result.returncode == 0
+    assert result.stdout == 'done\n'

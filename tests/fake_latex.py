@@ -10,6 +10,7 @@ wrong reason.
 import pathlib
 import re
 import sys
+import time
 
 INPUT = re.compile(r"\\input\{([^}]*)\}")
 LABEL = re.compile(r"\\label\{([^}]*)\}")
@@ -52,6 +53,17 @@ while pending:
             continue
         seen.add(target)
         pending.append((target, target.read_text()))
+
+# `% slow: 30` makes this stand-in grind, so a test can stop it. A real TeX run
+# over a long document is the child Esc has to reach; one that returns instantly
+# cannot stand in for it. The touch file lets a test wait for the child to
+# genuinely exist rather than guess how long that takes.
+SLOW = re.search(r"%\s*slow:\s*([0-9.]+)", source)
+if SLOW:
+    READY = re.search(r"%\s*ready:\s*(\S+)", source)
+    if READY:
+        pathlib.Path(READY.group(1)).write_text("ready", encoding="utf-8")
+    time.sleep(float(SLOW.group(1)))
 
 if "\\begin{document}" in source and "\\end{document}" in source:
     pathlib.Path("writeup.pdf").write_bytes(b"%PDF-fake")

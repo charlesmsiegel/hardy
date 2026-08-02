@@ -535,9 +535,14 @@ class Shell:
                 # says they would rather lose the kernel's state than keep
                 # waiting for it.
                 stopped = self._escalate_turn()
+                # "any ... among them", not "a ... among them": the count says
+                # how many children were killed, not which. Asserting that a
+                # computer algebra session lost its state would be a lie
+                # whenever the child that would not stop was Lean or LaTeX and
+                # the kernel was sitting idle with every value still in it.
                 self.write(
-                    "stopped waiting; the processes still running were killed, and a "
-                    "computer algebra session among them has lost its state"
+                    "stopped waiting; killed what had not stopped -- any computer "
+                    "algebra kernel among them has lost its state"
                     if stopped
                     else "nothing left to stop; the turn is already cancelled",
                     style="warning",

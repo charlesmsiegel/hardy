@@ -1168,6 +1168,12 @@ class MathematicsSession:
         # Cleared here rather than in `cancel`: a turn cancelled during the
         # previous exchange must not silently disarm this one's tool gate.
         self._cancelled.clear()
+        # And the same for the children. A stop stays in force after `cancel`
+        # so that a tool call already past the gate cannot spawn its child a
+        # moment later and outlive the press that was spent on it -- which
+        # means something has to lift it, or this turn's first child would be
+        # killed on sight by the last turn's Esc.
+        process.resume_children()
         return self._stream(self.runtime.stream(text))
 
     def _stream(self, events: Iterator[TurnEvent]) -> Iterator[TurnEvent]:
@@ -1235,11 +1241,18 @@ class MathematicsSession:
 
         The CAS kernel is asked through its own session rather than through
         `process`: it is persistent, and only the session knows whether a cell
-        is actually in flight and how to read what comes back. Everything else
-        is one-shot and goes through `run_process`, which keeps the register.
+        is actually in flight and how to read what comes back. Every other
+        child registers itself with `process.tracked` -- `run_process` does it
+        for Lean and Tectonic, and the interactive LaTeX check does it around
+        the `Popen` it drives itself.
 
-        That register is per *process*, not per session, so this reaches every
-        `run_process` child running anywhere in this interpreter. Hardy runs one
+        Two children are still out of reach, both inside `cas_export`: the
+        script it runs to check the export, and the fresh kernel it replays in.
+        They belong to a `CasSession` built for the export and discarded with
+        it, so an export is still bounded only by its own limits.
+
+        The register is per *process*, not per session, so this reaches every
+        tracked child running anywhere in this interpreter. Hardy runs one
         session per process, which is why that is the same set in practice —
         and the register is the only place a child started five call frames
         down inside a tool is reachable from at all, short of threading a

@@ -45,7 +45,9 @@ from .process import (
     INTERRUPT_GRACE_SECONDS,
     child_creation,
     child_environment,
+    kill_group,
     signal_interrupt,
+    terminate_group,
 )
 
 HEADER_BYTES = 10
@@ -776,11 +778,14 @@ class _Kernel:
 
     def kill(self) -> None:
         if self.process.poll() is None:
-            self.process.terminate()
+            # The group: a cell that shelled out has children of its own, and
+            # stopping the interpreter while they keep running would leave them
+            # orphaned against a kernel that no longer exists.
+            terminate_group(self.process)
             try:
                 self.process.wait(timeout=2)
             except subprocess.TimeoutExpired:
-                self.process.kill()
+                kill_group(self.process)
                 self.process.wait()
         for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
             if stream is not None:
