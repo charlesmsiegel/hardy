@@ -649,6 +649,26 @@ def test_a_fractional_deadline_survives_the_report():
         assert shown in "\n".join(describe(cost))
 
 
+def test_the_host_that_produced_the_durations_is_recorded(tmp_path: Path):
+    """Every other identity pins *what* was elaborated, none pin how fast the
+    machine was — and the same Lean and Mathlib give a 12s prelude on a
+    workstation and 40s on a small runner, which are opposite verdicts from
+    provenance that looks identical."""
+    from hardy.latency import machine_identity
+
+    cost = measure_import_cost(
+        ("Mathlib",), argv=("lean", "--json"), cwd=tmp_path,
+        timeout_seconds=120, repeats=1, runner=runner_for([12_000]),
+    )
+    assert cost.machine == machine_identity()
+    assert cost.machine in "\n".join(describe(cost))
+
+
+def test_an_unrecorded_machine_is_named_rather_than_omitted():
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    assert "machine: (unrecorded)" in "\n".join(describe(cost))
+
+
 def test_the_identity_admits_the_revisions_are_declared_not_hashed():
     """"Pins dependencies" overclaimed: a rebuilt `.lake/packages/mathlib`
     changes the oleans and the latency while the manifest rev and digest stay
