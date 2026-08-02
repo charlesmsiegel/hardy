@@ -294,3 +294,81 @@ def test_escalating_an_idle_session_leaves_the_kernel_alone(cas_session) -> None
         assert session.execute("b").value_repr == "2"
     finally:
         session.close()
+
+
+def test_a_second_press_before_the_cell_is_sent_still_kills(cas_session, tmp_path) -> None:
+    """Both presses landing before the cell goes out.
+
+    A single remembered flag would give the cell the first press's signal and
+    lose the second, so a deaf cell would sit out the grace the user had
+    already declined to wait for.
+    """
+    session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
+    try:
+        session.execute("a")
+        assert session.interrupt() is False
+        assert session.escalate() is False
+
+        started = time.monotonic()
+        record = session.execute("deaf")
+
+        assert record.status == "interrupted"
+        assert session.state == "dead"
+        # Killed on arrival rather than signalled and waited out.
+        assert time.monotonic() - started < 1.5
+    finally:
+        session.close()
+
+
+def test_a_stop_that_arrives_after_the_reply_does_not_reject_the_next_cell(
+    cas_session,
+) -> None:
+    """The mirror of the pre-send window.
+
+    A press can land in the moment after the kernel has flushed its reply and
+    before Hardy has noticed, where the kernel is between cells and can only
+    remember it. Left to itself that memory would reject the next cell -- which
+    nobody asked to stop -- so every cell says whether Hardy still wants one.
+    """
+    session = cas_session()
+    try:
+        session.execute("a")
+        # Signal the kernel directly, with no cell in flight: exactly what the
+        # late press does to the child, without needing to hit the window.
+        assert session._kernel is not None
+        session._kernel.interrupt()
+        time.sleep(0.2)
+        session.resume()
+
+        record = session.execute("b")
+
+        assert record.status == "ok"
+        assert record.accepted is True
+        assert record.value_repr == "2"
+    finally:
+        session.close()
+
+
+def test_a_cell_that_reports_success_after_being_signalled_is_not_accepted(
+    cas_session, tmp_path
+) -> None:
+    """A cell -- or a library under it -- can catch the interrupt and return
+    normally from a path it would not otherwise have taken. It really finished,
+    so it keeps its status; it cannot be built on, because a replay without the
+    signal may not reproduce it."""
+    session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
+    try:
+        session.execute("a")
+        ready = tmp_path / "cell-running"
+        threading.Thread(
+            target=_press_when_running, args=(session, ready), daemon=True
+        ).start()
+
+        record = session.execute(f"swallow {ready}")
+
+        assert record.status == "ok"
+        assert record.accepted is False
+        assert "interrupted but reported success" in record.restart_note
+        assert [item.source for item in session.accepted()] == ["a"]
+    finally:
+        session.close()

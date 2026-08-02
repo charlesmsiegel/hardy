@@ -227,7 +227,10 @@ Priority labels are sequencing hints:
   cells and leaving the cell to run on with the press already spent; a
   `KeyboardInterrupt` the cell raised itself is still the ordinary error it
   always was, because the parent knows whether it asked for one and the driver
-  does not. Like an errored cell it is recorded, reported,
+  does not. A cell that was signalled and reported success anyway is recorded
+  but not accepted: it may have caught the signal and returned from a path it
+  would not otherwise have taken, and a replay without the signal would then
+  not reproduce it. Like an errored cell it is recorded, reported,
   and never accepted: it did not finish, and it may have changed the namespace
   on its way to being stopped, so what it left is outside the set a replay and
   an export rebuild from. A kernel that will not answer within a short grace --

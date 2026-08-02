@@ -702,8 +702,15 @@ class CasCommandSession(Streams):
         self.running = threading.Event()
         self.interrupted = 0
         self.escalated = 0
+        self.resumed = 0
         self.abandoned: list[str] = []
-        self.cas = types.SimpleNamespace(run=self._run, session=object())
+        # `cas.session.interrupt` is what the cancellation path reaches for,
+        # and `interrupt_work` is what Esc reaches for. Both stop the cell, so
+        # both count.
+        self.cas = types.SimpleNamespace(
+            run=self._run,
+            session=types.SimpleNamespace(interrupt=self._interrupt_cell),
+        )
         self.workspace = Path(".")
 
     def _run(self, source: str, *, author: str):
@@ -713,15 +720,22 @@ class CasCommandSession(Streams):
             restart_note="", stdout="", stderr="", value_repr="stopped", note=""
         )
 
-    def interrupt_work(self) -> int:
+    def _interrupt_cell(self) -> bool:
         self.interrupted += 1
         self.release.set()
+        return True
+
+    def interrupt_work(self) -> int:
+        self._interrupt_cell()
         return 1
 
     def escalate(self) -> int:
         self.escalated += 1
         self.release.set()
         return 1
+
+    def resume_work(self) -> None:
+        self.resumed += 1
 
     def send(self, text: str) -> str:
         return "unused"
@@ -831,3 +845,78 @@ async def test_a_command_in_flight_refuses_a_model_turn(settings):
         ],
     )
     assert "A command is still running" in written
+
+
+async def test_a_safe_command_does_not_steal_a_running_cells_ownership(settings):
+    """`/status` is deliberately allowed to run alongside a long cell. With a
+    flag rather than a count, the short command finishing cleared the state
+    belonging to the cell, after which Esc found nothing to stop and the
+    runaway was unreachable."""
+    session = CasCommandSession()
+    _, written = await drive(
+        settings,
+        session,
+        [
+            ("/cas 1+1\r", session.running.is_set),
+            # Runs and finishes while the cell is still going.
+            ("/status\r", None),
+            ("\x1b ", lambda: session.interrupted == 1),
+            ("\x03", None),
+        ],
+    )
+    assert session.interrupted == 1, "Esc could not reach the cell after /status"
+    assert "Session" in written  # /status really did run
+
+
+async def test_a_safe_command_does_not_lift_the_stop(settings):
+    """A stop stays in force after Esc so that work admitted a moment earlier
+    cannot start its child behind the press. `/status` is explicitly permitted
+    during a cancelled turn, so lifting the stop there would undo exactly that
+    protection."""
+    session = CasCommandSession()
+    _, _ = await drive(
+        settings,
+        session,
+        [
+            ("/cas 1+1\r", session.running.is_set),
+            ("\x1b ", lambda: session.interrupted == 1),
+            ("/status\r", None),
+            ("\x03", None),
+        ],
+    )
+    # One resume, from `/cas` itself at the start. `/status` running after the
+    # press must not add another: it is explicitly permitted during a cancelled
+    # turn, so lifting the stop there would undo the protection.
+    assert session.resumed == 1, "a safe command lifted the stop"
+
+
+async def test_an_owning_command_lifts_the_stop(settings):
+    session = CasCommandSession()
+    await drive(
+        settings,
+        session,
+        [
+            ("/cas 1+1\r", session.running.is_set),
+            ("\x1b ", lambda: session.interrupted == 1),
+            ("\x03", None),
+        ],
+    )
+    # `/cas` is not safe-in-flight: it starts new work, so it lifts a stop left
+    # over from before it, or its own first cell would be stopped on sight.
+    assert session.resumed == 1
+
+
+async def test_ctrl_c_during_a_cell_interrupts_the_worker(settings):
+    """Cancelling the await does not stop the worker. Without a signal the cell
+    runs on, and the shell then blocks closing the session while `asyncio.run`
+    blocks joining its executor -- both until `cas_cell_seconds`."""
+    session = CasCommandSession()
+    await drive(
+        settings,
+        session,
+        [
+            ("/cas 1+1\r", session.running.is_set),
+            ("\x03", lambda: session.interrupted == 1),
+        ],
+    )
+    assert session.interrupted == 1

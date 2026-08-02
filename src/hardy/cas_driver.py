@@ -253,18 +253,30 @@ def main() -> None:
                 request = json.loads(payload.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 return
-            if PENDING_INTERRUPT:
+            held = PENDING_INTERRUPT
+            PENDING_INTERRUPT = False
+            if held and request.get("stopping", True):
                 # The stop reached this kernel before the cell did. Answering
                 # without running it is what the parent is waiting for: it gets
                 # a framed reply straight away, the namespace is untouched, and
                 # the kernel is still here for the next cell.
-                PENDING_INTERRUPT = False
                 reply = _interrupted_reply()
             else:
+                # `held` without `stopping` is a signal that arrived in the
+                # moment after the last reply was flushed and before Hardy had
+                # read it. It was aimed at a cell that was already over, and
+                # Hardy -- which knows whether it still wants a stop -- says it
+                # does not. Rejecting this cell for it would stop something
+                # nobody asked to stop.
                 reply = run_cell(str(request.get("source", "")), namespace, limit)
         except KeyboardInterrupt:
             PENDING_INTERRUPT = False
             reply = _interrupted_reply()
+        # Back to deferring before the reply is written, not at the top of the
+        # loop: between the cell ending and the loop coming round there would
+        # otherwise be a stretch running under the raising handler with no cell
+        # to abandon, where a late signal kills the kernel outright.
+        _handle_stops_by(_remember)
         encoded = json.dumps(reply, ensure_ascii=False).encode("utf-8")
         stdout.write(f"{len(encoded):0{HEADER_BYTES}d}".encode("ascii"))
         stdout.write(encoded)

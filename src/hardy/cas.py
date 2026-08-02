@@ -71,6 +71,11 @@ DESYNCHRONISED = object()
 # whole point of interrupting rather than timing out.
 INTERRUPTED = object()
 
+# How hard a stop has been asked for: signal and let the kernel answer, or stop
+# waiting for an answer. Mirrors the levels `process` keeps for its own
+# register, and for the same reason.
+_ASKED, _INSISTED = 1, 2
+
 
 class CasError(Exception):
     """A CAS call that cannot be answered, phrased for the model that asked."""
@@ -93,6 +98,13 @@ class CellOutcome(FrozenModel):
     # the kernel survived is the session's live state, reported by
     # `cas_state` and by the restart note on the next cell.
     kernel_lost: bool = False
+    # Whether Hardy actually signalled this cell. A cell that reports `ok`
+    # after being signalled is not acceptable even though it says it worked: a
+    # cell -- or a library under it -- may catch the interrupt and return
+    # normally from a path it would not otherwise have taken, and a replay
+    # without the signal would then not reproduce it. It is recorded and
+    # reported like any other cell; it just cannot be built on.
+    signalled: bool = False
 
 
 
@@ -229,8 +241,19 @@ class SympyBackend:
     def script_argv(self, command: Path | None, script: Path) -> tuple[str, ...]:
         return (str(command) if command else sys.executable, "-u", str(script))
 
-    def frame(self, source: str, nonce: str) -> bytes:
-        payload = json.dumps({"source": source}, ensure_ascii=False).encode("utf-8")
+    def frame(self, source: str, nonce: str, stopping: bool = False) -> bytes:
+        """`stopping` is whether a stop is still in force as this cell goes out.
+
+        It is how a stop the driver is *holding* gets discarded. A signal can
+        land in the moment after the driver has flushed a reply and before
+        Hardy has noticed, where the driver is between cells and can only
+        remember it -- and that memory would otherwise reject the next cell,
+        which nobody asked to stop. Hardy knows whether it still wants one, and
+        says so with every cell.
+        """
+        payload = json.dumps(
+            {"source": source, "stopping": stopping}, ensure_ascii=False
+        ).encode("utf-8")
         return f"{len(payload):0{HEADER_BYTES}d}".encode("ascii") + payload
 
     def sanitize(self, stdout: str, fed: str = "") -> str:
@@ -312,7 +335,9 @@ class _SentinelBackend:
         """Verbatim. These interpreters print a statement's value themselves."""
         return source
 
-    def frame(self, source: str, nonce: str) -> bytes:
+    def frame(self, source: str, nonce: str, stopping: bool = False) -> bytes:
+        """`stopping` is accepted and ignored: a line-oriented interpreter has
+        no protocol for a stop it is holding, and nothing to discard."""
         begin = SENTINEL_BEGIN.format(nonce=nonce)
         end = SENTINEL_END.format(nonce=nonce)
         return (
@@ -838,11 +863,15 @@ class CasSession:
         # the cell ran on until the grace expired and took the kernel with it,
         # which is the exact loss interrupting exists to avoid.
         self._signal_lock = threading.Lock()
-        # A stop asked for while no cell was in flight, remembered so the cell
-        # about to go out is stopped rather than the press being lost. Lifted
-        # by `resume`, at the start of the next turn, exactly as the register
-        # in `process` is.
-        self._stopping = False
+        # How hard a stop asked for while no cell was in flight was asked,
+        # remembered so the cell about to go out is stopped rather than the
+        # press being lost. A level rather than a flag for the same reason the
+        # register in `process` keeps one: if both presses land before the cell
+        # is sent, a flag would give it the first press's signal and lose the
+        # second, so a deaf cell would sit out a grace the user had already
+        # declined to wait for. Lifted by `resume`, at the start of the next
+        # turn or command, exactly as that register is.
+        self._stop_level = 0
         self._records: list[CellRecord] = self._load()
 
     # ------------------------------------------------------------------ log
@@ -1208,7 +1237,7 @@ class CasSession:
         else:
             end = SENTINEL_END.format(nonce=nonce).encode()
             kernel.rearm(end)
-        frame = self.backend.frame(source, nonce)
+        frame = self.backend.frame(source, nonce, self._stop_level > 0)
         with self._signal_lock:
             # Cleared before the cell is out there, and only then armed: an
             # interrupt asked for while nothing was running would otherwise
@@ -1217,12 +1246,16 @@ class CasSession:
             sent = kernel.send(frame)
             self._in_flight.set()
             # A stop asked for before this cell existed still applies to it:
-            # the press was aimed at the work, and the work is now this. The
-            # signal goes out here, under the lock, so it lands on a driver
-            # that has the frame rather than on one still waiting for it.
-            if self._stopping and sent:
+            # the press was aimed at the work, and the work is now this. It
+            # goes out here, under the lock, at the level it was asked at --
+            # a second press that landed before the cell did still means kill
+            # rather than ask.
+            if self._stop_level and sent:
                 self._interrupted.set()
-                kernel.interrupt()
+                if self._stop_level >= _INSISTED:
+                    kernel.kill()
+                else:
+                    kernel.interrupt()
         try:
             if not sent:
                 return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
@@ -1287,7 +1320,10 @@ class CasSession:
             # classification always read a broken M2 cell as "ok".
             status = self.backend.classify(outcome.stdout, stderr_text)
             outcome = outcome.model_copy(update={"stderr": stderr_text, "status": status})
-        if not self._interrupted.is_set() and outcome.status == "interrupted":
+        signalled = self._interrupted.is_set()
+        if signalled:
+            outcome = outcome.model_copy(update={"signalled": True})
+        if not signalled and outcome.status == "interrupted":
             # The driver says it caught a `KeyboardInterrupt` and Hardy never
             # sent one, so the cell raised it itself -- `raise
             # KeyboardInterrupt` in the source, or a library that uses it to
@@ -1296,7 +1332,7 @@ class CasSession:
             # durable log. The parent is the only side that can tell these
             # apart: the driver has no idea where the signal came from.
             outcome = outcome.model_copy(update={"status": "error"})
-        elif self._interrupted.is_set() and outcome.status != "ok":
+        elif signalled and outcome.status != "ok":
             # The kernel answered after being asked to stop, so it is alive and
             # its namespace is intact -- but what it answered with is the cell
             # failing, not the cell's result. A sentinel backend has no status
@@ -1327,7 +1363,7 @@ class CasSession:
         that is defence in depth, not the design.
         """
         with self._signal_lock:
-            self._stopping = True
+            self._stop_level = max(self._stop_level, _ASKED)
             if not self._in_flight.is_set():
                 return False
             kernel = self._kernel
@@ -1347,7 +1383,7 @@ class CasSession:
         belonged to would interrupt the next turn's first cell on sight.
         """
         with self._signal_lock:
-            self._stopping = False
+            self._stop_level = 0
 
     def escalate(self) -> bool:
         """Stop waiting for the interrupt to be answered, and stop the kernel.
@@ -1365,7 +1401,7 @@ class CasSession:
         being lost.
         """
         with self._signal_lock:
-            self._stopping = True
+            self._stop_level = _INSISTED
             if not self._in_flight.is_set():
                 return False
             kernel = self._kernel
@@ -1491,6 +1527,21 @@ class CasSession:
             unverifiable = (
                 truncated and status == "ok" and self.backend.framing == "sentinel"
             )
+            # A cell Hardy signalled that answered `ok` anyway. It really did
+            # finish, so it keeps that status -- but it finished under a signal,
+            # and a cell (or a library beneath it) that catches one can return
+            # normally from a path it would not otherwise have taken. A replay
+            # without the signal would then not reproduce it, which is the one
+            # thing an accepted cell has to be able to do.
+            perturbed = outcome.signalled and status == "ok"
+            if perturbed:
+                notes = (notes + " " if notes else "") + (
+                    "[this cell was interrupted but reported success anyway, so it "
+                    "ran under a signal it may have caught. It is recorded, and its "
+                    "output is what it produced, but it was not accepted into the "
+                    "state replay and export rebuild from: without the interrupt it "
+                    "may not take the same path. Rerun it if you mean to build on it.]"
+                )
             if unverifiable:
                 notes = (notes + " " if notes else "") + (
                     "[output exceeded cas_output_bytes, so this cell was classified "
@@ -1516,7 +1567,7 @@ class CasSession:
                 author=author,  # type: ignore[arg-type]
                 source=source,
                 status=status,  # type: ignore[arg-type]
-                accepted=status == "ok" and not unverifiable,
+                accepted=status == "ok" and not unverifiable and not perturbed,
                 stdout=outcome.stdout,
                 stderr=outcome.stderr,
                 value_repr=outcome.value_repr,

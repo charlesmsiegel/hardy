@@ -184,11 +184,15 @@ class Shell:
         # `state.turn_running`, so a turn finishing naturally makes it moot
         # without needing its own reset.
         self._forcing = False
-        # A command owns the session the way a turn does while it runs, so an
-        # Esc during one has somewhere to go and a second command has somewhere
-        # to be refused. `_command_stopping` is its `_abandoned`: the first
-        # press interrupts, the second gives up and kills.
-        self._command_running = False
+        # How many commands are in flight. A count rather than a flag, because
+        # the safe-in-flight ones (`/status`, `/help`) are deliberately allowed
+        # to run *alongside* a long `/cas` cell -- and with a flag, the short
+        # one finishing cleared the state belonging to the cell, after which Esc
+        # found nothing to stop and the runaway was unreachable.
+        self._commands_running = 0
+        # `_command_stopping` is a command's `_abandoned`: the first press
+        # interrupts, the second gives up and kills. Reset when the first
+        # command starts, not when any does, for the same reason.
         self._command_stopping = False
         # Requests from `_FromThread`, each an (already-created, not-yet-
         # awaited) coroutine paired with the `concurrent.futures.Future` a
@@ -476,7 +480,7 @@ class Shell:
                 text,
                 self._registry,
                 turn_running=self._state.turn_running,
-                command_running=self._command_running,
+                command_running=self._commands_running > 0,
             )
             if outcome.kind == "send":
                 # `turn_running` flips here, synchronously, not inside
@@ -533,14 +537,15 @@ class Shell:
                 )
                 return
             if outcome.kind == "command":
-                # Flipped here, synchronously, for exactly the reason
-                # `turn_running` is: a lone Escape typed behind this Enter is
-                # resolved in the very same input batch, with no event-loop
-                # turn in between. Left to `_run_command`, which does not run a
-                # line of its body until the loop gets to it, the press would
-                # find no command running and do nothing.
-                self._command_running = True
-                self._command_stopping = False
+                # Counted here, synchronously, for exactly the reason
+                # `turn_running` is flipped here: a lone Escape typed behind
+                # this Enter is resolved in the very same input batch, with no
+                # event-loop turn in between. Left to `_run_command`, which
+                # does not run a line of its body until the loop gets to it,
+                # the press would find no command running and do nothing.
+                if self._commands_running == 0:
+                    self._command_stopping = False
+                self._commands_running += 1
             event.app.create_background_task(self._run_command(outcome))
 
         @keys.add("escape", eager=True)
@@ -550,7 +555,7 @@ class Shell:
                 # cell on a worker precisely so this key can be read while it
                 # does. Nothing else here is long enough to interrupt, and a
                 # command that owns no child reports exactly that.
-                if self._command_running:
+                if self._commands_running:
                     self._stop_command()
                 return
             if self._abandoned:
@@ -705,10 +710,10 @@ class Shell:
             loop.call_soon_threadsafe(arrivals.put_nowait, _TURN_OVER)
 
     async def _run_command(self, outcome: dispatch.Outcome) -> None:
-        # `_command_running` was set by `_submit_key` before this task existed,
-        # and stays set for the whole handler rather than only the part that
-        # runs a child: `dispatch.classify` reads it to refuse a second command
-        # or a model turn while one is in flight, and that has to hold while a
+        # The count was raised by `_submit_key` before this task existed, and
+        # stays up for the whole handler rather than only the part that runs a
+        # child: `dispatch.classify` reads it to refuse a second command or a
+        # model turn while one is in flight, and that has to hold while a
         # handler is waiting on a prompt of its own as much as while it is
         # computing.
         if outcome.kind == "empty":
@@ -717,20 +722,24 @@ class Shell:
             self.write(outcome.message, style="error")
             return
         resume = getattr(self._state.session, "resume_work", None)
-        if resume is not None:
-            # A stop stays in force after an Esc so that work admitted a moment
-            # earlier cannot start its child behind the press. Nothing lifts it
-            # between commands otherwise, and the next `/cas` cell would be
-            # interrupted on sight by a press aimed at the last one.
+        # Only a command that takes the session over. A stop stays in force
+        # after an Esc so that work admitted a moment earlier cannot start its
+        # child behind the press, and the safe-in-flight commands are exactly
+        # the ones allowed to run *during* a cancelled turn -- so `/status`
+        # lifting the stop would let that admitted tool spawn and run to its
+        # timeout after all. Something must lift it, or the next `/cas` cell
+        # would be stopped by a press aimed at the last one; a command that
+        # starts new work is the right thing to lift it.
+        if resume is not None and not outcome.command.safe_in_flight:
             resume()
         try:
             self._state = await outcome.command.handler(self, outcome.argument, self._state)
         except Exception as error:  # noqa: BLE001 - a bad command must not end the session
             self.write(f"{type(error).__name__}: {error}", style="error")
         finally:
-            # Cleared wherever the handler ended, including a raise: a flag
-            # left set would refuse every command and every turn after it.
-            self._command_running = False
+            # Wherever the handler ended, including a raise: a count left up
+            # would refuse every command and every turn after it.
+            self._commands_running -= 1
         if self._state.done:
             self._app.exit(result=0)
 
