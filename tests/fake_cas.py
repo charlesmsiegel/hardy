@@ -85,6 +85,15 @@ def answer(source: str) -> dict:
                 signal.signal(handled, signal.SIG_IGN)
         _announce(word)
         time.sleep(120)
+    if _matches(word, "deafterm"):
+        # Deaf to SIGTERM as well, so only SIGKILL is left -- which is what the
+        # second press has to reach for without waiting out a polite teardown.
+        for name in ("SIGINT", "SIGBREAK", "SIGTERM"):
+            handled = getattr(signal, name, None)
+            if handled is not None:
+                signal.signal(handled, signal.SIG_IGN)
+        _announce(word)
+        time.sleep(120)
     if _matches(word, "hang"):
         _announce(word)
         time.sleep(120)

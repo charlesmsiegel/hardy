@@ -225,3 +225,42 @@ def test_a_latex_compile_deaf_to_sigterm_is_killed(tmp_path: Path):
     assert "interrupted" in result.output
     # Grace, then SIGTERM, then SIGKILL -- and nowhere near the 300s timeout.
     assert 1.5 <= elapsed < 30
+
+
+def test_a_second_escape_does_not_wait_out_the_first_presss_grace(tmp_path: Path):
+    """A single `wait(GRACE)` is not woken by the second press -- nothing sets
+    the event it waits on -- so a press arriving inside the grace sat out the
+    whole of it, which is precisely what the press was made to skip."""
+    import threading
+    import time
+
+    from hardy import process
+
+    ready = tmp_path / "tex-stubborn"
+    source = (
+        "\\documentclass{article}\n"
+        f"% slow: 300\n% deaf: sigterm\n% ready: {ready}\n"
+        "\\begin{document}Fine.\\end{document}\n"
+    )
+
+    def press_twice() -> None:
+        end = time.monotonic() + 30
+        while time.monotonic() < end and not ready.exists():
+            time.sleep(0.01)
+        assert ready.exists(), "the fake LaTeX child never started"
+        assert process.interrupt_children() == 1
+        # Lands while the watcher is inside the grace.
+        time.sleep(0.2)
+        assert process.stop_children() == 1
+
+    threading.Thread(target=press_twice, daemon=True).start()
+
+    started = time.monotonic()
+    result = LatexTools(COMMAND, timeout=300).check(source)
+    elapsed = time.monotonic() - started
+
+    assert not result.ok
+    assert "interrupted" in result.output
+    # Well inside the 2s grace the first press started, let alone the 4s the
+    # full ladder takes when nobody presses again.
+    assert elapsed < 1.5

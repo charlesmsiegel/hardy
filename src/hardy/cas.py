@@ -801,17 +801,31 @@ class _Kernel:
         """Ask the cell in flight to stop, leaving the kernel alive to say so."""
         return signal_interrupt(self.process)
 
-    def kill(self) -> None:
+    def kill(self, *, immediate: bool = False) -> None:
+        """Stop the kernel. `immediate` skips the polite half.
+
+        The graceful teardown asks with SIGTERM and waits up to two seconds
+        before SIGKILL, which is right when a session is closing. It is wrong
+        for the second Esc: that runs on the terminal's own event loop, so the
+        wait would freeze the UI -- for exactly as long as the press was made
+        to avoid waiting.
+        """
         if self.process.poll() is None:
             # The group: a cell that shelled out has children of its own, and
             # stopping the interpreter while they keep running would leave them
             # orphaned against a kernel that no longer exists.
-            terminate_group(self.process)
-            try:
-                self.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
+            if immediate:
                 kill_group(self.process)
+                # SIGKILL cannot be caught or ignored, so this returns as soon
+                # as the child is reaped rather than waiting on its goodwill.
                 self.process.wait()
+            else:
+                terminate_group(self.process)
+                try:
+                    self.process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    kill_group(self.process)
+                    self.process.wait()
         for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
             if stream is not None:
                 with contextlib.suppress(OSError):
@@ -1253,7 +1267,7 @@ class CasSession:
             if self._stop_level and sent:
                 self._interrupted.set()
                 if self._stop_level >= _INSISTED:
-                    kernel.kill()
+                    kernel.kill(immediate=True)
                 else:
                     kernel.interrupt()
         try:
@@ -1412,7 +1426,11 @@ class CasSession:
         # set -- records the cell as interrupted with the kernel lost, which is
         # what happened. It drops the kernel itself when it gets there; nothing
         # here touches `_kernel`, so the two threads cannot race over it.
-        kernel.kill()
+        #
+        # Straight to SIGKILL: this runs on the terminal's event loop, and the
+        # graceful teardown's two-second wait would freeze the UI for exactly
+        # as long as this press was made to avoid waiting.
+        kernel.kill(immediate=True)
         return True
 
     # -------------------------------------------------------------- budget
