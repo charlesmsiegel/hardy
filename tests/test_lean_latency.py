@@ -325,10 +325,13 @@ def test_an_unusable_threshold_is_refused_before_probing(tmp_path: Path, capsys,
     project.mkdir()
     probed = []
     monkeypatch.setattr(cli.latency, "measure_import_cost", lambda *a, **k: probed.append(1))
-    for value in ("-0.5", "nan", "1.5"):
+    # Zero belongs with the negatives: one Lean call cannot avoid its own
+    # import, so it recovers nothing, and `0% >= 0%` reported that as a
+    # warranted pool — affirmative evidence for machinery that saves nothing.
+    for value in ("-0.5", "nan", "1.5", "0"):
         args = cli.build_parser().parse_args(["latency", "--threshold", value])
         assert cli.run_latency(args, _config_for(tmp_path, project)) == 2
-        assert "--threshold must be a fraction between 0 and 1" in capsys.readouterr().out
+        assert "--threshold must be a fraction above 0 and at most 1" in capsys.readouterr().out
     assert probed == []
 
 

@@ -656,8 +656,13 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     # recovering nothing, NaN fails every comparison so nothing is ever
     # warranted, and above 1 can never be reached. Each manufactures a verdict
     # from malformed input rather than from the measurement.
-    if not math.isfinite(args.threshold) or not 0.0 <= args.threshold <= 1.0:
-        print("--threshold must be a fraction between 0 and 1")
+    #
+    # Zero belongs with the negatives, which the original bound missed by
+    # admitting it. A single Lean call cannot avoid its own import, so it
+    # recovers nothing, and `0% >= 0%` reported that as a warranted pool --
+    # affirmative evidence for machinery that saves nothing at all.
+    if not math.isfinite(args.threshold) or not 0.0 < args.threshold <= 1.0:
+        print("--threshold must be a fraction above 0 and at most 1")
         return 2
     # Checked here rather than left to `measure_import_cost`, which only sees
     # it after `probe_toolchain` has already started a child that can sit on
