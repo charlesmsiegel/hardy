@@ -801,6 +801,119 @@ def test_a_project_that_is_not_the_one_the_claim_was_frozen_against_is_not_pinne
     assert matched.identity.pinned
 
 
+def test_the_lean_source_strips_the_turnstile_that_find_does_not_take() -> None:
+    """One query, two syntaxes, and each source speaks its own.
+
+    Loogle takes `⊢ p` as a conclusion filter -- verified against the live
+    service. Mathlib's `#find t` instead matches the *result type* directly
+    (`#find _ + _ = _ + _`), so the turnstile is not merely redundant there but
+    unsupported. Passing it through meant the pinned source failed on exactly
+    the input the tool was built for, leaving the ranking to the unpinned one.
+
+    Stripping loses nothing: `#find`'s bare term and Loogle's `⊢` mean the same
+    search.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean_module = importlib.import_module('hardy.lean')
+    domain = importlib.import_module('hardy.domain')
+    service = _Service(domain, lean_module, results=[_record('Nat.add_comm')])
+
+    source = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
+    source.search('⊢ _ + _ = _ + _', 5)
+    source.search('_ + _ = _ + _', 5)
+
+    assert [query for query, _ in service.calls] == ['_ + _ = _ + _', '_ + _ = _ + _']
+
+
+def test_a_toolchain_that_can_change_under_the_same_name_is_not_a_pin(tmp_path) -> None:
+    """`stable` and `nightly` are elan aliases, not toolchains.
+
+    The compiler behind one changes while the file, the corpus string and the
+    provenance digest all stay identical -- so a ranking would promise to
+    replay on a Lean that no longer exists. A pin has to name a version that
+    cannot move.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean_module = importlib.import_module('hardy.lean')
+    domain = importlib.import_module('hardy.domain')
+    manifest = b'{"packages": []}'
+
+    service = _Service(domain, lean_module)
+    service.lean_project = tmp_path
+    (tmp_path / 'lake-manifest.json').write_bytes(manifest)
+    service.environment = service.environment.model_copy(
+        update={'lake_manifest_sha256': hashlib.sha256(manifest).hexdigest()}
+    )
+
+    def pinned_with(toolchain):
+        (tmp_path / 'lean-toolchain').write_text(toolchain, encoding='utf-8')
+        return retrieval.LeanSearchSource(service, limits=domain.RunLimits()).identity.pinned
+
+    for immutable in (
+        'leanprover/lean4:v4.32.0\n',
+        'leanprover/lean4:v4.33.0-rc1',
+        'leanprover/lean4:nightly-2026-01-15',
+    ):
+        assert pinned_with(immutable), immutable
+    for movable in (
+        'leanprover/lean4:stable',
+        'leanprover/lean4:nightly',
+        'stable',
+        'my-local-toolchain',
+    ):
+        assert not pinned_with(movable), movable
+
+
+def test_two_rankings_at_once_cannot_each_spend_the_whole_budget() -> None:
+    """`rank` read `_spent`, ran the sources, then wrote it back. Two MCP calls
+    arriving together both read the same figure before either wrote, so each
+    admitted sources against a budget the other was already spending. The
+    staged transport gates its dispatch; the MCP server does not.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    domain = importlib.import_module('hardy.domain')
+    import threading
+
+    started = threading.Barrier(2, timeout=5)
+    ticks = iter(float(tick) for tick in range(0, 200, 4))
+    guard = threading.Lock()
+
+    class Concurrent:
+        identity = _pinned(retrieval)
+        worst_case_seconds = 4.0
+
+        def search(self, goal, limit):
+            # Both threads are inside `rank` before either finishes, which is
+            # exactly the interleaving the budget has to survive.
+            started.wait()
+            return (_record('Nat.add_comm'),)
+
+    def clock():
+        with guard:
+            return next(ticks)
+
+    retriever = retrieval.PremiseRetriever(
+        sources=[Concurrent()], limits=domain.RunLimits(retrieval_seconds=4), clock=clock
+    )
+    results: list[object] = []
+
+    def rank():
+        try:
+            results.append(retriever.rank('_ + _ = _ + _'))
+        except threading.BrokenBarrierError:
+            # The loser never reaches the source, which is the point.
+            results.append(None)
+
+    threads = [threading.Thread(target=rank) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    admitted = [item for item in results if item is not None and not item.budget_exhausted]
+    assert len(admitted) == 1, 'both calls were admitted against a budget sized for one'
+
+
 def test_the_lean_source_reports_an_unsuccessful_search_as_no_answer() -> None:
     """`#find` that timed out returned no results, which is not the same as
     there being none -- and the ranking must not present it as the latter."""
