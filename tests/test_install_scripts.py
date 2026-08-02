@@ -122,6 +122,42 @@ def test_powershell_installer_parses(script: Path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+# Tools the scripts drive, which need not be installed on whatever machine is
+# running the tests. Everything else a script calls must resolve.
+EXTERNAL_TOOLS = ["winget", "elan", "lake", "npm", "claude", "pdflatex", "initexmf", "tar", "git", "powershell"]
+
+
+@pytest.mark.parametrize("script", POWERSHELL_SCRIPTS, ids=lambda p: p.name)
+def test_every_command_a_windows_script_calls_exists(script: Path):
+    """PowerShell resolves commands when it reaches them, not when it parses.
+
+    So deleting a function while leaving its callers behind is a clean parse and
+    a script that dies at run time, on whichever branch happens to reach it —
+    which is how the updater lost `Update-Source` and `Update-Environment` while
+    keeping both calls, on the one path CI does not exercise.
+    """
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+    allowed = ", ".join(f"'{tool}'" for tool in EXTERNAL_TOOLS)
+    command = (
+        "$e = $null; $t = $null; "
+        f"$ast = [System.Management.Automation.Language.Parser]::ParseFile('{script}', [ref]$t, [ref]$e); "
+        f"$external = @({allowed}); "
+        "$defined = @($ast.FindAll({ param($n) "
+        "$n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) "
+        "| ForEach-Object { $_.Name }); "
+        "$missing = @($ast.FindAll({ param($n) "
+        "$n -is [System.Management.Automation.Language.CommandAst] }, $true) "
+        "| ForEach-Object { $_.GetCommandName() } | Where-Object { $_ } | Sort-Object -Unique "
+        "| Where-Object { $defined -notcontains $_ -and $external -notcontains $_ "
+        "-and -not (Get-Command $_ -ErrorAction SilentlyContinue) }); "
+        "if ($missing) { $missing -join ', '; exit 1 }"
+    )
+    result = subprocess.run([powershell, "-NoProfile", "-Command", command], capture_output=True, text=True)
+    assert result.returncode == 0, f"{script.name} calls what it never defines: {result.stdout}{result.stderr}"
+
+
 def fake_installation(root: Path) -> dict[str, Path]:
     """Everything an install leaves behind, so removal can be checked against it."""
     places = {
@@ -572,7 +608,9 @@ def publish_installer_bundle(release: Path, marker: str, *, corrupt: bool = Fals
     (release / "SHA256SUMS").write_text(f"{digest}  {bundle.name}\n", encoding="utf-8")
 
 
-def run_standalone(script: str, tmp_path: Path, **environment: str) -> subprocess.CompletedProcess:
+def run_standalone(
+    script: str, tmp_path: Path, _arguments: list[str] | None = None, **environment: str
+) -> subprocess.CompletedProcess:
     """Run one installer script with nothing beside it, as a download would be."""
     lonely = tmp_path / "elsewhere/bin"
     lonely.mkdir(parents=True, exist_ok=True)
@@ -581,7 +619,7 @@ def run_standalone(script: str, tmp_path: Path, **environment: str) -> subproces
     # bash would accept things a POSIX shell does not.
     interpreter = "sh" if script == "install.sh" else "bash"
     return subprocess.run(
-        [interpreter, str(lonely / script)], capture_output=True, text=True,
+        [interpreter, str(lonely / script), *(_arguments or [])], capture_output=True, text=True,
         env={
             **os.environ,
             "HOME": str(tmp_path),
@@ -655,6 +693,45 @@ def test_with_neither_a_release_nor_a_repository_the_installer_says_both(tmp_pat
     assert result.returncode != 0
     assert "could not fetch the Hardy installers" in result.stderr
     assert "clone the repository yourself" in result.stderr
+
+
+@posix_only
+@pytest.mark.parametrize("script", ["install.sh", "install-linux.sh"])
+def test_the_installers_are_kept_beside_the_installation_they_manage(tmp_path: Path, script: str):
+    """--prefix is parsed long after the bootstrap has chosen where to put the
+    installers, so the bootstrap has to read it too. Otherwise an update against
+    the requested prefix finds no installers there at all."""
+    release = tmp_path / "release"
+    publish_installer_bundle(release, "ran the release installers")
+    prefix = tmp_path / "custom prefix"
+    with serving(release) as base:
+        result = run_standalone(
+            script, tmp_path, HARDY_RELEASE_BASE_URL=base, HARDY_HOME="",
+            _arguments=["--prefix", str(prefix)],
+        )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (prefix / "installers/scripts/lib/common.sh").exists()
+
+
+@posix_only
+@pytest.mark.parametrize("script", ["install.sh", "install-linux.sh"])
+def test_a_failed_fetch_leaves_the_retained_installers_alone(tmp_path: Path, script: str):
+    """Re-running a downloaded installer over an existing installation must not
+    take away its updater and uninstaller because a download failed. It must not
+    quietly *use* the old ones either — that is the version skew the bundle
+    exists to prevent — so this ends in the repository fallback, and fails
+    there, with the retained copy still on disk."""
+    home = tmp_path / "hardy"
+    retained = home / "installers/scripts/lib"
+    retained.mkdir(parents=True)
+    (retained / "common.sh").write_text("# from the release that is installed\n", encoding="utf-8")
+
+    result = run_standalone(
+        script, tmp_path, HARDY_RELEASE_BASE_URL="http://127.0.0.1:1/unreachable"
+    )
+    assert result.returncode != 0
+    assert (retained / "common.sh").read_text(encoding="utf-8").startswith("# from the release")
+    assert not (home / "installers.new").exists()
 
 
 @posix_only
@@ -803,6 +880,31 @@ def test_a_checkout_that_cannot_be_imported_is_still_a_checkout(tmp_path: Path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == str(tree)
+
+
+@posix_only
+def test_a_checkout_whose_path_needs_encoding_is_still_found(tmp_path: Path):
+    """pip records the tree as a file URL, so a space, a `#`, or anything
+    non-ASCII arrives percent-encoded. Slicing the prefix off leaves a path that
+    does not exist, and the updater would call the checkout a wheel install."""
+    tree = tmp_path / "hardy checkout#1"
+    tree.mkdir()
+    (tree / "pyproject.toml").write_text('[project]\nname = "hardy-prover"\n', encoding="utf-8")
+    venv = environment_with_metadata(tmp_path, editable_at=tree)
+    result = subprocess.run(
+        [str(venv / "bin/python"), "-c", update_probe()], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == str(tree)
+
+
+def test_both_updaters_classify_an_installation_the_same_way():
+    """The POSIX and Windows updaters embed the same probe, because there is
+    nowhere for the two of them to share one. Identical is the only version of
+    that which stays true."""
+    windows = (SCRIPTS / "update-windows.ps1").read_text(encoding="utf-8")
+    embedded = windows.split("$probe = @'\n", 1)[1].split("\n'@\n", 1)[0]
+    assert embedded == update_probe(), "the two copies of the install-classifying probe have drifted"
 
 
 @posix_only

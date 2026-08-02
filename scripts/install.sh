@@ -24,16 +24,20 @@ if [ -d "$script_directory" ]; then directory="$(cd "$script_directory" && pwd)"
 # manifest, which is never a reason to go and install something else.
 hardy_fetch_installers() {
 	target="$1"
+	staging="$target.new"
 	command -v curl >/dev/null 2>&1 || return 1
-	rm -rf "$target"
-	mkdir -p "$target"
-	curl -fsSL "$release_base/SHA256SUMS" -o "$target/SHA256SUMS" 2>/dev/null || return 1
-	curl -fsSL "$release_base/hardy-installers.tar.gz" -o "$target/bundle.tar.gz" 2>/dev/null || return 1
-	expected="$(sed -n 's/^\([0-9a-fA-F]\{64\}\)[ *]*hardy-installers\.tar\.gz$/\1/p' "$target/SHA256SUMS")"
+	# Staged beside the retained copy, never over it. Re-running the installer
+	# on an existing installation must not leave it without its updater and
+	# uninstaller because a download failed halfway.
+	rm -rf "$staging"
+	mkdir -p "$staging"
+	curl -fsSL "$release_base/SHA256SUMS" -o "$staging/SHA256SUMS" 2>/dev/null || return 1
+	curl -fsSL "$release_base/hardy-installers.tar.gz" -o "$staging/bundle.tar.gz" 2>/dev/null || return 1
+	expected="$(sed -n 's/^\([0-9a-fA-F]\{64\}\)[ *]*hardy-installers\.tar\.gz$/\1/p' "$staging/SHA256SUMS")"
 	if command -v sha256sum >/dev/null 2>&1; then
-		actual="$(sha256sum "$target/bundle.tar.gz" | cut -d' ' -f1)"
+		actual="$(sha256sum "$staging/bundle.tar.gz" | cut -d' ' -f1)"
 	elif command -v shasum >/dev/null 2>&1; then
-		actual="$(shasum -a 256 "$target/bundle.tar.gz" | cut -d' ' -f1)"
+		actual="$(shasum -a 256 "$staging/bundle.tar.gz" | cut -d' ' -f1)"
 	else
 		printf 'error: neither sha256sum nor shasum is here, so the installers cannot be verified\n' >&2
 		return 2
@@ -42,18 +46,34 @@ hardy_fetch_installers() {
 		printf 'error: the installer bundle at %s does not match that release manifest\n' "$release_base" >&2
 		return 2
 	fi
-	tar xz -C "$target" -f "$target/bundle.tar.gz" 2>/dev/null || return 1
-	rm -f "$target/bundle.tar.gz"
+	tar xz -C "$staging" -f "$staging/bundle.tar.gz" 2>/dev/null || return 1
+	rm -f "$staging/bundle.tar.gz"
+	[ -e "$staging/scripts/install-linux.sh" ] || return 1
+	rm -rf "$target"
+	mv "$staging" "$target"
 	# Kept, and handed to the installer that runs next. It names the versioned
 	# assets, so the wheel comes from the release these scripts came from even
 	# if another is published while prerequisites are being installed.
 	export HARDY_RELEASE_MANIFEST="$target/SHA256SUMS"
-	[ -e "$target/scripts/install-linux.sh" ] || return 1
 }
 
 if [ ! -e "$directory/install-linux.sh" ]; then
 	HARDY_REPO_URL="${HARDY_REPO_URL:-https://github.com/charlesmsiegel/hardy}"
+	# --prefix is parsed by the shared argument parser, long after this; but the
+	# installers are kept beside the installation they manage, so the bootstrap
+	# has to honour it too or an update would later look for them under the
+	# default prefix and find nothing.
 	hardy_home="${HARDY_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
+	take_prefix=0
+	for argument in "$@"; do
+		if [ "$take_prefix" = 1 ]; then
+			hardy_home="$argument"
+			take_prefix=0
+			continue
+		fi
+		if [ "$argument" = "--prefix" ]; then take_prefix=1; fi
+	done
+	export HARDY_HOME="$hardy_home"
 	if [ -n "${HARDY_RELEASE_BASE_URL:-}" ]; then
 		release_base="${HARDY_RELEASE_BASE_URL%/}"
 	elif [ -n "${HARDY_VERSION:-}" ]; then
@@ -71,7 +91,8 @@ if [ ! -e "$directory/install-linux.sh" ]; then
 	# where main's installers and a released wheel need not be. Fetched afresh
 	# every time — the bundle is a few kilobytes, and a kept copy would be last
 	# release's installers reaching for this release's wheel.
-	source_root="$hardy_home/installers"
+	installers="$hardy_home/installers"
+	source_root=""
 	status=0
 	if [ -n "${HARDY_REPO_REF:-}" ]; then
 		# A ref names a branch or a tag, which only the repository serves. It
@@ -81,10 +102,15 @@ if [ ! -e "$directory/install-linux.sh" ]; then
 		named_a_release=0
 	else
 		printf '==> Fetching the Hardy installers from %s\n' "$release_base"
-		hardy_fetch_installers "$source_root" || status=$?
+		if hardy_fetch_installers "$installers"; then source_root="$installers"; else status=$?; fi
 	fi
 	if [ "$status" != 0 ]; then
-		rm -rf "$source_root"
+		# Only the staging directory. A retained copy from an earlier install is
+		# this installation's updater and uninstaller, and a failed download is
+		# no reason to take those away — but it is not used either, since last
+		# release's installers reaching for this release's wheel is the skew the
+		# bundle exists to prevent.
+		rm -rf "$installers.new"
 		if [ "$status" = 2 ] || [ "$named_a_release" = 1 ]; then
 			printf 'error: could not install the release at %s, and will not install something else in its place.\nUnset HARDY_VERSION to take whatever the repository has instead.\n' "$release_base" >&2
 			exit 1
@@ -94,7 +120,7 @@ if [ ! -e "$directory/install-linux.sh" ]; then
 	# The repository: before the first release exists, and whenever a ref was
 	# named. Always re-fetched, so that changing HARDY_REPO_URL or HARDY_REPO_REF
 	# cannot silently reinstall the previous one.
-	if [ ! -e "$source_root/scripts/install-linux.sh" ]; then
+	if [ -z "$source_root" ]; then
 		HARDY_REPO_REF="${HARDY_REPO_REF:-main}"
 		source_root="$hardy_home/src"
 		printf '==> Fetching Hardy into %s (ref %s)\n' "$source_root" "$HARDY_REPO_REF"
