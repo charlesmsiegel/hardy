@@ -372,3 +372,33 @@ def test_a_cell_that_reports_success_after_being_signalled_is_not_accepted(
         assert [item.source for item in session.accepted()] == ["a"]
     finally:
         session.close()
+
+
+def test_escalating_does_not_block_the_caller_on_a_deaf_kernel(cas_session, tmp_path) -> None:
+    """`escalate` runs on the terminal's own event loop. The graceful teardown
+    asks with SIGTERM and waits two seconds before SIGKILL, which would freeze
+    the UI for exactly as long as this press was made to avoid waiting."""
+    session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
+    spent: list[float] = []
+    try:
+        session.execute("a")
+        ready = tmp_path / "cell-running"
+
+        def press_twice() -> None:
+            _press_when_running(session, ready)
+            started = time.monotonic()
+            assert session.escalate() is True
+            spent.append(time.monotonic() - started)
+
+        threading.Thread(target=press_twice, daemon=True).start()
+
+        record = session.execute(f"deafterm {ready}")
+
+        assert record.status == "interrupted"
+        assert session.state == "dead"
+        assert spent, "the second press never landed"
+        # SIGKILL cannot be caught, so this is the cost of reaping a child --
+        # not the two seconds a SIGTERM-first teardown spends being polite.
+        assert spent[0] < 1.0
+    finally:
+        session.close()

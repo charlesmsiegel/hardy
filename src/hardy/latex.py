@@ -27,13 +27,30 @@ def _escalate_after_grace(child, entry, settled) -> None:
     while not entry.interrupted.is_set() and not entry.escalated.is_set():
         if settled.wait(0.05):
             return
-    # The second press skips the grace: that is what it buys.
-    if not entry.escalated.is_set() and settled.wait(INTERRUPT_GRACE_SECONDS):
+    # The grace, in slices. A single `settled.wait(GRACE)` is not woken by the
+    # second press -- nothing sets `settled` -- so a press arriving inside it
+    # would sit out the whole first-press grace it was pressed to skip.
+    if _settled_within(settled, entry, INTERRUPT_GRACE_SECONDS):
         return
     terminate_group(child)
-    if settled.wait(0 if entry.escalated.is_set() else 2):
+    if _settled_within(settled, entry, 2):
         return
     kill_group(child)
+
+
+def _settled_within(settled, entry, seconds: float) -> bool:
+    """Whether the compile ended within `seconds`. Cut short by a second press.
+
+    Polled rather than waited in one go, because the thing that would end the
+    wait early -- `entry.escalated` -- is an event nobody sets `settled` for.
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if entry.escalated.is_set():
+            return False
+        if settled.wait(min(0.05, max(0.0, deadline - time.monotonic()))):
+            return True
+    return settled.is_set()
 
 
 # Fragments are `\input` from one document, and that document is what a
