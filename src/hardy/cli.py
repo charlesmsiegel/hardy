@@ -649,6 +649,12 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     if not math.isfinite(args.threshold) or not 0.0 <= args.threshold <= 1.0:
         print("--threshold must be a fraction between 0 and 1")
         return 2
+    # Checked here rather than left to `measure_import_cost`, which only sees
+    # it after `probe_toolchain` has already started a child that can sit on
+    # the full deadline before the count is ever rejected.
+    if args.repeats < 1:
+        print("--repeats must be at least 1")
+        return 2
     project = config.lean_project if config.lean_project is not None else Path.cwd()
     # A deleted project makes `Popen` raise `FileNotFoundError` for the working
     # directory, which would otherwise be reported as a missing Lean; a project
@@ -662,7 +668,12 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     # would misattribute a `--lean-command` pointing at a different compiler.
     # Returns None when the toolchain cannot be identified, and the report then
     # says so rather than naming a version nobody verified.
-    environment = latency.probe_toolchain(
+    # Before any child starts. The probe elaborates whatever modules the user
+    # named, and elaboration runs arbitrary code with this process's filesystem
+    # and network access; nothing here is isolated, and AGENTS.md is explicit
+    # that Hardy must never let that pass unsaid.
+    print(f"WARNING: {WARNING}")
+    probe = latency.probe_toolchain(
         config.lean_command, project, timeout_seconds=args.timeout
     )
     try:
@@ -672,7 +683,8 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
             cwd=project,
             timeout_seconds=args.timeout,
             repeats=args.repeats,
-            environment=environment,
+            environment=probe.identity,
+            identity_note=probe.reason,
         )
     except FileNotFoundError:
         print(f"Lean executable not found: {config.lean_command[0]}")
