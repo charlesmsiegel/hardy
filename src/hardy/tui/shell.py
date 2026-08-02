@@ -546,6 +546,20 @@ class Shell:
                 if self._commands_running == 0:
                     self._command_stopping = False
                 self._commands_running += 1
+                # Lifted here, synchronously, and not inside `_run_command`:
+                # an Escape typed behind this Enter is resolved in the very
+                # same input batch, before the scheduled task runs a line of
+                # its body. Lifting it there would erase the stop that press
+                # had already recorded -- against this very command -- and the
+                # cell would start as though nothing had been pressed.
+                #
+                # Only a command that takes the session over. The safe-in-flight
+                # ones are exactly those allowed to run *during* a cancelled
+                # turn, so lifting the stop for `/status` would let a tool call
+                # admitted before the press spawn its child after it.
+                resume = getattr(self._state.session, "resume_work", None)
+                if resume is not None and not outcome.command.safe_in_flight:
+                    resume()
             event.app.create_background_task(self._run_command(outcome))
 
         @keys.add("escape", eager=True)
@@ -721,17 +735,8 @@ class Shell:
         if outcome.kind in {"unknown", "refused"}:
             self.write(outcome.message, style="error")
             return
-        resume = getattr(self._state.session, "resume_work", None)
-        # Only a command that takes the session over. A stop stays in force
-        # after an Esc so that work admitted a moment earlier cannot start its
-        # child behind the press, and the safe-in-flight commands are exactly
-        # the ones allowed to run *during* a cancelled turn -- so `/status`
-        # lifting the stop would let that admitted tool spawn and run to its
-        # timeout after all. Something must lift it, or the next `/cas` cell
-        # would be stopped by a press aimed at the last one; a command that
-        # starts new work is the right thing to lift it.
-        if resume is not None and not outcome.command.safe_in_flight:
-            resume()
+        # The stop was lifted by `_submit_key`, before any Escape in the same
+        # input batch could be resolved. Doing it here would undo that press.
         try:
             self._state = await outcome.command.handler(self, outcome.argument, self._state)
         except Exception as error:  # noqa: BLE001 - a bad command must not end the session

@@ -190,3 +190,38 @@ def test_a_latex_compile_that_refuses_the_interrupt_is_still_stopped(tmp_path: P
     assert "interrupted" in result.output
     # It waited out the grace and no more -- not the 300s compile timeout.
     assert 1.5 <= elapsed < 30
+
+
+def test_a_latex_compile_deaf_to_sigterm_is_killed(tmp_path: Path):
+    """A watcher that stopped at SIGTERM left the main thread blocked in
+    `communicate` until the compile timeout anyway -- so the press bought
+    nothing against the child most in need of stopping."""
+    import threading
+    import time
+
+    from hardy import process
+
+    ready = tmp_path / "tex-stubborn"
+    source = (
+        "\\documentclass{article}\n"
+        f"% slow: 300\n% deaf: sigterm\n% ready: {ready}\n"
+        "\\begin{document}Fine.\\end{document}\n"
+    )
+
+    def press_escape() -> None:
+        end = time.monotonic() + 30
+        while time.monotonic() < end and not ready.exists():
+            time.sleep(0.01)
+        assert ready.exists(), "the fake LaTeX child never started"
+        assert process.interrupt_children() == 1
+
+    threading.Thread(target=press_escape, daemon=True).start()
+
+    started = time.monotonic()
+    result = LatexTools(COMMAND, timeout=300).check(source)
+    elapsed = time.monotonic() - started
+
+    assert not result.ok
+    assert "interrupted" in result.output
+    # Grace, then SIGTERM, then SIGKILL -- and nowhere near the 300s timeout.
+    assert 1.5 <= elapsed < 30

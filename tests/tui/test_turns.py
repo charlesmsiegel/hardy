@@ -703,6 +703,8 @@ class CasCommandSession(Streams):
         self.interrupted = 0
         self.escalated = 0
         self.resumed = 0
+        # Order matters as much as counts: a resume *after* the press erases it.
+        self.events: list[str] = []
         self.abandoned: list[str] = []
         # `cas.session.interrupt` is what the cancellation path reaches for,
         # and `interrupt_work` is what Esc reaches for. Both stop the cell, so
@@ -722,6 +724,7 @@ class CasCommandSession(Streams):
 
     def _interrupt_cell(self) -> bool:
         self.interrupted += 1
+        self.events.append("interrupt")
         self.release.set()
         return True
 
@@ -736,6 +739,7 @@ class CasCommandSession(Streams):
 
     def resume_work(self) -> None:
         self.resumed += 1
+        self.events.append("resume")
 
     def send(self, text: str) -> str:
         return "unused"
@@ -920,3 +924,22 @@ async def test_ctrl_c_during_a_cell_interrupts_the_worker(settings):
         ],
     )
     assert session.interrupted == 1
+
+
+async def test_escape_in_the_same_batch_as_the_command_is_not_erased(settings):
+    """Enter on `/cas` and Esc resolve in one input batch, before the scheduled
+    handler runs a line. Lifting the stop inside the handler would erase the
+    press that had already been recorded against this very command, and the
+    cell would start as though nothing had been pressed."""
+    session = CasCommandSession()
+    await drive(
+        settings,
+        session,
+        [
+            ("/cas 1+1\r\x1b ", lambda: session.interrupted == 1),
+            ("\x03", None),
+        ],
+    )
+    # The stop is lifted when the command is admitted, and the press lands
+    # after it. The other order leaves the press with nothing to hold.
+    assert session.events == ["resume", "interrupt"]
