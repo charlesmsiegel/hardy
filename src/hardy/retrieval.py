@@ -77,6 +77,10 @@ MAX_GOAL_CHARACTERS = 512
 RRF_K = 60
 RANKER = "reciprocal-rank-fusion/1"
 
+# How many candidates each source is asked for, per premise the answer holds.
+# Fusion needs to see past the cutoff to find agreement there; see `rank`.
+CANDIDATE_DEPTH = 3
+
 SourceKind = Literal["lean_search", "loogle", "embedding"]
 
 
@@ -178,32 +182,47 @@ class PremiseRanking(FrozenModel):
     premises: tuple[RankedPremise, ...]
     provenance: RetrievalProvenance
     provenance_sha256: str
+    # Every source that was configured actually answered.
+    complete: bool
+    # Every source that answered is pinned, so this order can be replayed.
+    reproducible: bool
     seconds_spent: float
+    # What is left of the run's retrieval budget after this ranking.
+    run_seconds_remaining: float
     budget_exhausted: bool
     observation_truncated: bool = False
     output_artifact: str | None = None
 
-    @property
-    def complete(self) -> bool:
-        """Every source that was configured actually answered."""
-        return all(source.answered for source in self.provenance.sources)
+    @staticmethod
+    def _complete(provenance: RetrievalProvenance) -> bool:
+        return all(source.answered for source in provenance.sources)
 
-    @property
-    def reproducible(self) -> bool:
-        """Every source that answered is pinned, so this order can be replayed.
-
-        Over the sources that answered rather than the ones that changed the
+    @staticmethod
+    def _reproducible(provenance: RetrievalProvenance) -> bool:
+        """Over the sources that answered rather than the ones that changed the
         order: an unpinned search returning nothing still shaped the result, by
         having nothing to add. Calling that replayable would be reproducibility
         by luck.
         """
-        answered = [source for source in self.provenance.sources if source.answered]
+        answered = [source for source in provenance.sources if source.answered]
         return bool(answered) and all(source.identity.pinned for source in answered)
 
     @model_validator(mode="after")
-    def digest_matches_the_record_it_is_taken_over(self) -> PremiseRanking:
+    def claims_match_the_record_they_are_taken_over(self) -> PremiseRanking:
+        """Stored rather than computed on read, and rechecked on every read.
+
+        These two were properties, which is why they never reached a model: a
+        tool answers over `model_dump_json()`, and a Python property is not
+        part of it. Fields carry them across the wire; recomputing them here
+        keeps them derived, so a ranking cannot claim to be replayable any more
+        than it can claim a digest it does not have.
+        """
         if self.provenance_sha256 != self.provenance.digest:
             raise ValueError("provenance_sha256 does not match the provenance it names")
+        if self.complete != self._complete(self.provenance):
+            raise ValueError("`complete` disagrees with the sources the provenance names")
+        if self.reproducible != self._reproducible(self.provenance):
+            raise ValueError("`reproducible` disagrees with the sources the provenance names")
         return self
 
 
@@ -236,9 +255,15 @@ class LeanSearchSource:
         return SourceIdentity(
             name="lean-find",
             kind="lean_search",
+            # `lean_commit` and not only `lean_version`: two builds can display
+            # one version and be different Leans, and `#find` runs in whichever
+            # of them this is. `EnvironmentIdentity` carries the commit for
+            # exactly that reason, so a corpus identity that dropped it would
+            # give two toolchains the same provenance digest.
             corpus=(
-                f"Mathlib {environment.mathlib_revision} / Lean {environment.lean_version} "
-                f"({environment.lake_manifest_sha256})"
+                f"Mathlib {environment.mathlib_revision} / "
+                f"Lean {environment.lean_version} ({environment.lean_commit}) / "
+                f"manifest {environment.lake_manifest_sha256}"
             ),
             pinned=True,
         )
@@ -307,7 +332,15 @@ class LoogleSource:
             raise RetrievalError("Loogle response was not a JSON object")
         if payload.get("error"):
             raise RetrievalError(f"Loogle: {str(payload['error'])[:MAX_SIGNATURE_CHARACTERS]}")
-        return _records_from_hits(payload.get("hits"), limit)
+        hits = payload.get("hits")
+        # A response with no usable hit list is the contract having changed or
+        # broken. Reading it as an empty result would file a protocol failure
+        # under "found nothing", leaving the ranking `complete` and a source
+        # that never answered looking like one that answered emptily. An
+        # actually empty `hits` is still an answer, and passes here.
+        if not isinstance(hits, list):
+            raise RetrievalError("Loogle response carried no `hits` list")
+        return _records_from_hits(hits, limit)
 
 
 def _fetch_url(url: str, timeout: float) -> bytes:
@@ -318,7 +351,7 @@ def _fetch_url(url: str, timeout: float) -> bytes:
         return response.read(MAX_RESPONSE_BYTES + 1)
 
 
-def _records_from_hits(hits: object, limit: int) -> tuple[DeclarationRecord, ...]:
+def _records_from_hits(hits: list, limit: int) -> tuple[DeclarationRecord, ...]:
     """Read hits into declaration records, discarding what does not look like one.
 
     A hit whose name is not a Lean identifier is not a lemma Hardy can go on to
@@ -327,8 +360,6 @@ def _records_from_hits(hits: object, limit: int) -> tuple[DeclarationRecord, ...
     it, and the names that survive are still checked against the real
     environment before they mean anything.
     """
-    if not isinstance(hits, list):
-        return ()
     records = []
     for hit in hits[:MAX_HITS]:
         if not isinstance(hit, dict):
@@ -368,6 +399,15 @@ class PremiseRetriever:
         self._sources = tuple(sources)
         self._limits = limits
         self._clock = clock
+        # Across the retriever's whole life, not one call. A retriever is built
+        # per proving stage and `rank` is called as often as the model likes, so
+        # a budget reset per call would be no budget at all -- a loop could
+        # spend an arbitrary multiple of what the run was frozen under.
+        self._spent = 0.0
+
+    @property
+    def seconds_remaining(self) -> float:
+        return max(0.0, self._limits.retrieval_seconds - self._spent)
 
     def rank(self, goal: str, limit: int = 10) -> PremiseRanking:
         if not 1 <= len(goal) <= MAX_GOAL_CHARACTERS or "\n" in goal or "\r" in goal:
@@ -375,6 +415,11 @@ class PremiseRetriever:
         if not 1 <= limit <= 50:
             raise ValueError("a premise ranking holds between 1 and 50 premises")
 
+        # Deeper than the answer is long. A premise both sources rank just past
+        # the cutoff outscores one that only a single source found -- 2/(60+11)
+        # beats 1/(60+1) -- so truncating each source at `limit` before fusing
+        # would throw away exactly the agreement the fusion exists to find.
+        depth = min(limit * CANDIDATE_DEPTH, MAX_HITS)
         started = self._clock()
         spent = 0.0
         exhausted = False
@@ -386,7 +431,7 @@ class PremiseRetriever:
 
         for source in self._sources:
             identity = source.identity
-            remaining = self._limits.retrieval_seconds - spent
+            remaining = self._limits.retrieval_seconds - self._spent - spent
             if remaining < source.worst_case_seconds:
                 # Refused rather than started and cut short: a source
                 # interrupted halfway has spent the budget and answered nothing.
@@ -407,7 +452,7 @@ class PremiseRetriever:
             detail: str | None = None
             results: tuple[DeclarationRecord, ...] = ()
             try:
-                results = source.search(goal, limit)
+                results = source.search(goal, depth)
             except (RetrievalError, ValueError) as error:
                 detail = str(error)
             seconds = max(0.0, self._clock() - started - spent)
@@ -456,6 +501,7 @@ class PremiseRetriever:
         # Name breaks the tie, so the same answers always fuse to the same order.
         premises.sort(key=lambda premise: (-premise.score, premise.name))
 
+        self._spent += spent
         provenance = RetrievalProvenance(
             goal_sha256=hashlib.sha256(goal.encode("utf-8")).hexdigest(),
             ranker=RANKER,
@@ -466,7 +512,10 @@ class PremiseRetriever:
             premises=tuple(premises[:limit]),
             provenance=provenance,
             provenance_sha256=provenance.digest,
+            complete=PremiseRanking._complete(provenance),
+            reproducible=PremiseRanking._reproducible(provenance),
             seconds_spent=spent,
+            run_seconds_remaining=self.seconds_remaining,
             budget_exhausted=exhausted,
         )
 

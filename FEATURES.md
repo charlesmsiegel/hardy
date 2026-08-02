@@ -330,10 +330,11 @@ Priority labels are sequencing hints:
   Lean's search runs in the environment the run is frozen under, while the public
   Loogle tracks a Mathlib it does not name.
 - **Now (implemented):** retrieval is metered against `retrieval_seconds` like any
-  other run budget — a source that could outlast what is left is never started,
-  and the ranking says which source was skipped rather than returning a shorter
-  list that reads as complete. Wall-clock rather than CPU: a remote index spends
-  its CPU elsewhere, and how long Hardy waits is what Hardy can enforce.
+  other run budget — spent across the run rather than refilled per call, and a
+  source that could outlast what is left is never started. The ranking says which
+  source was skipped, and what remains of the budget, rather than returning a
+  shorter list that reads as complete. Wall-clock rather than CPU: a remote index
+  spends its CPU elsewhere, and how long Hardy waits is what Hardy can enforce.
 - **Later:** a versioned embedding index served by a persistent retrieval service.
   `IndexIdentity` already requires the model, tokenizer, pooling, corpus, and
   index identities of any embedding source, and no source carries one yet.
