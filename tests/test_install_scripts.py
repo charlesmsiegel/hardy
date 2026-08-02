@@ -799,16 +799,39 @@ def test_an_update_replaces_the_installers_it_is_running_out_of(tmp_path: Path):
 
 
 @posix_only
-def test_an_install_with_no_retained_installers_has_none_to_refresh(tmp_path: Path):
-    """A clone install keeps no installers directory, and an update of one must
-    not invent it — nor reach for a release it was never going to install."""
-    result = run_with_common(
-        "stage_installers; commit_installers", tmp_path,
-        HARDY_HOME=str(tmp_path / "hardy"),
-        HARDY_RELEASE_BASE_URL="http://127.0.0.1:1/unreachable",
-    )
+def test_a_first_release_install_has_no_installers_to_displace(tmp_path: Path):
+    """`--from-release` from a checkout skips the bootstrap, so it reaches this
+    with nothing retained yet. It still has to end with the updater and
+    uninstaller on disk: leaving them in the checkout would put them somewhere
+    the user is free to delete."""
+    home = tmp_path / "hardy"
+    release = tmp_path / "release"
+    publish_installer_bundle(release, "release N")
+    with serving(release) as base:
+        result = run_with_common(
+            "stage_installers; commit_installers", tmp_path,
+            HARDY_HOME=str(home), HARDY_RELEASE_BASE_URL=base,
+        )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert not (tmp_path / "hardy/installers").exists()
+    assert (home / "installers/scripts/lib/common.sh").exists()
+    assert not (home / "installers.new").exists()
+
+
+@posix_only
+def test_the_recorded_origin_follows_the_prefix_it_was_asked_for(tmp_path: Path):
+    """--prefix moves HARDY_HOME during argument parsing. A record whose path
+    was fixed before that would be read from the default prefix — some other
+    installation's, or none at all."""
+    elsewhere = tmp_path / "custom"
+    written = run_with_common(
+        f'HARDY_HOME="{elsewhere}"; record_release_origin; printf %s "$(release_origin_file)"',
+        tmp_path, HARDY_REPO_URL="https://example.invalid/fork",
+    )
+    assert written.returncode == 0, written.stderr
+    assert written.stdout == f"{elsewhere}/release-origin"
+    assert (elsewhere / "release-origin").read_text(encoding="utf-8").strip() == (
+        "repo=https://example.invalid/fork"
+    )
 
 
 @posix_only

@@ -152,16 +152,22 @@ check_disk_space() {
 # time so that an install made from a fork is updated from that fork: the
 # updater running later has none of the environment the installer was given, and
 # without this would quietly move the installation to the official repository.
-RELEASE_ORIGIN="$HARDY_HOME/release-origin"
+#
+# Derived when asked for, not stored: --prefix moves HARDY_HOME during argument
+# parsing, and a path fixed before that would point at some other installation's
+# record, or at nothing.
+release_origin_file() { printf '%s/release-origin' "$HARDY_HOME"; }
 
 record_release_origin() {
 	mkdir -p "$HARDY_HOME"
-	printf 'repo=%s\n' "$HARDY_REPO_URL" >"$RELEASE_ORIGIN"
+	printf 'repo=%s\n' "$HARDY_REPO_URL" >"$(release_origin_file)"
 }
 
 recorded_repo_url() {
-	[ -r "$RELEASE_ORIGIN" ] || return 1
-	sed -n 's/^repo=//p' "$RELEASE_ORIGIN" | head -1 | grep . || return 1
+	local record
+	record="$(release_origin_file)"
+	[ -r "$record" ] || return 1
+	sed -n 's/^repo=//p' "$record" | head -1 | grep . || return 1
 }
 
 # The repository to reach for: chosen now, else whatever this installation was
@@ -261,7 +267,6 @@ download_release_asset() {
 # uninstaller looking at release N+1 — the skew the bundle exists to prevent.
 stage_installers() {
 	local target="$HARDY_HOME/installers" staging="$HARDY_HOME/installers.new" bundle
-	[ -d "$target" ] || return 0
 	step "Fetching the installers for this release"
 	# Last run's displaced copy, cleared now rather than at the end: this script
 	# may be running out of the directory about to be replaced.
@@ -281,7 +286,8 @@ stage_installers() {
 commit_installers() {
 	local target="$HARDY_HOME/installers" staging="$HARDY_HOME/installers.new"
 	[ -d "$staging/tree" ] || return 0
-	mv "$target" "$target.previous"
+	# A first install has nothing to displace.
+	if [ -e "$target" ]; then mv "$target" "$target.previous"; fi
 	mv "$staging/tree" "$target"
 	rm -rf "$staging"
 	say "the installers in $target now match the installed release"
@@ -406,6 +412,14 @@ install_released_wheel() {
 	say "installed hardy from $(basename "$wheel")"
 	rm -rf "$directory"
 	record_release_origin
+	# A standalone install was bootstrapped and already has these. A
+	# --from-release install run from a checkout was not, and without them the
+	# installation's updater and uninstaller would live in a checkout that is
+	# free to be deleted or moved.
+	if [ ! -e "$HARDY_HOME/installers/scripts/lib/common.sh" ]; then
+		stage_installers
+		commit_installers
+	fi
 }
 
 ensure_path_entry() {
