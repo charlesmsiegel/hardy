@@ -1,4 +1,5 @@
 import importlib
+import subprocess
 import sys
 import threading
 import time
@@ -332,3 +333,38 @@ def test_the_next_turn_is_allowed_to_run(tmp_path) -> None:
     assert not result.interrupted
     assert result.returncode == 0
     assert result.stdout == 'done\n'
+
+
+def test_a_press_that_reaches_nothing_does_not_discard_a_finished_run(tmp_path) -> None:
+    """A press landing after the child exited but before its registration is
+    dropped used to mark the run interrupted anyway -- throwing away a Lean
+    check that had passed, and reporting that it never finished."""
+    process = importlib.import_module('hardy.process')
+    done = tmp_path / 'finished'
+    spec = process.ProcessSpec(
+        argv=(sys.executable, str(EMITTER), '--stdout', 'done', '--ready', str(done)),
+        cwd=tmp_path,
+        timeout_seconds=10,
+        max_output_bytes=4_096,
+    )
+    entries: list = []
+
+    # Registers a child by hand, exactly as `run_process` does, and lets it
+    # finish before pressing -- which is the window the report describes.
+    child = subprocess.Popen(
+        (sys.executable, str(EMITTER), '--stdout', 'done'),
+        cwd=tmp_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        **process.child_creation(),
+    )
+    with process.tracked(child) as entry:
+        child.communicate()
+        entries.append(entry)
+        assert process.interrupt_children() == 1
+
+    assert not entries[0].interrupted.is_set(), 'a finished run was recorded as stopped'
+
+    # And the ordinary path is unaffected.
+    process.resume_children()
+    assert process.run_process(spec).returncode == 0

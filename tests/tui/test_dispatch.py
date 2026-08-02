@@ -58,3 +58,21 @@ def test_a_turn_in_flight_refuses_cas():
 def test_a_turn_in_flight_still_allows_read_only_commands():
     for text in ("/status", "/help", "/clear", "/exit", "/quit"):
         assert dispatch.classify(text, registry(), turn_running=True).kind == "command", text
+
+
+def test_the_leading_space_escape_hatch_is_refused_in_flight():
+    """It is an ordinary message wearing a different hat, and the busy guard
+    used to sit below it -- so it could start a second turn on top of a running
+    one, and start one on top of a `/cas` cell whose Esc it would then disarm."""
+    outcome = dispatch.classify(" prove something", registry(), turn_running=True)
+    assert outcome.kind == "refused"
+    outcome = dispatch.classify(
+        " prove something", registry(), turn_running=False, command_running=True
+    )
+    assert outcome.kind == "refused"
+
+
+def test_the_leading_space_escape_hatch_still_works_when_idle():
+    outcome = dispatch.classify(" /usr/bin is a path", registry(), turn_running=False)
+    assert outcome.kind == "send"
+    assert outcome.argument == "/usr/bin is a path"

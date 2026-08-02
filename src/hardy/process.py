@@ -119,10 +119,6 @@ def signal_interrupt(child: subprocess.Popen) -> bool:
     to escalate, and every caller in Hardy escalates the same way the timeout
     already did: terminate, then kill.
     """
-    if child.poll() is not None:
-        # Already gone. `poll` also keeps the pid reserved as a zombie until it
-        # is waited on, so what follows cannot land on a recycled pid.
-        return False
     try:
         if os.name == "nt":
             # The group, addressed by the pid of the child that leads it.
@@ -149,11 +145,14 @@ def terminate_group(child: subprocess.Popen) -> None:
     orphaned and unreachable. `child_creation` put the tree in a group of its
     own precisely so it can be addressed as one.
 
+    Deliberately not conditioned on the leader still being alive. A wrapper
+    that takes the signal and exits while the compiler it started ignores it
+    leaves a group with members and no leader -- which is exactly the tree this
+    exists to reach, and checking `poll()` first would skip it.
+
     Windows has no equivalent: killing a process tree there needs a job object,
     which nothing here sets up, so the leader is all `terminate` can reach.
     """
-    if child.poll() is not None:
-        return
     if os.name != "nt":
         try:
             os.killpg(child.pid, signal.SIGTERM)
@@ -168,8 +167,6 @@ def terminate_group(child: subprocess.Popen) -> None:
 
 def kill_group(child: subprocess.Popen) -> None:
     """`terminate_group`, for a tree that did not take SIGTERM either."""
-    if child.poll() is not None:
-        return
     if os.name != "nt":
         try:
             os.killpg(child.pid, signal.SIGKILL)
@@ -257,8 +254,15 @@ def interrupt_children() -> int:
         _STOP_LEVEL = max(_STOP_LEVEL, _ASKED)
         entries = list(_RUNNING)
     for entry in entries:
-        entry.interrupted.set()
+        # Read before signalling, and it decides only the *record*: a child
+        # that had already exited when the press landed finished on its own,
+        # and marking it interrupted would throw away a completed Lean check or
+        # a successful compile and report that it never finished. The signal
+        # still goes out either way, because the group can outlive its leader.
+        running = entry.child.poll() is None
         signal_interrupt(entry.child)
+        if running:
+            entry.interrupted.set()
     return len(entries)
 
 
@@ -275,9 +279,11 @@ def stop_children() -> int:
         _STOP_LEVEL = _INSISTED
         entries = list(_RUNNING)
     for entry in entries:
-        entry.interrupted.set()
-        entry.escalated.set()
+        running = entry.child.poll() is None
         terminate_group(entry.child)
+        if running:
+            entry.interrupted.set()
+            entry.escalated.set()
     return len(entries)
 
 
@@ -382,6 +388,14 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
         interrupted = entry.interrupted.is_set()
         escalated = entry.escalated.is_set()
 
+    if child.poll() is not None and (interrupted or overflow.is_set()):
+        # The leader is gone but Hardy is what stopped this run, so the signal
+        # it took may have been taken by the wrapper alone. One sweep of the
+        # group, for the compiler that ignored it and would otherwise be left
+        # orphaned. Not done after an ordinary clean exit: there the group id
+        # belongs to a pid the system is free to reuse, and nothing is known to
+        # be left in it.
+        terminate_group(child)
     if child.poll() is None:
         # The group, not the leader: a wrapper that exits on SIGTERM while the
         # compiler it started keeps running would leave the work orphaned and
