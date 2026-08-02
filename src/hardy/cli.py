@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
-from . import cas_tools, claude_runtime, doctor
+from . import cas_tools, claude_runtime, doctor, latency
 from . import config as configuration
 from .cas import CasError
 from .cas_export import export_session
@@ -604,6 +604,37 @@ def _find_run_dir(root: Path, run_id: Any) -> Path:
     return candidates[0]
 
 
+DEFAULT_PROBE_TIMEOUT = 300.0
+
+
+def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
+    """Measure the fixed Lean import cost, for the gate in DESIGN.md and #54.
+
+    Runs where the ordinary checks run -- inside the configured Lake project,
+    through the configured Lean command -- because an import cost measured
+    against a different Mathlib is not the cost this harness pays.
+    """
+    imports = tuple(args.imports or ("Mathlib",))
+    total_ms = None if args.total_seconds is None else round(args.total_seconds * 1_000)
+    try:
+        cost = latency.measure_import_cost(
+            imports,
+            argv=(*config.lean_command, "--json"),
+            cwd=config.lean_project if config.lean_project is not None else Path.cwd(),
+            timeout_seconds=args.timeout,
+            repeats=args.repeats,
+        )
+    except FileNotFoundError:
+        print(f"Lean executable not found: {config.lean_command[0]}")
+        return 1
+    except ValueError as error:
+        print(str(error))
+        return 2
+    return latency.report(
+        cost, calls=args.calls, total_ms=total_ms, threshold=args.threshold
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Hardy interactive mathematical research agent")
     parser.add_argument("--config", type=Path, help=f"settings file (default {configuration.default_config_path()})")
@@ -621,6 +652,21 @@ def build_parser() -> argparse.ArgumentParser:
     chat.add_argument("--workspace", type=Path, help=f"workspace directory (default {configuration.DEFAULT_WORKSPACE})")
     check = subparsers.add_parser("doctor", help="check that Lean, LaTeX, and the model are usable")
     check.add_argument("--deep", action="store_true", help="also compile a Mathlib probe file, which can take minutes")
+    # The evidence DESIGN.md and issue #54 defer warm pools until. Separate from
+    # `doctor` because it answers a design question rather than reporting whether
+    # the machine works, and because each probe pays a full Mathlib import.
+    measure = subparsers.add_parser(
+        "latency", help="measure the fixed Lean import cost a warm pool would recover (issue #54)"
+    )
+    measure.add_argument("--import", dest="imports", action="append", metavar="MODULE", help="module to import in the probe (repeatable; default Mathlib)")
+    measure.add_argument("--repeats", type=int, default=latency.DEFAULT_REPEATS, help=f"probes to time (default {latency.DEFAULT_REPEATS})")
+    measure.add_argument("--calls", type=int, help="Lean calls made by an observed run, for a verdict")
+    measure.add_argument("--total-seconds", type=float, help="wall time of that observed run, for a verdict")
+    measure.add_argument("--threshold", type=float, default=latency.DEFAULT_THRESHOLD, help=f"recoverable share that warrants a pool (default {latency.DEFAULT_THRESHOLD})")
+    # Its own bound rather than `lean_timeout`: the probe exists because a
+    # Mathlib import is slow, and the ordinary 30s check timeout would kill
+    # every probe and report the cost as unmeasurable.
+    measure.add_argument("--timeout", type=float, default=DEFAULT_PROBE_TIMEOUT, help=f"seconds one probe may take (default {DEFAULT_PROBE_TIMEOUT:.0f})")
     prove = subparsers.add_parser("prove", help="stage one claim from statement to document")
     prove.add_argument("claim", nargs="?", help="the claim in ordinary language")
     prove.add_argument("--backend", choices=("claude", "codex"), default="claude")
@@ -650,6 +696,8 @@ def main() -> int:
     config = _config(args, parser)
     if args.command == "doctor":
         return doctor.report(doctor.run_checks(config, deep=args.deep))
+    if args.command == "latency":
+        return run_latency(args, config)
     if args.command == "prove":
         return run_prove(args)
     if args.command == "accept":

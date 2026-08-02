@@ -143,8 +143,16 @@ Priority labels are sequencing hints:
   unconfined. Closing it belongs with the deferred process isolation, not here.
 - **Next:** incremental proving with `sorry`-backed sketches while ensuring only
   the final grade requires a hole-free proof.
+- **Now (implemented):** `hardy latency` measures the fixed import cost one Lean
+  call pays — the imports elaborated with no proof body — and, given the call
+  count and wall time of an observed run, reports the share a warm pool would
+  recover: `prelude × (calls − 1)`, capped by the run it is compared against. It
+  gives no verdict without an observed run to compare against, because the
+  missing number is exactly the one that decides the question below.
 - **Later:** persistent REPL sessions, warm worker pools, pristine reset per run,
-  process-death recovery, timeouts, and proof-state snapshot/pickling.
+  process-death recovery, timeouts, and proof-state snapshot/pickling. Deferred
+  until the measurement above says the recovered share is worth the machinery;
+  see issue #54.
 - **Later:** hybrid cheap closers such as `simp`, `omega`, `aesop`, `exact?`, and
   `duper` before spending model tokens.
 
