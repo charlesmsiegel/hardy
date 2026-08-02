@@ -558,6 +558,46 @@ def test_a_genuinely_impossible_run_is_still_refused_on_the_floor():
     assert cost.estimate(calls=100, total_ms=50_000).is_consistent is False
 
 
+def test_a_saving_larger_than_the_run_is_refused_however_cheap_the_floor():
+    """Judging feasibility on the floor alone removed the median's only bound.
+
+    Samples of 1s, 100s, 100s with two calls in a 3s run pass the floor check
+    (2 x 1s fits), while the median-based saving is 100s — reported as 3333%
+    of the run, and warranted. A pool cannot save more time than the run took.
+    """
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(1_000, 100_000, 100_000))
+    estimate = cost.estimate(calls=2, total_ms=3_000)
+    assert estimate.floor_prelude_ms == 2_000
+    assert estimate.recoverable_ms == 100_000
+    assert estimate.is_consistent is False
+    with pytest.raises(ValueError, match="contradict"):
+        estimate.warrants_warm_pool()
+
+    text = "\n".join(describe(cost, calls=2, total_ms=3_000))
+    assert "more time than the run took" in text
+    assert "warranted" not in text
+
+
+def test_a_fractional_deadline_survives_the_report():
+    """The deadline is a censored sample's whole lower bound.
+
+    Rounding rendered `--timeout 0.4` as "deadline 0s" and `1.5` as "2s",
+    misstating both the configuration and the bound it implies.
+    """
+    for seconds, shown in ((0.4, "deadline 0.4s"), (1.5, "deadline 1.5s"), (300.0, "deadline 300s")):
+        cost = ImportCost(imports=("Mathlib",), samples_ms=(1,), timeout_seconds=seconds)
+        assert shown in "\n".join(describe(cost))
+
+
+def test_the_identity_admits_it_does_not_pin_local_sources():
+    """Editing a locally-imported module changes latency while every recorded
+    identity stays byte-identical, so the gap is stated rather than implied."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,), environment=_identity())
+    text = "\n".join(describe(cost))
+    assert "source identity: (unrecorded" in text
+    assert "not local modules" in text
+
+
 def test_the_verdict_line_renders_the_relation_from_exact_values():
     """Widening precision can always be defeated by a close enough threshold.
 
