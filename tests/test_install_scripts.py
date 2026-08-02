@@ -570,18 +570,42 @@ def test_moving_an_installation_to_another_repository_reinstalls_the_wheel(tmp_p
     home = tmp_path / "hardy"
     home.mkdir()
     (home / "release-origin").write_text("repo=https://github.com/charlesmsiegel/hardy\n", encoding="utf-8")
-    body = f'HARDY_HOME="{home}"\nprintf "[%s]" "$(reinstall_arguments)"'
 
-    same = run_with_common(body, tmp_path, HARDY_REPO_URL="https://github.com/charlesmsiegel/hardy")
-    assert same.returncode == 0, same.stderr
-    assert same.stdout == "[]", "an install from the same repository is a plain upgrade"
+    def flag(tool: str, **environment: str) -> str:
+        result = run_with_common(
+            f'HARDY_HOME="{home}"\nprintf "[%s]" "$(reinstall_arguments {tool})"',
+            tmp_path, **environment,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout
 
-    fork = run_with_common(body, tmp_path, HARDY_REPO_URL="https://github.com/someone/hardy")
-    assert fork.returncode == 0, fork.stderr
-    assert fork.stdout in ("[--reinstall]", "[--force-reinstall]"), fork.stdout
+    same = "https://github.com/charlesmsiegel/hardy"
+    assert flag("pip", HARDY_REPO_URL=same) == "[]", "the same repository is a plain upgrade"
+    assert flag("pip") == "[]", "no repository chosen means this installation's own"
 
-    unasked = run_with_common(body, tmp_path)
-    assert unasked.stdout == "[]", "no repository chosen means this installation's own"
+    # Each tool in its own language: handing pip uv's spelling is an unknown
+    # option, and the install dies on a flag rather than on anything real.
+    fork = "https://github.com/someone/hardy"
+    assert flag("pip", HARDY_REPO_URL=fork) == "[--force-reinstall]"
+    assert flag("uv", HARDY_REPO_URL=fork) == "[--reinstall]"
+
+
+@posix_only
+def test_the_reinstall_flag_is_phrased_for_the_tool_that_will_run(tmp_path: Path):
+    """Nothing checks a flag's spelling until the install is underway, so the
+    caller has to name the tool rather than let the helper guess. Guessing from
+    `have uv` is what once handed pip `--reinstall` on a machine where uv was
+    present but the environment had been made by `python -m venv`."""
+    unnamed = run_with_common('reinstall_arguments\nprintf "reached"', tmp_path)
+    assert unnamed.returncode != 0
+    assert unnamed.stdout == "", "an unnamed tool has to stop the install, not carry on"
+    assert "uv" in unnamed.stderr and "pip" in unnamed.stderr
+
+    # The installer asks what built the environment; the updater asks what is on
+    # the machine. Both have to be asked, which is why there are two.
+    tracks = run_with_common('USE_UV=1; environment_installer; USE_UV=0; environment_installer', tmp_path)
+    assert tracks.stdout == "uvpip"
+    assert "update_installer" in (SCRIPTS / "update.sh").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(

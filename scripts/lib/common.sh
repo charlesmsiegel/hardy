@@ -317,12 +317,20 @@ commit_installers() {
 # version is a different wheel, and --upgrade alone would report success and
 # change nothing while the origin record and the installers moved. Used by the
 # installer re-run and by the updater alike.
+#
+# The tool is a parameter because uv and pip spell the same idea differently and
+# the two callers choose between them on different grounds — the installer by
+# what created the environment, the updater by what is on the machine. Guessing
+# here rather than asking is how pip once got handed uv's spelling of the flag.
 reinstall_arguments() {
-	local recorded
+	local recorded tool="${1:-}"
+	case "$tool" in
+	uv | pip) ;;
+	*) fail "reinstall_arguments needs 'uv' or 'pip', not '$tool'" ;;
+	esac
 	recorded="$(recorded_repo_url 2>/dev/null || printf '')"
 	[ "$(release_repo_url)" = "$recorded" ] && return 0
-	# uv and pip spell the same idea differently.
-	if have uv; then printf '%s' --reinstall; else printf '%s' --force-reinstall; fi
+	if [ "$tool" = uv ]; then printf '%s' --reinstall; else printf '%s' --force-reinstall; fi
 }
 
 # `release` unless there is a source tree here to install, which is what a
@@ -415,6 +423,10 @@ environment_install() {
 	fi
 }
 
+# Which of the two environment_install is about to run, for anything that has to
+# phrase an option in that one's language.
+environment_installer() { if [ "$USE_UV" = 1 ]; then printf uv; else printf pip; fi; }
+
 create_environment() {
 	step "Installing Hardy into $VENV"
 	mkdir -p "$HARDY_HOME"
@@ -462,7 +474,7 @@ install_released_wheel() {
 	wheel="$(download_release_asset .whl "$directory")"
 	say "verified $(basename "$wheel") against the release manifest"
 	local reinstall
-	reinstall="$(reinstall_arguments)"
+	reinstall="$(reinstall_arguments "$(environment_installer)")"
 	# shellcheck disable=SC2086  # deliberately unquoted: empty means no flag
 	environment_install $reinstall "$wheel" || fail "could not install $(basename "$wheel") into $VENV"
 	say "installed hardy from $(basename "$wheel")"
