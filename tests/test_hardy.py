@@ -362,6 +362,31 @@ def test_running_out_of_wall_clock_is_not_a_provider_failure(proof_request: Requ
     assert result.terminal_reason == "wall_clock_limit"
 
 
+def test_the_trajectory_records_which_lean_project_ran(tmp_path: Path, proof_request: Request):
+    """`lake env lean` names a command, not the library it resolves imports against.
+
+    Two projects on the same command and different Mathlib revisions produce
+    trajectories that are otherwise identical, so a recorded run could not be
+    attributed to the environment that produced it.
+    """
+    project = tmp_path / "project"
+    project.mkdir()
+    lean = LeanTools(proof_request, (sys.executable, str(Path(__file__).with_name("fake_lean.py"))), project=project)
+    output = tmp_path / "output"
+    run(proof_request, factory([call("submit_proof", {"proof": "by exact True.intro"})]), lean, output, max_turns=2)
+
+    trajectory = json.loads((output / "trajectory.json").read_text())
+    assert trajectory["lean_project"] == str(project)
+
+
+def test_a_trajectory_without_a_lean_project_says_so_rather_than_inventing_one(
+    tmp_path: Path, proof_request: Request, lean: LeanTools
+):
+    """No configured project means Lean ran in the working directory."""
+    run(proof_request, factory([call("submit_proof", {"proof": "by exact True.intro"})]), lean, tmp_path, max_turns=2)
+    assert json.loads((tmp_path / "trajectory.json").read_text())["lean_project"] is None
+
+
 def test_a_provider_that_never_reported_a_count_leaves_the_turn_count_unknown(
     proof_request: Request, lean: LeanTools, tmp_path: Path
 ):

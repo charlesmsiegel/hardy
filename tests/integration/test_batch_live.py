@@ -10,6 +10,13 @@ called -- which is the whole difference between `verified` and
 Billable, so never implicit: `HARDY_LIVE` has to be set on purpose. The marker
 alone would not do, because the hermetic CI job runs `pytest` with no `-m`
 filter and would spend a subscription on every push.
+
+`HARDY_LIVE=1` costs more than money. These tests hand model-written Lean to an
+unsandboxed subprocess, and Lean elaboration runs metaprogram code -- so this is
+the one part of the suite that executes text a model chose, and it belongs in a
+disposable development environment. Hardy says so in every artifact it writes;
+by then the code has already run, so the warning is also emitted before the
+first turn.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import warnings
 from pathlib import Path
 
 import pytest
@@ -25,7 +33,16 @@ from hardy import config as configuration
 from hardy.cli import runtime_factory
 from hardy.lean import LeanTools
 from hardy.models import Request
-from hardy.runner import run
+from hardy.runner import WARNING, run
+
+
+def _executable(command: str) -> str | None:
+    """The Lean command as it will actually be run, or None if it is not there.
+
+    A configured command can be a bare name to find on PATH or a path to a
+    binary, and `shutil.which` answers for both.
+    """
+    return shutil.which(command)
 
 pytestmark = [pytest.mark.live, pytest.mark.real_toolchain]
 
@@ -52,15 +69,27 @@ def live_config() -> configuration.Config:
     record, and reading only `HARDY_MODEL` would quietly bill a different one.
     """
     if os.environ.get("HARDY_LIVE", "").strip().lower() not in ENABLED:
-        pytest.skip("set HARDY_LIVE=1 to spend a subscription on these tests")
+        pytest.skip(
+            "set HARDY_LIVE=1 to spend a subscription on these tests, and to run "
+            f"model-written Lean unsandboxed. {WARNING}"
+        )
     if shutil.which("claude") is None:
         pytest.skip("the Claude Code CLI the agent SDK drives is not installed")
-    if shutil.which("lake") is None:
-        pytest.skip("lake is not installed")
 
     config = configuration.load()
     if config.lean_project is None:
         config = configuration.load(lean_project=ROOT / "lean_project")
+
+    # The configured executable, not `lake`. `lean_command` is a setting, and a
+    # working direct `lean` or a wrapper around one is a supported way to spell
+    # it -- checking for `lake` unconditionally skipped the explicitly requested
+    # suite over a binary this run would never have called.
+    if _executable(config.lean_command[0]) is None:
+        pytest.skip(f"the configured Lean command is not executable: {config.lean_command[0]}")
+
+    # Before the first turn, not only in the artifacts afterwards: by the time a
+    # writeup carries this sentence, the Lean it is warning about has run.
+    warnings.warn(f"live run: {WARNING}", stacklevel=1)
 
     if _mathlib_olean(config.lean_project) is None:
         pytest.skip(f"Mathlib is not built in {config.lean_project}; run `hardy setup`")
@@ -146,8 +175,17 @@ def test_a_real_model_proves_a_real_theorem_through_the_kernel(
 
     trajectory = _trajectory(tmp_path)
     assert trajectory["terminal_reason"] == "verified"
-    assert trajectory["model"] == str(live_config.model)
     assert any(event.get("name") == "submit_proof" for event in trajectory["events"])
+    # What this experiment ran as. A paid result nobody can attribute to a model
+    # and a library is an anecdote: `lake env lean` names a command, and two
+    # projects on different Mathlib revisions answer to it identically.
+    assert trajectory["model"] == str(live_config.model)
+    assert trajectory["backend"] == "claude"
+    assert trajectory["lean_command"] == list(live_config.lean_command)
+    assert trajectory["lean_project"] == str(live_config.lean_project)
+    # The compiler and Mathlib revisions behind that project are not recorded
+    # here yet; FEATURES.md tracks pinning toolchain identities as outstanding.
+    assert _mathlib_olean(live_config.lean_project) is not None
     # The provider ran the loop and said how many turns it took.
     assert isinstance(result.turns, int) and result.turns >= 1
 
