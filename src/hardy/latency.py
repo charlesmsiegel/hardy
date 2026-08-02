@@ -52,10 +52,15 @@ DEFAULT_REPEATS = 3
 DEFAULT_THRESHOLD = 0.25
 
 
-# `Lean (version 4.32.0, commit 8c9756b28d64, Release)`. Both halves are
-# required below: an identity carrying one and inventing the other is the
-# failure this whole helper exists to avoid.
-LEAN_VERSION = re.compile(r"version (?P<version>[^\s,)]+), commit (?P<commit>[0-9a-fA-F]+)")
+# `Lean (version 4.32.0, x86_64-unknown-linux-gnu, commit 8c9756b28d64, Release)`.
+# Matched as two independent fields rather than one pattern: real builds put a
+# target triple between them, and requiring `, commit` to follow the version
+# directly failed on exactly the compilers this is meant to identify -- leaving
+# the identity `unrecorded` beside a perfectly readable manifest.
+# Both halves are still required; an identity carrying one and inventing the
+# other is the failure this whole helper exists to avoid.
+LEAN_VERSION = re.compile(r"version (?P<version>[^\s,)]+)")
+LEAN_COMMIT = re.compile(r"commit (?P<commit>[0-9a-fA-F]+)")
 
 
 def probe_toolchain(
@@ -99,12 +104,14 @@ def probe_toolchain(
         )
     except OSError:
         return None
-    found = LEAN_VERSION.search(f"{version.stdout}\n{version.stderr}")
-    if version.returncode != 0 or found is None:
+    spoken = f"{version.stdout}\n{version.stderr}"
+    found = LEAN_VERSION.search(spoken)
+    commit = LEAN_COMMIT.search(spoken)
+    if version.returncode != 0 or found is None or commit is None:
         return None
     return EnvironmentIdentity(
         lean_version=found.group("version"),
-        lean_commit=found.group("commit"),
+        lean_commit=commit.group("commit"),
         mathlib_revision=revision,
         lake_manifest_sha256=hashlib.sha256(raw).hexdigest(),
     )
@@ -144,14 +151,26 @@ class WarmPoolEstimate(FrozenModel):
         return max(0, self.calls - 1) * self.import_ms
 
     @property
+    def observed_prelude_ms(self) -> int:
+        """Prelude time the observed run actually spent.
+
+        All `calls` of it, not `calls - 1`. The run being described was
+        unpooled -- that is the point of measuring it -- so it paid the prelude
+        on every call including the first. Only the *saving* excludes the first.
+        """
+        return self.calls * self.import_ms
+
+    @property
     def is_consistent(self) -> bool:
         """Whether the prelude and the observed run can describe the same calls.
 
-        Every counted call is assumed to have paid the measured prelude. If
-        that would take longer than the run actually lasted, the assumption is
-        false and no verdict follows from these two numbers.
+        Tested against `observed_prelude_ms`, not `recoverable_ms`. Using the
+        saving here conflated two different quantities and let impossible
+        evidence through: two calls with a 60s prelude inside a 100s run need
+        120s of preludes alone, yet `(2-1) x 60 <= 100` accepted it and
+        reported 60% recoverable.
         """
-        return self.recoverable_ms <= self.total_ms
+        return self.observed_prelude_ms <= self.total_ms
 
     @property
     def recoverable_fraction(self) -> float:
@@ -285,6 +304,22 @@ def measure_import_cost(
     )
 
 
+def _decimal_places(fraction: float, threshold: float, limit: int = 6) -> int:
+    """The fewest decimals that print the share on its true side of the line.
+
+    A fixed precision cannot do this: `.0%` rendered 24.9% as "25%" and `.1%`
+    still renders 24.96% as "25.0%", each printing a number that reads as
+    meeting a threshold the verdict underneath says it missed. Widening until
+    the rounded comparison agrees with the exact one keeps short numbers short
+    and only spends digits where the answer is genuinely close.
+    """
+    exact = fraction >= threshold
+    for places in range(1, limit + 1):
+        if (round(fraction * 100, places) >= round(threshold * 100, places)) == exact:
+            return places
+    return limit
+
+
 def describe(
     cost: ImportCost,
     *,
@@ -363,15 +398,16 @@ def describe(
             "run's own import set."
         )
         return lines
+    # Both percentages share one precision, chosen so the printed share never
+    # reads as meeting a threshold the verdict below says it missed.
+    places = _decimal_places(estimate.recoverable_fraction, threshold)
     lines.append(
         f"a warm pool would recover {estimate.recoverable_ms / 1000:.2f}s "
-        # One decimal, because `.0%` renders 24.9% as "25%" and then prints
-        # "against a 25% threshold: not warranted" underneath it.
-        f"({estimate.recoverable_fraction:.1%} of the run)"
+        f"({estimate.recoverable_fraction:.{places}%} of the run)"
     )
     warranted = estimate.warrants_warm_pool(threshold=threshold)
     verdict = "warranted" if warranted else "not warranted"
-    lines.append(f"against a {threshold:.1%} threshold: {verdict}")
+    lines.append(f"against a {threshold:.{places}%} threshold: {verdict}")
     return lines
 
 
