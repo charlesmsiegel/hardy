@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from hardy import config as configuration
 from hardy.cli import runtime_factory
-from hardy.config import DEFAULT_MODEL
 from hardy.lean import LeanTools
 from hardy.models import Request
 from hardy.runner import run
@@ -30,51 +30,100 @@ from hardy.runner import run
 pytestmark = [pytest.mark.live, pytest.mark.real_toolchain]
 
 ROOT = Path(__file__).parents[2]
-# Long enough for a cold `import Mathlib`, which costs tens of seconds before
-# the first tactic is even read.
-LEAN_TIMEOUT = 180.0
-WALL_SECONDS = 300.0
+# Generous on purpose: a cold page cache turns a single `import Mathlib` into
+# well over a minute, and this budget is a stall guard, not a target. A run that
+# proves the theorem finishes long before it.
+WALL_SECONDS = 900.0
+# Values that mean "yes". `HARDY_LIVE=0` is a conventional way to say no, and
+# every non-empty string is truthy in Python -- so a plain presence check would
+# read a disabling value as an instruction to spend money.
+ENABLED = {"1", "true", "yes", "on"}
 # Terminal reasons that honestly describe a run which produced no proof. A
 # `verified` here would mean the harness graded a false statement as proved.
 HONEST_FAILURES = {"no_proof_submitted", "axioms_rejected", "turn_limit", "wall_clock_limit"}
 
 
-def _lean_project() -> Path:
-    configured = os.environ.get("HARDY_LEAN_PROJECT")
-    return Path(configured) if configured else ROOT / "lean_project"
-
-
 @pytest.fixture(scope="module")
-def live_lean_project() -> Path:
-    if not os.environ.get("HARDY_LIVE"):
+def live_config() -> configuration.Config:
+    """The settings `hardy batch` would run under, confirmed to actually work.
+
+    Hardy's own resolution rather than a private one: a model chosen in
+    `config.toml` is the experimental condition this exercise is supposed to
+    record, and reading only `HARDY_MODEL` would quietly bill a different one.
+    """
+    if os.environ.get("HARDY_LIVE", "").strip().lower() not in ENABLED:
         pytest.skip("set HARDY_LIVE=1 to spend a subscription on these tests")
     if shutil.which("claude") is None:
         pytest.skip("the Claude Code CLI the agent SDK drives is not installed")
     if shutil.which("lake") is None:
         pytest.skip("lake is not installed")
-    project = _lean_project()
-    if not (project / "lake-manifest.json").exists():
-        pytest.skip(f"no built Lean project at {project}; run `hardy setup`")
-    return project
+
+    config = configuration.load()
+    if config.lean_project is None:
+        config = configuration.load(lean_project=ROOT / "lean_project")
+
+    if _mathlib_olean(config.lean_project) is None:
+        pytest.skip(f"Mathlib is not built in {config.lean_project}; run `hardy setup`")
+    return config
 
 
-def _tools(request: Request, project: Path) -> LeanTools:
-    return LeanTools(request, ("lake", "env", "lean"), timeout=LEAN_TIMEOUT, project=project)
+def _mathlib_olean(project: Path) -> Path | None:
+    """The built `Mathlib.olean`, in either layout, or None.
+
+    A `lake-manifest.json` only proves dependencies were *resolved*. This
+    repository's own `real-toolchain` job builds a `lean_project` holding no
+    Mathlib at all, and its manifest looks exactly like a built one -- so a
+    manifest check passes and the billable run then fails every proof attempt
+    on a missing module.
+
+    The artifact rather than an `import Mathlib` elaboration, which was tried
+    first and is the worse guard: it costs 10 seconds against a warm page cache
+    and over 100 against a cold one, so it exceeded the Lean timeout and skipped
+    the whole suite it was added to protect. A probe that refuses the run it is
+    guarding is not a cheaper failure than the one it prevents. This proves the
+    module was built and not that it loads; the run itself is what says that.
+    """
+    direct = project / ".lake" / "build" / "lib" / "lean" / "Mathlib.olean"
+    if direct.exists():
+        return direct
+    # A project that merely depends on Mathlib keeps it under `packages`.
+    return next(iter(project.glob(".lake/packages/*/.lake/build/lib/lean/Mathlib.olean")), None)
 
 
-def _run(request: Request, project: Path, output: Path, **limits):
-    model = os.environ.get("HARDY_MODEL", DEFAULT_MODEL)
-    return run(request, runtime_factory(model), _tools(request, project), output, **limits)
+def _request(declaration: str, claim: str) -> Request:
+    return Request.from_dict(
+        {"declaration": declaration, "informal_claim": claim, "imports": ["Mathlib"]}
+    )
+
+
+def _tools(request: Request, config: configuration.Config) -> LeanTools:
+    return LeanTools(
+        request,
+        config.lean_command,
+        timeout=config.lean_timeout,
+        project=config.lean_project,
+    )
+
+
+def _run(request: Request, config: configuration.Config, output: Path, **limits):
+    return run(request, runtime_factory(str(config.model)), _tools(request, config), output, **limits)
+
+
+def _example() -> Request:
+    return Request.from_dict(
+        json.loads((ROOT / "examples" / "true.json").read_text(encoding="utf-8"))
+    )
 
 
 def _trajectory(output: Path) -> dict:
     return json.loads((output / "trajectory.json").read_text(encoding="utf-8"))
 
 
-def test_a_real_model_proves_a_real_theorem_through_the_kernel(live_lean_project: Path, tmp_path: Path):
+def test_a_real_model_proves_a_real_theorem_through_the_kernel(
+    live_config: configuration.Config, tmp_path: Path
+):
     """Reaching `verified` means the model chose `submit_proof`, not just `check_proof`."""
-    request = Request.from_dict(json.loads((ROOT / "examples" / "true.json").read_text(encoding="utf-8")))
-    result = _run(request, live_lean_project, tmp_path, max_turns=8, wall_seconds=WALL_SECONDS)
+    result = _run(_example(), live_config, tmp_path, max_turns=8, wall_seconds=WALL_SECONDS)
 
     assert result.terminal_reason == "verified"
     assert result.formalization == "kernel verified"
@@ -97,21 +146,21 @@ def test_a_real_model_proves_a_real_theorem_through_the_kernel(live_lean_project
 
     trajectory = _trajectory(tmp_path)
     assert trajectory["terminal_reason"] == "verified"
+    assert trajectory["model"] == str(live_config.model)
     assert any(event.get("name") == "submit_proof" for event in trajectory["events"])
     # The provider ran the loop and said how many turns it took.
     assert isinstance(result.turns, int) and result.turns >= 1
 
 
-def test_a_statement_that_cannot_be_proved_fails_honestly(live_lean_project: Path, tmp_path: Path):
+def test_a_statement_that_cannot_be_proved_fails_honestly(
+    live_config: configuration.Config, tmp_path: Path
+):
     """A false statement must cost a refusal, not a grade."""
-    request = Request.from_dict(
-        {
-            "informal_claim": "Every natural number equals its own successor.",
-            "declaration": "theorem HardyTarget : ∀ n : ℕ, n = n + 1",
-            "imports": ["Mathlib"],
-        }
+    request = _request(
+        "theorem HardyTarget : ∀ n : ℕ, n = n + 1",
+        "Every natural number equals its own successor.",
     )
-    result = _run(request, live_lean_project, tmp_path, max_turns=6, wall_seconds=WALL_SECONDS)
+    result = _run(request, live_config, tmp_path, max_turns=6, wall_seconds=WALL_SECONDS)
 
     assert result.terminal_reason in HONEST_FAILURES
     assert result.formalization == "not formalized"
@@ -124,15 +173,19 @@ def test_a_statement_that_cannot_be_proved_fails_honestly(live_lean_project: Pat
 
 
 def test_a_starved_wall_clock_is_recorded_as_a_budget_not_a_provider_error(
-    live_lean_project: Path, tmp_path: Path
+    live_config: configuration.Config, tmp_path: Path
 ):
-    """Five seconds cannot outlast one `import Mathlib`, so the budget decides the run.
+    """The distinction is between Hardy's own limit and a provider failure.
 
-    The distinction this pins is between Hardy's own limit and a provider
-    failure. `runtime_error` here would blame Anthropic for a deadline Hardy set.
+    `runtime_error` here would blame Anthropic for a deadline Hardy set.
+
+    One second, and not a plausible-looking five: the budget has to be one no
+    environment can meet, or the test measures machine speed and fails on a fast
+    one by verifying the theorem instead. A turn cannot complete inside it --
+    spawning the CLI and reaching the provider costs longer than that on its own,
+    before Lean is asked to load Mathlib.
     """
-    request = Request.from_dict(json.loads((ROOT / "examples" / "true.json").read_text(encoding="utf-8")))
-    result = _run(request, live_lean_project, tmp_path, max_turns=8, wall_seconds=5)
+    result = _run(_example(), live_config, tmp_path, max_turns=8, wall_seconds=1)
 
     assert result.terminal_reason == "wall_clock_limit"
     assert result.proof is None
@@ -142,10 +195,10 @@ def test_a_starved_wall_clock_is_recorded_as_a_budget_not_a_provider_error(
     assert result.turns is None
 
     limits = _trajectory(tmp_path)["limits"]
-    assert limits["wall_seconds"] == 5
+    assert limits["wall_seconds"] == 1
     assert limits["wall_clock_enforced_by"] == "hardy"
     # Hardy cancels the exchange; it does not kill a Lean check already running
     # on a worker thread, and that thread is waited on during shutdown. So the
-    # run overruns its budget, and `elapsed_seconds` says so rather than
+    # run can overrun its budget, and `elapsed_seconds` says so rather than
     # reporting the budget back as if it had been kept.
     assert limits["elapsed_seconds"] >= limits["wall_seconds"]
