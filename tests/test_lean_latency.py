@@ -250,7 +250,7 @@ def test_the_identity_names_the_lean_that_was_actually_invoked(tmp_path: Path):
             output_overflow=False,
         )
 
-    identity = probe_toolchain(("lean",), tmp_path, runner=run)
+    identity = probe_toolchain(("lean",), tmp_path, runner=run).identity
     assert identity is not None
     # The invoked compiler's version, not the staged path's constant.
     assert identity.lean_version == "4.99.0"
@@ -269,14 +269,20 @@ def test_an_unidentifiable_toolchain_yields_no_identity_rather_than_half_of_one(
             stderr="", duration_ms=5, timed_out=False, output_overflow=False,
         )
 
-    # No manifest at all.
-    assert probe_toolchain(("lean",), tmp_path, runner=run) is None
+    # No manifest at all: the reason names the manifest, not the compiler.
+    missing = probe_toolchain(("lean",), tmp_path, runner=run)
+    assert missing.identity is None
+    assert "lake-manifest.json" in missing.reason
 
     (tmp_path / "lake-manifest.json").write_text(
         json.dumps({"packages": [{"name": "mathlib", "rev": "deadbeef"}]}), encoding="utf-8"
     )
-    # Manifest present, but the compiler does not identify itself.
-    assert probe_toolchain(("lean",), tmp_path, runner=run) is None
+    # Manifest present and readable, so blaming it would send the user to the
+    # wrong place: the compiler is what failed to identify itself.
+    mute = probe_toolchain(("lean",), tmp_path, runner=run)
+    assert mute.identity is None
+    assert "named no version and commit" in mute.reason
+    assert "lake-manifest.json" not in mute.reason
 
 
 def test_non_finite_bounds_are_refused_before_probing(tmp_path: Path, capsys, monkeypatch):
@@ -519,6 +525,154 @@ def test_the_observed_run_must_afford_a_prelude_on_every_call():
     assert "warranted" not in text
 
 
+def test_the_contradiction_message_states_the_total_it_actually_compared():
+    """It printed the saving while comparing the observed total.
+
+    With two calls at a 60s prelude in a 100s run it said "is 60.00s, longer
+    than the 100.00s run" — an arithmetic claim that is false on its face.
+    """
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(60_000,))
+    text = "\n".join(describe(cost, calls=2, total_ms=100_000))
+    assert "is 120.00s, longer than the 100.00s run" in text
+
+
+def test_ordinary_probe_noise_is_not_reported_as_an_import_mismatch():
+    """A median is a point estimate, not an exact per-call lower bound.
+
+    Ten calls whose preludes ran at 11s inside a 115s run are compatible, but
+    a 12s median tested exactly declares 120s > 115s and refuses. Feasibility
+    is judged against the fastest probe, which no call can have beaten.
+    """
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(11_000, 12_000, 13_000))
+    assert cost.median_ms == 12_000
+    estimate = cost.estimate(calls=10, total_ms=115_000)
+    assert estimate.floor_ms == 11_000
+    assert estimate.is_consistent is True
+    # The saving still comes from the median, not the floor.
+    assert estimate.recoverable_ms == 108_000
+
+
+def test_a_genuinely_impossible_run_is_still_refused_on_the_floor():
+    """Loosening to the floor must not stop catching real mismatches."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(11_000, 12_000, 13_000))
+    assert cost.estimate(calls=100, total_ms=50_000).is_consistent is False
+
+
+def test_the_verdict_line_renders_the_relation_from_exact_values():
+    """Widening precision can always be defeated by a close enough threshold.
+
+    At a 24.9600001% threshold against a 24.96% share every precision collides,
+    so the report would show two equal numbers above a verdict distinguishing
+    them. The `<` comes from the exact comparison and cannot contradict.
+    """
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(2_496,))
+    text = "\n".join(describe(cost, calls=2, total_ms=10_000, threshold=0.249600001))
+    assert " < " in text
+    assert "not warranted" in text
+
+    warranted = "\n".join(describe(cost, calls=2, total_ms=10_000, threshold=0.1))
+    assert " >= " in warranted
+
+
+def test_a_failed_probe_keeps_one_diagnostic_to_explain_itself(tmp_path: Path):
+    """"3 failed" alone cannot distinguish a typo from a broken toolchain."""
+    def run(spec: ProcessSpec) -> ProcessResult:
+        return ProcessResult(
+            argv=spec.argv,
+            cwd=spec.cwd,
+            returncode=1,
+            stdout='{"severity": "error", "data": "unknown module prefix \'Mathlibb\'"}',
+            stderr="",
+            duration_ms=40,
+            timed_out=False,
+            output_overflow=False,
+        )
+
+    cost = measure_import_cost(
+        ("Mathlibb",), argv=("lean", "--json"), cwd=tmp_path,
+        timeout_seconds=120, repeats=2, runner=run,
+    )
+    assert cost.diagnostic is not None
+    assert "Mathlibb" in cost.diagnostic
+    assert "unknown module prefix 'Mathlibb'" in "\n".join(describe(cost))
+
+
+def test_the_deadline_travels_with_a_censored_measurement(tmp_path: Path):
+    """"Hit the deadline" means something different at 1s than at 300s."""
+    cost = measure_import_cost(
+        ("Mathlib",), argv=("lean", "--json"), cwd=tmp_path,
+        timeout_seconds=300, repeats=1, runner=runner_for([12_000]),
+    )
+    assert cost.timeout_seconds == 300
+    assert "deadline 300s" in "\n".join(describe(cost))
+
+
+def test_too_few_probes_to_exclude_the_cold_start_says_so():
+    """`--repeats 1` measures the cold cache and multiplies it across a run."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(30_000,))
+    text = "\n".join(describe(cost, calls=10, total_ms=400_000))
+    assert "too few for the median to exclude the cold-cache" in text
+    assert "--repeats 3" in text
+
+    enough = ImportCost(imports=("Mathlib",), samples_ms=(30_000, 12_000, 11_000))
+    assert "cold-cache" not in "\n".join(describe(enough, calls=10, total_ms=400_000))
+
+
+def test_the_censored_median_is_labelled_by_what_it_was_taken_over():
+    """Calling it a "median of 2" invites a check against two samples whose
+    own median is 11s, when the reported 12s is the middle of three."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(10_000, 12_000), timeouts=1)
+    text = "\n".join(describe(cost))
+    assert "censored median of 3" in text
+    assert "median of 2" not in text
+
+
+def test_repeats_below_one_is_refused_before_any_child_starts(tmp_path: Path, capsys, monkeypatch):
+    """`measure_import_cost` rejects it only after the toolchain probe has
+    already had a full deadline to stall in."""
+    from hardy import cli
+
+    project = tmp_path / "lean_project"
+    project.mkdir()
+    started = []
+    monkeypatch.setattr(cli.latency, "probe_toolchain", lambda *a, **k: started.append(1))
+    monkeypatch.setattr(cli.latency, "measure_import_cost", lambda *a, **k: started.append(1))
+    args = cli.build_parser().parse_args(["latency", "--repeats", "0"])
+    assert cli.run_latency(args, _config_for(tmp_path, project)) == 2
+    assert "--repeats must be at least 1" in capsys.readouterr().out
+    assert started == []
+
+
+def test_the_unsandboxed_warning_precedes_every_child_process(tmp_path: Path, capsys, monkeypatch):
+    """Elaborating a user-named module runs arbitrary code unisolated, and
+    AGENTS.md forbids letting that pass unsaid."""
+    from hardy import cli
+    from hardy.latency import ImportCost as Cost
+    from hardy.latency import ToolchainProbe
+
+    project = tmp_path / "lean_project"
+    project.mkdir()
+    order = []
+
+    def probe(*a, **k):
+        order.append("probe")
+        return ToolchainProbe(reason="none")
+
+    monkeypatch.setattr(cli.latency, "probe_toolchain", probe)
+    monkeypatch.setattr(
+        cli.latency,
+        "measure_import_cost",
+        lambda *a, **k: (order.append("measure"), Cost(imports=("Mathlib",), samples_ms=(1,)))[1],
+    )
+    args = cli.build_parser().parse_args(["latency"])
+    cli.run_latency(args, _config_for(tmp_path, project))
+    out = capsys.readouterr().out
+    assert "not sandboxed" in out
+    # Printed before either child, not after the numbers.
+    assert out.index("not sandboxed") < out.index("import set")
+    assert order == ["probe", "measure"]
+
+
 def test_a_run_that_exactly_affords_its_preludes_is_still_consistent():
     """The boundary belongs on the accepting side: a run whose whole duration
     was preludes is degenerate but not impossible."""
@@ -538,7 +692,7 @@ def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys,
     project.mkdir()
     seen = {}
 
-    def fake_measure(imports, *, argv, cwd, timeout_seconds, repeats, environment=None, runner=None):
+    def fake_measure(imports, *, argv, cwd, timeout_seconds, repeats, environment=None, identity_note=None, runner=None):
         seen.update(imports=imports, argv=argv, cwd=cwd, repeats=repeats)
         return Cost(imports=imports, samples_ms=(12_000,))
 

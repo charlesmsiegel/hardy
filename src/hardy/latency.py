@@ -63,13 +63,27 @@ LEAN_VERSION = re.compile(r"version (?P<version>[^\s,)]+)")
 LEAN_COMMIT = re.compile(r"commit (?P<commit>[0-9a-fA-F]+)")
 
 
+class ToolchainProbe(FrozenModel):
+    """An identity, or the specific reason there isn't one.
+
+    The reason is carried rather than discarded because the failures are not
+    interchangeable: a missing manifest, a compiler that exits non-zero, and a
+    compiler whose `--version` cannot be parsed each need a different fix, and
+    reporting all three as "no readable lake-manifest.json" sends two of the
+    three users to look in the wrong place.
+    """
+
+    identity: EnvironmentIdentity | None = None
+    reason: str | None = None
+
+
 def probe_toolchain(
     command: tuple[str, ...],
     project: Path,
     *,
     timeout_seconds: float = 60.0,
     runner: Callable[[ProcessSpec], ProcessResult] = run_process,
-) -> EnvironmentIdentity | None:
+) -> ToolchainProbe:
     """Identify the Lean that is about to be probed, or return None.
 
     Deliberately not `cli._environment_identity`, which is where this started
@@ -90,8 +104,10 @@ def probe_toolchain(
         manifest = json.loads(raw)
         mathlib = next(item for item in manifest["packages"] if item["name"] == "mathlib")
         revision = str(mathlib["rev"])
-    except (OSError, ValueError, KeyError, TypeError, StopIteration):
-        return None
+    except OSError:
+        return ToolchainProbe(reason=f"no readable {manifest_path}")
+    except (ValueError, KeyError, TypeError, StopIteration):
+        return ToolchainProbe(reason=f"{manifest_path} names no mathlib package")
     try:
         version = runner(
             ProcessSpec(
@@ -102,18 +118,24 @@ def probe_toolchain(
                 env={},
             )
         )
-    except OSError:
-        return None
+    except OSError as error:
+        return ToolchainProbe(reason=f"{command[0]} could not be run: {error}")
+    if version.timed_out:
+        return ToolchainProbe(reason=f"{command[0]} --version timed out")
+    if version.returncode != 0:
+        return ToolchainProbe(reason=f"{command[0]} --version exited {version.returncode}")
     spoken = f"{version.stdout}\n{version.stderr}"
     found = LEAN_VERSION.search(spoken)
     commit = LEAN_COMMIT.search(spoken)
-    if version.returncode != 0 or found is None or commit is None:
-        return None
-    return EnvironmentIdentity(
-        lean_version=found.group("version"),
-        lean_commit=commit.group("commit"),
-        mathlib_revision=revision,
-        lake_manifest_sha256=hashlib.sha256(raw).hexdigest(),
+    if found is None or commit is None:
+        return ToolchainProbe(reason=f"{command[0]} --version named no version and commit")
+    return ToolchainProbe(
+        identity=EnvironmentIdentity(
+            lean_version=found.group("version"),
+            lean_commit=commit.group("commit"),
+            mathlib_revision=revision,
+            lake_manifest_sha256=hashlib.sha256(raw).hexdigest(),
+        )
     )
 
 
@@ -135,6 +157,10 @@ class WarmPoolEstimate(FrozenModel):
     import_ms: NonNegativeInt
     calls: NonNegativeInt
     total_ms: NonNegativeInt
+    # The fastest prelude observed, used only to test whether the run and the
+    # probe can describe the same calls. Defaults to `import_ms`, so an
+    # estimate built from a bare number behaves as before.
+    floor_ms: NonNegativeInt | None = None
 
     @property
     def recoverable_ms(self) -> int:
@@ -161,16 +187,32 @@ class WarmPoolEstimate(FrozenModel):
         return self.calls * self.import_ms
 
     @property
+    def floor_prelude_ms(self) -> int:
+        """The most conservative reading of what each call must have cost.
+
+        The median is a point estimate over a handful of noisy probes, and
+        treating it as an exact per-call lower bound rejected compatible
+        evidence: a 12s median against ten calls whose preludes happened to
+        run at 11s inside a 115s run fails `120s <= 115s` while nothing is
+        actually wrong. The fastest probe observed is the defensible floor --
+        no call can have imported the same modules faster than the fastest
+        time anyone measured for them.
+        """
+        return self.calls * (self.floor_ms if self.floor_ms is not None else self.import_ms)
+
+    @property
     def is_consistent(self) -> bool:
         """Whether the prelude and the observed run can describe the same calls.
 
-        Tested against `observed_prelude_ms`, not `recoverable_ms`. Using the
-        saving here conflated two different quantities and let impossible
-        evidence through: two calls with a 60s prelude inside a 100s run need
-        120s of preludes alone, yet `(2-1) x 60 <= 100` accepted it and
-        reported 60% recoverable.
+        Tested against the *floor* across all `calls`, which is two corrections
+        to one line. It uses every call, not `calls - 1`: the observed run was
+        unpooled, so it paid the prelude on the first call too, and testing
+        against the saving let impossible evidence through (two calls at a 60s
+        prelude need 120s inside a 100s run, yet `(2-1) x 60 <= 100` passed).
+        And it uses the fastest probe rather than the median, so ordinary
+        measurement noise is not reported as an import mismatch.
         """
-        return self.observed_prelude_ms <= self.total_ms
+        return self.floor_prelude_ms <= self.total_ms
 
     @property
     def recoverable_fraction(self) -> float:
@@ -203,6 +245,17 @@ class ImportCost(FrozenModel):
     # command and project cannot be reproduced or attributed.
     command: tuple[str, ...] = ()
     project: str | None = None
+    # The deadline these probes ran under. A censored sample's whole content is
+    # "at least this long", so a copied report that omits it cannot state its
+    # own lower bound -- "hit the deadline" means something different at 1s
+    # than at 300s.
+    timeout_seconds: float | None = None
+    # One representative complaint from a failed probe. Without it a misspelled
+    # `--import Mathlibb` is indistinguishable from a broken toolchain: both
+    # report "3 failed" and leave the user to re-run Lean by hand to find out
+    # which. Bounded to one line so a wall of Mathlib errors cannot crowd out
+    # the measurement.
+    diagnostic: str | None = None
     # The command and path alone are mutable: `lake env lean` in `/project`
     # says the same thing before and after that project's toolchain advances,
     # while the durations it produces change completely. The pinned identity
@@ -211,6 +264,8 @@ class ImportCost(FrozenModel):
     # faked when it does not, since `hardy latency` must still work against a
     # bare Lean with no Lake project at all.
     environment: EnvironmentIdentity | None = None
+    # Why there is no identity, when there is none.
+    identity_note: str | None = None
 
     @property
     def failures(self) -> int:
@@ -252,7 +307,14 @@ class ImportCost(FrozenModel):
             raise ValueError(
                 "no successful import probe, so there is no measured cost to estimate from"
             )
-        return WarmPoolEstimate(import_ms=median, calls=calls, total_ms=total_ms)
+        return WarmPoolEstimate(
+            import_ms=median,
+            calls=calls,
+            total_ms=total_ms,
+            # The saving is estimated from the median; feasibility is judged
+            # against the fastest probe, so noise is not read as a mismatch.
+            floor_ms=min(self.samples_ms),
+        )
 
 
 def measure_import_cost(
@@ -263,6 +325,7 @@ def measure_import_cost(
     timeout_seconds: float,
     repeats: int = DEFAULT_REPEATS,
     environment: EnvironmentIdentity | None = None,
+    identity_note: str | None = None,
     runner: Callable[[ProcessSpec], ProcessResult] = run_process,
 ) -> ImportCost:
     """Time the prelude by elaborating the imports alone, `repeats` times.
@@ -279,6 +342,7 @@ def measure_import_cost(
     samples: list[int] = []
     timeouts = 0
     errors = 0
+    diagnostic: str | None = None
     for _ in range(repeats):
         elaboration = elaborate(
             source,
@@ -293,6 +357,19 @@ def measure_import_cost(
             timeouts += 1
         else:
             errors += 1
+            if diagnostic is None:
+                # The first complaint, kept whole enough to name a bad import
+                # and short enough not to bury the numbers.
+                first = next(
+                    (
+                        item.message
+                        for item in elaboration.diagnostics
+                        if item.severity == "error"
+                    ),
+                    None,
+                )
+                if first:
+                    diagnostic = first.strip().splitlines()[0][:200]
     return ImportCost(
         imports=imports,
         samples_ms=tuple(samples),
@@ -300,7 +377,10 @@ def measure_import_cost(
         errors=errors,
         command=argv,
         project=str(cwd),
+        timeout_seconds=timeout_seconds,
+        diagnostic=diagnostic,
         environment=environment,
+        identity_note=identity_note,
     )
 
 
@@ -342,16 +422,24 @@ def describe(
     ]
     if cost.environment is None:
         # Named, not omitted: a report with no pinned identity is weaker
-        # evidence, and silence would let a reader assume it had one.
-        lines.append("toolchain identity: (unrecorded — no readable lake-manifest.json)")
+        # evidence, and silence would let a reader assume it had one. The
+        # specific reason travels with it, since a missing manifest and a
+        # compiler that will not identify itself are fixed in different places.
+        lines.append(f"toolchain identity: (unrecorded — {cost.identity_note or 'unknown'})")
     else:
         lines.append(f"lean: {cost.environment.lean_version} ({cost.environment.lean_commit})")
         lines.append(f"mathlib: {cost.environment.mathlib_revision}")
         lines.append(f"lake-manifest sha256: {cost.environment.lake_manifest_sha256}")
     lines.append(f"import set: {imports}")
-    lines.append(
-        f"probes: {len(cost.samples_ms)} ok, {cost.timeouts} timed out, {cost.errors} failed"
+    deadline = (
+        "" if cost.timeout_seconds is None else f" (deadline {cost.timeout_seconds:.0f}s)"
     )
+    lines.append(
+        f"probes: {len(cost.samples_ms)} ok, {cost.timeouts} timed out, "
+        f"{cost.errors} failed{deadline}"
+    )
+    if cost.diagnostic:
+        lines.append(f"first error: {cost.diagnostic}")
     median = cost.median_ms
     if median is None:
         if cost.timeouts:
@@ -367,8 +455,24 @@ def describe(
         else:
             lines.append("no successful probe; the prelude is unmeasured and #54 cannot be decided")
         return lines
-    lines.append(f"prelude (median of {len(cost.samples_ms)}): {median / 1000:.2f}s per Lean call")
+    # Labelled by what the median was actually taken over. With samples of 10s
+    # and 12s plus one timeout the answer is 12s -- the censored middle of
+    # three -- and calling it a "median of 2" invites the reader to check it
+    # against those two samples, whose own median is 11s.
+    counted = len(cost.samples_ms) + cost.timeouts
+    label = "censored median" if cost.timeouts else "median"
+    lines.append(f"prelude ({label} of {counted}): {median / 1000:.2f}s per Lean call")
     lines.append(f"samples: {', '.join(f'{item / 1000:.2f}s' for item in cost.samples_ms)}")
+    if len(cost.samples_ms) < 3:
+        # The first elaboration on a machine also warms the page cache, and the
+        # median can only step over that outlier once there are others to step
+        # to. Below three it is inside the number, and the number is then
+        # multiplied across every call.
+        lines.append(
+            f"caution: {len(cost.samples_ms)} successful probe(s) — too few for the median to "
+            "exclude the cold-cache first elaboration, so the prelude here may be overstated; "
+            "--repeats 3 or more measures the steady state"
+        )
     if calls is None or total_ms is None:
         lines.append("")
         lines.append(
@@ -390,9 +494,13 @@ def describe(
         "pays a different prelude, and counting it here overstates the recovery"
     )
     if not estimate.is_consistent:
+        floor = estimate.floor_ms if estimate.floor_ms is not None else estimate.import_ms
         lines.append(
-            f"{calls} calls each paying a {median / 1000:.2f}s prelude is "
-            f"{estimate.recoverable_ms / 1000:.2f}s, longer than the {total_ms / 1000:.2f}s run "
+            # The observed total, not the saving. Printing `recoverable_ms`
+            # here said "2 calls each paying 60.00s is 60.00s, longer than the
+            # 100.00s run", which is neither true nor even self-consistent.
+            f"{calls} calls each paying at least {floor / 1000:.2f}s is "
+            f"{estimate.floor_prelude_ms / 1000:.2f}s, longer than the {total_ms / 1000:.2f}s run "
             "itself, so these calls did not all pay this prelude -- most likely the probe and "
             "the run do not import the same modules. No verdict follows; re-measure with the "
             "run's own import set."
@@ -407,7 +515,16 @@ def describe(
     )
     warranted = estimate.warrants_warm_pool(threshold=threshold)
     verdict = "warranted" if warranted else "not warranted"
-    lines.append(f"against a {threshold:.{places}%} threshold: {verdict}")
+    # The relation comes from the exact values, not from the digits printed
+    # above them. Widening precision alone can always be defeated -- a
+    # threshold of 24.9600001% against a 24.96% share collides at every
+    # precision -- and then the report shows two equal numbers above a verdict
+    # that distinguishes them. An explicit `>=` or `<` cannot contradict.
+    relation = ">=" if warranted else "<"
+    lines.append(
+        f"{estimate.recoverable_fraction:.{places}%} {relation} "
+        f"{threshold:.{places}%} threshold: {verdict}"
+    )
     return lines
 
 
