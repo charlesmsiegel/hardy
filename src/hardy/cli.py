@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -628,6 +629,14 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     if args.timeout <= 0:
         print("--timeout must be positive")
         return 2
+    # A threshold argparse accepts as a float but that no share can be compared
+    # against meaningfully: negative makes every run "warranted" including one
+    # recovering nothing, NaN fails every comparison so nothing is ever
+    # warranted, and above 1 can never be reached. Each manufactures a verdict
+    # from malformed input rather than from the measurement.
+    if not math.isfinite(args.threshold) or not 0.0 <= args.threshold <= 1.0:
+        print("--threshold must be a fraction between 0 and 1")
+        return 2
     project = config.lean_project if config.lean_project is not None else Path.cwd()
     # A deleted project makes `Popen` raise `FileNotFoundError` for the working
     # directory, which would otherwise be reported as a missing Lean; a project
@@ -636,6 +645,14 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     if not project.is_dir():
         print(f"Lean project directory not found: {project}")
         return 1
+    # Best effort: the pinned Lean and Mathlib identities are what make a
+    # copied result reproducible, but a bare Lean with no Lake manifest is
+    # still a legitimate thing to measure. Recorded when readable, reported as
+    # unrecorded when not — never guessed.
+    try:
+        environment = _environment_identity(config)
+    except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError):
+        environment = None
     try:
         cost = latency.measure_import_cost(
             imports,
@@ -643,6 +660,7 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
             cwd=project,
             timeout_seconds=args.timeout,
             repeats=args.repeats,
+            environment=environment,
         )
     except FileNotFoundError:
         print(f"Lean executable not found: {config.lean_command[0]}")
@@ -680,7 +698,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     measure.add_argument("--import", dest="imports", action="append", metavar="MODULE", help="module to import in the probe (repeatable; default Mathlib)")
     measure.add_argument("--repeats", type=int, default=latency.DEFAULT_REPEATS, help=f"probes to time (default {latency.DEFAULT_REPEATS})")
-    measure.add_argument("--calls", type=int, help="Lean calls made by an observed run, for a verdict")
+    measure.add_argument("--calls", type=int, help="Lean calls in an observed run that imported the probed set, for a verdict")
     measure.add_argument("--total-seconds", type=float, help="wall time of that observed run, for a verdict")
     measure.add_argument("--threshold", type=float, default=latency.DEFAULT_THRESHOLD, help=f"recoverable share that warrants a pool (default {latency.DEFAULT_THRESHOLD})")
     # Its own bound rather than `lean_timeout`: the probe exists because a
