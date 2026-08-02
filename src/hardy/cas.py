@@ -41,7 +41,12 @@ from typing import Any, Literal
 from pydantic import ValidationError, model_validator
 
 from .domain import FrozenModel, RunLimits
-from .process import child_environment
+from .process import (
+    INTERRUPT_GRACE_SECONDS,
+    child_creation,
+    child_environment,
+    signal_interrupt,
+)
 
 HEADER_BYTES = 10
 # A cell is bracketed by two markers, not trailed by one. A pipe preserves
@@ -53,10 +58,16 @@ SENTINEL_BEGIN = "«hardy-begin:{nonce}»"
 SENTINEL_END = "«hardy-end:{nonce}»"
 BackendName = Literal["sympy", "singular", "macaulay2"]
 
-# Distinguishable non-answers from a read: the deadline passed, or the stream
-# said something that cannot belong to the cell we sent.
+# Distinguishable non-answers from a read: the deadline passed, the user
+# stopped waiting, or the stream said something that cannot belong to the cell
+# we sent.
 TIMED_OUT = object()
 DESYNCHRONISED = object()
+# The interrupt was asked for and the kernel did not answer it within the
+# grace. Distinct from `TIMED_OUT` because the cell did not exceed anything --
+# it was stopped -- and distinct from a kernel that *did* answer, which is the
+# whole point of interrupting rather than timing out.
+INTERRUPTED = object()
 
 
 class CasError(Exception):
@@ -66,11 +77,20 @@ class CasError(Exception):
 class CellOutcome(FrozenModel):
     """What an adapter extracts from one framed reply, before Hardy records it."""
 
-    status: Literal["ok", "error", "kernel_died", "timeout"]
+    status: Literal["ok", "error", "kernel_died", "timeout", "interrupted"]
     stdout: str = ""
     stderr: str = ""
     value_repr: str = ""
     capture_truncated: bool = False
+    # Whether the kernel has to be dropped because of this outcome. An
+    # interrupt is the only status that goes both ways: a kernel that answers
+    # one is still a kernel, with its namespace intact, which is the entire
+    # reason for interrupting instead of timing out -- and one that does not
+    # answer has to be stopped like any other unreachable kernel. This is not
+    # on `CellRecord`: the durable log records what the cell did, and whether
+    # the kernel survived is the session's live state, reported by
+    # `cas_state` and by the restart note on the next cell.
+    kernel_lost: bool = False
 
 
 
@@ -91,7 +111,11 @@ class CellRecord(FrozenModel):
     segment: int
     author: Literal["model", "human"]
     source: str
-    status: Literal["ok", "error", "timeout", "kernel_died"]
+    # "interrupted" is never accepted, and for the same reason "error" is not:
+    # the cell did not finish, and it may well have changed the namespace on
+    # its way to being stopped. What it leaves behind is outside the accepted
+    # set, exactly as an errored cell's is.
+    status: Literal["ok", "error", "timeout", "kernel_died", "interrupted"]
     accepted: bool
     stdout: str = ""
     stderr: str = ""
@@ -548,6 +572,9 @@ class _Kernel:
         self._tail = b""
         self._changed = threading.Condition()
         cwd.mkdir(parents=True, exist_ok=True)
+        # Its own process group (see `child_creation`), so an interrupt reaches
+        # a cell that shelled out as well as the interpreter that started it,
+        # and so nothing aimed at Hardy's own group lands here by accident.
         self.process = subprocess.Popen(
             self.argv,
             cwd=str(cwd),
@@ -556,7 +583,7 @@ class _Kernel:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            **child_creation(),
         )
         for pipe, destination in ((self.process.stdout, self.out), (self.process.stderr, self.err)):
             threading.Thread(target=self._drain, args=(pipe, destination), daemon=True).start()
@@ -649,23 +676,54 @@ class _Kernel:
             return False
         return True
 
-    def read_reply(self, extract: Callable[[bytes], Any], deadline: float) -> Any:
-        """Wait for a complete reply, the kernel's death, or the deadline.
+    def read_reply(
+        self,
+        extract: Callable[[bytes], Any],
+        deadline: float,
+        interrupted: threading.Event | None = None,
+    ) -> Any:
+        """Wait for a complete reply, the kernel's death, the deadline, or a stop.
 
         The extractor sees raw bytes. Decoding first would make a partial
         multi-byte character into a replacement character three bytes wide,
         and a length-prefixed frame would then look complete before it was.
+
+        `interrupted` is set by whoever pressed Esc, on their thread, after the
+        signal has already gone to the child. It does not end the wait by
+        itself: an interrupted kernel is *expected* to answer -- the driver
+        turns the signal into a traceback and replies with it, which is what
+        leaves the namespace intact -- so the reply is still what this is
+        waiting for, only now with a much shorter deadline. `INTERRUPTED` is
+        the answer that no reply came within the grace, and it means the kernel
+        can no longer be spoken to.
         """
         with self._changed:
+            grace_deadline: float | None = None
             while True:
                 found = extract(bytes(self.out))
+                # Checked before the interrupt, so a cell that finished in the
+                # same instant Esc was pressed is reported as what it did
+                # rather than as what the user asked for a moment too late.
                 if found is not None:
                     return found
                 if self._finished >= 2:
                     return None
-                remaining = deadline - time.monotonic()
+                now = time.monotonic()
+                if interrupted is not None and interrupted.is_set() and grace_deadline is None:
+                    grace_deadline = now + INTERRUPT_GRACE_SECONDS
+                stop_at = deadline if grace_deadline is None else min(deadline, grace_deadline)
+                remaining = stop_at - now
                 if remaining <= 0:
+                    # A stop that was asked for is reported as one even if the
+                    # cell's own deadline happened to pass while the kernel was
+                    # being given its grace. The user stopped this; calling it
+                    # a timeout would credit the limit for what Esc did.
+                    if interrupted is not None and interrupted.is_set():
+                        return INTERRUPTED
                     return TIMED_OUT
+                # Nothing notifies this condition when the interrupt flag is
+                # set on another thread, so the poll interval is also what
+                # bounds how long it takes to notice one.
                 self._changed.wait(min(remaining, 0.05))
 
     def stderr_text(self) -> str:
@@ -712,6 +770,10 @@ class _Kernel:
                     last_growth = time.monotonic()
             return bytes(self.err).decode("utf-8", errors="replace")
 
+    def interrupt(self) -> bool:
+        """Ask the cell in flight to stop, leaving the kernel alive to say so."""
+        return signal_interrupt(self.process)
+
     def kill(self) -> None:
         if self.process.poll() is None:
             self.process.terminate()
@@ -752,6 +814,17 @@ class CasSession:
         # staged runs, and MCP. The lock belongs to the resource, not a caller.
         self._lock = threading.RLock()
         self._kernel: _Kernel | None = None
+        # Both read and written without the lock, on purpose: the thread that
+        # holds it is the one inside `execute`, waiting on the kernel, and that
+        # is precisely the thread an interrupt has to reach. An `Event` rather
+        # than a bool because these cross threads with no lock between them.
+        #
+        # `_in_flight` is what makes an interrupt safe to send at all. A signal
+        # delivered between cells lands on a driver blocked reading stdin,
+        # where it has no cell to abandon and nothing to answer with, so
+        # `interrupt` refuses unless a cell is actually out there.
+        self._in_flight = threading.Event()
+        self._interrupted = threading.Event()
         self._records: list[CellRecord] = self._load()
 
     # ------------------------------------------------------------------ log
@@ -1118,15 +1191,39 @@ class CasSession:
             end = SENTINEL_END.format(nonce=nonce).encode()
             kernel.rearm(end)
         frame = self.backend.frame(source, nonce)
-        if not kernel.send(frame):
-            return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
-        deadline = time.monotonic() + limit
-        # The frame, not the source: an echoing interpreter echoes the sentinel
-        # statements bracketing the cell as readily as the cell itself, and a
-        # multi-line cell's second line onward comes back under a continuation
-        # indent rather than a prompt of its own.
-        fed = frame.decode("utf-8", errors="replace")
-        reply = kernel.read_reply(self._extractor(nonce, fed), deadline)
+        # Cleared before the cell is out there, and only then armed: an
+        # interrupt asked for while nothing was running would otherwise stop
+        # the *next* cell, which nobody asked to stop.
+        self._interrupted.clear()
+        self._in_flight.set()
+        try:
+            if not kernel.send(frame):
+                return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
+            deadline = time.monotonic() + limit
+            # The frame, not the source: an echoing interpreter echoes the
+            # sentinel statements bracketing the cell as readily as the cell
+            # itself, and a multi-line cell's second line onward comes back
+            # under a continuation indent rather than a prompt of its own.
+            fed = frame.decode("utf-8", errors="replace")
+            reply = kernel.read_reply(
+                self._extractor(nonce, fed), deadline, self._interrupted
+            )
+        finally:
+            self._in_flight.clear()
+        if reply is INTERRUPTED:
+            # Asked to stop and did not answer within the grace. Whatever it is
+            # doing, it is not talking, and a kernel that cannot be spoken to
+            # cannot be replayed from or built on -- so it goes, exactly as a
+            # timed-out one does. This is the case the interrupt exists to
+            # avoid, not the one it produces when it works.
+            return CellOutcome(
+                status="interrupted",
+                stderr=(
+                    "the cell was interrupted and the kernel did not answer within "
+                    f"{INTERRUPT_GRACE_SECONDS:g}s, so it was stopped and its state is gone"
+                ),
+                kernel_lost=True,
+            )
         if reply is TIMED_OUT:
             return CellOutcome(
                 status="timeout",
@@ -1135,6 +1232,21 @@ class CasSession:
         if reply is None or reply is DESYNCHRONISED:
             # A stream that desynchronised cannot be trusted to be answering
             # the cell we sent, so it is a death rather than a bad answer.
+            if self._interrupted.is_set():
+                # Died *because* it was signalled. Not every interpreter turns
+                # an interrupt into a traceback it can report -- one still
+                # starting up has no handler installed yet, and a REPL may
+                # simply exit -- and a kernel Hardy stopped must not be
+                # recorded as one that fell over on its own. The state is gone
+                # either way; what changes is which cause the record names.
+                return CellOutcome(
+                    status="interrupted",
+                    stderr=(
+                        "the cell was interrupted and the kernel did not survive it, "
+                        "so its state is gone"
+                    ),
+                    kernel_lost=True,
+                )
             return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
         outcome, consumed = reply
         if self.backend.framing == "sentinel":
@@ -1148,7 +1260,67 @@ class CasSession:
             # classification always read a broken M2 cell as "ok".
             status = self.backend.classify(outcome.stdout, stderr_text)
             outcome = outcome.model_copy(update={"stderr": stderr_text, "status": status})
+        if self._interrupted.is_set() and outcome.status != "ok":
+            # The kernel answered after being asked to stop, so it is alive and
+            # its namespace is intact -- but what it answered with is the cell
+            # failing, not the cell's result. A sentinel backend has no status
+            # of its own (`classify` is Hardy's own inference from an error
+            # banner), and the driver's own word for this is already
+            # "interrupted"; either way the honest name for a cell the user
+            # stopped is that it was stopped. A cell that came back "ok"
+            # finished before the signal reached it and keeps its result.
+            outcome = outcome.model_copy(update={"status": "interrupted"})
         return outcome
+
+    def interrupt(self) -> bool:
+        """Stop the cell in flight without stopping the kernel.
+
+        Callable from any thread and takes no lock -- the lock is held by the
+        thread inside `execute`, which is the thread this exists to reach.
+        Reports whether an interrupt was actually asked of a running cell, so
+        the terminal can say what it did rather than claiming to have stopped
+        something that was never running.
+
+        There is a window between the check and the signal in which the cell
+        can finish, so the driver still has to survive a signal arriving with
+        no cell to abandon; that is defence in depth, not the design.
+        """
+        if not self._in_flight.is_set():
+            return False
+        kernel = self._kernel
+        if kernel is None:
+            return False
+        # Set before the signal, not after: the reader must never see a kernel
+        # that has already answered the interrupt while the flag that explains
+        # the answer is still clear.
+        self._interrupted.set()
+        return kernel.interrupt()
+
+    def escalate(self) -> bool:
+        """Stop waiting for the interrupt to be answered, and stop the kernel.
+
+        The second Esc. An interrupt is a request, and a cell deep in a library
+        that never returns to its interpreter will not hear it; this is the way
+        out of waiting for an answer that is not coming. It costs exactly what
+        the timeout costs -- the namespace -- which is why it is the second
+        press and not the first.
+
+        Like `interrupt`, takes no lock and refuses when nothing is running:
+        killing an idle kernel would leave the session holding a dead child it
+        still believed in.
+        """
+        if not self._in_flight.is_set():
+            return False
+        kernel = self._kernel
+        if kernel is None:
+            return False
+        self._interrupted.set()
+        # The reading thread sees both streams end, and -- because the flag is
+        # set -- records the cell as interrupted with the kernel lost, which is
+        # what happened. It drops the kernel itself when it gets there; nothing
+        # here touches `_kernel`, so the two threads cannot race over it.
+        kernel.kill()
+        return True
 
     # -------------------------------------------------------------- budget
 
@@ -1273,7 +1445,13 @@ class CasSession:
                     "export and after a kernel restart. Rerun it printing less, or "
                     "raise cas_output_bytes and rerun it, before building on it.]"
                 )
-            if status in {"timeout", "kernel_died"}:
+            if outcome.kernel_lost:
+                notes = (notes + " " if notes else "") + (
+                    "[the kernel did not answer the interrupt, so it was stopped. "
+                    "Every value in the session is gone; the next cell rebuilds "
+                    "from the accepted ones.]"
+                )
+            if status in {"timeout", "kernel_died"} or outcome.kernel_lost:
                 self._drop_kernel()
             record = CellRecord(
                 seq=len(self._records),
@@ -1481,7 +1659,7 @@ def run_exported_script(
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            **child_creation(),
         )
     except (OSError, ValueError) as error:
         raise CasError(
@@ -1614,7 +1792,11 @@ def replay_in_fresh_kernel(
             if charge is not None:
                 charge(elapsed)
             outcomes.append(outcome)
-            if outcome.status in {"kernel_died", "timeout"}:
+            # `kernel_lost` as well: whatever stopped this kernel, the cells
+            # behind it have no kernel left to run in, and reporting them as
+            # anything other than unreplayed would be a claim about a process
+            # that no longer exists.
+            if outcome.status in {"kernel_died", "timeout"} or outcome.kernel_lost:
                 outcomes.extend([None] * (len(cells) - len(outcomes)))
                 break
     except CasError:

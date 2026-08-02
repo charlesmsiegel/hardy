@@ -121,6 +121,15 @@ def run_cell(source: str, namespace: dict, limit: int) -> dict:
                 if value is not None:
                     namespace["_"] = value
                     value_repr = repr(value)
+        # Hardy asked for this one, so it is reported under its own name rather
+        # than as the cell having gone wrong -- and, far more importantly, it is
+        # *answered*. Catching it here is what makes an interrupt cost one cell
+        # instead of the whole session: the kernel stays up, the namespace keeps
+        # everything the earlier cells put in it, and the parent gets a reply
+        # rather than waiting out a deadline on a child that will never speak.
+        except KeyboardInterrupt:
+            status = "interrupted"
+            traceback.print_exc()
         # A cell is untrusted input, and `exit()` raises SystemExit: the kernel
         # has to outlive whatever a cell does, or one stray call ends a session
         # and every value in it.
@@ -160,16 +169,28 @@ def main() -> None:
 
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
     while True:
-        header = read_exact(stdin, HEADER_BYTES)
-        if header is None:
-            return
         try:
-            length = int(header.decode("ascii"))
-        except ValueError:
-            return
-        payload = read_exact(stdin, length)
-        if payload is None:
-            return
+            header = read_exact(stdin, HEADER_BYTES)
+            if header is None:
+                return
+            try:
+                length = int(header.decode("ascii"))
+            except ValueError:
+                return
+            payload = read_exact(stdin, length)
+            if payload is None:
+                return
+        # An interrupt Hardy sends while a cell is running is caught by
+        # `run_cell`, which is the case that matters. This covers the race at
+        # the edge of it: the cell finished, its reply has been written, and
+        # the signal arrives while this is already blocked waiting for the next
+        # cell. There is nothing to abandon and nothing to report, and dying
+        # here would cost the whole namespace over a signal that arrived a
+        # moment too late. Nothing is lost by resuming -- an idle read has no
+        # partial frame in hand, because the parent sends one cell at a time
+        # and waits for its reply.
+        except KeyboardInterrupt:
+            continue
         try:
             request = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):

@@ -308,3 +308,44 @@ def test_the_script_header_does_not_claim_a_verification_it_cannot_have(
     assert "replayed" in header  # what was checked before this file existed
     assert "export.json" in header  # where the verdict on this file lives
     assert "verified on replay)" not in header
+
+
+def test_the_real_driver_answers_an_interrupt_and_keeps_the_namespace(sympy_session) -> None:
+    """The shape issue #33 is about, against the driver Hardy actually ships.
+
+    The fake kernel proves the parent's half. This proves the child's: a
+    `SIGINT` reaches the interpreter running the cell, `run_cell` turns it into
+    a framed reply instead of dying, and every value the earlier cells put in
+    the namespace is still there afterwards. Without that, the only way to stop
+    a runaway Gröbner basis is the timeout, which takes the session with it.
+    """
+    import threading
+    import time
+
+    sympy_session.execute("x, y = symbols('x y')")
+    sympy_session.execute("kept = expand((x + y)**4)")
+
+    def press_escape() -> None:
+        end = time.monotonic() + 10
+        while time.monotonic() < end:
+            if sympy_session.interrupt():
+                return
+            time.sleep(0.01)
+        raise AssertionError("no cell was ever in flight to interrupt")
+
+    threading.Thread(target=press_escape, daemon=True).start()
+
+    started = time.monotonic()
+    # `time.sleep` is interruptible, which a tight C loop inside a SymPy
+    # routine would not be -- that case escalates, and is covered against the
+    # fake kernel, which can be made deaf on purpose.
+    record = sympy_session.execute("import time\ntime.sleep(300)")
+
+    assert record.status == "interrupted"
+    assert record.accepted is False
+    assert "KeyboardInterrupt" in record.stderr
+    # Neither the 120s cell limit nor the 300s sleep was waited out.
+    assert time.monotonic() - started < 10
+    # The kernel is alive and remembers everything, which is the whole point.
+    assert sympy_session.state != "dead"
+    assert sympy_session.execute("kept").value_repr == "x**4 + 4*x**3*y + 6*x**2*y**2 + 4*x*y**3 + y**4"

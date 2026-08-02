@@ -125,6 +125,10 @@ class LeanToolResult(ToolResult):
     open_goals: tuple[str, ...] = ()
     timed_out: bool = False
     output_overflow: bool = False
+    # A check nobody let finish. Carried here rather than only in the header
+    # text because the trajectory is what an evaluation reads, and "Lean found
+    # nothing wrong" and "Lean was stopped" are not the same observation.
+    interrupted: bool = False
     observation_truncated: bool = False
     source_sha256: str | None = None
 
@@ -148,6 +152,7 @@ class LeanToolResult(ToolResult):
             "open_goals": list(self.open_goals),
             "timed_out": self.timed_out,
             "output_overflow": self.output_overflow,
+            "interrupted": self.interrupted,
             "observation_truncated": self.observation_truncated,
             "source_sha256": self.source_sha256,
         }
@@ -374,7 +379,12 @@ class LeanTools:
 
     def _observe(self, elaboration: Elaboration, source: str) -> LeanToolResult:
         process = elaboration.process
-        if process.timed_out:
+        # Before the timeout, because a run stopped by Esc may well have been
+        # heading for one, and the model must not read "timeout" and conclude
+        # its source is too slow to elaborate when nobody let it try.
+        if process.interrupted:
+            header = f"interrupted after {process.duration_ms / 1000:.3f}s; Lean did not finish"
+        elif process.timed_out:
             header = f"timeout after {self.timeout:.1f}s"
         elif process.output_overflow:
             header = f"output limit of {self.max_output_bytes} bytes reached"
@@ -394,6 +404,7 @@ class LeanTools:
             open_goals=elaboration.open_goals,
             timed_out=process.timed_out,
             output_overflow=process.output_overflow,
+            interrupted=process.interrupted,
             observation_truncated=truncated,
             source_sha256=elaboration.source_sha256,
         )

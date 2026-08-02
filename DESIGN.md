@@ -142,6 +142,17 @@ mutated the namespace, so a live session and a clean script can disagree
 without anything saying so. A rebuild that reconstructs different values
 poisons the session rather than reporting success.
 
+Persistence is also why the kernel is interrupted rather than timed out. A cell
+sent under the wrong monomial ordering can run far longer than intended, and
+killing the kernel to stop it discards every value the session accumulated —
+paying for one mistaken cell with all of them. Esc signals the child instead,
+and the driver answers the signal rather than dying, so the cell stops and the
+namespace stands. What that cannot promise is obedience: a cell inside a C loop
+that never returns to its interpreter will not see the signal, so an interrupt
+that goes unanswered within a short grace escalates to exactly what the timeout
+did. An interrupted cell is never accepted — it did not finish, and like an
+errored one it may already have changed the namespace.
+
 Replaying the cells is not the same claim as the script working, so export also
 runs the file it just published, as a subprocess, and compares that transcript
 against the record too. A kernel evaluates a trailing expression and reports its
@@ -222,7 +233,10 @@ Claude Code CLI is not merely installed but actually signed in.
 The interactive session's one new runtime dependency is `prompt_toolkit`: a
 real terminal input layer, needed for ghost-text command completion, a
 `/model` selector, and Esc-to-cancel without blocking the input box on
-a synchronous `input()` call while a turn is in flight. It is confined to two
+a synchronous `input()` call while a turn is in flight. Esc stops the model and
+interrupts the children the turn started; a second press escalates from
+interrupt to kill, because an interrupt is a request and a child that ignores
+it would otherwise leave the user with nothing further to press. It is confined to two
 modules (`hardy/tui/select.py` and `hardy/tui/shell.py`); everything else in
 `hardy/tui` speaks only the plain `Ui` port, so the line-based fallback
 (`--plain`, `HARDY_PLAIN`, a non-TTY, or a terminal session that fails to

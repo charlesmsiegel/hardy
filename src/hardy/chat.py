@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
-from . import audit
+from . import audit, process
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
@@ -1201,22 +1201,68 @@ class MathematicsSession:
         """`stream`, for a caller with nothing to draw it on."""
         return final_text(self.stream(text))
 
-    def cancel(self, reason: str = "user_cancelled") -> None:
-        """Stop the turn. Idempotent, and callable from any thread.
+    def cancel(self, reason: str = "user_cancelled") -> int:
+        """Stop the turn and the work it has already started. Any thread.
 
-        What this can honestly promise is that the model stops and that no
-        *further* tool call will run. It cannot promise that a Lean or LaTeX
-        process already started will stop, or that a file such a call has
-        already written will be unwritten — so `_dispatch` lets work in flight
-        finish rather than tearing it out from under the workspace.
+        The model stops, no *further* tool call runs, and every child process
+        this session has in flight is asked to stop — a Lean elaboration, a
+        Tectonic compile, the cell a CAS kernel is grinding on. Returns how
+        many were asked, so a caller can say what it actually reached.
+
+        Idempotent in the part that records the cancellation, deliberately not
+        in the part that signals: `_cancelled` is what stops a *second*
+        transcript entry and a second teardown of the runtime, and the children
+        are asked once because that is all the first press has to do. A second
+        press escalates, and goes through `escalate` rather than back through
+        here.
+
+        What this still cannot promise is that a file a tool call already wrote
+        will be unwritten. An interrupted child leaves whatever it had already
+        put on disk, which is why `_dispatch` refuses new calls rather than
+        trying to undo finished ones.
         """
         if self._cancelled.is_set():
-            return
+            return 0
         self._cancelled.set()
         self._record({"type": "turn", "status": "cancelled", "reason": reason})
         cancel = getattr(self.runtime, "cancel", None)
         if cancel is not None:
             cancel()
+        return self.interrupt_work()
+
+    def interrupt_work(self) -> int:
+        """Ask the children in flight to stop. Returns how many.
+
+        The CAS kernel is asked through its own session rather than through
+        `process`: it is persistent, and only the session knows whether a cell
+        is actually in flight and how to read what comes back. Everything else
+        is one-shot and goes through `run_process`, which keeps the register.
+
+        That register is per *process*, not per session, so this reaches every
+        `run_process` child running anywhere in this interpreter. Hardy runs one
+        session per process, which is why that is the same set in practice —
+        and the register is the only place a child started five call frames
+        down inside a tool is reachable from at all, short of threading a
+        cancellation token through every signature between here and there.
+        """
+        stopped = process.interrupt_children()
+        if self.cas is not None and self.cas.session.interrupt():
+            stopped += 1
+        return stopped
+
+    def escalate(self) -> int:
+        """Stop waiting for the interrupts to be taken. Returns how many.
+
+        The second press. An interrupt is a request; a child sitting in a loop
+        that never checks for signals will not take it, and this is the way out
+        of waiting on one. It costs what the timeout costs — a killed CAS
+        kernel takes its namespace with it — which is why it is deliberately
+        not what the first press does.
+        """
+        stopped = process.stop_children()
+        if self.cas is not None and self.cas.session.escalate():
+            stopped += 1
+        return stopped
 
     def record_abandonment(self, reason: str) -> None:
         """Write down that a turn was walked away from.

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import time
 import types
 from pathlib import Path
 
@@ -273,3 +274,72 @@ def test_a_provider_thread_that_will_not_settle_seals_the_trajectory(tmp_path: P
     # Sealed, and the trajectory says so rather than simply stopping: a reader
     # can tell a run that ended from one whose record was cut off.
     assert kinds[-1] == "claude.unsettled"
+
+
+def test_cancel_interrupts_the_lean_child_a_tool_call_is_waiting_on(tmp_path: Path):
+    """The gap issue #33 is about: `cancel` used to promise only that no
+    *further* tool call would run, leaving the model's turn stopped while a
+    Lean elaboration ground on to its timeout. It stops the child now, and
+    reports having done so."""
+    chat = session(tmp_path)
+    ready = tmp_path / "lean-started"
+    # 300s, against a fake Lean whose own timeout is far longer than this test
+    # is willing to wait: if the interrupt does not land, nothing else stops it.
+    source = f"-- slow: 300\n-- ready: {ready}\nexact True.intro\n"
+
+    outcome: list = []
+    worker = threading.Thread(
+        target=lambda: outcome.append(chat._dispatch("check_lean", {"source": source}))
+    )
+    worker.start()
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not ready.exists():
+        time.sleep(0.01)
+    assert ready.exists(), "the fake Lean child never started"
+
+    stopped = chat.cancel("user_pressed_escape")
+    worker.join(timeout=30)
+
+    assert not worker.is_alive(), "the Lean child outlived the cancellation"
+    assert stopped == 1, "cancel did not reach the child that was running"
+    result = outcome[0]
+    assert not result.ok
+    # Named as what it was. A model told "timeout" would conclude its source is
+    # too slow to elaborate, when in fact nobody let Lean answer.
+    assert result.interrupted
+    assert not result.timed_out
+    assert "interrupted" in result.output
+
+
+def test_cancel_reports_reaching_nothing_when_no_child_is_running(tmp_path: Path):
+    chat = session(tmp_path)
+
+    # Honest counting is what lets the terminal say "interrupted the work in
+    # flight" only when there was some.
+    assert chat.cancel("user_pressed_escape") == 0
+
+
+def test_escalate_kills_the_child_the_interrupt_did_not_stop(tmp_path: Path):
+    """The second Esc. `process.stop_children` refusing to terminate a child
+    that ignored the signal would leave the user with nothing left to press."""
+    chat = session(tmp_path)
+    ready = tmp_path / "lean-started"
+    source = f"-- slow: 300\n-- ready: {ready}\nexact True.intro\n"
+
+    outcome: list = []
+    worker = threading.Thread(
+        target=lambda: outcome.append(chat._dispatch("check_lean", {"source": source}))
+    )
+    worker.start()
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not ready.exists():
+        time.sleep(0.01)
+    assert ready.exists(), "the fake Lean child never started"
+
+    assert chat.escalate() == 1
+    worker.join(timeout=30)
+
+    assert not worker.is_alive()
+    # Still a run Hardy stopped, not a child that exited on its own: escalating
+    # changes how long it waits, not what the record says happened.
+    assert outcome[0].interrupted

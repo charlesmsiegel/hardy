@@ -158,14 +158,73 @@ async def test_escape_records_the_abandonment(settings):
 
 
 async def test_escape_says_it_cancelled_without_overclaiming(settings):
-    """Esc really does stop the turn now, so the notice may say so -- but the
-    limit has not moved. A Lean or LaTeX process already running is left to
-    finish, and a file such a call has written stays written, so the wording
-    still has to promise only the part that is true."""
+    """Esc stops the turn and interrupts the children it started -- but only
+    the ones there were. This session reports that it stopped nothing, so the
+    notice falls back to the older, weaker promise: a file a tool call has
+    already written stays written, and the wording says only what is true."""
     session = SlowSession()
     _, written = await blast(settings, session, "prove something\r\x1b \x03")
     assert "cancelled" in written.lower()
     assert "may still finish" in written
+
+
+class InterruptibleSession(SlowSession):
+    """A session with children to stop, and one that will not be talked down.
+
+    `cancel` reports how many it interrupted, as `MathematicsSession.cancel`
+    does; `escalate` is what the second press reaches.
+    """
+
+    def __init__(self, running: int = 1):
+        super().__init__()
+        self.running = running
+        self.escalated = 0
+
+    def cancel(self, reason: str = "user_cancelled") -> int:
+        super().cancel(reason)
+        return self.running
+
+    def escalate(self) -> int:
+        self.escalated += 1
+        return self.running
+
+
+async def test_escape_says_it_interrupted_the_work_in_flight(settings):
+    session = InterruptibleSession()
+    _, written = await blast(settings, session, "prove something\r\x1b \x03")
+    assert session.cancelled == ["user_pressed_escape"]
+    assert "interrupted" in written
+    # And that a second press is the way out, because an interrupt a child
+    # refuses is otherwise indistinguishable from one nothing happened to.
+    assert "esc again" in written
+
+
+async def test_a_second_escape_escalates_from_interrupt_to_kill(settings):
+    session = InterruptibleSession()
+    _, written = await blast(settings, session, "prove something\r\x1b \x1b \x03")
+    assert session.escalated == 1
+    # The turn is cancelled once, not twice: the second press is about the
+    # child that did not stop, not about the turn, which already has.
+    assert session.cancelled == ["user_pressed_escape"]
+    assert "killed" in written
+    # It says what the kill costs. A CAS kernel loses every value in it, and a
+    # user who is about to spend that is owed the price before they see it.
+    assert "lost its state" in written
+
+
+async def test_a_second_escape_with_nothing_left_running_says_so(settings):
+    session = InterruptibleSession(running=0)
+    _, written = await blast(settings, session, "prove something\r\x1b \x1b \x03")
+    assert session.escalated == 1
+    assert "nothing left to stop" in written
+
+
+async def test_escape_does_not_escalate_a_session_that_cannot(settings):
+    """A session with no `escalate` is not an error and not a crash -- the
+    press simply reports that there is nothing more to do."""
+    session = SlowSession()
+    _, written = await blast(settings, session, "prove something\r\x1b \x1b \x03")
+    assert "nothing left to stop" in written
 
 
 async def test_escape_abandons_instantly_without_waiting_out_a_timeout(settings):
