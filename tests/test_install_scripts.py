@@ -354,6 +354,23 @@ def test_the_windows_scripts_generate_no_utf8_bom(script: Path):
     assert not offenders, f"-Encoding UTF8 writes a BOM on Windows PowerShell; use Write-Utf8File: {offenders}"
 
 
+@pytest.mark.parametrize(
+    ("script", "leftovers"),
+    [
+        (SCRIPTS / "uninstall.sh", ["installers.previous", "installers.new", "download"]),
+        (SCRIPTS / "uninstall-windows.ps1", ["installers.previous", "installers.new", "download"]),
+    ],
+    ids=lambda value: getattr(value, "name", ""),
+)
+def test_uninstalling_takes_what_an_interrupted_update_left(script: Path, leftovers: list[str]):
+    """An update swaps the installers by renaming the old copy aside. Interrupted
+    mid-swap it leaves that copy, which is a runnable installer bundle — and an
+    uninstaller that reports success with one still on disk is lying."""
+    source = script.read_text(encoding="utf-8")
+    for leftover in leftovers:
+        assert leftover in source, f"{script.name} leaves {leftover} behind"
+
+
 @pytest.mark.parametrize("name", ["uninstall.sh", "update.sh"])
 def test_the_posix_scripts_send_windows_users_to_powershell(name: str):
     """Someone in Git Bash reaching for uninstall.sh needs the same signpost
@@ -855,6 +872,14 @@ def test_an_installation_is_updated_from_the_repository_it_came_from(tmp_path: P
         HARDY_HOME=str(home), HARDY_REPO_URL="https://example.invalid/other",
     )
     assert chosen.stdout == "https://example.invalid/other/releases/latest/download"
+
+    # Re-running the retained installer resolves to the fork, so it must record
+    # the fork again rather than the default it did not use.
+    rerun = run_with_common("record_release_origin", tmp_path, HARDY_HOME=str(home))
+    assert rerun.returncode == 0, rerun.stderr
+    assert (home / "release-origin").read_text(encoding="utf-8").strip() == (
+        "repo=https://example.invalid/fork"
+    )
 
 
 def update_probe() -> str:
