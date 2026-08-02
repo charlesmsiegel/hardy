@@ -249,7 +249,10 @@ the Lean, LaTeX, or computer algebra process it started is interrupted rather
 than left running to its timeout — with one exception: the fresh kernel and the
 script an export runs to check itself belong to a session built for that export,
 and are bounded only by their own limits. A computer algebra cell that answers the
-interrupt costs only itself: the kernel and every value in it survive. One that
+interrupt costs only itself: the kernel survives, and with it everything the
+earlier cells put in the namespace. What an interrupted cell had already changed
+before it was stopped stays changed — nothing is rolled back — which is why such
+a cell is never accepted. One that
 does not answer within a couple of seconds is stopped the way the timeout
 stopped it, and the state goes with it; a second Esc skips that wait and kills
 what had not stopped. On Windows that kill reaches the process Hardy started
