@@ -1030,11 +1030,42 @@ def test_the_unsandboxed_warning_precedes_every_child_process(tmp_path: Path, ca
     )
     args = cli.build_parser().parse_args(["latency"])
     cli.run_latency(args, _config_for(tmp_path, project))
-    out = capsys.readouterr().out
-    assert "not sandboxed" in out
-    # Printed before either child, not after the numbers.
-    assert out.index("not sandboxed") < out.index("import set")
+    captured = capsys.readouterr()
+    # On stderr, not stdout: a redirected stdout is block-buffered, so the
+    # warning could surface only after a multi-minute probe had already
+    # elaborated the module — and the report is evidence someone redirects to
+    # a file, which the warning is not part of.
+    assert "not sandboxed" in captured.err
+    assert "not sandboxed" not in captured.out
+    assert "import set" in captured.out
     assert order == ["probe", "measure"]
+
+
+def test_an_empty_lean_command_is_reported_not_dereferenced(tmp_path: Path, capsys, monkeypatch):
+    """`--lean-command "   "` parses to an empty tuple, and the launch-failure
+    handler then reads `command[0]` and raises IndexError instead of naming
+    the configuration problem."""
+    from hardy import cli
+    from hardy.config import Config
+    from hardy.domain import RunLimits
+
+    project = tmp_path / "lean_project"
+    project.mkdir()
+    started = []
+    monkeypatch.setattr(cli.latency, "probe_toolchain", lambda *a, **k: started.append(1))
+    config = Config(
+        model="test-model",
+        lean_command=(),
+        lean_project=project,
+        lean_timeout=30.0,
+        latex_command=("tectonic",),
+        workspace=tmp_path / ".hardy",
+        limits=RunLimits(),
+    )
+    args = cli.build_parser().parse_args(["latency"])
+    assert cli.run_latency(args, config) == 2
+    assert "no Lean command configured" in capsys.readouterr().out
+    assert started == []
 
 
 def test_a_run_that_exactly_affords_its_preludes_is_still_consistent():

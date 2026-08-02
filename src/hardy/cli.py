@@ -7,6 +7,7 @@ import math
 import os
 import re
 import shutil
+import sys
 from collections.abc import Callable
 from importlib import metadata
 from importlib.resources import files
@@ -700,11 +701,16 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     # would misattribute a `--lean-command` pointing at a different compiler.
     # Returns None when the toolchain cannot be identified, and the report then
     # says so rather than naming a version nobody verified.
-    # Before any child starts. The probe elaborates whatever modules the user
-    # named, and elaboration runs arbitrary code with this process's filesystem
-    # and network access; nothing here is isolated, and AGENTS.md is explicit
-    # that Hardy must never let that pass unsaid.
-    print(f"WARNING: {WARNING}")
+    if not config.lean_command:
+        print("no Lean command configured; set lean_command or pass --lean-command")
+        return 2
+    # Before any child starts, on stderr, flushed. Two reasons beyond habit:
+    # a redirected stdout is block-buffered, so a warning printed there could
+    # appear only after a multi-minute probe had already elaborated whatever
+    # the user named -- and this report is evidence somebody will redirect to a
+    # file, which the warning is not part of. AGENTS.md is explicit that Hardy
+    # must never let unsandboxed elaboration pass unsaid.
+    print(f"WARNING: {WARNING}", file=sys.stderr, flush=True)
     probe = latency.probe_toolchain(
         config.lean_command, project, timeout_seconds=args.timeout
     )
