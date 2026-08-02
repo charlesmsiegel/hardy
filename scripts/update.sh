@@ -220,6 +220,10 @@ update_from_release() {
 	say "installed $(basename "$wheel")"
 	rm -rf "$directory"
 	commit_installers
+	# An update given HARDY_REPO_URL has moved this installation to that
+	# repository, so that is where the next one should look. Recorded after the
+	# move rather than before it: a failed update leaves the record it had.
+	record_release_origin
 }
 
 update_toolchain() {

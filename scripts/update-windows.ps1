@@ -198,6 +198,11 @@ function Update-FromRelease {
     Write-Detail "installed $(Split-Path -Leaf $wheel)"
     Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
     Complete-Installers $staged
+    # An update given HARDY_REPO_URL has moved this installation to that
+    # repository, so that is where the next one should look.
+    New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
+    [System.IO.File]::WriteAllText(
+        $ReleaseOrigin, "repo=$(Get-ReleaseRepoUrl)`r`n", (New-Object System.Text.UTF8Encoding $false))
 }
 
 

@@ -39,6 +39,12 @@ jobs:
             script: install-linux.sh
           - os: macos-latest
             script: install-macos.sh
+          # The dispatcher carries its own copy of the release bootstrap, the
+          # prefix parsing, the fallback and the hand-off — and it is the one
+          # the documented `curl … | sh` reaches. Covering only the per-OS
+          # scripts would leave the most-used entry point untested.
+          - os: ubuntu-latest
+            script: install.sh
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -78,8 +84,12 @@ jobs:
           mkdir -p "$standalone"
           cp "scripts/${{ matrix.script }}" "$standalone/"
           cd "$standalone"
+          # install.sh is the one piped into `sh`; run it under a real /bin/sh,
+          # since bash accepts things a POSIX shell does not.
+          interpreter=bash
+          if [ "${{ matrix.script }}" = "install.sh" ]; then interpreter=sh; fi
           HARDY_RELEASE_BASE_URL=http://127.0.0.1:8000 HARDY_MODEL=claude-opus-5 \
-            bash "./${{ matrix.script }}" --yes --skip-mathlib --skip-latex
+            "$interpreter" "./${{ matrix.script }}" --yes --skip-mathlib --skip-latex
 
       - name: The installer fetched the installers, and installed the wheel
         run: |

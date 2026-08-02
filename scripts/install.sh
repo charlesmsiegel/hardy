@@ -124,27 +124,35 @@ if [ ! -e "$directory/install-linux.sh" ]; then
 		HARDY_REPO_REF="${HARDY_REPO_REF:-main}"
 		source_root="$hardy_home/src"
 		printf '==> Fetching Hardy into %s (ref %s)\n' "$source_root" "$HARDY_REPO_REF"
-		rm -rf "$source_root"
-		mkdir -p "$source_root"
+		# Into a sibling, never over the tree in place. An editable installation
+		# points at this directory, so removing it before a fetch that then
+		# failed would break the installed `hardy` outright.
+		staging="$source_root.new"
+		rm -rf "$staging"
+		mkdir -p "$staging"
 		fetched=0
 		if command -v curl >/dev/null 2>&1; then
 			# A ref may be a branch or a tag, GitHub keeps the two in separate
 			# namespaces, and a clean machine has no git to ask which this is.
 			for namespace in heads tags; do
 				curl -fsSL "$HARDY_REPO_URL/archive/refs/$namespace/$HARDY_REPO_REF.tar.gz" 2>/dev/null |
-					tar xz -C "$source_root" --strip-components=1 2>/dev/null && fetched=1
+					tar xz -C "$staging" --strip-components=1 2>/dev/null && fetched=1
 				if [ "$fetched" = 1 ]; then break; fi
 			done
 		fi
 		if [ "$fetched" = 0 ] && command -v git >/dev/null 2>&1; then
-			rm -rf "$source_root"
-			mkdir -p "$source_root"
-			git clone --depth 1 --branch "$HARDY_REPO_REF" "$HARDY_REPO_URL" "$source_root" && fetched=1
+			rm -rf "$staging"
+			mkdir -p "$staging"
+			git clone --depth 1 --branch "$HARDY_REPO_REF" "$HARDY_REPO_URL" "$staging" && fetched=1
 		fi
-		[ "$fetched" = 1 ] || {
+		if [ "$fetched" = 1 ] && [ -e "$staging/scripts/install-linux.sh" ]; then
+			rm -rf "$source_root"
+			mv "$staging" "$source_root"
+		else
+			rm -rf "$staging"
 			printf 'error: could not fetch the Hardy installers from %s, nor the repository at %s (ref %s).\nCheck your network, or clone the repository yourself and run scripts/%s from the clone.\n' "$release_base" "$HARDY_REPO_URL" "$HARDY_REPO_REF" install.sh >&2
 			exit 1
-		}
+		fi
 	fi
 
 	directory="$source_root/scripts"
