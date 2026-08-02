@@ -461,8 +461,15 @@ def test_without_an_observed_run_the_report_gives_no_verdict():
 def test_an_unmeasured_prelude_reports_that_rather_than_a_verdict():
     cost = ImportCost(imports=("Mathlib",), samples_ms=(), errors=3)
     text = "\n".join(describe(cost, calls=10, total_ms=150_000))
-    assert "unmeasured" in text
+    # Names the failure rather than only its absence: "3 of 3 failed outright"
+    # tells the user where to look, which a bare "unmeasured" did not.
+    assert "3 of 3 probes failed outright" in text
     assert "warranted" not in text
+
+
+def test_a_probe_set_with_neither_samples_nor_failures_says_it_measured_nothing():
+    cost = ImportCost(imports=("Mathlib",), samples_ms=())
+    assert "unmeasured" in "\n".join(describe(cost))
 
 
 def test_the_report_states_the_verdict_both_ways():
@@ -711,6 +718,77 @@ def test_a_failed_probe_keeps_one_diagnostic_to_explain_itself(tmp_path: Path):
     assert cost.diagnostic is not None
     assert "Mathlibb" in cost.diagnostic
     assert "unknown module prefix 'Mathlibb'" in "\n".join(describe(cost))
+
+
+def test_a_plain_text_failure_is_still_explained(tmp_path: Path):
+    """The commonest failure of all was the one being dropped.
+
+    `parse_lean_json` labels any non-JSON line `information`, and a lake or
+    Lean that dies before emitting diagnostics — unknown package, broken
+    toolchain — speaks plain stderr. Filtering for `severity == "error"`
+    reduced exactly those to a bare "failed".
+    """
+    def run(spec: ProcessSpec) -> ProcessResult:
+        return ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=1, stdout="",
+            stderr="error: unknown package 'mathlibb'",
+            duration_ms=40, timed_out=False, output_overflow=False,
+        )
+
+    cost = measure_import_cost(
+        ("Mathlibb",), argv=("lake", "env", "lean", "--json"), cwd=tmp_path,
+        timeout_seconds=120, repeats=1, runner=run,
+    )
+    assert cost.diagnostic == "error: unknown package 'mathlibb'"
+    assert "unknown package" in "\n".join(describe(cost))
+
+
+def test_a_measurement_that_mostly_failed_is_not_a_steady_state():
+    """Every probe runs the same source through the same toolchain.
+
+    One survivor of three is the tail of something unreliable, not evidence;
+    excluding errors from the count let it become the median and issue a
+    verdict.
+    """
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,), errors=2)
+    assert cost.median_ms is None
+    text = "\n".join(describe(cost, calls=10, total_ms=150_000))
+    assert "2 of 3 probes failed outright" in text
+    assert "warranted" not in text
+
+
+def test_a_withheld_verdict_exits_nonzero():
+    """Shell automation cannot tell rejected evidence from a real verdict
+    if both exit 0, which is the confusion this command exists to prevent."""
+    from hardy.latency import report
+
+    clean = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    assert report(clean, calls=10, total_ms=150_000) == 0
+    # Prelude measured cleanly, but the run contradicts it.
+    assert report(clean, calls=100, total_ms=50_000) == 1
+    # No observed run requested at all is not a failure to answer.
+    assert report(clean) == 0
+
+
+def test_the_contradiction_quotes_the_bound_its_total_was_computed_from():
+    """It printed the raw fastest sample beside a total derived from
+    `fastest - spread`: "each paid at least 11s, so 100 of them are 900s"."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(11_000, 12_000, 13_000))
+    text = "\n".join(describe(cost, calls=100, total_ms=50_000))
+    assert "at least 9.00s is 900.00s" in text
+
+
+def test_the_command_provenance_preserves_argument_boundaries():
+    """`("wrapper", "--config", "a b")` and four separate arguments rendered
+    identically, so a copied report could not identify what produced it."""
+    spaced = ImportCost(
+        imports=("Mathlib",), samples_ms=(1,), command=("wrapper", "--config", "a b")
+    )
+    split = ImportCost(
+        imports=("Mathlib",), samples_ms=(1,), command=("wrapper", "--config", "a", "b")
+    )
+    assert "\n".join(describe(spaced)) != "\n".join(describe(split))
+    assert "'a b'" in "\n".join(describe(spaced))
 
 
 def test_the_deadline_travels_with_a_censored_measurement(tmp_path: Path):

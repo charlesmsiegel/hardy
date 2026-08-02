@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 import statistics
 from collections.abc import Callable
 from pathlib import Path
@@ -36,7 +37,7 @@ from pathlib import Path
 from pydantic import NonNegativeInt
 
 from .domain import EnvironmentIdentity, FrozenModel
-from .lean import elaborate
+from .lean import Elaboration, elaborate
 from .process import ProcessResult, ProcessSpec, run_process
 
 # How many probes a measurement takes when the caller does not say. The first
@@ -137,6 +138,27 @@ def probe_toolchain(
             lake_manifest_sha256=hashlib.sha256(raw).hexdigest(),
         )
     )
+
+
+def _first_complaint(elaboration: Elaboration) -> str | None:
+    """Whatever the failed probe said, in decreasing order of structure.
+
+    Filtering for `severity == "error"` alone missed the most common failure
+    there is: `parse_lean_json` labels any line that is not JSON as
+    `information`, and a `lake` or Lean that dies before it starts emitting
+    diagnostics -- an unknown package, a broken toolchain -- says so in plain
+    stderr. That reduced exactly the cases worth explaining back to "failed".
+    """
+    for wanted in ("error", None):
+        for item in elaboration.diagnostics:
+            if wanted is not None and item.severity != wanted:
+                continue
+            if item.message.strip():
+                return item.message.strip().splitlines()[0][:200]
+    for stream in (elaboration.process.stderr, elaboration.process.stdout):
+        if stream.strip():
+            return stream.strip().splitlines()[0][:200]
+    return None
 
 
 def import_probe(imports: tuple[str, ...]) -> str:
@@ -313,6 +335,13 @@ class ImportCost(FrozenModel):
         total = len(observed) + self.timeouts
         if total == 0:
             return None
+        # Every probe runs the same source through the same toolchain, so if
+        # most of them failed outright the ones that survived are not evidence
+        # of a steady state -- they are the tail of something unreliable. An
+        # errored probe carries no duration, which is why it is not censored
+        # data, but it is not an irrelevant absence either.
+        if self.errors > len(observed):
+            return None
         middle = [total // 2] if total % 2 else [total // 2 - 1, total // 2]
         if any(position >= len(observed) for position in middle):
             return None
@@ -377,18 +406,7 @@ def measure_import_cost(
         else:
             errors += 1
             if diagnostic is None:
-                # The first complaint, kept whole enough to name a bad import
-                # and short enough not to bury the numbers.
-                first = next(
-                    (
-                        item.message
-                        for item in elaboration.diagnostics
-                        if item.severity == "error"
-                    ),
-                    None,
-                )
-                if first:
-                    diagnostic = first.strip().splitlines()[0][:200]
+                diagnostic = _first_complaint(elaboration)
     return ImportCost(
         imports=imports,
         samples_ms=tuple(samples),
@@ -436,7 +454,10 @@ def describe(
     lines = [
         # The toolchain first: these durations belong to it, and a report
         # pasted elsewhere without it cannot be reproduced or attributed.
-        f"lean command: {' '.join(cost.command) or '(unrecorded)'}",
+        # shlex, not a plain join: `("wrapper", "--config", "a b")` and four
+        # separate arguments render identically otherwise, so a copied report
+        # cannot even uniquely identify the command that produced it.
+        f"lean command: {shlex.join(cost.command) if cost.command else '(unrecorded)'}",
         f"lean project: {cost.project or '(unrecorded)'}",
     ]
     if cost.environment is None:
@@ -474,7 +495,19 @@ def describe(
         lines.append(f"first error: {cost.diagnostic}")
     median = cost.median_ms
     if median is None:
+        # Both can be true at once -- probes that errored and probes that were
+        # killed are different failures with different fixes -- so whichever
+        # apply are stated. Reporting only the first would hide the other.
+        explained = False
+        if cost.errors > len(cost.samples_ms):
+            explained = True
+            lines.append(
+                f"{cost.errors} of {cost.probes} probes failed outright, so the "
+                f"{len(cost.samples_ms)} that finished are not evidence of a steady state; "
+                "fix the error above and re-measure"
+            )
         if cost.timeouts:
+            explained = True
             lines.append(
                 # Every probe in the denominator. Counting only those that
                 # carry a duration reported "1 of 1 probes hit the deadline"
@@ -484,7 +517,7 @@ def describe(
                 "longer than the probes that finished and the median is not identifiable; "
                 "re-run with a longer --timeout"
             )
-        else:
+        if not explained:
             lines.append("no successful probe; the prelude is unmeasured and #54 cannot be decided")
         return lines
     # Labelled by what the median was actually taken over. With samples of 10s
@@ -526,7 +559,12 @@ def describe(
         "pays a different prelude, and counting it here overstates the recovery"
     )
     if not estimate.is_consistent:
-        floor = estimate.floor_ms if estimate.floor_ms is not None else estimate.import_ms
+        fastest = estimate.floor_ms if estimate.floor_ms is not None else estimate.import_ms
+        # The *adjusted* per-call bound, which is what the total below is
+        # computed from. Printing the raw fastest sample beside a total derived
+        # from `fastest - spread` said "each call paid at least 11s, so 100 of
+        # them are 900s" -- two numbers that cannot both be right.
+        floor = max(0, fastest - estimate.spread_ms)
         if estimate.floor_prelude_ms > total_ms:
             # The observed total, not the saving. Printing `recoverable_ms`
             # here said "2 calls each paying 60.00s is 60.00s, longer than the
@@ -542,7 +580,7 @@ def describe(
                 f"the {median / 1000:.2f}s median prelude implies a "
                 f"{estimate.recoverable_ms / 1000:.2f}s saving inside a "
                 f"{total_ms / 1000:.2f}s run, which is more time than the run took; the probes "
-                f"disagree too widely (fastest {floor / 1000:.2f}s) to estimate from."
+                f"disagree too widely (fastest {fastest / 1000:.2f}s) to estimate from."
             )
         lines.append(
             "No verdict follows; re-measure with the run's own import set, or with more probes."
@@ -577,6 +615,17 @@ def report(
     total_ms: int | None = None,
     threshold: float = DEFAULT_THRESHOLD,
 ) -> int:
+    """Print the measurement; exit nonzero when it could not answer.
+
+    A withheld verdict is a failure to answer even when the prelude itself was
+    measured cleanly. Returning 0 there told a shell that rejected evidence and
+    a real verdict were the same outcome, which is precisely the confusion this
+    command exists to prevent.
+    """
     for line in describe(cost, calls=calls, total_ms=total_ms, threshold=threshold):
         print(line)
-    return 0 if cost.median_ms is not None else 1
+    if cost.median_ms is None:
+        return 1
+    if calls is not None and total_ms is not None:
+        return 0 if cost.estimate(calls=calls, total_ms=total_ms).is_consistent else 1
+    return 0
