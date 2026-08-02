@@ -239,44 +239,42 @@ def main() -> None:
         payload = read_exact(stdin, length)
         if payload is None:
             return
-        _handle_stops_by(signal.default_int_handler)
-        # One handler over everything between having the frame and having a
-        # reply. `run_cell` catches the signal that lands while the cell is
-        # running, which is the common case; this catches the one that lands in
-        # the gaps around it -- parsing the frame, or the moment before `exec`
-        # begins. Hardy signals the instant it has written a frame, so those
-        # gaps are exactly where an early press tends to arrive, and an
-        # uncaught `KeyboardInterrupt` there kills the kernel and the whole
-        # namespace over a press meant to cost one cell.
+        # Parsed with the stop still deferred, so nothing here can be
+        # interrupted into killing the kernel.
         try:
-            try:
-                request = json.loads(payload.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                return
-            held = PENDING_INTERRUPT
-            PENDING_INTERRUPT = False
-            if held and request.get("stopping", True):
-                # The stop reached this kernel before the cell did. Answering
-                # without running it is what the parent is waiting for: it gets
-                # a framed reply straight away, the namespace is untouched, and
-                # the kernel is still here for the next cell.
-                reply = _interrupted_reply()
-            else:
-                # `held` without `stopping` is a signal that arrived in the
-                # moment after the last reply was flushed and before Hardy had
-                # read it. It was aimed at a cell that was already over, and
-                # Hardy -- which knows whether it still wants a stop -- says it
-                # does not. Rejecting this cell for it would stop something
-                # nobody asked to stop.
-                reply = run_cell(str(request.get("source", "")), namespace, limit)
-        except KeyboardInterrupt:
-            PENDING_INTERRUPT = False
+            request = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return
+        held = PENDING_INTERRUPT
+        PENDING_INTERRUPT = False
+        if held and request.get("stopping", True):
+            # The stop reached this kernel before the cell did. Answering
+            # without running it is what the parent is waiting for: it gets a
+            # framed reply straight away, the namespace is untouched, and the
+            # kernel is still here for the next cell.
             reply = _interrupted_reply()
-        # Back to deferring before the reply is written, not at the top of the
-        # loop: between the cell ending and the loop coming round there would
-        # otherwise be a stretch running under the raising handler with no cell
-        # to abandon, where a late signal kills the kernel outright.
-        _handle_stops_by(_remember)
+        else:
+            # `held` without `stopping` is a signal that arrived in the moment
+            # after the last reply was flushed and before Hardy had read it. It
+            # was aimed at a cell that was already over, and Hardy -- which
+            # knows whether it still wants a stop -- says it does not.
+            # Rejecting this cell for it would stop something nobody asked to
+            # stop.
+            #
+            # The raising handler is installed *inside* the `try` and taken
+            # down in the `finally`, because the switch itself is a window: a
+            # signal landing after the handler is installed but before the
+            # block is entered, or after the block ends but before deferral is
+            # restored, would escape `main` and kill the kernel over a press
+            # meant to cost one cell. Hardy signals the instant it has written
+            # a frame, so those are exactly the moments an early press arrives.
+            try:
+                _handle_stops_by(signal.default_int_handler)
+                reply = run_cell(str(request.get("source", "")), namespace, limit)
+            except KeyboardInterrupt:
+                reply = _interrupted_reply()
+            finally:
+                _handle_stops_by(_remember)
         encoded = json.dumps(reply, ensure_ascii=False).encode("utf-8")
         stdout.write(f"{len(encoded):0{HEADER_BYTES}d}".encode("ascii"))
         stdout.write(encoded)

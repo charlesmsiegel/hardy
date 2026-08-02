@@ -252,8 +252,9 @@ does not answer within a couple of seconds is stopped the way the timeout
 stopped it, and the state goes with it; a second Esc skips that wait and kills
 what had not stopped. A cell you started yourself
 with `/cas` is interrupted by the same press, and while one is running the box
-refuses a second command or a new question rather than interleaving them in the
-one kernel.
+refuses a second cell or a new question rather than interleaving them in the one
+kernel. Commands that only read or leave — `/status`, `/help`, `/clear`,
+`/exit` — still work while a cell runs.
 
 What it cannot undo is work already done: a file a tool call has already
 written stays written, and an interrupted child leaves behind whatever it had
