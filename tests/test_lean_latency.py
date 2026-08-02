@@ -649,6 +649,22 @@ def test_a_fractional_deadline_survives_the_report():
         assert shown in "\n".join(describe(cost))
 
 
+def test_a_relative_project_is_recorded_as_the_directory_it_resolved_to(tmp_path: Path, monkeypatch):
+    """`--lean-project lean` from `/work/a` and `/work/b` measured different
+    source trees and recorded the same string. The subprocess resolves it
+    against the invocation directory; a record that does not is not
+    attributable."""
+    project = tmp_path / "lean"
+    project.mkdir()
+    monkeypatch.chdir(tmp_path)
+    cost = measure_import_cost(
+        ("Mathlib",), argv=("lean", "--json"), cwd=Path("lean"),
+        timeout_seconds=120, repeats=1, runner=runner_for([12_000]),
+    )
+    assert cost.project == str(project.resolve())
+    assert cost.project != "lean"
+
+
 def test_the_host_that_produced_the_durations_is_recorded(tmp_path: Path):
     """Every other identity pins *what* was elaborated, none pin how fast the
     machine was — and the same Lean and Mathlib give a 12s prelude on a
@@ -1053,7 +1069,7 @@ def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys,
     )
     args = cli.build_parser().parse_args(["latency", "--calls", "10", "--total-seconds", "150"])
     assert cli.run_latency(args, config) == 0
-    assert seen["cwd"] == project
+    assert seen["cwd"] == project.resolve()
     assert seen["argv"] == ("lake", "env", "lean", "--json")
     assert seen["imports"] == ("Mathlib",)
     assert "72.0% of the run" in capsys.readouterr().out
