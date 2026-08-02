@@ -245,7 +245,11 @@ and hostile-input tests.
 2. **Honest experiment harness:** faithfulness and axiom checks, budgets, fixed
    evaluation inputs, reproducible identities, and useful failure reports.
 3. **Broaden capability:** literature, critique/repair, alternative runtimes and
-   strategies, retrieval, and memory—only as experiments require them.
+   strategies, retrieval, and memory—only as experiments require them. Premise
+   retrieval's first half arrived ahead of this step: ranking a goal across
+   Lean's own search and Loogle is implemented, metered, and carries its
+   provenance, while the versioned embedding index and the service that would
+   serve it remain here.
 4. **Harden:** restore isolation and quotas before the system handles untrusted
    content or is offered as a service.
 

@@ -17,7 +17,7 @@ import os
 
 import pytest
 
-from hardy.retrieval import LoogleSource, RetrievalError
+from hardy.retrieval import LoogleSource, RetrievalTransportError
 
 
 @pytest.mark.live
@@ -28,7 +28,11 @@ def test_the_public_loogle_still_answers_the_shape_the_parser_reads() -> None:
     source = LoogleSource()
     try:
         found = source.search('Nat.add_comm', 5)
-    except RetrievalError as error:  # the service being down is not a defect here
+    except RetrievalTransportError as error:
+        # The service being unreachable is not a defect. A response Hardy
+        # cannot read is exactly the drift this test exists to catch, so that
+        # one is deliberately *not* caught -- skipping on it would make the
+        # test unable to fail for the only reason it was written.
         pytest.skip(f'Loogle did not answer: {error}')
 
     assert found, 'Loogle returned no usable hits for a name it certainly holds'
