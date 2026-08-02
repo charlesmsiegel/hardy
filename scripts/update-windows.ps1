@@ -202,6 +202,39 @@ function Update-FromRelease {
 
 
 
+function Update-Source($tree) {
+    Write-Step "Updating the source tree at $tree"
+    if (-not (Test-Path (Join-Path $tree '.git'))) {
+        # A downloaded archive has no history to pull.
+        Write-Warn "$tree is not a git checkout; leaving the code as it is"
+        Write-Detail 'run scripts\install-windows.ps1 to fetch a newer copy'
+        return
+    }
+    if (-not (Test-Command 'git')) { Stop-Update 'git is required to update a checkout' }
+    $before = (& git -C $tree rev-parse HEAD 2>$null)
+    & git -C $tree diff --quiet 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "$tree has uncommitted changes"
+        if (-not (Confirm-Step 'Pull anyway? Your changes are left in place and may conflict.')) {
+            Stop-Update 'stopped: commit or stash your changes, then re-run'
+        }
+    }
+    & git -C $tree pull --ff-only
+    if ($LASTEXITCODE -ne 0) { Stop-Update "git pull failed in $tree" }
+    $after = (& git -C $tree rev-parse HEAD 2>$null)
+    if ($before -eq $after) { Write-Detail "already up to date ($before)" }
+    else { Write-Detail "$before -> $after" }
+}
+
+# The step that matters: the code is editable and already current, so this is
+# what turns a newly declared dependency into an installed one.
+function Update-Environment($tree) {
+    Write-Step "Reinstalling dependencies into $Venv"
+    & $VenvPython -m pip install -e $tree
+    if ($LASTEXITCODE -ne 0) { Stop-Update "could not reinstall Hardy into $Venv" }
+    Write-Detail 'dependencies are current'
+}
+
 # The installers a release install keeps are what updates and removes it later,
 # so they move with the wheel: after an update to release N+1, release N's
 # uninstaller would otherwise be the one that runs. Downloaded and verified
