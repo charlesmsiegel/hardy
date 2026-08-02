@@ -34,6 +34,9 @@ class FakeSource:
         self._seconds = seconds
         self.calls: list[tuple[str, int]] = []
 
+    def query_for(self, query: str) -> str:
+        return query
+
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
         self.calls.append((goal, limit))
         if self._error is not None:
@@ -568,6 +571,37 @@ def test_a_local_name_inside_a_string_literal_is_left_alone() -> None:
     assert retrieval.search_query("c : Char\n⊢ c = 'c'") == "⊢ _ = 'c'"
 
 
+def test_the_local_names_lean_actually_displays_are_recognised() -> None:
+    """Two forms went through to the search verbatim, where they mean nothing.
+
+    `x✝` is how Lean shows a hypothesis it had to disambiguate, and it is not
+    an identifier, so nothing recognised it. `«foo bar»` is one name, but
+    splitting the binder head on whitespace tore it into `«foo` and `bar»`
+    before it could be matched. Either way both sources failed on a goal that
+    was otherwise perfectly ordinary.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    assert retrieval.search_query('x✝ : ℕ\n⊢ x✝ + 1 = 1 + x✝') == '⊢ _ + 1 = 1 + _'
+    assert retrieval.search_query('x✝¹ : ℕ\nx✝ : ℕ\n⊢ x✝¹ + x✝ = x✝') == '⊢ _ + _ = _'
+    assert retrieval.search_query('«foo bar» : ℕ\n⊢ «foo bar» = 0') == '⊢ _ = 0'
+
+
+def test_a_response_hardy_cannot_decode_is_a_failed_source() -> None:
+    """`errors="replace"` turned undecodable bytes into `\\ufffd` and handed back
+    a signature that reads as ordinary Lean while naming something else --
+    altered data recorded as a source that answered successfully. JSON is
+    required to be valid Unicode, so a body that is not is a failure.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    body = b'{"hits": [{"name": "Nat.add_comm", "type": " : \xff\xfe"}]}'
+
+    source = retrieval.LoogleSource(fetch=lambda url, timeout: body)
+
+    with pytest.raises(retrieval.RetrievalError, match='UTF-8'):
+        source.search('_ + _ = _ + _', 5)
+
+
 def test_a_goal_written_in_dot_notation_is_not_desugared_and_does_not_pretend_to_be() -> None:
     """A known limit, pinned so nobody reads silence as support.
 
@@ -819,10 +853,20 @@ def test_the_lean_source_strips_the_turnstile_that_find_does_not_take() -> None:
     service = _Service(domain, lean_module, results=[_record('Nat.add_comm')])
 
     source = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
-    source.search('⊢ _ + _ = _ + _', 5)
-    source.search('_ + _ = _ + _', 5)
 
-    assert [query for query, _ in service.calls] == ['_ + _ = _ + _', '_ + _ = _ + _']
+    assert source.query_for('⊢ _ + _ = _ + _') == '_ + _ = _ + _'
+    assert source.query_for('_ + _ = _ + _') == '_ + _ = _ + _'
+    # And the retriever records what it actually sent, per source, rather than
+    # the shared spelling neither of them may have received.
+    lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')])
+    lean.query_for = lambda query: query.removeprefix('⊢ ')
+    loogle = FakeSource(_unpinned(retrieval), [_record('Nat.mul_comm')])
+
+    ranking = _retriever(retrieval, [lean, loogle]).rank('⊢ _ + _ = _ + _')
+
+    asked = {item.identity.name: item.query for item in ranking.provenance.sources}
+    assert asked == {'lean-find': '_ + _ = _ + _', 'loogle': '⊢ _ + _ = _ + _'}
+    assert ranking.query == '⊢ _ + _ = _ + _'
 
 
 def test_a_toolchain_that_can_change_under_the_same_name_is_not_a_pin(tmp_path) -> None:
@@ -881,6 +925,9 @@ def test_two_rankings_at_once_cannot_each_spend_the_whole_budget() -> None:
     class Concurrent:
         identity = _pinned(retrieval)
         worst_case_seconds = 4.0
+
+        def query_for(self, query):
+            return query
 
         def search(self, goal, limit):
             # Both threads are inside `rank` before either finishes, which is

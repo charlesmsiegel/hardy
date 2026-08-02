@@ -171,6 +171,11 @@ class SourceOutcome(FrozenModel):
 
     identity: SourceIdentity
     answered: bool
+    # What this source was actually asked, which is not always the shared query:
+    # `#find` does not take Loogle's turnstile, so the two are handed different
+    # spellings of one question. Recording only the shared one would leave the
+    # provenance naming a query the pinned source never ran.
+    query: str | None = None
     returned: int = 0
     seconds: float = 0.0
     detail: str | None = None
@@ -321,6 +326,10 @@ class PremiseSource(Protocol):
     @property
     def worst_case_seconds(self) -> float: ...
 
+    def query_for(self, query: str) -> str:
+        """This source's spelling of the shared query."""
+        ...
+
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]: ...
 
 
@@ -428,17 +437,19 @@ class LeanSearchSource:
         """
         return float(self._limits.lean_process_seconds) + MAX_TEARDOWN_SECONDS
 
-    def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
+    def query_for(self, query: str) -> str:
         # `#find t` matches the *result type* against `t` -- `#find _ + _ = _ +
         # _` -- so Loogle's `⊢` conclusion filter is not redundant here but
         # unsupported, and passing it through failed the pinned source on
         # exactly the input this tool exists to take. The two spellings mean
         # the same search, so nothing is lost by dropping it.
-        pattern = goal[len(TURNSTILE) :].strip() if goal.startswith(TURNSTILE) else goal
+        return query[len(TURNSTILE) :].strip() if query.startswith(TURNSTILE) else query
+
+    def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
         # `search_declarations` takes 1..20; the retriever's limit is the
         # ranking's length, which a caller may set higher than one source will
         # serve.
-        found = self._service.search_declarations(pattern, max(1, min(limit, 20)))
+        found = self._service.search_declarations(goal, max(1, min(limit, 20)))
         if not found.success:
             # An empty list from a search that failed reads as "no such lemma",
             # which is the one thing it does not mean.
@@ -498,6 +509,11 @@ class LoogleSource:
         """
         return 2 * self._timeout
 
+    def query_for(self, query: str) -> str:
+        # Loogle reads `⊢ p` as a conclusion filter, so it takes the shared
+        # query as it stands. Verified against the live service.
+        return query
+
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
         url = f"{self._endpoint}?{urlencode({'q': goal})}"
         try:
@@ -509,7 +525,14 @@ class LoogleSource:
         if len(body) > MAX_RESPONSE_BYTES:
             raise RetrievalError(f"Loogle response too large: over {MAX_RESPONSE_BYTES} bytes")
         try:
-            payload = json.loads(body.decode("utf-8", errors="replace"))
+            # Strictly. `errors="replace"` turned undecodable bytes into `\ufffd`
+            # and handed back a signature that reads as ordinary Lean while
+            # naming something else -- silently altered data recorded as a
+            # source that answered. JSON is required to be valid Unicode, so a
+            # body that is not is a source that failed.
+            payload = json.loads(body.decode("utf-8"))
+        except UnicodeDecodeError as error:
+            raise RetrievalError(f"Loogle response was not valid UTF-8: {error}") from error
         except json.JSONDecodeError as error:
             raise RetrievalError(f"Loogle response was not JSON: {error}") from error
         if not isinstance(payload, dict):
@@ -668,6 +691,13 @@ def search_query(goal: str) -> str:
     return conclusion
 
 
+# One binder name. Guillemets first, so a quoted name stays whole: splitting on
+# whitespace turned `«foo bar»` into two tokens that matched nothing.
+BINDER_TOKEN = re.compile(r"«[^»]*»|[^\s]+")
+# How Lean displays a hypothesis it had to disambiguate -- `x✝`, `x✝¹`. Not an
+# identifier, so nothing else here recognises it.
+DISPLAYED_LOCAL = re.compile(r"[^\s:()]*✝[^\s:()]*")
+
 # A Lean string literal, with backslash escapes: an escaped quote does not end
 # it, so `"a \" x"` is one literal rather than two fragments and a stray `x`.
 STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"')
@@ -700,8 +730,21 @@ def _local_names(lines: Sequence[str]) -> set[str]:
         head, separator, _ = line.partition(" : ")
         if not separator:
             continue
-        names.update(part for part in head.split() if DECLARATION_NAME.fullmatch(part))
+        names.update(part for part in BINDER_TOKEN.findall(head) if _is_local(part))
     return names
+
+
+def _is_local(token: str) -> bool:
+    """Whether a binder token is a name Lean bound in this goal.
+
+    Two forms beyond an ordinary identifier, both of which Lean prints and both
+    of which went through to the search verbatim -- where they mean nothing, so
+    every source failed on a goal that was otherwise perfectly ordinary.
+    `x✝` is how a shadowed or unnamed hypothesis is displayed, and `«foo bar»`
+    is a quoted name, which `head.split()` tore in half before it could even be
+    recognised.
+    """
+    return bool(DECLARATION_NAME.fullmatch(token) or DISPLAYED_LOCAL.fullmatch(token))
 
 
 class PremiseRetriever:
@@ -793,8 +836,9 @@ class PremiseRetriever:
 
             detail: str | None = None
             results: tuple[DeclarationRecord, ...] = ()
+            asked = source.query_for(query)
             try:
-                results = source.search(query, depth)
+                results = source.search(asked, depth)
             except Exception as error:  # noqa: BLE001 - one source failing is an outcome, not the end
                 # Every way a source can fail, not the two that were foreseen.
                 # `lake` losing its execute bit raises `PermissionError`, and
@@ -814,6 +858,7 @@ class PremiseRetriever:
                 SourceOutcome(
                     identity=identity,
                     answered=detail is None,
+                    query=asked,
                     returned=len(results),
                     seconds=seconds,
                     detail=detail,
