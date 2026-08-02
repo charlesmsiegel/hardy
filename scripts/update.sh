@@ -108,8 +108,10 @@ parse_update_arguments() {
 # when there is no Hardy in the environment to ask.
 discover_source_tree() {
 	"$VENV/bin/python" - <<'PY'
-import json, pathlib, sys
+import json, pathlib
 from importlib import metadata
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 try:
     distribution = metadata.distribution("hardy-prover")
@@ -121,8 +123,11 @@ except metadata.PackageNotFoundError:
 recorded = distribution.read_text("direct_url.json")
 if recorded:
     direct = json.loads(recorded)
-    if direct.get("dir_info", {}).get("editable") and direct.get("url", "").startswith("file://"):
-        tree = pathlib.Path(direct["url"][len("file://"):])
+    parsed = urlparse(direct.get("url", ""))
+    if direct.get("dir_info", {}).get("editable") and parsed.scheme == "file":
+        # url2pathname, not a slice: the path is percent-encoded, and on
+        # Windows it carries a leading slash before the drive letter.
+        tree = pathlib.Path(url2pathname(parsed.path))
         if (tree / "pyproject.toml").is_file():
             print(tree)
             raise SystemExit(0)

@@ -148,18 +148,25 @@ function Get-SourceTree {
     $probe = @'
 import json, pathlib
 from importlib import metadata
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 try:
     distribution = metadata.distribution("hardy-prover")
 except metadata.PackageNotFoundError:
     raise SystemExit(1)
 
+# pip records this for anything installed from a local path or a URL; a wheel
+# install from a file has one too, so `editable` is what distinguishes them.
 recorded = distribution.read_text("direct_url.json")
 if recorded:
     direct = json.loads(recorded)
-    if direct.get("dir_info", {}).get("editable") and direct.get("url", "").startswith("file://"):
-        tree = direct["url"][len("file://"):].lstrip("/")
-        if (pathlib.Path(tree) / "pyproject.toml").is_file():
+    parsed = urlparse(direct.get("url", ""))
+    if direct.get("dir_info", {}).get("editable") and parsed.scheme == "file":
+        # url2pathname, not a slice: the path is percent-encoded, and on
+        # Windows it carries a leading slash before the drive letter.
+        tree = pathlib.Path(url2pathname(parsed.path))
+        if (tree / "pyproject.toml").is_file():
             print(tree)
             raise SystemExit(0)
 raise SystemExit(3)
@@ -192,6 +199,8 @@ function Update-FromRelease {
     Remove-Item -Recurse -Force $directory -ErrorAction SilentlyContinue
     Complete-Installers $staged
 }
+
+
 
 # The installers a release install keeps are what updates and removes it later,
 # so they move with the wheel: after an update to release N+1, release N's
