@@ -186,6 +186,10 @@ class SourceOutcome(FrozenModel):
     query: str | None = None
     returned: int = 0
     seconds: float = 0.0
+    # Refused by the budget rather than asked. A flag rather than a prefix on
+    # `detail`, so `budget_exhausted` can be re-derived from this record
+    # instead of re-read out of a sentence.
+    skipped_for_budget: bool = False
     detail: str | None = None
 
     @model_validator(mode="after")
@@ -318,6 +322,19 @@ class PremiseRanking(FrozenModel):
             raise ValueError("`complete` disagrees with the sources the provenance names")
         if self.reproducible != self._reproducible(self.provenance):
             raise ValueError("`reproducible` disagrees with the sources the provenance names")
+        # The budget claims come from the same record, for the same reason:
+        # they sat beside two derived booleans while being neither derived nor
+        # checked, so a ranking could misreport what an experiment spent and
+        # still validate. `run_seconds_remaining` is the exception and stays
+        # unverifiable here -- it depends on what earlier calls spent, which
+        # this record does not contain and should not pretend to.
+        spent = sum(source.seconds for source in self.provenance.sources)
+        if abs(self.seconds_spent - spent) > 1e-9:
+            raise ValueError("`seconds_spent` disagrees with what the sources recorded")
+        if self.budget_exhausted != any(
+            source.skipped_for_budget for source in self.provenance.sources
+        ):
+            raise ValueError("`budget_exhausted` disagrees with the sources the provenance names")
         return self
 
 
@@ -385,6 +402,15 @@ class LeanSearchSource:
         the corpus identity names another. Hashing the manifest beside the
         toolchain pin is the check that was missing, and it is the same number
         `EnvironmentIdentity` already carries.
+
+        What it does not establish, said plainly rather than implied: the
+        manifest names the revisions Lake resolved, not the source that was
+        built. A locally edited and rebuilt Mathlib, or replaced oleans, leaves
+        it byte-identical while `#find` searches something else. Closing that
+        would mean hashing the build output on every identity call, which for
+        Mathlib is not a thing to do per search. So `pinned` means the manifest
+        and toolchain match -- the same shape of limit the axiom audit states
+        about the environment it elaborates in.
         """
         project = getattr(self._service, "lean_project", None)
         if project is None:
@@ -850,6 +876,7 @@ class PremiseRetriever:
                     SourceOutcome(
                         identity=identity,
                         answered=False,
+                        skipped_for_budget=True,
                         detail=(
                             f"retrieval budget exhausted: {remaining:.1f}s left of "
                             f"{self._limits.retrieval_seconds}s, and this source may take "

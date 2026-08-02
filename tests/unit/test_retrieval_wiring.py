@@ -77,7 +77,7 @@ def test_the_mcp_server_answers_a_ranking_and_bounds_it(tmp_path) -> None:
             service=object(),
             store=store,
             official_checks=1,
-            observation_bytes=1_200,
+            observation_bytes=1_300,
             retriever=_retriever(
                 retrieval, [lean.DeclarationRecord(name='Huge.result', signature='x' * 10_000)]
             ),
@@ -89,7 +89,7 @@ def test_the_mcp_server_answers_a_ranking_and_bounds_it(tmp_path) -> None:
     assert [premise.name for premise in ranking.premises] == ['Huge.result']
     assert ranking.observation_truncated
     assert ranking.output_artifact is not None
-    assert len(ranking.model_dump_json().encode('utf-8')) <= 1_200
+    assert len(ranking.model_dump_json().encode('utf-8')) <= 1_300
     assert (store.path / ranking.output_artifact).exists()
     # Bounding rewrites the premises, so the digest must still describe the
     # provenance the bounded value carries rather than the one it was cut from.
@@ -136,7 +136,8 @@ def test_the_staged_dispatcher_offers_the_same_tool(tmp_path) -> None:
         ),
     )
     dispatch = staged.ClaudeStagedRuntime(
-        store=None, lean_runtime_factory=lambda claim: runtime
+        store=storage.RunStore.create(tmp_path / 'staged', 'prove', now=NOW, run_id=RUN_ID),
+        lean_runtime_factory=lambda claim: runtime,
     )._dispatcher(runtime)
 
     result = dispatch('rank_premises', {'goal': '_ + _ = _ + _', 'limit': 5})
@@ -145,6 +146,49 @@ def test_the_staged_dispatcher_offers_the_same_tool(tmp_path) -> None:
     payload = json.loads(result.output)
     assert [premise['name'] for premise in payload['premises']] == ['Nat.add_comm']
     assert payload['provenance']['sources'][0]['identity']['pinned'] is True
+
+
+def test_a_staged_ranking_reaches_the_run_record(tmp_path) -> None:
+    """The runtime leaves tool *results* to the dispatcher, and every other
+    tool's outcome survives in something durable -- `verification.json`, the
+    workspace tree, the CAS cell log. A ranking has no such home, so without
+    this the trajectory would show retrieval being asked and never what it
+    answered, for a result that shaped the proof.
+    """
+    domain = importlib.import_module('hardy.domain')
+    lean = importlib.import_module('hardy.lean')
+    retrieval = importlib.import_module('hardy.retrieval')
+    server = importlib.import_module('hardy.mcp_server')
+    staged = importlib.import_module('hardy.staged')
+    storage = importlib.import_module('hardy.storage')
+
+    store = storage.RunStore.create(tmp_path, 'prove', now=NOW, run_id=RUN_ID)
+    runtime = server.LeanToolRuntime(
+        claim=_claim(domain),
+        service=object(),
+        store=store,
+        official_checks=1,
+        observation_bytes=32 * 1024,
+        retriever=_retriever(
+            retrieval, [lean.DeclarationRecord(name='Nat.add_comm', signature='n + m = m + n')]
+        ),
+    )
+    dispatch = staged.ClaudeStagedRuntime(
+        store=store, lean_runtime_factory=lambda claim: runtime
+    )._dispatcher(runtime)
+
+    assert dispatch('rank_premises', {'goal': '_ + _ = _ + _'}).ok
+
+    recorded = [
+        json.loads(line)
+        for line in (store.path / 'trajectory.jsonl').read_text(encoding='utf-8').splitlines()
+    ]
+    ranking = next(item for item in recorded if item.get('kind') == 'claude.ranking')
+    premises = ranking['payload']['ranking']['premises']
+    assert [premise['name'] for premise in premises] == ['Nat.add_comm']
+    # The provenance travels with it, or the record says a ranking happened
+    # without saying what produced it.
+    assert ranking['payload']['ranking']['provenance']['sources'][0]['identity']['pinned'] is True
 
 
 def test_a_malformed_retrieval_call_is_an_answer_rather_than_a_traceback(tmp_path) -> None:

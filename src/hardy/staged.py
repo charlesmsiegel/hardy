@@ -261,6 +261,15 @@ class ClaudeStagedRuntime:
                     result = lean_runtime.rank_premises(
                         str(arguments["goal"]), int(arguments.get("limit", 10))
                     )
+                    # Recorded here because nowhere else records it. The
+                    # runtime deliberately leaves tool *results* to the
+                    # dispatcher (see `claude_runtime._blocks`), and every
+                    # other tool's outcome survives in something durable --
+                    # `verification.json`, the workspace tree, the CAS cell
+                    # log. A ranking has no such home, so without this the
+                    # trajectory would show that retrieval was asked and never
+                    # what it answered, for a result that shaped the proof.
+                    self._observe({"type": "ranking", "ranking": result.model_dump(mode="json")})
                 else:
                     return ToolResult(False, f"unknown tool: {name}")
             except (KeyError, TypeError, ValueError) as error:
