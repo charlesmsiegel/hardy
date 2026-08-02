@@ -21,7 +21,22 @@ class Outcome:
     message: str = ""
 
 
-def classify(text: str, commands: Sequence[Command], *, turn_running: bool) -> Outcome:
+def classify(
+    text: str,
+    commands: Sequence[Command],
+    *,
+    turn_running: bool,
+    command_running: bool = False,
+) -> Outcome:
+    """What a submitted line means, given what is already in flight.
+
+    `command_running` exists because a command is no longer necessarily over by
+    the time the next line is read: `/cas` runs its cell on a worker so the
+    event loop stays free to read an Esc, which also leaves the input box live
+    while the cell runs. Everything `turn_running` refuses is refused for the
+    same reason here -- a model turn started mid-cell, or a second cell, would
+    interleave in the one locked kernel both go through.
+    """
     # A leading space is the escape hatch for text that must start with a
     # slash; `/` itself is reserved.
     if text.startswith(" "):
@@ -31,9 +46,10 @@ def classify(text: str, commands: Sequence[Command], *, turn_running: bool) -> O
     if not text.strip():
         return Outcome("empty")
 
+    busy = "A turn" if turn_running else "A command"
     if not text.startswith("/"):
-        if turn_running:
-            return Outcome("refused", message="A turn is still running. Wait for it to finish.")
+        if turn_running or command_running:
+            return Outcome("refused", message=f"{busy} is still running. Wait for it to finish.")
         return Outcome("send", argument=text.strip())
 
     found = resolve(text, commands)
@@ -44,9 +60,9 @@ def classify(text: str, commands: Sequence[Command], *, turn_running: bool) -> O
             message=f"unknown command {name} — press Tab to complete, or /help for the list",
         )
     command, argument = found
-    if turn_running and not command.safe_in_flight:
+    if (turn_running or command_running) and not command.safe_in_flight:
         return Outcome(
             "refused",
-            message=f"/{command.name} cannot run while a turn is still running.",
+            message=f"/{command.name} cannot run while {busy.lower()} is still running.",
         )
     return Outcome("command", command=command, argument=argument)

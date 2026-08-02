@@ -23,6 +23,7 @@ import ast
 import contextlib
 import io
 import json
+import signal
 import sys
 import traceback
 
@@ -30,8 +31,61 @@ HEADER_BYTES = 10
 CELL_FILENAME = "<hardy-cell>"
 
 
+# Set when an interrupt arrives with no cell to abandon: between cells, or
+# while the frame for the next one is still being read. It cannot simply be
+# ignored. Hardy signals the moment it has written a frame, and the child may
+# not have picked it up yet -- swallowing the signal there would leave the cell
+# to run on with the only press already spent, until Hardy gave up waiting and
+# killed the kernel, which is the loss interrupting exists to avoid. Remembered
+# instead, and answered by the cell it arrived alongside.
+#
+# It cannot poison an unrelated later cell either: Hardy only ever signals a
+# kernel it has just given work to.
+PENDING_INTERRUPT = False
+
+
+def _interrupted_reply() -> dict:
+    """What a cell Hardy stopped before it ran reports."""
+    return {
+        "status": "interrupted",
+        "stdout": "",
+        "stderr": "interrupted before the cell ran",
+        "value_repr": "",
+        "capture_truncated": False,
+    }
+
+
+# The signals a stop arrives as: `SIGINT` on POSIX, and `SIGBREAK` on Windows,
+# which is what `CTRL_BREAK_EVENT` raises in the target.
+_STOP_SIGNALS = tuple(
+    found
+    for found in (getattr(signal, name, None) for name in ("SIGINT", "SIGBREAK"))
+    if found is not None
+)
+
+
+def _remember(_signum, _frame) -> None:
+    """Record a stop instead of raising it. Installed while reading a frame."""
+    global PENDING_INTERRUPT
+    PENDING_INTERRUPT = True
+
+
+def _handle_stops_by(handler) -> None:
+    for number in _STOP_SIGNALS:
+        with contextlib.suppress(OSError, ValueError):
+            signal.signal(number, handler)
+
+
 def read_exact(stream, count: int) -> bytes | None:
-    """Read exactly `count` bytes, or None if the stream ended first."""
+    """Read exactly `count` bytes, or None if the stream ended first.
+
+    Reading is done with the stop signal *deferred* rather than raised. There
+    is no placement of a `try` that would be safe otherwise: the exception can
+    land between `read` returning and the bytes being counted, and those bytes
+    are then lost with it -- half a frame, and a protocol that never
+    resynchronises. Deferring means no statement in here can be interrupted at
+    all, and the stop is answered by the cell whose frame this is reading.
+    """
     chunks: list[bytes] = []
     while count > 0:
         chunk = stream.read(count)
@@ -167,35 +221,50 @@ def main() -> None:
     with contextlib.suppress(BaseException):
         exec("from sympy import *", namespace)
 
+    global PENDING_INTERRUPT
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
     while True:
-        try:
-            header = read_exact(stdin, HEADER_BYTES)
-            if header is None:
-                return
-            try:
-                length = int(header.decode("ascii"))
-            except ValueError:
-                return
-            payload = read_exact(stdin, length)
-            if payload is None:
-                return
-        # An interrupt Hardy sends while a cell is running is caught by
-        # `run_cell`, which is the case that matters. This covers the race at
-        # the edge of it: the cell finished, its reply has been written, and
-        # the signal arrives while this is already blocked waiting for the next
-        # cell. There is nothing to abandon and nothing to report, and dying
-        # here would cost the whole namespace over a signal that arrived a
-        # moment too late. Nothing is lost by resuming -- an idle read has no
-        # partial frame in hand, because the parent sends one cell at a time
-        # and waits for its reply.
-        except KeyboardInterrupt:
-            continue
-        try:
-            request = json.loads(payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        # Deferred across the read, raised across the cell. The cell is the one
+        # place a stop *should* interrupt Python directly -- that is what makes
+        # it abandon the computation and leave the namespace standing -- and
+        # everywhere else it is a flag.
+        _handle_stops_by(_remember)
+        header = read_exact(stdin, HEADER_BYTES)
+        if header is None:
             return
-        reply = run_cell(str(request.get("source", "")), namespace, limit)
+        try:
+            length = int(header.decode("ascii"))
+        except ValueError:
+            return
+        payload = read_exact(stdin, length)
+        if payload is None:
+            return
+        _handle_stops_by(signal.default_int_handler)
+        # One handler over everything between having the frame and having a
+        # reply. `run_cell` catches the signal that lands while the cell is
+        # running, which is the common case; this catches the one that lands in
+        # the gaps around it -- parsing the frame, or the moment before `exec`
+        # begins. Hardy signals the instant it has written a frame, so those
+        # gaps are exactly where an early press tends to arrive, and an
+        # uncaught `KeyboardInterrupt` there kills the kernel and the whole
+        # namespace over a press meant to cost one cell.
+        try:
+            try:
+                request = json.loads(payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return
+            if PENDING_INTERRUPT:
+                # The stop reached this kernel before the cell did. Answering
+                # without running it is what the parent is waiting for: it gets
+                # a framed reply straight away, the namespace is untouched, and
+                # the kernel is still here for the next cell.
+                PENDING_INTERRUPT = False
+                reply = _interrupted_reply()
+            else:
+                reply = run_cell(str(request.get("source", "")), namespace, limit)
+        except KeyboardInterrupt:
+            PENDING_INTERRUPT = False
+            reply = _interrupted_reply()
         encoded = json.dumps(reply, ensure_ascii=False).encode("utf-8")
         stdout.write(f"{len(encoded):0{HEADER_BYTES}d}".encode("ascii"))
         stdout.write(encoded)

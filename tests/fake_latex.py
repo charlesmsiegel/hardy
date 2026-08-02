@@ -60,6 +60,15 @@ while pending:
 # genuinely exist rather than guess how long that takes.
 SLOW = re.search(r"%\s*slow:\s*([0-9.]+)", source)
 if SLOW:
+    if re.search(r"%\s*deaf\b", source):
+        # Refuses the interrupt, as a compiler sitting in a C loop would. The
+        # grace has to run out and the group has to be terminated.
+        import signal
+
+        for name in ("SIGINT", "SIGBREAK"):
+            handled = getattr(signal, name, None)
+            if handled is not None:
+                signal.signal(handled, signal.SIG_IGN)
     READY = re.search(r"%\s*ready:\s*(\S+)", source)
     if READY:
         pathlib.Path(READY.group(1)).write_text("ready", encoding="utf-8")

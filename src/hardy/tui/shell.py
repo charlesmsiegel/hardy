@@ -184,6 +184,12 @@ class Shell:
         # `state.turn_running`, so a turn finishing naturally makes it moot
         # without needing its own reset.
         self._forcing = False
+        # A command owns the session the way a turn does while it runs, so an
+        # Esc during one has somewhere to go and a second command has somewhere
+        # to be refused. `_command_stopping` is its `_abandoned`: the first
+        # press interrupts, the second gives up and kills.
+        self._command_running = False
+        self._command_stopping = False
         # Requests from `_FromThread`, each an (already-created, not-yet-
         # awaited) coroutine paired with the `concurrent.futures.Future` a
         # tool thread is blocked on. Never touched from that thread beyond
@@ -467,7 +473,10 @@ class Shell:
                 return
             self._box.text = ""
             outcome = dispatch.classify(
-                text, self._registry, turn_running=self._state.turn_running
+                text,
+                self._registry,
+                turn_running=self._state.turn_running,
+                command_running=self._command_running,
             )
             if outcome.kind == "send":
                 # `turn_running` flips here, synchronously, not inside
@@ -523,11 +532,26 @@ class Shell:
                     self._run_turn(outcome.argument, future, arrivals)
                 )
                 return
+            if outcome.kind == "command":
+                # Flipped here, synchronously, for exactly the reason
+                # `turn_running` is: a lone Escape typed behind this Enter is
+                # resolved in the very same input batch, with no event-loop
+                # turn in between. Left to `_run_command`, which does not run a
+                # line of its body until the loop gets to it, the press would
+                # find no command running and do nothing.
+                self._command_running = True
+                self._command_stopping = False
             event.app.create_background_task(self._run_command(outcome))
 
         @keys.add("escape", eager=True)
         def _abandon(event) -> None:
             if not self._state.turn_running:
+                # No turn, but a command can still own a child: `/cas` runs its
+                # cell on a worker precisely so this key can be read while it
+                # does. Nothing else here is long enough to interrupt, and a
+                # command that owns no child reports exactly that.
+                if self._command_running:
+                    self._stop_command()
                 return
             if self._abandoned:
                 # The turn was already stopped, so this press is about the
@@ -681,17 +705,63 @@ class Shell:
             loop.call_soon_threadsafe(arrivals.put_nowait, _TURN_OVER)
 
     async def _run_command(self, outcome: dispatch.Outcome) -> None:
+        # `_command_running` was set by `_submit_key` before this task existed,
+        # and stays set for the whole handler rather than only the part that
+        # runs a child: `dispatch.classify` reads it to refuse a second command
+        # or a model turn while one is in flight, and that has to hold while a
+        # handler is waiting on a prompt of its own as much as while it is
+        # computing.
         if outcome.kind == "empty":
             return
         if outcome.kind in {"unknown", "refused"}:
             self.write(outcome.message, style="error")
             return
+        resume = getattr(self._state.session, "resume_work", None)
+        if resume is not None:
+            # A stop stays in force after an Esc so that work admitted a moment
+            # earlier cannot start its child behind the press. Nothing lifts it
+            # between commands otherwise, and the next `/cas` cell would be
+            # interrupted on sight by a press aimed at the last one.
+            resume()
         try:
             self._state = await outcome.command.handler(self, outcome.argument, self._state)
         except Exception as error:  # noqa: BLE001 - a bad command must not end the session
             self.write(f"{type(error).__name__}: {error}", style="error")
+        finally:
+            # Cleared wherever the handler ended, including a raise: a flag
+            # left set would refuse every command and every turn after it.
+            self._command_running = False
         if self._state.done:
             self._app.exit(result=0)
+
+    def _stop_command(self) -> None:
+        """Esc against a command rather than a turn.
+
+        There is no turn to unwind and nothing to record as cancelled -- a
+        command is not a turn, and writing one into the transcript would claim
+        the model had been stopped. All this does is reach the child, which for
+        `/cas` is the cell in the kernel the human and the model share.
+        """
+        session = self._state.session
+        if self._command_stopping:
+            escalate = getattr(session, "escalate", None)
+            stopped = escalate() if escalate is not None else 0
+            self.write(
+                "stopped waiting; killed what had not stopped -- any computer "
+                "algebra kernel among them has lost its state"
+                if isinstance(stopped, int) and stopped
+                else "nothing left to stop",
+                style="warning",
+            )
+            return
+        self._command_stopping = True
+        interrupt = getattr(session, "interrupt_work", None)
+        stopped = interrupt() if interrupt is not None else 0
+        self.write(
+            "interrupted; esc again to stop waiting and kill it"
+            if isinstance(stopped, int) and stopped
+            else "nothing running to interrupt"
+        )
 
     async def _run_turn(
         self, text: str, future: asyncio.Future, arrivals: asyncio.Queue

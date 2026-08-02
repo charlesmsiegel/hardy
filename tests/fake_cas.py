@@ -7,7 +7,9 @@ ask for a timeout, a flood, or an answer that refuses to reproduce without
 needing SymPy, Singular, or Macaulay2 installed.
 """
 
+import contextlib
 import json
+import pathlib
 import signal
 import sys
 import time
@@ -17,7 +19,28 @@ HEADER_BYTES = 10
 HISTORY: list[str] = []
 
 
+PENDING_INTERRUPT = False
+_STOP_SIGNALS = tuple(
+    found
+    for found in (getattr(signal, name, None) for name in ("SIGINT", "SIGBREAK"))
+    if found is not None
+)
+
+
+def _remember(_signum, _frame):
+    """As `cas_driver._remember`: record the stop rather than raising it."""
+    global PENDING_INTERRUPT
+    PENDING_INTERRUPT = True
+
+
+def _handle_stops_by(handler):
+    for number in _STOP_SIGNALS:
+        with contextlib.suppress(OSError, ValueError):
+            signal.signal(number, handler)
+
+
 def read_exact(stream, count):
+    """As `cas_driver.read_exact`: read with the stop deferred, never raised."""
     chunks = []
     while count > 0:
         chunk = stream.read(count)
@@ -28,20 +51,42 @@ def read_exact(stream, count):
     return b"".join(chunks)
 
 
+def _matches(word: str, prefix: str) -> bool:
+    return word == prefix or word.startswith(prefix + " ")
+
+
+def _announce(word: str) -> None:
+    """Write the readiness path a cell was given, if any.
+
+    `hang /tmp/x` writes `/tmp/x` before blocking, so a test can wait for the
+    cell to be *running* before pressing Esc. Without it a test can only press
+    blind, and a press landing before the kernel has read the frame is answered
+    without the cell ever running -- a real behaviour, but not the one a test of
+    the in-flight path means to exercise.
+    """
+    _, _, path = word.partition(" ")
+    if path.strip():
+        pathlib.Path(path.strip()).write_text("ready", encoding="utf-8")
+
+
 def answer(source: str) -> dict:
     word = source.strip()
     if word == "boom":
         return {"status": "error", "stdout": "", "stderr": "boom", "value_repr": ""}
-    if word == "hang":
-        time.sleep(120)
-    if word == "deaf":
+    if _matches(word, "deaf"):
         # Refuses the interrupt, as a cell sitting in a C loop that never
         # returns to the interpreter would. The parent's grace has to run out
         # and the kernel has to be dropped, which is the escalation path.
+        # Announced *after* the handlers are in place, so a test that waits for
+        # it cannot press into the window where the default handler still runs.
         for name in ("SIGINT", "SIGBREAK"):
             handled = getattr(signal, name, None)
             if handled is not None:
                 signal.signal(handled, signal.SIG_IGN)
+        _announce(word)
+        time.sleep(120)
+    if _matches(word, "hang"):
+        _announce(word)
         time.sleep(120)
     if word == "slow":
         # Long enough to be measurable against a budget, short enough that a
@@ -49,6 +94,10 @@ def answer(source: str) -> dict:
         # to the deterministic counter below, so it is accepted and replays
         # faithfully like any other cell.
         time.sleep(0.5)
+    if word == "selfinterrupt":
+        # The cell raising it, with nobody having pressed anything. The driver
+        # cannot tell this from Hardy's own signal; the parent can.
+        raise KeyboardInterrupt
     if word == "die":
         raise SystemExit(1)
     if word == "flood":
@@ -75,6 +124,15 @@ def answer(source: str) -> dict:
     return {"status": "ok", "stdout": "", "stderr": "", "value_repr": str(len(HISTORY))}
 
 
+def _interrupted() -> dict:
+    return {
+        "status": "interrupted",
+        "stdout": "",
+        "stderr": "interrupted before the cell ran",
+        "value_repr": "",
+    }
+
+
 def clip(reply: dict, limit: int) -> dict:
     """Clip at the source, as the real driver does."""
     truncated = False
@@ -89,30 +147,33 @@ def clip(reply: dict, limit: int) -> dict:
 def main() -> None:
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else 256 * 1024
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
+    global PENDING_INTERRUPT
     while True:
+        _handle_stops_by(_remember)
+        header = read_exact(stdin, HEADER_BYTES)
+        if header is None:
+            return
+        payload = read_exact(stdin, int(header))
+        if payload is None:
+            return
+        _handle_stops_by(signal.default_int_handler)
+        # One handler from having the frame to having a reply, as
+        # `cas_driver.main` has: a signal in the gaps around the cell -- parsing
+        # the frame, the moment before it starts -- would otherwise be uncaught
+        # and kill the kernel, and those gaps are exactly where a press that
+        # arrived with the frame tends to land.
         try:
-            header = read_exact(stdin, HEADER_BYTES)
-            if header is None:
-                return
-            payload = read_exact(stdin, int(header))
-            if payload is None:
-                return
-        except KeyboardInterrupt:
-            # As `cas_driver.main` does: a signal that arrives between cells has
-            # nothing to abandon, and dying here would cost the namespace.
-            continue
-        source = json.loads(payload.decode("utf-8")).get("source", "")
-        try:
-            reply = answer(source)
+            source = json.loads(payload.decode("utf-8")).get("source", "")
+            if PENDING_INTERRUPT:
+                PENDING_INTERRUPT = False
+                reply = _interrupted()
+            else:
+                reply = answer(source)
         except KeyboardInterrupt:
             # As `cas_driver.run_cell` does: the cell is abandoned and *the
             # kernel answers*, which is what leaves the session's state intact.
-            reply = {
-                "status": "interrupted",
-                "stdout": "",
-                "stderr": "KeyboardInterrupt",
-                "value_repr": "",
-            }
+            PENDING_INTERRUPT = False
+            reply = _interrupted()
         reply = clip(reply, limit)
         encoded = json.dumps(reply).encode("utf-8")
         stdout.write(f"{len(encoded):0{HEADER_BYTES}d}".encode("ascii"))

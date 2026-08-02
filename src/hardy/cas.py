@@ -830,6 +830,19 @@ class CasSession:
         # `interrupt` refuses unless a cell is actually out there.
         self._in_flight = threading.Event()
         self._interrupted = threading.Event()
+        # Held across "write the frame and arm the flag" and across "decide
+        # whether to signal", so the two cannot interleave. Without it a press
+        # landing between the two reached a driver that was still idle: the
+        # signal was swallowed by the between-cells handler, the cell went out
+        # immediately afterwards, and the only press was already spent -- so
+        # the cell ran on until the grace expired and took the kernel with it,
+        # which is the exact loss interrupting exists to avoid.
+        self._signal_lock = threading.Lock()
+        # A stop asked for while no cell was in flight, remembered so the cell
+        # about to go out is stopped rather than the press being lost. Lifted
+        # by `resume`, at the start of the next turn, exactly as the register
+        # in `process` is.
+        self._stopping = False
         self._records: list[CellRecord] = self._load()
 
     # ------------------------------------------------------------------ log
@@ -1196,13 +1209,22 @@ class CasSession:
             end = SENTINEL_END.format(nonce=nonce).encode()
             kernel.rearm(end)
         frame = self.backend.frame(source, nonce)
-        # Cleared before the cell is out there, and only then armed: an
-        # interrupt asked for while nothing was running would otherwise stop
-        # the *next* cell, which nobody asked to stop.
-        self._interrupted.clear()
-        self._in_flight.set()
+        with self._signal_lock:
+            # Cleared before the cell is out there, and only then armed: an
+            # interrupt asked for while nothing was running would otherwise
+            # stop the *next* cell, which nobody asked to stop.
+            self._interrupted.clear()
+            sent = kernel.send(frame)
+            self._in_flight.set()
+            # A stop asked for before this cell existed still applies to it:
+            # the press was aimed at the work, and the work is now this. The
+            # signal goes out here, under the lock, so it lands on a driver
+            # that has the frame rather than on one still waiting for it.
+            if self._stopping and sent:
+                self._interrupted.set()
+                kernel.interrupt()
         try:
-            if not kernel.send(frame):
+            if not sent:
                 return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
             deadline = time.monotonic() + limit
             # The frame, not the source: an echoing interpreter echoes the
@@ -1265,7 +1287,16 @@ class CasSession:
             # classification always read a broken M2 cell as "ok".
             status = self.backend.classify(outcome.stdout, stderr_text)
             outcome = outcome.model_copy(update={"stderr": stderr_text, "status": status})
-        if self._interrupted.is_set() and outcome.status != "ok":
+        if not self._interrupted.is_set() and outcome.status == "interrupted":
+            # The driver says it caught a `KeyboardInterrupt` and Hardy never
+            # sent one, so the cell raised it itself -- `raise
+            # KeyboardInterrupt` in the source, or a library that uses it to
+            # unwind. That is an ordinary failure of the cell, and recording it
+            # as a cancellation would put a user action nobody took into the
+            # durable log. The parent is the only side that can tell these
+            # apart: the driver has no idea where the signal came from.
+            outcome = outcome.model_copy(update={"status": "error"})
+        elif self._interrupted.is_set() and outcome.status != "ok":
             # The kernel answered after being asked to stop, so it is alive and
             # its namespace is intact -- but what it answered with is the cell
             # failing, not the cell's result. A sentinel backend has no status
@@ -1280,26 +1311,43 @@ class CasSession:
     def interrupt(self) -> bool:
         """Stop the cell in flight without stopping the kernel.
 
-        Callable from any thread and takes no lock -- the lock is held by the
-        thread inside `execute`, which is the thread this exists to reach.
-        Reports whether an interrupt was actually asked of a running cell, so
-        the terminal can say what it did rather than claiming to have stopped
-        something that was never running.
+        Callable from any thread. Takes `_signal_lock` but never `_lock` -- the
+        latter is held by the thread inside `execute`, which is the thread this
+        exists to reach, and waiting for it would deadlock against the very
+        cell being stopped.
 
-        There is a window between the check and the signal in which the cell
-        can finish, so the driver still has to survive a signal arriving with
-        no cell to abandon; that is defence in depth, not the design.
+        Reports whether a cell was actually running to be stopped, so the
+        terminal can say what it did rather than claiming to have stopped
+        something that was not there. A press that finds nothing is still
+        remembered: the cell it was aimed at may be a microsecond from going
+        out, and `_send` signals it as soon as it does.
+
+        There is still a window in which the cell finishes just as the signal
+        is sent, so the driver survives one arriving with no cell to abandon;
+        that is defence in depth, not the design.
         """
-        if not self._in_flight.is_set():
-            return False
-        kernel = self._kernel
-        if kernel is None:
-            return False
-        # Set before the signal, not after: the reader must never see a kernel
-        # that has already answered the interrupt while the flag that explains
-        # the answer is still clear.
-        self._interrupted.set()
-        return kernel.interrupt()
+        with self._signal_lock:
+            self._stopping = True
+            if not self._in_flight.is_set():
+                return False
+            kernel = self._kernel
+            if kernel is None:
+                return False
+            # Set before the signal, not after: the reader must never see a
+            # kernel that has already answered the interrupt while the flag
+            # that explains the answer is still clear.
+            self._interrupted.set()
+            return kernel.interrupt()
+
+    def resume(self) -> None:
+        """Lift a remembered stop, so the next turn's cells may run.
+
+        The counterpart of `process.resume_children`, called at the same
+        moment and for the same reason: a stop that outlived the turn it
+        belonged to would interrupt the next turn's first cell on sight.
+        """
+        with self._signal_lock:
+            self._stopping = False
 
     def escalate(self) -> bool:
         """Stop waiting for the interrupt to be answered, and stop the kernel.
@@ -1310,16 +1358,20 @@ class CasSession:
         the timeout costs -- the namespace -- which is why it is the second
         press and not the first.
 
-        Like `interrupt`, takes no lock and refuses when nothing is running:
-        killing an idle kernel would leave the session holding a dead child it
-        still believed in.
+        Like `interrupt`, takes `_signal_lock` but never `_lock`, and refuses
+        when nothing is running: killing an idle kernel would leave the session
+        holding a dead child it still believed in. The stop is remembered
+        either way, so a cell about to go out is stopped rather than the press
+        being lost.
         """
-        if not self._in_flight.is_set():
-            return False
-        kernel = self._kernel
-        if kernel is None:
-            return False
-        self._interrupted.set()
+        with self._signal_lock:
+            self._stopping = True
+            if not self._in_flight.is_set():
+                return False
+            kernel = self._kernel
+            if kernel is None:
+                return False
+            self._interrupted.set()
         # The reading thread sees both streams end, and -- because the flag is
         # set -- records the cell as interrupted with the kernel lost, which is
         # what happened. It drops the kernel itself when it gets there; nothing

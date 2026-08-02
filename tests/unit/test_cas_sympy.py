@@ -310,7 +310,7 @@ def test_the_script_header_does_not_claim_a_verification_it_cannot_have(
     assert "verified on replay)" not in header
 
 
-def test_the_real_driver_answers_an_interrupt_and_keeps_the_namespace(sympy_session) -> None:
+def test_the_real_driver_answers_an_interrupt_and_keeps_the_namespace(sympy_session, tmp_path) -> None:
     """The shape issue #33 is about, against the driver Hardy actually ships.
 
     The fake kernel proves the parent's half. This proves the child's: a
@@ -325,13 +325,19 @@ def test_the_real_driver_answers_an_interrupt_and_keeps_the_namespace(sympy_sess
     sympy_session.execute("x, y = symbols('x y')")
     sympy_session.execute("kept = expand((x + y)**4)")
 
+    ready = tmp_path / "cell-running"
+
     def press_escape() -> None:
-        end = time.monotonic() + 10
-        while time.monotonic() < end:
-            if sympy_session.interrupt():
-                return
+        # Waits for the cell to be genuinely running before pressing, so this
+        # covers the signal reaching `run_cell` rather than the separate path
+        # where a stop arrives before the kernel has even read the frame.
+        # Pressed once, never polled: a press is remembered, so polling would
+        # keep re-arming it after the cell had already answered.
+        end = time.monotonic() + 30
+        while time.monotonic() < end and not ready.exists():
             time.sleep(0.01)
-        raise AssertionError("no cell was ever in flight to interrupt")
+        assert ready.exists(), "the cell never started"
+        assert sympy_session.interrupt() is True, "no cell was in flight"
 
     threading.Thread(target=press_escape, daemon=True).start()
 
@@ -339,7 +345,11 @@ def test_the_real_driver_answers_an_interrupt_and_keeps_the_namespace(sympy_sess
     # `time.sleep` is interruptible, which a tight C loop inside a SymPy
     # routine would not be -- that case escalates, and is covered against the
     # fake kernel, which can be made deaf on purpose.
-    record = sympy_session.execute("import time\ntime.sleep(300)")
+    record = sympy_session.execute(
+        "import time\n"
+        f"open({str(ready)!r}, 'w').write('x')\n"
+        "time.sleep(300)"
+    )
 
     assert record.status == "interrupted"
     assert record.accepted is False
@@ -348,4 +358,7 @@ def test_the_real_driver_answers_an_interrupt_and_keeps_the_namespace(sympy_sess
     assert time.monotonic() - started < 10
     # The kernel is alive and remembers everything, which is the whole point.
     assert sympy_session.state != "dead"
+    # The stop stays in force until something lifts it, as the next turn does:
+    # every later cell of a cancelled turn is stopped too, deliberately.
+    sympy_session.resume()
     assert sympy_session.execute("kept").value_repr == "x**4 + 4*x**3*y + 6*x**2*y**2 + 4*x*y**3 + y**4"

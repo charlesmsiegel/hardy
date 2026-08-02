@@ -190,12 +190,19 @@ class _Running:
 
 _RUNNING: set[_Running] = set()
 _RUNNING_LOCK = threading.Lock()
-# Set while a stop is in force, and cleared when the next turn starts. Without
-# it, stopping is a one-time sweep over whoever happened to be registered at
-# that instant, and a tool call already past the cancellation gate could spawn
-# its child a moment later and run to its full timeout with nothing left to
-# stop it -- the first Esc having already been spent.
-_STOPPING = threading.Event()
+# How hard a stop is in force, and until when. Cleared at the start of the next
+# turn. Without it, stopping is a one-time sweep over whoever happened to be
+# registered at that instant, and a tool call already past the cancellation gate
+# could spawn its child a moment later and run to its full timeout with nothing
+# left to stop it -- the first Esc having already been spent.
+#
+# A level rather than a flag, because the two presses do different things and a
+# child can arrive after either. If both land before the child registers, a
+# boolean would give the late arrival the first press's SIGINT and lose the
+# second press entirely -- so a wrapper that ignores SIGINT would sit out the
+# grace the user had already declined to wait for.
+_ASKED, _INSISTED = 1, 2
+_STOP_LEVEL = 0
 
 
 @contextlib.contextmanager
@@ -210,12 +217,15 @@ def tracked(child: subprocess.Popen):
     with _RUNNING_LOCK:
         _RUNNING.add(entry)
         # Read under the same lock the sweeps take, so this child is either in
-        # the snapshot they took or sees the flag they set. It cannot fall
+        # the snapshot they took or sees the level they set. It cannot fall
         # between the two.
-        arriving_into_a_stop = _STOPPING.is_set()
-    if arriving_into_a_stop:
+        arriving_into = _STOP_LEVEL
+    if arriving_into:
         entry.interrupted.set()
-        signal_interrupt(child)
+        if arriving_into >= _INSISTED:
+            terminate_group(child)
+        else:
+            signal_interrupt(child)
     try:
         yield entry
     finally:
@@ -234,8 +244,11 @@ def interrupt_children() -> int:
     by its session, which knows whether a cell is in flight and what the reply
     means, and signalling it from here as well would interrupt it twice.
     """
+    global _STOP_LEVEL
     with _RUNNING_LOCK:
-        _STOPPING.set()
+        # `max`, not assignment: a first press arriving after a second one has
+        # already escalated must not talk the stop back down.
+        _STOP_LEVEL = max(_STOP_LEVEL, _ASKED)
         entries = list(_RUNNING)
     for entry in entries:
         entry.interrupted.set()
@@ -251,8 +264,9 @@ def stop_children() -> int:
     as one Hardy stopped rather than as a child that exited on its own; all it
     changes is that the grace is not waited out.
     """
+    global _STOP_LEVEL
     with _RUNNING_LOCK:
-        _STOPPING.set()
+        _STOP_LEVEL = _INSISTED
         entries = list(_RUNNING)
     for entry in entries:
         entry.interrupted.set()
@@ -267,7 +281,9 @@ def resume_children() -> None:
     own cancellation flag. A stop that outlived the turn it belonged to would
     kill the next turn's first child on sight.
     """
-    _STOPPING.clear()
+    global _STOP_LEVEL
+    with _RUNNING_LOCK:
+        _STOP_LEVEL = 0
 
 
 class ProcessSpec(FrozenModel):

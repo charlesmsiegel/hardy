@@ -4,11 +4,30 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
 from .models import ToolResult
-from .process import child_creation, kill_group, tracked
+from .process import INTERRUPT_GRACE_SECONDS, child_creation, kill_group, terminate_group, tracked
+
+
+def _escalate_after_grace(child, entry, settled) -> None:
+    """Terminate a compile that was asked to stop and did not.
+
+    Waits for the stop rather than for the compiler, then gives it the same
+    grace `run_process` gives every other child before taking the group down.
+    Returns as soon as `settled` is set, so an ordinary compile costs it
+    nothing.
+    """
+    while not settled.wait(0.05):
+        if not entry.interrupted.is_set():
+            continue
+        if settled.wait(INTERRUPT_GRACE_SECONDS):
+            return
+        terminate_group(child)
+        return
+
 
 # Fragments are `\input` from one document, and that document is what a
 # compiler is ever pointed at.
@@ -138,6 +157,20 @@ class LatexTools:
                     text=True, **child_creation(),
                 )
                 with tracked(child) as entry:
+                    settled = threading.Event()
+                    # `communicate` cannot be told to stop waiting, and a
+                    # compiler that ignores the signal would otherwise be waited
+                    # on for the whole compile timeout -- reported, in the end,
+                    # as a timeout, when what happened was a press the user made
+                    # thirty seconds earlier. `run_process` bounds this with the
+                    # same grace inside its own poll loop; here it takes a
+                    # watcher, because the wait is inside `communicate`.
+                    watcher = threading.Thread(
+                        target=_escalate_after_grace,
+                        args=(child, entry, settled),
+                        daemon=True,
+                    )
+                    watcher.start()
                     try:
                         stdout, stderr = child.communicate(timeout=self.timeout)
                     except subprocess.TimeoutExpired:
@@ -146,6 +179,9 @@ class LatexTools:
                         raise subprocess.TimeoutExpired(
                             self.command, self.timeout, stdout, stderr
                         ) from None
+                    finally:
+                        settled.set()
+                        watcher.join(timeout=1)
                     interrupted = entry.interrupted.is_set()
                 process = subprocess.CompletedProcess(
                     self.command, child.returncode, stdout, stderr

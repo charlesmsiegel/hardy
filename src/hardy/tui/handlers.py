@@ -216,7 +216,16 @@ async def handle_cas(ui: Ui, argument: str, state: State) -> State:
             return state
         # Human cells go into the same log, under the same lock, and are
         # replayed and exported exactly like the model's.
-        result = cas.run(source, author="human")
+        #
+        # On a worker, because a cell can run for as long as the model's can
+        # and this handler is a coroutine on the terminal's event loop. Run
+        # inline, it blocks the very loop that has to read the Esc meant to
+        # stop it -- so a runaway human cell could only ever end at
+        # `cas_cell_seconds`, which takes the kernel and every value in it,
+        # while the same cell sent by the model was interruptible. `/cas` is
+        # already refused while anything else is in flight, so nothing else
+        # can reach the kernel during the await.
+        result = await asyncio.to_thread(cas.run, source, author="human")
         if result.restart_note:
             ui.write(result.restart_note)
         for stream in (result.stdout, result.stderr):
