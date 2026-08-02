@@ -61,6 +61,14 @@ DEFAULT_REPEATS = 3
 # pristine-reset, and snapshot machinery in #54 costs to carry.
 DEFAULT_THRESHOLD = 0.25
 
+# Successful probes a verdict requires. The median can only step over the cold
+# first elaboration once there are others to step to, so below three the
+# one-time page-cache cost is inside the number -- and that number is then
+# multiplied across every call. A report that disclaims its own prelude and
+# then issues a verdict from it is arguing with itself, so the verdict is
+# withheld rather than footnoted.
+MINIMUM_SAMPLES = 3
+
 
 # `Lean (version 4.32.0, x86_64-unknown-linux-gnu, commit 8c9756b28d64, Release)`.
 # Matched as two independent fields rather than one pattern: real builds put a
@@ -404,6 +412,11 @@ class ImportCost(FrozenModel):
         return len(self.samples_ms) + self.timeouts + self.errors
 
     @property
+    def enough_samples(self) -> bool:
+        """Whether the median can have excluded the cold first elaboration."""
+        return len(self.samples_ms) >= MINIMUM_SAMPLES
+
+    @property
     def median_ms(self) -> int | None:
         """The steady-state prelude, or None when it is not identifiable.
 
@@ -625,15 +638,15 @@ def describe(
     label = "censored median" if cost.timeouts else "median"
     lines.append(f"prelude ({label} of {counted}): {median / 1000:.2f}s per Lean call")
     lines.append(f"samples: {', '.join(f'{item / 1000:.2f}s' for item in cost.samples_ms)}")
-    if len(cost.samples_ms) < 3:
+    if not cost.enough_samples:
         # The first elaboration on a machine also warms the page cache, and the
         # median can only step over that outlier once there are others to step
         # to. Below three it is inside the number, and the number is then
         # multiplied across every call.
         lines.append(
             f"caution: {len(cost.samples_ms)} successful probe(s) — too few for the median to "
-            "exclude the cold-cache first elaboration, so the prelude here may be overstated; "
-            "--repeats 3 or more measures the steady state"
+            "exclude the cold-cache first elaboration, so the prelude above may be overstated; "
+            f"--repeats {MINIMUM_SAMPLES} or more measures the steady state"
         )
     if calls is None or total_ms is None:
         lines.append("")
@@ -643,9 +656,20 @@ def describe(
             "pays on its first."
         )
         return lines
-    estimate = cost.estimate(calls=calls, total_ms=total_ms, workers=workers)
     lines.append("")
     lines.append(f"observed run: {calls} Lean call(s) in {total_ms / 1000:.2f}s")
+    if not cost.enough_samples:
+        # Withheld, not footnoted. Multiplying a prelude the report has just
+        # called possibly-overstated across every call, and then declaring a
+        # pool warranted on the product, is the report contradicting itself --
+        # the same fault as printing a share that disagrees with its verdict.
+        lines.append(
+            f"no verdict: the prelude above rests on {len(cost.samples_ms)} probe(s) and may "
+            f"still carry the one-time cold-cache cost, which this would multiply across "
+            f"{calls} calls; re-measure with --repeats {MINIMUM_SAMPLES} or more"
+        )
+        return lines
+    estimate = cost.estimate(calls=calls, total_ms=total_ms, workers=workers)
     # The one assumption the tool cannot check. `--calls` is taken to count
     # only calls that imported the probed set; a run whose calls import
     # different modules has a different prelude per call, and nothing here can
@@ -754,6 +778,8 @@ def report(
     if cost.median_ms is None:
         return 1
     if calls is not None and total_ms is not None:
+        if not cost.enough_samples:
+            return 1
         estimate = cost.estimate(calls=calls, total_ms=total_ms, workers=workers)
         return 0 if estimate.is_consistent else 1
     return 0

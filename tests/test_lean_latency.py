@@ -177,7 +177,7 @@ def test_the_report_states_the_assumption_it_cannot_check():
     Nothing here can verify that, so the report says so where the number is
     quoted rather than leaving a reader to assume it was checked.
     """
-    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000, 12_000, 12_000))
     text = "\n".join(describe(cost, calls=10, total_ms=150_000))
     assert "assuming all 10 imported `Mathlib`" in text
     assert "overstates the recovery" in text
@@ -404,7 +404,7 @@ def test_contradictory_run_data_is_refused_rather_than_capped():
 
 
 def test_the_report_explains_a_contradiction_instead_of_giving_a_verdict():
-    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000, 12_000, 12_000))
     text = "\n".join(describe(cost, calls=100, total_ms=50_000))
     assert "did not all pay this prelude" in text
     assert "warranted" not in text
@@ -476,7 +476,7 @@ def test_a_probe_set_with_neither_samples_nor_failures_says_it_measured_nothing(
 
 
 def test_the_report_states_the_verdict_both_ways():
-    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000, 12_000, 12_000))
     warranted = "\n".join(describe(cost, calls=10, total_ms=150_000, threshold=0.25))
     assert "72.0% of the run" in warranted
     assert "not warranted" not in warranted
@@ -490,7 +490,7 @@ def test_the_reported_share_never_contradicts_the_verdict_beside_it():
     """A 24.9% share printed as "25%" above "25% threshold: not warranted"
     is a report arguing with itself, and rounding was the only cause."""
     # 2490ms recoverable of 10_000ms is 24.9%, just under the threshold.
-    cost = ImportCost(imports=("Mathlib",), samples_ms=(2_490,))
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(2_490, 2_490, 2_490))
     text = "\n".join(describe(cost, calls=2, total_ms=10_000, threshold=0.25))
     assert "24.9% of the run" in text
     assert "not warranted" in text
@@ -504,14 +504,14 @@ def test_precision_widens_only_as_far_as_the_comparison_needs():
     until the printed number lands on its true side of the line -- and stays
     narrow when nothing is close.
     """
-    near = ImportCost(imports=("Mathlib",), samples_ms=(2_496,))
+    near = ImportCost(imports=("Mathlib",), samples_ms=(2_496, 2_496, 2_496))
     text = "\n".join(describe(near, calls=2, total_ms=10_000, threshold=0.25))
     assert "24.96% of the run" in text
     assert "25.00% threshold" in text
     assert "not warranted" in text
 
     # Nothing near the line, so one decimal still suffices.
-    far = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    far = ImportCost(imports=("Mathlib",), samples_ms=(12_000, 12_000, 12_000))
     plain = "\n".join(describe(far, calls=10, total_ms=150_000, threshold=0.25))
     assert "72.0% of the run" in plain
     assert "25.0% threshold" in plain
@@ -529,7 +529,7 @@ def test_the_observed_run_must_afford_a_prelude_on_every_call():
         estimate.warrants_warm_pool()
 
     text = "\n".join(
-        describe(ImportCost(imports=("Mathlib",), samples_ms=(60_000,)), calls=2, total_ms=100_000)
+        describe(ImportCost(imports=("Mathlib",), samples_ms=(60_000, 60_000, 60_000)), calls=2, total_ms=100_000)
     )
     assert "did not all pay this prelude" in text
     assert "warranted" not in text
@@ -541,7 +541,7 @@ def test_the_contradiction_message_states_the_total_it_actually_compared():
     With two calls at a 60s prelude in a 100s run it said "is 60.00s, longer
     than the 100.00s run" — an arithmetic claim that is false on its face.
     """
-    cost = ImportCost(imports=("Mathlib",), samples_ms=(60_000,))
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(60_000, 60_000, 60_000))
     text = "\n".join(describe(cost, calls=2, total_ms=100_000))
     assert "is 120.00s, longer than the 100.00s run" in text
 
@@ -758,7 +758,7 @@ def test_the_verdict_line_renders_the_relation_from_exact_values():
     the case where they collide beyond the precision cap is covered by
     `test_operands_that_render_identically_are_not_printed_as_an_inequality`.
     """
-    cost = ImportCost(imports=("Mathlib",), samples_ms=(2_496,))
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(2_496, 2_496, 2_496))
     text = "\n".join(describe(cost, calls=2, total_ms=10_000, threshold=0.25))
     assert "24.96% < 25.00% threshold" in text
     assert "not warranted" in text
@@ -822,7 +822,7 @@ def test_every_worker_in_a_pool_pays_its_own_first_import():
 def test_a_pool_larger_than_the_run_does_not_credit_idle_workers():
     """"1 calls minus 4 first import(s)" credited imports to workers that
     serviced nothing. The saving was right; the sentence beside it was not."""
-    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000, 12_000, 12_000))
     estimate = cost.estimate(calls=1, total_ms=13_000, workers=4)
     assert estimate.effective_workers == 1
     assert estimate.recoverable_ms == 0
@@ -836,14 +836,14 @@ def test_the_report_says_both_measurements_must_share_an_environment():
     `--total-seconds` arrive as bare numbers. A wall time from a faster machine
     combines with a local prelude into a verdict neither environment supports,
     and it looks exactly like one both do."""
-    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000, 12_000, 12_000))
     text = "\n".join(describe(cost, calls=10, total_ms=150_000))
     assert "machine and toolchain recorded above" in text
     assert "two separate measurements" in text
 
 
 def test_the_report_names_the_pool_shape_it_costed():
-    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000, 12_000, 12_000))
     single = "\n".join(describe(cost, calls=10, total_ms=200_000))
     assert "a single warm process" in single
     pooled = "\n".join(describe(cost, calls=10, total_ms=200_000, workers=4))
@@ -854,7 +854,7 @@ def test_the_report_names_the_pool_shape_it_costed():
 def test_operands_that_render_identically_are_not_printed_as_an_inequality():
     """`24.960000% < 24.960000%` is false as printed, however right the
     relation is; one operand is dropped rather than repeated."""
-    cost = ImportCost(imports=("Mathlib",), samples_ms=(2_496,))
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(2_496, 2_496, 2_496))
     text = "\n".join(describe(cost, calls=2, total_ms=10_000, threshold=0.2496000001))
     assert "24.960000% < 24.960000%" not in text
     assert "below the threshold" in text
@@ -903,7 +903,7 @@ def test_a_withheld_verdict_exits_nonzero():
     if both exit 0, which is the confusion this command exists to prevent."""
     from hardy.latency import report
 
-    clean = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    clean = ImportCost(imports=("Mathlib",), samples_ms=(12_000, 12_000, 12_000))
     assert report(clean, calls=10, total_ms=150_000) == 0
     # Prelude measured cleanly, but the run contradicts it.
     assert report(clean, calls=100, total_ms=50_000) == 1
@@ -994,15 +994,44 @@ def test_the_deadline_travels_with_a_censored_measurement(tmp_path: Path):
     assert "deadline 300s" in "\n".join(describe(cost))
 
 
-def test_too_few_probes_to_exclude_the_cold_start_says_so():
-    """`--repeats 1` measures the cold cache and multiplies it across a run."""
+def test_too_few_probes_withholds_the_verdict_rather_than_footnoting_it():
+    """A caution alone left the control flow intact: the report called its own
+    prelude possibly-overstated and then declared a pool warranted from it,
+    which is the report arguing with itself."""
+    from hardy.latency import report
+
     cost = ImportCost(imports=("Mathlib",), samples_ms=(30_000,))
     text = "\n".join(describe(cost, calls=10, total_ms=400_000))
     assert "too few for the median to exclude the cold-cache" in text
     assert "--repeats 3" in text
+    assert "no verdict" in text
+    assert "warranted" not in text
+    assert report(cost, calls=10, total_ms=400_000) == 1
 
     enough = ImportCost(imports=("Mathlib",), samples_ms=(30_000, 12_000, 11_000))
-    assert "cold-cache" not in "\n".join(describe(enough, calls=10, total_ms=400_000))
+    verdict = "\n".join(describe(enough, calls=10, total_ms=400_000))
+    assert "cold-cache" not in verdict
+    assert "warranted" in verdict
+    assert report(enough, calls=10, total_ms=400_000) == 0
+
+
+def test_an_absurd_call_count_is_refused_before_probing(tmp_path: Path, capsys, monkeypatch):
+    """Python integers do not overflow, but the report renders ms as seconds
+    and `10**308 * 12_000 / 1000` exceeds a float — so the command completed
+    every expensive probe and exited with an OverflowError traceback."""
+    from hardy import cli
+
+    project = tmp_path / "lean_project"
+    project.mkdir()
+    started = []
+    monkeypatch.setattr(cli.latency, "probe_toolchain", lambda *a, **k: started.append(1))
+    monkeypatch.setattr(cli.latency, "measure_import_cost", lambda *a, **k: started.append(1))
+    args = cli.build_parser().parse_args(
+        ["latency", "--calls", str(10**308), "--total-seconds", "150"]
+    )
+    assert cli.run_latency(args, _config_for(tmp_path, project)) == 2
+    assert "--calls must be between" in capsys.readouterr().out
+    assert started == []
 
 
 def test_the_censored_median_is_labelled_by_what_it_was_taken_over():
@@ -1112,7 +1141,7 @@ def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys,
 
     def fake_measure(imports, *, argv, cwd, timeout_seconds, repeats, environment=None, identity_note=None, runner=None):
         seen.update(imports=imports, argv=argv, cwd=cwd, repeats=repeats)
-        return Cost(imports=imports, samples_ms=(12_000,))
+        return Cost(imports=imports, samples_ms=(12_000, 12_000, 12_000))
 
     monkeypatch.setattr(cli.latency, "measure_import_cost", fake_measure)
     config = Config(
@@ -1162,7 +1191,7 @@ def test_invalid_observed_run_values_are_refused_before_any_probe_runs(tmp_path:
     )
     args = cli.build_parser().parse_args(["latency", "--calls", "-1", "--total-seconds", "150"])
     assert cli.run_latency(args, _config_for(tmp_path, project)) == 2
-    assert "--calls cannot be negative" in capsys.readouterr().out
+    assert "--calls must be between" in capsys.readouterr().out
     assert probed == []
 
     args = cli.build_parser().parse_args(["latency", "--total-seconds", "-5"])

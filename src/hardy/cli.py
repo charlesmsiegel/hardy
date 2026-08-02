@@ -608,6 +608,10 @@ def _find_run_dir(root: Path, run_id: Any) -> Path:
 
 DEFAULT_PROBE_TIMEOUT = 300.0
 
+# Far beyond any run `hardy latency` describes, and small enough that every
+# derived total still renders. See the bound in `run_latency`.
+MAX_CALLS = 1_000_000_000
+
 
 def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     """Measure the fixed Lean import cost, for the gate in DESIGN.md and #54.
@@ -631,8 +635,13 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     # traceback where a usage error belongs. Checked before the conversion
     # below too -- `round(nan)` raises ValueError and `round(inf)` raises
     # OverflowError, so converting first turns a usage error into a traceback.
-    if args.calls is not None and args.calls < 0:
-        print("--calls cannot be negative")
+    # Bounded above as well as below. Python integers do not overflow, but the
+    # report renders milliseconds as seconds, and `10**308 * 12_000 / 1000`
+    # exceeds what a float can hold -- so an absurd count completed every
+    # expensive probe and then exited with an OverflowError traceback. A billion
+    # Lean calls is already far beyond any run this measures.
+    if args.calls is not None and not 0 <= args.calls <= MAX_CALLS:
+        print(f"--calls must be between 0 and {MAX_CALLS}")
         return 2
     if args.total_seconds is not None and (
         not math.isfinite(args.total_seconds)

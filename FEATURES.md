@@ -149,11 +149,16 @@ Priority labels are sequencing hints:
   recover: `prelude × (calls − workers)`, where `--workers` is the size of the
   hypothetical pool and defaults to a single persistent process. It withholds
   the verdict rather than
-  guessing — with no observed run to compare against, when enough probes hit
-  the deadline that the median falls among the censored ones, and when the
-  prelude and the run contradict each other by describing more time than the
-  run took. Each refusal names which number is missing, because a fabricated
-  one decides the question below without evidence.
+  guessing — with no observed run to compare against, with fewer than three
+  successful probes (below which the median still carries the one-time
+  cold-cache cost it would then multiply across every call), when enough probes
+  hit the deadline that the median falls among the censored ones, when most
+  probes failed outright, and when the prelude and the run contradict each other
+  in either direction. Each refusal names which number is missing, because a
+  fabricated one decides the question below without evidence. Two assumptions it
+  cannot check — that the counted calls imported the probed set, and that the
+  observed run happened on the recorded machine and toolchain — are stated
+  beside the numbers rather than left for a reader to infer.
 - **Later:** persistent REPL sessions, warm worker pools, pristine reset per run,
   process-death recovery, timeouts, and proof-state snapshot/pickling. Deferred
   until the measurement above says the recovered share is worth the machinery;
