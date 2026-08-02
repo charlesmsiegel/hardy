@@ -554,6 +554,28 @@ def test_only_the_names_the_goal_bound_are_wildcarded() -> None:
     assert retrieval.search_query('h : a very long type\n  continuing here\n⊢ f h') == '⊢ f _'
 
 
+def test_the_budget_a_ranking_reports_is_re_derived_when_it_is_read_back() -> None:
+    """`seconds_spent` and `budget_exhausted` sat beside two derived booleans
+    while being neither derived nor checked, so a ranking could misreport what
+    an experiment spent and still pass every validation.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    readings = iter([0.0, 4.0, 4.0])
+    lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')], worst_case_seconds=4.0)
+    loogle = FakeSource(_unpinned(retrieval), [_record('Nat.mul_comm')], worst_case_seconds=4.0)
+
+    ranking = _retriever(
+        retrieval, [lean, loogle], seconds=5, clock=lambda: next(readings)
+    ).rank('_ + _ = _ + _')
+    payload = json.loads(ranking.model_dump_json())
+
+    assert ranking.budget_exhausted and ranking.seconds_spent == pytest.approx(4.0)
+    assert retrieval.PremiseRanking.model_validate(payload).seconds_spent == pytest.approx(4.0)
+    for field, wrong in (('seconds_spent', 0.5), ('budget_exhausted', False)):
+        with pytest.raises(ValidationError):
+            retrieval.PremiseRanking.model_validate(payload | {field: wrong})
+
+
 def test_a_conclusion_lean_wrapped_over_several_lines_is_rejoined() -> None:
     """Taking only the turnstile line searched a shorter, different
     proposition, and said nothing about having done so -- the same silent
