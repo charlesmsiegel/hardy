@@ -221,10 +221,18 @@ def test_the_mathlib_revision_is_qualified_when_the_command_may_look_elsewhere()
     from hardy.latency import manifest_binds
 
     assert manifest_binds(("lake", "env", "lean")) is True
-    assert manifest_binds(("/usr/bin/lake", "env", "lean")) is True
+    assert manifest_binds(("/usr/bin/lake", "env", "/usr/bin/lean")) is True
     assert manifest_binds(("lean",)) is False
     assert manifest_binds(("my-wrapper", "lean")) is False
     assert manifest_binds(()) is False
+    # Checking only argv[0] claimed to be conservative and was the opposite:
+    # this starts with lake, replaces the environment lake just built, and
+    # imports from another project entirely.
+    assert manifest_binds(
+        ("lake", "env", "env", "LEAN_PATH=/other/.lake/build/lib/lean", "lean")
+    ) is False
+    assert manifest_binds(("lake", "env", "lean", "--json")) is False
+    assert manifest_binds(("lake", "exe", "lean")) is False
 
     unbound = ImportCost(
         imports=("Mathlib",), samples_ms=(12_000,), environment=_identity(), manifest_bound=False
