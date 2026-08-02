@@ -554,6 +554,60 @@ def test_only_the_names_the_goal_bound_are_wildcarded() -> None:
     assert retrieval.search_query('h : a very long type\n  continuing here\n⊢ f h') == '⊢ f _'
 
 
+def test_the_local_environment_keeps_its_signatures_even_when_it_is_not_pinned() -> None:
+    """Tightening what pinning requires quietly cost the local search its say.
+
+    An unpinned Lean source is still the environment that will elaborate the
+    proof, so its rendering of a type is the one worth showing. Whether the
+    ranking can be *replayed* is a separate question, and `reproducible` is
+    where it belongs.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    unpinned_lean = retrieval.SourceIdentity(
+        name='lean-find', kind='lean_search', corpus='Mathlib 81a5 / toolchain unverified',
+        pinned=False,
+    )
+    lean = FakeSource(unpinned_lean, [_record('Nat.add_comm', 'Nat.add_comm : n + m = m + n')])
+    loogle = FakeSource(_unpinned(retrieval), [_record('Nat.add_comm', 'from the internet')])
+
+    ranking = _retriever(retrieval, [loogle, lean]).rank('_ + _ = _ + _')
+
+    assert ranking.premises[0].signature == 'Nat.add_comm : n + m = m + n'
+    assert not ranking.reproducible
+
+
+def test_a_field_label_is_not_a_use_of_the_local_that_shares_its_name() -> None:
+    """`{ field := field }` names the field once and the local once. Rewriting
+    both produced `{ _ := _ }`, which no source accepts."""
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    assert retrieval.search_query('field : Nat\n⊢ { field := field } = expected') == (
+        '⊢ { field := _ } = expected'
+    )
+    assert retrieval.search_query('x : Nat\n⊢ f (y := x) = x') == '⊢ f (y := _) = _'
+
+
+def test_a_self_hosted_loogle_can_name_the_corpus_it_serves() -> None:
+    """The endpoint is configurable so a project can run its own against a
+    pinned Mathlib -- and hard-coding `pinned=False` made that configuration
+    pointless for the only reason anyone would use it. The public instance
+    names no revision and stays unpinned."""
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    public = retrieval.LoogleSource(fetch=lambda url, timeout: b'{"hits": []}')
+    assert not public.identity.pinned
+
+    hosted = retrieval.LoogleSource(
+        endpoint='https://loogle.internal/json',
+        corpus_revision='81a5d257',
+        fetch=lambda url, timeout: b'{"hits": []}',
+    )
+
+    assert hosted.identity.pinned
+    assert '81a5d257' in hosted.identity.corpus
+    assert hosted.identity.corpus != public.identity.corpus
+
+
 def test_the_budget_a_ranking_reports_is_re_derived_when_it_is_read_back() -> None:
     """`seconds_spent` and `budget_exhausted` sat beside two derived booleans
     while being neither derived nor checked, so a ranking could misreport what
@@ -571,7 +625,11 @@ def test_the_budget_a_ranking_reports_is_re_derived_when_it_is_read_back() -> No
 
     assert ranking.budget_exhausted and ranking.seconds_spent == pytest.approx(4.0)
     assert retrieval.PremiseRanking.model_validate(payload).seconds_spent == pytest.approx(4.0)
-    for field, wrong in (('seconds_spent', 0.5), ('budget_exhausted', False)):
+    for field, wrong in (
+        ('seconds_spent', 0.5),
+        ('budget_exhausted', False),
+        ('run_seconds_remaining', 999.0),
+    ):
         with pytest.raises(ValidationError):
             retrieval.PremiseRanking.model_validate(payload | {field: wrong})
 

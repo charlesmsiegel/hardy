@@ -228,6 +228,12 @@ class RetrievalProvenance(FrozenModel):
     # made and not what it said, so premises could be swapped wholesale --
     # names, scores, source ranks -- and every check still passed.
     premises_sha256: str
+    # The frozen budget this ranking was admitted against, and what the
+    # retriever had already spent before it. Recorded so `run_seconds_remaining`
+    # is derivable rather than asserted -- it was the one budget claim a reader
+    # had to take on faith, which is not a thing this record does.
+    budget_seconds: int
+    prior_seconds_spent: float
     ranker: str
     sources: tuple[SourceOutcome, ...]
 
@@ -325,9 +331,8 @@ class PremiseRanking(FrozenModel):
         # The budget claims come from the same record, for the same reason:
         # they sat beside two derived booleans while being neither derived nor
         # checked, so a ranking could misreport what an experiment spent and
-        # still validate. `run_seconds_remaining` is the exception and stays
-        # unverifiable here -- it depends on what earlier calls spent, which
-        # this record does not contain and should not pretend to.
+        # still validate. Including what earlier calls spent is what made the
+        # last of the three derivable too.
         spent = sum(source.seconds for source in self.provenance.sources)
         if abs(self.seconds_spent - spent) > 1e-9:
             raise ValueError("`seconds_spent` disagrees with what the sources recorded")
@@ -335,6 +340,12 @@ class PremiseRanking(FrozenModel):
             source.skipped_for_budget for source in self.provenance.sources
         ):
             raise ValueError("`budget_exhausted` disagrees with the sources the provenance names")
+        remaining = max(
+            0.0,
+            self.provenance.budget_seconds - self.provenance.prior_seconds_spent - spent,
+        )
+        if abs(self.run_seconds_remaining - remaining) > 1e-9:
+            raise ValueError("`run_seconds_remaining` disagrees with the budget and the spend")
         return self
 
 
@@ -505,16 +516,32 @@ class LoogleSource:
         endpoint: str = DEFAULT_LOOGLE_ENDPOINT,
         *,
         timeout: float = DEFAULT_LOOGLE_TIMEOUT,
+        corpus_revision: str | None = None,
         fetch: Callable[[str, float], bytes] | None = None,
     ) -> None:
         self._endpoint = endpoint
         self._timeout = timeout
+        # A self-hosted instance served against a fixed Mathlib can say so, and
+        # then a ranking it shaped *is* replayable. The endpoint was made
+        # configurable for exactly that deployment, and hard-coding
+        # `pinned=False` made the configuration pointless for the one reason
+        # anyone would use it. Declared by the caller because nothing in the
+        # protocol reports it -- an unverified claim, but the operator's rather
+        # than Hardy's, and the revision it names travels in the corpus.
+        self._corpus_revision = corpus_revision
         self._fetch = fetch or _fetch_url
 
     @property
     def identity(self) -> SourceIdentity:
         return SourceIdentity(
-            name="loogle", kind="loogle", corpus=self._endpoint, pinned=False
+            name="loogle",
+            kind="loogle",
+            corpus=(
+                f"{self._endpoint} @ {self._corpus_revision}"
+                if self._corpus_revision
+                else self._endpoint
+            ),
+            pinned=self._corpus_revision is not None,
         )
 
     @property
@@ -725,8 +752,11 @@ def search_query(goal: str) -> str:
         # `xs` under projection and must become `_.reverse`; leaving it earns a
         # guaranteed `Unknown identifier`, which is worse than a pattern a
         # search might not like.
+        # `(?!\s*:=)` keeps a label: in `{ field := field }` the first `field`
+        # names the structure field and the second is the local. Rewriting both
+        # produced `{ _ := _ }`, which is not a query any source accepts.
         conclusion = _substitute_outside_literals(
-            conclusion, rf"(?<![\w'.!?]){re.escape(name)}(?![\w'!?])"
+            conclusion, rf"(?<![\w'.!?]){re.escape(name)}(?![\w'!?])(?!\s*:=)"
         )
     return conclusion
 
@@ -863,7 +893,7 @@ class PremiseRetriever:
         # name -> (rank per source, best record seen)
         found: dict[str, list[SourceRank]] = {}
         records: dict[str, DeclarationRecord] = {}
-        pinned_signature: set[str] = set()
+        local_signature: set[str] = set()
 
         for source in self._sources:
             identity = source.identity
@@ -936,14 +966,20 @@ class PremiseRetriever:
                     SourceRank(source=identity.name, rank=position)
                 )
                 # The signature a model reads should be the one the environment
-                # it will elaborate against actually holds, so a pinned source's
-                # rendering wins over a remote service's.
-                if record.name not in records or (
-                    identity.pinned and record.name not in pinned_signature
-                ):
+                # it will elaborate against actually holds, so the local search
+                # wins over a remote service's rendering.
+                #
+                # Keyed on the *kind*, not on `pinned`. Tightening what pinning
+                # requires -- an immutable toolchain, a matching manifest --
+                # quietly cost a legitimately-unpinned local environment its
+                # say over signatures, and handed the model a remote type for a
+                # declaration its own Lean was about to elaborate. Whether a
+                # ranking can be replayed is a question for `reproducible`.
+                local = identity.kind == "lean_search"
+                if record.name not in records or (local and record.name not in local_signature):
                     records[record.name] = record
-                if identity.pinned:
-                    pinned_signature.add(record.name)
+                if local:
+                    local_signature.add(record.name)
 
         premises = [
             RankedPremise(
@@ -957,9 +993,12 @@ class PremiseRetriever:
         # Name breaks the tie, so the same answers always fuse to the same order.
         premises.sort(key=lambda premise: (-premise.score, premise.name))
 
+        prior = self._spent
         self._spent += spent
         provenance = RetrievalProvenance(
             premises_sha256=premises_digest(premises[:limit]),
+            budget_seconds=self._limits.retrieval_seconds,
+            prior_seconds_spent=prior,
             goal_sha256=hashlib.sha256(goal.encode("utf-8")).hexdigest(),
             query_sha256=hashlib.sha256(query.encode("utf-8")).hexdigest(),
             ranker=RANKER,
