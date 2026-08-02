@@ -275,7 +275,20 @@ class WarmPoolEstimate(FrozenModel):
         available. `is_consistent` detects that instead, and the report
         refuses rather than rounding a contradiction into evidence.
         """
-        return max(0, self.calls - self.workers) * self.import_ms
+        return (self.calls - self.effective_workers) * self.import_ms
+
+    @property
+    def effective_workers(self) -> int:
+        """Workers that can actually receive a call.
+
+        A pool larger than the run is not wrong to ask about -- "what if I had
+        four?" is a reasonable question of a one-call run -- but three of those
+        four never start, so they never pay a first import. `max(0, calls -
+        workers)` produced the right saving and a false sentence beside it:
+        "1 calls minus 4 first import(s)", crediting imports to workers that
+        serviced nothing.
+        """
+        return min(self.workers, self.calls)
 
     @property
     def observed_prelude_ms(self) -> int:
@@ -643,6 +656,17 @@ def describe(
         f"assuming all {calls} imported `{imports}` — a call importing something else "
         "pays a different prelude, and counting it here overstates the recovery"
     )
+    # The second thing nothing here can check. Every identity above describes
+    # the *probe*; `--calls` and `--total-seconds` arrive as bare numbers with
+    # no provenance at all. A wall time copied from a faster machine, an older
+    # Mathlib, or a different project state combines with a locally measured
+    # prelude to produce a verdict neither environment supports -- and it looks
+    # exactly like a verdict that both do.
+    lines.append(
+        "and assuming that run happened on the machine and toolchain recorded above — "
+        "these are two separate measurements, and nothing here can tell whether they "
+        "came from the same one"
+    )
     if not estimate.is_consistent:
         fastest = estimate.floor_ms if estimate.floor_ms is not None else estimate.import_ms
         # The *adjusted* per-call bound, which is what the total below is
@@ -674,13 +698,15 @@ def describe(
     # Both percentages share one precision, chosen so the printed share never
     # reads as meeting a threshold the verdict below says it missed.
     places = _decimal_places(estimate.recoverable_fraction, threshold)
-    pool = (
-        "a single warm process" if workers == 1 else f"a warm pool of {workers} workers"
-    )
+    busy = estimate.effective_workers
+    pool = "a single warm process" if workers == 1 else f"a warm pool of {workers} workers"
+    # `busy`, not `workers`: a pool larger than the run leaves the surplus idle,
+    # and they never pay a first import to be credited with.
+    idle = "" if busy == workers else f" ({workers - busy} of {workers} would never receive a call)"
     lines.append(
         f"{pool} would recover {estimate.recoverable_ms / 1000:.2f}s "
         f"({estimate.recoverable_fraction:.{places}%} of the run), sequentially — "
-        f"{calls} calls minus {workers} first import(s)"
+        f"{calls} calls minus {busy} first import(s){idle}"
     )
     warranted = estimate.warrants_warm_pool(threshold=threshold)
     verdict = "warranted" if warranted else "not warranted"

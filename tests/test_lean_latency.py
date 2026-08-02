@@ -819,6 +819,29 @@ def test_every_worker_in_a_pool_pays_its_own_first_import():
     assert cost.estimate(calls=4, total_ms=200_000, workers=4).recoverable_ms == 0
 
 
+def test_a_pool_larger_than_the_run_does_not_credit_idle_workers():
+    """"1 calls minus 4 first import(s)" credited imports to workers that
+    serviced nothing. The saving was right; the sentence beside it was not."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    estimate = cost.estimate(calls=1, total_ms=13_000, workers=4)
+    assert estimate.effective_workers == 1
+    assert estimate.recoverable_ms == 0
+    text = "\n".join(describe(cost, calls=1, total_ms=13_000, workers=4))
+    assert "1 calls minus 1 first import(s)" in text
+    assert "3 of 4 would never receive a call" in text
+
+
+def test_the_report_says_both_measurements_must_share_an_environment():
+    """Every identity recorded describes the probe; `--calls` and
+    `--total-seconds` arrive as bare numbers. A wall time from a faster machine
+    combines with a local prelude into a verdict neither environment supports,
+    and it looks exactly like one both do."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    text = "\n".join(describe(cost, calls=10, total_ms=150_000))
+    assert "machine and toolchain recorded above" in text
+    assert "two separate measurements" in text
+
+
 def test_the_report_names_the_pool_shape_it_costed():
     cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
     single = "\n".join(describe(cost, calls=10, total_ms=200_000))
