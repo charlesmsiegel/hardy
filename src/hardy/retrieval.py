@@ -41,6 +41,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -77,9 +78,17 @@ MAX_HITS = 200
 # a goal with its hypotheses and that is the form a model has to hand.
 MAX_QUERY_CHARACTERS = 512
 MAX_GOAL_CHARACTERS = 4_096
-# What Lean puts before a goal's conclusion, and what Loogle and `#find` both
-# accept at the head of a conclusion pattern.
+# What Lean puts before a goal's conclusion, and what Loogle accepts at the head
+# of a conclusion filter. `#find` does not take it -- see `LeanSearchSource`.
 TURNSTILE = "⊢"
+
+# A `lean-toolchain` naming a compiler that cannot change under it: a release
+# tag or a dated nightly. `stable`, `nightly` and a local toolchain name are
+# aliases -- elan repoints them, and a ranking recorded under one would promise
+# to replay on a Lean that is no longer there.
+IMMUTABLE_TOOLCHAIN = re.compile(
+    r":(?:v\d+\.\d+\.\d+(?:-[\w.]+)?|nightly-\d{4}-\d{2}-\d{2})\Z"
+)
 
 # Reciprocal rank fusion. The sources return ordered names and no comparable
 # scores -- `#find` reports matches, Loogle reports hits -- so rank is the only
@@ -340,9 +349,14 @@ class LeanSearchSource:
         if project is None:
             return None
         try:
-            return (Path(project) / "lean-toolchain").read_text(encoding="utf-8").strip() or None
+            pin = (Path(project) / "lean-toolchain").read_text(encoding="utf-8").strip()
         except OSError:
             return None
+        # Nonempty was never the question. `leanprover/lean4:stable` is a name
+        # elan repoints, so the file can stay byte-identical while the compiler
+        # behind it changes -- and the corpus string and provenance digest would
+        # not move either.
+        return pin if IMMUTABLE_TOOLCHAIN.search(pin) else None
 
     @property
     def _manifest_matches(self) -> bool:
@@ -415,10 +429,16 @@ class LeanSearchSource:
         return float(self._limits.lean_process_seconds) + MAX_TEARDOWN_SECONDS
 
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
+        # `#find t` matches the *result type* against `t` -- `#find _ + _ = _ +
+        # _` -- so Loogle's `⊢` conclusion filter is not redundant here but
+        # unsupported, and passing it through failed the pinned source on
+        # exactly the input this tool exists to take. The two spellings mean
+        # the same search, so nothing is lost by dropping it.
+        pattern = goal[len(TURNSTILE) :].strip() if goal.startswith(TURNSTILE) else goal
         # `search_declarations` takes 1..20; the retriever's limit is the
         # ranking's length, which a caller may set higher than one source will
         # serve.
-        found = self._service.search_declarations(goal, max(1, min(limit, 20)))
+        found = self._service.search_declarations(pattern, max(1, min(limit, 20)))
         if not found.success:
             # An empty list from a search that failed reads as "no such lemma",
             # which is the one thing it does not mean.
@@ -702,6 +722,14 @@ class PremiseRetriever:
         # a budget reset per call would be no budget at all -- a loop could
         # spend an arbitrary multiple of what the run was frozen under.
         self._spent = 0.0
+        # And one ranking at a time. `rank` read the spend, ran its sources,
+        # then wrote it back, so two MCP calls arriving together both admitted
+        # against a figure the other was already spending -- a budget sized for
+        # one paying for two. The staged transport gates its dispatch; the MCP
+        # server does not, so the budget defends itself here. Serializing is the
+        # right shape rather than a concession: the sources share one Lake
+        # project, and two `#find` runs at once were never going to be faster.
+        self._admission = threading.Lock()
 
     @property
     def seconds_remaining(self) -> float:
@@ -729,6 +757,10 @@ class PremiseRetriever:
         # deeper. `LeanSearchSource` still clamps to the 20 that
         # `search_declarations` accepts, so its half of the fusion stays
         # partial by that limit rather than by this one.
+        with self._admission:
+            return self._ranked(goal, query, limit)
+
+    def _ranked(self, goal: str, query: str, limit: int) -> PremiseRanking:
         depth = min(max(limit * CANDIDATE_DEPTH, FUSION_DEPTH_FLOOR), MAX_HITS)
         started = self._clock()
         spent = 0.0
