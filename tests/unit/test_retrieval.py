@@ -403,8 +403,7 @@ def test_fusion_sees_deeper_than_the_number_of_premises_it_returns() -> None:
 
     ranking = _retriever(retrieval, [lean, loogle]).rank('_ + _ = _ + _', limit=3)
 
-    asked = lean.calls[0][1]
-    assert asked > 3 and asked >= retrieval.FUSION_DEPTH_FLOOR
+    assert lean.calls[0][1] == retrieval.MAX_HITS
     assert ranking.premises[0].name == 'Both.found'
     assert len(ranking.premises) == 3
 
@@ -443,8 +442,10 @@ def test_fusion_looks_deep_enough_even_for_a_one_premise_answer() -> None:
 
     ranking = _retriever(retrieval, [lean, loogle]).rank('_ + _ = _ + _', limit=1)
 
-    assert lean.calls == [('_ + _ = _ + _', retrieval.FUSION_DEPTH_FLOOR)]
-    assert retrieval.FUSION_DEPTH_FLOOR == retrieval.RRF_K + 1
+    # Asked for everything the source will give, because no cutoff derived
+    # from `limit` is sufficient: a premise ranked first by one source gains
+    # from a vote at any depth in the other.
+    assert lean.calls == [('_ + _ = _ + _', retrieval.MAX_HITS)]
     assert [premise.name for premise in ranking.premises] == ['Both.found']
 
 
@@ -527,7 +528,7 @@ def test_a_goal_as_lean_prints_it_is_searched_by_its_conclusion() -> None:
 
     ranking = retriever.rank('n m : ℕ\nh : n < m\n⊢ n + m = m + n')
 
-    assert lean.calls == [('⊢ _ + _ = _ + _', retrieval.FUSION_DEPTH_FLOOR)]
+    assert lean.calls == [('⊢ _ + _ = _ + _', retrieval.MAX_HITS)]
     assert ranking.query == '⊢ _ + _ = _ + _'
     assert ranking.goal == 'n m : ℕ\nh : n < m\n⊢ n + m = m + n'
     # A pattern with no hypotheses is already a query and passes through whole.
@@ -551,6 +552,62 @@ def test_only_the_names_the_goal_bound_are_wildcarded() -> None:
     )
     # A wrapped type continuing on its own line binds nothing.
     assert retrieval.search_query('h : a very long type\n  continuing here\n⊢ f h') == '⊢ f _'
+
+
+def test_a_conclusion_lean_wrapped_over_several_lines_is_rejoined() -> None:
+    """Taking only the turnstile line searched a shorter, different
+    proposition, and said nothing about having done so -- the same silent
+    wrongness as rewriting a string literal.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    # `x` is bound above the turnstile, so rejoining and wildcarding compose:
+    # the continuation is picked up and its local is replaced like any other.
+    assert retrieval.search_query('x : T\n⊢ SomePredicate\n  x') == '⊢ SomePredicate _'
+    assert retrieval.search_query(
+        'n : ℕ\n⊢ VeryLongName n +\n    OtherName n =\n    Result n'
+    ) == '⊢ VeryLongName _ + OtherName _ = Result _'
+    # A blank line ends the goal, and an unindented line starts the next one:
+    # neither belongs to this conclusion.
+    assert retrieval.search_query('⊢ First\n\n⊢ Second') == '⊢ First'
+    assert retrieval.search_query('⊢ First\n⊢ Second') == '⊢ First'
+
+
+def test_a_duplicate_does_not_push_the_premise_behind_it_down_a_rank() -> None:
+    """`[A, A, B]` put B second among the results the source usefully returned.
+    Ranking it third lowered its score for a duplicate already discarded, and
+    that can change the fused order.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    lean = FakeSource(
+        _pinned(retrieval), [_record('A'), _record('A'), _record('B')]
+    )
+
+    ranking = _retriever(retrieval, [lean]).rank('_ + _ = _ + _')
+
+    ranks = {premise.name: premise.ranks[0].rank for premise in ranking.premises}
+    assert ranks == {'A': 1, 'B': 2}
+
+
+def test_a_name_too_long_to_be_a_declaration_is_discarded_not_truncated() -> None:
+    """Only the signature was bounded, so a name of arbitrary length rode into
+    the ranking and crowded genuine premises out of the observation budget on
+    its way to meaning nothing. Truncating it would be worse still: a cut name
+    is a different name.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    body = json.dumps(
+        {
+            'hits': [
+                {'name': 'A.' + 'x' * retrieval.MAX_NAME_CHARACTERS, 'type': ' : True'},
+                {'name': 'Nat.add_comm', 'type': ' : n + m = m + n'},
+            ]
+        }
+    ).encode('utf-8')
+
+    found = retrieval.LoogleSource(fetch=lambda url, timeout: body).search('x', 10)
+
+    assert [record.name for record in found] == ['Nat.add_comm']
 
 
 def test_a_local_name_inside_a_string_literal_is_left_alone() -> None:

@@ -70,6 +70,11 @@ DEFAULT_LOOGLE_TIMEOUT = 30.0
 MAX_RESPONSE_BYTES = 1024 * 1024
 READ_CHUNK_BYTES = 64 * 1024
 MAX_SIGNATURE_CHARACTERS = 512
+# Lean declaration names are short. A longer one is not a name Hardy could go
+# on to `#check`, and it is *discarded* rather than truncated -- a cut name is
+# a different name, and would crowd genuine premises out of the observation
+# budget on its way to meaning nothing.
+MAX_NAME_CHARACTERS = 256
 MAX_HITS = 200
 
 # The query is one bounded line, matching what `LeanService.search_declarations`
@@ -96,15 +101,18 @@ IMMUTABLE_TOOLCHAIN = re.compile(
 RRF_K = 60
 RANKER = "reciprocal-rank-fusion/1"
 
-# How many candidates each source is asked for, per premise the answer holds.
-# Fusion needs to see past the cutoff to find agreement there; see `rank`.
-CANDIDATE_DEPTH = 3
-# And never fewer than this, because the multiplier alone cannot fix a short
-# answer. A premise two sources both rank at `r` scores 2/(RRF_K + r), which
-# beats the best a single source can offer -- 1/(RRF_K + 1) -- for every r up
-# to RRF_K. So looking RRF_K + 1 deep is exactly sufficient for two sources,
-# and at r = RRF_K + 2 the shared premise genuinely has lost.
-FUSION_DEPTH_FLOOR = RRF_K + 1
+# Fusion over truncated lists is an approximation, and no cutoff makes it
+# exact. An earlier comment here derived RRF_K + 1 as "exactly sufficient" from
+# the equal-rank case; that was wrong for unequal ranks. A premise ranked 20th
+# by one source and 62nd by the other scores 1/80 + 1/122, which still beats a
+# single source's best 1/61 -- and if it is ranked first by one source, a vote
+# at *any* depth from the other moves its score. So there is nothing to derive.
+#
+# What is left is to ask each source for as much as it will give and be honest
+# that the result is bounded by that: `LeanSearchSource` clamps to the 20 that
+# `search_declarations` accepts, and Loogle to `MAX_HITS`. Costless in
+# requests -- each source is asked once either way, and only the parsing goes
+# deeper.
 
 # HTTP statuses that mean the service is unwell rather than that Hardy asked it
 # the wrong thing. Everything else in 4xx says the request was refused on its
@@ -613,7 +621,7 @@ def _records_from_hits(hits: list, limit: int) -> tuple[DeclarationRecord, ...]:
         if not isinstance(hit, dict):
             continue
         name = str(hit.get("name", ""))
-        if not DECLARATION_NAME.fullmatch(name):
+        if len(name) > MAX_NAME_CHARACTERS or not DECLARATION_NAME.fullmatch(name):
             continue
         # Loogle's `type` is the declaration's binders and proposition without
         # its name -- " (n m : ℕ) : n + m = m + n" -- so the two are joined
@@ -666,12 +674,18 @@ def search_query(goal: str) -> str:
     a source that did not answer -- the honest outcome, and a much better one
     than a ranking of whatever a mangled query happened to match.
 
+    A conclusion Lean wrapped over several lines is rejoined before any of
+    this. The pretty-printer breaks a long proposition onto indented
+    continuation lines, and taking only the turnstile line searched a shorter,
+    different proposition without saying so.
+
     Text with no hypothesis lines is already a pattern and passes through.
     """
-    lines = [line.strip() for line in goal.strip().splitlines() if line.strip()]
+    raw = goal.splitlines()
+    lines = [line.strip() for line in raw if line.strip()]
     if not lines:
         return ""
-    conclusion = next((line for line in lines if line.startswith(TURNSTILE)), lines[0])
+    conclusion = " ".join(_conclusion_lines(raw)) or lines[0]
     # Longest first, so `xs` is not half-replaced by a shorter `x`.
     for name in sorted(_local_names(lines), key=len, reverse=True):
         # Outside string literals only. `⊢ x = "x"` is a statement about the
@@ -713,6 +727,26 @@ def _substitute_outside_literals(text: str, pattern: str) -> str:
         read = literal.end()
     pieces.append(re.sub(pattern, "_", text[read:]))
     return "".join(pieces)
+
+
+def _conclusion_lines(raw: Sequence[str]) -> list[str]:
+    """The first goal's conclusion, including the lines Lean wrapped it onto.
+
+    A continuation is indented; a blank line ends the goal, and an unindented
+    line starts the next one. Empty when there is no turnstile at all, which is
+    how a bare search pattern reaches the caller untouched.
+    """
+    start = next(
+        (index for index, line in enumerate(raw) if line.strip().startswith(TURNSTILE)), None
+    )
+    if start is None:
+        return []
+    taken = [raw[start].strip()]
+    for line in raw[start + 1 :]:
+        if not line.strip() or not line[:1].isspace():
+            break
+        taken.append(line.strip())
+    return taken
 
 
 def _local_names(lines: Sequence[str]) -> set[str]:
@@ -790,21 +824,12 @@ class PremiseRetriever:
         if not 1 <= limit <= 50:
             raise ValueError("a premise ranking holds between 1 and 50 premises")
 
-        # Deeper than the answer is long, and never shallower than the floor.
-        # A premise both sources rank past the cutoff outscores one that only a
-        # single source found, so truncating each source at `limit` before
-        # fusing would throw away exactly the agreement the fusion exists to
-        # find -- and for a short answer the multiplier is no better, which is
-        # what `FUSION_DEPTH_FLOOR` is derived to fix. Costless in requests:
-        # each source is asked once either way and only the parsing goes
-        # deeper. `LeanSearchSource` still clamps to the 20 that
-        # `search_declarations` accepts, so its half of the fusion stays
-        # partial by that limit rather than by this one.
+        # Depth is not derived from `limit`; see the note on fusion above.
         with self._admission:
             return self._ranked(goal, query, limit)
 
     def _ranked(self, goal: str, query: str, limit: int) -> PremiseRanking:
-        depth = min(max(limit * CANDIDATE_DEPTH, FUSION_DEPTH_FLOOR), MAX_HITS)
+        depth = MAX_HITS
         started = self._clock()
         spent = 0.0
         exhausted = False
@@ -867,13 +892,19 @@ class PremiseRetriever:
             if detail is not None:
                 continue
             seen: set[str] = set()
-            for position, record in enumerate(results, start=1):
+            position = 0
+            for record in results:
                 # A source that lists a name twice must not vote twice: two
                 # entries from one search would inflate the score and leave
                 # `ranks` reading as though two searches had agreed.
                 if record.name in seen:
                     continue
                 seen.add(record.name)
+                # Counted after the skip, not by `enumerate` before it: a
+                # source answering `[A, A, B]` put B second among the results
+                # it usefully returned, and recording it third quietly lowered
+                # its score for a duplicate that had already been discarded.
+                position += 1
                 found.setdefault(record.name, []).append(
                     SourceRank(source=identity.name, rank=position)
                 )
