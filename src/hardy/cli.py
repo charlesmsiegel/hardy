@@ -616,11 +616,31 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     """
     imports = tuple(args.imports or ("Mathlib",))
     total_ms = None if args.total_seconds is None else round(args.total_seconds * 1_000)
+    # Checked before probing, not after: each probe pays a full Mathlib import,
+    # and rejecting a negative --calls once minutes have been spent is a
+    # traceback where a usage error belongs.
+    if args.calls is not None and args.calls < 0:
+        print("--calls cannot be negative")
+        return 2
+    if total_ms is not None and total_ms < 0:
+        print("--total-seconds cannot be negative")
+        return 2
+    if args.timeout <= 0:
+        print("--timeout must be positive")
+        return 2
+    project = config.lean_project if config.lean_project is not None else Path.cwd()
+    # A deleted project makes `Popen` raise `FileNotFoundError` for the working
+    # directory, which would otherwise be reported as a missing Lean; a project
+    # path that is a regular file raises `NotADirectoryError` and escaped as a
+    # traceback. Checked up front, as `LeanTools._run` and `doctor` both do.
+    if not project.is_dir():
+        print(f"Lean project directory not found: {project}")
+        return 1
     try:
         cost = latency.measure_import_cost(
             imports,
             argv=(*config.lean_command, "--json"),
-            cwd=config.lean_project if config.lean_project is not None else Path.cwd(),
+            cwd=project,
             timeout_seconds=args.timeout,
             repeats=args.repeats,
         )
