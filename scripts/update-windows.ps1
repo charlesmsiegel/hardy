@@ -257,9 +257,11 @@ function Update-Environment($tree) {
 function Request-Installers {
     $installers = Join-Path $Prefix 'installers'
     if (-not (Test-Path $installers)) { return '' }
+    # Refused rather than skipped: carrying on would install the new wheel and
+    # leave the previous release's updater and uninstaller minding it, which is
+    # the skew the bundle exists to prevent.
     if (-not (Test-Command 'tar')) {
-        Write-Warn "tar is not available; $installers still holds the previous release's scripts"
-        return ''
+        Stop-Update 'tar is required to unpack the release installers, and is not on this machine. It ships with Windows 10 1803 and Server 2019 and later.'
     }
     Write-Step 'Fetching the installers for this release'
     $staging = Join-Path $Prefix 'installers.new'

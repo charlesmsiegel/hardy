@@ -367,16 +367,23 @@ ensure_python() {
 	install_uv_python
 }
 
-# Every path from here needs curl — elan's installer is fetched with it, and so
-# is the release. A minimal image can carry Python 3.11 and no curl at all, and
-# ensure_python leaves the prerequisite hook unrun when it finds a Python it
-# likes, so asking for it here is what keeps the promise to install what is
-# missing rather than complaining about it.
-ensure_curl() {
-	have curl && return 0
-	step "Installing curl"
+# curl fetches elan's installer and the release; git is what lake fetches
+# Mathlib with. ensure_python leaves the prerequisite hook unrun whenever it
+# finds a Python it likes, so a machine carrying Python 3.11 and neither of
+# these would otherwise get all the way to the Mathlib step before anyone
+# noticed. Asking here is what keeps the promise to install what is missing
+# rather than to complain about it.
+ensure_tools() {
+	local missing=""
+	have curl || missing="curl"
+	if [ "$SKIP_MATHLIB" = 0 ] && ! have git; then missing="${missing:+$missing and }git"; fi
+	[ -n "$missing" ] || return 0
+	step "Installing $missing"
 	os_install_prerequisites
 	have curl || fail "curl is required to download elan and Hardy's release; install it and re-run"
+	if [ "$SKIP_MATHLIB" = 0 ] && ! have git; then
+		fail "git is required for lake to fetch Mathlib; install it, or re-run with --skip-mathlib"
+	fi
 }
 
 # One installer for both kinds of environment: `uv pip` when the private Python
@@ -687,7 +694,7 @@ hardy_install_main() {
 	fi
 	check_disk_space
 	ensure_python
-	ensure_curl
+	ensure_tools
 	create_environment
 	link_command
 	ensure_elan
