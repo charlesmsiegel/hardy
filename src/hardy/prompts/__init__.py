@@ -25,7 +25,7 @@ from ..domain import FrozenClaim
 
 # Bumped whenever a staged template changes. The hash below identifies the text
 # exactly; this names the revision a human can talk about.
-PROMPT_SET_VERSION = "2026-07-24.2"
+PROMPT_SET_VERSION = "2026-08-02.1"
 
 SUFFIX = ".md.j2"
 

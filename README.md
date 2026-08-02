@@ -49,6 +49,14 @@ produce; with `--force-budget-exhaustion-test` it exercises the whole pipeline
 with no model, no network, and no toolchain. The earlier one-shot proof
 experiment remains available as `hardy batch`, but is secondary.
 
+While it proves, the model can ask `rank_premises` which declarations are worth
+looking at for a goal, fusing Lean's own `#find` with Loogle. Retrieval spends a
+metered budget, and a ranking names every source it asked, what that source
+searched, and whether the order can be replayed at all — Lean's search runs in
+the environment the run is frozen under, while the public Loogle tracks a
+Mathlib it does not name. A ranking is a heuristic, never evidence: only the
+kernel verifies anything.
+
 All three surfaces read `#print axioms` through the same parser, so a proof
 standing on `sorryAx` or on an axiom nobody approved is reported as such rather
 than as a theorem — including one reached through an import, which nothing in

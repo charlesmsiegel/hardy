@@ -4,11 +4,15 @@ Exact Lean signature:
 {{ signature }}
 
 Do not change the theorem name, binders, proposition, or imports.
-Use the four Hardy tools as needed:
+Use the five Hardy tools as needed:
 - lean_check_proof for official candidates against the Frozen Claim;
 - lean_check_scratch for bounded exploration;
-- lean_inspect_declarations for exact known names; and
-- lean_search_declarations for discovery.
+- lean_inspect_declarations for exact known names;
+- lean_search_declarations for discovery; and
+- rank_premises when you do not know what the relevant lemma is called, which
+  ranks candidates for a goal across Lean's own search and Loogle. Its results
+  are a heuristic ordering, not evidence: confirm any name it offers with
+  lean_inspect_declarations before relying on it.
 
 Return proof_body as the complete Lean term placed after :=, normally beginning
 with by; never include a theorem or lemma declaration. Also return an informal

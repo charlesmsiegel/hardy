@@ -40,6 +40,11 @@ class RunLimits(FrozenModel):
     cas_cell_seconds: int = 60
     cas_session_seconds: int = 900
     cas_output_bytes: int = 256 * 1024
+    # Premise retrieval is metered the way the official checks are: the budget
+    # refuses the next call rather than interrupting one in flight. Wall-clock
+    # seconds across the whole run -- a remote index spends its CPU elsewhere,
+    # and how long Hardy waits is the part Hardy can enforce.
+    retrieval_seconds: int = 300
 
 
 class FormalizationProposal(FrozenModel):

@@ -90,6 +90,19 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "rank_premises",
+            "description": "Rank the declarations most likely to help with one goal, fusing Lean's own search with Loogle. The answer names every source it asked and says whether the ranking can be replayed.",
+            "parameters": {
+                "type": "object",
+                "properties": {"goal": {"type": "string"}, "limit": {"type": "integer"}},
+                "required": ["goal"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -243,6 +256,10 @@ class ClaudeStagedRuntime:
                         lean_runtime.service.search_declarations(
                             str(arguments["query"]), int(arguments.get("limit", 10))
                         )
+                    )
+                elif name == "rank_premises":
+                    result = lean_runtime.rank_premises(
+                        str(arguments["goal"]), int(arguments.get("limit", 10))
                     )
                 else:
                     return ToolResult(False, f"unknown tool: {name}")
