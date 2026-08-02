@@ -204,15 +204,20 @@ class WarmPoolEstimate(FrozenModel):
     def is_consistent(self) -> bool:
         """Whether the prelude and the observed run can describe the same calls.
 
-        Tested against the *floor* across all `calls`, which is two corrections
-        to one line. It uses every call, not `calls - 1`: the observed run was
-        unpooled, so it paid the prelude on the first call too, and testing
-        against the saving let impossible evidence through (two calls at a 60s
-        prelude need 120s inside a 100s run, yet `(2-1) x 60 <= 100` passed).
-        And it uses the fastest probe rather than the median, so ordinary
-        measurement noise is not reported as an import mismatch.
+        Two conditions, and both are load-bearing.
+
+        The run must have been able to afford a prelude on every call --
+        `calls`, not `calls - 1`, because the observed run was unpooled and
+        paid for the first import too. Judged against the *fastest* probe, so
+        ordinary measurement noise is not reported as an import mismatch.
+
+        And the saving must fit inside the run. Relaxing the first condition to
+        the floor removed the only bound the median was under: with samples of
+        1s, 100s, 100s, two calls and a 3s run, the floor comfortably fits
+        while the median-based saving is 100s -- reported as 3333% recoverable
+        and warranted. A pool cannot save more time than the run took.
         """
-        return self.floor_prelude_ms <= self.total_ms
+        return self.floor_prelude_ms <= self.total_ms and self.recoverable_ms <= self.total_ms
 
     @property
     def recoverable_fraction(self) -> float:
@@ -430,9 +435,17 @@ def describe(
         lines.append(f"lean: {cost.environment.lean_version} ({cost.environment.lean_commit})")
         lines.append(f"mathlib: {cost.environment.mathlib_revision}")
         lines.append(f"lake-manifest sha256: {cost.environment.lake_manifest_sha256}")
+        # The manifest pins dependencies, and nothing here pins the root
+        # project's own files. Editing a locally-imported module changes the
+        # latency without changing any identity above it, so the limit is
+        # stated rather than left for a reader to infer from what is absent.
+        lines.append("source identity: (unrecorded — pins dependencies, not local modules)")
     lines.append(f"import set: {imports}")
+    # `:g`, not `:.0f`: the deadline is a censored sample's entire lower bound,
+    # and rounding it rendered `--timeout 0.4` as "deadline 0s" and `1.5` as
+    # "2s" -- misreporting both the configuration and the bound it implies.
     deadline = (
-        "" if cost.timeout_seconds is None else f" (deadline {cost.timeout_seconds:.0f}s)"
+        "" if cost.timeout_seconds is None else f" (deadline {cost.timeout_seconds:g}s)"
     )
     lines.append(
         f"probes: {len(cost.samples_ms)} ok, {cost.timeouts} timed out, "
@@ -495,15 +508,25 @@ def describe(
     )
     if not estimate.is_consistent:
         floor = estimate.floor_ms if estimate.floor_ms is not None else estimate.import_ms
-        lines.append(
+        if estimate.floor_prelude_ms > total_ms:
             # The observed total, not the saving. Printing `recoverable_ms`
             # here said "2 calls each paying 60.00s is 60.00s, longer than the
             # 100.00s run", which is neither true nor even self-consistent.
-            f"{calls} calls each paying at least {floor / 1000:.2f}s is "
-            f"{estimate.floor_prelude_ms / 1000:.2f}s, longer than the {total_ms / 1000:.2f}s run "
-            "itself, so these calls did not all pay this prelude -- most likely the probe and "
-            "the run do not import the same modules. No verdict follows; re-measure with the "
-            "run's own import set."
+            lines.append(
+                f"{calls} calls each paying at least {floor / 1000:.2f}s is "
+                f"{estimate.floor_prelude_ms / 1000:.2f}s, longer than the "
+                f"{total_ms / 1000:.2f}s run itself, so these calls did not all pay this "
+                "prelude -- most likely the probe and the run do not import the same modules."
+            )
+        else:
+            lines.append(
+                f"the {median / 1000:.2f}s median prelude implies a "
+                f"{estimate.recoverable_ms / 1000:.2f}s saving inside a "
+                f"{total_ms / 1000:.2f}s run, which is more time than the run took; the probes "
+                f"disagree too widely (fastest {floor / 1000:.2f}s) to estimate from."
+            )
+        lines.append(
+            "No verdict follows; re-measure with the run's own import set, or with more probes."
         )
         return lines
     # Both percentages share one precision, chosen so the printed share never
