@@ -368,3 +368,58 @@ def test_a_press_that_reaches_nothing_does_not_discard_a_finished_run(tmp_path) 
     # And the ordinary path is unaffected.
     process.resume_children()
     assert process.run_process(spec).returncode == 0
+
+
+def test_a_late_arrival_that_already_finished_keeps_its_result(tmp_path) -> None:
+    """The stop stays in force so a child registering after the press is caught
+    on arrival -- but a fast one that finished before it registered produced a
+    real result, and marking that would discard a Lean check that passed."""
+    process = importlib.import_module('hardy.process')
+    process.interrupt_children()  # a stop already in force
+
+    child = subprocess.Popen(
+        (sys.executable, '-c', 'pass'),
+        cwd=tmp_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        **process.child_creation(),
+    )
+    child.communicate()  # over before it is registered
+    with process.tracked(child) as entry:
+        pass
+
+    assert not entry.interrupted.is_set()
+
+
+def test_run_guarded_stops_a_child_that_ignores_the_interrupt(tmp_path) -> None:
+    """The shared ladder, used by LaTeX, the Lake probe, and doctor alike."""
+    process = importlib.import_module('hardy.process')
+    ready = tmp_path / 'deaf'
+
+    def press_escape() -> None:
+        _await_file(ready)
+        assert _press_escape(process) == 1
+
+    threading.Thread(target=press_escape, daemon=True).start()
+
+    started = time.monotonic()
+    outcome = process.run_guarded(
+        (
+            sys.executable,
+            str(EMITTER),
+            '--ignore-interrupt',
+            '--ready',
+            str(ready),
+            '--sleep-after',
+            '60',
+        ),
+        cwd=tmp_path,
+        timeout=60,
+    )
+    elapsed = time.monotonic() - started
+
+    assert outcome.interrupted
+    assert not outcome.timed_out
+    assert outcome.returncode is None
+    # Grace, then the group's SIGTERM -- and nowhere near the 60s timeout.
+    assert 1.5 <= elapsed < 30

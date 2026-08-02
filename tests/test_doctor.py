@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from hardy import doctor
+from hardy import doctor, process
 from hardy.config import Config
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="the fake tools are POSIX shell scripts")
@@ -109,16 +108,31 @@ def test_the_deep_check_compiles_a_mathlib_probe(tmp_path: Path, project: Path):
 
 
 
+def _answering(stdout: str):
+    """Stand in for the guarded run the login check goes through.
+
+    The seam is `run_guarded` rather than `subprocess.run`: every child Hardy
+    starts goes through the group, the register, and the escalation ladder, and
+    a probe patched at the old seam would quietly run the real `claude`.
+    """
+    def run(*_args, **_kwargs):
+        return process.GuardedResult(returncode=0, stdout=stdout, stderr="")
+
+    return run
+
+
 def test_a_logged_out_cli_is_reported_as_a_failure(monkeypatch: pytest.MonkeyPatch):
     """`claude --version` would succeed while logged out, letting doctor call a
     machine ready when the first model call is going to fail authentication."""
-    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, '{"loggedIn": false}', ""))
+    monkeypatch.setattr(doctor, "run_guarded", _answering('{"loggedIn": false}'))
     check = doctor._login_check("claude")
     assert check.ok is False and "claude login" in check.detail
 
 
 def test_a_signed_in_cli_reports_how(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, '{"loggedIn": true, "authMethod": "oauth_token"}', ""))
+    monkeypatch.setattr(
+        doctor, "run_guarded", _answering('{"loggedIn": true, "authMethod": "oauth_token"}')
+    )
     check = doctor._login_check("claude")
     assert check.ok and "oauth_token" in check.detail
 

@@ -24,6 +24,7 @@ import signal
 import subprocess
 import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import Field
@@ -68,6 +69,11 @@ MAX_TEARDOWN_SECONDS = TEARDOWN_SECONDS * 3
 # and answer with it; short enough that a user who pressed Esc does not sit
 # through it wondering whether anything happened.
 INTERRUPT_GRACE_SECONDS = 2.0
+
+# What a descendant gets between the sweep's SIGTERM and its SIGKILL. Short,
+# because by then the leader is gone and nothing can be waited on: this is a
+# blocking pause on the way out of a run that has already been stopped.
+_SWEEP_GRACE_SECONDS = 0.2
 
 
 def child_creation() -> dict[str, object]:
@@ -223,9 +229,15 @@ def tracked(child: subprocess.Popen):
         # between the two.
         arriving_into = _STOP_LEVEL
     if arriving_into:
-        entry.interrupted.set()
+        # Signalled regardless -- a group can outlive its leader -- but only
+        # *recorded* as stopped if it was still running. A child that finished
+        # between the spawn and this line produced a real result, and marking
+        # it would throw away a Lean check that passed.
+        if child.poll() is None:
+            entry.interrupted.set()
+            if arriving_into >= _INSISTED:
+                entry.escalated.set()
         if arriving_into >= _INSISTED:
-            entry.escalated.set()
             terminate_group(child)
         else:
             signal_interrupt(child)
@@ -297,6 +309,104 @@ def resume_children() -> None:
     global _STOP_LEVEL
     with _RUNNING_LOCK:
         _STOP_LEVEL = 0
+
+
+class GuardedResult(FrozenModel):
+    """What a `run_guarded` child did, and whether Hardy is what stopped it."""
+
+    returncode: int | None
+    stdout: str = ""
+    stderr: str = ""
+    timed_out: bool = False
+    interrupted: bool = False
+
+
+def run_guarded(
+    argv: Sequence[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float,
+    env: dict[str, str] | None = None,
+) -> GuardedResult:
+    """Run a child to completion, reachable by Esc, inheriting the environment.
+
+    The counterpart to `run_process` for the callers that cannot use it: a TeX
+    installation and a Lake project both need the environment they were started
+    with, and `run_process` deliberately hands a child only the few variables a
+    toolchain needs to find itself. What they still need is everything else --
+    the group, the register, the grace, and the escalation -- and three callers
+    reimplementing that is three chances to leave one rung off the ladder.
+
+    Output is read whole rather than capped: these are probes and compilers
+    whose output the caller already trims, not the unbounded captures
+    `run_process` exists to bound.
+    """
+    child = subprocess.Popen(
+        list(argv),
+        cwd=str(cwd) if cwd else None,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **child_creation(),
+    )
+    with tracked(child) as entry:
+        settled = threading.Event()
+        watcher = threading.Thread(
+            target=_escalate_after_grace, args=(child, entry, settled), daemon=True
+        )
+        watcher.start()
+        timed_out = False
+        try:
+            stdout, stderr = child.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            kill_group(child)
+            stdout, stderr = child.communicate()
+        finally:
+            settled.set()
+            watcher.join(timeout=1)
+        interrupted = entry.interrupted.is_set()
+    stopped = timed_out or interrupted
+    return GuardedResult(
+        returncode=None if stopped else child.returncode,
+        stdout=stdout or "",
+        stderr=stderr or "",
+        timed_out=timed_out,
+        interrupted=interrupted,
+    )
+
+
+def _escalate_after_grace(child: subprocess.Popen, entry: _Running, settled: threading.Event) -> None:
+    """Stop a child that was asked to stop and did not.
+
+    `communicate` cannot be told to stop waiting, so the ladder every other
+    child walks -- grace, group SIGTERM, group SIGKILL -- is walked here by a
+    watcher instead. The grace is spent in slices: nothing sets `settled` when
+    the second press arrives, so a single long wait could not be woken by it,
+    and a press landing inside the grace would sit out the whole of the grace
+    it was pressed to skip.
+    """
+    while not entry.interrupted.is_set() and not entry.escalated.is_set():
+        if settled.wait(0.05):
+            return
+    if _settled_within(settled, entry, INTERRUPT_GRACE_SECONDS):
+        return
+    terminate_group(child)
+    if _settled_within(settled, entry, 2):
+        return
+    kill_group(child)
+
+
+def _settled_within(settled: threading.Event, entry: _Running, seconds: float) -> bool:
+    """Whether the child ended within `seconds`. Cut short by a second press."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if entry.escalated.is_set():
+            return False
+        if settled.wait(min(0.05, max(0.0, deadline - time.monotonic()))):
+            return True
+    return settled.is_set()
 
 
 class ProcessSpec(FrozenModel):
@@ -390,12 +500,19 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
 
     if child.poll() is not None and (interrupted or overflow.is_set()):
         # The leader is gone but Hardy is what stopped this run, so the signal
-        # it took may have been taken by the wrapper alone. One sweep of the
-        # group, for the compiler that ignored it and would otherwise be left
-        # orphaned. Not done after an ordinary clean exit: there the group id
-        # belongs to a pid the system is free to reuse, and nothing is known to
-        # be left in it.
+        # it took may have been taken by the wrapper alone. Sweep the group for
+        # the compiler that ignored it and would otherwise be left orphaned.
+        # Not done after an ordinary clean exit: there the group id belongs to
+        # a pid the system is free to reuse, and nothing is known to be left in
+        # it.
+        #
+        # SIGTERM and then SIGKILL, because there is no leader left to `wait`
+        # on -- nothing here can observe whether a descendant took the first
+        # signal, so the only alternative to following through is returning
+        # while it runs on.
         terminate_group(child)
+        time.sleep(_SWEEP_GRACE_SECONDS)
+        kill_group(child)
     if child.poll() is None:
         # The group, not the leader: a wrapper that exits on SIGTERM while the
         # compiler it started keeps running would leave the work orphaned and
