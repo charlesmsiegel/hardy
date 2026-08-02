@@ -140,8 +140,48 @@ def signal_interrupt(child: subprocess.Popen) -> bool:
     return True
 
 
+def terminate_group(child: subprocess.Popen) -> None:
+    """Terminate the child's whole group, not only the child leading it.
+
+    `Popen.terminate` signals one process. A toolchain is a tree -- `lake` runs
+    `lean`, a TeX driver runs the engine -- so terminating the leader can let
+    the wrapper exit while the compiler that was doing the work grinds on,
+    orphaned and unreachable. `child_creation` put the tree in a group of its
+    own precisely so it can be addressed as one.
+
+    Windows has no equivalent: killing a process tree there needs a job object,
+    which nothing here sets up, so the leader is all `terminate` can reach.
+    """
+    if child.poll() is not None:
+        return
+    if os.name != "nt":
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+            return
+        except (OSError, ValueError):
+            # No group to aim at. Fall through rather than leave the child
+            # running because the tidier way of stopping it was unavailable.
+            pass
+    with contextlib.suppress(OSError):
+        child.terminate()
+
+
+def kill_group(child: subprocess.Popen) -> None:
+    """`terminate_group`, for a tree that did not take SIGTERM either."""
+    if child.poll() is not None:
+        return
+    if os.name != "nt":
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+            return
+        except (OSError, ValueError):
+            pass
+    with contextlib.suppress(OSError):
+        child.kill()
+
+
 class _Running:
-    """One child of `run_process`, and whether a stop has been asked of it."""
+    """One tracked child, and whether a stop has been asked of it."""
 
     def __init__(self, child: subprocess.Popen) -> None:
         self.child = child
@@ -150,13 +190,32 @@ class _Running:
 
 _RUNNING: set[_Running] = set()
 _RUNNING_LOCK = threading.Lock()
+# Set while a stop is in force, and cleared when the next turn starts. Without
+# it, stopping is a one-time sweep over whoever happened to be registered at
+# that instant, and a tool call already past the cancellation gate could spawn
+# its child a moment later and run to its full timeout with nothing left to
+# stop it -- the first Esc having already been spent.
+_STOPPING = threading.Event()
 
 
 @contextlib.contextmanager
-def _tracked(child: subprocess.Popen):
+def tracked(child: subprocess.Popen):
+    """Register a child so a stop can reach it, and hand back its flag.
+
+    Public because not every child Hardy runs goes through `run_process`: an
+    interactive LaTeX check drives its own `Popen` so it can keep the caller's
+    environment, and it still has to be reachable by Esc.
+    """
     entry = _Running(child)
     with _RUNNING_LOCK:
         _RUNNING.add(entry)
+        # Read under the same lock the sweeps take, so this child is either in
+        # the snapshot they took or sees the flag they set. It cannot fall
+        # between the two.
+        arriving_into_a_stop = _STOPPING.is_set()
+    if arriving_into_a_stop:
+        entry.interrupted.set()
+        signal_interrupt(child)
     try:
         yield entry
     finally:
@@ -165,15 +224,18 @@ def _tracked(child: subprocess.Popen):
 
 
 def interrupt_children() -> int:
-    """Ask every child now running under `run_process` to stop.
+    """Ask every tracked child to stop, and keep asking of any that arrive.
 
-    Returns how many were asked, so a caller can say whether an Esc reached
-    anything at all. The persistent CAS kernel is deliberately not in this
-    register: it is owned by its session, which knows whether a cell is in
-    flight and what the reply means, and signalling it from here as well would
-    interrupt it twice.
+    Returns how many were running to be asked, so a caller can say whether an
+    Esc reached anything at all. The stop stays in force until `resume_children`
+    lifts it at the start of the next turn.
+
+    The persistent CAS kernel is deliberately not in this register: it is owned
+    by its session, which knows whether a cell is in flight and what the reply
+    means, and signalling it from here as well would interrupt it twice.
     """
     with _RUNNING_LOCK:
+        _STOPPING.set()
         entries = list(_RUNNING)
     for entry in entries:
         entry.interrupted.set()
@@ -190,13 +252,22 @@ def stop_children() -> int:
     changes is that the grace is not waited out.
     """
     with _RUNNING_LOCK:
+        _STOPPING.set()
         entries = list(_RUNNING)
     for entry in entries:
         entry.interrupted.set()
-        if entry.child.poll() is None:
-            with contextlib.suppress(OSError):
-                entry.child.terminate()
+        terminate_group(entry.child)
     return len(entries)
+
+
+def resume_children() -> None:
+    """Lift the stop, so the next turn's children are allowed to run.
+
+    Called when a turn starts, which is the same moment the session clears its
+    own cancellation flag. A stop that outlived the turn it belonged to would
+    kill the next turn's first child on sight.
+    """
+    _STOPPING.clear()
 
 
 class ProcessSpec(FrozenModel):
@@ -264,7 +335,7 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
     # grace is time to react to the signal, and it would be no such thing if it
     # had been counting down since before the signal was sent.
     grace_deadline: float | None = None
-    with _tracked(child) as entry:
+    with tracked(child) as entry:
         while child.poll() is None:
             if overflow.is_set():
                 break
@@ -283,11 +354,14 @@ def run_process(spec: ProcessSpec) -> ProcessResult:
         interrupted = entry.interrupted.is_set()
 
     if child.poll() is None:
-        child.terminate()
+        # The group, not the leader: a wrapper that exits on SIGTERM while the
+        # compiler it started keeps running would leave the work orphaned and
+        # the budget this module exists to enforce meaningless.
+        terminate_group(child)
         try:
             child.wait(timeout=TEARDOWN_SECONDS)
         except subprocess.TimeoutExpired:
-            child.kill()
+            kill_group(child)
             child.wait()
     for reader in readers:
         reader.join(timeout=TEARDOWN_SECONDS)

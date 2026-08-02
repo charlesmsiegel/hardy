@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from .models import ToolResult
+from .process import child_creation, kill_group, tracked
 
 # Fragments are `\input` from one document, and that document is what a
 # compiler is ever pointed at.
@@ -125,12 +126,39 @@ class LatexTools:
                 # carrying the real preamble.
                 root.write_text(_probe_root(root.read_text(encoding="utf-8"), path), encoding="utf-8")
             try:
-                process = subprocess.run(
-                    [*self.command, root.name], cwd=work, capture_output=True,
-                    text=True, timeout=self.timeout, check=False,
+                # `Popen` rather than `subprocess.run`, only so the child can be
+                # registered: Esc has to reach a LaTeX compile the same way it
+                # reaches a Lean one, and `run` never hands back the object a
+                # signal would be aimed at. Everything else is what `run` does --
+                # the environment is inherited whole, unlike `run_process`, which
+                # a TeX installation's own variables would not survive.
+                child = subprocess.Popen(
+                    [*self.command, root.name], cwd=work,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, **child_creation(),
                 )
-                output = (process.stdout + process.stderr).strip()[-self.output_limit :]
+                with tracked(child) as entry:
+                    try:
+                        stdout, stderr = child.communicate(timeout=self.timeout)
+                    except subprocess.TimeoutExpired:
+                        kill_group(child)
+                        stdout, stderr = child.communicate()
+                        raise subprocess.TimeoutExpired(
+                            self.command, self.timeout, stdout, stderr
+                        ) from None
+                    interrupted = entry.interrupted.is_set()
+                process = subprocess.CompletedProcess(
+                    self.command, child.returncode, stdout, stderr
+                )
+                output = (stdout + stderr).strip()[-self.output_limit :]
                 elapsed = time.monotonic() - started
+                if interrupted:
+                    # Stopped, not judged. A compile nobody let finish has no
+                    # verdict about the source, and reporting its exit status as
+                    # one would read as LaTeX rejecting the document.
+                    return ToolResult(
+                        False, f"interrupted after {elapsed:.3f}s\n{output}", source
+                    )
                 pdf = work / "writeup.pdf"
                 if process.returncode == 0 and output_dir is not None and pdf.exists():
                     output_dir.mkdir(parents=True, exist_ok=True)

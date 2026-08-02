@@ -115,3 +115,42 @@ def test_a_real_inclusion_is_recognised(tmp_path: Path):
     (tree / "sections" / "one.tex").write_text("Section one.\n", encoding="utf-8")
     (tree / "writeup.tex").write_text(ROOT, encoding="utf-8")
     assert LatexTools(COMMAND).check("Revised.\n", path="sections/one.tex", tree=tree).ok
+
+
+def test_a_latex_compile_can_be_interrupted(tmp_path: Path):
+    """LaTeX drives its own `Popen` rather than going through `run_process`, so
+    it can keep the caller's environment -- a TeX installation's own variables
+    would not survive `run_process`'s filter. That is exactly why it has to
+    register the child itself: without it, Esc stops Lean and the CAS kernel
+    but a compile runs on to its timeout, which is not the contract the
+    terminal now advertises."""
+    import threading
+    import time
+
+    from hardy import process
+
+    ready = tmp_path / "tex-started"
+    source = (
+        "\\documentclass{article}\n"
+        f"% slow: 300\n% ready: {ready}\n"
+        "\\begin{document}Fine.\\end{document}\n"
+    )
+
+    def press_escape() -> None:
+        end = time.monotonic() + 30
+        while time.monotonic() < end and not ready.exists():
+            time.sleep(0.01)
+        assert ready.exists(), "the fake LaTeX child never started"
+        assert process.interrupt_children() == 1, "the compile was not registered"
+
+    threading.Thread(target=press_escape, daemon=True).start()
+
+    started = time.monotonic()
+    result = LatexTools(COMMAND, timeout=300).check(source)
+
+    assert not result.ok
+    # Stopped, not judged: reporting the exit status of a compile nobody let
+    # finish would read as LaTeX rejecting the document.
+    assert "interrupted" in result.output
+    assert "timeout" not in result.output
+    assert time.monotonic() - started < 30

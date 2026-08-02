@@ -248,12 +248,12 @@ Esc cancels an in-flight turn: the model stops, no further tool call runs, and
 the Lean, LaTeX, or computer algebra process it started is interrupted rather
 than left running to its timeout. An interrupted computer algebra cell keeps
 its kernel and the values in it; a second Esc gives up on the interrupt and
-kills what did not stop, which costs that state. A file a tool call already
-wrote stays written.
-What it cannot undo is work already begun — a Lean, LaTeX, or computer algebra
-process already running is left to finish rather than killed halfway, and
-anything such a call has already written stays written. A reply that lands
-anyway is still printed, labelled as belonging to the turn you stopped.
+kills what did not stop, which costs that state.
+
+What it cannot undo is work already done: a file a tool call has already
+written stays written, and an interrupted child leaves behind whatever it had
+got to. A reply that lands anyway is still printed, labelled as belonging to
+the turn you stopped.
 Ctrl+C once, while a turn is running, only warns; a second Ctrl+C leaves at
 once, at the cost of whatever that turn was still doing.
 
