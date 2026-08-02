@@ -475,3 +475,72 @@ def test_a_signalled_replay_never_counts_as_reproducing(cas_session, tmp_path) -
         assert [item.source for item in session.accepted()] == [source]
     finally:
         session.close()
+
+
+def test_a_kernel_that_stopped_reading_can_still_be_escalated(cas_session) -> None:
+    """The write, not the cell.
+
+    A kernel wedged between cells never reads the frame, so a cell large enough
+    to outgrow the pipe buffer blocks in `write` -- before the cell's deadline
+    is running, and with nothing in flight for a first press to ask of. The
+    lock that orders the send against the signal must not be held across that
+    write: `interrupt` and `escalate` take it on the terminal's own event loop,
+    so holding it would freeze the interface at exactly the moment the only
+    press that could end the wait was pressed.
+    """
+    session = cas_session(cas_cell_seconds=120, cas_session_seconds=600)
+    try:
+        # Answers, and then stops reading its input for good.
+        assert session.execute("deafread").status == "ok"
+        kernel = session._kernel
+        assert kernel is not None
+        # Reported back rather than asserted here: an assertion that fails on
+        # this thread would be lost, and the test would pass by not noticing.
+        seen: dict[str, object] = {}
+
+        def press_twice() -> None:
+            seen["sent"] = session._sending.wait(30)
+            # Long enough that a write which was ever going to complete has.
+            # What is still pending after this is genuinely blocked on a kernel
+            # that is not reading -- which is the situation under test, and not
+            # something the test can otherwise tell it reached.
+            time.sleep(0.3)
+            seen["blocked"] = session._sending.is_set()
+            # Timed across both presses, because both take the lock and both
+            # run on the terminal's event loop: whichever one waits on the
+            # write is a frozen interface either way.
+            started = time.monotonic()
+            seen["asked"] = session.interrupt()
+            seen["escalated"] = session.escalate()
+            seen["spent"] = time.monotonic() - started
+
+        threading.Thread(target=press_twice, daemon=True).start()
+        # A regression holds the lock across the write, and `escalate` then
+        # blocks forever rather than failing: this is what turns that into a
+        # failed assertion instead of a hung suite.
+        watchdog = threading.Timer(30, lambda: kernel.kill(immediate=True))
+        watchdog.start()
+        try:
+            # A legal cell -- under the 64 KiB source limit -- whose *frame* is
+            # not: every quote is escaped, so the JSON is twice the source and
+            # comfortably past a 64 KiB pipe buffer. The limit bounds what the
+            # user writes, not what goes down the pipe.
+            record = session.execute('"' * 40_000)
+        finally:
+            watchdog.cancel()
+
+        assert seen.get("sent") is True, "the cell was never sent"
+        assert seen.get("blocked") is True, "the write never blocked"
+        # Nothing is in flight, so there is nothing to *ask* -- a kernel that
+        # is not listening cannot be asked anything, which is why the escape
+        # from this is the press that does not ask.
+        assert seen.get("asked") is False
+        assert seen.get("escalated") is True
+        assert seen.get("spent", 99) < 5, "the press waited on the blocked write"
+        # Hardy stopped this, and the record says so rather than reporting a
+        # kernel that fell over on its own.
+        assert record.status == "interrupted"
+        assert record.accepted is False
+        assert session.state == "dead"
+    finally:
+        session.close()

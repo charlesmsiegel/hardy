@@ -1,9 +1,12 @@
 import importlib
+import os
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+
+import pytest
 
 EMITTER = Path(__file__).parents[1] / 'fixtures' / 'process' / 'emit.py'
 
@@ -423,3 +426,92 @@ def test_run_guarded_stops_a_child_that_ignores_the_interrupt(tmp_path) -> None:
     assert outcome.returncode is None
     # Grace, then the group's SIGTERM -- and nowhere near the 60s timeout.
     assert 1.5 <= elapsed < 30
+
+
+WRAPPER = Path(__file__).parents[1] / 'fixtures' / 'process' / 'wrapper.py'
+
+
+def test_a_stop_reaches_the_work_a_wrapper_left_behind(tmp_path) -> None:
+    """The leader's liveness decides the record, not the escalation.
+
+    `lake` and `latexmk` hand off and exit, and the compiler that inherits the
+    captured pipes is what `communicate` is really waiting on. A press landing
+    after the leader is gone found nothing running to mark, so the watcher sat
+    in its initial wait and never walked the ladder -- and the run went on to
+    its full timeout despite having been stopped twice.
+    """
+    process = importlib.import_module('hardy.process')
+    ready = tmp_path / 'grandchild'
+
+    def press_escape() -> None:
+        _await_file(ready)
+        assert _press_escape(process) == 1
+
+    threading.Thread(target=press_escape, daemon=True).start()
+
+    started = time.monotonic()
+    outcome = process.run_guarded(
+        (
+            sys.executable,
+            str(WRAPPER),
+            '--ready',
+            str(ready),
+            '--ignore-interrupt',
+            '--ignore-terminate',
+            '--sleep',
+            '120',
+        ),
+        cwd=tmp_path,
+        timeout=120,
+    )
+    elapsed = time.monotonic() - started
+
+    # Deaf to both signals, so this is the whole ladder: grace, group SIGTERM,
+    # group SIGKILL. Anywhere near 120 means the press was lost.
+    assert outcome.interrupted
+    assert not outcome.timed_out
+    assert outcome.returncode is None
+    assert 1.5 <= elapsed < 60
+
+
+def test_a_guarded_run_does_not_leave_its_group_behind_when_the_caller_is_interrupted(
+    tmp_path, monkeypatch
+) -> None:
+    """Ctrl+C at a synchronous caller.
+
+    `hardy doctor` run as a command calls `run_checks` straight through, with
+    no cancellation wrapper to reach the children -- and the probe is in a
+    process group of its own precisely so the terminal's signal does *not*
+    reach it. Unwinding without killing that group leaves the probe running
+    out its limit after Hardy has exited.
+    """
+    process = importlib.import_module('hardy.process')
+    if not hasattr(os, 'killpg'):  # pragma: no cover - POSIX-only assertion
+        pytest.skip('process groups are addressed differently on Windows')
+    seen: dict[str, subprocess.Popen] = {}
+
+    def interrupted(self, *args, **kwargs):
+        seen['child'] = self
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess.Popen, 'communicate', interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        process.run_guarded(
+            (sys.executable, str(WRAPPER), '--sleep', '120'),
+            cwd=tmp_path,
+            timeout=120,
+        )
+
+    child = seen['child']
+    assert child.poll() is not None
+    # The leader is reaped, so nothing is left in the group unless the
+    # grandchild survived it.
+    end = time.monotonic() + 10
+    while time.monotonic() < end:
+        try:
+            os.killpg(child.pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    raise AssertionError('the probe was left running after the caller unwound')

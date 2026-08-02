@@ -20,6 +20,8 @@ HISTORY: list[str] = []
 
 
 PENDING_INTERRUPT = False
+# Set by the `deafread` cell: the loop answers it and then stops reading.
+STOP_READING = False
 _STOP_SIGNALS = tuple(
     found
     for found in (getattr(signal, name, None) for name in ("SIGINT", "SIGBREAK"))
@@ -132,6 +134,13 @@ def answer(source: str) -> dict:
         # to the deterministic counter below, so it is accepted and replays
         # faithfully like any other cell.
         time.sleep(0.5)
+    if word == "deafread":
+        # Answers this cell and then never reads its input again -- a kernel
+        # wedged between cells rather than inside one. Nothing is in flight, so
+        # there is no cell to interrupt; what there is, once the next cell
+        # outgrows the pipe buffer, is a write with nowhere to go.
+        global STOP_READING
+        STOP_READING = True
     if word == "selfinterrupt":
         # The cell raising it, with nobody having pressed anything. The driver
         # cannot tell this from Hardy's own signal; the parent can.
@@ -187,6 +196,12 @@ def main() -> None:
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
     global PENDING_INTERRUPT
     while True:
+        if STOP_READING:
+            # Wedged between cells with the stop still deferred, so it is deaf
+            # as well as silent: only a kill ends this, and ending it is what
+            # unblocks the parent's write.
+            time.sleep(120)
+            return
         _handle_stops_by(_remember)
         header = read_exact(stdin, HEADER_BYTES)
         if header is None:
