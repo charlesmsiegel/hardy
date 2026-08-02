@@ -562,6 +562,46 @@ def test_a_download_that_does_not_match_the_manifest_is_refused(tmp_path: Path):
 
 
 @posix_only
+def test_moving_an_installation_to_another_repository_reinstalls_the_wheel(tmp_path: Path):
+    """Two repositories can publish the same version number, and pip's answer to
+    "install 0.2.0" when 0.2.0 is already there is to do nothing. Left alone,
+    that would move the origin record and the installers to the fork and leave
+    the fork's code uninstalled."""
+    home = tmp_path / "hardy"
+    home.mkdir()
+    (home / "release-origin").write_text("repo=https://github.com/charlesmsiegel/hardy\n", encoding="utf-8")
+    body = f'HARDY_HOME="{home}"\nprintf "[%s]" "$(reinstall_arguments)"'
+
+    same = run_with_common(body, tmp_path, HARDY_REPO_URL="https://github.com/charlesmsiegel/hardy")
+    assert same.returncode == 0, same.stderr
+    assert same.stdout == "[]", "an install from the same repository is a plain upgrade"
+
+    fork = run_with_common(body, tmp_path, HARDY_REPO_URL="https://github.com/someone/hardy")
+    assert fork.returncode == 0, fork.stderr
+    assert fork.stdout in ("[--reinstall]", "[--force-reinstall]"), fork.stdout
+
+    unasked = run_with_common(body, tmp_path)
+    assert unasked.stdout == "[]", "no repository chosen means this installation's own"
+
+
+@pytest.mark.parametrize(
+    "script, flag",
+    [
+        (SCRIPTS / "install-windows.ps1", "--force-reinstall"),
+        (SCRIPTS / "update-windows.ps1", "--force-reinstall"),
+    ],
+    ids=lambda value: getattr(value, "name", value),
+)
+def test_the_windows_scripts_reinstall_when_the_repository_changes(script: Path, flag: str):
+    """The same reasoning as the POSIX helper above, in the two PowerShell
+    scripts that install a released wheel. They cannot share a function with
+    each other, so each is checked."""
+    source = script.read_text(encoding="utf-8")
+    assert flag in source, f"{script.name} cannot move an installation between repositories"
+    assert "release-origin" in source or "$ReleaseOrigin" in source
+
+
+@posix_only
 def test_a_release_with_no_manifest_says_so_rather_than_installing_anything(tmp_path: Path):
     empty = tmp_path / "empty"
     empty.mkdir()

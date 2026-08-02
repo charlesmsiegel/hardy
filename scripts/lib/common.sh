@@ -312,6 +312,19 @@ commit_installers() {
 	say "the installers in $target now match the installed release"
 }
 
+# "Already the same version" is only an answer while the wheels come from the
+# same place. Moving an installation to a fork whose wheel carries the same
+# version is a different wheel, and --upgrade alone would report success and
+# change nothing while the origin record and the installers moved. Used by the
+# installer re-run and by the updater alike.
+reinstall_arguments() {
+	local recorded
+	recorded="$(recorded_repo_url 2>/dev/null || printf '')"
+	[ "$(release_repo_url)" = "$recorded" ] && return 0
+	# uv and pip spell the same idea differently.
+	if have uv; then printf '%s' --reinstall; else printf '%s' --force-reinstall; fi
+}
+
 # `release` unless there is a source tree here to install, which is what a
 # developer running this from a clone means. An unpacked installer bundle is
 # not one: it carries scripts/ and no pyproject.toml, precisely so that a
@@ -448,7 +461,10 @@ install_released_wheel() {
 	fi
 	wheel="$(download_release_asset .whl "$directory")"
 	say "verified $(basename "$wheel") against the release manifest"
-	environment_install "$wheel" || fail "could not install $(basename "$wheel") into $VENV"
+	local reinstall
+	reinstall="$(reinstall_arguments)"
+	# shellcheck disable=SC2086  # deliberately unquoted: empty means no flag
+	environment_install $reinstall "$wheel" || fail "could not install $(basename "$wheel") into $VENV"
 	say "installed hardy from $(basename "$wheel")"
 	rm -rf "$directory"
 	record_release_origin

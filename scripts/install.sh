@@ -56,7 +56,8 @@ hardy_fetch_installers() {
 }
 
 if [ ! -e "$directory/install-linux.sh" ]; then
-	HARDY_REPO_URL="${HARDY_REPO_URL:-https://github.com/charlesmsiegel/hardy}"
+	# Whether the repository was chosen, before the default hides the answer.
+	repo_chosen="${HARDY_REPO_URL:+1}"
 	# --prefix is parsed by the shared argument parser, long after this; but the
 	# installers are kept beside the installation they manage, so the bootstrap
 	# has to honour it too or an update would later look for them under the
@@ -72,6 +73,16 @@ if [ ! -e "$directory/install-linux.sh" ]; then
 		if [ "$argument" = "--prefix" ]; then take_prefix=1; fi
 	done
 	export HARDY_HOME="$hardy_home"
+	# An existing installation says which repository it came from, and this
+	# bootstrap has to agree with the installer it is about to hand over to:
+	# staging the official bundle and then letting that installer ask a fork
+	# for the wheel names in it is a manifest that does not describe the
+	# release being installed.
+	if [ -z "$repo_chosen" ] && [ -r "$hardy_home/release-origin" ]; then
+		recorded_repo="$(sed -n 's/^repo=//p' "$hardy_home/release-origin" | head -1)"
+		if [ -n "$recorded_repo" ]; then HARDY_REPO_URL="$recorded_repo"; fi
+	fi
+	HARDY_REPO_URL="${HARDY_REPO_URL:-https://github.com/charlesmsiegel/hardy}"
 	if [ -n "${HARDY_RELEASE_BASE_URL:-}" ]; then
 		release_base="${HARDY_RELEASE_BASE_URL%/}"
 	elif [ -n "${HARDY_VERSION:-}" ]; then
