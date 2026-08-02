@@ -10,6 +10,7 @@ from pathlib import Path
 from .config import DEFAULT_CAS_BACKEND, Config
 from .lean import LeanTools
 from .models import Request
+from .process import run_guarded
 
 MATHLIB_PROBE = "import Mathlib\n\nexample : 2 + 2 = 4 := by norm_num\n"
 LAKEFILES = ("lakefile.toml", "lakefile.lean")
@@ -29,13 +30,19 @@ class Check:
 
 def _probe(command: list[str], *, cwd: Path | None = None, timeout: float = 120) -> tuple[bool, str]:
     try:
-        process = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False, cwd=str(cwd) if cwd else None)
+        # Guarded like every other child: `/doctor` runs on a worker so the
+        # terminal stays live, and a probe that could not be reached by Esc
+        # would leave the user watching a 120-second check they had asked to
+        # stop.
+        process = run_guarded(command, cwd=cwd, timeout=timeout)
+        if process.interrupted:
+            return False, "interrupted"
+        if process.timed_out:
+            return False, f"timed out after {timeout:.0f}s"
     except FileNotFoundError:
         return False, f"{command[0]} not found on PATH"
     except NotADirectoryError:
         return False, f"working directory not usable: {cwd}"
-    except subprocess.TimeoutExpired:
-        return False, f"timed out after {timeout:.0f}s"
     output = (process.stdout + process.stderr).strip().splitlines()
     detail = output[0] if output else f"exit={process.returncode}"
     return process.returncode == 0, detail[:200]
@@ -82,9 +89,11 @@ def _login_check(cli: str) -> Check:
     failure would then arrive on the first model call instead of here.
     """
     try:
-        finished = subprocess.run([cli, "auth", "status"], capture_output=True, text=True, timeout=30)
+        finished = run_guarded([cli, "auth", "status"], timeout=30)
     except (OSError, subprocess.SubprocessError) as error:
         return Check("claude login", False, f"could not run {cli}: {error}")
+    if finished.interrupted or finished.timed_out:
+        return Check("claude login", False, f"{cli} auth status did not finish")
     try:
         status = json.loads(finished.stdout)
     except (json.JSONDecodeError, TypeError):

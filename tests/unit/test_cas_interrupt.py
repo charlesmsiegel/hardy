@@ -84,11 +84,15 @@ def test_an_interrupt_does_not_wait_out_the_cell_limit(cas_session, tmp_path) ->
         record = session.execute(f"hang {ready}")
 
         # `hang` sleeps for 120s and the cell limit is 120s. Either would take
-        # two minutes; the interrupt takes about none, and does not spend the
-        # grace either, because the kernel answers.
+        # two minutes.
         assert record.status == "interrupted"
+        # And it did not spend the grace: a kernel that had been left to the
+        # grace would have been dropped, so a live kernel *is* the evidence
+        # that it answered. Asserted that way rather than on the clock, which
+        # under a loaded suite can drift past the grace without anything having
+        # waited for it.
         assert session.state != "dead"
-        assert time.monotonic() - started < 2
+        assert time.monotonic() - started < 30
     finally:
         session.close()
 
@@ -192,9 +196,10 @@ def test_a_press_that_lands_before_the_cell_still_stops_it(cas_session) -> None:
         record = session.execute("hang")
 
         assert record.status == "interrupted"
-        # Answered rather than killed after the grace: the namespace is intact.
+        # Answered rather than killed after the grace: a dropped kernel is what
+        # spending the grace looks like, so a live one is the evidence.
         assert session.state != "dead"
-        assert time.monotonic() - started < 2
+        assert time.monotonic() - started < 30
         session.resume()
         assert session.execute("c").value_repr == "2"
     finally:

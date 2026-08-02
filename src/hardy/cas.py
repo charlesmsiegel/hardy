@@ -1285,7 +1285,16 @@ class CasSession:
                 self._extractor(nonce, fed), deadline, self._interrupted
             )
         finally:
-            self._in_flight.clear()
+            # Both under the lock `interrupt` takes, so a press either lands
+            # before this (and is recorded against the cell) or finds nothing
+            # in flight and is not. Read here rather than at the bottom of the
+            # method: between the reply arriving and this line, a press is
+            # still aimed at a cell nobody could yet know was over, and it is
+            # resolved conservatively -- the cell is recorded and reported, and
+            # simply not accepted, which costs a rerun rather than correctness.
+            with self._signal_lock:
+                signalled = self._interrupted.is_set()
+                self._in_flight.clear()
         if reply is INTERRUPTED:
             # Asked to stop and did not answer within the grace. Whatever it is
             # doing, it is not talking, and a kernel that cannot be spoken to
@@ -1336,7 +1345,6 @@ class CasSession:
             # classification always read a broken M2 cell as "ok".
             status = self.backend.classify(outcome.stdout, stderr_text)
             outcome = outcome.model_copy(update={"stderr": stderr_text, "status": status})
-        signalled = self._interrupted.is_set()
         if signalled:
             outcome = outcome.model_copy(update={"signalled": True})
         if not signalled and outcome.status == "interrupted":

@@ -4,54 +4,11 @@ import re
 import shutil
 import subprocess
 import tempfile
-import threading
 import time
 from pathlib import Path
 
 from .models import ToolResult
-from .process import INTERRUPT_GRACE_SECONDS, child_creation, kill_group, terminate_group, tracked
-
-
-def _escalate_after_grace(child, entry, settled) -> None:
-    """Stop a compile that was asked to stop and did not.
-
-    Waits for the stop rather than for the compiler, then walks the same
-    ladder `run_process` walks for every other child: the grace, then the
-    group's SIGTERM, then SIGKILL for a tree that ignored that too. Stopping at
-    SIGTERM would leave the main thread blocked in `communicate` until the full
-    compile timeout, which is the wait the press was meant to end.
-
-    Returns as soon as `settled` is set, so an ordinary compile costs it
-    nothing but one 50ms wait.
-    """
-    while not entry.interrupted.is_set() and not entry.escalated.is_set():
-        if settled.wait(0.05):
-            return
-    # The grace, in slices. A single `settled.wait(GRACE)` is not woken by the
-    # second press -- nothing sets `settled` -- so a press arriving inside it
-    # would sit out the whole first-press grace it was pressed to skip.
-    if _settled_within(settled, entry, INTERRUPT_GRACE_SECONDS):
-        return
-    terminate_group(child)
-    if _settled_within(settled, entry, 2):
-        return
-    kill_group(child)
-
-
-def _settled_within(settled, entry, seconds: float) -> bool:
-    """Whether the compile ended within `seconds`. Cut short by a second press.
-
-    Polled rather than waited in one go, because the thing that would end the
-    wait early -- `entry.escalated` -- is an event nobody sets `settled` for.
-    """
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if entry.escalated.is_set():
-            return False
-        if settled.wait(min(0.05, max(0.0, deadline - time.monotonic()))):
-            return True
-    return settled.is_set()
-
+from .process import run_guarded
 
 # Fragments are `\input` from one document, and that document is what a
 # compiler is ever pointed at.
@@ -169,50 +126,22 @@ class LatexTools:
                 # carrying the real preamble.
                 root.write_text(_probe_root(root.read_text(encoding="utf-8"), path), encoding="utf-8")
             try:
-                # `Popen` rather than `subprocess.run`, only so the child can be
-                # registered: Esc has to reach a LaTeX compile the same way it
-                # reaches a Lean one, and `run` never hands back the object a
-                # signal would be aimed at. Everything else is what `run` does --
-                # the environment is inherited whole, unlike `run_process`, which
-                # a TeX installation's own variables would not survive.
-                child = subprocess.Popen(
-                    [*self.command, root.name], cwd=work,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True, **child_creation(),
+                # `run_guarded` rather than `run_process`: a TeX installation
+                # needs the environment Hardy was started with, and
+                # `run_process` deliberately hands a child only the few
+                # variables a toolchain needs to find itself. Everything else
+                # -- the group, the register, the grace, the escalation -- is
+                # the same ladder every other child walks.
+                outcome = run_guarded(
+                    [*self.command, root.name], cwd=work, timeout=self.timeout
                 )
-                with tracked(child) as entry:
-                    settled = threading.Event()
-                    # `communicate` cannot be told to stop waiting, and a
-                    # compiler that ignores the signal would otherwise be waited
-                    # on for the whole compile timeout -- reported, in the end,
-                    # as a timeout, when what happened was a press the user made
-                    # thirty seconds earlier. `run_process` bounds this with the
-                    # same grace inside its own poll loop; here it takes a
-                    # watcher, because the wait is inside `communicate`.
-                    watcher = threading.Thread(
-                        target=_escalate_after_grace,
-                        args=(child, entry, settled),
-                        daemon=True,
+                if outcome.timed_out:
+                    raise subprocess.TimeoutExpired(
+                        self.command, self.timeout, outcome.stdout, outcome.stderr
                     )
-                    watcher.start()
-                    try:
-                        stdout, stderr = child.communicate(timeout=self.timeout)
-                    except subprocess.TimeoutExpired:
-                        kill_group(child)
-                        stdout, stderr = child.communicate()
-                        raise subprocess.TimeoutExpired(
-                            self.command, self.timeout, stdout, stderr
-                        ) from None
-                    finally:
-                        settled.set()
-                        watcher.join(timeout=1)
-                    interrupted = entry.interrupted.is_set()
-                process = subprocess.CompletedProcess(
-                    self.command, child.returncode, stdout, stderr
-                )
-                output = (stdout + stderr).strip()[-self.output_limit :]
+                output = (outcome.stdout + outcome.stderr).strip()[-self.output_limit :]
                 elapsed = time.monotonic() - started
-                if interrupted:
+                if outcome.interrupted:
                     # Stopped, not judged. A compile nobody let finish has no
                     # verdict about the source, and reporting its exit status as
                     # one would read as LaTeX rejecting the document.
@@ -220,7 +149,7 @@ class LatexTools:
                         False, f"interrupted after {elapsed:.3f}s\n{output}", source
                     )
                 pdf = work / "writeup.pdf"
-                if process.returncode == 0 and output_dir is not None and pdf.exists():
+                if outcome.returncode == 0 and output_dir is not None and pdf.exists():
                     output_dir.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(pdf, output_dir / "writeup.pdf")
                     # The compiler's own record of the labels it created. What
@@ -232,7 +161,11 @@ class LatexTools:
                     if aux_dir is not None and aux.exists():
                         aux_dir.mkdir(parents=True, exist_ok=True)
                         shutil.copyfile(aux, aux_dir / "writeup.aux")
-                return ToolResult(process.returncode == 0, f"exit={process.returncode} elapsed={elapsed:.3f}s\n{output}", source)
+                return ToolResult(
+                    outcome.returncode == 0,
+                    f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n{output}",
+                    source,
+                )
             except subprocess.TimeoutExpired as error:
                 output = ((error.stdout or "") + (error.stderr or ""))[-self.output_limit :]
                 return ToolResult(False, f"timeout after {self.timeout:.1f}s\n{output}", source)
