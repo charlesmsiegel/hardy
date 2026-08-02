@@ -32,7 +32,7 @@ from pathlib import Path
 
 from pydantic import NonNegativeInt
 
-from .domain import FrozenModel
+from .domain import EnvironmentIdentity, FrozenModel
 from .lean import elaborate
 from .process import ProcessResult, ProcessSpec, run_process
 
@@ -123,10 +123,23 @@ class ImportCost(FrozenModel):
     # command and project cannot be reproduced or attributed.
     command: tuple[str, ...] = ()
     project: str | None = None
+    # The command and path alone are mutable: `lake env lean` in `/project`
+    # says the same thing before and after that project's toolchain advances,
+    # while the durations it produces change completely. The pinned identity
+    # is what makes a copied result reproducible, so it is recorded when the
+    # project has a manifest to read it from -- and left None rather than
+    # faked when it does not, since `hardy latency` must still work against a
+    # bare Lean with no Lake project at all.
+    environment: EnvironmentIdentity | None = None
 
     @property
     def failures(self) -> int:
         return self.timeouts + self.errors
+
+    @property
+    def probes(self) -> int:
+        """Every probe run, including the ones that carry no duration."""
+        return len(self.samples_ms) + self.timeouts + self.errors
 
     @property
     def median_ms(self) -> int | None:
@@ -169,6 +182,7 @@ def measure_import_cost(
     cwd: Path,
     timeout_seconds: float,
     repeats: int = DEFAULT_REPEATS,
+    environment: EnvironmentIdentity | None = None,
     runner: Callable[[ProcessSpec], ProcessResult] = run_process,
 ) -> ImportCost:
     """Time the prelude by elaborating the imports alone, `repeats` times.
@@ -206,6 +220,7 @@ def measure_import_cost(
         errors=errors,
         command=argv,
         project=str(cwd),
+        environment=environment,
     )
 
 
@@ -228,16 +243,30 @@ def describe(
         # pasted elsewhere without it cannot be reproduced or attributed.
         f"lean command: {' '.join(cost.command) or '(unrecorded)'}",
         f"lean project: {cost.project or '(unrecorded)'}",
-        f"import set: {imports}",
-        f"probes: {len(cost.samples_ms)} ok, {cost.timeouts} timed out, {cost.errors} failed",
     ]
+    if cost.environment is None:
+        # Named, not omitted: a report with no pinned identity is weaker
+        # evidence, and silence would let a reader assume it had one.
+        lines.append("toolchain identity: (unrecorded — no readable lake-manifest.json)")
+    else:
+        lines.append(f"lean: {cost.environment.lean_version} ({cost.environment.lean_commit})")
+        lines.append(f"mathlib: {cost.environment.mathlib_revision}")
+        lines.append(f"lake-manifest sha256: {cost.environment.lake_manifest_sha256}")
+    lines.append(f"import set: {imports}")
+    lines.append(
+        f"probes: {len(cost.samples_ms)} ok, {cost.timeouts} timed out, {cost.errors} failed"
+    )
     median = cost.median_ms
     if median is None:
         if cost.timeouts:
             lines.append(
-                f"{cost.timeouts} of {len(cost.samples_ms) + cost.timeouts} probes hit the "
-                "deadline, so the prelude is longer than the probes that finished and the "
-                "median is not identifiable; re-run with a longer --timeout"
+                # Every probe in the denominator. Counting only those that
+                # carry a duration reported "1 of 1 probes hit the deadline"
+                # directly beneath a line saying three probes ran, which reads
+                # as a timeout being the only failure mode.
+                f"{cost.timeouts} of {cost.probes} probes hit the deadline, so the prelude is "
+                "longer than the probes that finished and the median is not identifiable; "
+                "re-run with a longer --timeout"
             )
         else:
             lines.append("no successful probe; the prelude is unmeasured and #54 cannot be decided")
@@ -254,6 +283,16 @@ def describe(
     estimate = cost.estimate(calls=calls, total_ms=total_ms)
     lines.append("")
     lines.append(f"observed run: {calls} Lean call(s) in {total_ms / 1000:.2f}s")
+    # The one assumption the tool cannot check. `--calls` is taken to count
+    # only calls that imported the probed set; a run whose calls import
+    # different modules has a different prelude per call, and nothing here can
+    # tell the difference unless the arithmetic overruns the wall clock (which
+    # `is_consistent` does catch). Stated in the report rather than left to the
+    # reader, because this number is meant to be quoted as evidence.
+    lines.append(
+        f"assuming all {calls} imported `{imports}` — a call importing something else "
+        "pays a different prelude, and counting it here overstates the recovery"
+    )
     if not estimate.is_consistent:
         lines.append(
             f"{calls} calls each paying a {median / 1000:.2f}s prelude is "

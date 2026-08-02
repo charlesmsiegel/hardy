@@ -156,6 +156,87 @@ def test_timeouts_and_errors_are_counted_apart(tmp_path: Path):
     assert cost.median_ms is None
 
 
+def test_the_timeout_denominator_counts_every_probe(tmp_path: Path):
+    """One timeout beside two errors is one of three, not one of one.
+
+    Counting only probes that carry a duration printed "1 of 1 probes hit the
+    deadline" directly under a line reporting three, which reads as the
+    timeout being the only failure mode.
+    """
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(), timeouts=1, errors=2)
+    assert cost.probes == 3
+    text = "\n".join(describe(cost))
+    assert "1 of 3 probes hit the deadline" in text
+
+
+def test_the_report_states_the_assumption_it_cannot_check():
+    """`--calls` is trusted to count only calls that paid the probed prelude.
+
+    Nothing here can verify that, so the report says so where the number is
+    quoted rather than leaving a reader to assume it was checked.
+    """
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,))
+    text = "\n".join(describe(cost, calls=10, total_ms=150_000))
+    assert "assuming all 10 imported `Mathlib`" in text
+    assert "overstates the recovery" in text
+
+
+def _identity():
+    from hardy.domain import EnvironmentIdentity
+
+    return EnvironmentIdentity(
+        lean_version="4.32.0",
+        lean_commit="8c9756b2",
+        mathlib_revision="81a5d257",
+        lake_manifest_sha256="a" * 64,
+    )
+
+
+def test_the_report_pins_lean_and_mathlib_not_only_the_path():
+    """`lake env lean` in `/project` says the same thing after a toolchain bump.
+
+    The durations do not, so a copied report needs the pinned identity to be
+    reproducible at all.
+    """
+    cost = ImportCost(
+        imports=("Mathlib",),
+        samples_ms=(12_000,),
+        command=("lake", "env", "lean"),
+        project="/project",
+        environment=_identity(),
+    )
+    text = "\n".join(describe(cost))
+    assert "81a5d257" in text
+    assert "4.32.0" in text
+    assert "a" * 64 in text
+
+
+def test_a_missing_manifest_is_named_rather_than_passed_over():
+    """Silence would let a reader assume the report carried an identity."""
+    cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,), command=("lean",))
+    text = "\n".join(describe(cost))
+    assert "toolchain identity: (unrecorded" in text
+
+
+def test_an_unusable_threshold_is_refused_before_probing(tmp_path: Path, capsys, monkeypatch):
+    """Each of these manufactures a verdict from malformed input.
+
+    A negative threshold warrants a pool that recovers nothing, NaN fails
+    every comparison so nothing is ever warranted, and above 1 is unreachable.
+    """
+    from hardy import cli
+
+    project = tmp_path / "lean_project"
+    project.mkdir()
+    probed = []
+    monkeypatch.setattr(cli.latency, "measure_import_cost", lambda *a, **k: probed.append(1))
+    for value in ("-0.5", "nan", "1.5"):
+        args = cli.build_parser().parse_args(["latency", "--threshold", value])
+        assert cli.run_latency(args, _config_for(tmp_path, project)) == 2
+        assert "--threshold must be a fraction between 0 and 1" in capsys.readouterr().out
+    assert probed == []
+
+
 def test_the_measurement_records_the_toolchain_that_produced_it(tmp_path: Path):
     """A prelude belongs to a toolchain; a bare number cannot be reproduced."""
     cost = measure_import_cost(
@@ -321,7 +402,7 @@ def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys,
     project.mkdir()
     seen = {}
 
-    def fake_measure(imports, *, argv, cwd, timeout_seconds, repeats, runner=None):
+    def fake_measure(imports, *, argv, cwd, timeout_seconds, repeats, environment=None, runner=None):
         seen.update(imports=imports, argv=argv, cwd=cwd, repeats=repeats)
         return Cost(imports=imports, samples_ms=(12_000,))
 
