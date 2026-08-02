@@ -1,0 +1,105 @@
+# Publishes the artifacts the installers download, so that installing Hardy
+# does not mean obtaining its repository.
+#
+# Three assets, all built here and never by hand:
+#
+#   hardy_prover-<version>-py3-none-any.whl   what goes into the virtual environment
+#   hardy_prover-<version>.tar.gz             the source distribution
+#   hardy-installers.tar.gz                   scripts/, so a standalone installer
+#                                             can fetch the rest of itself
+#
+# The installer bundle carries no version in its name on purpose: that is what
+# makes `releases/latest/download/hardy-installers.tar.gz` a URL anyone can curl
+# without first knowing what the current release is. The versioned names are
+# discovered from SHA256SUMS, which the installer downloads first and then
+# checks every download against.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # So a release can be cut, or re-cut, without pushing another tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release from (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: astral-sh/setup-uv@v5
+
+      # A tag that disagrees with pyproject.toml would publish a wheel whose
+      # version is not the one anyone asked for, and the mismatch would only
+      # surface later as an installer downloading something unexpected.
+      - name: The tag and pyproject.toml must agree
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag || github.ref_name }}"
+          declared="$(python3 -c \
+            'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          if [ "$tag" != "v$declared" ]; then
+            echo "error: tag $tag does not match version $declared in pyproject.toml" >&2
+            exit 1
+          fi
+          echo "version=$declared" >> "$GITHUB_ENV"
+
+      - name: Build the wheel and the source distribution
+        run: uv build --out-dir dist
+
+      # scripts/ alone, not the whole tree: this is what a machine with no
+      # clone unpacks in order to have an installer to run at all.
+      - name: Bundle the installers
+        run: tar czf dist/hardy-installers.tar.gz scripts
+
+      # Named rather than globbed as `*`, so the manifest holds bare filenames
+      # and cannot pick up a stray file left in dist/ by an earlier step.
+      - name: Checksum every asset
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum "hardy_prover-${{ env.version }}-py3-none-any.whl" \
+                    "hardy_prover-${{ env.version }}.tar.gz" \
+                    hardy-installers.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Re-runnable: a re-cut release replaces its assets rather than
+          # failing on the one that already exists.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "Hardy $TAG" \
+              --generate-notes
+          fi
+
+      # The published release is what every installer will download, so read it
+      # back rather than trusting that the upload did what it said.
+      - name: Read the release back
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          published="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
+          echo "$published"
+          for required in "hardy-installers.tar.gz" "SHA256SUMS" \
+                          "hardy_prover-${{ env.version }}-py3-none-any.whl" \
+                          "hardy_prover-${{ env.version }}.tar.gz"; do
+            printf '%s\n' "$published" | grep -qx "$required" ||
+              { echo "error: $required is missing from the release" >&2; exit 1; }
+          done

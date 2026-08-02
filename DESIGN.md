@@ -185,6 +185,26 @@ required — installs whatever is missing and skips whatever is present: Python,
 and Hardy itself. Platform-specific work is confined to package installation;
 the environment, Lean project, config file, and verification step are shared.
 
+Installing Hardy means putting a released wheel into a virtual environment, not
+obtaining a copy of the repository. A tagged release publishes the wheel beside
+a `SHA256SUMS` manifest and a bundle of the installer scripts themselves, so a
+machine holding nothing but one downloaded script can fetch the rest of the
+installer and then the wheel, and refuses anything whose digest the release does
+not vouch for. The scripts and the wheel come from the same release, which is
+why the bundle exists at all: installers taken from `main` against a wheel from
+a release are two versions that need not agree. A clone is still the developer's
+path — run from one, the installers install that tree editable — and remains the
+fallback for a fork or a branch, which have no release to download.
+
+Three installers tested only by hand are three installers that are usually
+broken, and the Windows one shipped once without ever having been executed. Each
+therefore runs end to end on a real runner of its own operating system on every
+pull request, starting from a single downloaded script and a release built from
+the commit under test. Mathlib and TeX are skipped there — gigabytes and tens of
+minutes, more than a runner has — so what CI establishes is that the installer
+reaches a `hardy` that runs, not that it reaches a `hardy` that can prove
+anything.
+
 Settings resolve from a TOML config file, then `HARDY_*` environment variables,
 then command-line flags. `lean_project` is what makes `hardy` runnable from any
 directory: Lean elaborates in that Lake project, so imports resolve the same way

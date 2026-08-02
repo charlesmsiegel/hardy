@@ -17,34 +17,63 @@ REPO_ROOT=""
 script_directory="$(dirname "${BASH_SOURCE[0]:-$0}")"
 if [ -d "$script_directory" ]; then REPO_ROOT="$(cd "$script_directory/.." && pwd)"; fi
 
-# Installing Hardy means installing this source tree, so a copy of the script
-# downloaded on its own (or piped from curl) fetches the repository and re-execs
-# from there. HARDY_REPO_URL and HARDY_REPO_REF override what is fetched.
+# A copy of this script downloaded on its own (or piped from curl) has no
+# scripts/lib/common.sh beside it, so it fetches the rest of the installer and
+# re-execs from there. The published release comes first: its installers and its
+# wheel are one version, where main's installers and a released wheel need not
+# be. Naming HARDY_REPO_REF asks for the repository instead, and the repository
+# is also the fallback before the first release exists.
 if [ ! -e "$REPO_ROOT/scripts/lib/common.sh" ]; then
 	HARDY_REPO_URL="${HARDY_REPO_URL:-https://github.com/charlesmsiegel/hardy}"
-	HARDY_REPO_REF="${HARDY_REPO_REF:-main}"
-	REPO_ROOT="${HARDY_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}/src"
-	if [ ! -e "$REPO_ROOT/scripts/lib/common.sh" ]; then
-		printf '==> Fetching Hardy into %s\n' "$REPO_ROOT"
+	hardy_home="${HARDY_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
+	# Fetched afresh every time, unlike the repository below: the bundle is a few
+	# kilobytes, and a kept copy would be last release's installers reaching for
+	# this release's wheel — the mismatch this exists to prevent.
+	REPO_ROOT="$hardy_home/installers"
+	if [ -z "${HARDY_REPO_REF:-}" ] && command -v curl >/dev/null 2>&1; then
+		if [ -n "${HARDY_RELEASE_BASE_URL:-}" ]; then
+			release_base="${HARDY_RELEASE_BASE_URL%/}"
+		elif [ -n "${HARDY_VERSION:-}" ]; then
+			release_base="$HARDY_REPO_URL/releases/download/$HARDY_VERSION"
+		else
+			release_base="$HARDY_REPO_URL/releases/latest/download"
+		fi
+		printf '==> Fetching the Hardy installers from %s\n' "$release_base"
 		rm -rf "$REPO_ROOT"
 		mkdir -p "$REPO_ROOT"
-		fetched=0
-		if command -v curl >/dev/null 2>&1; then
-			curl -fsSL "$HARDY_REPO_URL/archive/refs/heads/$HARDY_REPO_REF.tar.gz" 2>/dev/null |
-				tar xz -C "$REPO_ROOT" --strip-components=1 2>/dev/null && fetched=1
-		fi
-		if [ "$fetched" = 0 ] && command -v git >/dev/null 2>&1; then
+		curl -fsSL "$release_base/hardy-installers.tar.gz" 2>/dev/null |
+			tar xz -C "$REPO_ROOT" 2>/dev/null ||
+			rm -rf "$REPO_ROOT"
+	fi
+
+	# The repository, when there is no release to fetch from — before the first
+	# one is published, and whenever a ref was named.
+	if [ ! -e "$REPO_ROOT/scripts/lib/common.sh" ]; then
+		HARDY_REPO_REF="${HARDY_REPO_REF:-main}"
+		REPO_ROOT="$hardy_home/src"
+		if [ ! -e "$REPO_ROOT/scripts/lib/common.sh" ]; then
+			printf '==> Fetching Hardy into %s\n' "$REPO_ROOT"
 			rm -rf "$REPO_ROOT"
 			mkdir -p "$REPO_ROOT"
-			git clone --depth 1 --branch "$HARDY_REPO_REF" "$HARDY_REPO_URL" "$REPO_ROOT" && fetched=1
+			fetched=0
+			if command -v curl >/dev/null 2>&1; then
+				curl -fsSL "$HARDY_REPO_URL/archive/refs/heads/$HARDY_REPO_REF.tar.gz" 2>/dev/null |
+					tar xz -C "$REPO_ROOT" --strip-components=1 2>/dev/null && fetched=1
+			fi
+			if [ "$fetched" = 0 ] && command -v git >/dev/null 2>&1; then
+				rm -rf "$REPO_ROOT"
+				mkdir -p "$REPO_ROOT"
+				git clone --depth 1 --branch "$HARDY_REPO_REF" "$HARDY_REPO_URL" "$REPO_ROOT" && fetched=1
+			fi
+			[ "$fetched" = 1 ] || {
+				printf 'error: could not fetch the Hardy installers from %s, nor the repository at %s (ref %s).\nCheck your network, or clone the repository yourself and run scripts/%s from the clone.\n' "${release_base:-a release}" "$HARDY_REPO_URL" "$HARDY_REPO_REF" "$SCRIPT_NAME" >&2
+				exit 1
+			}
 		fi
-		[ "$fetched" = 1 ] || {
-			printf 'error: could not fetch %s (ref %s).\nCheck your network, or clone the repository yourself and run scripts/%s from the clone.\n' "$HARDY_REPO_URL" "$HARDY_REPO_REF" "$SCRIPT_NAME" >&2
-			exit 1
-		}
 	fi
+
 	[ -e "$REPO_ROOT/scripts/lib/common.sh" ] ||
-		{ printf 'error: %s does not look like the Hardy repository\n' "$REPO_ROOT" >&2; exit 1; }
+		{ printf 'error: %s does not carry the Hardy installers\n' "$REPO_ROOT" >&2; exit 1; }
 	exec bash "$REPO_ROOT/scripts/$SCRIPT_NAME" "$@"
 fi
 # shellcheck source-path=SCRIPTDIR

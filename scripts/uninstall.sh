@@ -51,7 +51,8 @@ usage() {
 	cat <<EOF
 Usage: $0 [options]
 
-Removes Hardy: the virtual environment, the fetched source tree, the \`hardy\`
+Removes Hardy: the virtual environment, whatever the installer fetched (a
+source tree, or the installer scripts of a release install), the \`hardy\`
 command, and the PATH lines the installer added.
 
 Asks before removing anything expensive to rebuild or personal. With --yes and
@@ -166,6 +167,10 @@ hardy_uninstall_main() {
 	drop "the hardy command" "$HARDY_BIN_DIR/hardy"
 	drop "the virtual environment" "$VENV"
 	drop "the fetched source tree" "$HARDY_HOME/src"
+	# What a release install leaves behind instead of a source tree: the
+	# installer scripts it was run from, and any half-finished download.
+	drop "the fetched installers" "$HARDY_HOME/installers"
+	drop "an interrupted download" "$HARDY_HOME/download"
 	remove_path_entries
 
 	if wanted "$REMOVE_LEAN_PROJECT" "Remove the Lean project at $LEAN_PROJECT ($(human_size "$LEAN_PROJECT"))? Rebuilding it is a multi-gigabyte download." "$LEAN_PROJECT"; then

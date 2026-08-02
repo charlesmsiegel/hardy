@@ -21,6 +21,11 @@ lean_project/
 # transcript.jsonl. Per-run state, never committed.
 .hardy/
 
+# Built distributions. The release workflow builds them into dist/ and the
+# installer workflow into release/; both belong to a run, not to the checkout.
+dist/
+release/
+
 # Coverage output. `pyproject.toml` configures it and CI keeps the report as
 # an artifact; the numbers belong to a run, not to the checkout.
 .coverage
