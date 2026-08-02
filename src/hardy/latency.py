@@ -489,7 +489,12 @@ def measure_import_cost(
         timeouts=timeouts,
         errors=errors,
         command=argv,
-        project=str(cwd),
+        # Resolved, not as given. A relative `--lean-project` recorded only
+        # `lean`, so runs from `/work/a` and `/work/b` measured different
+        # source trees and reported the same configuration -- the subprocess
+        # resolves it against the invocation directory, and a record that does
+        # not is not attributable.
+        project=str(Path(cwd).resolve()),
         timeout_seconds=timeout_seconds,
         machine=machine_identity(),
         diagnostic=diagnostic,

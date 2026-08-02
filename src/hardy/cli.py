@@ -682,6 +682,10 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
     if not project.is_dir():
         print(f"Lean project directory not found: {project}")
         return 1
+    # Resolved once, so the toolchain probe, the measurement, and the recorded
+    # provenance all name the same absolute directory rather than a relative
+    # path whose meaning depends on where the command happened to be invoked.
+    project = project.resolve()
     # Asked of the Lean actually being invoked, not `_environment_identity`,
     # whose version and commit are constants pinned for the staged path and
     # would misattribute a `--lean-command` pointing at a different compiler.
