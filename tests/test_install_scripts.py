@@ -752,6 +752,23 @@ def test_a_failed_fetch_leaves_the_retained_installers_alone(tmp_path: Path, scr
 
 
 @posix_only
+@pytest.mark.parametrize("script", ["install.sh", "install-linux.sh"])
+def test_a_failed_repository_fetch_leaves_the_installed_tree_alone(tmp_path: Path, script: str):
+    """An editable installation points at this tree, so removing it before a
+    fetch that then fails would break the installed `hardy` outright — and the
+    re-fetch that keeps a changed ref honest is what made that a real risk."""
+    home = tmp_path / "hardy"
+    installed = home / "src/scripts/lib"
+    installed.mkdir(parents=True)
+    (installed / "common.sh").write_text("# the tree hardy is installed from\n", encoding="utf-8")
+
+    result = run_standalone(script, tmp_path, HARDY_REPO_REF="no-such-branch")
+    assert result.returncode != 0
+    assert (installed / "common.sh").read_text(encoding="utf-8").startswith("# the tree")
+    assert not (home / "src.new").exists()
+
+
+@posix_only
 def test_a_named_ref_takes_the_repository_rather_than_a_release(tmp_path: Path):
     """HARDY_REPO_REF is how a fork or a branch is installed, and neither has a
     release to download. Reaching for one anyway would install the wrong Hardy.

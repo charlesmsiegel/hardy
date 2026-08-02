@@ -410,16 +410,18 @@ install_source_tree() {
 install_released_wheel() {
 	local wheel staged=0 directory="$HARDY_HOME/download"
 	rm -rf "$directory"
-	# A standalone install was bootstrapped and already has the installers. A
-	# --from-release install run from a checkout was not, and without them the
-	# installation's updater and uninstaller would live in a checkout that is
-	# free to be deleted or moved.
+	# The bootstrap fetches the bundle itself and hands the manifest over, and
+	# that is the only case where the installers on disk are already this
+	# release's. Every other route here — a checkout with --from-release, or the
+	# retained installer re-run on an existing installation — has to fetch them,
+	# or an installation moving to release N+1 would keep release N's updater
+	# and uninstaller.
 	#
 	# Staged before the wheel is fetched, not after: staging leaves its manifest
 	# behind for the wheel to be found in, so both artifacts come from one
 	# release rather than from two resolutions of `latest` minutes apart, and
 	# neither is put in place before both have been verified.
-	if [ ! -e "$HARDY_HOME/installers/scripts/lib/common.sh" ]; then
+	if [ "${HARDY_RELEASE_MANIFEST:-}" != "$HARDY_HOME/installers/SHA256SUMS" ]; then
 		stage_installers
 		staged=1
 	fi

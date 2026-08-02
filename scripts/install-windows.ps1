@@ -259,7 +259,11 @@ function Invoke-ReleaseInstaller {
     # unreachable release means there is not one yet, which is the state before
     # the first is published, and the repository is where Hardy comes from --
     # the same fallback all three POSIX bootstraps take.
-    $named = [bool]($env:HARDY_VERSION -or $env:HARDY_RELEASE_BASE_URL)
+    # -FromRelease and HARDY_INSTALL_FROM=release are as explicit as naming a
+    # version: falling back to the repository would install the very thing the
+    # caller ruled out.
+    $named = [bool]($env:HARDY_VERSION -or $env:HARDY_RELEASE_BASE_URL -or
+        $FromRelease -or ($env:HARDY_INSTALL_FROM -eq 'release'))
     $bundle = Save-ReleaseAsset 'hardy-installers.tar.gz' (Join-Path $staging 'download') $named
     if (-not $bundle) {
         Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
