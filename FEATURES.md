@@ -237,6 +237,12 @@ Priority labels are sequencing hints:
   a cell inside a C loop that never returns to its interpreter -- is stopped
   the way the timeout stopped it, and the record says the state went with it.
   A second Esc escalates to that immediately rather than waiting the grace out.
+- **Known gap:** on Windows the escalation reaches the process Hardy started
+  and not the tree beneath it. The *interrupt* does reach the tree --
+  `CTRL_BREAK_EVENT` is delivered to a process group -- but terminating and
+  killing are per-process there, and taking a tree down needs a job object
+  Hardy does not set up. A wrapper that exits while the compiler it started
+  ignores the signal can be left running.
 - **Known gap:** the same interrupt reaches Lean, LaTeX, and Tectonic, which
   are one-shot children and simply stop. Only the CAS kernel is persistent
   enough for an interrupt to *preserve* anything, and only the SymPy driver

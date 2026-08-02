@@ -245,36 +245,40 @@ def main() -> None:
             request = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return
-        held = PENDING_INTERRUPT
-        PENDING_INTERRUPT = False
-        if held and request.get("stopping", True):
-            # The stop reached this kernel before the cell did. Answering
-            # without running it is what the parent is waiting for: it gets a
-            # framed reply straight away, the namespace is untouched, and the
-            # kernel is still here for the next cell.
-            reply = _interrupted_reply()
-        else:
-            # `held` without `stopping` is a signal that arrived in the moment
-            # after the last reply was flushed and before Hardy had read it. It
-            # was aimed at a cell that was already over, and Hardy -- which
-            # knows whether it still wants a stop -- says it does not.
-            # Rejecting this cell for it would stop something nobody asked to
-            # stop.
-            #
-            # The raising handler is installed *inside* the `try` and taken
-            # down in the `finally`, because the switch itself is a window: a
-            # signal landing after the handler is installed but before the
-            # block is entered, or after the block ends but before deferral is
-            # restored, would escape `main` and kill the kernel over a press
-            # meant to cost one cell. Hardy signals the instant it has written
-            # a frame, so those are exactly the moments an early press arrives.
-            try:
-                _handle_stops_by(signal.default_int_handler)
-                reply = run_cell(str(request.get("source", "")), namespace, limit)
-            except KeyboardInterrupt:
+        # The raising handler goes up *inside* the `try` and comes down in the
+        # `finally`, because each switch is itself a window: a signal landing
+        # after the handler is installed but before the block is entered, or
+        # after the block ends but before deferral is restored, would escape
+        # `main` and kill the kernel over a press meant to cost one cell. Hardy
+        # signals the instant it has written a frame, so those are exactly the
+        # moments an early press arrives.
+        #
+        # The deferred flag is read *after* the switch, never before. Read
+        # first, a signal arriving in between would set it again with nobody
+        # left to look, and the cell would run on with the press already spent
+        # -- until Hardy gave up waiting and killed the kernel.
+        try:
+            _handle_stops_by(signal.default_int_handler)
+            held = PENDING_INTERRUPT
+            PENDING_INTERRUPT = False
+            if held and request.get("stopping", True):
+                # The stop reached this kernel before the cell did. Answering
+                # without running it is what the parent is waiting for: it gets
+                # a framed reply straight away, the namespace is untouched, and
+                # the kernel is still here for the next cell.
                 reply = _interrupted_reply()
-            finally:
-                _handle_stops_by(_remember)
+            else:
+                # `held` without `stopping` is a signal that arrived in the
+                # moment after the last reply was flushed and before Hardy had
+                # read it. It was aimed at a cell that was already over, and
+                # Hardy -- which knows whether it still wants a stop -- says it
+                # does not. Rejecting this cell for it would stop something
+                # nobody asked to stop.
+                reply = run_cell(str(request.get("source", "")), namespace, limit)
+        except KeyboardInterrupt:
+            reply = _interrupted_reply()
+        finally:
+            _handle_stops_by(_remember)
         encoded = json.dumps(reply, ensure_ascii=False).encode("utf-8")
         stdout.write(f"{len(encoded):0{HEADER_BYTES}d}".encode("ascii"))
         stdout.write(encoded)

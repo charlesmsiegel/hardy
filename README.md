@@ -250,7 +250,9 @@ than left running to its timeout. A computer algebra cell that answers the
 interrupt costs only itself: the kernel and every value in it survive. One that
 does not answer within a couple of seconds is stopped the way the timeout
 stopped it, and the state goes with it; a second Esc skips that wait and kills
-what had not stopped. A cell you started yourself
+what had not stopped. On Windows that kill reaches the process Hardy started
+and not the tree beneath it — stopping a whole tree there needs a job object
+Hardy does not set up. A cell you started yourself
 with `/cas` is interrupted by the same press, and while one is running the box
 refuses a second cell or a new question rather than interleaving them in the one
 kernel. Commands that only read or leave — `/status`, `/help`, `/clear`,

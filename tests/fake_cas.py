@@ -172,15 +172,15 @@ def main() -> None:
         payload = read_exact(stdin, int(header))
         if payload is None:
             return
-        _handle_stops_by(signal.default_int_handler)
-        # One handler from having the frame to having a reply, as
-        # `cas_driver.main` has: a signal in the gaps around the cell -- parsing
-        # the frame, the moment before it starts -- would otherwise be uncaught
-        # and kill the kernel, and those gaps are exactly where a press that
-        # arrived with the frame tends to land.
+        request = json.loads(payload.decode("utf-8"))
+        source = request.get("source", "")
+        # Exactly `cas_driver.main`'s shape: the handler goes up inside the
+        # guarded block and comes down in its `finally`, and the deferred flag
+        # is read after the switch, never before. Both switches are windows a
+        # press can land in, and an uncaught `KeyboardInterrupt` in either one
+        # kills the kernel and the whole namespace.
         try:
-            request = json.loads(payload.decode("utf-8"))
-            source = request.get("source", "")
+            _handle_stops_by(signal.default_int_handler)
             held = PENDING_INTERRUPT
             PENDING_INTERRUPT = False
             # `held` without `stopping` is a stop that arrived after the last
@@ -191,12 +191,9 @@ def main() -> None:
         except KeyboardInterrupt:
             # As `cas_driver.run_cell` does: the cell is abandoned and *the
             # kernel answers*, which is what leaves the session's state intact.
-            PENDING_INTERRUPT = False
             reply = _interrupted()
-        # Deferring again before the reply is written, as `cas_driver.main`
-        # does: the stretch between the cell ending and the loop coming round
-        # would otherwise run under the raising handler with no cell to abandon.
-        _handle_stops_by(_remember)
+        finally:
+            _handle_stops_by(_remember)
         reply = clip(reply, limit)
         encoded = json.dumps(reply).encode("utf-8")
         stdout.write(f"{len(encoded):0{HEADER_BYTES}d}".encode("ascii"))
