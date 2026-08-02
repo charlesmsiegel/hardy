@@ -213,6 +213,30 @@ def test_the_report_pins_lean_and_mathlib_not_only_the_path():
     assert "a" * 64 in text
 
 
+def test_the_mathlib_revision_is_qualified_when_the_command_may_look_elsewhere():
+    """`lake env lean` builds LEAN_PATH from this project's manifest, so the
+    revision on disk is the revision elaborated. A bare `lean` or a wrapper may
+    import an entirely different Mathlib, and reading the manifest then
+    attributes the latency to a toolchain that did not produce it."""
+    from hardy.latency import manifest_binds
+
+    assert manifest_binds(("lake", "env", "lean")) is True
+    assert manifest_binds(("/usr/bin/lake", "env", "lean")) is True
+    assert manifest_binds(("lean",)) is False
+    assert manifest_binds(("my-wrapper", "lean")) is False
+    assert manifest_binds(()) is False
+
+    unbound = ImportCost(
+        imports=("Mathlib",), samples_ms=(12_000,), environment=_identity(), manifest_bound=False
+    )
+    assert "may resolve imports outside the project" in "\n".join(describe(unbound))
+
+    bound = ImportCost(
+        imports=("Mathlib",), samples_ms=(12_000,), environment=_identity(), manifest_bound=True
+    )
+    assert "may resolve imports outside the project" not in "\n".join(describe(bound))
+
+
 def test_a_missing_manifest_is_named_rather_than_passed_over():
     """Silence would let a reader assume the report carried an identity."""
     cost = ImportCost(imports=("Mathlib",), samples_ms=(12_000,), command=("lean",))
@@ -1139,7 +1163,7 @@ def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys,
     project.mkdir()
     seen = {}
 
-    def fake_measure(imports, *, argv, cwd, timeout_seconds, repeats, environment=None, identity_note=None, runner=None):
+    def fake_measure(imports, *, argv, cwd, timeout_seconds, repeats, environment=None, identity_note=None, manifest_bound=False, runner=None):
         seen.update(imports=imports, argv=argv, cwd=cwd, repeats=repeats)
         return Cost(imports=imports, samples_ms=(12_000, 12_000, 12_000))
 

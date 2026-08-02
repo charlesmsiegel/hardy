@@ -732,6 +732,7 @@ def run_latency(args: argparse.Namespace, config: configuration.Config) -> int:
             repeats=args.repeats,
             environment=probe.identity,
             identity_note=probe.reason,
+            manifest_bound=probe.manifest_bound,
         )
     except FileNotFoundError:
         print(f"Lean executable not found: {config.lean_command[0]}")
