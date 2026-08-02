@@ -30,7 +30,9 @@ import asyncio
 import contextlib
 import threading
 import time
+import types
 from io import StringIO
+from pathlib import Path
 
 import pytest
 from prompt_toolkit.application import create_app_session
@@ -684,3 +686,148 @@ async def test_a_turn_the_app_exit_cut_off_keeps_the_words_it_drew(settings):
         "the streamed tail was dropped when the app went away"
     )
     assert session.abandoned == ["app_exited"]
+
+
+class CasCommandSession(Streams):
+    """A session whose `/cas` cell blocks, and which counts what Esc reaches.
+
+    Shaped like `MathematicsSession`: `cas.run` is what `handle_cas` calls, and
+    `interrupt_work`/`escalate` are what the shell reaches for. The interrupt
+    releases the cell, because that is what interrupting a real kernel does --
+    the driver answers the signal and the call returns.
+    """
+
+    def __init__(self):
+        self.release = threading.Event()
+        self.running = threading.Event()
+        self.interrupted = 0
+        self.escalated = 0
+        self.abandoned: list[str] = []
+        self.cas = types.SimpleNamespace(run=self._run, session=object())
+        self.workspace = Path(".")
+
+    def _run(self, source: str, *, author: str):
+        self.running.set()
+        self.release.wait(timeout=5)
+        return types.SimpleNamespace(
+            restart_note="", stdout="", stderr="", value_repr="stopped", note=""
+        )
+
+    def interrupt_work(self) -> int:
+        self.interrupted += 1
+        self.release.set()
+        return 1
+
+    def escalate(self) -> int:
+        self.escalated += 1
+        self.release.set()
+        return 1
+
+    def send(self, text: str) -> str:
+        return "unused"
+
+    def record_abandonment(self, reason: str) -> None:
+        self.abandoned.append(reason)
+
+
+async def drive(settings, session, batches, *, timeout: float = 5.0):
+    """Send key batches in stages, waiting between them.
+
+    `blast` sends everything at once, which is right for testing what a single
+    input batch resolves to. This is for the opposite: a press that must land
+    while something started by an earlier press is genuinely in flight.
+    """
+    buffer = StringIO()
+    with create_pipe_input() as pipe:
+        output = Vt100_Output(buffer, lambda: Size(rows=24, columns=80))
+        with create_app_session(input=pipe, output=output):
+            built = shell.Shell(
+                settings, session, handlers.build_registry(), input=pipe, output=output
+            )
+            task = asyncio.ensure_future(built.run_async())
+            await asyncio.sleep(0.05)
+            for keys, wait_for in batches:
+                pipe.send_text(keys)
+                if wait_for is not None:
+                    end = time.monotonic() + timeout
+                    while time.monotonic() < end and not wait_for():
+                        await asyncio.sleep(0.01)
+                    assert wait_for(), f"never became true after {keys!r}"
+                else:
+                    await asyncio.sleep(0.1)
+            code = await task
+    return code, buffer.getvalue()
+
+
+async def test_escape_interrupts_a_human_cas_cell(settings):
+    """A cell the human started is as long-running as one the model sent, and
+    goes to the same locked kernel. It used to be unreachable: the handler ran
+    on the event loop, so the loop that had to read the Esc was the one the
+    cell was blocking, and the key handler bailed out because no *turn* was
+    running."""
+    session = CasCommandSession()
+    _, written = await drive(
+        settings,
+        session,
+        [
+            ("/cas 1+1\r", session.running.is_set),
+            ("\x1b ", lambda: session.interrupted == 1),
+            ("\x03", None),
+        ],
+    )
+    assert session.interrupted == 1
+    # No turn was cancelled, because none was running: a command is not a turn,
+    # and recording one would claim the model had been stopped.
+    assert session.abandoned == []
+    assert "interrupted" in written
+
+
+async def test_a_second_escape_during_a_command_escalates(settings):
+    session = CasCommandSession()
+    # The first press releases this fake's cell, so the second has to land in
+    # the same batch to reach a command still marked as running.
+    _, written = await drive(
+        settings,
+        session,
+        [
+            ("/cas 1+1\r", session.running.is_set),
+            ("\x1b \x1b ", lambda: session.escalated == 1),
+            ("\x03", None),
+        ],
+    )
+    assert session.interrupted == 1
+    assert session.escalated == 1
+    assert "lost its state" in written
+
+
+async def test_a_command_in_flight_refuses_a_second_one(settings):
+    """The input box is live while the cell runs now, which it was not when the
+    cell blocked the loop. Two cells at once would interleave in the one locked
+    kernel that both the human and the model go through."""
+    session = CasCommandSession()
+    _, written = await drive(
+        settings,
+        session,
+        [
+            ("/cas 1+1\r", session.running.is_set),
+            ("/cas 2+2\r", None),
+            ("\x1b ", lambda: session.interrupted == 1),
+            ("\x03", None),
+        ],
+    )
+    assert "cannot run while a command is still running" in written
+
+
+async def test_a_command_in_flight_refuses_a_model_turn(settings):
+    session = CasCommandSession()
+    _, written = await drive(
+        settings,
+        session,
+        [
+            ("/cas 1+1\r", session.running.is_set),
+            ("prove something\r", None),
+            ("\x1b ", lambda: session.interrupted == 1),
+            ("\x03", None),
+        ],
+    )
+    assert "A command is still running" in written

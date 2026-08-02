@@ -154,3 +154,39 @@ def test_a_latex_compile_can_be_interrupted(tmp_path: Path):
     assert "interrupted" in result.output
     assert "timeout" not in result.output
     assert time.monotonic() - started < 30
+
+
+def test_a_latex_compile_that_refuses_the_interrupt_is_still_stopped(tmp_path: Path):
+    """`communicate` cannot be told to stop waiting, so without a watcher a
+    compiler that ignores the signal would be waited on for the whole compile
+    timeout and then reported as a timeout -- when what happened was a press
+    the user made seconds earlier."""
+    import threading
+    import time
+
+    from hardy import process
+
+    ready = tmp_path / "tex-deaf"
+    source = (
+        "\\documentclass{article}\n"
+        f"% slow: 300\n% deaf\n% ready: {ready}\n"
+        "\\begin{document}Fine.\\end{document}\n"
+    )
+
+    def press_escape() -> None:
+        end = time.monotonic() + 30
+        while time.monotonic() < end and not ready.exists():
+            time.sleep(0.01)
+        assert ready.exists(), "the fake LaTeX child never started"
+        assert process.interrupt_children() == 1
+
+    threading.Thread(target=press_escape, daemon=True).start()
+
+    started = time.monotonic()
+    result = LatexTools(COMMAND, timeout=300).check(source)
+    elapsed = time.monotonic() - started
+
+    assert not result.ok
+    assert "interrupted" in result.output
+    # It waited out the grace and no more -- not the 300s compile timeout.
+    assert 1.5 <= elapsed < 30

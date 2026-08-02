@@ -239,11 +239,13 @@ Priority labels are sequencing hints:
   `cas_export`: the script it runs to check the export, and the fresh kernel it
   replays in. They live on a `CasSession` built for the export and discarded
   with it, so an export is bounded only by its own limits.
-- **Known gap:** a cell the *human* starts with `/cas` is not interruptible.
-  Commands run on the terminal's event loop rather than on a worker, so a long
-  cell blocks the loop that would have to read the Esc, and the key handler
-  only acts while a model turn is running. A runaway human cell still costs
-  `cas_cell_seconds` and the kernel with it.
+- **Now (implemented):** a cell the *human* starts with `/cas` is interrupted
+  by the same press. It runs on a worker rather than on the terminal's event
+  loop, which is what leaves the loop free to read the Esc that stops it, and
+  Esc reaches a command in flight as well as a turn. The input box stays live
+  while a cell runs, so a second command and a model turn are both refused for
+  the duration: two cells at once would interleave in the one locked kernel the
+  human and the model share.
 - **Now (implemented):** within one Hardy process, `cas_session_seconds` bounds
   total CAS wall clock rather than only the cells a caller asked for. A rebuild
   after a kernel death and the fresh-kernel replay an export verifies itself

@@ -1173,7 +1173,7 @@ class MathematicsSession:
         # moment later and outlive the press that was spent on it -- which
         # means something has to lift it, or this turn's first child would be
         # killed on sight by the last turn's Esc.
-        process.resume_children()
+        self.resume_work()
         return self._stream(self.runtime.stream(text))
 
     def _stream(self, events: Iterator[TurnEvent]) -> Iterator[TurnEvent]:
@@ -1235,6 +1235,20 @@ class MathematicsSession:
         if cancel is not None:
             cancel()
         return self.interrupt_work()
+
+    def resume_work(self) -> None:
+        """Lift a stop, so new work is allowed to run. Any thread.
+
+        A stop stays in force after `cancel` so that work admitted a moment
+        earlier cannot start its child after the press and outlive it. That
+        makes lifting it somebody's job, and the job belongs to whatever is
+        about to start work: a turn does it here, and the terminal does it
+        before running a command, because a command is not a turn and an Esc
+        pressed during one would otherwise still be in force over the next.
+        """
+        process.resume_children()
+        if self.cas is not None:
+            self.cas.session.resume()
 
     def interrupt_work(self) -> int:
         """Ask the children in flight to stop. Returns how many.

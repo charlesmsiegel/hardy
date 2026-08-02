@@ -246,9 +246,14 @@ returns, so a long Lean check reports what it is doing instead of going quiet.
 
 Esc cancels an in-flight turn: the model stops, no further tool call runs, and
 the Lean, LaTeX, or computer algebra process it started is interrupted rather
-than left running to its timeout. An interrupted computer algebra cell keeps
-its kernel and the values in it; a second Esc gives up on the interrupt and
-kills what did not stop, which costs that state.
+than left running to its timeout. A computer algebra cell that answers the
+interrupt costs only itself: the kernel and every value in it survive. One that
+does not answer within a couple of seconds is stopped the way the timeout
+stopped it, and the state goes with it; a second Esc skips that wait and kills
+what had not stopped. A cell you started yourself
+with `/cas` is interrupted by the same press, and while one is running the box
+refuses a second command or a new question rather than interleaving them in the
+one kernel.
 
 What it cannot undo is work already done: a file a tool call has already
 written stays written, and an interrupted child leaves behind whatever it had
