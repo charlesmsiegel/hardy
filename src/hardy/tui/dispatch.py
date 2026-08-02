@@ -37,17 +37,17 @@ def classify(
     same reason here -- a model turn started mid-cell, or a second cell, would
     interleave in the one locked kernel both go through.
     """
-    # A leading space is the escape hatch for text that must start with a
-    # slash; `/` itself is reserved.
-    if text.startswith(" "):
-        stripped = text.strip()
-        return Outcome("send", argument=stripped) if stripped else Outcome("empty")
-
     if not text.strip():
         return Outcome("empty")
 
     busy = "A turn" if turn_running else "A command"
-    if not text.startswith("/"):
+    # A leading space is the escape hatch for text that must start with a
+    # slash; `/` itself is reserved. It is still a message, so it is refused
+    # while something is in flight exactly as an ordinary one is -- the guard
+    # used to sit below this branch, which let the escape hatch start a second
+    # turn on top of a running one and, worse, let `stream` lift a stop that
+    # had just been aimed at the cell still running.
+    if text.startswith(" ") or not text.startswith("/"):
         if turn_running or command_running:
             return Outcome("refused", message=f"{busy} is still running. Wait for it to finish.")
         return Outcome("send", argument=text.strip())
