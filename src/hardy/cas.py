@@ -1253,12 +1253,17 @@ class CasSession:
         else:
             end = SENTINEL_END.format(nonce=nonce).encode()
             kernel.rearm(end)
-        frame = self.backend.frame(source, nonce, self._stop_level > 0)
+        # The frame is built inside the lock, below, because the bit it carries
+        # is the stop level: read outside, a press landing between the read and
+        # the lock would be recorded while the frame already said no stop was
+        # wanted -- and the driver, told that, would discard the very signal
+        # that press sent.
         with self._signal_lock:
             # Cleared before the cell is out there, and only then armed: an
             # interrupt asked for while nothing was running would otherwise
             # stop the *next* cell, which nobody asked to stop.
             self._interrupted.clear()
+            frame = self.backend.frame(source, nonce, self._stop_level > 0)
             sent = kernel.send(frame)
             self._in_flight.set()
             # A stop asked for before this cell existed still applies to it:
