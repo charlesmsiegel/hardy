@@ -9,6 +9,8 @@ on it.
 
 from __future__ import annotations
 
+import pytest
+
 from hardy.usage import Usage
 
 
@@ -115,6 +117,39 @@ def test_a_new_provider_session_starts_its_counter_over():
     is the case a smaller-than-last test cannot catch on its own."""
     spent = Usage().record(_cumulative(2)).record(_cumulative(3, session="thread-2"))
     assert spent.cost_usd == 2.5   # $1.00, then a fresh session's $1.50
+
+
+def test_a_restart_is_seen_even_where_one_figure_happens_to_rise():
+    """A restart resets every counter at once -- `z$r` writes them together --
+    so it is a property of the report, not of one field. A cost that climbs
+    past its old baseline while the token counts fall off a cliff is a fresh
+    counter, and differencing the cost against the old baseline would lose the
+    whole of the session before it."""
+    spent = (
+        Usage()
+        .record({"type": "result", "session_id": "t1", "cost_usd": 0.10,
+                 "usage": {"cache_read_input_tokens": 5_000}})
+        # The CLI did not restore: a new exchange costing $0.20, but reading
+        # only what its own context needed.
+        .record({"type": "result", "session_id": "t1", "cost_usd": 0.20,
+                 "usage": {"cache_read_input_tokens": 400}})
+    )
+    assert spent.cost_usd == pytest.approx(0.30)     # not 0.20
+    assert spent.cache_read_tokens == 5_400
+
+
+def test_an_ordinary_continuation_is_not_mistaken_for_a_restart():
+    """Every figure climbing is what a restored counter looks like."""
+    spent = (
+        Usage()
+        .record({"type": "result", "session_id": "t1", "cost_usd": 0.10,
+                 "usage": {"input_tokens": 100, "cache_read_input_tokens": 5_000}})
+        .record({"type": "result", "session_id": "t1", "cost_usd": 0.25,
+                 "usage": {"input_tokens": 260, "cache_read_input_tokens": 9_000}})
+    )
+    assert spent.cost_usd == pytest.approx(0.25)
+    assert spent.input_tokens == 260
+    assert spent.cache_read_tokens == 9_000
 
 
 def test_an_errored_exchange_still_cost_what_it_cost():
@@ -263,18 +298,21 @@ def test_a_ledger_survives_a_round_trip_through_session_json():
     assert Usage.from_dict(spent.as_dict()) == spent
 
 
-def test_a_workspace_written_before_the_ledger_existed_reopens_empty():
-    assert Usage.from_dict(None) == Usage()
-    assert Usage.from_dict({}) == Usage()
+def test_nothing_stored_reads_as_no_ledger_rather_than_an_empty_one():
+    """None, not `Usage()`. The caller pairs a ledger with a replay cursor,
+    and "read, and it was empty" would licence trusting a cursor that belongs
+    to no ledger at all."""
+    assert Usage.from_dict(None) is None
+    assert Usage.from_dict({}) is None
 
 
-def test_a_corrupted_ledger_is_read_as_empty_rather_than_crashing_the_session():
+def test_a_corrupted_ledger_is_refused_rather_than_crashing_the_session():
     """`session.json` is a file on disk a user can edit. Refusing to open the
     workspace over a bad counter would cost them the workspace, not the counter.
     """
-    assert Usage.from_dict({"turns": "seven", "input_tokens": None}) == Usage()
+    assert Usage.from_dict({"turns": "seven", "input_tokens": None}) is None
     # A bad cost alone is enough: a total half-read is not a total, and there
     # is no honest way to show four of five numbers as if they belonged
     # together.
-    assert Usage.from_dict({"turns": 2, "cost_usd": "free"}) == Usage()
-    assert Usage.from_dict({"turns": 2, "cost_usd": -1.0}) == Usage()
+    assert Usage.from_dict({"turns": 2, "cost_usd": "free"}) is None
+    assert Usage.from_dict({"turns": 2, "cost_usd": -1.0}) is None

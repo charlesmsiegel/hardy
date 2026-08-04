@@ -375,6 +375,41 @@ def test_a_turn_nobody_ever_drained_invents_no_exchange(tmp_path: Path):
     assert chat.usage.turns == 0
 
 
+def test_a_ledger_too_damaged_to_read_is_rebuilt_rather_than_trusted(tmp_path: Path):
+    """`Usage.from_dict` refusing a stored ledger and the cursor still being
+    believed is the worst of both: an empty total paired with a cursor at the
+    end of the transcript, so nothing is recovered and the next exchange
+    becomes the whole session."""
+    _pre_ledger(tmp_path, [0.10, 0.20])
+    chat = spending(tmp_path)                    # recovers, and writes a cursor
+    assert chat.usage.turns == 2
+    damaged = stored(tmp_path)
+    damaged["usage"]["turns"] = "two"            # as a hand-edit would leave it
+    (tmp_path / "session.json").write_text(json.dumps(damaged), encoding="utf-8")
+    reopened = spending(tmp_path)
+    assert reopened.usage.turns == 2
+    assert "Nothing spent yet." not in "\n".join(reopened.usage.lines())
+
+
+def test_a_transcript_that_shrank_leaves_a_cursor_that_can_advance_again(tmp_path: Path):
+    """Resetting the cursor through the monotonic helper does not reset it.
+    The oversized value would survive, and the next result appended before a
+    save would sit below it and be skipped for good."""
+    chat = spending(tmp_path)
+    chat.send("One.")
+    chat.send("Two.")
+    spent = chat.usage
+    (tmp_path / "transcript.jsonl").write_text("", encoding="utf-8")
+    assert spending(tmp_path).usage == spent     # ledger kept, as before
+    assert stored(tmp_path)["usage_cursor"] == 0  # and the cursor really moved
+    # A result appended after the truncation is still picked up.
+    with (tmp_path / "transcript.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "type": "result", "session_id": "thread-1", "cost_usd": 3.0,
+        }) + "\n")
+    assert spending(tmp_path).usage.turns == spent.turns + 1
+
+
 def test_a_workspace_with_no_transcript_at_all_recovers_nothing(tmp_path: Path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "session.json").write_text(

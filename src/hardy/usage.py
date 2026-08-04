@@ -191,6 +191,17 @@ class Usage:
             if counted is not None:
                 stated[field] = counted
 
+        # A restart is a property of the report, not of one field: `z$r` writes
+        # every restored counter back at once, so they go to zero together. One
+        # figure below its baseline is therefore enough to condemn the whole
+        # report -- and taking it field by field would miss the case where a
+        # fresh counter happens to pass an old baseline, which for the cost of
+        # a cheap session is easy. The token counters are what usually give it
+        # away: a new exchange's cache reads start in the thousands where an
+        # accumulated baseline is in the hundreds of thousands.
+        restarted = restarted or any(
+            figure < self.baselines[field] for field, figure in stated.items() if field in self.baselines
+        )
         baselines, reports = dict(self.baselines), dict(self.reports)
         totals = {field: getattr(self, field) for field in self.COUNTERS}
         spent = self.cost_usd
@@ -307,38 +318,45 @@ class Usage:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_dict(cls, stored: Any) -> Usage:
-        """Read what `session.json` remembered, tolerating what it might not.
+    def from_dict(cls, stored: Any) -> Usage | None:
+        """Read what `session.json` remembered, or None if it cannot be read.
 
         A workspace written before this existed has no entry, and the file is
         one a user can open and edit. Neither is a reason to refuse to open the
-        workspace, so anything unreadable is read as a fresh ledger -- losing a
-        counter rather than the session it counts.
+        workspace, so anything unreadable is refused here rather than raised --
+        losing a counter rather than the session it counts.
+
+        None rather than an empty ledger, because those two mean opposite
+        things to a caller holding a replay cursor: a ledger that was read is
+        up to date with the transcript, and one that was refused is not up to
+        date with anything. Pairing an empty total with the cursor that
+        belonged to the total it replaced would report a long session as having
+        spent nothing and never look at the history that could say otherwise.
         """
         if not isinstance(stored, Mapping):
-            return cls()
+            return None
         counters = {
             field: _count(stored.get(field))
             for field in ("turns", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens")
         }
         if any(value is None for value in counters.values()):
-            return cls()
+            return None
         cost = stored.get("cost_usd")
         if cost is not None and (isinstance(cost, bool) or not isinstance(cost, (int, float)) or cost < 0):
-            return cls()
+            return None
         session = stored.get("provider_session")
         if session is not None and not isinstance(session, str):
-            return cls()
+            return None
         held, marks = stored.get("reports"), stored.get("baselines")
         if not isinstance(held, Mapping) or not isinstance(marks, Mapping):
-            return cls()
+            return None
         reports = {str(field): _count(covered) for field, covered in held.items()}
         if any(covered is None for covered in reports.values()):
-            return cls()
+            return None
         baselines = {}
         for field, figure in marks.items():
             if isinstance(figure, bool) or not isinstance(figure, (int, float)) or figure < 0:
-                return cls()
+                return None
             baselines[str(field)] = float(figure)
         return cls(
             **counters,

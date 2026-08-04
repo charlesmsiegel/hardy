@@ -1468,9 +1468,15 @@ class MathematicsSession:
         Once. The result is saved immediately, so the next open takes the
         stored ledger and no transcript is ever counted twice.
         """
-        stored = self.state.get(USAGE_KEY)
-        recovered = Usage() if stored is None else Usage.from_dict(stored)
-        start = self._ledger_cursor(fresh=stored is None)
+        # A ledger that would not read is treated exactly as a missing one, and
+        # so is its cursor: the cursor's only meaning is "the ledger beside me
+        # accounts for the transcript this far", and there is no such ledger
+        # any more. Keeping it would pair an empty total with a cursor at the
+        # end of the file -- nothing recovered, nothing recoverable, and the
+        # next exchange written down as the whole session.
+        held = Usage.from_dict(self.state.get(USAGE_KEY))
+        recovered = held if held is not None else Usage()
+        start = self._ledger_cursor(fresh=held is None)
         counted = 0
         for event in self._recorded(start):
             if event.get("type") == "result":
@@ -1507,9 +1513,16 @@ class MathematicsSession:
         cursor = self.state.get(CURSOR_KEY)
         size = self._transcript_end()
         if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0 or cursor > size:
-            # No cursor either: a ledger written before this existed has read
-            # its whole transcript by construction.
-            self._mark_ledger_read(size)
+            # Set rather than advanced. `_mark_ledger_read` only ever moves the
+            # cursor forward, which is right while the transcript only grows
+            # and wrong here: the whole point is that this cursor is past the
+            # end, and leaving it there would put the next appended result
+            # below it, where a replay would never look again.
+            #
+            # (No cursor at all lands here too: a ledger written before this
+            # existed has read its whole transcript by construction.)
+            self.state[CURSOR_KEY] = size
+            self._save_state()
             return size
         return cursor
 
