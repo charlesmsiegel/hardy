@@ -9,9 +9,14 @@ it.
 The distinction this module exists to preserve is **unreported** against
 **zero**. A backend that says nothing about cost is not a backend that cost
 nothing, and rendering silence as `$0.00` would tell a user the one thing the
-meter is there to stop them believing. So cost is `None` until a provider states
-one, token counts carry a `counted` flag beside them, and every rendering path
-below has to say `not reported` rather than reach for a default.
+meter is there to stop them believing.
+
+That distinction is kept per field and not per report, because a backend that
+states its input tokens has not thereby stated that its output was zero --
+`Output: 0 tokens` on a row nobody reported is the same lie as `$0.00`. So
+`reports` counts, for each field, how many exchanges actually stated it: none
+means unreported, fewer than `turns` means the total covers part of the session
+and says which part.
 
 Nothing here estimates. If the provider did not say it, Hardy does not know it.
 """
@@ -31,6 +36,15 @@ _COUNTERS = {
     "output_tokens": "output_tokens",
     "cache_creation_input_tokens": "cache_write_tokens",
     "cache_read_input_tokens": "cache_read_tokens",
+}
+
+#: What `/status` calls each counter. Keyed by field so the labels and the
+#: order in `Usage.COUNTERS` cannot drift apart.
+_LABELS = {
+    "input_tokens": "Input",
+    "output_tokens": "Output",
+    "cache_write_tokens": "Cache write",
+    "cache_read_tokens": "Cache read",
 }
 
 #: The width of the label column in `/status`, matched to the lines that were
@@ -101,11 +115,20 @@ class Usage:
     cache_read_tokens: int = 0
     #: None until a provider reports a cost. Never defaulted to zero.
     cost_usd: float | None = None
-    #: Whether any provider ever reported token counts. False leaves every
-    #: counter above at zero and meaning nothing.
-    counted: bool = False
+    #: Field name -> how many exchanges stated it. Absent or zero means the
+    #: field was never reported and its counter above means nothing; a value
+    #: below `turns` means the total covers only part of the session.
+    reports: dict[str, int] = dataclasses.field(default_factory=dict)
 
     UNREPORTED = "not reported by this backend"
+
+    #: The token counters, in the order `lines()` reads them out.
+    COUNTERS = ("input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens")
+
+    @property
+    def counted(self) -> bool:
+        """Whether any token counter was ever reported."""
+        return any(self.reports.get(field) for field in self.COUNTERS)
 
     @property
     def total_tokens(self) -> int:
@@ -125,23 +148,21 @@ class Usage:
         errored one, which burned tokens before it failed. What the provider
         did not state is left unstated rather than counted as zero.
         """
+        reports = dict(self.reports)
         cost = self.cost_usd
         stated = event.get("cost_usd")
         if isinstance(stated, (int, float)) and not isinstance(stated, bool) and stated >= 0:
             cost = (self.cost_usd or 0.0) + float(stated)
+            reports["cost_usd"] = reports.get("cost_usd", 0) + 1
         report = event.get("usage")
         counts = report if isinstance(report, Mapping) else {}
-        totals = {
-            field: getattr(self, field) + (_count(counts.get(key)) or 0)
-            for key, field in _COUNTERS.items()
-        }
-        return dataclasses.replace(
-            self,
-            turns=self.turns + 1,
-            cost_usd=cost,
-            counted=self.counted or any(_count(counts.get(key)) is not None for key in _COUNTERS),
-            **totals,
-        )
+        totals = {}
+        for key, field in _COUNTERS.items():
+            stated_count = _count(counts.get(key))
+            totals[field] = getattr(self, field) + (stated_count or 0)
+            if stated_count is not None:
+                reports[field] = reports.get(field, 0) + 1
+        return dataclasses.replace(self, turns=self.turns + 1, cost_usd=cost, reports=reports, **totals)
 
     # -- rendering --------------------------------------------------------
 
@@ -156,9 +177,12 @@ class Usage:
         if not self.turns:
             return ""
         parts = []
-        if self.cost_usd is not None:
-            parts.append(_money(self.cost_usd))
+        if self.reports.get("cost_usd"):
+            parts.append(_money(self.cost_usd or 0.0))
         if self.counted:
+            # Deliberately unqualified: this is the sum of what the provider
+            # reported, which is exactly what the meter claims to be, and the
+            # row has no space to say more. `/status` carries the coverage.
             parts.append(_compact(self.total_tokens))
         return " · ".join(parts)
 
@@ -168,18 +192,48 @@ class Usage:
             return ["Nothing spent yet."]
         rows = [
             self._row("Turns", str(self.turns)),
-            self._row("Cost", _money(self.cost_usd) if self.cost_usd is not None else self.UNREPORTED),
+            self._stated("Cost", "cost_usd", "" if self.cost_usd is None else _money(self.cost_usd)),
         ]
-        if not self.counted:
-            return [*rows, self._row("Tokens", self.UNREPORTED)]
-        return [
-            *rows,
-            self._row("Input", f"{self.input_tokens:,} tokens"),
-            self._row("Output", f"{self.output_tokens:,} tokens"),
-            self._row("Cache write", f"{self.cache_write_tokens:,} tokens"),
-            self._row("Cache read", f"{self.cache_read_tokens:,} tokens"),
-            self._row("Total", f"{self.total_tokens:,} tokens"),
+        rows += [
+            self._stated(_LABELS[field], field, f"{getattr(self, field):,} tokens")
+            for field in self.COUNTERS
         ]
+        if self.counted:
+            # Summed over the counters that were reported; the ones that were
+            # not contribute nothing, and say so on their own rows above. The
+            # sum inherits their coverage: a total that reads as whole while
+            # every line of it reads as partial is the mismatch again, one
+            # level up.
+            rows.append(self._row("Total", f"{self.total_tokens:,} tokens{self._coverage()}"))
+        return rows
+
+    def _coverage(self) -> str:
+        """How much of the session the token total actually spans, if not all."""
+        spans = {self.reports[field] for field in self.COUNTERS if self.reports.get(field)}
+        if spans == {self.turns}:
+            return ""
+        if len(spans) == 1:
+            return f" ({spans.pop()} of {self.turns} exchanges)"
+        # No backend reports its counters over different exchanges, but a
+        # ledger carried across versions could; naming one span would pick a
+        # number that is right for some counters and wrong for the rest.
+        return " (counters cover different exchanges)"
+
+    def _stated(self, label: str, field: str, value: str) -> str:
+        """One row, marked with how much of the session it actually covers.
+
+        A field reported for every exchange needs no qualification. One
+        reported for some of them is a total about part of the session sitting
+        beside totals about all of it, which is worth a reader's attention:
+        `session.json` may have been carried across a version that did not
+        record this, or the backend may simply be inconsistent.
+        """
+        covered = self.reports.get(field, 0)
+        if not covered:
+            return self._row(label, self.UNREPORTED)
+        if covered < self.turns:
+            return self._row(label, f"{value} ({covered} of {self.turns} exchanges)")
+        return self._row(label, value)
 
     @staticmethod
     def _row(label: str, value: str) -> str:
@@ -210,8 +264,14 @@ class Usage:
         cost = stored.get("cost_usd")
         if cost is not None and (isinstance(cost, bool) or not isinstance(cost, (int, float)) or cost < 0):
             return cls()
+        held = stored.get("reports")
+        if not isinstance(held, Mapping):
+            return cls()
+        reports = {str(field): _count(covered) for field, covered in held.items()}
+        if any(covered is None for covered in reports.values()):
+            return cls()
         return cls(
             **counters,
             cost_usd=None if cost is None else float(cost),
-            counted=bool(stored.get("counted")),
+            reports={field: covered for field, covered in reports.items() if covered},
         )

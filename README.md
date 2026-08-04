@@ -237,11 +237,20 @@ here stays at or under 38 columns instead, which is what keeps a resize safe.
 The spend meter on that rule (`── claude-opus-5 ── $1.34 · 82k ───`) is the
 running cost and token count of the session so far, taken from the provider's
 own report after each exchange and accumulated in `session.json`, so reopening
-a workspace continues the total rather than restarting it. It is never
-estimated: a backend that reports no usage shows no meter, and `/status` says
-`not reported by this backend` rather than `$0.00`. Because no chrome row may
-grow, a terminal too narrow to hold the meter whole drops it rather than
-showing part of a number; `/status` still has it.
+a workspace continues the total rather than restarting it. A workspace that
+predates the ledger recovers what it can from the `result` events already in
+its `transcript.jsonl` the first time it is opened, rather than reporting a
+long session as having spent nothing.
+
+It is never estimated, and unreported is never rendered as zero. A backend
+that reports no usage shows no meter, and `/status` says `not reported by this
+backend` rather than `$0.00`. The same holds per field: a backend that states
+its input tokens has not thereby stated that its output was zero, so only the
+counters it actually reported carry numbers. Where a total covers part of a
+session — recovered history has costs but no token counts — `/status` says
+which exchanges it covers. Because no chrome row may grow, a terminal too
+narrow to hold the meter whole drops it rather than showing part of a number;
+`/status` still has it.
 
 Slash commands: `/help` lists them, `/model` opens a selector to switch the
 live model (arrow keys or a row number, Enter to choose, Esc to cancel),
