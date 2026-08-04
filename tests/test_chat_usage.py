@@ -9,6 +9,7 @@ has cost nothing so far is worse than not being told at all.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -293,44 +294,76 @@ def test_a_reported_exchange_is_not_counted_a_second_time_on_teardown(tmp_path: 
     assert chat.usage.turns == 2
 
 
-def test_a_late_result_settles_the_provisional_exchange(tmp_path: Path):
-    """`_consume` joins its worker with a timeout and does not disable
-    observation when that runs out, so a slow worker can deliver its result
-    after the teardown has already booked the exchange as unreported. One
-    request must stay one turn -- otherwise every reported field is labelled
-    as covering half a session it covers all of."""
+def _stale_worker(chat) -> None:
+    """Make the session see its next report as coming from a worker the
+    consumer already walked away from. `_consume` joins with a timeout and
+    does not stop a slow worker observing, so this is a state the runtime
+    really reaches."""
+    chat.runtime.worker = threading.Thread(target=lambda: None)   # never current
+
+
+def test_a_report_from_a_worker_left_behind_is_recorded_but_not_folded(tmp_path: Path):
+    """Its figures are session-to-date and *older* than what a later turn has
+    already reported, so folding it is not late accounting -- it is a smaller
+    view of spend already counted, which the restart test would then read as a
+    fresh counter and add all over again."""
     chat = spending(tmp_path)
-    chat.send("One.")                       # reported normally: one turn
-    # A second turn starts -- `stream` clears the per-turn flags -- and its
-    # teardown fires while the worker is still going.
+    chat.send("One.")                       # session-to-date $0.50
+    spent = chat.usage
+    _stale_worker(chat)
+    chat._observed({"type": "result", "session_id": "thread-1", "cost_usd": 0.3})
+    assert chat.usage == spent              # no turn, no spend, no baseline moved
+    # It is still in the transcript: it happened.
+    assert '"cost_usd": 0.3' in (tmp_path / "transcript.jsonl").read_text(encoding="utf-8")
+
+
+def test_a_stale_report_does_not_stand_in_for_the_turn_in_flight(tmp_path: Path):
+    """Otherwise the current turn's teardown sees a report that was never
+    about it, skips its own record, and the exchange vanishes from the ledger
+    while the coverage still reads as complete."""
+    chat = spending(tmp_path)
     chat._reported.clear()
-    chat._remember_spend({}, unreported=True)
-    assert chat.usage.turns == 2
-    # ...and the report the worker was still holding, arriving afterwards.
-    chat._remember_spend({"type": "result", "session_id": "thread-1", "cost_usd": 0.9, "usage": REPORT})
-    assert chat.usage.turns == 2            # settled, not appended
-    assert chat.usage.cost_usd == 0.9       # 0.50, then session-to-date 0.90
-    # Nothing is left labelled partial: both exchanges reported in the end.
-    assert "of 2 exchanges" not in "\n".join(chat.usage.lines())
+    _stale_worker(chat)
+    chat._observed({"type": "result", "session_id": "thread-1", "cost_usd": 0.4})
+    assert not chat._reported.is_set()
+    chat._remember_spend({}, chat._transcript_end(), unreported=True)
+    assert chat.usage.turns == 1
+    assert chat.usage.cost_usd is None
 
 
-def test_a_report_from_a_turn_that_is_already_over_is_not_folded_into_the_next(tmp_path: Path):
-    """Once a new exchange has started, the old turn has nothing left to
-    settle, and settling into the new one would misattribute it."""
+def test_a_skipped_report_is_not_folded_by_a_later_reopen(tmp_path: Path):
+    """Skipping is a decision, so the cursor moves past it. A replay that
+    folded what the live session deliberately refused would reintroduce the
+    double count through the back door."""
     chat = spending(tmp_path)
-    chat._remember_spend({}, unreported=True)
-    chat.send("A new question.")            # clears the provisional state
-    assert chat.usage.turns == 2
-    chat._remember_spend({"type": "result", "session_id": "thread-1", "cost_usd": 9.0})
-    assert chat.usage.turns == 3
+    chat.send("One.")
+    _stale_worker(chat)
+    chat._observed({"type": "result", "session_id": "thread-1", "cost_usd": 0.3})
+    spent = chat.usage
+    assert spending(tmp_path).usage == spent
+
+
+def test_the_cursor_stops_at_the_report_it_folded_not_the_end_of_the_file(tmp_path: Path):
+    """Two turns' reports can be in flight at once, so the file may already
+    hold one nobody has folded. Advancing to the end would step over it."""
+    chat = spending(tmp_path)
+    chat.send("One.")
+    folded = stored(tmp_path)["usage_cursor"]
+    # A second result appended by a thread that has not folded it yet.
+    trailing = json.dumps({"type": "result", "session_id": "thread-1", "cost_usd": 1.4}) + "\n"
+    with (tmp_path / "transcript.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(trailing)
+    assert folded < (tmp_path / "transcript.jsonl").stat().st_size
+    # Reopening still sees it, because the cursor never claimed it.
+    assert spending(tmp_path).usage.turns == 2
 
 
 def test_a_teardown_after_a_report_adds_nothing(tmp_path: Path):
     """The ordinary case, and the other side of the race."""
     chat = spending(tmp_path)
     chat.send("One.")
-    chat._remember_spend({}, unreported=True)
-    chat._remember_spend({}, unreported=True)
+    chat._remember_spend({}, chat._transcript_end(), unreported=True)
+    chat._remember_spend({}, chat._transcript_end(), unreported=True)
     assert chat.usage.turns == 1
 
 
@@ -354,6 +387,19 @@ def test_a_damaged_transcript_line_does_not_stop_the_workspace_opening(tmp_path:
     _pre_ledger(tmp_path, [0.10, 0.20])
     with (tmp_path / "transcript.jsonl").open("a", encoding="utf-8") as handle:
         handle.write("{not json\n")
+    assert spending(tmp_path).usage.turns == 2
+
+
+def test_a_line_torn_inside_a_utf8_character_does_not_stop_it_either(tmp_path: Path):
+    """`_record` writes with `ensure_ascii=False`, so a process killed during
+    an append can split the last line mid-character. Decoding that strictly
+    raises before `json.loads` is ever reached -- past the guard above -- and
+    since recovery runs in the constructor, it would cost the whole workspace
+    rather than the one torn line."""
+    _pre_ledger(tmp_path, [0.10, 0.20])
+    with (tmp_path / "transcript.jsonl").open("ab") as handle:
+        # A theorem name with an accent, cut through the middle of the é.
+        handle.write(b'{"type": "result", "note": "caf' + "é".encode()[:1])
     assert spending(tmp_path).usage.turns == 2
 
 

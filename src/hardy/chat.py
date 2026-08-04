@@ -229,13 +229,9 @@ class MathematicsSession:
         # yet. An Event for the same reason `_cancelled` is one: it is set on
         # the runtime's thread and read on whichever thread drained the turn.
         self._reported = threading.Event()
-        # Whether the exchange in flight is already in the ledger with nothing
-        # reported, waiting for a report that may still arrive. The runtime's
-        # worker outlives its teardown wait when it is slow, so the two threads
-        # race for the same exchange; this and the flag above are read and
-        # written only under `_spend`, which is what makes the pair a decision
-        # rather than two guesses.
-        self._provisional = False
+        # Held across reading `_reported` and folding, so the runtime's worker
+        # and the thread that drained the turn make one decision about who
+        # records the exchange rather than two guesses.
         self._spend = threading.Lock()
         # `session.json` is written from more than one thread -- a tool call
         # under the gate above, and `_observed` remembering the provider thread
@@ -278,11 +274,40 @@ class MathematicsSession:
         the artifacts on disk implied a conversation that had already taken
         place.
         """
-        self._record(event)
-        if event.get("type") == "result":
-            self._reported.set()
-            self._remember_thread()
-            self._remember_spend(event)
+        offset = self._record(event)
+        if event.get("type") != "result":
+            return
+        self._remember_thread()
+        if not self._from_the_turn_in_flight():
+            # A report the consumer already gave up waiting for. It is kept in
+            # the transcript -- it happened -- but folding it would corrupt the
+            # ledger rather than improve it: every figure in it is
+            # session-to-date, and a *later* turn has since reported a larger
+            # one, so this smaller figure is not new spend but an older view of
+            # spend already counted. Differencing against it would read as a
+            # counter restart and add the whole thing a second time. The
+            # exchange it belongs to is in the ledger already, recorded as
+            # unreported by its own teardown.
+            #
+            # The cursor still advances past it. Skipping is a decision, and a
+            # replay after a crash must make the same one rather than folding
+            # what this deliberately did not.
+            self._skip_spend(offset)
+            return
+        self._reported.set()
+        self._remember_spend(event, offset)
+
+    def _from_the_turn_in_flight(self) -> bool:
+        """Whether this report belongs to the turn the session is running now.
+
+        Observation happens on the runtime's worker thread, and the runtime
+        publishes the worker owning the current turn -- assigned before that
+        thread starts, so a live worker either is that one or has been
+        superseded. A runtime with no worker at all (the plain path, and the
+        fakes) reports from the calling thread and cannot be stale.
+        """
+        worker = getattr(self.runtime, "worker", None)
+        return worker is None or threading.current_thread() is worker
 
     def switch_model(self, model: str) -> None:
         """Continue this conversation on a different model.
@@ -365,10 +390,18 @@ class MathematicsSession:
         manifest = json.dumps(self._without(*LEDGER_KEYS), ensure_ascii=False)
         return f"\n\nWorkspace: {self.workspace}\nExisting manifest:\n{manifest}"
 
-    def _record(self, event: dict[str, Any]) -> None:
+    def _record(self, event: dict[str, Any]) -> int:
+        """Append one event, and say where the transcript now ends.
+
+        The offset is what lets the ledger's cursor advance to the end of the
+        event it just accounted for rather than to wherever the file happens
+        to have reached -- two turns' reports can be in flight at once, and
+        the file's current size may already include one nobody has folded.
+        """
         event = {"timestamp": time.time(), **event}
         with self.transcript_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+            return handle.tell()
 
     def _final_gates(self, source: str) -> ToolResult | None:
         """What disqualifies a source from being saved, before Lean is asked.
@@ -1228,13 +1261,9 @@ class MathematicsSession:
         # previous exchange must not silently disarm this one's tool gate.
         self._cancelled.clear()
         # Same reasoning, and the same thread: what the last exchange reported
-        # says nothing about whether this one will. The provisional flag goes
-        # with it -- once a new exchange has started, a report arriving late
-        # from the old one has no turn of its own left to settle, and settling
-        # it into this one would be worse than counting it.
+        # says nothing about whether this one will.
         with self._spend:
             self._reported.clear()
-            self._provisional = False
         # And the same for the children. A stop stays in force after `cancel`
         # so that a tool call already past the gate cannot spawn its child a
         # moment later and outlive the press that was spent on it -- which
@@ -1274,11 +1303,11 @@ class MathematicsSession:
             # with no `result` at all -- but the provider may well have billed
             # for what it did before that. Counted with everything about it
             # unreported, because the alternative is a session that burned
-            # tokens and still says `Nothing spent yet.` Provisionally: the
-            # runtime's worker can outlive the wait `_consume` gives it, and a
-            # report that lands afterwards settles this exchange rather than
-            # opening another.
-            self._remember_spend({}, unreported=True)
+            # tokens and still says `Nothing spent yet.` Final: the runtime's
+            # worker can outlive the wait `_consume` gives it, but a report
+            # arriving after this is stale rather than late -- `_observed`
+            # says why it cannot be folded in afterwards.
+            self._remember_spend({}, self._transcript_end(), unreported=True)
 
     def send(self, text: str) -> str:
         """`stream`, for a caller with nothing to draw it on."""
@@ -1451,8 +1480,11 @@ class MathematicsSession:
             return recovered
         self.state[USAGE_KEY] = recovered.as_dict()
         self._record({"type": "migration", "reason": "spend", "recovered_turns": counted})
-        self._mark_ledger_read()
+        self._mark_ledger_read(self._transcript_end())
         return recovered
+
+    def _transcript_end(self) -> int:
+        return self.transcript_path.stat().st_size if self.transcript_path.exists() else 0
 
     def _ledger_cursor(self, *, fresh: bool) -> int:
         """Where in the transcript the stored ledger has already read to.
@@ -1473,22 +1505,34 @@ class MathematicsSession:
         if fresh:
             return 0
         cursor = self.state.get(CURSOR_KEY)
-        size = self.transcript_path.stat().st_size if self.transcript_path.exists() else 0
+        size = self._transcript_end()
         if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0 or cursor > size:
             # No cursor either: a ledger written before this existed has read
             # its whole transcript by construction.
-            self._mark_ledger_read()
+            self._mark_ledger_read(size)
             return size
         return cursor
 
-    def _mark_ledger_read(self) -> None:
-        """Record that the ledger accounts for the transcript as it now stands.
+    def _mark_ledger_read(self, offset: int | None = None) -> None:
+        """Record that the ledger accounts for the transcript up to `offset`.
 
-        Saved with the ledger in one write, so an interruption loses both and
-        the replay above starts from the same place the ledger did rather than
-        from a cursor that outran it.
+        The end of the event just handled, not the file's current size: two
+        turns' reports can be in flight at once, and one of them may already
+        have been appended by a thread still waiting to fold it. Advancing to
+        the file's end would step over that one, and a crash before its thread
+        got the lock would leave it skipped for good.
+
+        Never backwards, because each result advances to its own end and they
+        need not be handled in the order they were written. Saved with the
+        ledger in one write, so an interruption loses both and the replay
+        starts from the same place the ledger did rather than from a cursor
+        that outran it.
         """
-        self.state[CURSOR_KEY] = self.transcript_path.stat().st_size if self.transcript_path.exists() else 0
+        if offset is None:
+            offset = self.transcript_path.stat().st_size if self.transcript_path.exists() else 0
+        held = self.state.get(CURSOR_KEY)
+        held = held if isinstance(held, int) and not isinstance(held, bool) and held >= 0 else 0
+        self.state[CURSOR_KEY] = max(held, offset)
         self._save_state()
 
     def _recorded(self, start: int = 0) -> Iterator[dict[str, Any]]:
@@ -1499,10 +1543,19 @@ class MathematicsSession:
         than raised -- the transcript is append-only and a process killed
         mid-write leaves exactly that, and one torn line is not a reason to
         refuse to open the workspace.
+
+        `errors="replace"` is what makes that promise true rather than nearly
+        true. `_record` writes with `ensure_ascii=False`, so a kill during an
+        append can cut the last line inside a multi-byte character -- and
+        decoding that strictly raises before `json.loads` is reached, past the
+        guard below. Since this runs while the session is being constructed,
+        the cost would be the workspace rather than the torn line. Replaced
+        bytes turn it into something that merely fails to parse, which is the
+        case already handled.
         """
         if not self.transcript_path.exists():
             return
-        with self.transcript_path.open(encoding="utf-8") as handle:
+        with self.transcript_path.open(encoding="utf-8", errors="replace") as handle:
             if start:
                 handle.seek(start)
             for line in handle:
@@ -1513,7 +1566,7 @@ class MathematicsSession:
                 if isinstance(event, dict):
                     yield event
 
-    def _remember_spend(self, event: dict[str, Any], *, unreported: bool = False) -> None:
+    def _remember_spend(self, event: dict[str, Any], offset: int, *, unreported: bool = False) -> None:
         """Add one exchange's reported cost and tokens to the running total.
 
         Written after every exchange rather than at the end of the session: a
@@ -1521,35 +1574,33 @@ class MathematicsSession:
         what it spent, and a total that only survives a clean exit is a total
         nobody can rely on.
 
-        Two threads reach this for the same exchange. The runtime's own thread
-        brings the provider's report; the thread that drained the turn brings
-        the news that there was not going to be one, having waited only as long
-        as `_consume`'s teardown allows. Whichever arrives second must not add a
-        second exchange -- one request drawn as two turns would also label every
-        reported field as covering half a session it covers all of. So the
-        decision is made under `_spend`: a report that finds a provisional
-        exchange settles it in place, and a teardown that finds a report
-        already in has nothing left to do.
+        Exactly one record per exchange, made by whichever of two threads gets
+        there. The runtime's worker brings the provider's report; the thread
+        that drained the turn brings the news that there was not going to be
+        one, having waited only as long as `_consume`'s teardown allows. The
+        `_reported` flag is what stops the second adding a turn the first
+        already added, and it is read and set under `_spend` so the two make
+        one decision rather than two guesses.
+
+        An exchange recorded as unreported stays that way. A report that turns
+        up afterwards is not folded into it -- see `_observed` for why a stale
+        session-to-date figure is worse than no figure -- so there is no
+        provisional state here for a later report to settle, and none to
+        persist for a reopen to reconstruct.
 
         `self.usage` is immutable, so each assignment publishes a whole new
         total rather than a half-updated one to the thread that draws it.
         """
         with self._spend:
             if unreported:
-                if self._reported.is_set() or self._provisional:
+                if self._reported.is_set():
                     return
-                self._provisional = True
-                self.usage = self.usage.record({})
-            elif self._provisional:
-                self._provisional = False
-                self.usage = self.usage.settle(event)
-            else:
-                self.usage = self.usage.record(event)
-            self._save_spend()
+                self._reported.set()
+            self.usage = self.usage.record(event)
+            self.state[USAGE_KEY] = self.usage.as_dict()
+            self._mark_ledger_read(offset)
 
-    def _save_spend(self) -> None:
-        self.state[USAGE_KEY] = self.usage.as_dict()
-        # Cursor and ledger in the same write. `_record` has already appended
-        # this event, so the cursor moves past it exactly when the ledger that
-        # accounts for it is saved.
-        self._mark_ledger_read()
+    def _skip_spend(self, offset: int) -> None:
+        """Account for a result the ledger deliberately did not fold."""
+        with self._spend:
+            self._mark_ledger_read(offset)

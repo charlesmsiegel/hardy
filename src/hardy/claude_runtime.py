@@ -310,6 +310,19 @@ class ClaudeAgentRuntime:
         with contextlib.suppress(RuntimeError):
             asyncio.run_coroutine_threadsafe(client.interrupt(), loop)
 
+    @property
+    def worker(self) -> threading.Thread | None:
+        """The thread running the turn in flight, if there is one.
+
+        Published because `_consume` gives up on a slow worker after
+        `TEARDOWN_SECONDS` without stopping it observing, so a report can
+        arrive from a turn the consumer has already walked away from -- and
+        an observer has no other way to tell that report from a current one.
+        Assigned before the thread starts, so a running worker either is this
+        one or has been superseded by it.
+        """
+        return self._worker
+
     def settle(self, timeout: float = TEARDOWN_SECONDS) -> bool:
         """Wait for the turn's thread to end. True if it did.
 
