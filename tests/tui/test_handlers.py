@@ -53,7 +53,8 @@ async def test_status_reports_the_full_spend_breakdown(ui, settings):
     """The chrome has room for a number; this is where it gets its detail."""
     spent = Usage(
         turns=7, input_tokens=1_204, output_tokens=3_910,
-        cache_write_tokens=12_000, cache_read_tokens=65_317, cost_usd=1.34, counted=True,
+        cache_write_tokens=12_000, cache_read_tokens=65_317, cost_usd=1.34,
+        reports=dict.fromkeys(("cost_usd", *Usage.COUNTERS), 7),
     )
     await handlers.handle_status(ui, "", State(config=settings, session=SimpleNamespace(usage=spent)))
     assert "$1.34" in ui.text

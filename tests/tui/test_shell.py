@@ -165,7 +165,11 @@ async def test_no_chrome_row_reaches_the_reflow_hazard_width(settings):
 # -- the spend meter in the rule ------------------------------------------
 
 
-SPENT = Usage(turns=4, input_tokens=82_431, cost_usd=1.34, counted=True)
+#: A ledger a fully reporting backend would have left after four exchanges.
+SPENT = Usage(
+    turns=4, input_tokens=82_431, cost_usd=1.34,
+    reports=dict.fromkeys(("cost_usd", *Usage.COUNTERS), 4),
+)
 
 
 def _rule(settings, session, columns: int = 120) -> str:

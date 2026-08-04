@@ -230,8 +230,8 @@ class MathematicsSession:
         self.state = self._read_state()
         # What the workspace has already spent, so reopening it continues the
         # total rather than restarting it. Read before the first turn can add
-        # to it; a workspace from before the ledger existed reads as empty.
-        self.usage = Usage.from_dict(self.state.get(USAGE_KEY))
+        # to it.
+        self.usage = self._recover_spend()
         # The runtime needs a way to reach the tools, and the tools need the
         # workspace, so it is built here rather than handed in ready-made.
         self.runtime = self._build(session_id=self.state.get("provider_session"))
@@ -289,11 +289,7 @@ class MathematicsSession:
         if session_id or not self.transcript_path.exists():
             return ""
         said = []
-        for line in self.transcript_path.read_text(encoding="utf-8").splitlines():
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        for event in self._recorded():
             # Not every event carries a message object: a `limit` event from the
             # runtime this migration exists to leave behind carries a bare
             # string, and reaching into it would stop the workspace reopening.
@@ -1387,6 +1383,59 @@ class MathematicsSession:
         if thread and self.state.get("provider_session") != thread:
             self.state["provider_session"] = thread
             self._save_state()
+
+    def _recover_spend(self) -> Usage:
+        """The workspace's running total, rebuilt from its history if need be.
+
+        A workspace written before the ledger existed has no `usage` key, but
+        its transcript is not silent about what it spent: `claude_runtime` has
+        been recording a `result` event with `cost_usd` per exchange all along.
+        Opening such a workspace to `Nothing spent yet.` would understate a
+        session by its entire history, and the next exchange would then be
+        written down as the whole of it.
+
+        So the reports are replayed through the same `record` that a live turn
+        uses -- which gives the recovered ledger the honesty of a live one for
+        free: those events carry no token counts, so tokens come back as
+        unreported rather than as zero, and once new exchanges do count them
+        `/status` says which exchanges the token totals cover.
+
+        Once. The result is saved immediately, so the next open takes the
+        stored ledger and no transcript is ever counted twice.
+        """
+        stored = self.state.get(USAGE_KEY)
+        if stored is not None:
+            return Usage.from_dict(stored)
+        recovered = Usage()
+        for event in self._recorded():
+            if event.get("type") == "result":
+                recovered = recovered.record(event)
+        if not recovered.turns:
+            return recovered
+        self.state[USAGE_KEY] = recovered.as_dict()
+        self._save_state()
+        self._record({"type": "migration", "reason": "spend", "recovered_turns": recovered.turns})
+        return recovered
+
+    def _recorded(self) -> Iterator[dict[str, Any]]:
+        """Every event the transcript holds, skipping any line that is not one.
+
+        Streamed rather than read whole: a long-running workspace's transcript
+        is the largest file in it. A line that will not parse is skipped rather
+        than raised -- the transcript is append-only and a process killed
+        mid-write leaves exactly that, and one torn line is not a reason to
+        refuse to open the workspace.
+        """
+        if not self.transcript_path.exists():
+            return
+        with self.transcript_path.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    yield event
 
     def _remember_spend(self, event: dict[str, Any]) -> None:
         """Add one exchange's reported cost and tokens to the running total.

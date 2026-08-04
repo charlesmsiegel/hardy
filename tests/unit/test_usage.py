@@ -11,6 +11,19 @@ from __future__ import annotations
 
 from hardy.usage import Usage
 
+
+def _ledger(**fields) -> Usage:
+    """A ledger as a backend that reports everything would have left it.
+
+    Constructing `Usage(...)` directly leaves `reports` empty, which now means
+    "nothing was ever stated" -- so a test that wants a fully measured session
+    has to say which fields were measured, and over how many exchanges.
+    """
+    turns = fields.get("turns", 1)
+    stated = [name for name in (*Usage.COUNTERS, "cost_usd") if name in fields]
+    return Usage(**fields, reports=dict.fromkeys(stated, turns))
+
+
 REPORT = {
     "type": "result",
     "cost_usd": 0.5,
@@ -67,7 +80,8 @@ def test_a_backend_that_reports_nothing_is_unreported_and_not_zero():
     assert spent.counted is False
     body = "\n".join(spent.lines())
     assert "$0.00" not in body
-    assert body.count(Usage.UNREPORTED) == 2  # once for cost, once for tokens
+    # Cost and each of the four token counters, every one of them named.
+    assert body.count(Usage.UNREPORTED) == 5
 
 
 def test_a_reported_zero_cost_is_a_number_and_not_unreported():
@@ -87,6 +101,58 @@ def test_cost_and_tokens_degrade_independently():
     counted = Usage().record({"type": "result", "usage": {"input_tokens": 900}})
     assert counted.brief() == "900"
     assert counted.cost_usd is None
+
+
+def test_a_counter_the_backend_omitted_is_not_shown_as_a_measured_zero():
+    """The degradation is per counter, not per report. A backend that states
+    input alone has not stated that its output was zero, and `0 tokens` on that
+    row is the same lie as `$0.00` on the cost row."""
+    spent = Usage().record({"type": "result", "usage": {"input_tokens": 900}})
+    body = spent.lines()
+    assert any(line.startswith("Input:") and "900 tokens" in line for line in body)
+    for counter in ("Output:", "Cache write:", "Cache read:"):
+        row = next(line for line in body if line.startswith(counter))
+        assert Usage.UNREPORTED in row, row
+    # No row anywhere states a bare zero it was never told.
+    assert not [line for line in body if line.endswith("0 tokens") and " 900 " not in line]
+
+
+def test_a_total_covering_only_some_exchanges_says_how_many():
+    """Cost spanning the whole session beside tokens spanning part of it is
+    two numbers about different things, printed as if they matched."""
+    spent = Usage().record({"type": "result", "cost_usd": 0.5}).record(
+        {"type": "result", "cost_usd": 0.5, "usage": {"input_tokens": 900}}
+    )
+    body = "\n".join(spent.lines())
+    assert "$1.00" in body
+    assert "(1 of 2 exchanges)" in body            # the token counters
+    assert "$1.00 (2 of 2" not in body             # complete coverage stays quiet
+
+
+def test_the_total_inherits_the_coverage_of_the_counters_it_sums():
+    """A whole-looking total over partial-looking rows is the same mismatch."""
+    spent = Usage().record({"type": "result"}).record(REPORT)
+    total = next(line for line in spent.lines() if line.startswith("Total:"))
+    assert "135 tokens (1 of 2 exchanges)" in total
+
+
+def test_counters_spanning_different_exchanges_name_no_single_span():
+    """Unreachable with a real backend, but a ledger carried across versions
+    could hold it, and picking one span would be wrong for the other counters.
+    """
+    spent = (
+        Usage()
+        .record({"type": "result", "usage": {"input_tokens": 5}})
+        .record({"type": "result", "usage": {"input_tokens": 5, "output_tokens": 7}})
+    )
+    total = next(line for line in spent.lines() if line.startswith("Total:"))
+    assert "counters cover different exchanges" in total
+
+
+def test_a_cost_reported_for_only_some_exchanges_is_marked_too():
+    spent = Usage().record({"type": "result"}).record({"type": "result", "cost_usd": 0.5})
+    row = next(line for line in spent.lines() if line.startswith("Cost:"))
+    assert "$0.50" in row and "(1 of 2 exchanges)" in row
 
 
 def test_a_report_that_arrives_after_silence_still_lands():
@@ -111,18 +177,18 @@ def test_unusable_counts_are_ignored_rather_than_believed():
 
 
 def test_the_brief_form_pairs_cost_with_a_compact_token_count():
-    spent = Usage(turns=1, input_tokens=82_431, cost_usd=1.34, counted=True)
+    spent = _ledger(turns=1, input_tokens=82_431, cost_usd=1.34)
     assert spent.brief() == "$1.34 · 82k"
 
 
 def test_sub_cent_spend_is_marked_rather_than_rounded_away():
     """`$0.00` after a real exchange reads as 'this backend reports nothing'."""
-    assert Usage(turns=1, cost_usd=0.004).brief() == "<$0.01"
+    assert _ledger(turns=1, cost_usd=0.004).brief() == "<$0.01"
 
 
 def test_token_counts_stay_readable_across_magnitudes():
     def compact(count: int) -> str:
-        return Usage(turns=1, input_tokens=count, counted=True).brief()
+        return _ledger(turns=1, input_tokens=count).brief()
 
     assert compact(940) == "940"
     assert compact(1_500) == "1.5k"
