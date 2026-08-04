@@ -6,6 +6,7 @@ from hardy import doctor
 from hardy.cas import CasError
 from hardy.tui import handlers
 from hardy.tui.ports import State
+from hardy.usage import Usage
 
 
 def test_the_registry_holds_the_specified_commands():
@@ -46,6 +47,40 @@ async def test_status_reports_the_live_configuration(ui, settings):
     assert "claude-opus-5" in ui.text
     assert str(settings.workspace) in ui.text
     assert str(settings.path) in ui.text
+
+
+async def test_status_reports_the_full_spend_breakdown(ui, settings):
+    """The chrome has room for a number; this is where it gets its detail."""
+    spent = Usage(
+        turns=7, input_tokens=1_204, output_tokens=3_910,
+        cache_write_tokens=12_000, cache_read_tokens=65_317, cost_usd=1.34, counted=True,
+    )
+    await handlers.handle_status(ui, "", State(config=settings, session=SimpleNamespace(usage=spent)))
+    assert "$1.34" in ui.text
+    for count in ("1,204", "3,910", "12,000", "65,317", "82,431"):
+        assert count in ui.text, count
+    assert "7" in ui.text
+
+
+async def test_status_says_unreported_rather_than_zero(ui, settings):
+    """A backend that reports nothing must not be rendered as a free one."""
+    session = SimpleNamespace(usage=Usage(turns=2))
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert Usage.UNREPORTED in ui.text
+    assert "$0.00" not in ui.text
+
+
+async def test_status_before_the_first_turn_claims_no_spend(ui, settings):
+    session = SimpleNamespace(usage=Usage())
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert "Nothing spent yet." in ui.text
+    assert "$" not in ui.text
+
+
+async def test_status_still_works_without_a_session(ui, settings):
+    """`/status` is safe in flight and runs before the session is attached."""
+    await handlers.handle_status(ui, "", State(config=settings, session=None))
+    assert "claude-opus-5" in ui.text
 
 
 async def test_exit_marks_the_state_done(ui, settings):

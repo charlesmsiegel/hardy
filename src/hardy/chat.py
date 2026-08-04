@@ -21,6 +21,7 @@ from .latex import ROOT_DOCUMENT, LatexTools
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
+from .usage import Usage
 from .workspace import (
     BuildFailure,
     ImportCycle,
@@ -48,6 +49,16 @@ DEFAULT_TEX_PATH = ROOT_DOCUMENT
 
 # What LaTeX wrote down about the labels it actually created, in its own .aux.
 NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")
+
+# The manifest keys that exist for Hardy and not for the model. `audit` is
+# withheld because the listing reports each verdict checked against the tree in
+# front of it, and handing back the stored one as well would put two answers for
+# the same module in one response. `usage` is withheld because what the session
+# has cost is not something the model can act on, and letting it into the system
+# prompt would make a resumed session's prompt differ from a fresh one by an
+# amount that has nothing to do with the mathematics.
+USAGE_KEY = "usage"
+WITHHELD = ("audit", USAGE_KEY)
 
 CHAT_TOOLS = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -217,6 +228,10 @@ class MathematicsSession:
         # State first: the runtime is built from the system prompt, which embeds
         # the manifest, and it resumes the provider thread the state remembers.
         self.state = self._read_state()
+        # What the workspace has already spent, so reopening it continues the
+        # total rather than restarting it. Read before the first turn can add
+        # to it; a workspace from before the ledger existed reads as empty.
+        self.usage = Usage.from_dict(self.state.get(USAGE_KEY))
         # The runtime needs a way to reach the tools, and the tools need the
         # workspace, so it is built here rather than handed in ready-made.
         self.runtime = self._build(session_id=self.state.get("provider_session"))
@@ -249,6 +264,7 @@ class MathematicsSession:
         self._record(event)
         if event.get("type") == "result":
             self._remember_thread()
+            self._remember_spend(event)
 
     def switch_model(self, model: str) -> None:
         """Continue this conversation on a different model.
@@ -324,8 +340,16 @@ class MathematicsSession:
         if started:
             self._record({"type": "model", "reason": "session_resumed", "previous": previous, **current})
 
+    def _without(self, *keys: str) -> dict[str, Any]:
+        """The manifest, minus the entries this reader has no business seeing."""
+        return {key: value for key, value in self.state.items() if key not in keys}
+
     def _context(self) -> str:
-        return f"\n\nWorkspace: {self.workspace}\nExisting manifest:\n{json.dumps(self.state, ensure_ascii=False)}"
+        # The stored audit verdicts stay here, as they always have -- the system
+        # prompt has no second, checked copy of them to contradict. Only the
+        # spend ledger is withheld; `WITHHELD` says why.
+        manifest = json.dumps(self._without(USAGE_KEY), ensure_ascii=False)
+        return f"\n\nWorkspace: {self.workspace}\nExisting manifest:\n{manifest}"
 
     def _record(self, event: dict[str, Any]) -> None:
         event = {"timestamp": time.time(), **event}
@@ -986,8 +1010,9 @@ class MathematicsSession:
             # Without the stored verdicts. They are reported below, checked
             # against the tree in front of us; handing back the raw ones as well
             # would put a `clean` and a `not established` for the same module in
-            # one response, and a reader could believe either.
-            "manifest": {key: value for key, value in self.state.items() if key != "audit"},
+            # one response, and a reader could believe either. See `WITHHELD`
+            # for why the spend ledger is left out too.
+            "manifest": self._without(*WITHHELD),
             "lean": lean,
             "tex": tex,
             "undocumented_theorems": list(self._undocumented()),
@@ -1362,3 +1387,19 @@ class MathematicsSession:
         if thread and self.state.get("provider_session") != thread:
             self.state["provider_session"] = thread
             self._save_state()
+
+    def _remember_spend(self, event: dict[str, Any]) -> None:
+        """Add one exchange's reported cost and tokens to the running total.
+
+        Written after every exchange rather than at the end of the session: a
+        session that is killed, or that ends by the window closing, still spent
+        what it spent, and a total that only survives a clean exit is a total
+        nobody can rely on.
+
+        Runs on the runtime's own thread. `self.usage` is immutable, so the
+        assignment publishes a whole new total rather than a half-updated one
+        to the thread that draws it.
+        """
+        self.usage = self.usage.record(event)
+        self.state[USAGE_KEY] = self.usage.as_dict()
+        self._save_state()

@@ -21,7 +21,7 @@ import contextlib
 import json
 import queue
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +104,19 @@ def _delta(message: Any) -> tuple[int, str] | None:
         return None
     index = event.get("index")
     return (index if isinstance(index, int) else 0, text)
+
+
+def _counts(usage: Any) -> dict[str, Any] | None:
+    """The provider's token report, as something `transcript.jsonl` can hold.
+
+    Copied rather than passed through so the recorded event cannot be changed
+    afterwards by whoever still holds the SDK's object, and returned as None --
+    never `{}` -- when there was no report, because a spend meter that cannot
+    tell silence from zero is worse than one that says nothing.
+    """
+    if not isinstance(usage, Mapping):
+        return None
+    return {str(key): value for key, value in usage.items()}
 
 
 def load_sdk():
@@ -501,5 +514,13 @@ class ClaudeAgentRuntime:
                 "session_id": self.session_id,
                 "turns": self.turns,
                 "cost_usd": getattr(message, "total_cost_usd", None),
+                # The provider's own token counts, passed through unchanged and
+                # left absent when it reported none. `{}` would be read
+                # downstream as a measured zero, which is the one thing a spend
+                # meter must not say about a backend that measured nothing.
+                # This is the exchange's usage and not the thread's: `_ask`
+                # opens a fresh client per turn, so these accumulate rather
+                # than superseding each other.
+                "usage": _counts(getattr(message, "usage", None)),
                 "is_error": getattr(message, "is_error", None),
             })

@@ -10,9 +10,10 @@ from hardy import claude_runtime
 class ResultMessage:
     """`_note` dispatches on the SDK's class name, so the fake must wear it."""
 
-    def __init__(self, *, is_error=False, subtype=None, num_turns=3):
+    def __init__(self, *, is_error=False, subtype=None, num_turns=3, cost=None, usage=None):
         self.content, self.session_id = [], "thread-9"
         self.is_error, self.subtype, self.num_turns = is_error, subtype, num_turns
+        self.total_cost_usd, self.usage = cost, usage
 
 
 def runtime(**kwargs) -> claude_runtime.ClaudeAgentRuntime:
@@ -44,6 +45,33 @@ def test_the_provider_turn_count_is_taken_from_the_result():
     list(live._note(ResultMessage(num_turns=7), []))
     assert live.turns == 7
     assert live.session_id == "thread-9"
+
+
+def test_the_result_event_carries_what_the_exchange_cost():
+    """Cost alone cannot tell 'expensive because long' from 'expensive because
+    the model is dear', so the token counts travel with it."""
+    seen: list[dict] = []
+    live = runtime(observe=seen.append)
+    counts = {"input_tokens": 10, "output_tokens": 20, "cache_read_input_tokens": 400}
+    list(live._note(ResultMessage(cost=0.25, usage=counts), []))
+    reported = [event for event in seen if event["type"] == "result"]
+    assert reported == [{
+        "type": "result",
+        "session_id": "thread-9",
+        "turns": 3,
+        "cost_usd": 0.25,
+        "usage": counts,
+        "is_error": False,
+    }]
+
+
+def test_a_provider_that_reports_no_usage_reports_none_and_not_zero():
+    """`{}` here would be indistinguishable downstream from a measured zero."""
+    seen: list[dict] = []
+    list(runtime(observe=seen.append)._note(ResultMessage(), []))
+    result = next(event for event in seen if event["type"] == "result")
+    assert result["cost_usd"] is None
+    assert result["usage"] is None
 
 
 def test_an_error_result_is_not_reported_as_a_finished_answer():

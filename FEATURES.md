@@ -187,7 +187,16 @@ Priority labels are sequencing hints:
   provider and only the wall clock is Hardy's. Tracked in issue #23.
 - **Now (implemented):** a Codex backend for ChatGPT subscriptions, on the same
   shape, shipped as the optional `codex` extra.
-- **Next:** token and cost budgets with reserve/settle accounting.
+- **Now (implemented):** an interactive session accumulates the cost and token
+  usage the provider reports for each exchange, persists the total in
+  `session.json` so reopening a workspace continues it, carries an abbreviated
+  form on the session rule, and breaks it out in `/status`. Never estimated: a
+  backend that reports nothing reads as unreported rather than as zero, and a
+  terminal too narrow for the meter drops it whole.
+- **Known gap:** those totals reach `session.json` and the session's own chrome,
+  but not `result.json` or the `trajectory.json` summary. Tracked in issue #30.
+- **Next:** token and cost budgets with reserve/settle accounting, and the
+  budget and what remains of it alongside the spend in `/status`.
 - **Next:** reclaim enough of the loop to enforce Hardy's own bounds and run
   cheap Lean closers before spending a model turn (issue #23).
 - **Later:** adapters for other agent SDKs, and an API-key path for users who
