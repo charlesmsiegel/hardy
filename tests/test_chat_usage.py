@@ -43,16 +43,28 @@ class ReportingRuntime:
         self.context = context
         self.session_id = context.get("session_id")
         self.sent = 0
+        # What this runtime has reported so far. A script entry states what an
+        # exchange *cost*; what goes on the wire is the session-to-date total,
+        # because that is what `total_cost_usd` carries. Starting at zero per
+        # instance models a reopened workspace whose provider counter was not
+        # restored -- the harder of the two cases for the ledger.
+        self.reported = 0.0
 
     def stream(self, text: str):
         observe = self.context.get("observe") or (lambda event: None)
         # Cycled, so a test can send more turns than it wrote reports for and
         # still get the same report each time.
-        report = self.script[min(self.sent, len(self.script) - 1)]
+        report = dict(self.script[min(self.sent, len(self.script) - 1)])
         self.sent += 1
         self.session_id = "thread-1"
+        event = {"type": "result", "session_id": self.session_id, "turns": 1}
+        if "cost_usd" in report:
+            self.reported += report["cost_usd"]
+            event["cost_usd"] = self.reported
+        if "usage" in report:
+            event["usage"] = report["usage"]
         yield TurnEvent("text", text="Said. ")
-        observe({"type": "result", "session_id": self.session_id, "turns": 1, **report})
+        observe(event)
         yield TurnEvent("reply", text="Said.")
 
     def ask(self, text: str) -> str:
@@ -143,10 +155,15 @@ def _pre_ledger(tmp_path: Path, costs) -> None:
         json.dumps({"schema_version": 1, "names": [], "assumptions": [], "provider_session": "old"}),
         encoding="utf-8",
     )
-    lines = [
-        json.dumps({"timestamp": 1.0, "type": "result", "session_id": "old", "turns": 2, "cost_usd": cost, "is_error": False})
-        for cost in costs
-    ]
+    # `costs` are per-exchange; what the transcript holds is the session-to-date
+    # figure each `result` actually carried.
+    running, lines = 0.0, []
+    for cost in costs:
+        running += cost
+        lines.append(json.dumps({
+            "timestamp": 1.0, "type": "result", "session_id": "old",
+            "turns": 2, "cost_usd": running, "is_error": False,
+        }))
     (tmp_path / "transcript.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -193,6 +210,91 @@ def test_the_recovery_is_written_down_and_does_not_run_twice(tmp_path: Path):
     reopened = spending(tmp_path)
     assert reopened.usage.turns == 3
     assert reopened.usage.cost_usd == 0.8
+
+
+def test_a_result_the_ledger_never_saved_is_picked_up_on_reopen(tmp_path: Path):
+    """`_record` appends to the transcript and `_remember_spend` saves the
+    ledger; a process killed between the two leaves the transcript ahead. The
+    exchange happened and was billed, so trusting the stored ledger blindly
+    would lose it for good."""
+    chat = spending(tmp_path)
+    chat.send("One.")
+    # Exactly the state that crash leaves behind: the transcript carries a
+    # second result, the ledger and its cursor still describe the first.
+    with (tmp_path / "transcript.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "timestamp": 2.0, "type": "result", "session_id": "thread-1",
+            "turns": 1, "cost_usd": 1.25, "usage": REPORT,
+        }) + "\n")
+    reopened = spending(tmp_path)
+    assert reopened.usage.turns == 2
+    assert reopened.usage.cost_usd == 1.25   # 0.50, then session-to-date 1.25
+    assert stored(tmp_path)["usage"]["turns"] == 2
+
+
+def test_the_cursor_stops_a_counted_exchange_being_counted_again(tmp_path: Path):
+    """The other half: reopening a workspace whose ledger is up to date must
+    not replay the transcript it was built from."""
+    chat = spending(tmp_path)
+    chat.send("One.")
+    chat.send("Two.")
+    before = chat.usage
+    for _ in range(3):
+        assert spending(tmp_path).usage == before
+
+
+def test_a_transcript_that_shrank_is_not_replayed_over_the_ledger(tmp_path: Path):
+    """A truncated or replaced transcript leaves the cursor past the end. The
+    ledger is the surviving record at that point; replaying a shorter file
+    against it would double-count whatever the new file happens to hold."""
+    chat = spending(tmp_path)
+    chat.send("One.")
+    chat.send("Two.")
+    spent = chat.usage
+    (tmp_path / "transcript.jsonl").write_text("", encoding="utf-8")
+    assert spending(tmp_path).usage == spent
+
+
+class FailingRuntime(ReportingRuntime):
+    """A turn that dies before the provider ever sends its result.
+
+    A transport failure, or Hardy's wall clock firing after the request has
+    gone out. The exchange happened and may have been billed for; nothing
+    reports what.
+    """
+
+    def stream(self, text: str):
+        yield TurnEvent("text", text="Half a ")
+        raise RuntimeError("the provider ended the exchange with an error: overloaded")
+
+
+def test_an_exchange_that_died_before_its_report_is_still_an_exchange(tmp_path: Path):
+    """`Nothing spent yet.` after a turn that burned tokens is a claim Hardy
+    cannot support. It is counted, with everything about it unreported."""
+    chat = session(tmp_path, FailingRuntime([{}]))
+    with pytest.raises(RuntimeError):
+        chat.send("One.")
+    assert chat.usage.turns == 1
+    body = "\n".join(chat.usage.lines())
+    assert "Nothing spent yet." not in body
+    assert Usage.UNREPORTED in body
+    assert chat.usage.cost_usd is None
+
+
+def test_a_reported_exchange_is_not_counted_a_second_time_on_teardown(tmp_path: Path):
+    """The teardown runs on every turn, including the ones that did report."""
+    chat = spending(tmp_path)
+    chat.send("One.")
+    chat.send("Two.")
+    assert chat.usage.turns == 2
+
+
+def test_a_turn_nobody_ever_drained_invents_no_exchange(tmp_path: Path):
+    """`stream` hands back a generator; one that is never iterated never ran,
+    and must not leave a turn in the ledger behind it."""
+    chat = spending(tmp_path)
+    chat.stream("One.")
+    assert chat.usage.turns == 0
 
 
 def test_a_workspace_with_no_transcript_at_all_recovers_nothing(tmp_path: Path):

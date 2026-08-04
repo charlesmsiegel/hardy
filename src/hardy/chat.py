@@ -58,7 +58,12 @@ NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")
 # prompt would make a resumed session's prompt differ from a fresh one by an
 # amount that has nothing to do with the mathematics.
 USAGE_KEY = "usage"
-WITHHELD = ("audit", USAGE_KEY)
+#: How far into `transcript.jsonl` the stored ledger has been brought up to
+#: date. Hardy's own bookkeeping, and no more the model's business than the
+#: ledger it belongs to.
+CURSOR_KEY = "usage_cursor"
+LEDGER_KEYS = (USAGE_KEY, CURSOR_KEY)
+WITHHELD = ("audit", *LEDGER_KEYS)
 
 CHAT_TOOLS = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -220,6 +225,10 @@ class MathematicsSession:
         # next one starts. Read by `_dispatch` on the SDK's own tool threads,
         # which is why it is an Event rather than a bare bool.
         self._cancelled = threading.Event()
+        # Whether the exchange in flight has had a `result` out of the provider
+        # yet. An Event for the same reason `_cancelled` is one: it is set on
+        # the runtime's thread and read on whichever thread drained the turn.
+        self._reported = threading.Event()
         # `session.json` is written from more than one thread -- a tool call
         # under the gate above, and `_observed` remembering the provider thread
         # on the runtime's own thread -- and `_atomic_json` replaces a temporary
@@ -263,6 +272,7 @@ class MathematicsSession:
         """
         self._record(event)
         if event.get("type") == "result":
+            self._reported.set()
             self._remember_thread()
             self._remember_spend(event)
 
@@ -344,7 +354,7 @@ class MathematicsSession:
         # The stored audit verdicts stay here, as they always have -- the system
         # prompt has no second, checked copy of them to contradict. Only the
         # spend ledger is withheld; `WITHHELD` says why.
-        manifest = json.dumps(self._without(USAGE_KEY), ensure_ascii=False)
+        manifest = json.dumps(self._without(*LEDGER_KEYS), ensure_ascii=False)
         return f"\n\nWorkspace: {self.workspace}\nExisting manifest:\n{manifest}"
 
     def _record(self, event: dict[str, Any]) -> None:
@@ -1209,6 +1219,9 @@ class MathematicsSession:
         # Cleared here rather than in `cancel`: a turn cancelled during the
         # previous exchange must not silently disarm this one's tool gate.
         self._cancelled.clear()
+        # Same reasoning, and the same thread: what the last exchange reported
+        # says nothing about whether this one will.
+        self._reported.clear()
         # And the same for the children. A stop stays in force after `cancel`
         # so that a tool call already past the gate cannot spawn its child a
         # moment later and outlive the press that was spent on it -- which
@@ -1243,6 +1256,14 @@ class MathematicsSession:
             # Even a failed exchange belongs to a provider thread, and that turn
             # and its tool calls are only reachable again by resuming it.
             self._remember_thread()
+            # And it belongs in the ledger. A transport failure, or Hardy's own
+            # wall clock firing after the request went out, ends the exchange
+            # with no `result` at all -- but the provider may well have billed
+            # for what it did before that. Counted with everything about it
+            # unreported, because the alternative is a session that burned
+            # tokens and still says `Nothing spent yet.`
+            if not self._reported.is_set():
+                self._remember_spend({})
 
     def send(self, text: str) -> str:
         """`stream`, for a caller with nothing to draw it on."""
@@ -1404,21 +1425,59 @@ class MathematicsSession:
         stored ledger and no transcript is ever counted twice.
         """
         stored = self.state.get(USAGE_KEY)
-        if stored is not None:
-            return Usage.from_dict(stored)
-        recovered = Usage()
-        for event in self._recorded():
+        recovered = Usage() if stored is None else Usage.from_dict(stored)
+        start = self._ledger_cursor(fresh=stored is None)
+        counted = 0
+        for event in self._recorded(start):
             if event.get("type") == "result":
                 recovered = recovered.record(event)
-        if not recovered.turns:
+                counted += 1
+        if not counted:
             return recovered
         self.state[USAGE_KEY] = recovered.as_dict()
-        self._save_state()
-        self._record({"type": "migration", "reason": "spend", "recovered_turns": recovered.turns})
+        self._record({"type": "migration", "reason": "spend", "recovered_turns": counted})
+        self._mark_ledger_read()
         return recovered
 
-    def _recorded(self) -> Iterator[dict[str, Any]]:
-        """Every event the transcript holds, skipping any line that is not one.
+    def _ledger_cursor(self, *, fresh: bool) -> int:
+        """Where in the transcript the stored ledger has already read to.
+
+        Zero for a workspace with no ledger at all -- its whole transcript is
+        history to recover. Otherwise the saved cursor, which is what makes the
+        two writes behind a completed exchange survive being interrupted
+        between: `_record` appends the `result` and `_remember_spend` saves the
+        ledger, and a process killed in between leaves the transcript ahead of
+        it. Reopening replays only that tail rather than trusting a ledger that
+        is known to be short.
+
+        A cursor past the end of the file means the transcript was truncated or
+        replaced. The ledger is then the only surviving account, so it is kept
+        as it stands and the cursor reset -- replaying a shorter file against a
+        ledger already built from a longer one would count that history twice.
+        """
+        if fresh:
+            return 0
+        cursor = self.state.get(CURSOR_KEY)
+        size = self.transcript_path.stat().st_size if self.transcript_path.exists() else 0
+        if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0 or cursor > size:
+            # No cursor either: a ledger written before this existed has read
+            # its whole transcript by construction.
+            self._mark_ledger_read()
+            return size
+        return cursor
+
+    def _mark_ledger_read(self) -> None:
+        """Record that the ledger accounts for the transcript as it now stands.
+
+        Saved with the ledger in one write, so an interruption loses both and
+        the replay above starts from the same place the ledger did rather than
+        from a cursor that outran it.
+        """
+        self.state[CURSOR_KEY] = self.transcript_path.stat().st_size if self.transcript_path.exists() else 0
+        self._save_state()
+
+    def _recorded(self, start: int = 0) -> Iterator[dict[str, Any]]:
+        """Every event the transcript holds from `start` on, skipping non-events.
 
         Streamed rather than read whole: a long-running workspace's transcript
         is the largest file in it. A line that will not parse is skipped rather
@@ -1429,6 +1488,8 @@ class MathematicsSession:
         if not self.transcript_path.exists():
             return
         with self.transcript_path.open(encoding="utf-8") as handle:
+            if start:
+                handle.seek(start)
             for line in handle:
                 try:
                     event = json.loads(line)
@@ -1451,4 +1512,7 @@ class MathematicsSession:
         """
         self.usage = self.usage.record(event)
         self.state[USAGE_KEY] = self.usage.as_dict()
-        self._save_state()
+        # Cursor and ledger in the same write. `_record` has already appended
+        # this event, so the cursor moves past it exactly when the ledger that
+        # accounts for it is saved.
+        self._mark_ledger_read()

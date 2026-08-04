@@ -53,13 +53,41 @@ def test_one_report_is_folded_into_the_total():
     assert spent.total_tokens == 135
 
 
-def test_reports_accumulate_across_exchanges():
-    """The provider bills each exchange separately -- Hardy opens a fresh SDK
-    client per turn -- so the session total is the sum, not the last report."""
-    spent = Usage().record(REPORT).record(REPORT).record(REPORT)
+def _cumulative(total: float, session: str = "thread-1") -> dict:
+    """A report as the CLI actually sends one: cost is session-to-date.
+
+    `total_cost_usd` comes from a counter the resume path restores from the
+    session's stored `lastCost`, so three $0.50 exchanges report 0.50, 1.00,
+    1.50 -- not 0.50 three times. Token counts do not work that way: they come
+    from a per-process accumulator that resume never touches, so each report
+    carries that exchange's own.
+    """
+    return {"type": "result", "session_id": session, "cost_usd": total, "usage": REPORT["usage"]}
+
+
+def test_cumulative_cost_reports_are_differenced_rather_than_summed():
+    """Summing them is triangular: 0.50 + 1.00 + 1.50 = $3.00 for a session
+    that cost $1.50, and the error grows with the square of the turn count."""
+    spent = Usage().record(_cumulative(0.5)).record(_cumulative(1.0)).record(_cumulative(1.5))
     assert spent.turns == 3
     assert spent.cost_usd == 1.5
+    # Tokens are per-exchange, so those really are summed.
     assert spent.total_tokens == 405
+
+
+def test_a_provider_counter_that_restarts_is_not_read_as_a_refund():
+    """The CLI only restores the running total when the session it is resuming
+    is the last one it saw; another session in between leaves the counter at
+    zero. A difference against the old baseline would be negative."""
+    spent = Usage().record(_cumulative(1.0)).record(_cumulative(2.0)).record(_cumulative(0.4))
+    assert spent.cost_usd == 2.4
+
+
+def test_a_new_provider_session_starts_its_counter_over():
+    """Told by the session id rather than inferred from the magnitude, which
+    is the case a smaller-than-last test cannot catch on its own."""
+    spent = Usage().record(_cumulative(1.0)).record(_cumulative(1.5, session="thread-2"))
+    assert spent.cost_usd == 2.5
 
 
 def test_an_errored_exchange_still_cost_what_it_cost():
@@ -115,13 +143,17 @@ def test_a_counter_the_backend_omitted_is_not_shown_as_a_measured_zero():
         assert Usage.UNREPORTED in row, row
     # No row anywhere states a bare zero it was never told.
     assert not [line for line in body if line.endswith("0 tokens") and " 900 " not in line]
+    # And the total does not read as the whole of something three-quarters
+    # unreported.
+    total = next(line for line in body if line.startswith("Total:"))
+    assert "reported counters only" in total
 
 
 def test_a_total_covering_only_some_exchanges_says_how_many():
     """Cost spanning the whole session beside tokens spanning part of it is
     two numbers about different things, printed as if they matched."""
     spent = Usage().record({"type": "result", "cost_usd": 0.5}).record(
-        {"type": "result", "cost_usd": 0.5, "usage": {"input_tokens": 900}}
+        {"type": "result", "cost_usd": 1.0, "usage": {"input_tokens": 900}}   # session-to-date
     )
     body = "\n".join(spent.lines())
     assert "$1.00" in body
