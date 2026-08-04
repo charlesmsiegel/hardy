@@ -237,11 +237,11 @@ here stays at or under 38 columns instead, which is what keeps a resize safe.
 The spend meter on that rule (`── claude-opus-5 ── $1.34 · 82k ───`) is the
 running cost and token count of the session so far, taken from the provider's
 own report after each exchange and accumulated in `session.json`, so reopening
-a workspace continues the total rather than restarting it. Cost is differenced
-rather than summed: the CLI restores a resumed session's running total before
-each exchange and reports the total afterwards, so adding those figures up
-would overcount triangularly. Token counts come from a per-process accumulator
-that resume does not touch, so those really are per-exchange. A workspace that
+a workspace continues the total rather than restarting it. Every figure is
+differenced rather than summed: the CLI restores a resumed session's running
+totals before each exchange -- the cost and the per-model token counts alike --
+and reports them afterwards, so adding those figures up would overcount
+triangularly. A workspace that
 predates the ledger recovers what it can from the `result` events already in
 its `transcript.jsonl` the first time it is opened, rather than reporting a
 long session as having spent nothing.

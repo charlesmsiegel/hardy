@@ -229,6 +229,14 @@ class MathematicsSession:
         # yet. An Event for the same reason `_cancelled` is one: it is set on
         # the runtime's thread and read on whichever thread drained the turn.
         self._reported = threading.Event()
+        # Whether the exchange in flight is already in the ledger with nothing
+        # reported, waiting for a report that may still arrive. The runtime's
+        # worker outlives its teardown wait when it is slow, so the two threads
+        # race for the same exchange; this and the flag above are read and
+        # written only under `_spend`, which is what makes the pair a decision
+        # rather than two guesses.
+        self._provisional = False
+        self._spend = threading.Lock()
         # `session.json` is written from more than one thread -- a tool call
         # under the gate above, and `_observed` remembering the provider thread
         # on the runtime's own thread -- and `_atomic_json` replaces a temporary
@@ -1220,8 +1228,13 @@ class MathematicsSession:
         # previous exchange must not silently disarm this one's tool gate.
         self._cancelled.clear()
         # Same reasoning, and the same thread: what the last exchange reported
-        # says nothing about whether this one will.
-        self._reported.clear()
+        # says nothing about whether this one will. The provisional flag goes
+        # with it -- once a new exchange has started, a report arriving late
+        # from the old one has no turn of its own left to settle, and settling
+        # it into this one would be worse than counting it.
+        with self._spend:
+            self._reported.clear()
+            self._provisional = False
         # And the same for the children. A stop stays in force after `cancel`
         # so that a tool call already past the gate cannot spawn its child a
         # moment later and outlive the press that was spent on it -- which
@@ -1261,9 +1274,11 @@ class MathematicsSession:
             # with no `result` at all -- but the provider may well have billed
             # for what it did before that. Counted with everything about it
             # unreported, because the alternative is a session that burned
-            # tokens and still says `Nothing spent yet.`
-            if not self._reported.is_set():
-                self._remember_spend({})
+            # tokens and still says `Nothing spent yet.` Provisionally: the
+            # runtime's worker can outlive the wait `_consume` gives it, and a
+            # report that lands afterwards settles this exchange rather than
+            # opening another.
+            self._remember_spend({}, unreported=True)
 
     def send(self, text: str) -> str:
         """`stream`, for a caller with nothing to draw it on."""
@@ -1498,7 +1513,7 @@ class MathematicsSession:
                 if isinstance(event, dict):
                     yield event
 
-    def _remember_spend(self, event: dict[str, Any]) -> None:
+    def _remember_spend(self, event: dict[str, Any], *, unreported: bool = False) -> None:
         """Add one exchange's reported cost and tokens to the running total.
 
         Written after every exchange rather than at the end of the session: a
@@ -1506,11 +1521,33 @@ class MathematicsSession:
         what it spent, and a total that only survives a clean exit is a total
         nobody can rely on.
 
-        Runs on the runtime's own thread. `self.usage` is immutable, so the
-        assignment publishes a whole new total rather than a half-updated one
-        to the thread that draws it.
+        Two threads reach this for the same exchange. The runtime's own thread
+        brings the provider's report; the thread that drained the turn brings
+        the news that there was not going to be one, having waited only as long
+        as `_consume`'s teardown allows. Whichever arrives second must not add a
+        second exchange -- one request drawn as two turns would also label every
+        reported field as covering half a session it covers all of. So the
+        decision is made under `_spend`: a report that finds a provisional
+        exchange settles it in place, and a teardown that finds a report
+        already in has nothing left to do.
+
+        `self.usage` is immutable, so each assignment publishes a whole new
+        total rather than a half-updated one to the thread that draws it.
         """
-        self.usage = self.usage.record(event)
+        with self._spend:
+            if unreported:
+                if self._reported.is_set() or self._provisional:
+                    return
+                self._provisional = True
+                self.usage = self.usage.record({})
+            elif self._provisional:
+                self._provisional = False
+                self.usage = self.usage.settle(event)
+            else:
+                self.usage = self.usage.record(event)
+            self._save_spend()
+
+    def _save_spend(self) -> None:
         self.state[USAGE_KEY] = self.usage.as_dict()
         # Cursor and ledger in the same write. `_record` has already appended
         # this event, so the cursor moves past it exactly when the ledger that

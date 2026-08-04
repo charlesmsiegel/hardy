@@ -44,11 +44,13 @@ class ReportingRuntime:
         self.session_id = context.get("session_id")
         self.sent = 0
         # What this runtime has reported so far. A script entry states what an
-        # exchange *cost*; what goes on the wire is the session-to-date total,
-        # because that is what `total_cost_usd` carries. Starting at zero per
-        # instance models a reopened workspace whose provider counter was not
-        # restored -- the harder of the two cases for the ledger.
+        # exchange itself cost and used; what goes on the wire is the
+        # session-to-date total, because that is what the CLI carries in both
+        # `total_cost_usd` and `usage`. Starting at zero per instance models a
+        # reopened workspace whose provider counters were not restored -- the
+        # harder of the two cases for the ledger.
         self.reported = 0.0
+        self.used: dict[str, int] = {}
 
     def stream(self, text: str):
         observe = self.context.get("observe") or (lambda event: None)
@@ -62,7 +64,9 @@ class ReportingRuntime:
             self.reported += report["cost_usd"]
             event["cost_usd"] = self.reported
         if "usage" in report:
-            event["usage"] = report["usage"]
+            for key, value in report["usage"].items():
+                self.used[key] = self.used.get(key, 0) + value
+            event["usage"] = dict(self.used)
         yield TurnEvent("text", text="Said. ")
         observe(event)
         yield TurnEvent("reply", text="Said.")
@@ -287,6 +291,47 @@ def test_a_reported_exchange_is_not_counted_a_second_time_on_teardown(tmp_path: 
     chat.send("One.")
     chat.send("Two.")
     assert chat.usage.turns == 2
+
+
+def test_a_late_result_settles_the_provisional_exchange(tmp_path: Path):
+    """`_consume` joins its worker with a timeout and does not disable
+    observation when that runs out, so a slow worker can deliver its result
+    after the teardown has already booked the exchange as unreported. One
+    request must stay one turn -- otherwise every reported field is labelled
+    as covering half a session it covers all of."""
+    chat = spending(tmp_path)
+    chat.send("One.")                       # reported normally: one turn
+    # A second turn starts -- `stream` clears the per-turn flags -- and its
+    # teardown fires while the worker is still going.
+    chat._reported.clear()
+    chat._remember_spend({}, unreported=True)
+    assert chat.usage.turns == 2
+    # ...and the report the worker was still holding, arriving afterwards.
+    chat._remember_spend({"type": "result", "session_id": "thread-1", "cost_usd": 0.9, "usage": REPORT})
+    assert chat.usage.turns == 2            # settled, not appended
+    assert chat.usage.cost_usd == 0.9       # 0.50, then session-to-date 0.90
+    # Nothing is left labelled partial: both exchanges reported in the end.
+    assert "of 2 exchanges" not in "\n".join(chat.usage.lines())
+
+
+def test_a_report_from_a_turn_that_is_already_over_is_not_folded_into_the_next(tmp_path: Path):
+    """Once a new exchange has started, the old turn has nothing left to
+    settle, and settling into the new one would misattribute it."""
+    chat = spending(tmp_path)
+    chat._remember_spend({}, unreported=True)
+    chat.send("A new question.")            # clears the provisional state
+    assert chat.usage.turns == 2
+    chat._remember_spend({"type": "result", "session_id": "thread-1", "cost_usd": 9.0})
+    assert chat.usage.turns == 3
+
+
+def test_a_teardown_after_a_report_adds_nothing(tmp_path: Path):
+    """The ordinary case, and the other side of the race."""
+    chat = spending(tmp_path)
+    chat.send("One.")
+    chat._remember_spend({}, unreported=True)
+    chat._remember_spend({}, unreported=True)
+    assert chat.usage.turns == 1
 
 
 def test_a_turn_nobody_ever_drained_invents_no_exchange(tmp_path: Path):

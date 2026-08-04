@@ -53,41 +53,68 @@ def test_one_report_is_folded_into_the_total():
     assert spent.total_tokens == 135
 
 
-def _cumulative(total: float, session: str = "thread-1") -> dict:
-    """A report as the CLI actually sends one: cost is session-to-date.
+def _cumulative(exchanges: int, session: str = "thread-1") -> dict:
+    """A report as the CLI actually sends one: every figure session-to-date.
 
-    `total_cost_usd` comes from a counter the resume path restores from the
-    session's stored `lastCost`, so three $0.50 exchanges report 0.50, 1.00,
-    1.50 -- not 0.50 three times. Token counts do not work that way: they come
-    from a per-process accumulator that resume never touches, so each report
-    carries that exchange's own.
+    Both come from state the resume path restores -- `Ot.totalCostUSD` for the
+    cost, and `Ot.modelUsage` for the counts, which `qya()` sums to build
+    `usage`. So after `exchanges` identical exchanges of $0.50 and 135 tokens,
+    the report carries the running total, not the last exchange's own.
     """
-    return {"type": "result", "session_id": session, "cost_usd": total, "usage": REPORT["usage"]}
+    return {
+        "type": "result",
+        "session_id": session,
+        "cost_usd": 0.5 * exchanges,
+        "usage": {key: value * exchanges for key, value in REPORT["usage"].items()},
+    }
+
+
+def test_cumulative_token_reports_are_differenced_too():
+    """`usage` is `qya()`, which sums `Ot.modelUsage` -- and the resume path
+    (`aEo` -> `Tws` -> `z$r`) restores that map from `lastModelUsage`. So the
+    counters are session-to-date exactly as the cost is, and summing 100 then
+    300 input tokens would store 400 for a session that used 300."""
+    spent = (
+        Usage()
+        .record({"type": "result", "session_id": "t1", "usage": {"input_tokens": 100, "output_tokens": 10}})
+        .record({"type": "result", "session_id": "t1", "usage": {"input_tokens": 300, "output_tokens": 40}})
+    )
+    assert spent.input_tokens == 300
+    assert spent.output_tokens == 40
+    assert spent.total_tokens == 340
+
+
+def test_a_token_counter_that_restarts_is_not_read_as_negative_usage():
+    spent = (
+        Usage()
+        .record({"type": "result", "session_id": "t1", "usage": {"input_tokens": 500}})
+        .record({"type": "result", "session_id": "t2", "usage": {"input_tokens": 120}})
+    )
+    assert spent.input_tokens == 620
 
 
 def test_cumulative_cost_reports_are_differenced_rather_than_summed():
     """Summing them is triangular: 0.50 + 1.00 + 1.50 = $3.00 for a session
     that cost $1.50, and the error grows with the square of the turn count."""
-    spent = Usage().record(_cumulative(0.5)).record(_cumulative(1.0)).record(_cumulative(1.5))
+    spent = Usage().record(_cumulative(1)).record(_cumulative(2)).record(_cumulative(3))
     assert spent.turns == 3
     assert spent.cost_usd == 1.5
-    # Tokens are per-exchange, so those really are summed.
-    assert spent.total_tokens == 405
+    assert spent.total_tokens == 405   # 135 an exchange; summing would give 810
 
 
 def test_a_provider_counter_that_restarts_is_not_read_as_a_refund():
     """The CLI only restores the running total when the session it is resuming
     is the last one it saw; another session in between leaves the counter at
     zero. A difference against the old baseline would be negative."""
-    spent = Usage().record(_cumulative(1.0)).record(_cumulative(2.0)).record(_cumulative(0.4))
-    assert spent.cost_usd == 2.4
+    spent = Usage().record(_cumulative(2)).record(_cumulative(4)).record(_cumulative(1))
+    assert spent.cost_usd == 2.5   # $1.00, then $1.00 more, then a restarted $0.50
 
 
 def test_a_new_provider_session_starts_its_counter_over():
     """Told by the session id rather than inferred from the magnitude, which
     is the case a smaller-than-last test cannot catch on its own."""
-    spent = Usage().record(_cumulative(1.0)).record(_cumulative(1.5, session="thread-2"))
-    assert spent.cost_usd == 2.5
+    spent = Usage().record(_cumulative(2)).record(_cumulative(3, session="thread-2"))
+    assert spent.cost_usd == 2.5   # $1.00, then a fresh session's $1.50
 
 
 def test_an_errored_exchange_still_cost_what_it_cost():
