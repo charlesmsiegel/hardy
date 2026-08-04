@@ -153,25 +153,11 @@ class Usage:
         The exchange is counted whatever the report contains -- including an
         errored one, which burned tokens before it failed. What the provider
         did not state is left unstated rather than counted as zero.
-        """
-        return self._fold(event, counted_turn=True)
 
-    def settle(self, event: Mapping[str, Any]) -> Usage:
-        """Fold a report into the exchange already counted, adding no turn.
+        Every figure in the report is differenced against the last one stated
+        for its own field.
 
-        A turn whose consumer walked away can outlive the wait its teardown
-        gives it, so the exchange gets counted with nothing reported and the
-        provider's report lands afterwards. It is the same request: settling it
-        into the total that is already there is what stops one exchange being
-        drawn as two, with every reported field then labelled as covering half
-        a session it covers all of.
-        """
-        return self._fold(event, counted_turn=False)
-
-    def _fold(self, event: Mapping[str, Any], *, counted_turn: bool) -> Usage:
-        """Difference one report against the last, field by field.
-
-        **Every figure in the report is session-to-date, not per-exchange.**
+        **They are session-to-date, not per-exchange.**
         The CLI restores a resumed session's running totals before the exchange
         starts -- `aEo` -> `Tws` -> `z$r`, which writes back both
         `Ot.totalCostUSD` and `Ot.modelUsage` -- and reports them afterwards:
@@ -179,16 +165,17 @@ class Usage:
         sums that same restored `Ot.modelUsage`. So three exchanges of $0.50
         report 0.50, 1.00, 1.50, and their token counts climb the same way.
         Adding those up is triangular -- the error grows with the square of the
-        turn count -- so each figure is differenced against the last one.
+        turn count.
 
         The counters do restart: the CLI restores them only when the session it
         resumes is the last one it saw, so an unrelated session in between
         leaves them at zero. A restart is taken from the session id when the
         report carries one, and otherwise from a figure having gone backwards,
-        which is something a session-to-date total cannot otherwise do. Two
-        consecutive equal figures across a restart read as no spend at all;
-        that costs one exchange, where believing the figure outright would cost
-        the whole session's total.
+        which is something a session-to-date total cannot otherwise do. That
+        second test is only sound for a report from the turn in flight -- a
+        stale one is *expected* to be smaller, and reading it as a restart
+        would add spend already counted. `MathematicsSession._observed` is
+        where stale reports are kept away from here.
         """
         session = event.get("session_id")
         session = session if isinstance(session, str) and session else self.provider_session
@@ -218,7 +205,7 @@ class Usage:
                 totals[field] += int(added)
         return dataclasses.replace(
             self,
-            turns=self.turns + (1 if counted_turn else 0),
+            turns=self.turns + 1,
             cost_usd=spent,
             baselines=baselines,
             provider_session=session,
