@@ -103,11 +103,12 @@ class Usage:
     mutating a shared counter in place would not be.
     """
 
-    #: Exchanges completed -- Hardy's own count, not the provider's `num_turns`.
-    #: One exchange is one thing the user sent and the reply it drew, which is
-    #: what "turn" means to somebody sitting in the session. `num_turns` counts
-    #: the provider's internal loop and, across a resumed thread, is not even
-    #: per-exchange.
+    #: Exchanges Hardy asked for -- its own count, not the provider's
+    #: `num_turns`. One exchange is one thing the user sent, which is what
+    #: "turn" means to somebody sitting in the session; `num_turns` counts the
+    #: provider's internal loop and, across a resumed thread, is not even
+    #: per-exchange. Asked for rather than completed: one that died without a
+    #: report was still sent, and may still have been billed.
     turns: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -115,6 +116,11 @@ class Usage:
     cache_read_tokens: int = 0
     #: None until a provider reports a cost. Never defaulted to zero.
     cost_usd: float | None = None
+    #: The last session-to-date figure the provider stated, and the provider
+    #: session it belonged to. Kept only to difference the next one against;
+    #: `cost_usd` above is the number a reader is shown.
+    provider_cost_usd: float | None = None
+    provider_session: str | None = None
     #: Field name -> how many exchanges stated it. Absent or zero means the
     #: field was never reported and its counter above means nothing; a value
     #: below `turns` means the total covers only part of the session.
@@ -149,10 +155,13 @@ class Usage:
         did not state is left unstated rather than counted as zero.
         """
         reports = dict(self.reports)
-        cost = self.cost_usd
+        cost, baseline = self.cost_usd, self.provider_cost_usd
+        session = event.get("session_id")
+        session = session if isinstance(session, str) and session else self.provider_session
         stated = event.get("cost_usd")
         if isinstance(stated, (int, float)) and not isinstance(stated, bool) and stated >= 0:
-            cost = (self.cost_usd or 0.0) + float(stated)
+            cost = (self.cost_usd or 0.0) + self._spent(float(stated), session)
+            baseline = float(stated)
             reports["cost_usd"] = reports.get("cost_usd", 0) + 1
         report = event.get("usage")
         counts = report if isinstance(report, Mapping) else {}
@@ -162,7 +171,38 @@ class Usage:
             totals[field] = getattr(self, field) + (stated_count or 0)
             if stated_count is not None:
                 reports[field] = reports.get(field, 0) + 1
-        return dataclasses.replace(self, turns=self.turns + 1, cost_usd=cost, reports=reports, **totals)
+        return dataclasses.replace(
+            self,
+            turns=self.turns + 1,
+            cost_usd=cost,
+            provider_cost_usd=baseline,
+            provider_session=session,
+            reports=reports,
+            **totals,
+        )
+
+    def _spent(self, stated: float, session: str | None) -> float:
+        """What this exchange added, given a session-to-date figure.
+
+        `total_cost_usd` is not the exchange's own cost. The CLI restores the
+        resumed session's running total before the exchange starts and reports
+        the total afterwards, so consecutive reports read 0.50, 1.00, 1.50 for
+        three exchanges of 0.50 each. Adding them up is triangular -- the error
+        grows with the square of the turn count -- so the figure is differenced
+        against the last one instead.
+
+        The counter does restart: the CLI only restores it when the session it
+        resumes is the last one it saw, so an unrelated session in between
+        leaves it at zero. A restart is taken from the session id when there is
+        one, and otherwise from the figure having gone backwards, which is
+        something a session-to-date total cannot otherwise do. Two consecutive
+        reports that are equal across a restart would be read as no spend at
+        all; that costs one exchange, where believing the figure would cost the
+        whole session's total.
+        """
+        if self.provider_cost_usd is None or session != self.provider_session or stated < self.provider_cost_usd:
+            return stated
+        return stated - self.provider_cost_usd
 
     # -- rendering --------------------------------------------------------
 
@@ -208,16 +248,29 @@ class Usage:
         return rows
 
     def _coverage(self) -> str:
-        """How much of the session the token total actually spans, if not all."""
-        spans = {self.reports[field] for field in self.COUNTERS if self.reports.get(field)}
-        if spans == {self.turns}:
-            return ""
-        if len(spans) == 1:
-            return f" ({spans.pop()} of {self.turns} exchanges)"
-        # No backend reports its counters over different exchanges, but a
-        # ledger carried across versions could; naming one span would pick a
-        # number that is right for some counters and wrong for the rest.
-        return " (counters cover different exchanges)"
+        """What the token total leaves out, in both directions it can.
+
+        A sum is short either because a counter was never reported at all --
+        the rows above say so, but a bare `Total` beside them still reads as
+        the whole of it -- or because the counters that were reported cover
+        only some of the exchanges. Both are worth a reader's attention and
+        they can happen together.
+        """
+        stated = [field for field in self.COUNTERS if self.reports.get(field)]
+        spans = {self.reports[field] for field in stated}
+        notes = []
+        if len(stated) < len(self.COUNTERS):
+            notes.append("reported counters only")
+        if spans and spans != {self.turns}:
+            # No backend reports its counters over different exchanges, but a
+            # ledger carried across versions could; naming one span would pick
+            # a number right for some counters and wrong for the rest.
+            notes.append(
+                f"{next(iter(spans))} of {self.turns} exchanges"
+                if len(spans) == 1
+                else "counters cover different exchanges"
+            )
+        return f" ({'; '.join(notes)})" if notes else ""
 
     def _stated(self, label: str, field: str, value: str) -> str:
         """One row, marked with how much of the session it actually covers.
@@ -261,8 +314,14 @@ class Usage:
         }
         if any(value is None for value in counters.values()):
             return cls()
-        cost = stored.get("cost_usd")
-        if cost is not None and (isinstance(cost, bool) or not isinstance(cost, (int, float)) or cost < 0):
+        costs = {}
+        for field in ("cost_usd", "provider_cost_usd"):
+            value = stored.get(field)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0):
+                return cls()
+            costs[field] = None if value is None else float(value)
+        session = stored.get("provider_session")
+        if session is not None and not isinstance(session, str):
             return cls()
         held = stored.get("reports")
         if not isinstance(held, Mapping):
@@ -272,6 +331,7 @@ class Usage:
             return cls()
         return cls(
             **counters,
-            cost_usd=None if cost is None else float(cost),
+            **costs,
+            provider_session=session,
             reports={field: covered for field, covered in reports.items() if covered},
         )
