@@ -42,6 +42,13 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
     ui.write(f"  Lean project: {config.lean_project or 'current directory'}")
     ui.write(f"  Config file:  {config.config_path}")
     ui.write(f"  Transcript:   {config.workspace / 'transcript.jsonl'}")
+    # `getattr` because `/status` is safe in flight and the shell builds before
+    # its session does -- there is a window where there is nothing to ask.
+    spent = getattr(state.session, "usage", None)
+    if spent is not None:
+        ui.write("Spend", style="normal")
+        for line in spent.lines():
+            ui.write(f"  {line}")
     if state.turn_running:
         ui.write("  A turn is still running.")
     return state

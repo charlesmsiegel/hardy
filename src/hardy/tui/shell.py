@@ -114,6 +114,11 @@ NARROW = 40
 #: resize down to exactly NARROW still cannot rewrap a chrome row.
 CHROME = NARROW - 2
 
+#: Rule left over after the spend meter, below which the meter is dropped. A
+#: rule that ends flush with a number reads as a truncation whether or not it
+#: is one, which is the doubt the meter exists to remove.
+_RULE_TAIL = 2
+
 
 class CommandSuggester(AutoSuggest):
     """Dim inline completion. Only ever appends, never rewrites what was typed."""
@@ -302,15 +307,39 @@ class Shell:
         return max(8, min(self._size().columns, NARROW) - 2)
 
     def _rule(self):
-        """The line between transcript and prompt; it also carries the model.
+        """The line between transcript and prompt; it also carries the model
+        and, when there is room, what the session has spent so far.
 
         The spec drew the model on the right end of the hint line, but
         anything right-aligned renders a full-width row, which the reflow
         fallback forbids. The rule has room; the model lives here instead.
+
+        The meter is fitted whole or not at all. Everything else on this row is
+        truncated to the limit, which is fine for a model name -- a reader can
+        see it was cut -- and not fine for a number, because `$1.3` is a
+        plausible reading of `$1.34` and there is nothing on screen to say it
+        was ever longer. Widening the row instead is not available: it is the
+        reflow contract, and a rule that survives a resize is worth more than a
+        cost that is always visible. `/status` has the number unconditionally.
         """
         limit = self._chrome_limit()
         text = f"── {self._state.config.model} "
+        meter = self._meter()
+        if meter:
+            wider = f"{text}── {meter} "
+            if len(wider) + _RULE_TAIL <= limit:
+                text = wider
         return [("class:hint", (text + "─" * limit)[:limit])]
+
+    def _meter(self) -> str:
+        """What the session has spent, abbreviated, or "" if it cannot say.
+
+        `getattr` rather than an attribute: the shell is built before its
+        session exists (`attach` wires it in afterwards, so the slot holds
+        None until then), and it is read on every render regardless.
+        """
+        spent = getattr(self._state.session, "usage", None)
+        return spent.brief() if spent is not None else ""
 
     def _hint(self):
         limit = self._chrome_limit()

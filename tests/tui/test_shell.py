@@ -17,7 +17,9 @@ paints or erases underneath an open prompt and refuses to pass vacuously.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from io import StringIO
+from types import SimpleNamespace
 
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.application.current import set_app
@@ -32,6 +34,7 @@ from prompt_toolkit.output.vt100 import Vt100_Output
 from hardy.tui import handlers, shell
 from hardy.tui.commands import Command
 from hardy.tui.ports import Choice
+from hardy.usage import Usage
 
 from .conftest import Streams
 from .nested_render import assert_no_outer_render_during_nested
@@ -152,6 +155,108 @@ async def test_no_chrome_row_reaches_the_reflow_hazard_width(settings):
                 screen, MouseHandlers(), WritePosition(0, 0, 120, height), "", False, None
             )
         await asyncio.sleep(0.05)  # let the history-load task settle before teardown
+    for y in range(screen.height):
+        used = [x for x, cell in screen.data_buffer[y].items() if cell.char.strip()]
+        assert not used or max(used) < shell.NARROW, (
+            f"row {y} draws at column {max(used)}; a narrowing resize would rewrap it"
+        )
+
+
+# -- the spend meter in the rule ------------------------------------------
+
+
+SPENT = Usage(turns=4, input_tokens=82_431, cost_usd=1.34, counted=True)
+
+
+def _rule(settings, session, columns: int = 120) -> str:
+    holder = {"rows": 24, "cols": columns}
+    with create_pipe_input() as pipe:
+        built = shell.Shell(
+            settings, session, handlers.build_registry(), input=pipe, output=_vt100(StringIO(), holder)
+        )
+        return built._rule()[0][1]
+
+
+def test_the_rule_carries_what_the_session_has_spent(settings):
+    """The acceptance criterion: the number is on screen without asking for it."""
+    drawn = _rule(settings, SimpleNamespace(usage=SPENT))
+    assert "claude-opus-5" in drawn
+    assert "$1.34" in drawn
+    assert "82k" in drawn
+
+
+def test_a_session_that_has_spent_nothing_leaves_the_rule_as_it_was(settings):
+    assert _rule(settings, SimpleNamespace(usage=Usage())) == _rule(settings, None)
+
+
+def test_a_narrow_terminal_drops_the_meter_rather_than_shrinking_the_rule(settings):
+    """Below the point where it fits, the meter goes -- whole. Half of `$1.34`
+    is a number that is not true, and the reflow contract forbids the row from
+    growing to make room."""
+    drawn = _rule(settings, SimpleNamespace(usage=SPENT), columns=24)
+    assert "$" not in drawn
+    assert "claude-opus-5" in drawn
+
+
+def test_a_long_model_name_costs_the_meter_and_not_its_last_digits(settings):
+    """The rule is truncated to the chrome limit, so a meter that only half
+    fits would be drawn as a plausible, wrong number."""
+    settings = dataclasses.replace(settings, model="claude-sonnet-4-5-20250929")
+    drawn = _rule(settings, SimpleNamespace(usage=SPENT))
+    assert "$" not in drawn
+    assert len(drawn) <= shell.CHROME
+
+
+def test_the_meter_never_widens_a_chrome_row_past_the_reflow_hazard(settings):
+    """Every width from useless to generous: the invariant is unconditional."""
+    for columns in range(8, 200, 3):
+        drawn = _rule(settings, SimpleNamespace(usage=SPENT), columns=columns)
+        assert len(drawn) < shell.NARROW, (columns, drawn)
+        # Whatever survived the fit, no digit of it may have been cut off.
+        assert "$" not in drawn or "$1.34 · 82k" in drawn
+
+
+def test_the_meter_is_re_read_every_render_rather_than_captured(settings):
+    """A total sampled when the shell was built would be zero forever. The
+    session is also wired in by `attach` *after* construction, so the rule has
+    to reach through the live state on each pass, not a remembered session."""
+    holder = {"rows": 24, "cols": 120}
+    with create_pipe_input() as pipe:
+        built = shell.Shell(
+            settings, None, handlers.build_registry(), input=pipe, output=_vt100(StringIO(), holder)
+        )
+        assert "$" not in built._rule()[0][1]
+        session = SimpleNamespace(usage=Usage())
+        built.attach(session)
+        assert "$" not in built._rule()[0][1]
+        session.usage = SPENT
+        assert "$1.34" in built._rule()[0][1]
+
+
+def test_a_session_with_no_ledger_at_all_still_draws_its_rule(settings):
+    """`attach` runs after construction, and the plain session is not the only
+    thing that may sit in that slot."""
+    assert "claude-opus-5" in _rule(settings, object())
+
+
+async def test_no_chrome_row_reaches_the_hazard_width_while_a_meter_is_drawn(settings):
+    """`test_no_chrome_row_reaches_the_reflow_hazard_width` with the session
+    that has something to report -- the meter is new chrome and inherits the
+    contract rather than being exempt from it."""
+    holder = {"rows": 24, "cols": 120}
+    with create_pipe_input() as pipe:
+        built = shell.Shell(
+            settings, SimpleNamespace(usage=SPENT), handlers.build_registry(),
+            input=pipe, output=_vt100(StringIO(), holder),
+        )
+        layout = built._app.layout
+        height = layout.container.preferred_height(120, 24).preferred
+        screen = Screen()
+        with set_app(built._app):
+            layout.container.write_to_screen(
+                screen, MouseHandlers(), WritePosition(0, 0, 120, height), "", False, None
+            )
+        await asyncio.sleep(0.05)
     for y in range(screen.height):
         used = [x for x, cell in screen.data_buffer[y].items() if cell.char.strip()]
         assert not used or max(used) < shell.NARROW, (
