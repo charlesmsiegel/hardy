@@ -62,6 +62,21 @@ class FakeMathematicsSession:
     def record_abandonment(self, reason) -> None: ...
 
 
+def test_opening_a_project_creates_its_layout(tmp_path):
+    """Otherwise every ignore rule this plan writes is inert.
+
+    `grep -rn "ensure()" src/` returned nothing before this test: the
+    directories and the anchored ignore rules existed only in unit tests, so a
+    real run left `.build/` and `.local/` as ordinary trackable files.
+    """
+    settings = configuration.load(tmp_path / "absent.toml", root=tmp_path, project="sylow")
+    cli.prepare_layout(settings)
+
+    problem = tmp_path / "sylow"
+    assert (problem / "lean").is_dir()
+    assert "/.local/" in (problem / ".gitignore").read_text(encoding="utf-8")
+
+
 def test_chat_wires_cas_into_the_session_and_closes_it_once(tmp_path, monkeypatch):
     FakeMathematicsSession.instances = []
     build_calls: list[dict] = []
