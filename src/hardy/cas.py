@@ -41,6 +41,7 @@ from typing import Any, Literal
 from pydantic import ValidationError, model_validator
 
 from .domain import FrozenModel, RunLimits
+from .layout import WriteGuard
 from .process import (
     INTERRUPT_GRACE_SECONDS,
     child_creation,
@@ -850,6 +851,19 @@ class CasSession:
         self.backend = backend
         self.command = command
         self.log_path = log_path
+        # The only door the cell log is read or written through. It matters
+        # more here than anywhere else in Hardy: `cells.jsonl` is a versioned
+        # file a clone can ship as a symlink, and `_truncate_log` opens the log
+        # `r+b` and TRUNCATES it -- so a followed link would not merely append
+        # to whatever it named, it would destroy it. `Layout.ensure` cannot
+        # help: it runs once at startup and never enumerates this file.
+        #
+        # Not created here. A session whose log directory cannot be made --
+        # the path is a plain file, the disk is full -- must still be
+        # constructible, and fail at the append, where the failure is a
+        # poisoned session naming the log rather than a constructor that
+        # raised. `_append` creates the directory, and the guard pins it then.
+        self._log = WriteGuard(log_path.parent)
         self.limits = limits
         self.cwd = cwd or log_path.parent
         self.observe = observe
@@ -903,7 +917,7 @@ class CasSession:
     def _load(self) -> list[CellRecord]:
         if not self.log_path.exists():
             return []
-        raw = self._repair_interrupted_append(self.log_path.read_bytes())
+        raw = self._repair_interrupted_append(self._read_log())
         records = []
         for line in raw.split(b"\n"):
             # Bytes, not text: a torn write can cut a multi-byte character in
@@ -943,14 +957,25 @@ class CasSession:
         self._mend_log(truncate_to=None)
         return raw + b"\n"
 
+    def _read_log(self) -> bytes:
+        """Every byte of the log, through the guard.
+
+        Reading is guarded as strictly as writing. A symlinked log read at load
+        time would have this session answer from cells recorded somewhere
+        outside the project entirely, and only notice when the first append was
+        refused -- long after it had replayed a stranger's history as its own.
+        """
+        with self._log.open(self.log_path.name, "rb") as stream:
+            return stream.read()
+
     def _truncate_log(self, size: int) -> None:
-        with self.log_path.open("r+b") as stream:
+        with self._log.open(self.log_path.name, "r+b") as stream:
             stream.truncate(size)
             stream.flush()
             os.fsync(stream.fileno())
 
     def _terminate_log(self) -> None:
-        with self.log_path.open("ab") as stream:
+        with self._log.open(self.log_path.name, "ab") as stream:
             stream.write(b"\n")
             stream.flush()
             os.fsync(stream.fileno())
@@ -999,14 +1024,14 @@ class CasSession:
             return
         if not size:
             return
-        with self.log_path.open("rb") as stream:
+        with self._log.open(self.log_path.name, "rb") as stream:
             stream.seek(-1, os.SEEK_END)
             if stream.read(1) == b"\n":
                 return
         # Same rule as at load: a well-formed final record lost only its
         # terminator and is kept, anything else is a fragment and goes. The
         # whole file is read only on this path, which is the damaged one.
-        head, separator, tail = self.log_path.read_bytes().rpartition(b"\n")
+        head, separator, tail = self._read_log().rpartition(b"\n")
         try:
             CellRecord.model_validate_json(tail)
         except ValidationError:
@@ -1026,9 +1051,13 @@ class CasSession:
         allowed to continue on state it can never explain.
         """
         try:
-            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            # Through the guard, which re-proves the directory and re-pins it
+            # if it had to be recreated: a session whose workspace was deleted
+            # underneath it must still be able to record the cell that just
+            # ran, and the fresh directory has a fresh inode.
+            self._log.mkdir()
             self._ensure_terminated()
-            with self.log_path.open("ab") as stream:
+            with self._log.open(self.log_path.name, "ab") as stream:
                 stream.write(record.model_dump_json().encode("utf-8") + b"\n")
                 stream.flush()
                 os.fsync(stream.fileno())

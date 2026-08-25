@@ -584,3 +584,43 @@ def test_the_identity_is_recorded_with_the_thread_not_with_the_cursor(tmp_path: 
 
     seen = (tmp_path / "transcript.jsonl").read_bytes()[:length]
     assert hashlib.sha256(seen).hexdigest() == digest
+
+
+def _cloned_workspace(tmp_path: Path, costs) -> None:
+    """A workspace exactly as a fresh `git clone` presents one.
+
+    The record and the transcript are versioned and arrive with the clone;
+    `.local/` is gitignored by design, so there is no ledger beside them --
+    on every machine, for every clone, before anything has happened.
+    """
+    _pre_ledger(tmp_path, costs)
+    (tmp_path / ".local" / "state.json").unlink()
+
+
+def test_opening_a_fresh_clone_leaves_its_transcript_untouched(tmp_path: Path):
+    """Recovery is bookkeeping about this machine, not about the mathematics.
+
+    It used to append a `migration` event to `transcript.jsonl` whenever the
+    ledger was missing -- which is every clone, by design -- so merely opening
+    a cloned project dirtied its saved trajectory before any mathematics or
+    any model interaction had happened.
+    """
+    _cloned_workspace(tmp_path, [0.10, 0.20])
+    before = (tmp_path / "transcript.jsonl").read_bytes()
+    chat = spending(tmp_path)
+    assert chat.usage.turns == 2                      # still recovered
+    assert (tmp_path / "transcript.jsonl").read_bytes() == before
+    # And what was recovered is written down where a fact about this machine
+    # belongs, beside the ledger it describes.
+    assert stored_local(tmp_path)["usage_recovered_turns"] == 2
+
+
+def test_the_recovered_count_accumulates_rather_than_being_overwritten(tmp_path: Path):
+    """A later tail replay must not make the note say the opposite of the truth."""
+    _cloned_workspace(tmp_path, [0.10, 0.20])
+    spending(tmp_path)
+    with (tmp_path / "transcript.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "result", "cost_usd": 0.9, "is_error": False}) + "\n")
+    reopened = spending(tmp_path)
+    assert reopened.usage.turns == 3
+    assert stored_local(tmp_path)["usage_recovered_turns"] == 3

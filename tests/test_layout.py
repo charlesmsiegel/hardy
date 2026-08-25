@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -450,3 +451,210 @@ def test_git_itself_agrees_the_rules_are_anchored(tmp_path: Path):
 
     assert ignored(".build/olean"), "the problem's own build must be excluded"
     assert not ignored("lean/.local/draft"), "authored work must not be excluded"
+
+
+# -- the guard that outlives setup ------------------------------------------
+#
+# `ensure` runs once, when a project opens. Everything below is about the
+# writes that happen after it, into files `ensure` never enumerates because a
+# clone brings them with it: the transcript, the record, the cell log.
+
+
+def test_a_guarded_write_lands_in_the_directory_it_names(tmp_path: Path):
+    problem = tmp_path / "sylow"
+    guard = layout.WriteGuard(problem, create=True)
+    with guard.open("transcript.jsonl", "a", encoding="utf-8") as handle:
+        handle.write("one\n")
+    with guard.open("transcript.jsonl", "a", encoding="utf-8") as handle:
+        handle.write("two\n")
+    assert (problem / "transcript.jsonl").read_text(encoding="utf-8") == "one\ntwo\n"
+
+
+@needs_symlinks
+def test_a_symlinked_file_is_refused_at_the_write_not_at_setup(tmp_path: Path):
+    """The escape this guard exists for, start to finish.
+
+    `transcript.jsonl` is tracked -- the problem `.gitignore` covers `/.build/`
+    and `/.local/` only -- so a cloned repository can ship it as a symlink.
+    `ensure` passes, because it checks the directories it creates and this is
+    not one of them, and the first appended event lands wherever the link says.
+    """
+    problem = tmp_path / "sylow"
+    problem.mkdir()
+    victim = tmp_path / "victim.sh"
+    victim.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+    (problem / "transcript.jsonl").symlink_to(victim)
+
+    layout.Layout(root=tmp_path, slug="sylow").ensure()  # setup still passes
+
+    guard = layout.WriteGuard(problem)
+    with pytest.raises(layout.LayoutError) as refusal:
+        guard.open("transcript.jsonl", "a", encoding="utf-8")
+    assert "transcript.jsonl" in str(refusal.value)
+    assert str(victim) in str(refusal.value)
+    assert victim.read_text(encoding="utf-8") == "#!/bin/sh\necho mine\n"
+
+
+@needs_symlinks
+def test_a_symlinked_file_is_refused_for_reading_too(tmp_path: Path):
+    """A log read through a link is a stranger's history answered as our own."""
+    problem = tmp_path / "sylow"
+    problem.mkdir()
+    (tmp_path / "elsewhere.jsonl").write_text("{}\n", encoding="utf-8")
+    (problem / "cells.jsonl").symlink_to(tmp_path / "elsewhere.jsonl")
+    with pytest.raises(layout.LayoutError):
+        layout.WriteGuard(problem).open("cells.jsonl", "rb")
+
+
+@needs_symlinks
+def test_a_symlinked_temporary_cannot_smuggle_an_atomic_write_out(tmp_path: Path):
+    """`os.replace` never follows a link -- but the temporary it renames does.
+
+    A repository shipping `session.json.tmp` as a symlink used to get the JSON
+    written straight through it, and the rename then moved the link over the
+    record: the escape succeeded without the rename following anything.
+    """
+    problem = tmp_path / "sylow"
+    problem.mkdir()
+    victim = tmp_path / "victim.sh"
+    victim.write_text("original\n", encoding="utf-8")
+    (problem / "session.json.tmp").symlink_to(victim)
+
+    layout.WriteGuard(problem).write_json("session.json", {"schema_version": 2})
+
+    assert victim.read_text(encoding="utf-8") == "original\n"
+    assert json.loads((problem / "session.json").read_text(encoding="utf-8"))["schema_version"] == 2
+
+
+@needs_symlinks
+def test_a_symlinked_record_is_refused_rather_than_silently_replaced(tmp_path: Path):
+    """Replacing it would not follow the link, but it would delete it."""
+    problem = tmp_path / "sylow"
+    problem.mkdir()
+    (tmp_path / "somewhere.json").write_text("{}\n", encoding="utf-8")
+    (problem / "session.json").symlink_to(tmp_path / "somewhere.json")
+    with pytest.raises(layout.LayoutError):
+        layout.WriteGuard(problem).write_json("session.json", {"schema_version": 2})
+    assert (problem / "session.json").is_symlink()
+
+
+@needs_symlinks
+def test_a_directory_swapped_for_a_link_after_the_proof_is_refused(tmp_path: Path):
+    """The proof is renewed per write, so it survives the tree moving under it.
+
+    A guard that only checked at construction would keep writing into whatever
+    the path leads to now, which is exactly the setup-time guarantee this
+    class exists to replace.
+    """
+    problem = tmp_path / "sylow"
+    (problem / "cas").mkdir(parents=True)
+    guard = layout.WriteGuard(problem / "cas")
+    with guard.open("cells.jsonl", "ab") as handle:
+        handle.write(b"{}\n")
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    shutil.rmtree(problem / "cas")
+    (problem / "cas").symlink_to(elsewhere, target_is_directory=True)
+
+    with pytest.raises(layout.LayoutError) as refusal:
+        guard.open("cells.jsonl", "ab")
+    assert "no longer the directory it was proven to be" in str(refusal.value)
+    assert not (elsewhere / "cells.jsonl").exists()
+
+
+def test_a_directory_recreated_by_the_guard_is_proven_and_pinned_again(tmp_path: Path):
+    """A workspace deleted underneath a live session must still record.
+
+    Without the re-pin, the fresh directory's new inode would look exactly
+    like the swap above and refuse every write for the rest of the session.
+    """
+    cas = tmp_path / "sylow" / "cas"
+    cas.mkdir(parents=True)
+    guard = layout.WriteGuard(cas)
+    shutil.rmtree(tmp_path / "sylow")
+    guard.mkdir()
+    with guard.open("cells.jsonl", "ab") as handle:
+        handle.write(b"{}\n")
+    assert (cas / "cells.jsonl").read_bytes() == b"{}\n"
+
+
+@needs_symlinks
+def test_a_directory_recreated_over_a_link_is_still_refused(tmp_path: Path):
+    """`mkdir(exist_ok=True)` on a link to a real directory succeeds silently."""
+    problem = tmp_path / "sylow"
+    problem.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    guard = layout.WriteGuard(problem / "cas", create=True)
+    shutil.rmtree(problem / "cas")
+    (problem / "cas").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(layout.LayoutError):
+        guard.mkdir()
+
+
+@pytest.mark.parametrize("bad", ["../escape", "a/b", "a\\b", "", ".", "..", "/absolute"])
+def test_a_guarded_name_is_one_file_name_and_nothing_else(tmp_path: Path, bad: str):
+    guard = layout.WriteGuard(tmp_path / "sylow", create=True)
+    with pytest.raises(layout.LayoutError):
+        guard.open(bad, "a")
+
+
+@needs_symlinks
+def test_a_guard_refuses_a_directory_that_leaves_its_own_parent(tmp_path: Path):
+    """The rule `ensure` applies, applied to whatever directory is handed over."""
+    problem = tmp_path / "sylow"
+    problem.mkdir()
+    (tmp_path / "other").mkdir()
+    (problem / ".local").symlink_to(tmp_path / "other", target_is_directory=True)
+    with pytest.raises(layout.LayoutError):
+        layout.WriteGuard(problem / ".local")
+
+
+# The ratchet. A guard nobody remembers to use is not a guarantee, and the
+# next file to live in a problem directory will be added by someone who never
+# read this module.
+
+GUARDED_MODULES = ("chat.py", "cas.py", "cas_export.py", "tui/shell.py")
+#: The two writes in those modules that do not go through a `WriteGuard`, by
+#: the function they sit in. Both write into the LaTeX tree at a path the
+#: model chose, which `workspace.safe_relative` has already confined to that
+#: tree -- a different mechanism for a different question, and the reason
+#: these are exceptions rather than omissions.
+UNGUARDED = {"_save_latex", "_delete_tex"}
+
+
+def _write_calls(source: str):
+    """Every `.open`/`.write_text`/`.write_bytes` call, with what it is on."""
+    import ast
+
+    tree = ast.parse(source)
+    holder: dict[ast.AST, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for child in ast.walk(node):
+                holder.setdefault(child, node.name)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in {"open", "write_text", "write_bytes"}:
+            continue
+        yield holder.get(node, "<module>"), ast.unparse(node.func.value), node.func.attr
+
+
+def test_every_file_write_in_a_problem_goes_through_the_guard():
+    """Adding a new file beside `transcript.jsonl` must not be able to skip it.
+
+    The mechanism is that a guard takes a NAME rather than a path, so there is
+    no path to open -- but nothing stops a future writer from rebuilding one.
+    This is what stops it: a new `open`/`write_text`/`write_bytes` in these
+    modules fails here until someone either routes it through a guard or says
+    in `UNGUARDED` why it does not belong to a problem directory.
+    """
+    package = Path(layout.__file__).parent
+    for module in GUARDED_MODULES:
+        for function, receiver, call in _write_calls((package / module).read_text(encoding="utf-8")):
+            guarded = receiver.endswith(("guard", "_log")) or receiver == "guard"
+            assert guarded or function in UNGUARDED, (
+                f"{module}:{function} calls {receiver}.{call}(...) outside a WriteGuard"
+            )

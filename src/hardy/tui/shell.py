@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import dataclasses
+import datetime
 import os
 import threading
 from collections.abc import Sequence
@@ -48,6 +49,7 @@ from prompt_toolkit.shortcuts import PromptSession
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import TextArea
 
+from ..layout import INPUT_HISTORY, LayoutError, WriteGuard
 from . import banner, dispatch, select, stream, transcript
 from .commands import Command, canonical, complete, resolve, suggest
 from .ports import Choice, State
@@ -157,6 +159,36 @@ class CommandCompleter(Completer):
             )
 
 
+class GuardedFileHistory(FileHistory):
+    """`FileHistory`, writing through a `WriteGuard` rather than around it.
+
+    prompt_toolkit opens the file itself, once per accepted line, for the rest
+    of the session -- so pointing it at a path checked when the shell was built
+    would put the one write that matters outside every guarantee Hardy makes.
+    `store_string` is the only place it writes, and this is that place.
+
+    The file is `.local/input-history`, which holds every line typed at the
+    prompt whether it was sent or not, so a link out of the project is both an
+    escape and a disclosure.
+    """
+
+    def __init__(self, guard: WriteGuard, name: str) -> None:
+        self._guard = guard
+        self._name = name
+        super().__init__(str(guard.path(name)))
+        # Refused now as well as at every append, so a history file that is
+        # already a symlink falls back to `InMemoryHistory` in `Shell` rather
+        # than raising later, from inside prompt_toolkit's own thread, where
+        # the failure would land as a rendering error.
+        guard.reserve(name)
+
+    def store_string(self, string: str) -> None:
+        with self._guard.open(self._name, "ab") as handle:
+            handle.write(f"\n# {datetime.datetime.now()}\n".encode())
+            for line in string.split("\n"):
+                handle.write(f"+{line}\n".encode())
+
+
 class Shell:
     """The interactive session: prompt area at the bottom, scrollback above."""
 
@@ -225,9 +257,12 @@ class Shell:
             # here, sent or not, is machine-local the same way the provider
             # thread and the spend ledger are, and the problem directory's
             # own `.gitignore` does not cover it.
-            config.layout.local.mkdir(parents=True, exist_ok=True)
-            history = FileHistory(str(config.layout.input_history))
-        except OSError:
+            history = GuardedFileHistory(WriteGuard(config.layout.local, create=True), INPUT_HISTORY)
+        except (OSError, LayoutError):
+            # A refusal is not a reason to lose the terminal. Nothing typed
+            # here is worth a session for, so an unwritable -- or a
+            # symlinked-away -- history file falls back to one that lives in
+            # memory, exactly as an unwritable directory already did.
             history = InMemoryHistory()
 
         # Grows from one line to a cap, then scrolls internally. Without a

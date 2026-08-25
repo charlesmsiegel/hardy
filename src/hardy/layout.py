@@ -3,13 +3,25 @@
 One module owns every path decision so the shape is stated once. A slug reaches
 here from a committed, hand-editable config file that travels with a clone, so
 it is validated as untrusted input rather than trusted as a name someone typed.
+
+The same distrust has to survive past startup. `Layout.ensure` proves the shape
+of the tree when a project opens, and that proof expires immediately: the files
+Hardy appends to for the rest of the session -- `transcript.jsonl`,
+`cas/cells.jsonl`, the record -- are tracked files a clone is free to ship as
+symlinks, and `ensure` never enumerates them. `WriteGuard` is where that gap is
+closed: every write proves, at the moment it happens, that it lands inside the
+directory that owns it.
 """
 
 from __future__ import annotations
 
+import errno
+import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 #: The tooling directory, which is Hardy's own and never a problem.
 HARDY_DIR = ".hardy"
@@ -18,6 +30,7 @@ LOCAL_DIR = ".local"
 RECORD = "session.json"
 TRANSCRIPT = "transcript.jsonl"
 LOCAL_STATE = "state.json"
+INPUT_HISTORY = "input-history"
 DEFAULT_SLUG = "main"
 
 # Names Windows cannot use as a directory, whatever the extension, plus the
@@ -141,7 +154,7 @@ class Layout:
 
     @property
     def input_history(self) -> Path:
-        return self.local / "input-history"
+        return self.local / INPUT_HISTORY
 
     def resolved_problem(self) -> Path:
         """The problem directory, proven to be a direct child of the root.
@@ -342,6 +355,277 @@ def _ensure_rules(path: Path, header: str, rules: tuple[str, ...]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_lines(path, terminator.join(lines) + terminator)
 
+
+# `O_NOFOLLOW` where the platform has it, nothing where it does not. It is the
+# one flag that closes the gap between "this leaf is not a symlink" and "the
+# file descriptor I just got is that same leaf"; Windows has no equivalent, so
+# there the `lstat` in `_leaf` is the whole of the leaf check. See `WriteGuard`
+# for why that is enough there: the identity check below re-walks the path in
+# the kernel on every write, which is what catches a junction swapped in
+# underneath us.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+
+class WriteGuard:
+    """The one door a file inside a Hardy-owned directory is written through.
+
+    `Layout.ensure` proves the shape of the tree ONCE, when a project opens.
+    That is setup, and it cannot speak for a write that happens ten minutes
+    later: `transcript.jsonl` is a tracked file that a cloned repository is
+    free to ship as `../../victim.sh`, `ensure` never enumerates it, and the
+    first appended event then lands outside the root. `cas/cells.jsonl` is
+    worse still, because `_truncate_log` opens it `r+b` and truncates -- so a
+    symlinked log destroys whatever it names rather than merely growing it.
+
+    So the proof is renewed at the moment of every write, and made of two
+    cheap parts:
+
+    * The OWNING DIRECTORY is resolved once, here, and its `(st_dev, st_ino)`
+      pinned. Every write re-`stat`s the directory BY PATH -- one syscall, in
+      which the kernel walks every ancestor for us -- and refuses if the
+      identity that comes back is not the pinned one. Any component of the
+      path being replaced by a link to somewhere else lands on a different
+      directory, hence a different inode, hence a refusal. This is deliberately
+      not `Path.resolve()` per write: that is a Python-level `lstat` loop over
+      every component, and these writes happen once per chat event.
+    * The LEAF is `lstat`ed and refused if it is a symlink at all, and then
+      opened with `O_NOFOLLOW` where the platform has it, which closes the
+      window between the two.
+
+    A file is named to this class rather than handed to it as a path, which is
+    the point: a new file inside a guarded directory cannot be written without
+    going through here, because there is no path to open.
+    """
+
+    def __init__(self, directory: Path, *, create: bool = False) -> None:
+        """Prove `directory` is where it appears to be, and pin what it is now.
+
+        The rule is `Layout.ensure`'s own, applied to whatever directory is
+        handed over: once resolved it must be an immediate child of its own
+        parent, resolved. So `<problem>/.local` is refused when it links into a
+        sibling project even though that is still inside the root, and the
+        problem directory itself is refused when it links out of the root --
+        without this class needing to know which of the two it is holding.
+        """
+        self.directory = directory
+        if create:
+            self._make()
+        else:
+            self._prove()
+
+    def _prove(self) -> None:
+        """Resolve the directory, check it against its parent, and pin it."""
+        self._resolved = _refuse_unless_direct_child(self.directory, self.directory.parent.resolve())
+        self._identity = _identity(self.directory)
+
+    def _make(self) -> None:
+        """Create the directory if it is absent, then prove it.
+
+        Through `_ensure_dir`, not `mkdir`, because `mkdir(exist_ok=True)` on a
+        path that is ALREADY a symlink to a real directory neither creates
+        anything nor raises -- it succeeds, silently, on someone else's
+        directory.
+        """
+        self.directory.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_dir(self.directory, self.directory.parent.resolve())
+        self._prove()
+
+    def mkdir(self) -> None:
+        """Put the directory back if something removed it, and re-pin it.
+
+        Not just convenience. `CasSession._append` recreates the log's
+        directory before every append, because a session whose workspace was
+        deleted underneath it should not lose the record of a cell that has
+        already run. A fresh directory has a fresh inode, so without re-pinning
+        here the next write would be refused for the rest of the session by a
+        guard that is comparing against a directory nobody can reach any more.
+        """
+        if self.directory.is_dir() and not self.directory.is_symlink():
+            return
+        self._make()
+
+    def confirm(self) -> None:
+        """Refuse unless the directory is still the one that was proven.
+
+        One `stat` of the whole path: the kernel resolves every component,
+        including any symlink or Windows junction swapped in since, and what
+        comes back is the identity of wherever the path leads NOW.
+        """
+        current = _identity(self.directory)
+        if self._identity is not None:
+            if current != self._identity:
+                raise LayoutError(
+                    f"{self.directory} is no longer the directory it was proven to be "
+                    f"(it now resolves to {self.directory.resolve()}); refusing to write through it"
+                )
+            return
+        # Nothing pinned. Either the filesystem does not number files -- some
+        # Windows ones report zero, and a comparison of zeros accepts
+        # everything -- or the directory did not exist yet when this guard was
+        # made, which is ordinary: a CAS session is constructed before its log
+        # directory is. Pay for the full resolution rather than pretend the
+        # cheap check happened, and pin whatever is there now for next time.
+        resolved = self.directory.resolve()
+        if resolved != self._resolved:
+            raise LayoutError(
+                f"{self.directory} now resolves to {resolved}, not {self._resolved}; "
+                "refusing to write through it"
+            )
+        self._identity = current
+
+    def path(self, name: str) -> Path:
+        """Where `name` lives, without proving anything about it.
+
+        For a caller that must show or store the path (a report, an error
+        message). Writing to it is what `open` and `write_json` are for.
+        """
+        return self.directory / _name(name)
+
+    def reserve(self, name: str) -> Path:
+        """`name`'s path, proven writable at this instant.
+
+        For a writer Hardy does not own the file handle of -- `os.replace`
+        onto a target, or a library that opens the file itself. Everything the
+        guard can check is checked; what it cannot promise is that nothing
+        moves between this returning and the write, which is exactly why every
+        writer that CAN take a file object uses `open` instead.
+        """
+        self.confirm()
+        return _leaf(self.directory / _name(name))
+
+    def open(self, name: str, mode: str = "r", **kwargs: Any) -> Any:
+        """Open `name` inside this directory, or refuse.
+
+        Reads go through here too, not only writes. A symlinked `cells.jsonl`
+        that were read at load time and refused only at append time would have
+        Hardy parse a file from outside the project as its own history, and
+        report the refusal about a record it had already answered from.
+        """
+        path = self.reserve(name)
+
+        def opener(target: str, flags: int) -> int:
+            # The flags builtin `open` computed for the mode, plus the refusal
+            # to traverse a final symlink. Racing the `lstat` in `_leaf` is the
+            # only way to reach the `ELOOP` below, and it comes back as the
+            # same `LayoutError` that the check would have raised.
+            return os.open(target, flags | _NOFOLLOW)
+
+        try:
+            return open(path, mode, opener=opener, **kwargs)  # noqa: PTH123 - `opener` is the point
+        except OSError as error:
+            if _NOFOLLOW and error.errno in {errno.ELOOP, errno.EMLINK}:
+                raise LayoutError(f"{path} became a symlink while it was being opened; refusing to write through it") from None
+            raise
+
+    def write_bytes(self, name: str, content: bytes, *, sync: bool = True) -> None:
+        """Replace `name` with `content`, whole or not at all.
+
+        The temporary matters as much as the target here, and a fixed
+        `<name>.tmp` was the hole: a repository that ships `session.json.tmp`
+        as a symlink gets the new bytes written straight THROUGH it, and the
+        `os.replace` afterwards renames the link over the record -- so the
+        escape succeeds even though the rename itself followed nothing.
+        `NamedTemporaryFile` opens with `O_CREAT | O_EXCL` under a name nobody
+        can have shipped, which fails outright on an existing path of any kind,
+        symlink included.
+
+        The target is guarded even so. Replacing it would not follow a link --
+        `os.replace` renames over the link itself -- but it would silently
+        delete something a user put there, and Hardy would rather say so.
+
+        Bytes, not `write_text`: that translates `\n` to `\r\n` on Windows, so
+        the same record would be one file on Linux and a different one there,
+        and any digest of it would disagree across a shared repository.
+        """
+        target = self.reserve(name)
+        temporary: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=self.directory, delete=False) as handle:
+                temporary = handle.name
+                handle.write(content)
+                if sync:
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            os.replace(temporary, target)
+            temporary = None
+        finally:
+            if temporary is not None:
+                Path(temporary).unlink(missing_ok=True)
+
+    def write_json(self, name: str, value: Any) -> None:
+        """Replace `name` with `value` as JSON, whole or not at all.
+
+        Not fsynced, unlike `write_bytes`'s default. `session.json` is rewritten
+        on every tool call that touches the manifest, and a flush to the
+        platter per call is a cost paid on the common path for a guarantee the
+        record does not need: it is derived from the transcript beside it, and
+        the rename is atomic whether or not the bytes have reached the disk.
+        """
+        self.write_bytes(name, (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8"), sync=False)
+
+
+def _name(name: str) -> str:
+    """`name`, refusing anything that is not a single file name.
+
+    A guard that accepted `../elsewhere` would be a guard in name only. This
+    is the same rule `validate_slug` applies, minus the parts that are about a
+    project slug in particular.
+    """
+    text = str(name)
+    if not text or text in {".", ".."}:
+        raise LayoutError(f"{name!r} is not a file name")
+    if "/" in text or "\\" in text or os.sep in text or (os.altsep and os.altsep in text):
+        raise LayoutError(f"a guarded file is one name, not a path: {name!r}")
+    # One `Path`, not two: this runs on every append, and building the same
+    # object twice to ask it two questions is the kind of cost that is
+    # invisible per call and measurable per session.
+    candidate = Path(text)
+    if candidate.is_absolute() or candidate.name != text:
+        raise LayoutError(f"a guarded file is one name, not a path: {name!r}")
+    return text
+
+
+def _leaf(path: Path) -> Path:
+    """`path`, refused outright if it is a symlink.
+
+    Not resolved and compared, the way a directory is. Every file behind this
+    guard is one Hardy itself creates and rewrites, so there is no legitimate
+    reason for one to be a link -- and asking where the link led would invite
+    the answer "somewhere acceptable", which is not a question worth having an
+    answer to for a file nobody should have replaced.
+    """
+    if path.is_symlink():
+        # Where it led, when the platform will say. `os.readlink` can itself
+        # fail -- a link removed between the two calls, a Windows reparse point
+        # it declines to read -- and an `OSError` escaping here would turn a
+        # refusal that is supposed to be one clean sentence into a traceback.
+        try:
+            target: object = os.readlink(path)
+        except OSError:
+            target = "somewhere it will not say"
+        raise LayoutError(f"{path} is a symlink to {target}; refusing to read or write through it")
+    return path
+
+
+def _identity(directory: Path) -> tuple[int, int] | None:
+    """What `directory` is right now, or None if it will not say.
+
+    None covers two cases, and `confirm` treats them the same way -- by
+    resolving in full instead. `st_ino` is zero on filesystems that do not
+    number files (some Windows ones do not), and a pair of zeros would compare
+    equal to every other pair of zeros, which is a check that accepts
+    everything. A directory that is not there yet has no identity at all, and
+    that is not an error to raise here: a caller writing into a directory that
+    does not exist gets the `OSError` from the write, which is the failure it
+    already knows how to answer.
+    """
+    try:
+        status = directory.stat()
+    except OSError:
+        return None
+    if not status.st_ino:
+        return None
+    return (status.st_dev, status.st_ino)
 
 def global_dir() -> Path:
     """The user-level Hardy directory."""
