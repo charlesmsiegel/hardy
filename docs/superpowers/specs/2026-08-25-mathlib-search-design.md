@@ -238,27 +238,21 @@ try_tactics(statement: str, tactics: list[str] | None = None,
 for each tactic in turn and elaborates it in a scratch file under `import
 Mathlib`, then parses `Try this:` out of the info diagnostics.
 
-**`lean_check_scratch` is the same capability without the meter.** A model can
-write `theorem tmp : P := by exact?` into the scratch check, read the same
-`Try this:` line out of the diagnostics, and reuse it having never called
-`try_tactics`. Left alone, that makes `tactic_search_seconds` bound nothing in
-aggregate and lets a run that leaned on automation throughout report zero
-attribution -- the figure saying "unaided" about exactly the case it exists to
-catch.
+**This tool is not the only way to run these tactics, and the design stops
+claiming otherwise.** A model can write `by exact?` into `lean_check_scratch`,
+into a submitted proof body that reaches `check_proof`, or into a chat
+`check_lean` that never touches `LeanService` at all. Three attempts at
+catching every route -- a scan at `check_scratch`, then a shared admission
+lock, then a wider net -- each closed one hole and opened others: the lock
+deadlocks against `try_tactics`'s own scratch calls, `check_proof` and
+`LeanTools` bypass the scan entirely, and a word-boundary scan fires on
+`exact?` written in a comment.
 
-So the meter and the log sit at `check_scratch`, the choke point every surface
-already goes through, rather than at `try_tactics`. A scratch source whose
-tactic text contains a menu token, matched on word boundaries, is metered
-against the same budget and appends the same record. `try_tactics` becomes the
-*ergonomic* route -- a menu, parsed suggestions, per-tactic outcomes -- rather
-than the only accounted one.
-
-**And the figure says what it observed, not what happened.** A textual scan can
-be evaded: a tactic behind a macro, an alias, a `set_option` that renames it.
-So `AutomationAttribution` counts search-tactic use *Hardy observed*, zero means
-none was observed rather than none occurred, and the field documentation says
-so in those words. A measurement claiming more than its mechanism supports is
-the defect this whole design keeps warning about.
+So the meter and the log cover **`try_tactics` only**, and every claim built on
+them is scoped to match. `tactic_search_seconds` bounds what this tool spends,
+not what a run spends on search tactics. That is a real limit and it is stated
+rather than papered over -- the alternative on offer was a leaky text scan
+across four entry points, sold as completeness.
 
 The default menu is `exact?`, `apply?`, `hint`, `simp?` -- cheap first, and
 `hint` because it runs several tactics itself. `rw?`, `omega`, `norm_num`,
@@ -325,6 +319,19 @@ class AutomationAttribution(FrozenModel):
     suggestions_reused: int           # appear verbatim in the accepted proof
 ```
 
+**What it counts, exactly: `try_tactics` calls.** A model that runs `exact?`
+through `lean_check_scratch`, through a submitted proof body, or through the
+interactive `check_lean` is not counted, and the figure does not pretend to
+notice. So a zero means "this run did not use the tactic-search tool", never
+"this run was unaided" -- and a reader comparing two runs is comparing tool
+use, not automation use.
+
+That is weaker than the figure this design first described, deliberately. The
+stronger version needed a text scan at every Lean entry point, which is leaky
+in both directions -- it misses a tactic behind a macro and fires on one
+written in a comment -- while reading as though it were complete. A narrow
+number whose limit is stated beats a broad one whose limit is discovered.
+
 `suggestions_reused` is a **textual** match: a suggestion string occurring as a
 substring of the accepted `proof_body`. That is what it measures and all it
 measures. A model that copies `exact Nat.add_comm n m` out of a suggestion is
@@ -352,9 +359,13 @@ rather than in it, at a path the parent chooses and passes to the MCP process
 by environment variable the way `HARDY_RUN_DIR` and `HARDY_CONFIG` already
 travel, outside the subtree `workspace_write` grants.
 
-**And absent stays absent.** If that path is unset or unreadable at
-finalization, `automation` is `None` -- nobody measured -- rather than a record
-of zeros. Zeros are a claim that the model worked unaided, and writing that
+**And absent stays absent.** The parent creates the log empty before launching
+the runtime, so an existing empty file means "measured, zero calls" and a
+missing one means the measurement itself failed. Without that step a fully
+instrumented run that simply never called the tool would report `None`, which
+says nobody measured -- losing the distinction in exactly the case it was built
+to preserve. If the path is unset or unreadable at finalization, `automation`
+is `None` rather than a record of zeros. Zeros are a claim that the model worked unaided, and writing that
 claim from a missing file is exactly the fabrication this arrangement exists to
 prevent.
 

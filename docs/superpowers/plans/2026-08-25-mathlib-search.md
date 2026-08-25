@@ -432,10 +432,17 @@ class SearchToolRuntime:
         return self._answer(lambda: self.service.search_declarations(query, limit))
 
     def inspect_declarations(self, names: list[str]) -> ToolResult:
-        return self._answer(
-            lambda: self.service.inspect_declarations(
-                tuple(str(name) for name in names[:MAX_NAMES])
+        # Refused, not truncated. `DeclarationInspection` carries no marker for
+        # names that were never looked at, so silently dropping the tail hands
+        # back a successful result in which "not found" and "not asked" are
+        # indistinguishable -- a partial answer presented as a whole one.
+        if len(names) > MAX_NAMES:
+            return ToolResult(
+                False,
+                f"inspect_declarations takes at most {MAX_NAMES} names; {len(names)} were given",
             )
+        return self._answer(
+            lambda: self.service.inspect_declarations(tuple(str(name) for name in names))
         )
 
     def _answer(self, call: Any) -> ToolResult:
@@ -650,7 +657,7 @@ Append to `CHAT_TOOLS` in `src/hardy/chat.py`, after the `request_assumption` en
 ```python
     {"type": "function", "function": {"name": "rank_premises", "description": "Rank the Mathlib declarations most likely to help with one goal. Paste the goal exactly as Lean printed it, hypotheses and all. Optionally pass `description`: one English sentence saying what the goal is about, which is what the natural-language search is given. A ranking is a heuristic, never evidence — confirm any name with inspect_declarations before relying on it.", "parameters": {"type": "object", "properties": {"goal": {"type": "string"}, "description": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["goal"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "search_declarations", "description": "Search the pinned Lean environment for declarations whose result type matches a pattern, with `_` for holes. Use rank_premises instead when you do not already know the shape you are looking for.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"], "additionalProperties": False}}},
-    {"type": "function", "function": {"name": "inspect_declarations", "description": "Resolve exact Lean declaration names to their signatures in the pinned environment. This is how a name from a ranking is confirmed before it is used.", "parameters": {"type": "object", "properties": {"names": {"type": "array", "items": {"type": "string"}}}, "required": ["names"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "inspect_declarations", "description": "Resolve up to 20 exact Lean declaration names to their signatures in the pinned environment. This is how a name from a ranking is confirmed before it is used.", "parameters": {"type": "object", "properties": {"names": {"type": "array", "items": {"type": "string"}, "maxItems": 20}}, "required": ["names"], "additionalProperties": False}}},
 ```
 
 The `description` property is accepted now and ignored until Task 8. The tool schema is what the model reads, and adding a property later would mean two prompt-set identities for one capability.
@@ -1443,6 +1450,7 @@ moves.
 
 from __future__ import annotations
 
+import inspect
 import os
 from pathlib import Path
 import sys
@@ -1528,6 +1536,18 @@ class ReplaySource:
     def recorded_seconds(self, goal: str) -> float:
         return self._tape.recorded_seconds(self._identity.name, goal)
 
+    def restricted_to(self, shapes) -> "ReplaySource":
+        """The same source answering only these shapes.
+
+        The ablation leg needs a retriever that cannot ask a constants query
+        at all, and `PremiseRetriever` decides that from `accepts` alone.
+        """
+        clone = ReplaySource(
+            self._identity.name, self._identity.kind, self._identity.corpus,
+            self._accepts & frozenset(shapes), self._tape,
+        )
+        return clone
+
 
 class RecordingSource:
     """A real source, taping what it answers. Only reached under `--live`."""
@@ -1540,14 +1560,23 @@ class RecordingSource:
     def identity(self):
         return self._inner.identity
 
+    _accepts_override: frozenset[str] | None = None
+
     @property
     def accepts(self) -> frozenset[str]:
         # Before Slice 3 lands, sources have no `accepts`; there is one shape.
+        if self._accepts_override is not None:
+            return self._accepts_override
         return getattr(self._inner, "accepts", frozenset({"conclusion"}))
 
     @property
     def worst_case_seconds(self) -> float:
         return self._inner.worst_case_seconds
+
+    def restricted_to(self, shapes) -> "RecordingSource":
+        restricted = RecordingSource(self._inner, self._tape)
+        restricted._accepts_override = self.accepts & frozenset(shapes)
+        return restricted
 
     def query_for(self, shape):
         return self._inner.query_for(shape)
@@ -1628,24 +1657,44 @@ def _factory(*, live: bool):
 
         class Adapted:
             def rank(self, goal, limit=10, description=None, shapes=None):
+                # Narrow each source's `accepts`, do not filter the source
+                # list. `PremiseRetriever.rank` derives its shapes from the
+                # goal and takes no shape argument, so dropping whole sources
+                # leaves Loogle -- which accepts `conclusion` -- still running
+                # its `constants` query. The "conclusion-only" baseline would
+                # then contain the very shape being ablated, and `rescued` and
+                # `promoted` would measure nothing.
                 chosen = (
-                    sources
-                    if shapes is None
-                    else [s for s in sources if s.accepts & set(shapes)]
+                    sources if shapes is None else [s.restricted_to(shapes) for s in sources]
                 )
                 retriever = retrieval.PremiseRetriever(sources=chosen, limits=RunLimits())
-                try:
-                    result = retriever.rank(goal, limit, description=description)
-                except TypeError:
-                    # Before Slice 3, `rank` takes no description.
-                    result = retriever.rank(goal, limit)
+                # Asked of the signature, not inferred from a raised
+                # `TypeError` -- which also fires when a source adapter or a
+                # model validator fails mid-rank, silently re-running the whole
+                # ranking without its description and recording duplicate live
+                # calls against a different source set.
+                takes_description = (
+                    "description" in inspect.signature(retriever.rank).parameters
+                )
+                result = (
+                    retriever.rank(goal, limit, description=description)
+                    if takes_description
+                    else retriever.rank(goal, limit)
+                )
+                # Looked up by the outcome's own identity and query, never by
+                # position: after Task 7 one source produces one outcome per
+                # shape it answered, so three sources can yield four outcomes
+                # and a positional pairing asks LeanSearch's cassette for
+                # Loogle's constants query.
+                by_name = {s.identity.name: s for s in chosen}
                 seconds = (
                     result.seconds_spent
                     if live
                     else sum(
-                        source.recorded_seconds(outcome.query or goal)
-                        for source, outcome in zip(chosen, result.provenance.sources)
-                        if hasattr(source, "recorded_seconds")
+                        by_name[outcome.identity.name].recorded_seconds(outcome.query or goal)
+                        for outcome in result.provenance.sources
+                        if outcome.answered
+                        and hasattr(by_name.get(outcome.identity.name), "recorded_seconds")
                     )
                 )
                 return _as_ranking(result, seconds)
@@ -3035,6 +3084,18 @@ def test_the_budget_refuses_the_next_tactic_rather_than_interrupting_one() -> No
     assert found.attempts == ()
 
 
+def test_a_search_tactic_run_another_way_is_not_counted_here() -> None:
+    """A model can run `exact?` through the scratch check, a submitted proof
+    body, or chat's own elaboration. None reach this counter, and the figure
+    is scoped to say so rather than reporting zero as "unaided"."""
+    lean = importlib.import_module('hardy.lean')
+    service = _service(lean, {'exact?': _result(lean, success=True, messages=[SUGGESTION])})
+
+    service.check_scratch('theorem tmp (n m : ℕ) : n + m = m + n := by exact?')
+
+    assert service.recorded_searches() == ()
+
+
 def test_a_statement_carrying_its_own_proof_is_refused() -> None:
     """This tool supplies the proof body. One already there would be silently
     replaced, and the result would describe a search nobody ran."""
@@ -3153,28 +3214,21 @@ class TacticSearch(FrozenModel):
     output_artifact: str | None = None
 ```
 
-Then close the other route. In `LeanService.check_scratch` (`lean.py:510`),
-before elaborating: if `self._search_tactics_in(source)` is non-empty, admit it
-against `tactic_search_seconds` the same way, and after the check append the
-same attribution record with the suggestions parsed out. A scratch check that
-runs no search tactic is unaffected and pays nothing.
+**Do not add a scratch-check hook.** An earlier revision of this plan metered
+and logged search tactics detected in `check_scratch`. It does not work:
 
-Add the test to `tests/unit/test_lean_try_tactics.py`:
+- `try_tactics` calls `check_scratch` while holding `_tactic_admission`, so a
+  hook taking the same lock deadlocks against every direct call, and making the
+  lock reentrant meters and logs each attempt twice.
+- `check_scratch` is not a choke point. `check_proof` reaches `_check_source`
+  directly, and the whole chat surface elaborates through `LeanTools` without
+  touching `LeanService` at all.
+- A word-boundary scan over Lean source fires on `exact?` written in a comment
+  and misses one behind a macro, so it is a floor in neither direction.
 
-```python
-def test_a_search_tactic_run_through_the_scratch_check_is_metered_and_logged() -> None:
-    """Otherwise `try_tactics` is the honest route and `lean_check_scratch`
-    is the one that gets the same answer for free -- with the budget bounding
-    nothing in aggregate, and attribution reporting zero for a run that leaned
-    on automation throughout."""
-    lean = importlib.import_module('hardy.lean')
-    service = _service(lean, {'exact?': _result(lean, success=True, messages=[SUGGESTION])})
-
-    service.check_scratch('theorem tmp (n m : ℕ) : n + m = m + n := by exact?')
-
-    assert service.recorded_searches()
-    assert service.recorded_searches()[0].attempts[0].suggestions == ('exact Nat.add_comm n m',)
-```
+The meter and the log therefore cover `try_tactics` only, and Task 12's figure
+is scoped to say exactly that. A narrow number whose limit is stated beats a
+broad one whose limit is discovered.
 
 Add to `LeanService`, after `search_declarations`:
 
@@ -3223,7 +3277,13 @@ Add to `LeanService`, after `search_declarations`:
         exhausted = False
         for tactic in chosen:
             remaining = self._limits.tactic_search_seconds - self._tactic_spent - spent
-            if self._limits.lean_process_seconds > remaining:
+            # Deadline *plus* teardown, which is what can actually elapse:
+            # `run_process` bounds the kill, the `wait`, and each output reader
+            # separately, and `LeanFindSource.worst_case_seconds` already adds
+            # `MAX_TEARDOWN_SECONDS` for exactly this reason. Admitting against
+            # the deadline alone lets repeated timeouts overrun the budget by
+            # the teardown, every time.
+            if self._limits.lean_process_seconds + MAX_TEARDOWN_SECONDS > remaining:
                 exhausted = True
                 break
             check = self.check_scratch(f"{statement} := by\n  {tactic}\n")
@@ -3701,12 +3761,17 @@ class AutomationAttribution(FrozenModel):
 Extend that docstring with the second limit, which matters as much as the
 first:
 
-> Counts search-tactic use **Hardy observed**. Both routes are accounted --
-> `try_tactics`, and a search tactic written into `lean_check_scratch`, which
-> `check_scratch` detects and logs -- but detection is a word-boundary scan
-> over the source and can be evaded by a macro, an alias, or a rename. Zero
-> therefore means none was observed, not that none occurred. This figure is a
-> floor on both counts.
+> Counts **`try_tactics` calls**, and nothing else. A model that runs `exact?`
+> through `lean_check_scratch`, through a submitted proof body, or through the
+> interactive `check_lean` is not counted here, and this figure does not pretend
+> to notice. So a zero means "this run did not use the tactic-search tool", never
+> "this run was unaided"; two runs compared on it are compared on tool use, not
+> on automation use.
+>
+> Narrower than an earlier draft of this design, deliberately. Catching the other
+> routes needed a text scan at every Lean entry point, which fires on a tactic
+> named in a comment and misses one behind a macro, while reading as though it
+> were complete.
 
 and on `RunManifest`, beside `grades`:
 
@@ -3770,7 +3835,11 @@ would be worse than one that never measured.
    `workspace_write` grants — `run_dir.parent / f"{run_dir.name}.attribution.jsonl"`
    — and passes it to the MCP process as `HARDY_ATTRIBUTION_LOG`, the way
    `HARDY_RUN_DIR` and `HARDY_CONFIG` already travel (`mcp_server.py:229`).
-   Add it to that `required` tuple.
+   Add it to that `required` tuple. **The parent creates it empty first.**
+   Without that, a fully instrumented run that never called the tool leaves no
+   file, and finalization reports `None` — "nobody measured" — in precisely the
+   case the absent/zero distinction exists to describe. An empty file means
+   measured and zero; a missing one means the measurement failed.
 2. `bound_tactic_search` appends one JSON line per search, using the protocol
    `cas.py:919-1010` implements and not merely its name: one write of
    `record + "\n"`, then `flush()`, then `os.fsync(fileno())`.
@@ -3847,6 +3916,11 @@ git commit -m "Say how much of a proof Lean's own search found, and no more than
 - [ ] No module under `src/hardy/` imports anything from `eval/`
 
 
+> **Note for Task 10:** `MAX_TEARDOWN_SECONDS` lives in `src/hardy/retrieval.py`.
+> Move it to `src/hardy/lean.py` beside the process helpers and import it from
+> there in `retrieval.py`, rather than importing `retrieval` from `lean` — that
+> direction is a cycle. Do the move in its own commit before the rest of the task.
+>
 > **Note for Task 10, Step 5:** `LeanService.__init__` (`lean.py:472`) gains
 > `self._tactic_spent = 0.0` and `self._tactic_admission = threading.Lock()`,
 > and `lean.py` gains `import threading`. The cumulative figure lives on the
