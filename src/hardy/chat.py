@@ -18,7 +18,7 @@ from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .latex import ROOT_DOCUMENT, LatexTools, compiles_document
-from .layout import LOCAL_DIR, LOCAL_STATE
+from .layout import LOCAL_DIR, LOCAL_STATE, Layout, global_build, global_lean
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
@@ -193,7 +193,7 @@ def _atomic_json(path: Path, value: Any) -> None:
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = ""):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", root: Path | None = None):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -206,6 +206,17 @@ class MathematicsSession:
         # keep its own `build_runtime` call in sync with this one.
         self.cas_detail = cas_detail
         self.workspace.mkdir(parents=True, exist_ok=True)
+        # The root the problem sits in. Derived rather than demanded, because
+        # every caller already knows the problem directory and none of them
+        # should have to restate the layout to get the project's shared Lean.
+        self.root = root if root is not None else workspace.parent
+        # The libraries a problem may import but did not author, in resolution
+        # order: the project's own, then the user's. The problem's own build
+        # comes first on LEAN_PATH, so its modules win a name collision -- and
+        # `shadowed_modules` makes that collision reportable rather than
+        # silent. Absent trees are dropped here, which is the normal case: a
+        # project with no shared library must cost nothing and error nowhere.
+        self.shared_roots: tuple[tuple[Path, Path], ...] = self._discover_shared()
         placeholder = Request("example : True", "interactive workspace", ("Mathlib",))
         self.lean = LeanTools(placeholder, lean_command, timeout=lean_timeout, project=lean_project)
         self.latex = LatexTools(latex_command)
@@ -230,7 +241,14 @@ class MathematicsSession:
         # describes what Lean reported under one toolchain and project, and
         # reopening a workspace against another does not make it false so much
         # as no longer about anything the session can see.
-        self._environment = _toolchain_identity(lean_command, lean_project)
+        self._toolchain = _toolchain_identity(lean_command, lean_project)
+        # The shared libraries are part of the problem's identity but not of
+        # their own: a problem module that imports one is only as current as
+        # the source behind it, while a shared module is stale only when its
+        # own text or the toolchain moves. Folding the digest into both would
+        # rebuild an entire shared library over an edit to one of its files.
+        self._shared_stamp = self._shared_digest()
+        self._environment = self._shared_identity(self._shared_stamp)
         self.lean_workspace = LeanWorkspace(
             workspace / LEAN_DIR,
             workspace / BUILD_DIR,
@@ -238,6 +256,16 @@ class MathematicsSession:
             environment=self._environment,
             external=self._external_stamp,
         )
+        # One workspace per shared tree, built by the same `compile_module`
+        # path the problem's own modules take. A tree compiled by some other
+        # route would drift from the one whose staleness rules the session
+        # trusts, and the whole point of these is that they are ordinary Lean.
+        self._shared_spaces = self._shared_workspaces()
+        # What was last put in the record about the shared libraries. Compared
+        # rather than re-recorded, so a fact that has not changed does not bury
+        # a long session's turns under repetitions of itself.
+        self._shared_observed: dict[str, Any] = {"shadowed": {}, "unbuildable": []}
+        self._shared_failures: tuple[str, ...] = ()
         self._make_runtime = make_runtime
         # The SDK may call several tools at once, each on its own thread, but
         # these run Lean, rewrite session.json, and stop to ask a human for
@@ -512,14 +540,278 @@ class MathematicsSession:
         return None
 
     def _run_lean_source(self, source: str) -> ToolResult:
-        return self.lean.run_source(source, env={"LEAN_PATH": self.lean_workspace.lean_path()})
+        return self.lean.run_source(source, env={"LEAN_PATH": self._lean_path()})
+
+    def _lean_path(self, space: LeanWorkspace | None = None) -> str:
+        """Where Lean looks for a module, nearest first.
+
+        The problem's own build, then the project's shared library, then the
+        user's, then whatever Mathlib's environment already provides. `lake
+        env` augments an inherited `LEAN_PATH` rather than replacing it, which
+        is what lets these sit beside Mathlib's own package directories.
+
+        Joined with `os.pathsep` and not with a colon: `LEAN_PATH` is separated
+        by a semicolon on Windows, which Hardy supports, and a colon there
+        would hand Lean one unresolvable path made of two real ones -- and
+        `C:\\...` would be split apart into the bargain.
+
+        `space` names a workspace other than this session's own, which is how
+        the audit probe reaches a staged tree without losing the shared
+        libraries the tree it is grading was compiled against.
+        """
+        entries = [
+            (space or self.lean_workspace).lean_path(),
+            *(str(build) for _, build in self.shared_roots),
+        ]
+        return os.pathsep.join(entries)
 
     def _compile_module(
         self, module: str, source_root: Path, build_root: Path, source_file: Path
     ) -> tuple[bool, str]:
-        """Build one workspace module, for `LeanWorkspace` to sequence."""
-        result = self.lean.compile_module(source_root, build_root, source_file)
+        """Build one workspace module, for `LeanWorkspace` to sequence.
+
+        Serves the problem's tree and every shared tree alike, so a library the
+        user brought is compiled by exactly the path the problem's own modules
+        take rather than by a second, subtly different one.
+        """
+        result = self.lean.compile_module(
+            source_root, build_root, source_file, lean_path=self._compile_path(build_root)
+        )
         return result.ok, result.output
+
+    def _compile_path(self, build_root: Path) -> str:
+        """`LEAN_PATH` for compiling one module into `build_root`.
+
+        The build being written to comes first, then the shared builds. Without
+        the shared entries a problem module that imports `CommAlg` elaborates
+        fine under `check_lean` -- which searches the full path -- and then
+        fails to compile on save, which is the worst shape this bug can take:
+        the workspace looks green right up to the moment it is written to.
+        """
+        entries = [str(build_root), *(str(build) for _, build in self.shared_roots if build != build_root)]
+        return os.pathsep.join(entries)
+
+    def _modules_under(self, source: Path) -> Iterator[tuple[str, Path]]:
+        """Every Lean module a shared source tree offers, by name."""
+        for path in sorted(source.rglob("*.lean")):
+            yield module_name(PurePosixPath(path.relative_to(source).as_posix())), path
+
+    def _shared_digest(self) -> str:
+        """What every shared Lean source this session can import currently is.
+
+        Mixed into `self._environment`, which keys the olean cache and stamps
+        each audit verdict. Without it, editing `.hardy/lean/CommAlg.lean`
+        leaves a problem module that imports it resting on an olean built
+        against the old text, *and* leaves that module's stored verdict --
+        whose signature would not have moved either -- reading as current. A
+        verdict that outlives the sources it was computed against is precisely
+        the failure the axiom audit exists to prevent, so the shared sources
+        are part of the identity or the identity is a lie.
+
+        Contents rather than size and mtime, unlike the Mathlib oleans in
+        `_external_stamp`: a shared library is small hand-written source, and a
+        digest over it cannot be defeated by an editor that preserves a
+        timestamp.
+        """
+        if not self.shared_roots:
+            # Empty, not a digest of nothing: `_shared_identity` reads it as
+            # "there is no shared library here", so a project that has none
+            # keeps exactly the identity it had before this feature existed
+            # rather than having its whole olean cache and every stored verdict
+            # invalidated by an upgrade that changed nothing it can see.
+            return ""
+        digest = hashlib.sha256()
+        for source, _ in self.shared_roots:
+            # The root itself, so adding a second shared tree is a change even
+            # if its files happen to hash to what the first tree's did.
+            digest.update(str(source).encode("utf-8"))
+            for name, path in self._modules_under(source):
+                digest.update(b"\0")
+                digest.update(name.encode("utf-8"))
+                try:
+                    digest.update(hashlib.sha256(path.read_bytes()).hexdigest().encode("ascii"))
+                except OSError:
+                    # An unreadable file makes the identity coarser, not the
+                    # session dead. Constant rather than timestamped: a value
+                    # that moved on its own would rebuild the whole tree every
+                    # turn, which is a worse failure than a coarse digest.
+                    digest.update(b"unreadable")
+        return digest.hexdigest()
+
+    def _discover_shared(self) -> tuple[tuple[Path, Path], ...]:
+        """The shared source and build trees that exist, in resolution order.
+
+        Through `Layout` rather than by rejoining the names here, so there is
+        one owner of where a project's shared Lean lives and this cannot drift
+        from the directory the rest of Hardy creates and ignores.
+        """
+        shared = Layout(root=self.root, slug=self.workspace.name)
+        return tuple(
+            (source, build)
+            for source, build in (
+                (shared.shared_lean, shared.shared_build),
+                (global_lean(), global_build()),
+            )
+            if source.is_dir()
+        )
+
+    def _shared_workspaces(self) -> tuple[LeanWorkspace, ...]:
+        return tuple(
+            LeanWorkspace(
+                source,
+                build,
+                self._compile_module,
+                environment=self._toolchain,
+                external=self._external_stamp,
+            )
+            for source, build in self.shared_roots
+        )
+
+    def _adopt_shared(self) -> None:
+        """Notice a shared tree that was not there when the session opened.
+
+        Neither reserved directory is created by `Layout.ensure`, so the
+        ordinary way a project acquires one is a user making it by hand -- very
+        possibly while a session is already running, right after being told the
+        directory exists. Fixed at startup, `shared_roots` would answer "no
+        such library" until Hardy was restarted, for a library sitting in plain
+        sight. Two `is_dir` calls is the whole cost of not doing that.
+        """
+        found = self._discover_shared()
+        if found == self.shared_roots:
+            return
+        self.shared_roots = found
+        self._shared_spaces = self._shared_workspaces()
+
+    def _shared_identity(self, digest: str) -> str:
+        """The build and audit identity `digest` implies."""
+        return f"{self._toolchain}\0shared:{digest}" if digest else self._toolchain
+
+    def _refresh_shared_identity(self) -> None:
+        """Move the build and audit identity if a shared source has moved.
+
+        Cheap enough to run before anything that reads a signature, which is
+        the point: a user edits `.hardy/lean` in their own editor while a
+        session is open, and an identity fixed at startup would let the olean
+        cache and every stored verdict go on describing the file they used to
+        be about. `_shared_spaces` are deliberately left alone -- their own
+        recursive source digests already catch their own edits.
+        """
+        self._adopt_shared()
+        digest = self._shared_digest()
+        if digest == self._shared_stamp:
+            return
+        self._shared_stamp = digest
+        self._environment = self._shared_identity(digest)
+        self.lean_workspace.rebind_environment(self._environment)
+
+    def build_shared(self) -> None:
+        """Compile the libraries this project imports but did not author.
+
+        A directory on `LEAN_PATH` is not a library. `import CommAlg` resolves
+        against `CommAlg.olean`, and nothing creates that unless something
+        compiles `CommAlg.lean` -- so without this pass the advertised import
+        simply fails, and the reserved directory is decoration.
+
+        Run before each Lean invocation rather than once at startup, because a
+        shared tree is the user's own and changes underneath a live session.
+        The same pass moves `self._environment`, so the edit that needs a
+        rebuild is the edit that expires the verdicts resting on it.
+
+        A shared library that will not build is reported, never raised: it is
+        someone else's code, the problem's own tree may not import it at all,
+        and a session that died on a stranger's syntax error would be a worse
+        answer than one that says what happened.
+        """
+        self._refresh_shared_identity()
+        failures: list[str] = []
+        # Built in reverse resolution order -- the user's personal library
+        # before the project's. A project library may reasonably rest on the
+        # personal one; the reverse cannot, since a personal library is shared
+        # across projects and can name none of them. Built the other way round,
+        # such an import would fail on the first pass and succeed only on the
+        # second, which reads as a flaky build rather than an ordering bug.
+        for space in reversed(self._shared_spaces):
+            try:
+                sources = space.sources()
+                failure = space.build_modules(tuple(sources)) if sources else None
+            except ImportCycle as error:
+                failure = BuildFailure(module=str(space.root), output=str(error))
+            except OSError as error:
+                # A shared tree that cannot be read is a fact to report, not a
+                # traceback out of a tool call the model asked for.
+                failure = BuildFailure(module=str(space.root), output=str(error))
+            if failure is not None:
+                failures.append(f"{failure.module}: {failure.output}")
+        self._shared_failures = tuple(failures)
+        self._note_shared()
+
+    def shadowed_modules(self) -> dict[str, Path]:
+        """Shared modules a problem module answers to instead, by name.
+
+        Resolution order already decides which one Lean loads. This says so out
+        loud: which file a theorem rests on is not a detail a session may leave
+        implicit, and a reader of the record who cannot tell `CommAlg` from
+        `CommAlg` has no way to reproduce the proof.
+        """
+        mine = set(self.lean_workspace.sources())
+        found: dict[str, Path] = {}
+        for source_root, _ in self.shared_roots:
+            for name, path in self._modules_under(source_root):
+                if name in mine and name not in found:
+                    found[name] = path
+        return found
+
+    def _shared_listing(self, shadowed: dict[str, Path]) -> dict[str, Any]:
+        """What the model needs to know about libraries it did not author.
+
+        An import nobody is told about is not an import: the model cannot ask
+        for `CommAlg` unless something says `CommAlg` is there. A name the
+        problem's own tree already uses is reported as shadowed rather than as
+        available, because Lean resolves the problem's module and offering the
+        shared one here would advertise an import that silently means something
+        else.
+        """
+        available: dict[str, str] = {}
+        for source, _ in self.shared_roots:
+            for name, path in self._modules_under(source):
+                if name not in shadowed and name not in available:
+                    available[name] = str(path)
+        return {
+            "roots": [str(source) for source, _ in self.shared_roots],
+            "modules": available,
+            "shadowed": {name: str(path) for name, path in shadowed.items()},
+            "unbuildable": list(self._shared_failures),
+        }
+
+    def _note_shared(self, shadowed: dict[str, Path] | None = None) -> None:
+        """Put a shadowed or unbuildable shared module in the transcript.
+
+        A `shadowed_modules` only its own unit test ever calls reports nothing
+        to anybody. The listing tells the model; this tells the record, which
+        is what a reader has afterwards and the only place a collision that was
+        resolved silently could ever be recovered from. Written when what is
+        true changes, not on every Lean call.
+        """
+        if shadowed is None:
+            shadowed = self.shadowed_modules()
+        observed = {
+            "shadowed": {name: str(path) for name, path in shadowed.items()},
+            "unbuildable": list(self._shared_failures),
+        }
+        if observed == self._shared_observed:
+            return
+        self._shared_observed = observed
+        # Nothing to say when nothing is wrong -- including when a collision
+        # that was reported has since been resolved, which the comparison above
+        # has already recorded as the new truth.
+        if not shadowed and not self._shared_failures:
+            return
+        self._record({
+            "type": "shared_library",
+            "roots": [str(source) for source, _ in self.shared_roots],
+            **observed,
+        })
 
     def _lean_search_path(self) -> tuple[Path, ...]:
         """Where Lean looks for the modules a workspace file imports.
@@ -604,7 +896,12 @@ class MathematicsSession:
         """
         relative = PurePosixPath(*module.split(".")).with_suffix(".olean")
         stamp = "missing"
-        for directory in self._lean_search_path():
+        # The shared builds first, in resolution order, then Lake's own answer.
+        # A module imported from `.hardy/lean` is external to the problem's
+        # workspace and Lake has never heard of it, so searching Lake alone
+        # stamped every such import `missing` -- a stamp that never moves, for
+        # a file that does.
+        for directory in (*(build for _, build in self.shared_roots), *self._lean_search_path()):
             candidate = directory / relative
             try:
                 if candidate.is_file():
@@ -620,6 +917,10 @@ class MathematicsSession:
             safe_relative(path)
         except WorkspacePathError as error:
             return ToolResult(False, str(error), source)
+        # Before the first Lean call of this check: an `import CommAlg` that
+        # names a shared library resolves against an olean, and nothing builds
+        # that olean but this.
+        self.build_shared()
         failure = self._build_imports(self.lean_workspace, source)
         if isinstance(failure, ToolResult):
             return failure
@@ -647,10 +948,18 @@ class MathematicsSession:
         seen: dict[str, ToolResult] = {}
 
         def capturing(module: str, source_root: Path, build_root: Path, source_file: Path) -> tuple[bool, str]:
-            result = self.lean.compile_module(source_root, build_root, source_file)
+            result = self.lean.compile_module(
+                source_root, build_root, source_file, lean_path=self._compile_path(build_root)
+            )
             seen[module] = result
             return result.ok, result.output
 
+        # Before the shadow is staged, so the staged build is keyed on the
+        # identity the shared sources currently have. Staging first would copy
+        # `_environment` into the shadow while it still named the old shared
+        # text, and the save would be committed under a signature that was
+        # already false when it was computed.
+        self.build_shared()
         shadow, commit = self.lean_workspace.stage(relative, text, capturing)
         try:
             module = module_name(relative)
@@ -909,7 +1218,7 @@ class MathematicsSession:
             probe = "".join(f"import {module}\n" for module in group)
             result = self.lean.run_source(
                 probe,
-                env={"LEAN_PATH": space.lean_path()},
+                env={"LEAN_PATH": self._lean_path(space)},
                 audit=tuple(f"axioms {name}" for name in wanted),
             )
             if not result.ok:
@@ -1237,6 +1546,13 @@ class MathematicsSession:
         # Read once. `sources()` walks and reads the whole tree, so calling it
         # per module made listing quadratic in the number of files.
         sources = self.lean_workspace.sources()
+        # Before the signatures below are computed: a shared source edited
+        # since the last Lean call has already invalidated every verdict, and
+        # a listing that reported them against the stale identity would answer
+        # `clean` for a module whose inputs have moved.
+        self._refresh_shared_identity()
+        shadowed = self.shadowed_modules()
+        self._note_shared(shadowed)
         lean = []
         for module, source in sorted(sources.items()):
             found = declarations(source)
@@ -1272,6 +1588,12 @@ class MathematicsSession:
             "manifest": self._without(*WITHHELD),
             "lean": lean,
             "tex": tex,
+            # The Lean this project may import but did not author, and which of
+            # its own modules answer to a shared name instead. Reported rather
+            # than left implicit: a model that cannot see the library cannot
+            # import it, and one that cannot see a collision would cite a
+            # theorem out of the wrong file.
+            "shared": self._shared_listing(shadowed),
             "undocumented_theorems": list(self._undocumented()),
             # Everything standing between this workspace and a report anyone
             # may believe, in the same words the refusal would use.

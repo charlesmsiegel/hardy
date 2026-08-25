@@ -457,7 +457,11 @@ class LeanTools:
         return self._run(self.with_audit(source, audit), env=env)
 
     def compile_module(
-        self, source_root: Path, build_root: Path, source_file: Path
+        self,
+        source_root: Path,
+        build_root: Path,
+        source_file: Path,
+        lean_path: str | None = None,
     ) -> LeanToolResult:
         """Build one workspace file to an olean, so others can import it.
 
@@ -466,6 +470,13 @@ class LeanTools:
         input file that is not underneath it. `LEAN_PATH` reaches the modules
         already built; `lake env` adds Mathlib's own paths to it rather than
         overwriting it.
+
+        `lean_path` overrides that variable for callers whose modules resolve
+        against more than one build. A session may import a shared library it
+        did not author, whose oleans sit outside this build root entirely, and
+        `str(build_root)` alone would fail every such import at compile time
+        while the same import resolved fine in a `check_lean` run -- the worst
+        shape of a bug, because the tree builds until it is saved.
         """
         source = source_file.read_text(encoding="utf-8")
         olean = (build_root / source_file.relative_to(source_root)).with_suffix(".olean")
@@ -473,7 +484,7 @@ class LeanTools:
         return self._run(
             source,
             argv=(*self.lean_command, "--json", f"--root={source_root}", "-o", str(olean)),
-            env={"LEAN_PATH": str(build_root)},
+            env={"LEAN_PATH": lean_path or str(build_root)},
             source_path=source_file,
         )
 
