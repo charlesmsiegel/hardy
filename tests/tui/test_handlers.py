@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from types import SimpleNamespace
 
 from hardy import completion, doctor
@@ -113,6 +114,19 @@ async def test_status_still_works_without_a_session(ui, settings):
     assert "claude-opus-5" in ui.text
 
 
+async def test_status_names_the_active_project(ui, settings):
+    """A root can hold several problems side by side, so `/status` must say
+    which one is open, not only where it lives on disk. `project="sylow"`
+    here, distinct from the `settings` fixture's own slug (which happens to
+    be the word "workspace"), so a passing assertion can only mean the
+    project name is actually being read rather than matched by coincidence
+    inside the path.
+    """
+    config = dataclasses.replace(settings, project="sylow")
+    await handlers.handle_status(ui, "", State(config=config, session=None))
+    assert "sylow" in ui.text
+
+
 async def test_exit_marks_the_state_done(ui, settings):
     state = await handlers.handle_exit(ui, "", State(config=settings, session=None))
     assert state.done is True
@@ -224,7 +238,11 @@ async def test_cas_export_reports_the_written_paths_and_replay_counts(ui, settin
     monkeypatch.setattr(handlers, "export_session", fake_export_session)
     fake = FakeCas()
     await handlers.handle_cas(ui, "export", cas_state(fake, settings, tmp_path))
-    assert captured == [(fake.session, tmp_path / "cas")]
+    # `config.layout.cas`, not `session.workspace / "cas"`: the fake session's
+    # `workspace` here is deliberately not `settings.layout.problem` (see
+    # `cas_state`), which is exactly what would let the two paths drift
+    # apart if the handler still read the session for this.
+    assert captured == [(fake.session, settings.layout.cas)]
     assert str(report.script_path) in ui.text
     assert str(report.notebook_path) in ui.text
     assert "3 verified" in ui.text

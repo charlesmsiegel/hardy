@@ -39,6 +39,35 @@ def test_the_banner_names_the_workspace_model_and_lean_project(tmp_path: Path):
     assert "current directory" in rendered
 
 
+def test_status_line_names_the_active_project_and_its_path(tmp_path: Path):
+    """A root can hold several problems now, so naming only a path (the old
+    single-scratch-workspace wording) leaves a reader unable to tell which
+    one is open without resolving it themselves. `project="sylow"` here,
+    distinct from the `settings()` fixture's own slug, so a passing
+    assertion can only mean the project name is actually being read.
+    """
+    config = configuration.Config(
+        model="claude-opus-5",
+        lean_command=("lake", "env", "lean"),
+        lean_project=None,
+        lean_timeout=180.0,
+        latex_command=("pdflatex",),
+        root=tmp_path,
+        project="sylow",
+        path=tmp_path / "config.toml",
+    )
+    line = banner.status_line(config)
+    assert "sylow" in line
+    assert str(config.layout.problem) in line
+
+
+def test_the_banner_uses_status_line_for_the_project(tmp_path: Path):
+    """Pinned so the banner cannot drift from `/status`'s own wording."""
+    config = settings(tmp_path)
+    hint = banner.lines(config)[1][1]
+    assert hint.startswith(banner.status_line(config))
+
+
 def test_the_hint_points_at_the_registry_not_just_model(tmp_path: Path):
     hint = banner.lines(settings(tmp_path))[4][1]
     assert "/help" in hint and "/exit" in hint
