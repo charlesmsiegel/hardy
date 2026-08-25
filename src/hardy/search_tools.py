@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from pathlib import Path
 from typing import Any
 
 from .config import Config
@@ -109,14 +110,32 @@ def _same_toolchain(config: Config) -> bool:
     command = tuple(config.lean_command)
     if command[1:] != LAKE_ENV_LEAN[1:]:
         return False
-    resolved = shutil.which(command[0])
-    lake = shutil.which(str(config.lake))
+    resolved = _resolve(command[0], config.lean_project)
+    lake = _resolve(str(config.lake), config.lean_project)
     if resolved is None or lake is None:
         return False
     try:
         return os.path.samefile(resolved, lake)
     except OSError:
         return False
+
+
+def _resolve(command: str, project: Path | None) -> str | None:
+    """Where this command actually runs from.
+
+    A relative path is resolved against the *project* directory, because that
+    is the working directory both Lean facades hand the child. Resolving it
+    against Hardy's own process directory instead made a matching pair like
+    `./bin/lake` on both sides compare unequal whenever Hardy was started
+    outside the project -- refusing search over a difference that does not
+    exist.
+    """
+    path = Path(command)
+    if not path.is_absolute() and (path.parent != Path(".") or command.startswith(".")):
+        if project is None:
+            return None
+        return shutil.which(str((project / path).resolve()))
+    return shutil.which(command)
 
 
 def build_runtime(config: Config) -> tuple[SearchToolRuntime | None, str]:
