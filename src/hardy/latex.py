@@ -17,6 +17,11 @@ BODY = "\\begin{document}"
 INCLUSION = re.compile(r"\\(?:input|include|subfile)\s*\{([^}]*)\}")
 
 
+def compiles_document(root: str, path: str) -> bool:
+    """Whether saving `path` compiles the writeup itself rather than a probe."""
+    return path == ROOT_DOCUMENT or _includes(root, path)
+
+
 def uncommented(source: str) -> str:
     r"""`source` with its TeX comments dropped.
 
@@ -101,6 +106,11 @@ class LatexTools:
         the mathematics.
         """
         started = time.monotonic()
+        # Whether what gets compiled is the document itself. A probe carries the
+        # real preamble around one fragment, which answers whether the fragment
+        # is sound and nothing else -- so its PDF is not the writeup and its
+        # labels are not the writeup's.
+        actual = True
         with tempfile.TemporaryDirectory(prefix="hardy-tex-") as directory:
             work = Path(directory)
             if tree is not None and tree.is_dir():
@@ -125,6 +135,7 @@ class LatexTools:
                 # had been checked -- so it is compiled through a probe root
                 # carrying the real preamble.
                 root.write_text(_probe_root(root.read_text(encoding="utf-8"), path), encoding="utf-8")
+                actual = False
             try:
                 # `run_guarded` rather than `run_process`: a TeX installation
                 # needs the environment Hardy was started with, and
@@ -149,7 +160,12 @@ class LatexTools:
                         False, f"interrupted after {elapsed:.3f}s\n{output}", source
                     )
                 pdf = work / "writeup.pdf"
-                if outcome.returncode == 0 and output_dir is not None and pdf.exists():
+                # Published only from the real document. A probe's output was
+                # being written over `writeup.pdf` -- so the file a human opens
+                # became a page holding one fragment -- and its `.aux` was
+                # handing the completion gate labels that the writeup does not
+                # create, from a document nobody will ever read.
+                if actual and outcome.returncode == 0 and output_dir is not None and pdf.exists():
                     output_dir.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(pdf, output_dir / "writeup.pdf")
                     # The compiler's own record of the labels it created. What

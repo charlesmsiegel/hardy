@@ -46,11 +46,29 @@ BRANCH_END = re.compile(r"\\fi(?![A-Za-z])")
 # An environment opening, with whatever optional arguments it carries:
 # `\begin{Verbatim}[fontsize=\small]`, `\begin{minted}{lean}`.
 OPENING = re.compile(r"\\begin\{([A-Za-z*]+)\}((?:\[[^\]]*\]|\{[^}]*\})*)")
+# Options that let a "verbatim" environment stop being one. `lstlisting` with
+# `literate={True}{{False}}4` renders `False` where the source says `True`, and
+# an escape character hands part of the listing back to TeX -- either way the
+# reader is shown something other than what was written, which is the one thing
+# quoting Lean is supposed to rule out. A block configured with any of these is
+# not a quotation.
+TRANSFORMING = re.compile(
+    r"\b(?:literate|escapechar|escapeinside|escapebegin|escapeend|texcl|mathescape"
+    r"|moredelim|deletekeywords|showstringspaces)\b"
+)
 # `\verb|...|`, `\lstinline{...}`: one delimiter, whatever character it is.
 INLINE = re.compile(r"\\(?:verb|lstinline)\*?(?:\[[^\]]*\])?(.)(.*?)\1")
 # TeX escapes, undone, so prose written for a compiler can be compared with the
 # plain sentence a human approved.
 ESCAPED = re.compile(r"\\([%$&#_{}])")
+# A macro definition. Its body is not typeset where it is written, and an
+# appendix "stating" an assumption only inside an unused `\newcommand` states
+# it to nobody. Bodies are dropped rather than expanded -- expansion is a TeX
+# engine's job, and dropping keeps the failure in the direction that refuses.
+DEFINITION = re.compile(
+    r"\\(?:new|renew|provide)command\s*\*?\s*(?:\{\s*\\[A-Za-z@]+\s*\}|\\[A-Za-z@]+)"
+    r"\s*(?:\[[^\]]*\])*\s*"
+)
 # The command that opens an appendix. Bounded so `\appendixtitle` does not
 # answer for it.
 APPENDIX = re.compile(r"\\appendix(?![A-Za-z])")
@@ -130,6 +148,7 @@ def displayed(source: str) -> Displayed:
     started = 0
     pending: list[str] | None = None
     skipping = False
+    trusted = True
     closing = ""
 
     def emit(part: str) -> None:
@@ -146,7 +165,8 @@ def displayed(source: str) -> Displayed:
                     pending.append(line)
                     break
                 pending.append(line[:found])
-                blocks.append((started, "\n".join(pending)))
+                if trusted:
+                    blocks.append((started, "\n".join(pending)))
                 pending = None
                 line = line[found + len(closing) :]
                 continue
@@ -176,6 +196,10 @@ def displayed(source: str) -> Displayed:
                 ),
                 None,
             )
+            # A transforming block still *ends* where it ends -- the scan has to
+            # walk to its `\end` either way -- but nothing inside it counts as
+            # shown to the reader.
+            faithful = opening is None or not TRANSFORMING.search(opening.group(2))
             skipped = FALSE_BRANCH.search(visible)
             if skipped is not None and (opening is None or skipped.start() < opening.start()):
                 emit(visible[: skipped.start()])
@@ -190,6 +214,7 @@ def displayed(source: str) -> Displayed:
                 break
             emit(visible[: opening.start()])
             started = position
+            trusted = faithful
             pending = []
             closing = f"\\end{{{opening.group(1)}}}"
             line = line[opening.end() :]
@@ -308,6 +333,36 @@ def quotes(statement: str, blocks: Sequence[str]) -> bool:
     return False
 
 
+def without_definitions(text: str) -> str:
+    r"""`text` with the body of every macro definition removed.
+
+    What a definition holds is typeset where the macro is *used*, if it ever
+    is. Left in, an appendix could carry its whole disclosure inside a
+    `\newcommand` nobody expands and satisfy a reader who was shown nothing.
+    """
+    out: list[str] = []
+    index = 0
+    while index < len(text):
+        found = DEFINITION.search(text, index)
+        if found is None:
+            out.append(text[index:])
+            break
+        out.append(text[index : found.start()])
+        index = found.end()
+        if index < len(text) and text[index] == "{":
+            depth = 0
+            while index < len(text):
+                if text[index] == "{":
+                    depth += 1
+                elif text[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        index += 1
+                        break
+                index += 1
+    return "".join(out)
+
+
 def prose(document: Displayed) -> str:
     """What the writeup *says*, as TeX would read it: normalised, unescaped.
 
@@ -320,7 +375,7 @@ def prose(document: Displayed) -> str:
     was "True": the Lean quotation stood in for the explanation it exists to be
     checked against.
     """
-    return ESCAPED.sub(r"\1", normalise(document.executed))
+    return ESCAPED.sub(r"\1", normalise(without_definitions(document.executed)))
 
 
 def has_appendix(document: Displayed) -> bool:
@@ -456,7 +511,8 @@ def _assumption_obligations(
         if marker is not None and offset >= marker.start()
     )
     written = ESCAPED.sub(
-        r"\1", normalise(document.executed[marker.end() :] if marker else "")
+        r"\1",
+        normalise(without_definitions(document.executed[marker.end() :] if marker else "")),
     )
     if marker is None:
         owed.append(

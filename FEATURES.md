@@ -56,12 +56,19 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   `verbatim`, `Verbatim`, `lstlisting`, `minted`. `alltt` and `semiverbatim` keep TeX's
   grouping, so `{α : Type}` would lose its braces on the way to the reader.
 - **Known limit — the document is scanned, not typeset.** Comments are dropped, a
-  literal `\iffalse` branch is skipped, and `\input` is followed only where TeX would
-  execute it — but this is a scan, not a TeX engine. A document that reaches its
-  listings through macro expansion, or through a conditional this scanner does not
-  model, is read as not quoting them and owes a plain listing instead. Refusing in that
-  direction is the safe one; the failure to avoid is crediting a quotation no reader
-  was shown.
+  literal `\iffalse` branch is skipped, macro definition bodies are removed rather than
+  expanded, a listing configured to transform what it shows (`literate`, an escape
+  character) is not counted as a quotation, and `\input` is followed only where TeX
+  would execute it — but this is a scan, not a TeX engine. A document that reaches its
+  listings or its prose through macro expansion, or through a conditional this scanner
+  does not model, is read as not carrying them and owes a plain listing or a plain
+  sentence instead. Refusing in that direction is the safe one; the failure to avoid is
+  crediting a quotation no reader was shown.
+- **Now (implemented):** only a compile of the writeup itself publishes anything. Saving
+  a fragment the root does not `\input` yet is checked through a probe document carrying
+  the real preamble — that answers whether the fragment is sound and nothing about the
+  writeup, so its PDF no longer overwrites `writeup.pdf` and its labels no longer reach
+  the completion gate.
 - **Now (implemented):** a naming registry links Lean declarations to LaTeX labels
   for later translation review; this link is not itself a faithfulness grade.
 - **Now (implemented):** introducing an axiom pauses for human approval and records

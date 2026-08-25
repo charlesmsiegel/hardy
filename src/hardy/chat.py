@@ -17,7 +17,7 @@ from . import audit, completion, process
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
-from .latex import ROOT_DOCUMENT, LatexTools
+from .latex import ROOT_DOCUMENT, LatexTools, compiles_document
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
@@ -1130,10 +1130,18 @@ class MathematicsSession:
             return result
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source.rstrip() + "\n", encoding="utf-8")
-        # Stamped after the write and only on a compile that succeeded: this is
-        # the record that the tree on disk is the tree those labels came from.
-        self.state["tex_signature"] = self._tex_signature()
-        self._save_state()
+        # Stamped after the write, on a compile that succeeded, and only when
+        # what was compiled is the writeup itself. Saving a fragment the root
+        # does not include yet is checked through a probe document, which says
+        # the fragment is sound and nothing about the writeup -- stamping that
+        # would mark the tree established on the strength of a document nobody
+        # will read.
+        root = self.tex_root / ROOT_DOCUMENT
+        if compiles_document(
+            root.read_text(encoding="utf-8") if root.is_file() else "", relative
+        ):
+            self.state["tex_signature"] = self._tex_signature()
+            self._save_state()
         # Advisory rather than a refusal. With the save_lean ratchet in place a
         # hard gate here would deadlock: Lean blocked for want of a writeup,
         # and the writeup blocked for not yet covering everything registered.
