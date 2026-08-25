@@ -113,6 +113,7 @@ def settings(tmp_path: Path) -> configuration.Config:
         lean_project=None,
         lean_timeout=180.0,
         latex_command=("pdflatex",),
-        workspace=tmp_path / "workspace",
+        root=tmp_path,
+        project="workspace",
         path=tmp_path / "config.toml",
     )

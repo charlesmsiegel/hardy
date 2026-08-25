@@ -1109,7 +1109,11 @@ Replace `_read_state` and add its counterpart:
             return {}
         try:
             loaded = json.loads(self.local_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            # UnicodeDecodeError is in the list deliberately: it is not a
+            # subclass of the others, and without it a file of invalid bytes
+            # would refuse to open the project rather than being treated as the
+            # disposable state this docstring promises it is.
             return {}
         return loaded if isinstance(loaded, dict) else {}
 
@@ -1897,7 +1901,11 @@ Add to `src/hardy/cli.py`:
 
 ```python
 def offer_registration(
-    config: configuration.Config, *, interactive: bool, choice: bool | None
+    config: configuration.Config,
+    *,
+    interactive: bool,
+    choice: bool | None,
+    ask: Callable[[str], str] = input,
 ) -> str | None:
     """Register this problem with a host Lake project, if asked to.
 
@@ -1909,13 +1917,24 @@ def offer_registration(
     host = config.root / "lakefile.toml"
     if not host.is_file() or choice is False:
         return None
-    if choice is None and not interactive:
+    slug = config.project
+    source = f"{slug}/lean"
+    existing = lakefile.registered_libraries(host)
+    # Idempotent ONLY when the existing entry is the one we would write. A
+    # library of this name pointing somewhere else is a conflict the user needs
+    # told about, and returning here would swallow `register`'s refusal and
+    # leave `--register-lakefile` silently doing nothing.
+    if existing.get(slug) == source:
         return None
     if choice is None:
-        return None  # the caller with a TTY passes an explicit answer
-    slug = config.project
-    if slug in lakefile.registered_libraries(host):
-        return None
+        if not interactive:
+            return None
+        # The offer this function exists to make. Without it registration is
+        # reachable only through the flag, and the promise that Hardy "offers
+        # to register" is never kept on the interactive path it was written for.
+        answer = ask(f"Register {slug}/lean with {host.name} so `lake build` sees it? [y/N] ")
+        if answer.strip().lower() not in {"y", "yes"}:
+            return None
     try:
         stanza = lakefile.register(host, config.root, slug)
     except lakefile.RegistrationRefused as refusal:
@@ -2153,6 +2172,225 @@ Expected: no hits describing `.hardy/` as a workspace or `--workspace` as a flag
 ```bash
 git add -A
 git commit -m "Point the installers and the prose at the layout that now exists"
+```
+
+---
+
+### Task 14: Close the escapes `layout.py` left open
+
+Corrective, added after review of the committed Tasks 1-2 found two real escapes and one portability gap. Both P1s were **reproduced** before this task was written.
+
+**Files:**
+- Modify: `src/hardy/layout.py`
+- Test: `tests/test_layout.py`
+
+**Interfaces:**
+- Consumes: `Layout`, `validate_slug`, `_write_once` from Tasks 1-2.
+- Produces: `Layout.resolved_problem() -> Path` (raises `LayoutError` if it escapes); `RESERVED_NAMES: frozenset[str]`; `_write_once` replaced by `_ensure_rules(path, header, rules)`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def test_a_symlinked_problem_directory_is_refused(tmp_path: Path):
+    r"""Validating the name is not validating the path.
+
+    A repository can contain `main -> ..`. The slug passes every check in
+    `validate_slug` — it is one component, not `..`, not absolute — and
+    `ensure()` then follows the link and creates `lean/`, `tex/`, `cas/`,
+    `.local/` and `.gitignore` OUTSIDE the root. Reproduced before this test
+    was written: with root `/tmp/x/root` and `main -> ..`, `ensure()` created
+    `/tmp/x/lean`.
+    """
+    (tmp_path / "root").mkdir()
+    (tmp_path / "root" / "main").symlink_to("..")
+    resolved = layout.Layout(root=tmp_path / "root", slug="main")
+
+    with pytest.raises(layout.LayoutError, match="outside"):
+        resolved.ensure()
+
+    assert not (tmp_path / "lean").exists(), "nothing may be created outside the root"
+
+
+def test_an_ordinary_directory_still_resolves(tmp_path: Path):
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.ensure()
+    assert resolved.resolved_problem() == (tmp_path / "sylow").resolve()
+
+
+def test_missing_rules_are_added_to_an_existing_ignore_file(tmp_path: Path):
+    """A pre-existing .gitignore must not leave machine-local state exposed.
+
+    Reproduced before this test was written: with `*.log` already in the
+    problem's .gitignore, `ensure()` returned without adding anything, so
+    `.local/` — the provider session id, the usage ledger, and the terminal
+    input history, which holds text typed and never sent — sat as ordinary
+    untracked files ready to be committed.
+    """
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.problem.mkdir(parents=True)
+    (resolved.problem / ".gitignore").write_text("*.log\n", encoding="utf-8")
+
+    resolved.ensure()
+
+    rules = (resolved.problem / ".gitignore").read_text(encoding="utf-8")
+    assert "*.log" in rules, "the user's own rules are preserved"
+    assert "/.local/" in rules
+    assert "/.build/" in rules
+
+
+def test_rules_already_present_are_not_duplicated(tmp_path: Path):
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.ensure()
+    resolved.ensure()
+    rules = (resolved.problem / ".gitignore").read_text(encoding="utf-8")
+    assert rules.count("/.local/") == 1
+    assert rules.count("/.build/") == 1
+
+
+@pytest.mark.parametrize("reserved", ["CON", "con", "PRN", "AUX", "NUL", "COM1", "LPT1", "trailing.", "trailing "])
+def test_a_windows_reserved_slug_is_refused_on_every_platform(reserved: str):
+    """Checked everywhere, not only on Windows.
+
+    The slug can arrive from a committed config that travels with a clone, so a
+    project accepted on Linux must not become uncreatable — or, with a trailing
+    dot, silently alias a different directory — when the same checkout is
+    opened on Windows.
+    """
+    with pytest.raises(layout.LayoutError):
+        layout.validate_slug(reserved)
+
+
+@pytest.mark.parametrize("bad", ['a:b', 'a*b', 'a?b', 'a"b', "a<b", "a>b", "a|b"])
+def test_windows_reserved_characters_are_refused(bad: str):
+    with pytest.raises(layout.LayoutError):
+        layout.validate_slug(bad)
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `uv run --extra test pytest tests/test_layout.py -v`
+Expected: the symlink test fails by creating files outside the root; the ignore-file test fails on the missing rules; the reserved-name tests fail with no exception raised.
+
+- [ ] **Step 3: Implement**
+
+Add to `src/hardy/layout.py`:
+
+```python
+# Names Windows cannot use as a directory, whatever the extension, plus the
+# characters it forbids. Enforced on every platform because a slug reaches here
+# from a committed config file that travels with a clone: a project created on
+# Linux must not be one its author cannot open on Windows.
+RESERVED_NAMES = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{digit}" for digit in range(1, 10)}
+    | {f"lpt{digit}" for digit in range(1, 10)}
+)
+RESERVED_CHARACTERS = frozenset(':*?"<>|')
+```
+
+In `validate_slug`, after the existing separator checks and before the return:
+
+```python
+    if text.rstrip(". ") != text:
+        raise LayoutError(f"a project slug may not end in a dot or a space: {slug!r}")
+    if text.partition(".")[0].lower() in RESERVED_NAMES:
+        raise LayoutError(f"{slug!r} is a reserved device name on Windows")
+    if set(text) & RESERVED_CHARACTERS:
+        raise LayoutError(f"a project slug may not contain any of {''.join(sorted(RESERVED_CHARACTERS))}: {slug!r}")
+```
+
+Add the path check to `Layout`:
+
+```python
+    def resolved_problem(self) -> Path:
+        """The problem directory, proven to be inside the root.
+
+        `validate_slug` checks the NAME; this checks the PATH, and they are not
+        the same question. A repository may ship `main -> ..` as a symlink: the
+        slug passes every name check, and following it would put this project's
+        sources, record and ignore file outside the root Hardy was pointed at.
+        """
+        root = self.root.resolve()
+        problem = self.problem.resolve()
+        if problem.parent != root:
+            raise LayoutError(
+                f"{self.problem} resolves to {problem}, which is outside {root}"
+            )
+        return problem
+```
+
+and call it first thing in `ensure()`:
+
+```python
+    def ensure(self) -> None:
+        # Before anything is created: a symlinked problem directory would
+        # otherwise have every mkdir below land outside the root.
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.problem.mkdir(parents=True, exist_ok=True)
+        self.resolved_problem()
+        for directory in (self.lean, self.tex, self.cas, self.local, self.hardy_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+        _ensure_rules(self.problem / ".gitignore", PROBLEM_HEADER, PROBLEM_RULES)
+        _ensure_rules(self.hardy_dir / ".gitignore", TOOLING_HEADER, TOOLING_RULES)
+```
+
+Replace `PROBLEM_IGNORE`/`TOOLING_IGNORE`/`_write_once` with rule lists and an appender:
+
+```python
+PROBLEM_HEADER = (
+    "# Written by Hardy. Everything here is recomputable from the sources
+"
+    "# beside it, or belongs to this machine and this account.
+"
+)
+PROBLEM_RULES = ("/.build/", "/.local/")
+TOOLING_HEADER = (
+    "# Written by Hardy. The oleans for this project's shared Lean library,
+"
+    "# rebuilt on demand and never committed.
+"
+)
+TOOLING_RULES = ("/.build/",)
+
+
+def _ensure_rules(path: Path, header: str, rules: tuple[str, ...]) -> None:
+    """Make sure `rules` are in `path`, leaving whatever else is there alone.
+
+    Appending rather than writing once. A problem directory may already carry a
+    `.gitignore` a user wrote, and returning early on that basis left `.local/`
+    unignored -- so the provider session id, the spend ledger, and the terminal
+    input history, which holds text typed and never sent, sat as ordinary
+    untracked files waiting to be committed.
+    """
+    existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    missing = [rule for rule in rules if rule not in existing]
+    if not missing:
+        return
+    lines = list(existing)
+    if lines and lines[-1].strip():
+        lines.append("")
+    if not existing:
+        lines.extend(header.rstrip("\n").splitlines())
+    lines.extend(missing)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+```
+
+- [ ] **Step 4: Run the tests**
+
+Run: `uv run --extra test pytest tests/test_layout.py -v`
+Expected: PASS, including the six earlier tests from Task 2 — `test_ensure_does_not_overwrite_an_edited_ignore_file` must still pass, because appending a missing rule is not overwriting an edit.
+
+- [ ] **Step 5: Run the whole suite**
+
+Run: `uv run --extra test pytest -q`
+Expected: PASS
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A
+git commit -m "Check the path and not only the name, and never leave .local unignored"
 ```
 
 ---

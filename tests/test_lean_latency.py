@@ -1151,7 +1151,8 @@ def test_an_empty_lean_command_is_reported_not_dereferenced(tmp_path: Path, caps
         lean_project=project,
         lean_timeout=30.0,
         latex_command=("tectonic",),
-        workspace=tmp_path / ".hardy",
+        root=tmp_path,
+        project="main",
         limits=RunLimits(),
     )
     args = cli.build_parser().parse_args(["latency"])
@@ -1190,7 +1191,8 @@ def test_the_cli_measures_in_the_configured_lake_project(tmp_path: Path, capsys,
         lean_project=project,
         lean_timeout=30.0,
         latex_command=("tectonic",),
-        workspace=tmp_path / ".hardy",
+        root=tmp_path,
+        project="main",
         limits=RunLimits(),
     )
     args = cli.build_parser().parse_args(["latency", "--calls", "10", "--total-seconds", "150"])
@@ -1211,7 +1213,8 @@ def _config_for(tmp_path: Path, project: Path):
         lean_project=project,
         lean_timeout=30.0,
         latex_command=("tectonic",),
-        workspace=tmp_path / ".hardy",
+        root=tmp_path,
+        project="main",
         limits=RunLimits(),
     )
 

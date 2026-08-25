@@ -60,7 +60,8 @@ def _config(tmp_path: Path, project: Path | None, **overrides):
         lean_project=project,
         lean_timeout=30.0,
         latex_command=('pdflatex',),
-        workspace=tmp_path / 'workspace',
+        root=tmp_path,
+        project='main',
         lake=lake,
     )
     fields.update(overrides)
@@ -201,7 +202,8 @@ def test_a_relative_lake_resolves_where_the_child_will_run_it(tmp_path) -> None:
     lake.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
     lake.chmod(0o755)
     config = configuration.Config(
-        workspace=tmp_path / 'workspace',
+        root=tmp_path,
+        project='main',
         lean_project=project,
         lake=pathlib.Path('bin/lake'),
         lean_command=('bin/lake', 'env', 'lean'),

@@ -31,7 +31,7 @@ def lines(config: Any, *, cas: Any = None, cas_detail: str = "") -> list[tuple[s
         ("normal", "Hardy — interactive mathematics workspace"),
         (
             "hint",
-            f"Workspace: {config.workspace}    Model: {config.model}  "
+            f"Workspace: {config.layout.problem}    Model: {config.model}  "
             f"(Claude Code subscription)",
         ),
         ("hint", f"Lean project: {project}"),

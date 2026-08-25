@@ -11,7 +11,8 @@ def _config(module, tmp_path):
         lean_project=None,
         lean_timeout=5.0,
         latex_command=('true',),
-        workspace=tmp_path / 'workspace',
+        root=tmp_path,
+        project='workspace',
         runs_root=tmp_path / 'runs',
     )
 

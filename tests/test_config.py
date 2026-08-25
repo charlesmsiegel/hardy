@@ -25,7 +25,8 @@ def test_defaults_apply_when_no_config_file_exists(tmp_path: Path):
     assert settings.lean_command == ("lake", "env", "lean")
     assert settings.latex_command[0] == "pdflatex"
     assert settings.lean_project is None
-    assert settings.workspace == Path(".hardy")
+    assert settings.project == "main"
+    assert settings.root == Path.cwd()
     assert settings.lean_timeout == config.DEFAULT_LEAN_TIMEOUT
     assert settings.path is None
 
@@ -104,8 +105,8 @@ def test_writing_a_setting_upserts_one_line(tmp_path: Path):
     path = tmp_path / "config.toml"
     path.write_text('# comment\nmodel = "old"\nlean_timeout = 90\n', encoding="utf-8")
     config.write_setting(path, "model", "new")
-    config.write_setting(path, "workspace", "here")
-    assert path.read_text(encoding="utf-8") == '# comment\nmodel = "new"\nlean_timeout = 90\nworkspace = "here"\n'
+    config.write_setting(path, "runs_root", "here")
+    assert path.read_text(encoding="utf-8") == '# comment\nmodel = "new"\nlean_timeout = 90\nruns_root = "here"\n'
     assert config.load(path).model == "new"
 
 
@@ -137,16 +138,16 @@ def test_an_existing_config_path_is_still_reported(tmp_path: Path):
 
 
 def test_removing_a_setting_leaves_every_other_line_alone(tmp_path: Path):
-    path = write(tmp_path / "config.toml", '# comment\nmodel = "x"\nworkspace = "gone"\nlean_timeout = 90\n')
-    config.remove_setting(path, "workspace")
-    assert path.read_text(encoding="utf-8") == '# comment\nmodel = "x"\nlean_timeout = 90\n' 
+    path = write(tmp_path / "config.toml", '# comment\nmodel = "x"\nruns_root = "gone"\nlean_timeout = 90\n')
+    config.remove_setting(path, "runs_root")
+    assert path.read_text(encoding="utf-8") == '# comment\nmodel = "x"\nlean_timeout = 90\n'
 
 
 def test_removing_an_absent_setting_or_file_is_a_no_op(tmp_path: Path):
     path = write(tmp_path / "config.toml", 'model = "x"\n')
-    config.remove_setting(path, "workspace")
+    config.remove_setting(path, "runs_root")
     assert path.read_text(encoding="utf-8") == 'model = "x"\n'
-    config.remove_setting(tmp_path / "missing.toml", "workspace")
+    config.remove_setting(tmp_path / "missing.toml", "runs_root")
 
 
 def test_removing_an_unknown_setting_is_rejected(tmp_path: Path):
@@ -214,3 +215,121 @@ def test_the_move_does_not_clobber_a_config_that_already_exists(tmp_path: Path):
 
 def test_nothing_to_move_is_not_an_error(tmp_path: Path):
     assert config.migrate_global(tmp_path / "absent.toml", tmp_path / "new.toml") is False
+
+
+def test_the_workspace_setting_is_gone(tmp_path: Path):
+    path = tmp_path / "config.toml"
+    path.write_text('workspace = ".hardy"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown settings"):
+        config.read_file(path)
+
+
+def test_the_project_config_names_the_active_problem(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".hardy").mkdir()
+    (tmp_path / ".hardy" / "config.toml").write_text('project = "sylow"\n', encoding="utf-8")
+    settings = config.load(tmp_path / "absent-global.toml", root=tmp_path)
+    assert settings.project == "sylow"
+    assert settings.layout.problem == tmp_path / "sylow"
+
+
+def test_a_custom_global_config_does_not_suppress_the_project_config(tmp_path: Path):
+    """`HARDY_CONFIG` selects the global layer only.
+
+    Letting it win over everything would mean a wrapper pointing it at its own
+    settings file silently opened -- and wrote -- the wrong problem's record.
+    """
+    (tmp_path / ".hardy").mkdir()
+    (tmp_path / ".hardy" / "config.toml").write_text('project = "sylow"\n', encoding="utf-8")
+    custom = tmp_path / "custom-global.toml"
+    custom.write_text('model = "claude-opus-5"\n', encoding="utf-8")
+
+    settings = config.load(custom, root=tmp_path)
+
+    assert settings.model == "claude-opus-5"
+    assert settings.project == "sylow"
+
+
+def test_the_flag_beats_the_project_config(tmp_path: Path):
+    (tmp_path / ".hardy").mkdir()
+    (tmp_path / ".hardy" / "config.toml").write_text('project = "sylow"\n', encoding="utf-8")
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path, project="galois")
+    assert settings.project == "galois"
+
+
+def test_the_only_project_present_is_the_default(tmp_path: Path):
+    (tmp_path / ".hardy").mkdir()
+    (tmp_path / "galois").mkdir()
+    (tmp_path / "galois" / "session.json").write_text("{}", encoding="utf-8")
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path)
+    assert settings.project == "galois"
+
+
+def test_an_empty_root_falls_back_to_main_without_reading_stdin(tmp_path: Path):
+    """Non-interactive selection must be deterministic.
+
+    Prompting here would hang `hardy batch` and CI, fail at EOF, or consume the
+    first piped message as a slug.
+    """
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path, interactive=False)
+    assert settings.project == "main"
+
+
+def test_two_projects_and_no_active_setting_falls_back_to_main(tmp_path: Path):
+    (tmp_path / ".hardy").mkdir()
+    for slug in ("galois", "sylow"):
+        (tmp_path / slug).mkdir()
+        (tmp_path / slug / "session.json").write_text("{}", encoding="utf-8")
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path, interactive=False)
+    assert settings.project == "main"
+
+
+def test_a_project_config_cannot_name_an_executable(tmp_path: Path):
+    """The project layer selects a problem; it does not choose programs.
+
+    `.hardy/config.toml` is committed and arrives with any clone, and `_chat`
+    builds the CAS runtime -- which runs the configured executable to probe its
+    version -- before the prompt appears. An unrestricted merge would let a
+    repository run an arbitrary program the moment someone starts Hardy in it.
+    """
+    (tmp_path / ".hardy").mkdir()
+    (tmp_path / ".hardy" / "config.toml").write_text(
+        'project = "sylow"\ncas_command = "/tmp/evil"\nlean_command = "/tmp/evil"\n',
+        encoding="utf-8",
+    )
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path)
+    assert settings.project == "sylow"
+    assert settings.cas_command is None
+    assert "/tmp/evil" not in " ".join(settings.lean_command)
+
+
+def test_the_environment_names_the_root_before_the_project_config_is_found(tmp_path: Path, monkeypatch):
+    """Otherwise HARDY_ROOT is advertised and inert.
+
+    The project layer lives inside the root, so a root resolved after the
+    environment is read would send Hardy to the current directory for its
+    project config and open the wrong problem there.
+    """
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / ".hardy").mkdir(parents=True)
+    (elsewhere / ".hardy" / "config.toml").write_text('project = "sylow"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HARDY_ROOT", str(elsewhere))
+
+    settings = config.load(tmp_path / "absent.toml")
+
+    assert settings.root == elsewhere
+    assert settings.project == "sylow"
+
+
+def test_runs_root_survives(tmp_path: Path):
+    """Staged runs are out of scope; `prove` and `accept` still read this."""
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path)
+    assert settings.runs_root == Path("runs")
+
+
+def test_a_slug_that_escapes_the_root_is_refused(tmp_path: Path):
+    (tmp_path / ".hardy").mkdir()
+    (tmp_path / ".hardy" / "config.toml").write_text('project = "../other"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="one directory name"):
+        config.load(tmp_path / "absent.toml", root=tmp_path)

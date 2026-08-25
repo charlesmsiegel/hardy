@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
-from . import cas_tools, claude_runtime, doctor, latency
+from . import cas_tools, claude_runtime, doctor, latency, layout
 from . import config as configuration
 from .cas import CasError
 from .cas_export import export_session
@@ -64,11 +64,12 @@ def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> config
     try:
         return configuration.load(
             args.config,
+            root=getattr(args, "root", None),
+            project=getattr(args, "project", None),
             model=args.model,
             lean_command=args.lean_command,
             lean_project=args.lean_project,
             latex_command=args.latex_command,
-            workspace=getattr(args, "workspace", None),
         )
     except (ValueError, OSError) as error:
         parser.error(str(error))
@@ -96,13 +97,13 @@ def _chat(config: configuration.Config, *, plain: bool = False) -> int:
         backend_name=config.cas_backend,
         command=config.cas_command,
         limits=config.limits,
-        log_path=config.workspace / "cas" / "cells.jsonl",
-        cwd=config.workspace / "cas",
+        log_path=config.layout.cas / "cells.jsonl",
+        cwd=config.layout.cas,
     )
 
     def build(confirm: Callable[[dict[str, str]], bool]) -> MathematicsSession:
         return MathematicsSession(
-            config.workspace,
+            config.layout.problem,
             runtime_factory(str(config.model)),
             config.lean_command,
             config.latex_command,
@@ -750,7 +751,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command")
     chat = subparsers.add_parser("chat", help="start or resume an interactive session")
-    chat.add_argument("--workspace", type=Path, help=f"workspace directory (default {configuration.DEFAULT_WORKSPACE})")
+    chat.add_argument("--root", type=Path, help="project root (default: the current directory)")
+    chat.add_argument("--project", help=f"which problem to open (default: the active one, or {layout.DEFAULT_SLUG})")
     check = subparsers.add_parser("doctor", help="check that Lean, LaTeX, and the model are usable")
     check.add_argument("--deep", action="store_true", help="also compile a Mathlib probe file, which can take minutes")
     # The evidence DESIGN.md and issue #54 defer warm pools until. Separate from

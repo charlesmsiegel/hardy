@@ -17,7 +17,6 @@ DEFAULT_LEAN_COMMAND = "lake env lean"
 # generous; a fast environment simply never reaches it.
 DEFAULT_LEAN_TIMEOUT = 180.0
 DEFAULT_LATEX_COMMAND = "pdflatex -interaction=nonstopmode -halt-on-error"
-DEFAULT_WORKSPACE = ".hardy"
 DEFAULT_RUNS_ROOT = "runs"
 DEFAULT_LAKE = "lake"
 DEFAULT_ELAN = "elan"
@@ -36,7 +35,8 @@ SETTINGS = {
     "lean_project": "HARDY_LEAN_PROJECT",
     "lean_timeout": "HARDY_LEAN_TIMEOUT",
     "latex_command": "HARDY_LATEX_COMMAND",
-    "workspace": "HARDY_WORKSPACE",
+    "root": "HARDY_ROOT",
+    "project": "HARDY_PROJECT",
     "runs_root": "HARDY_RUNS_ROOT",
     "lake": "HARDY_LAKE",
     "elan": "HARDY_ELAN",
@@ -46,6 +46,12 @@ SETTINGS = {
     "cas_backend": "HARDY_CAS_BACKEND",
     "cas_command": "HARDY_CAS_COMMAND",
 }
+
+# What a project's own committed config may say. Deliberately tiny: the file
+# travels with a clone, and Hardy runs the configured CAS executable before the
+# prompt appears. A repository gets to say which problem is active. It does not
+# get to say which programs run.
+PROJECT_SETTINGS = frozenset({"project"})
 
 # SymPy is the default because it is a Python dependency and therefore always
 # present. Singular and Macaulay2 are far better at algebraic geometry and far
@@ -79,7 +85,7 @@ def legacy_config_path() -> Path:
 
 #: Settings that existed once and do not any more. A migrated file carrying one
 #: would be rejected by `read_file`, so the move drops them.
-RETIRED_SETTINGS = ("workspace", "runs_root")
+RETIRED_SETTINGS = ("workspace",)
 
 
 def migrate_global(source: Path | None = None, destination: Path | None = None) -> bool:
@@ -122,7 +128,8 @@ class Config:
     lean_project: Path | None
     lean_timeout: float
     latex_command: tuple[str, ...]
-    workspace: Path
+    root: Path
+    project: str
     # Where staged `prove` runs are kept, and the pinned toolchain that builds
     # their documents. The budgets a run is frozen under travel with them.
     runs_root: Path = Path(DEFAULT_RUNS_ROOT)
@@ -149,6 +156,11 @@ class Config:
         """
         return self.requested_path or self.path or default_config_path()
 
+    @property
+    def layout(self) -> layout.Layout:
+        """Where this configuration says the active problem's parts live."""
+        return layout.Layout(root=self.root, slug=self.project)
+
 
 def read_file(path: Path) -> dict[str, Any]:
     """Read one config file, rejecting keys Hardy does not understand.
@@ -167,10 +179,98 @@ def read_file(path: Path) -> dict[str, Any]:
     return {key: value for key, value in values.items() if str(value).strip() != ""}
 
 
-def load(path: Path | None = None, **overrides: Any) -> Config:
-    """Resolve configuration from the config file, environment, and CLI flags."""
+def existing_projects(root: Path) -> list[str]:
+    """The slugs under `root` that already hold a record, sorted.
+
+    A directory counts as a project when Hardy has written its record there.
+    An empty directory a user happened to create is not one, and neither is
+    `.hardy/`, which `validate_slug` refuses anyway.
+    """
+    if not root.is_dir():
+        return []
+    found = []
+    for child in sorted(root.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        if (child / layout.RECORD).is_file():
+            found.append(child.name)
+    return found
+
+
+def active_project(root: Path, stated: str | None, project_values: dict[str, Any]) -> str:
+    """Which problem this run opens.
+
+    Deterministic, and it never reads stdin: prompting on a piped launch would
+    hang, fail at EOF, or take the first chat message for a slug. The caller
+    that has a TTY may ask first and pass the answer in as `stated`.
+    """
+    for candidate in (stated, project_values.get("project")):
+        if candidate:
+            return layout.validate_slug(str(candidate))
+    present = existing_projects(root)
+    if len(present) == 1:
+        return present[0]
+    return layout.DEFAULT_SLUG
+
+
+def load(
+    path: Path | None = None,
+    *,
+    root: Path | None = None,
+    project: str | None = None,
+    interactive: bool = False,
+    **overrides: Any,
+) -> Config:
+    """Resolve configuration from both layers, the environment, and CLI flags.
+
+    Two layers, not one. The global file holds settings that belong to the
+    user; the project file, at `<root>/.hardy/config.toml`, holds settings that
+    belong to this checkout -- above all which problem is active. `HARDY_CONFIG`
+    selects the global file *only*: letting it win over everything, as it did
+    when there was one file, would mean a wrapper pointing it elsewhere
+    silently opened and wrote the wrong problem's record.
+
+    Precedence: global file, then project file, then environment, then flags.
+    """
+    # The migration runs before the default path is read, and only when the
+    # caller named no file of its own: an explicit --config or HARDY_CONFIG is
+    # a deliberate choice about which file to use, not an upgrade to perform.
+    # Without this the relocation would be implemented, unit-tested, and never
+    # reached -- an upgrading user's model and toolchain settings would be
+    # silently ignored.
+    if path is None and not os.environ.get("HARDY_CONFIG"):
+        migrate_global()
     path = path or default_config_path()
     values: dict[str, Any] = read_file(path)
+
+    # The root is resolved before the project layer is located, because the
+    # project layer lives inside it. Reading the environment afterwards would
+    # make HARDY_ROOT advertised and inert: Hardy would take the project config
+    # from the current directory and open the wrong problem there.
+    def _root_from(source: dict[str, Any]) -> Path | None:
+        value = source.get("root")
+        return Path(str(value)).expanduser() if value else None
+
+    resolved_root = (
+        (Path(root).expanduser() if root else None)
+        or (Path(os.environ["HARDY_ROOT"]).expanduser() if os.environ.get("HARDY_ROOT") else None)
+        or _root_from(values)
+        or Path.cwd()
+    )
+
+    # Only PROJECT_SETTINGS are honoured from the project layer. That file is
+    # committed and arrives with any clone, and `_chat` builds the CAS runtime
+    # -- which calls `probe_version()` on the configured executable
+    # (`cas_tools.py:108`) -- before the prompt appears. An unrestricted merge
+    # would therefore let a repository run an arbitrary program the moment
+    # someone starts Hardy inside it. Selecting the active problem is what this
+    # layer is for; naming executables is not.
+    project_values = {
+        key: value
+        for key, value in read_file(resolved_root / layout.HARDY_DIR / "config.toml").items()
+        if key in PROJECT_SETTINGS
+    }
+    values.update(project_values)
     for key, variable in SETTINGS.items():
         value = os.environ.get(variable)
         if value:
@@ -203,7 +303,8 @@ def load(path: Path | None = None, **overrides: Any) -> Config:
         lean_project=location("lean_project"),
         lean_timeout=lean_timeout,
         latex_command=tuple(shlex.split(text("latex_command", DEFAULT_LATEX_COMMAND))),
-        workspace=location("workspace") or Path(DEFAULT_WORKSPACE),
+        root=resolved_root,
+        project=active_project(resolved_root, project, values),
         runs_root=location("runs_root") or Path(DEFAULT_RUNS_ROOT),
         lake=location("lake") or Path(DEFAULT_LAKE),
         elan=location("elan") or Path(DEFAULT_ELAN),
