@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import layout
 from .domain import RunLimits
 
 DEFAULT_MODEL = "claude-opus-5"
@@ -54,16 +55,62 @@ DEFAULT_CAS_BACKEND = "sympy"
 
 
 def default_config_path() -> Path:
-    """The config file Hardy reads when no path is given."""
+    """The global config file Hardy reads when no path is given.
+
+    `~/.hardy/config.toml` on every platform. One directory holds the user's
+    Hardy settings, skills, prompts and shared Lean, so there is one place to
+    look rather than a different one per operating system.
+    """
     override = os.environ.get("HARDY_CONFIG")
     if override:
         return Path(override).expanduser()
+    return layout.global_dir() / "config.toml"
+
+
+def legacy_config_path() -> Path:
+    """Where the config used to live, before `~/.hardy/` existed."""
     if os.name == "nt":
         base = os.environ.get("APPDATA")
         if base:
             return Path(base) / "hardy" / "config.toml"
     home = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(home) / "hardy" / "config.toml"
+
+
+#: Settings that existed once and do not any more. A migrated file carrying one
+#: would be rejected by `read_file`, so the move drops them.
+RETIRED_SETTINGS = ("workspace", "runs_root")
+
+
+def migrate_global(source: Path | None = None, destination: Path | None = None) -> bool:
+    """Move a pre-`~/.hardy/` config into place, dropping retired settings.
+
+    A translation rather than a copy. `read_file` refuses any key outside
+    `SETTINGS`, and every installer-written config carries `workspace`, which
+    this change removes -- so relocating the file verbatim would leave Hardy
+    unable to load its own configuration.
+
+    Returns whether anything moved. An absent source and an existing
+    destination are both ordinary: the destination is the newer file and is
+    never overwritten.
+    """
+    source = source or legacy_config_path()
+    destination = destination or (layout.global_dir() / "config.toml")
+    if not source.is_file() or destination.exists():
+        return False
+    retired = re.compile(rf"^\s*(?:{'|'.join(RETIRED_SETTINGS)})\s*=")
+    kept = [
+        line
+        for line in source.read_text(encoding="utf-8-sig").splitlines()
+        if not retired.match(line)
+    ]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    temporary.chmod(0o600)
+    os.replace(temporary, destination)
+    source.unlink()
+    return True
 
 
 @dataclass(frozen=True)
