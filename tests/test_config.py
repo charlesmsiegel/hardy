@@ -152,3 +152,65 @@ def test_removing_an_absent_setting_or_file_is_a_no_op(tmp_path: Path):
 def test_removing_an_unknown_setting_is_rejected(tmp_path: Path):
     with pytest.raises(ValueError, match="unknown setting"):
         config.remove_setting(tmp_path / "config.toml", "nonsense")
+
+
+def test_the_default_config_lives_in_the_global_hardy_directory(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert config.default_config_path() == tmp_path / ".hardy" / "config.toml"
+
+
+def test_the_environment_override_still_wins(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("HARDY_CONFIG", str(tmp_path / "elsewhere.toml"))
+    assert config.default_config_path() == tmp_path / "elsewhere.toml"
+
+
+def test_a_legacy_config_moves_into_the_global_directory(tmp_path: Path):
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('model = "claude-opus-5"\nlean_timeout = 90\n', encoding="utf-8")
+    destination = tmp_path / ".hardy" / "config.toml"
+
+    assert config.migrate_global(legacy, destination) is True
+
+    assert not legacy.exists()
+    moved = destination.read_text(encoding="utf-8")
+    assert 'model = "claude-opus-5"' in moved
+    assert "lean_timeout = 90" in moved
+
+
+def test_the_move_drops_the_setting_that_no_longer_exists(tmp_path: Path):
+    """`read_file` raises on an unknown key, so a verbatim copy would not start.
+
+    Every installer-written config carries `workspace`, and that setting is
+    being removed. Copying the file unchanged would leave Hardy refusing to
+    load its own migrated configuration.
+    """
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('model = "x"\nworkspace = ".hardy"\nlean_timeout = 90\n', encoding="utf-8")
+    destination = tmp_path / ".hardy" / "config.toml"
+
+    config.migrate_global(legacy, destination)
+
+    moved = destination.read_text(encoding="utf-8")
+    assert "workspace" not in moved
+    assert 'model = "x"' in moved
+    assert "lean_timeout = 90" in moved
+    # The proof that matters: the migrated file loads.
+    assert config.read_file(destination)["model"] == "x"
+
+
+def test_the_move_does_not_clobber_a_config_that_already_exists(tmp_path: Path):
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('model = "old"\n', encoding="utf-8")
+    destination = tmp_path / ".hardy" / "config.toml"
+    destination.parent.mkdir(parents=True)
+    destination.write_text('model = "current"\n', encoding="utf-8")
+
+    assert config.migrate_global(legacy, destination) is False
+    assert 'model = "current"' in destination.read_text(encoding="utf-8")
+
+
+def test_nothing_to_move_is_not_an_error(tmp_path: Path):
+    assert config.migrate_global(tmp_path / "absent.toml", tmp_path / "new.toml") is False
