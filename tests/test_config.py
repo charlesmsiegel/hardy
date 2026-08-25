@@ -19,7 +19,15 @@ def write(path: Path, text: str) -> Path:
     return path
 
 
-def test_defaults_apply_when_no_config_file_exists(tmp_path: Path):
+def test_defaults_apply_when_no_config_file_exists(tmp_path: Path, monkeypatch):
+    """Without `chdir`, `load` reads the real `Path.cwd()` -- the developer's
+
+    own checkout -- for both the project config and its project-directory
+    scan. This passes today only because this repo happens to hold no
+    `session.json` anywhere under it; it would break the moment someone ran
+    `hardy chat` here.
+    """
+    monkeypatch.chdir(tmp_path)
     settings = config.load(tmp_path / "missing.toml")
     assert settings.model == config.DEFAULT_MODEL
     assert settings.lean_command == ("lake", "env", "lean")
@@ -199,6 +207,31 @@ def test_the_move_drops_the_setting_that_no_longer_exists(tmp_path: Path):
     assert "lean_timeout = 90" in moved
     # The proof that matters: the migrated file loads.
     assert config.read_file(destination)["model"] == "x"
+
+
+def test_the_move_keeps_runs_root_which_is_still_a_live_setting(tmp_path: Path):
+    """`runs_root` is out of scope for this change and stays readable by
+
+    `workflow.py`, `acceptance.py`, and `cli.py`. Only `workspace` is retired;
+    a `RETIRED_SETTINGS` that widened back to `("workspace", "runs_root")`
+    would silently discard a live user setting on every upgrade, so this pins
+    `runs_root` surviving the move right alongside `workspace` being dropped.
+    """
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        'model = "x"\nworkspace = ".hardy"\nruns_root = "custom-runs"\nlean_timeout = 90\n',
+        encoding="utf-8",
+    )
+    destination = tmp_path / ".hardy" / "config.toml"
+
+    config.migrate_global(legacy, destination)
+
+    moved = destination.read_text(encoding="utf-8")
+    assert "workspace" not in moved
+    assert 'runs_root = "custom-runs"' in moved
+    # The proof that matters: the migrated file loads, and keeps the setting.
+    assert config.read_file(destination)["runs_root"] == "custom-runs"
 
 
 def test_the_move_does_not_clobber_a_config_that_already_exists(tmp_path: Path):
