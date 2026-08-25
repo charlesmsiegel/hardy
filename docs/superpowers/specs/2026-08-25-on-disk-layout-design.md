@@ -34,9 +34,17 @@ twice is how migration code multiplies.
 
 Give the project root an unambiguous meaning, put every authored artifact and
 the whole record under version control where a `git log` can answer "which
-axioms did we approve in March, and who approved them", and leave gitignored
-only what is genuinely recomputable or machine-local — such that #93 needs no
-new concept and no second migration.
+axioms did we approve in March, and when", and leave gitignored only what is
+genuinely recomputable or machine-local — such that #93 needs no new concept
+and no second migration.
+
+The issue's phrasing was "and who approved them". This design does **not**
+deliver that half, and says so rather than implying it: `request_assumption`
+stores `status: "user-approved"` and nothing else (`chat.py:1195`), and a git
+author identifies whoever committed the file, who need not be whoever answered
+the prompt. Capturing an approver identity is a change to the record's schema
+and to what Hardy knows about its user — it is listed under Open questions, not
+assumed here.
 
 ## Decisions
 
@@ -46,7 +54,8 @@ new concept and no second migration.
 | Where does one problem live | `<root>/<slug>/` — an ordinary, versioned, user-owned top-level directory |
 | Lean and TeX inside a problem | `<slug>/lean/` and `<slug>/tex/`, both multi-file |
 | Are Lean and TeX files paired by name | No. See "Why files are not paired" below. |
-| What happens when the host has a `lakefile.toml` | Sources stay in `<slug>/lean/`; Hardy *offers* to register that directory with the host lakefile so the user's own `lake build` sees the modules |
+| What happens when the host has a `lakefile.toml` | Sources stay in `<slug>/lean/`; Hardy *offers* to register that directory with the host lakefile as **its own `lean_lib` named for the slug**, never as a bare source root |
+| Is the slug trusted | No. It is validated as a single safe path component, and the resolved directory must sit directly beneath the root. |
 | Where is the record | `<slug>/session.json` and `<slug>/transcript.jsonl`, versioned, written only by Hardy |
 | Where is machine-local state | `<slug>/.local/state.json` — gitignored |
 | Where is derived build state | `<slug>/.build/` — gitignored |
@@ -81,7 +90,8 @@ new concept and no second migration.
     writeup.pdf               the artifact people share
     .gitignore                written by Hardy: `.build/`, `.local/`
     .build/                   gitignored — oleans, tex aux
-    .local/                   gitignored — provider session id, usage ledger, usage_cursor
+    .local/                   gitignored — provider session id, usage ledger,
+                              usage_cursor, terminal input history
 
   <other-slug>/               a second problem
 ```
@@ -117,9 +127,12 @@ also exactly the unit #93 asks for.
 
 ## Why there is no migration
 
-This section is about *workspace* migration. The one relocation that does
-happen — the global config file moving from XDG/APPDATA into `~/.hardy/` — is a
-single file with a single reader, and is described under Interfaces.
+This section is about *workspace* migration. One relocation does still happen —
+the global config file moving from XDG/APPDATA into `~/.hardy/` — and it is not
+as small as it first looks: the path is hard-coded in four installer scripts and
+in `docs/INSTALL.md` as well as in `config.py`, and the file must be translated
+rather than copied because the `workspace` key it carries is being removed. It
+is described in full under Interfaces.
 
 The issue's constraints called for migration, on the precedent of
 `_migrate_layout` (`chat.py:553`). That constraint is dropped deliberately, by
@@ -196,6 +209,20 @@ resets the cursor, and does not replay a shorter file against a ledger built
 from a longer one. The behaviour is correct; it gains a test that names this
 case.
 
+**The provider thread across a `git checkout`, which is new work.** The cursor
+is not the only thing bound to the transcript's length. `.local/` is
+gitignored, so a checkout that rewinds the *versioned* transcript leaves
+`provider_session` pointing at the newer tip. Resuming it would continue a
+provider conversation containing turns that are absent from the transcript on
+disk — the session's answers would then depend on context the record does not
+contain, which is precisely the property this design exists to guarantee.
+
+So the provider thread is bound to the transcript tip and **cleared whenever
+the transcript is shortened or replaced** — the same condition
+`_recover_spend` already detects for the cursor, acted on for both. Losing a
+resumable thread is the cheap half of that trade; a record that does not
+account for its own answers is the expensive half.
+
 ## Interfaces
 
 **Configuration.** `workspace` is replaced by `root` and `project`.
@@ -203,20 +230,84 @@ case.
 XDG/APPDATA file exists, that file is moved into place. `HARDY_CONFIG` continues
 to win over everything.
 
+**The move is a translation, not a copy.** `config.read_file` raises on any key
+outside `SETTINGS` (`config.py`), so relocating a file that still carries
+`workspace = "..."` — which every installer-written config does today — would
+leave Hardy unable to start at all. The migration drops the removed key and
+preserves every other setting.
+
+**The installers own this path too, and must move with it.** The default is not
+only in `config.py`: `scripts/lib/common.sh:18` defaults to XDG,
+`scripts/install-windows.ps1:71` and `scripts/uninstall-windows.ps1:57` to
+APPDATA, `scripts/uninstall.sh` removes it, and `docs/INSTALL.md` documents it.
+`common.sh:678` additionally passes `HARDY_CONFIG` explicitly into `hardy
+doctor` — which, under the rule that `HARDY_CONFIG` wins, *suppresses* the
+migration. Left alone, re-running an installer after a runtime migration writes
+a second config at the legacy path and the uninstaller then removes the wrong
+one. Every consumer moves in the same change.
+
 **Command line.**
 
 | Removed | Added |
 |---|---|
 | `--workspace PATH` | `--root PATH` (default: cwd) |
-| `HARDY_WORKSPACE` | `--project SLUG` (default: active in `.hardy/config.toml`; else the only one; else prompt, defaulting to `main`) |
+| `HARDY_WORKSPACE` | `--project SLUG` (default: active in `.hardy/config.toml`; else the only one; else `main` — prompting only on a TTY) |
+
+**Project selection must never block a pipe.** Dropping the migration removed
+the migration's prompt but not this one, which is a different prompt on a
+surviving path. When stdin is not a TTY the fallback is deterministic — the
+active project, else the only one, else `main`, created if absent — and Hardy
+never reads stdin to choose. Prompting there would hang `hardy batch` and CI,
+fail at EOF, or silently consume the first piped message as a slug.
+
+**The slug is untrusted input.** It arrives from `--project`, from an
+environment variable, or from `.hardy/config.toml` — a committed, hand-editable
+file that travels with a clone. It is validated as a single safe path
+component, and the resolved problem directory is verified to sit directly
+beneath the root, on the same rule `safe_relative` already applies to workspace
+paths. Without that, `../other` or an absolute value writes `session.json`,
+`transcript.jsonl`, and generated `.gitignore` files outside the project Hardy
+claims to manage.
 
 **Lakefile registration.** When `<root>` holds a `lakefile.toml`, Hardy offers to
-add `<slug>/lean` as a source directory so the user's own `lake build` sees the
-modules. It asks, it is idempotent, and it is declinable — declining costs
-nothing, because imports still resolve through `lean_project` as they do today.
+register `<slug>/lean` so the user's own `lake build` sees the modules. It asks,
+it is idempotent, and it is declinable — declining costs nothing, because
+imports still resolve through `lean_project` as they do today.
+
+Each problem is registered as **its own `lean_lib`, named for the slug**, never
+as a bare source root added to a shared one. Two problems both holding the
+natural default `lean/Main.lean` would otherwise put two modules named `Main`
+into one Lake build — ambiguous or invalid, and a direct contradiction of this
+design's own requirement that problems share no Lean namespace. Registration is
+refused rather than guessed if the host lakefile already defines a library of
+that name for a different directory.
+
+This does not change Hardy's own resolution order, which stays as described
+above: registration is for the user's toolchain and editor, not for Hardy's
+build.
 
 **VCS.** Hardy writes two `.gitignore` files and does nothing else to the user's
 version control. It does not run `git init`.
+
+## What else the versioned record must not carry
+
+Two machine-local things sit outside `session.json` today and would become
+versioned by accident under a naive move.
+
+**Terminal input history.** `tui/shell.py:225` keeps it at `workspace /
+"input-history"`. It is per-machine UI state, and it holds text the user typed
+and then *did not send* — drafts, corrections, abandoned lines. That never
+entered the transcript and must not enter the repository. It moves to
+`<slug>/.local/`.
+
+**CAS export references.** `chat.py:1224` writes `report.script_path` and
+`report.notebook_path` into `session.json`, and `ExportReport` declares both as
+`str` built from the export directory. With an absolute `--root` those are
+absolute source-machine paths; once the record is versioned they are stale the
+moment the project is cloned or moved. They are stored relative to the problem
+directory and resolved on read. Making the CLI's invocation directory
+project-relative does not fix this on its own — the persisted values are the
+problem.
 
 ## Modules affected
 
@@ -227,7 +318,9 @@ version control. It does not run `git init`.
 | `workspace.py` | shared libraries as extra LEAN_PATH entries plus a shadowing check; no restructuring — `LeanWorkspace` already takes `root` and `build` |
 | `usage.py` | `provider_session` read and written from `.local/state.json` |
 | `cli.py` | new flags; CAS paths (`cli.py:100-101`, `:171`) become project-relative |
-| `tui/shell.py` | `/status` names the active project |
+| `cas_export.py` | `ExportReport` paths stored relative to the problem directory (see below) |
+| `tui/shell.py` | `/status` names the active project; input history moves from `workspace / "input-history"` to `<slug>/.local/` |
+| `scripts/lib/common.sh`, `scripts/install-windows.ps1`, `scripts/uninstall.sh`, `scripts/uninstall-windows.ps1`, `docs/INSTALL.md` | the config path they each hard-code |
 | `.gitignore` | line 19 and its comment stop being false |
 | `README.md`, `DESIGN.md`, `FEATURES.md`, `ARCHITECTURE.html` | kept consistent, per the repository rule |
 
@@ -251,6 +344,21 @@ version control. It does not run `git init`.
 - The save-time guarantees are unchanged by the move: refuse-whole on a broken
   dependent, dependents rebuilt, per-module audit verdicts, the documentation
   ratchet.
+- A shortened or replaced `transcript.jsonl` clears `provider_session` as well
+  as resetting the cursor, so the next turn starts a fresh provider thread
+  rather than resuming one the record cannot account for.
+- Project selection under a non-TTY never reads stdin: it resolves to the
+  active project, the only project, or `main`, and a piped first message is
+  never consumed as a slug.
+- A slug of `../other`, an absolute path, or a multi-component value is
+  refused, and nothing is written outside the root.
+- A legacy config carrying `workspace = "..."` migrates into `~/.hardy/` with
+  that key dropped and every other setting preserved, and Hardy starts.
+- Input history is written under `<slug>/.local/` and is gitignored.
+- CAS export references in `session.json` are relative, and survive the problem
+  directory being moved.
+- Registering two problems into one host lakefile produces two distinct
+  libraries, and a name already bound to a different directory is refused.
 
 ## Out of scope
 
@@ -266,6 +374,19 @@ version control. It does not run `git init`.
 - **Project commands** (`/project new`, `list`, `switch`) — #93. This design
   makes them `mkdir` and a config key, which is the point, but they are not
   built here.
+
+## Open questions
+
+**Who approved an assumption.** `request_assumption` records
+`status: "user-approved"` and no identity (`chat.py:1195`), so a versioned
+record still cannot attribute a trust decision to a person — the git author is
+whoever committed, not whoever answered. Capturing this means deciding what
+Hardy knows about its user (a git `user.email`? a configured name? nothing, on
+a single-user tool?) and adding it to both the confirmation event and the
+durable assumption record. That is a change to the record's schema and is
+deliberately not decided here. Raised by review of this spec; worth its own
+issue if the answer is anything other than "a single-user tool does not need
+it".
 
 ## Known consequence
 
