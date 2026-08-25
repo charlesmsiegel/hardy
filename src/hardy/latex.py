@@ -17,7 +17,7 @@ BODY = "\\begin{document}"
 INCLUSION = re.compile(r"\\(?:input|include|subfile)\s*\{([^}]*)\}")
 
 
-def _uncommented(source: str) -> str:
+def uncommented(source: str) -> str:
     r"""`source` with its TeX comments dropped.
 
     A `%` opens a comment unless escaped as `\%`, and the backslash before it
@@ -57,7 +57,7 @@ def _includes(root: str, path: str) -> bool:
     }
     return any(
         found.strip().replace("\\", "/") in wanted
-        for found in INCLUSION.findall(_uncommented(root))
+        for found in INCLUSION.findall(uncommented(root))
     )
 
 

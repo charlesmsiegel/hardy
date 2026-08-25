@@ -191,12 +191,35 @@ abandonable — and the naming registry drops the mappings it stranded, recordin
 that in `transcript.jsonl`, since losing a formal-to-writeup link is a change to
 the record of what was claimed.
 
-**Every `theorem` owes a writeup.** Before Hardy may save a file introducing a
-new theorem, each theorem already saved must be recorded with `record_name` and
-carry a matching `\label` somewhere in the writeup tree. `lemma`, `def`, and
-`instance` are exempt, so scaffolding stays free — the rule is that anything
-reported as a result is stated as a `theorem`. Repairing, restating, or deleting
-an undocumented theorem is always allowed; only *adding* a new one is gated.
+**Every `theorem` owes a writeup, and the writeup owes its reader the Lean.**
+A saved theorem is carried by the document only when three things hold at once:
+`record_name` maps it to a LaTeX name, the compiler really created that `\label`,
+and the document quotes the theorem's **exact Lean statement** — the declaration
+head from `theorem` through to the `:=` — verbatim, where TeX cannot mangle it.
+Whitespace and Lean comments may differ; the proposition may not, and a
+quotation that runs on into a *longer* statement does not count. Only the
+document the root actually `\input`s counts, since a fragment nothing pulls in
+is in front of nobody. Until every saved theorem is carried, saving a file that
+introduces a new one is refused. `lemma`, `def`, and `instance` are exempt, so
+scaffolding stays free — the rule is that anything reported as a result is
+stated as a `theorem`. Repairing, restating, or deleting an undocumented theorem
+is always allowed; only *adding* a new one is gated.
+
+**What nobody proved goes in an appendix.** If the work rests on a user-approved
+axiom — a result Mathlib does not have, stood in for by assumption — the writeup
+must open an `\appendix` that states it in both languages: the mathematics under
+a `\label` for its LaTeX name, and the exact `axiom Name : statement` line Lean
+was given, quoted verbatim. An approval nobody used owes nothing.
+
+**Nothing is finished until the artifacts say so.** Claiming a result is itself a
+tool call — `report_result`, naming the theorems it claims — and Hardy refuses it
+unless the Lean is saved and audited, every claimed theorem is carried by the
+document, and the appendix states every assumption. Saying it in prose instead
+does not get around this: after every turn Hardy writes what the workspace still
+owes on the screen under its own name, read off the two trees rather than off
+anything the model said, and `/status` answers the same question whenever the
+user asks. A model may decline to report; it cannot report what the artifacts do
+not carry, and it cannot quietly leave the human-readable half out.
 
 The manifest links Lean declaration names to LaTeX labels and records every
 user-approved assumption, exact Lean statement, informal rendering, reason, and

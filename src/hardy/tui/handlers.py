@@ -51,6 +51,23 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
             ui.write(f"  {line}")
     if state.turn_running:
         ui.write("  A turn is still running.")
+    # Asked of the artifacts, not of the model. `/status` is where a user finds
+    # out whether what they have been told is backed by anything, so it must be
+    # able to disagree with the conversation.
+    owed = getattr(state.session, "obligations", None)
+    if owed is not None:
+        try:
+            outstanding = owed()
+        except Exception as error:  # noqa: BLE001 - a status line must not end the session
+            ui.write(f"  Obligations could not be read: {error}", style="error")
+            return state
+        ui.write("Work", style="normal")
+        if not outstanding:
+            ui.write("  Nothing outstanding: every saved theorem is written up.")
+        else:
+            ui.write("  Not finished. Nothing here may be reported as done until:")
+            for item in outstanding:
+                ui.write(f"    - {item}")
     return state
 
 

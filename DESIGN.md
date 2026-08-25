@@ -32,6 +32,14 @@ Only Lean kernel acceptance justifies “verified.” TeX compilation checks doc
 construction, not mathematical truth. If Hardy cannot finish, it should still
 return useful partial artifacts and state their limits rather than overclaim.
 
+Neither artifact substitutes for the other, and the interactive path enforces
+that rather than asking for it: a result is reportable only as Lean the kernel
+checked, quoted verbatim in a document a human can read against it, with every
+unproved assumption stated in an appendix in both languages. Whether the work is
+finished is therefore computed from the artifacts, not asserted by the model —
+which is the same principle as grading on the axioms Lean reports rather than on
+an exit code, applied to the human-readable half.
+
 Both formalization grades follow an audit of the axioms Lean reports for each
 graded declaration, not a process exit code. `sorryAx` is fatal and no approval
 can make it an assumption. “Verified modulo listed paper assumptions” is
@@ -291,8 +299,10 @@ and hostile-input tests.
    Lean and LaTeX invocation, linked names, explicitly approved assumptions,
    durable transcript, and saved artifacts. Both artifacts are multi-file trees,
    with Lean modules importing each other and a save refused whole if it would
-   break a dependent; a saved `theorem` owes a writeup before another may be
-   added. The older one-shot proof loop remains as a dependency smoke path. A
+   break a dependent; a saved `theorem` owes a writeup — its label, and its exact
+   Lean statement quoted where a reader can check it — before another may be
+   added, with every assumption stated in an appendix in both languages, and
+   nothing may be reported as finished until the artifacts carry all of it. The older one-shot proof loop remains as a dependency smoke path. A
    real model/Mathlib acceptance run remains to be recorded.
 2. **Honest experiment harness:** faithfulness and axiom checks, budgets, fixed
    evaluation inputs, reproducible identities, and useful failure reports.
