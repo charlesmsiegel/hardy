@@ -13,7 +13,7 @@ import threading
 from pathlib import Path
 
 import pytest
-from test_chat import session
+from test_chat import FakeChatRuntime, session
 
 from hardy.models import TurnEvent
 from hardy.usage import Usage
@@ -88,6 +88,11 @@ def stored(tmp_path: Path) -> dict:
     return json.loads((tmp_path / "session.json").read_text(encoding="utf-8"))
 
 
+def stored_local(tmp_path: Path) -> dict:
+    """The ledger's own file: it is machine-local, not part of the record."""
+    return json.loads((tmp_path / ".local" / "state.json").read_text(encoding="utf-8"))
+
+
 def test_a_session_starts_having_spent_nothing(tmp_path: Path):
     assert spending(tmp_path).usage == Usage()
 
@@ -105,8 +110,8 @@ def test_the_total_is_written_down_as_it_goes(tmp_path: Path):
     """Not only at the end: a session killed mid-way still cost what it cost."""
     chat = spending(tmp_path)
     chat.send("One.")
-    assert stored(tmp_path)["usage"]["cost_usd"] == 0.5
-    assert stored(tmp_path)["usage"]["turns"] == 1
+    assert stored_local(tmp_path)["usage"]["cost_usd"] == 0.5
+    assert stored_local(tmp_path)["usage"]["turns"] == 1
 
 
 def test_reopening_a_workspace_continues_the_total(tmp_path: Path):
@@ -136,7 +141,7 @@ def test_a_backend_that_reports_nothing_leaves_the_total_unreported(tmp_path: Pa
 def test_a_workspace_written_before_the_ledger_existed_still_opens(tmp_path: Path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "session.json").write_text(
-        json.dumps({"schema_version": 1, "names": [], "assumptions": []}), encoding="utf-8"
+        json.dumps({"schema_version": 2, "names": [], "assumptions": []}), encoding="utf-8"
     )
     chat = spending(tmp_path)
     assert chat.usage == Usage()
@@ -154,12 +159,19 @@ def _pre_ledger(tmp_path: Path, costs) -> None:
     in it -- `claude_runtime` has been writing that all along -- and that is
     the history the migration recovers. No `usage` key on those events: token
     counts were the half the runtime dropped.
+
+    `provider_session` sits in `.local/state.json`, not `session.json`: it is
+    machine-local like the ledger this fixture is about, and a record fixture
+    that still carried it would not be one this Hardy would open.
     """
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "session.json").write_text(
-        json.dumps({"schema_version": 1, "names": [], "assumptions": [], "provider_session": "old"}),
+        json.dumps({"schema_version": 2, "names": [], "assumptions": []}),
         encoding="utf-8",
     )
+    local_dir = tmp_path / ".local"
+    local_dir.mkdir(parents=True, exist_ok=True)
+    (local_dir / "state.json").write_text(json.dumps({"provider_session": "old"}), encoding="utf-8")
     # `costs` are per-exchange; what the transcript holds is the session-to-date
     # figure each `result` actually carried.
     running, lines = 0.0, []
@@ -211,7 +223,7 @@ def test_the_recovery_is_written_down_and_does_not_run_twice(tmp_path: Path):
     the recovered ones again."""
     _pre_ledger(tmp_path, [0.10, 0.20])
     spending(tmp_path).send("One.")
-    assert stored(tmp_path)["usage"]["turns"] == 3
+    assert stored_local(tmp_path)["usage"]["turns"] == 3
     reopened = spending(tmp_path)
     assert reopened.usage.turns == 3
     assert reopened.usage.cost_usd == 0.8
@@ -234,7 +246,7 @@ def test_a_result_the_ledger_never_saved_is_picked_up_on_reopen(tmp_path: Path):
     reopened = spending(tmp_path)
     assert reopened.usage.turns == 2
     assert reopened.usage.cost_usd == 1.25   # 0.50, then session-to-date 1.25
-    assert stored(tmp_path)["usage"]["turns"] == 2
+    assert stored_local(tmp_path)["usage"]["turns"] == 2
 
 
 def test_the_cursor_stops_a_counted_exchange_being_counted_again(tmp_path: Path):
@@ -348,7 +360,7 @@ def test_the_cursor_stops_at_the_report_it_folded_not_the_end_of_the_file(tmp_pa
     hold one nobody has folded. Advancing to the end would step over it."""
     chat = spending(tmp_path)
     chat.send("One.")
-    folded = stored(tmp_path)["usage_cursor"]
+    folded = stored_local(tmp_path)["usage_cursor"]
     # A second result appended by a thread that has not folded it yet.
     trailing = json.dumps({"type": "result", "session_id": "thread-1", "cost_usd": 1.4}) + "\n"
     with (tmp_path / "transcript.jsonl").open("a", encoding="utf-8") as handle:
@@ -383,9 +395,9 @@ def test_a_ledger_too_damaged_to_read_is_rebuilt_rather_than_trusted(tmp_path: P
     _pre_ledger(tmp_path, [0.10, 0.20])
     chat = spending(tmp_path)                    # recovers, and writes a cursor
     assert chat.usage.turns == 2
-    damaged = stored(tmp_path)
+    damaged = stored_local(tmp_path)
     damaged["usage"]["turns"] = "two"            # as a hand-edit would leave it
-    (tmp_path / "session.json").write_text(json.dumps(damaged), encoding="utf-8")
+    (tmp_path / ".local" / "state.json").write_text(json.dumps(damaged), encoding="utf-8")
     reopened = spending(tmp_path)
     assert reopened.usage.turns == 2
     assert "Nothing spent yet." not in "\n".join(reopened.usage.lines())
@@ -401,7 +413,7 @@ def test_a_transcript_that_shrank_leaves_a_cursor_that_can_advance_again(tmp_pat
     spent = chat.usage
     (tmp_path / "transcript.jsonl").write_text("", encoding="utf-8")
     assert spending(tmp_path).usage == spent     # ledger kept, as before
-    assert stored(tmp_path)["usage_cursor"] == 0  # and the cursor really moved
+    assert stored_local(tmp_path)["usage_cursor"] == 0  # and the cursor really moved
     # A result appended after the truncation is still picked up.
     with (tmp_path / "transcript.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({
@@ -413,7 +425,7 @@ def test_a_transcript_that_shrank_leaves_a_cursor_that_can_advance_again(tmp_pat
 def test_a_workspace_with_no_transcript_at_all_recovers_nothing(tmp_path: Path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "session.json").write_text(
-        json.dumps({"schema_version": 1, "names": [], "assumptions": []}), encoding="utf-8"
+        json.dumps({"schema_version": 2, "names": [], "assumptions": []}), encoding="utf-8"
     )
     assert spending(tmp_path).usage == Usage()
 
@@ -450,3 +462,42 @@ def test_the_spend_is_kept_out_of_what_the_model_is_told(tmp_path: Path):
     chat.send("One.")
     assert "usage" not in chat._workspace_listing()["manifest"]
     assert "cost_usd" not in chat._context()
+
+
+def test_the_record_carries_no_machine_local_state(tmp_path: Path):
+    """The record is versioned; a provider thread and a spend ledger are not.
+
+    They belong to this machine and this account, which is why `WITHHELD`
+    already kept all three out of the model's sight.
+    """
+    runtime = FakeChatRuntime([{"role": "assistant", "content": "done"}])
+    chat = session(tmp_path, runtime)
+    chat.send("hello")
+
+    record = json.loads((tmp_path / "session.json").read_text(encoding="utf-8"))
+    assert "provider_session" not in record
+    assert "usage" not in record
+    assert "usage_cursor" not in record
+
+    local = json.loads((tmp_path / ".local" / "state.json").read_text(encoding="utf-8"))
+    assert "usage" in local
+
+
+def test_the_spend_total_still_continues_across_a_reopen(tmp_path: Path):
+    runtime = FakeChatRuntime([{"role": "assistant", "content": "one"}])
+    first = session(tmp_path, runtime)
+    first.send("hello")
+    spent = first.usage.turns
+
+    reopened = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "two"}]))
+    assert reopened.usage.turns == spent
+
+
+def test_the_record_still_carries_the_things_that_are_evidence(tmp_path: Path):
+    runtime = FakeChatRuntime([{"role": "assistant", "content": "done"}])
+    chat = session(tmp_path, runtime)
+    chat.send("hello")
+    record = json.loads((tmp_path / "session.json").read_text(encoding="utf-8"))
+    assert record["schema_version"] == 2
+    assert "names" in record
+    assert "assumptions" in record

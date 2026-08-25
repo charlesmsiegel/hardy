@@ -162,7 +162,7 @@ def test_session_resumes_the_provider_thread(tmp_path: Path):
     workspace must hand the SDK the thread it left off in."""
     first = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "First answer."}]))
     first.send("Remember this question.")
-    assert json.loads((tmp_path / "session.json").read_text())["provider_session"] == "thread-1"
+    assert json.loads((tmp_path / ".local" / "state.json").read_text())["provider_session"] == "thread-1"
 
     resumed = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "I remember."}]))
     assert resumed.runtime.context["session_id"] == "thread-1"
@@ -297,7 +297,7 @@ def test_the_provider_thread_survives_a_failed_exchange(tmp_path: Path):
     chat = session(tmp_path, Failing([]))
     with pytest.raises(RuntimeError):
         chat.send("go")
-    assert json.loads((tmp_path / "session.json").read_text())["provider_session"] == "thread-after-error"
+    assert json.loads((tmp_path / ".local" / "state.json").read_text())["provider_session"] == "thread-after-error"
 
 
 def test_migration_keeps_the_newest_context_when_truncating(tmp_path: Path):
@@ -378,7 +378,7 @@ def test_a_turn_nobody_drains_still_remembers_the_provider_thread(tmp_path: Path
     chat = session(tmp_path, EagerChatRuntime([]))
     chat.stream("Did anyone hear me?")          # deliberately never iterated
 
-    state = json.loads((tmp_path / "session.json").read_text())
+    state = json.loads((tmp_path / ".local" / "state.json").read_text())
     assert state.get("provider_session") == "thread-1"
 
 

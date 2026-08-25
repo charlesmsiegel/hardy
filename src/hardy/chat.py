@@ -18,6 +18,7 @@ from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .latex import ROOT_DOCUMENT, LatexTools
+from .layout import LOCAL_DIR, LOCAL_STATE
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
@@ -50,20 +51,23 @@ DEFAULT_TEX_PATH = ROOT_DOCUMENT
 # What LaTeX wrote down about the labels it actually created, in its own .aux.
 NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")
 
-# The manifest keys that exist for Hardy and not for the model. `audit` is
-# withheld because the listing reports each verdict checked against the tree in
-# front of it, and handing back the stored one as well would put two answers for
-# the same module in one response. `usage` is withheld because what the session
-# has cost is not something the model can act on, and letting it into the system
-# prompt would make a resumed session's prompt differ from a fresh one by an
-# amount that has nothing to do with the mathematics.
+# The manifest key that exists for Hardy and not for the model. The listing
+# reports each verdict checked against the tree in front of it, and handing back
+# the stored one as well would put two answers for the same module in one
+# response. The ledger and the provider thread are no longer withheld here
+# because they are no longer in the record: they live in `.local/state.json`.
+WITHHELD = ("audit",)
 USAGE_KEY = "usage"
 #: How far into `transcript.jsonl` the stored ledger has been brought up to
 #: date. Hardy's own bookkeeping, and no more the model's business than the
 #: ledger it belongs to.
 CURSOR_KEY = "usage_cursor"
+THREAD_KEY = "provider_session"
+#: The two keys the ledger used to leave in `self.state` for `_context` to
+#: filter back out. Neither lands there any more, so `_context` no longer
+#: filters by this -- kept as a name so `USAGE_KEY` and `CURSOR_KEY` still read
+#: as a pair rather than two keys that happen to share a purpose.
 LEDGER_KEYS = (USAGE_KEY, CURSOR_KEY)
-WITHHELD = ("audit", *LEDGER_KEYS)
 
 CHAT_TOOLS = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -194,6 +198,12 @@ class MathematicsSession:
         self.latex = LatexTools(latex_command)
         self.state_path = workspace / "session.json"
         self.transcript_path = workspace / "transcript.jsonl"
+        # Machine-local state, beside the record but never part of it. The
+        # record is versioned and describes the mathematics; the provider
+        # thread and the spend ledger describe this machine and this account,
+        # and a clone of the project must not inherit either.
+        self.local_path = workspace / LOCAL_DIR / LOCAL_STATE
+        self.local_path.parent.mkdir(parents=True, exist_ok=True)
         # The Lean tree and the writeup tree. Both are directories now: a
         # development outgrows one file, and so does the document about it.
         self.tex_root = workspace / TEX_DIR
@@ -239,15 +249,17 @@ class MathematicsSession:
         # file at a fixed path. Two writers at once would interleave into it.
         self._writes = threading.Lock()
         # State first: the runtime is built from the system prompt, which embeds
-        # the manifest, and it resumes the provider thread the state remembers.
+        # the manifest, and it resumes the provider thread the local state
+        # remembers.
         self.state = self._read_state()
+        self.local = self._read_local()
         # What the workspace has already spent, so reopening it continues the
         # total rather than restarting it. Read before the first turn can add
         # to it.
         self.usage = self._recover_spend()
         # The runtime needs a way to reach the tools, and the tools need the
         # workspace, so it is built here rather than handed in ready-made.
-        self.runtime = self._build(session_id=self.state.get("provider_session"))
+        self.runtime = self._build(session_id=self.local.get(THREAD_KEY))
         self._sync_provenance()
 
     def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
@@ -317,7 +329,7 @@ class MathematicsSession:
         thread is carried over, so the new model inherits the conversation.
         """
         previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint")}
-        self.runtime = self._build(model=model, session_id=self.state.get("provider_session"))
+        self.runtime = self._build(model=model, session_id=self.local.get(THREAD_KEY))
         self.state.update(provenance(self.runtime))
         self._save_state()
         self._record({"type": "model", "reason": "switched", "previous": previous, **provenance(self.runtime)})
@@ -351,16 +363,54 @@ class MathematicsSession:
         return f"\n\nThis workspace predates the current provider session. Earlier conversation, for context only:\n{carried}"
 
     def _read_state(self) -> dict[str, Any]:
+        """The record, refusing a schema this version does not read.
+
+        There is deliberately no reader for version 1. Accepting one anyway
+        would carry its `provider_session`, `usage` and `usage_cursor` into a
+        record that is now versioned -- and, since `WITHHELD` no longer names
+        those keys, into the model's context as well. Refusing is the honest
+        failure.
+        """
         if self.state_path.exists():
-            return json.loads(self.state_path.read_text(encoding="utf-8"))
-        # `audit` is absent until the first save; a workspace written before the
-        # audit existed has none either, and neither may read as a clean one.
-        return {"schema_version": 1, "names": [], "assumptions": []}
+            stored = json.loads(self.state_path.read_text(encoding="utf-8"))
+            version = stored.get("schema_version")
+            if version != 2:
+                raise ValueError(
+                    f"{self.state_path} is schema version {version!r}; this Hardy reads version 2 only"
+                )
+            return stored
+        # `audit` is absent until the first save; a workspace with none may not
+        # read as a clean one.
+        return {"schema_version": 2, "names": [], "assumptions": []}
+
+    def _read_local(self) -> dict[str, Any]:
+        """This machine's state, or an empty one.
+
+        Unreadable is treated as absent rather than raised. The file is
+        gitignored and disposable by construction, and losing a resumable
+        thread is never a reason to refuse to open the project.
+        """
+        if not self.local_path.exists():
+            return {}
+        try:
+            loaded = json.loads(self.local_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            # UnicodeDecodeError is in the list deliberately: it is not a
+            # subclass of the others, and without it a file of invalid bytes
+            # would refuse to open the project rather than being treated as the
+            # disposable state this docstring promises it is.
+            return {}
+        return loaded if isinstance(loaded, dict) else {}
 
     def _save_state(self) -> None:
         """The one door `session.json` is written through, from any thread."""
         with self._writes:
             _atomic_json(self.state_path, self.state)
+
+    def _save_local(self) -> None:
+        """The one door `.local/state.json` is written through, from any thread."""
+        with self._writes:
+            _atomic_json(self.local_path, self.local)
 
     def _sync_provenance(self) -> None:
         """Make the record agree with what is actually about to answer.
@@ -385,9 +435,12 @@ class MathematicsSession:
 
     def _context(self) -> str:
         # The stored audit verdicts stay here, as they always have -- the system
-        # prompt has no second, checked copy of them to contradict. Only the
-        # spend ledger is withheld; `WITHHELD` says why.
-        manifest = json.dumps(self._without(*LEDGER_KEYS), ensure_ascii=False)
+        # prompt has no second, checked copy of them to contradict. The spend
+        # ledger used to be withheld here too, by name (`LEDGER_KEYS`); now it
+        # lives in `self.local` and was never in `self.state` to begin with, so
+        # filtering `self.state` for it would be a no-op that reads as if it
+        # still needed filtering.
+        manifest = json.dumps(self._without(), ensure_ascii=False)
         return f"\n\nWorkspace: {self.workspace}\nExisting manifest:\n{manifest}"
 
     def _record(self, event: dict[str, Any]) -> int:
@@ -1445,9 +1498,9 @@ class MathematicsSession:
 
     def _remember_thread(self) -> None:
         thread = getattr(self.runtime, "session_id", None)
-        if thread and self.state.get("provider_session") != thread:
-            self.state["provider_session"] = thread
-            self._save_state()
+        if thread and self.local.get(THREAD_KEY) != thread:
+            self.local[THREAD_KEY] = thread
+            self._save_local()
 
     def _recover_spend(self) -> Usage:
         """The workspace's running total, rebuilt from its history if need be.
@@ -1474,7 +1527,7 @@ class MathematicsSession:
         # any more. Keeping it would pair an empty total with a cursor at the
         # end of the file -- nothing recovered, nothing recoverable, and the
         # next exchange written down as the whole session.
-        held = Usage.from_dict(self.state.get(USAGE_KEY))
+        held = Usage.from_dict(self.local.get(USAGE_KEY))
         recovered = held if held is not None else Usage()
         start = self._ledger_cursor(fresh=held is None)
         counted = 0
@@ -1484,7 +1537,7 @@ class MathematicsSession:
                 counted += 1
         if not counted:
             return recovered
-        self.state[USAGE_KEY] = recovered.as_dict()
+        self.local[USAGE_KEY] = recovered.as_dict()
         self._record({"type": "migration", "reason": "spend", "recovered_turns": counted})
         self._mark_ledger_read(self._transcript_end())
         return recovered
@@ -1510,7 +1563,7 @@ class MathematicsSession:
         """
         if fresh:
             return 0
-        cursor = self.state.get(CURSOR_KEY)
+        cursor = self.local.get(CURSOR_KEY)
         size = self._transcript_end()
         if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0 or cursor > size:
             # Set rather than advanced. `_mark_ledger_read` only ever moves the
@@ -1521,8 +1574,8 @@ class MathematicsSession:
             #
             # (No cursor at all lands here too: a ledger written before this
             # existed has read its whole transcript by construction.)
-            self.state[CURSOR_KEY] = size
-            self._save_state()
+            self.local[CURSOR_KEY] = size
+            self._save_local()
             return size
         return cursor
 
@@ -1543,10 +1596,10 @@ class MathematicsSession:
         """
         if offset is None:
             offset = self.transcript_path.stat().st_size if self.transcript_path.exists() else 0
-        held = self.state.get(CURSOR_KEY)
+        held = self.local.get(CURSOR_KEY)
         held = held if isinstance(held, int) and not isinstance(held, bool) and held >= 0 else 0
-        self.state[CURSOR_KEY] = max(held, offset)
-        self._save_state()
+        self.local[CURSOR_KEY] = max(held, offset)
+        self._save_local()
 
     def _recorded(self, start: int = 0) -> Iterator[dict[str, Any]]:
         """Every event the transcript holds from `start` on, skipping non-events.
@@ -1610,7 +1663,7 @@ class MathematicsSession:
                     return
                 self._reported.set()
             self.usage = self.usage.record(event)
-            self.state[USAGE_KEY] = self.usage.as_dict()
+            self.local[USAGE_KEY] = self.usage.as_dict()
             self._mark_ledger_read(offset)
 
     def _skip_spend(self, offset: int) -> None:
