@@ -1308,6 +1308,12 @@ class MathematicsSession:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(kept, encoding="utf-8")
                 return ToolResult(False, f"the writeup no longer compiles without {path}, so it was kept:\n{checked.output}")
+            # This compile is as good as a save's, and the tree it compiled is
+            # the tree on disk -- so it is stamped like one. Without this a
+            # deletion left a freshly compiled writeup reading as stale, and
+            # the only way out was a save that changed nothing.
+            self.state["tex_signature"] = self._tex_signature()
+            self._save_state()
         return ToolResult(True, f"deleted {path}")
 
     def _resolve(self, path: str) -> tuple[Path, str] | ToolResult:
@@ -1449,9 +1455,10 @@ class MathematicsSession:
                 "Settle every line above with save_lean, record_name and save_latex, then "
                 "report again. Do not tell the user this is finished in the meantime.",
             )
-        used = self._used_assumptions()
         rested = [
-            item for item in self.state["assumptions"] if str(item["formal_name"]) in used
+            item
+            for item in self.state["assumptions"]
+            if str(item["formal_name"]) in self._rests_on(resolved)
         ]
         entry = {
             "theorems": sorted(resolved),
@@ -1479,6 +1486,24 @@ class MathematicsSession:
                 else ""
             ),
         )
+
+    def _rests_on(self, names: Iterable[str]) -> set[str]:
+        """The approved assumptions these declarations actually depend on.
+
+        Read from the per-declaration audit rather than from the workspace as a
+        whole. A report naming only the clean theorem was recording every
+        assumption anywhere in the tree as its own -- saying "verified modulo
+        Sylow" about a result that never touched it, in the durable record, on
+        evidence Lean had already given to the contrary.
+        """
+        wanted = set(names)
+        found: set[str] = set()
+        approved = self._approved_assumptions()
+        for record in self.state.get("audit", {}).values():
+            for entry in record.get("declarations", ()):
+                if entry.get("name") in wanted:
+                    found.update(set(entry.get("axioms", ())) & approved)
+        return found
 
     def _tex_signature(self) -> str:
         """What the writeup tree hashes to, as a whole."""

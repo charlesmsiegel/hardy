@@ -209,7 +209,11 @@ is always allowed; only *adding* a new one is gated.
 axiom — a result Mathlib does not have, stood in for by assumption — the writeup
 must open an `\appendix` that states it in both languages: the mathematics under
 a `\label` for its LaTeX name, and the exact `axiom Name : statement` line Lean
-was given, quoted verbatim. An approval nobody used owes nothing.
+was given, quoted verbatim. All of it after the `\appendix`, in the document's
+reading order with inclusions spliced where they occur, so a disclosure in the
+body followed by an empty appendix does not count. An approval nobody used owes
+nothing, and a report rests on what its own theorems were audited to depend on
+rather than on everything in the workspace.
 
 **Nothing is finished until the artifacts say so.** Claiming a result is itself a
 tool call — `report_result`, naming the theorems it claims — and Hardy refuses it

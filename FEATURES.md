@@ -48,13 +48,20 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   `.tex` files on disk are the ones that compiled the labels being relied on. A Lean
   or TeX file edited behind Hardy's back, or a workspace reopened from before the
   audit existed, is outstanding work until it is saved again.
-- **Known limit — what a listing must be quoted *as*.** The document is read the way
-  LaTeX reads it: comments dropped, verbatim environments taken as displayed text, and
-  `\input` followed only where TeX would execute it. That is a scan, not a TeX
-  engine, so a document that reaches its listings through macro expansion or a
-  conditional branch is read as not quoting them, and owes a plain listing instead.
-  Refusing in that direction is the safe one — the alternative is crediting a
-  quotation no reader was shown.
+- **Now (implemented):** the writeup is read in reading order, as one document. The
+  root's inclusions are spliced where they occur, so "in the appendix" means after the
+  `\appendix` TeX actually executed rather than anywhere in the paper — a label,
+  prose and axiom listing in the body followed by an empty `\appendix` disclose
+  nothing. Only environments that render every Lean character survive as quotations:
+  `verbatim`, `Verbatim`, `lstlisting`, `minted`. `alltt` and `semiverbatim` keep TeX's
+  grouping, so `{α : Type}` would lose its braces on the way to the reader.
+- **Known limit — the document is scanned, not typeset.** Comments are dropped, a
+  literal `\iffalse` branch is skipped, and `\input` is followed only where TeX would
+  execute it — but this is a scan, not a TeX engine. A document that reaches its
+  listings through macro expansion, or through a conditional this scanner does not
+  model, is read as not quoting them and owes a plain listing instead. Refusing in that
+  direction is the safe one; the failure to avoid is crediting a quotation no reader
+  was shown.
 - **Now (implemented):** a naming registry links Lean declarations to LaTeX labels
   for later translation review; this link is not itself a faithfulness grade.
 - **Now (implemented):** introducing an axiom pauses for human approval and records
