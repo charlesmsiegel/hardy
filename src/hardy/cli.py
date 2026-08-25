@@ -18,7 +18,7 @@ from . import cas_tools, claude_runtime, doctor, latency, layout
 from . import config as configuration
 from .cas import CasError
 from .cas_export import export_session
-from .chat import MathematicsSession
+from .chat import MathematicsSession, SchemaError
 from .lean import LeanTools
 from .models import Request
 from .runner import WARNING, run
@@ -105,20 +105,26 @@ def _chat(
 ) -> int:
     from .tui import run_session
 
+    def _report(error: Exception) -> None:
+        # Every other `LayoutError` a run can hit -- a bad `--project`, a bad
+        # value in a config file -- reaches `_config` and goes through
+        # `parser.error`, which prints a clean message and exits 2. Both this
+        # and `SchemaError` below are raised later, once a session is
+        # actually opening, so without this they were the paths where the
+        # same kind of error surfaced as a raw traceback (or, for the schema
+        # refusal reached through the interactive shell, a misleading
+        # "Falling back to the plain session" line followed by one) instead.
+        # `parser` is optional because a direct caller (tests, or any future
+        # non-CLI embedding) has no parser to hand it and is better served by
+        # the real exception than a swallowed one.
+        if parser is None:
+            raise error
+        parser.error(str(error))
+
     try:
         prepare_layout(config)
     except layout.LayoutError as error:
-        # Every other `LayoutError` a run can hit -- a bad `--project`, a bad
-        # value in a config file -- reaches `_config` and goes through
-        # `parser.error`, which prints a clean message and exits 2. This one
-        # is raised later, once a session is actually opening, so without
-        # this it was the one path where the same error surfaced as a raw
-        # traceback instead. `parser` is optional because a direct caller
-        # (tests, or any future non-CLI embedding) has no parser to hand it
-        # and is better served by the real exception than a swallowed one.
-        if parser is None:
-            raise
-        parser.error(str(error))
+        _report(error)
 
     # Built once, here -- not inside `build` below -- because `run_session`
     # can call its `session_factory` a second time (the interactive shell
@@ -149,6 +155,14 @@ def _chat(
 
     try:
         return run_session(config, build, plain=plain)
+    except SchemaError as error:
+        # Reaches here whichever path `run_session` took: the plain path
+        # raises it straight out of `build`, and the interactive path (see
+        # `tui.run_session`) refuses to let its fallback-on-any-exception
+        # catch swallow this one and misreport it as a rendering problem.
+        # `_report` always either raises or exits -- nothing here returns.
+        _report(error)
+        raise AssertionError("unreachable: _report always raises or exits")
     finally:
         # Not reached at all if a forced double-Ctrl+C exit inside the shell
         # reaches `os._exit` -- that bypasses every `finally` in the process,

@@ -96,6 +96,17 @@ def migrate_global(source: Path | None = None, destination: Path | None = None) 
     this change removes -- so relocating the file verbatim would leave Hardy
     unable to load its own configuration.
 
+    Parsed and re-serialized, not line-filtered: a legacy file may spell a
+    retired key as a multiline value -- `workspace = \"\"\"` with the string
+    and the closing delimiter on their own following lines -- and dropping
+    only the assignment line would leave those continuation lines behind.
+    Since the source is then deleted, the destination would be a file
+    `tomllib` cannot parse, and Hardy would not start. TOML's grammar is not
+    line-oriented, so only a real parse can tell where a value actually ends
+    -- and a real parse also means a quoted key (`"workspace" = ...`, which a
+    line-based regex would have to special-case) needs no special-casing at
+    all: `tomllib` already treats it as the same key either way.
+
     Returns whether anything moved. An absent source and an existing
     destination are both ordinary: the destination is the newer file and is
     never overwritten.
@@ -104,25 +115,33 @@ def migrate_global(source: Path | None = None, destination: Path | None = None) 
     destination = destination or (layout.global_dir() / "config.toml")
     if not source.is_file() or destination.exists():
         return False
-    # TOML permits a quoted key -- `"workspace" = ...` decodes identically to
-    # `workspace = ...` -- but the unquoted pattern below would not match it,
-    # so the migration would delete the source and install a destination
-    # still carrying the retired key, and `read_file` rejects that on every
-    # later load: Hardy would not start at all.
-    names = "|".join(RETIRED_SETTINGS)
-    retired = re.compile(rf"""^\s*(?:['"]?)(?:{names})(?:['"]?)\s*=""")
-    kept = [
-        line
-        for line in source.read_text(encoding="utf-8-sig").splitlines()
-        if not retired.match(line)
-    ]
+    values = tomllib.loads(source.read_text(encoding="utf-8-sig"))
+    kept = {key: value for key, value in values.items() if key not in RETIRED_SETTINGS}
+    lines = [_render_toml_line(key, value) for key, value in kept.items()]
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
     temporary.chmod(0o600)
     os.replace(temporary, destination)
     source.unlink()
     return True
+
+
+def _render_toml_line(key: str, value: Any) -> str:
+    """One `key = value` line, typed the way `tomllib` would read it back.
+
+    `migrate_global` re-serializes rather than copying source text, so a
+    survivor's type has to be reconstructed explicitly: a number written back
+    as a quoted string (`lean_timeout = "90"`) would still parse, but nothing
+    else in this module ever writes a config that way, and a hand-inspecting
+    user comparing before and after would see a spurious change.
+    """
+    if isinstance(value, bool):
+        return f"{key} = {'true' if value else 'false'}"
+    if isinstance(value, (int, float)):
+        return f"{key} = {value}"
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'{key} = "{escaped}"'
 
 
 @dataclass(frozen=True)

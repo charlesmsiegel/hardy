@@ -235,14 +235,14 @@ Priority labels are sequencing hints:
   shape, shipped as the optional `codex` extra.
 - **Now (implemented):** an interactive session accumulates the cost and token
   usage the provider reports for each exchange, persists the total in
-  `session.json` so reopening a workspace continues it, carries an abbreviated
-  form on the session rule, and breaks it out in `/status`. A workspace from
+  `.local/state.json` so reopening a workspace continues it, carries an
+  abbreviated form on the session rule, and breaks it out in `/status`. A workspace from
   before the ledger recovers what its transcript already recorded. Never
   estimated, and never zero where nothing was reported — per field, not per
   report, so a counter the backend omitted reads as unreported and a total
   covering part of a session says which part. A terminal too narrow for the
   meter drops it whole.
-- **Known gap:** those totals reach `session.json` and the session's own chrome,
+- **Known gap:** those totals reach `.local/state.json` and the session's own chrome,
   but not `result.json` or the `trajectory.json` summary. Tracked in issue #30.
 - **Next:** token and cost budgets with reserve/settle accounting, and the
   budget and what remains of it alongside the spend in `/status`.

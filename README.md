@@ -170,8 +170,7 @@ reason to build one.
 
 The default `.hardy/` workspace contains a Lean tree under `lean/`, a writeup
 tree under `tex/` rooted at `writeup.tex`, the compiled `writeup.pdf`,
-`session.json`, and an append-only `transcript.jsonl`. A workspace written
-before the trees existed is migrated into them the next time it is opened.
+`session.json`, and an append-only `transcript.jsonl`.
 
 Both trees hold as many files as the work needs. A Lean file's path is its
 module name — `lean/Group/Sylow.lean` is `import Group.Sylow` — so a development
@@ -269,7 +268,7 @@ here stays at or under 38 columns instead, which is what keeps a resize safe.
 
 The spend meter on that rule (`── claude-opus-5 ── $1.34 · 82k ───`) is the
 running cost and token count of the session so far, taken from the provider's
-own report after each exchange and accumulated in `session.json`, so reopening
+own report after each exchange and accumulated in `.local/state.json`, so reopening
 a workspace continues the total rather than restarting it. Every figure is
 differenced rather than summed: the CLI restores a resumed session's running
 totals before each exchange -- the cost and the per-model token counts alike --

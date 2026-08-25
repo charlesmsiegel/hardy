@@ -69,6 +69,18 @@ THREAD_KEY = "provider_session"
 #: as a pair rather than two keys that happen to share a purpose.
 LEDGER_KEYS = (USAGE_KEY, CURSOR_KEY)
 
+
+class SchemaError(ValueError):
+    """A record whose `schema_version` this build does not read.
+
+    Its own type, not a bare `ValueError`: a caller opening a project needs
+    to tell "this workspace predates a format change, refused on purpose"
+    apart from every other way constructing a session can fail, and render
+    it as the one clean line it is -- not as a session-startup problem to
+    fall back away from, nor as a stack trace.
+    """
+
+
 CHAT_TOOLS = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "save_lean", "description": "Check and save one Lean file in the workspace tree, defaulting to Main.lean. Every file importing it is rebuilt and the save is refused whole if any of them breaks. Completed saved work must contain no sorry or admit.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -375,7 +387,7 @@ class MathematicsSession:
             stored = json.loads(self.state_path.read_text(encoding="utf-8"))
             version = stored.get("schema_version")
             if version != 2:
-                raise ValueError(
+                raise SchemaError(
                     f"{self.state_path} is schema version {version!r}; this Hardy reads version 2 only"
                 )
             return stored

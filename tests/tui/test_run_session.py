@@ -11,12 +11,13 @@ from __future__ import annotations
 import io
 from io import StringIO
 
+import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output.vt100 import Vt100_Output
 
-from hardy import runner
+from hardy import chat, runner
 from hardy.tui import run_session
 
 from .conftest import Streams
@@ -63,6 +64,32 @@ def test_a_shell_that_will_not_start_falls_back_rather_than_failing(settings, mo
     captured = capsys.readouterr()
     assert runner.WARNING in captured.out
     assert "no console" in captured.err
+
+
+def test_a_schema_error_is_not_treated_as_a_rendering_problem(settings, monkeypatch):
+    """The interactive fallback exists for rendering failures, not this.
+
+    Reproduced: catching `SchemaError` under the same broad `except
+    Exception` as a real rendering failure printed a misleading "Falling
+    back to the plain session: ..." line and retried in `_run_plain`, where
+    the identical refusal then escaped uncaught as a raw traceback right
+    after it -- a user with an old workspace got a wrong diagnosis followed
+    by a stack trace. It must propagate untouched instead, for `_chat` to
+    report once, cleanly.
+    """
+    monkeypatch.setattr("hardy.tui._is_interactive", lambda: True)
+
+    def explode(confirm):
+        raise chat.SchemaError("session.json is schema version 1; this Hardy reads version 2 only")
+
+    buffer = StringIO()
+    with create_pipe_input() as pipe:
+        output = Vt100_Output(buffer, lambda: Size(rows=24, columns=80))
+        with create_app_session(input=pipe, output=output):
+            with pytest.raises(chat.SchemaError):
+                run_session(settings, explode)
+
+    assert "Falling back" not in buffer.getvalue()
 
 
 def test_the_session_factory_is_called_exactly_once_on_the_plain_path(settings, monkeypatch):

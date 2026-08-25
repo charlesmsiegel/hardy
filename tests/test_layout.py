@@ -170,7 +170,8 @@ def test_a_symlinked_ignore_file_is_refused_not_followed(tmp_path: Path):
     ../../target.sh`, then `ensure()`, left `target.sh` ending in
     `/.build/\\n/.local/\\n`. Point that symlink at `~/.bashrc` and a cloned
     repository gets Hardy to append to a user's shell config the moment chat
-    starts.
+    starts. Refused outright as a symlink, not merely checked against the
+    root: a generated `.gitignore` has no legitimate reason to be one.
     """
     resolved = layout.Layout(root=tmp_path, slug="sylow")
     resolved.problem.mkdir(parents=True)
@@ -178,10 +179,55 @@ def test_a_symlinked_ignore_file_is_refused_not_followed(tmp_path: Path):
     target.write_text("echo hi\n", encoding="utf-8")
     (resolved.problem / ".gitignore").symlink_to(Path("..") / ".." / "target.sh")
 
-    with pytest.raises(layout.LayoutError, match="outside"):
+    with pytest.raises(layout.LayoutError, match="symlink"):
         resolved.ensure()
 
     assert target.read_text(encoding="utf-8") == "echo hi\n", "the symlink target must not be written through"
+
+
+@needs_symlinks
+def test_an_ignore_file_symlinked_inside_the_root_is_still_refused(tmp_path: Path):
+    """"Inside the root" is not tight enough for a generated file either.
+
+    Reproduced (P1, review of the CRITICAL fix): `sylow/.gitignore ->
+    ../README.md`. `README.md` is still under the project root, so a check
+    that only asked "is this inside the root" would accept it -- and
+    `ensure()` would append Hardy's ignore rules to a README the moment a
+    chat session starts.
+    """
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.problem.mkdir(parents=True)
+    readme = tmp_path / "README.md"
+    readme.write_text("# sylow\n", encoding="utf-8")
+    (resolved.problem / ".gitignore").symlink_to(Path("..") / "README.md")
+
+    with pytest.raises(layout.LayoutError, match="symlink"):
+        resolved.ensure()
+
+    assert readme.read_text(encoding="utf-8") == "# sylow\n", "README.md must be byte-for-byte unchanged"
+
+
+@needs_symlinks
+def test_a_child_directory_symlinked_into_a_sibling_project_is_refused(tmp_path: Path):
+    """"Inside the root" is not tight enough for the child directories either.
+
+    Reproduced (P1, review of the Major-1 fix): `sylow/.local ->
+    ../other-project/.local`. The target is still under the project root --
+    it is just another problem's own directory -- so a check that only asked
+    "is this inside the root" would accept it, landing this problem's
+    provider state inside a sibling project, outside the `/.local/` rule that
+    is supposed to cover it.
+    """
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.problem.mkdir(parents=True)
+    sibling_local = tmp_path / "other-project" / ".local"
+    sibling_local.mkdir(parents=True)
+    (resolved.problem / ".local").symlink_to(Path("..") / "other-project" / ".local")
+
+    with pytest.raises(layout.LayoutError, match="outside"):
+        resolved.ensure()
+
+    assert not any(sibling_local.iterdir())
 
 
 @needs_symlinks
@@ -202,7 +248,36 @@ def test_a_symlinked_child_directory_is_refused_not_followed(tmp_path: Path):
     with pytest.raises(layout.LayoutError, match="outside"):
         resolved.ensure()
 
-    assert not (outside / "state.json").exists()
+    # Not `assert not (outside / "state.json").exists()`: `state.json` is
+    # written by `chat.py`, not by `ensure()`, so that assertion would pass
+    # whether or not the escape was actually closed. `ensure()` itself must
+    # create nothing inside `outside/` at all.
+    assert not any(outside.iterdir())
+
+
+@needs_symlinks
+def test_a_symlinked_build_directory_is_refused_not_followed(tmp_path: Path):
+    """`.build` was in neither the creation loop nor the guarded set.
+
+    Reproduced before this test was written: `sylow/.build -> ../../outside`
+    was accepted by `ensure()`, and the build tree it stands for -- the
+    Lean oleans a shadow build writes -- would land outside the root the
+    same way `.local` did before it was guarded.
+    """
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.problem.mkdir(parents=True)
+    # A distinct name from the `.local` test's `outside/`: both tests share
+    # the same `tmp_path.parent` under pytest's default tmp-dir layout, and a
+    # second `mkdir()` of the same name would raise `FileExistsError` before
+    # the test's own assertion ever ran.
+    outside = tmp_path.parent / "outside-build"
+    outside.mkdir()
+    (resolved.problem / ".build").symlink_to(Path("..") / ".." / "outside-build")
+
+    with pytest.raises(layout.LayoutError, match="outside"):
+        resolved.ensure()
+
+    assert not any(outside.iterdir())
 
 
 def test_missing_rules_preserve_an_existing_crlf_ignore_file(tmp_path: Path):
@@ -224,6 +299,28 @@ def test_missing_rules_preserve_an_existing_crlf_ignore_file(tmp_path: Path):
     assert b"\n" not in stripped and b"\r" not in stripped, "every line ending must be CRLF, none bare"
     assert b"*.log\r\n" in raw
     assert b"/.local/\r\n" in raw
+
+
+def test_a_non_utf8_ignore_file_round_trips_without_crashing(tmp_path: Path):
+    """git does not require an ignore file to be UTF-8.
+
+    Reproduced: a `.gitignore` containing a legacy-locale byte -- not valid
+    UTF-8 on its own -- raised `UnicodeDecodeError` from a strict decode,
+    which `prepare_layout`'s caller does not catch, after `ensure()` had
+    already created part of the layout. Surrogate-escaping round-trips the
+    byte through untouched instead of refusing to read a file Hardy edits
+    but does not own.
+    """
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.problem.mkdir(parents=True)
+    (resolved.problem / ".gitignore").write_bytes(b"*.log\n\xe9dition\n")
+
+    resolved.ensure()
+
+    raw = (resolved.problem / ".gitignore").read_bytes()
+    assert b"\xe9dition" in raw, "the non-UTF-8 byte must round-trip untouched"
+    assert b"/.local/" in raw
+    assert b"/.build/" in raw
 
 
 def test_rules_already_present_are_not_duplicated(tmp_path: Path):

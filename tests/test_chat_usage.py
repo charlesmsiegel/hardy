@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from test_chat import FakeChatRuntime, session
 
+from hardy import chat
 from hardy.models import TurnEvent
 from hardy.usage import Usage
 
@@ -136,6 +137,22 @@ def test_a_backend_that_reports_nothing_leaves_the_total_unreported(tmp_path: Pa
     assert chat.usage.cost_usd is None
     assert chat.usage.counted is False
     assert "$0.00" not in "\n".join(chat.usage.lines())
+
+
+def test_a_schema_1_record_is_refused_with_its_own_error_type(tmp_path: Path):
+    """The refusal is deliberate; how it surfaces to a user is not this test's
+
+    concern (see `tests/unit/test_chat_wiring.py` for that) -- only that
+    opening a schema-1 workspace raises `chat.SchemaError`, not a bare
+    `ValueError` a caller would have to pattern-match on message text to
+    tell apart from every other way construction can fail.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "session.json").write_text(
+        json.dumps({"schema_version": 1, "names": [], "assumptions": []}), encoding="utf-8"
+    )
+    with pytest.raises(chat.SchemaError, match="schema version 1"):
+        spending(tmp_path)
 
 
 def test_a_workspace_written_before_the_ledger_existed_still_opens(tmp_path: Path):

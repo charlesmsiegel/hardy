@@ -70,13 +70,25 @@ def test_opening_a_project_creates_its_layout(tmp_path):
     `grep -rn "ensure()" src/` returned nothing before this test: the
     directories and the anchored ignore rules existed only in unit tests, so a
     real run left `.build/` and `.local/` as ordinary trackable files.
+
+    Also pins `prepare_layout`'s second statement, `unignore_tooling`, not
+    only its first: deleting the `unignore_tooling(...)` call left every
+    other test in this file (including the wiring spy below, which only
+    watches whether `prepare_layout` runs, not what it does) green -- 409
+    passed, 4 skipped. A pre-seeded legacy root `.gitignore` and an
+    assertion on its *effect* catches that a bare call-count spy cannot.
     """
+    (tmp_path / ".gitignore").write_text("*.log\n.hardy/\n", encoding="utf-8")
     settings = configuration.load(tmp_path / "absent.toml", root=tmp_path, project="sylow")
     cli.prepare_layout(settings)
 
     problem = tmp_path / "sylow"
     assert (problem / "lean").is_dir()
     assert "/.local/" in (problem / ".gitignore").read_text(encoding="utf-8")
+
+    root_ignore = (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert ".hardy/" not in root_ignore, "unignore_tooling must have run"
+    assert "*.log" in root_ignore, "the user's other rules are untouched"
 
 
 def test_chat_calls_prepare_layout_before_building_the_cas_runtime(tmp_path, monkeypatch):
@@ -90,6 +102,8 @@ def test_chat_calls_prepare_layout_before_building_the_cas_runtime(tmp_path, mon
     order: `cas_tools.build_runtime` writes its log under `<slug>/cas/` and
     needs that directory to already exist.
     """
+    (tmp_path / ".gitignore").write_text("*.log\n.hardy/\n", encoding="utf-8")
+
     order: list[str] = []
     real_prepare_layout = cli.prepare_layout
 
@@ -111,6 +125,56 @@ def test_chat_calls_prepare_layout_before_building_the_cas_runtime(tmp_path, mon
 
     assert code == 0
     assert order == ["prepare_layout", "build_runtime"]
+    # `prepare_layout`'s call count alone does not pin its second statement:
+    # a spy on the function as a whole still fires once even if
+    # `unignore_tooling(...)` is deleted from inside it. Assert the effect.
+    root_ignore = (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert ".hardy/" not in root_ignore, "unignore_tooling must have run"
+
+
+def test_chat_wraps_a_schema_error_through_the_given_parser(tmp_path, monkeypatch, capsys):
+    """The schema-1 refusal is deliberate; how it reaches the user is not.
+
+    Before this, `run_session`'s interactive path caught it as an ordinary
+    exception, printed a misleading "Falling back to the plain session:
+    ..." line, retried in `_run_plain`, and let the identical refusal
+    escape uncaught as a raw traceback. `_chat` must render it through
+    `parser.error` -- one clean line -- the same way `LayoutError` is.
+    """
+
+    def explode(*args, **kwargs):
+        raise cli.SchemaError("session.json is schema version 1; this Hardy reads version 2 only")
+
+    def fake_build_runtime(**kwargs):
+        return FakeCasRuntime(), "fakecas 1.0"
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
+    monkeypatch.setattr(cli, "MathematicsSession", explode)
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli._chat(settings(tmp_path), plain=True, parser=parser)
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "schema version 1" in err
+    assert "Falling back" not in err
+
+
+def test_chat_without_a_parser_lets_a_schema_error_propagate(tmp_path, monkeypatch):
+    """A direct caller with no parser to hand gets the real exception."""
+
+    def explode(*args, **kwargs):
+        raise cli.SchemaError("boom")
+
+    def fake_build_runtime(**kwargs):
+        return FakeCasRuntime(), "fakecas 1.0"
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
+    monkeypatch.setattr(cli, "MathematicsSession", explode)
+
+    with pytest.raises(cli.SchemaError):
+        cli._chat(settings(tmp_path), plain=True)
 
 
 def test_chat_wraps_a_layout_error_through_the_given_parser(tmp_path, monkeypatch, capsys):

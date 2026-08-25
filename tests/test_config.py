@@ -227,6 +227,33 @@ def test_a_quoted_retired_key_is_dropped_too(tmp_path: Path):
     assert config.read_file(destination)["model"] == "x"
 
 
+def test_a_multiline_retired_value_is_migrated_cleanly(tmp_path: Path):
+    """Line-editing cannot handle TOML's grammar.
+
+    Reproduced: a legacy config spelling `workspace` as a multiline value --
+    `workspace = \"\"\"` with the string and the closing delimiter on their
+    own following lines -- left those continuation lines behind when only the
+    assignment line was dropped. Since the source is then deleted, the
+    destination was a file `tomllib` could not parse, and Hardy would not
+    start.
+    """
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        'model = "x"\nworkspace = """\n.hardy\n"""\nlean_timeout = 90\n',
+        encoding="utf-8",
+    )
+    destination = tmp_path / ".hardy" / "config.toml"
+
+    assert config.migrate_global(legacy, destination) is True
+
+    # The proof that matters: the migrated file parses at all.
+    loaded = config.read_file(destination)
+    assert loaded["model"] == "x"
+    assert loaded["lean_timeout"] == 90
+    assert "workspace" not in loaded
+
+
 def test_the_move_keeps_runs_root_which_is_still_a_live_setting(tmp_path: Path):
     """`runs_root` is out of scope for this change and stays readable by
 
