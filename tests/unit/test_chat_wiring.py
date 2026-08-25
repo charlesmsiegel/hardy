@@ -14,6 +14,8 @@ from __future__ import annotations
 import contextlib
 import io
 
+import pytest
+
 from hardy import cli
 from hardy import config as configuration
 
@@ -75,6 +77,72 @@ def test_opening_a_project_creates_its_layout(tmp_path):
     problem = tmp_path / "sylow"
     assert (problem / "lean").is_dir()
     assert "/.local/" in (problem / ".gitignore").read_text(encoding="utf-8")
+
+
+def test_chat_calls_prepare_layout_before_building_the_cas_runtime(tmp_path, monkeypatch):
+    """Pins the wiring itself, not just what `prepare_layout` does on its own.
+
+    `test_opening_a_project_creates_its_layout` above calls `prepare_layout`
+    directly and cannot fail if `_chat` stops calling it. Deleting the
+    `prepare_layout(config)` line from `_chat` left every other test in this
+    file green, because the fakes here never touch the filesystem to notice
+    the directories are gone -- so this spies on the call itself, and on its
+    order: `cas_tools.build_runtime` writes its log under `<slug>/cas/` and
+    needs that directory to already exist.
+    """
+    order: list[str] = []
+    real_prepare_layout = cli.prepare_layout
+
+    def spy_prepare_layout(config):
+        order.append("prepare_layout")
+        return real_prepare_layout(config)
+
+    def fake_build_runtime(**kwargs):
+        order.append("build_runtime")
+        return FakeCasRuntime(), "fakecas 1.0"
+
+    monkeypatch.setattr(cli, "prepare_layout", spy_prepare_layout)
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
+    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
+
+    FakeMathematicsSession.instances = []
+    code = cli._chat(settings(tmp_path), plain=True)
+
+    assert code == 0
+    assert order == ["prepare_layout", "build_runtime"]
+
+
+def test_chat_wraps_a_layout_error_through_the_given_parser(tmp_path, monkeypatch, capsys):
+    """Every other `LayoutError` a run can hit goes through `parser.error`,
+    which prints a clean message and exits 2 instead of a raw traceback --
+    this one, raised later once a session is actually opening, must too.
+    """
+
+    def explode(self):
+        raise cli.layout.LayoutError("boom: outside the root")
+
+    monkeypatch.setattr(cli.layout.Layout, "ensure", explode)
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli._chat(settings(tmp_path), plain=True, parser=parser)
+
+    assert excinfo.value.code == 2
+    assert "boom: outside the root" in capsys.readouterr().err
+
+
+def test_chat_without_a_parser_lets_a_layout_error_propagate(tmp_path, monkeypatch):
+    """A direct caller with no parser to hand -- a test, an embedding -- gets
+    the real exception rather than a silently swallowed one."""
+
+    def explode(self):
+        raise cli.layout.LayoutError("boom")
+
+    monkeypatch.setattr(cli.layout.Layout, "ensure", explode)
+
+    with pytest.raises(cli.layout.LayoutError):
+        cli._chat(settings(tmp_path), plain=True)
 
 
 def test_chat_wires_cas_into_the_session_and_closes_it_once(tmp_path, monkeypatch):

@@ -97,10 +97,28 @@ def prepare_layout(config: configuration.Config) -> None:
     config.layout.unignore_tooling(config.root / ".gitignore")
 
 
-def _chat(config: configuration.Config, *, plain: bool = False) -> int:
+def _chat(
+    config: configuration.Config,
+    *,
+    plain: bool = False,
+    parser: argparse.ArgumentParser | None = None,
+) -> int:
     from .tui import run_session
 
-    prepare_layout(config)
+    try:
+        prepare_layout(config)
+    except layout.LayoutError as error:
+        # Every other `LayoutError` a run can hit -- a bad `--project`, a bad
+        # value in a config file -- reaches `_config` and goes through
+        # `parser.error`, which prints a clean message and exits 2. This one
+        # is raised later, once a session is actually opening, so without
+        # this it was the one path where the same error surfaced as a raw
+        # traceback instead. `parser` is optional because a direct caller
+        # (tests, or any future non-CLI embedding) has no parser to hand it
+        # and is better served by the real exception than a swallowed one.
+        if parser is None:
+            raise
+        parser.error(str(error))
 
     # Built once, here -- not inside `build` below -- because `run_session`
     # can call its `session_factory` a second time (the interactive shell
@@ -828,7 +846,7 @@ def main() -> int:
     if args.command == "batch":
         return _batch(args, config, parser)
     # No subcommand is intentionally the primary interactive experience.
-    return _chat(config, plain=args.plain)
+    return _chat(config, plain=args.plain, parser=parser)
 
 
 if __name__ == "__main__":
