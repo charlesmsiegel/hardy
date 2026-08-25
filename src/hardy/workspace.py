@@ -436,28 +436,100 @@ def declarations(source: str) -> dict[str, tuple[str, ...]]:
     # Comments first: Lean reads `/-- explanation -/ theorem result ...` as a
     # declaration, and a scanner that saw the leading slash would miss it --
     # so the theorem would never be recorded and never owe a writeup.
-    text = strip_comments(source)
-    lines = text.splitlines()
-
-    prefixes = _scope_prefixes(lines)
-
-    # Declarations are matched over the whole text so a name on the line after
-    # its keyword is still found, then attributed to the scope open at the line
-    # the keyword sits on.
-    starts = []
-    offset = 0
-    for line in lines:
-        starts.append(offset)
-        offset += len(line) + 1
-    for match in DECLARATION.finditer(text):
-        index = bisect_right(starts, match.start()) - 1
-        prefix = prefixes[index] if 0 <= index < len(prefixes) else ()
+    for match, prefix in _scan(strip_comments(source)):
         modifiers, kind, name = match.group(1), match.group(2), match.group(3)
         qualified = declared_name(name, prefix)
         found[kind].append(qualified)
         if PRIVATE.search(modifiers):
             found["private"].append(qualified)
     return {kind: tuple(names) for kind, names in found.items()}
+
+
+def _scan(text: str) -> list[tuple[re.Match[str], tuple[str, ...]]]:
+    """Every declaration in an already-stripped source, with its namespace.
+
+    Declarations are matched over the whole text so a name on the line after
+    its keyword is still found, then attributed to the scope open at the line
+    the keyword sits on.
+
+    One walk, shared by `declarations` and `statements`. They must agree about
+    what a declaration is called: a theorem the first names `Hardy.one` and the
+    second names `one` would be one theorem to the writeup gate and another to
+    the ratchet, and the statement the document was checked against would not
+    be the statement anyone had to write up.
+    """
+    lines = text.splitlines()
+    prefixes = _scope_prefixes(lines)
+    starts = []
+    offset = 0
+    for line in lines:
+        starts.append(offset)
+        offset += len(line) + 1
+    scanned = []
+    for match in DECLARATION.finditer(text):
+        index = bisect_right(starts, match.start()) - 1
+        scanned.append((match, prefixes[index] if 0 <= index < len(prefixes) else ()))
+    return scanned
+
+
+# What a statement may nest, and what closes it. Depth is tracked so that the
+# `:=` in a binder's default value (`(n : Nat := 3)`) is not read as the start
+# of the proof, which would truncate the statement a human is asked to check.
+CLOSERS = {"(": ")", "[": "]", "{": "}", "⟨": "⟩"}
+OPENERS = {closer: opener for opener, closer in CLOSERS.items()}
+PROOF = ":="
+
+
+def statements(source: str) -> dict[str, str]:
+    """Each theorem and lemma's statement, whitespace-normalised.
+
+    The declaration head and nothing else: from the keyword through the `:=`
+    that opens the proof, exclusive. This is what a reader of the writeup has
+    to be able to compare against the document in front of them, so it is also
+    what the writeup gate looks for -- a paper that quotes a *different*
+    statement than the one Lean checked is worse than one that quotes none.
+
+    Attributes and modifiers are dropped and whitespace is collapsed, because
+    neither changes the proposition and both differ harmlessly between the
+    Lean file and the listing in the paper. Nothing else is normalised: the
+    proposition is compared character for character.
+    """
+    text = strip_comments(source)
+    scanned = _scan(text)
+    found: dict[str, str] = {}
+    for position, (match, prefix) in enumerate(scanned):
+        bound = scanned[position + 1][0].start() if position + 1 < len(scanned) else len(text)
+        head = text[match.start(2) : _statement_end(text, match.end(), bound)]
+        found[declared_name(match.group(3), prefix)] = " ".join(head.split())
+    return found
+
+
+def _statement_end(text: str, start: int, bound: int) -> int:
+    """Where a declaration's statement stops: its own `:=`, or `bound`.
+
+    A declaration whose proof is written some other way -- `where`, a `| pat`
+    branch, or nothing at all because the file is mid-edit -- has no `:=` to
+    find, and stopping at the next declaration keeps the statement bounded
+    rather than swallowing the rest of the file.
+    """
+    depth = 0
+    index = start
+    while index < bound:
+        character = text[index]
+        if character == '"':
+            index += 1
+            while index < bound and text[index] != '"':
+                index += 2 if text[index] == "\\" else 1
+            index += 1
+            continue
+        if character in CLOSERS:
+            depth += 1
+        elif character in OPENERS:
+            depth = max(depth - 1, 0)
+        elif depth == 0 and text.startswith(PROOF, index):
+            return index
+        index += 1
+    return bound
 
 
 def name_aliases(name: str) -> tuple[str, ...]:

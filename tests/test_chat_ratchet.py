@@ -8,7 +8,25 @@ from workspace_helpers import results
 FIRST = "import Mathlib\ntheorem hardyOne : True := by exact True.intro\n"
 SECOND = "import Mathlib\ntheorem hardyTwo : True := by exact True.intro\n"
 LEMMAS = "import Mathlib\nlemma hardyHelper : True := by exact True.intro\n"
-TEX = "\\documentclass{article}\n\\begin{document}One.\\label{thm:one}\\end{document}\n"
+
+
+def writeup(*quoted: str, label: str = "thm:one") -> str:
+    r"""A document that carries one theorem: a label, and the Lean it is about.
+
+    Both halves, because either alone leaves the reader nothing to check. A
+    `\label` says the document claims to describe a theorem; the verbatim Lean
+    is what lets a human see that it describes *that* one.
+    """
+    body = "\n".join(quoted)
+    return (
+        "\\documentclass{article}\n\\begin{document}\n"
+        f"One.\\label{{{label}}}\n"
+        f"\\begin{{verbatim}}\n{body}\n\\end{{verbatim}}\n"
+        "\\end{document}\n"
+    )
+
+
+TEX = writeup("theorem hardyOne : True")
 
 
 def test_a_second_theorem_is_refused_while_the_first_is_undocumented(tmp_path: Path):
@@ -128,7 +146,10 @@ def test_a_commented_out_label_does_not_release_the_ratchet(tmp_path: Path):
 
 
 def test_an_escaped_percent_does_not_hide_a_real_label(tmp_path: Path):
-    escaped = "\\documentclass{article}\n\\begin{document}100\\% done \\label{thm:one}\n\\end{document}\n"
+    escaped = (
+        "\\documentclass{article}\n\\begin{document}100\\% done \\label{thm:one}\n"
+        "\\begin{verbatim}\ntheorem hardyOne : True\n\\end{verbatim}\n\\end{document}\n"
+    )
     runtime = FakeChatRuntime([
         call("save_lean", {"path": "One.lean", "source": FIRST}),
         call("record_name", {"formal_name": "hardyOne", "latex_name": "thm:one", "description": "One."}),
@@ -150,7 +171,7 @@ def test_a_bare_name_shared_by_two_theorems_documents_neither(tmp_path: Path):
     runtime = FakeChatRuntime([
         call("save_lean", {"path": "A.lean", "source": first}),
         call("record_name", {"formal_name": "result", "latex_name": "thm:one", "description": "A result."}),
-        call("save_latex", {"source": TEX}),
+        call("save_latex", {"source": writeup("theorem result : True")}),
         call("save_lean", {"path": "B.lean", "source": second}),
         call("save_lean", {"path": "C.lean", "source": SECOND}),
         {"role": "assistant", "content": "Blocked once ambiguous."},
@@ -227,7 +248,10 @@ def test_deleting_the_fragment_that_held_a_label_closes_the_ratchet_again(tmp_pa
     theorem is released on the strength of a writeup that is gone.
     """
     root = "\\documentclass{article}\n\\begin{document}Body.\\end{document}\n"
-    fragment = "Section one.\\label{thm:one}\n"
+    fragment = (
+        "Section one.\\label{thm:one}\n"
+        "\\begin{verbatim}\ntheorem hardyOne : True\n\\end{verbatim}\n"
+    )
     runtime = FakeChatRuntime([
         call("save_lean", {"path": "One.lean", "source": FIRST}),
         call("record_name", {"formal_name": "hardyOne", "latex_name": "thm:one", "description": "One."}),
@@ -250,7 +274,7 @@ def test_a_namespaced_theorem_is_documented_by_either_name(tmp_path: Path):
     runtime = FakeChatRuntime([
         call("save_lean", {"path": "One.lean", "source": source}),
         call("record_name", {"formal_name": "Hardy.one", "latex_name": "thm:one", "description": "One."}),
-        call("save_latex", {"source": TEX}),
+        call("save_latex", {"source": writeup("theorem one : True")}),
         call("save_lean", {"path": "Two.lean", "source": SECOND}),
         {"role": "assistant", "content": "Saved."},
     ])

@@ -56,7 +56,10 @@ class TurnEvent:
     `claude_runtime._deltas` for why consuming both would double every answer.
     """
 
-    kind: str                    # text | thinking | tool_use | tool_result | reply
+    # `notice` is Hardy's own, not the model's: what the workspace still
+    # owes, drawn after the reply and read off the artifacts rather than off
+    # anything that was said.
+    kind: str                    # text | thinking | tool_use | tool_result | reply | notice
     text: str = ""               # a delta for `text`; the whole reply for `reply`
     name: str = ""               # the tool, for tool_use and tool_result
     ok: bool | None = None       # how a tool call came out, for tool_result

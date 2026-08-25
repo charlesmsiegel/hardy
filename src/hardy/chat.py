@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
-from . import audit, process
+from . import audit, completion, process
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
@@ -34,6 +34,7 @@ from .workspace import (
     module_name,
     module_path,
     safe_relative,
+    statements,
     unreadable_assumptions,
 )
 
@@ -75,6 +76,7 @@ CHAT_TOOLS = [
     {"type": "function", "function": {"name": "delete_file", "description": "Delete one workspace file. Refused if another workspace file imports it.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "record_name", "description": "Record the durable correspondence between a Lean declaration and its LaTeX label/name.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "latex_name": {"type": "string"}, "description": {"type": "string"}}, "required": ["formal_name", "latex_name", "description"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "request_assumption", "description": "Ask the human for permission to introduce an axiom when a result is unavailable. Never assume approval.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "lean_statement": {"type": "string"}, "latex_name": {"type": "string"}, "informal_statement": {"type": "string"}, "source": {"type": "string"}, "reason": {"type": "string"}}, "required": ["formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "report_result", "description": "Report finished work. The only way to call anything proved, done, or complete: say it in prose and Hardy contradicts you in front of the user. Refused unless every theorem named is saved Lean the kernel audited, the writeup creates its label and quotes its exact Lean statement verbatim, and every assumption the work rests on is stated in an appendix in both Lean and prose.", "parameters": {"type": "object", "properties": {"theorems": {"type": "array", "items": {"type": "string"}}, "summary": {"type": "string"}}, "required": ["theorems", "summary"], "additionalProperties": False}}},
 ]
 
 # A migrated workspace carries a bounded tail of its old conversation, enough to
@@ -651,7 +653,26 @@ class MathematicsSession:
         # Absent from `seen` when the source was byte-identical to what was
         # already built, so the cache skipped it. Nothing was wrong with it.
         result = seen.get(module, ToolResult(True, "unchanged; already built", source))
-        return ToolResult(result.ok, f"{result.output}\n\naxiom audit: {note}", result.source)
+        return ToolResult(
+            result.ok,
+            f"{result.output}\n\naxiom audit: {note}{self._owed_note()}",
+            result.source,
+        )
+
+    def _owed_note(self) -> str:
+        """The outstanding obligations, appended to a tool result.
+
+        On every save, not only on the one that trips the ratchet. A model that
+        is told what the work still owes while it is saving can settle it now;
+        one told only when it is refused learns it a theorem too late.
+        """
+        owed = self._obligations()
+        if not owed:
+            return ""
+        return (
+            "\n\nNot reportable yet. This workspace still owes:\n"
+            f"{completion.describe(owed)}"
+        )
 
     def _approved_assumptions(self) -> set[str]:
         return {item["formal_name"] for item in self.state["assumptions"]}
@@ -913,30 +934,102 @@ class MathematicsSession:
             found.update(declarations(source)["theorem"])
         return found
 
-    def _undocumented(self) -> tuple[str, ...]:
-        """Saved theorems with no writeup behind them.
+    def _saved_statements(self) -> dict[str, str]:
+        """Every saved theorem, with the exact statement Lean was given.
 
-        Derived from the registry and the writeup tree every time it is asked
-        for. A stored flag would outlive the file it described, and
-        `session.json` already carries enough state that has to be kept true.
+        Theorems only. A `lemma` is scaffolding and owes nothing, which is the
+        same line `_saved_theorems` draws and has to stay the same line: a
+        writeup gate that demanded a paragraph for every helper would make
+        splitting a proof into helpers the expensive way to work.
         """
-        labels = self._labels()
-        documented = {item["formal_name"] for item in self.state["names"] if item["latex_name"] in labels}
-        saved = self._saved_theorems()
-        # A bare registry name may stand for a qualified declaration, but only
-        # while it names exactly one. `A.result` and `B.result` both answer to
-        # `result`, and letting one label cover both would report a theorem as
-        # written up when nothing in the document refers to it.
-        by_leaf: dict[str, list[str]] = {}
-        for name in saved:
-            by_leaf.setdefault(name.rsplit(".", 1)[-1], []).append(name)
-        owed = []
-        for name in sorted(saved):
-            leaf = name.rsplit(".", 1)[-1]
-            if name in documented or (leaf in documented and len(by_leaf[leaf]) == 1):
+        found: dict[str, str] = {}
+        for source in self.lean_workspace.sources().values():
+            theorems = set(declarations(source)["theorem"])
+            found.update(
+                {name: text for name, text in statements(source).items() if name in theorems}
+            )
+        return found
+
+    def _tex_sources(self) -> dict[str, str]:
+        """The writeup tree as text, keyed by workspace-relative path."""
+        if not self.tex_root.is_dir():
+            return {}
+        found: dict[str, str] = {}
+        for path in sorted(self.tex_root.rglob("*.tex")):
+            try:
+                found[path.relative_to(self.tex_root).as_posix()] = path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                # Unreadable is not empty, but a listing that raises here would
+                # take the turn with it. The obligation it leaves standing is
+                # the safe direction: the file cannot be shown to say anything.
                 continue
-            owed.append(name)
-        return tuple(owed)
+        return found
+
+    def _used_assumptions(self) -> set[str]:
+        """Approved axioms the saved tree actually rests on.
+
+        Both ways one can be reached: written into a workspace file, or
+        inherited through an import and found by the audit. An approval nobody
+        used is not an assumption this work depends on, and demanding an
+        appendix entry for it would pad the appendix with disclaimers a reader
+        has to rule out by hand.
+        """
+        used: set[str] = set()
+        for source in self.lean_workspace.sources().values():
+            used.update(name for name, _ in assumptions(source))
+        for record in self.state.get("audit", {}).values():
+            used.update(str(name) for name in record.get("assumed", ()))
+        return used
+
+    def _obligations(self) -> tuple[completion.Obligation, ...]:
+        """What the workspace still owes, derived from the artifacts alone.
+
+        Never stored. A flag saying the work was finished would outlive the
+        file it described -- and the one thing this must not do is report a
+        theorem as written up because it *was*, before the statement changed.
+        """
+        return completion.outstanding(
+            theorems=self._saved_statements(),
+            registry=self.state["names"],
+            labels=self._labels(),
+            assumptions=self.state["assumptions"],
+            used=self._used_assumptions(),
+            tex=self._tex_sources(),
+        )
+
+    def obligations(self) -> tuple[completion.Obligation, ...]:
+        """What the workspace owes, for the human rather than the model.
+
+        `/status` asks this. It is the same answer `report_result` is refused
+        by and the same one drawn at the end of a turn, deliberately: a user
+        who suspects they are being told a result exists must be able to ask
+        something other than the model.
+        """
+        return self._obligations()
+
+    def _undocumented(self) -> tuple[str, ...]:
+        """Saved theorems the writeup does not yet carry.
+
+        A theorem is carried when the registry names it, the compiler really
+        created that label, and the document quotes the statement Lean was
+        given. The third is the one a reader needs: a paper that describes a
+        theorem in prose alone cannot be checked against the Lean, and being
+        checkable is the only reason the document exists.
+
+        Derived from the artifacts every time it is asked for -- see
+        `_obligations`, which is where the rules live.
+        """
+        return tuple(
+            sorted(
+                {
+                    item.subject
+                    for item in self._obligations()
+                    if item.subject and item.kind in {"record", "label", "statement"}
+                }
+            )
+        )
 
     def _documentation_gate(self, source: str) -> str | None:
         """The catch-up ratchet: write up the last theorem before the next.
@@ -947,7 +1040,7 @@ class MathematicsSession:
         delete the very theorem blocking it. The second alone would let one
         file absorb any number of undocumented claims.
         """
-        owed = self._undocumented()
+        owed = self._obligations()
         if not owed:
             return None
         existing = self._saved_theorems()
@@ -955,9 +1048,11 @@ class MathematicsSession:
         if not introduced:
             return None
         return (
-            f"the workspace owes a writeup for {list(owed)} before a new theorem "
-            f"({introduced[0]}) is added. Call record_name for each, then save_latex "
-            "with a \\label for each latex_name. A lemma carries no such requirement."
+            f"the workspace owes the human-readable half of its work before a new theorem "
+            f"({introduced[0]}) is added:\n"
+            f"{completion.describe(owed)}\n"
+            "Settle these with record_name and save_latex. A lemma carries no such "
+            "requirement, so state scaffolding as a lemma."
         )
 
     def _check_latex(self, path: str, source: str) -> ToolResult:
@@ -991,9 +1086,21 @@ class MathematicsSession:
         # Advisory rather than a refusal. With the save_lean ratchet in place a
         # hard gate here would deadlock: Lean blocked for want of a writeup,
         # and the writeup blocked for not yet covering everything registered.
+        # Which is also why the writeup tree is the one place a save is never
+        # refused for what it does not yet contain -- it is where every
+        # obligation is settled.
+        #
+        # Two notes, not one. The obligations are about the *work*: what a
+        # saved theorem still owes before anyone may report it. This one is
+        # about the *registry*: a name recorded for something the document has
+        # not labelled yet, which is a promise made and not yet kept even when
+        # no theorem is waiting on it.
         missing = [item["latex_name"] for item in self.state["names"] if item["latex_name"] not in self._labels()]
+        note = self._owed_note()
         if missing:
-            return ToolResult(True, f"{result.output}\n\nSaved. Still missing labels for registered names: {missing}", source)
+            note = f"\n\nStill missing labels for registered names: {missing}{note}"
+        if note:
+            return ToolResult(True, f"{result.output}\n\nSaved.{note}", source)
         return result
 
     def _tex_path(self, path: str) -> tuple[str, Path] | ToolResult:
@@ -1063,6 +1170,9 @@ class MathematicsSession:
             "lean": lean,
             "tex": tex,
             "undocumented_theorems": list(self._undocumented()),
+            # Everything standing between this workspace and a report anyone
+            # may believe, in the same words the refusal would use.
+            "obligations": [item.as_dict() for item in self._obligations()],
             # What each saved module was found to rest on, so the model can
             # report it rather than having to remember it. A module is absent
             # until a save covers it, and a verdict from another environment is
@@ -1199,8 +1309,121 @@ class MathematicsSession:
                 self.state["names"].append(mapping)
                 self._save_state()
             declaration = f"axiom {proposal['formal_name']} : {proposal['lean_statement']}"
-            return ToolResult(True, f"User approved. Declare exactly `{declaration}` and disclose source `{proposal['source']}` in the writeup.")
+            return ToolResult(
+                True,
+                f"User approved. Declare exactly `{declaration}`, disclose source "
+                f"`{proposal['source']}`, and state it in the writeup's \\appendix -- both "
+                f"that Lean line, verbatim, and \\label{{{proposal['latex_name']}}} on the "
+                "prose statement of what was assumed. Nothing resting on it can be "
+                "reported until the appendix carries both.",
+            )
+        if name == "report_result":
+            claimed = arguments.get("theorems")
+            return self._report_result(
+                [str(item) for item in claimed] if isinstance(claimed, list) else [],
+                str(arguments.get("summary") or ""),
+            )
         return ToolResult(False, f"unknown tool: {name}")
+
+    def _report_result(self, claimed: list[str], summary: str) -> ToolResult:
+        """Say the work is done, and be refused until the artifacts say it too.
+
+        The gap this closes is the whole reason it exists: every other gate
+        here guards an artifact, and a model that never writes one walks past
+        all of them. It can prove a theorem in the conversation, describe it
+        beautifully, and finish a session having saved nothing -- or save Lean
+        and leave the reader a document that never quotes it. So the claim
+        itself is a tool call, and it is checked against the same two trees
+        everything else here is checked against.
+
+        What is checked is mechanical and stays mechanical: the theorem is
+        saved and was audited when it was saved, the compiler really made its
+        label, the document really quotes its statement, and every assumption
+        the work rests on is in the appendix in both languages. Nothing here
+        reads a proof or judges prose -- a report is not a verdict on the
+        mathematics, only on whether both halves of the work exist.
+        """
+        if not summary.strip():
+            return ToolResult(False, "a report needs a summary of what was established")
+        saved = self._saved_statements()
+        if not saved:
+            return ToolResult(
+                False,
+                "this workspace holds no saved theorem, so nothing here is reportable. A "
+                "result is reportable only as Lean the kernel checked, written up where a "
+                "human can read it: prose alone is not a result, and a lemma is scaffolding "
+                "that is not reportable either. State as a theorem what you would report.",
+            )
+        if not claimed:
+            return ToolResult(
+                False,
+                f"name the theorems this report claims. Saved theorems: {sorted(saved)}",
+            )
+        resolved: dict[str, str] = {}
+        unknown: list[str] = []
+        for name in claimed:
+            found = [
+                candidate
+                for candidate in saved
+                if candidate == name or candidate.rsplit(".", 1)[-1] == name
+            ]
+            if len(found) == 1:
+                resolved[found[0]] = name
+            else:
+                unknown.append(name)
+        if unknown:
+            return ToolResult(
+                False,
+                f"{unknown} does not name exactly one saved theorem, so it cannot be "
+                f"reported. A lemma is not reportable either. Saved theorems: {sorted(saved)}",
+            )
+        owed = self._obligations()
+        # Everything about a claimed theorem, and every assumption obligation
+        # whoever it belongs to: an appendix that does not say what the work
+        # rests on makes *this* report unbelievable, not somebody else's.
+        blocking = [
+            item
+            for item in owed
+            if item.subject in resolved or item.kind in {"appendix", "assumption"}
+        ]
+        if blocking:
+            return ToolResult(
+                False,
+                "this report is refused: the artifacts do not yet back it.\n"
+                f"{completion.describe(blocking)}\n"
+                "Settle every line above with save_lean, record_name and save_latex, then "
+                "report again. Do not tell the user this is finished in the meantime.",
+            )
+        used = self._used_assumptions()
+        rested = [
+            item for item in self.state["assumptions"] if str(item["formal_name"]) in used
+        ]
+        entry = {
+            "theorems": sorted(resolved),
+            "summary": summary.strip(),
+            "statements": {name: saved[name] for name in sorted(resolved)},
+            "assumptions": [str(item["formal_name"]) for item in rested],
+        }
+        self.state.setdefault("reports", []).append(entry)
+        self._save_state()
+        self._record({"type": "report", **entry})
+        elsewhere = [item for item in owed if item not in blocking]
+        return ToolResult(
+            True,
+            f"Reported {entry['theorems']}. Each is saved Lean whose axioms were audited "
+            "when it was saved, carries a label the compiler created, and has its exact "
+            "statement quoted in the writeup where the reader can check it"
+            + (
+                f", modulo the assumptions the appendix states: {entry['assumptions']}."
+                if entry["assumptions"]
+                else ", resting on no assumption beyond Lean's own."
+            )
+            + (
+                f"\nStill outstanding elsewhere in the workspace:\n{completion.describe(elsewhere)}"
+                if elsewhere
+                else ""
+            ),
+        )
 
     def _cas_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """The computer algebra tools. Errors are answers, not exceptions.
@@ -1280,12 +1503,25 @@ class MathematicsSession:
         # session's tool gate is still open and the provider can dispatch one
         # more call. Yielding here means the gate shuts before any of that.
         iterator = iter(events)
+        tail: Iterator[TurnEvent] | None = None
         try:
             while True:
-                try:
-                    event = next(iterator)
-                except StopIteration:
-                    return
+                if tail is None:
+                    try:
+                        event = next(iterator)
+                    except StopIteration:
+                        # The model has stopped talking; Hardy has not. What it
+                        # says here is read off the artifacts, so a turn that
+                        # ended "proved it" over a workspace with no Lean in it
+                        # is contradicted in front of the user, in the same
+                        # breath, every time.
+                        tail = iter(self._closing_notice())
+                        continue
+                else:
+                    try:
+                        event = next(tail)
+                    except StopIteration:
+                        return
                 try:
                     yield event
                 except BaseException:
@@ -1308,6 +1544,31 @@ class MathematicsSession:
             # arriving after this is stale rather than late -- `_observed`
             # says why it cannot be folded in afterwards.
             self._remember_spend({}, self._transcript_end(), unreported=True)
+
+    def _closing_notice(self) -> list[TurnEvent]:
+        """What the workspace owes, said by Hardy rather than by the model.
+
+        Not part of the conversation and not something the model can suppress,
+        shorten, or reword: it is drawn from the two trees on disk after the
+        reply has been said, and it is written down as well, so a transcript
+        shows what the user was told alongside what they were promised.
+        """
+        try:
+            owed = self._obligations()
+        except Exception:  # noqa: BLE001 - a status line must never end a turn
+            return []
+        if not owed:
+            return []
+        self._record({"type": "obligations", "outstanding": [item.as_dict() for item in owed]})
+        return [
+            TurnEvent(
+                "notice",
+                text=(
+                    f"Hardy: not finished — {completion.summary(owed)}. Nothing here may be "
+                    f"reported as done until these are settled:\n{completion.describe(owed)}"
+                ),
+            )
+        ]
 
     def send(self, text: str) -> str:
         """`stream`, for a caller with nothing to draw it on."""

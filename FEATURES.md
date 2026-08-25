@@ -19,13 +19,28 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   workspace is never left uncompilable. LaTeX fragments are `\input` from
   `writeup.tex` and compiled through it. `read_workspace` lists the tree,
   `read_file` fetches one file, and `delete_file` removes one that nothing imports.
-- **Now (implemented):** a `theorem` cannot be accumulated without a writeup. Saving
-  a file that introduces a new theorem is refused while an already-saved theorem has
-  no `record_name` entry and no matching `\label` in the writeup tree. `lemma`,
-  `def`, and `instance` are exempt, so scaffolding is free; repairing or deleting an
-  undocumented theorem is always allowed, and only adding another is gated. This
-  replaces an arrangement in which the writeup was optional and, in practice,
-  usually absent.
+- **Now (implemented):** a `theorem` cannot be accumulated without a writeup, and the
+  writeup must quote the Lean. A saved theorem is carried only when `record_name` maps
+  it to a LaTeX name, the compiler really created that `\label`, and the document the
+  root `\input`s quotes the theorem's exact statement — the declaration head from
+  `theorem` to the `:=` — verbatim, where TeX cannot mangle it. Whitespace and Lean
+  comments are forgiven; a changed proposition is not, and neither is a quotation that
+  runs on into a longer statement, which is how `t : n = n` could otherwise be shown as
+  `t : n = n + 0`. Saving a file that introduces a new theorem is refused while any of
+  this is outstanding. `lemma`, `def`, and `instance` are exempt, so scaffolding is
+  free; repairing or deleting an undocumented theorem is always allowed, and only
+  adding another is gated. This replaces an arrangement in which the writeup was
+  optional and, in practice, usually absent.
+- **Now (implemented):** saying the work is finished is a tool call, `report_result`,
+  naming the theorems claimed — and it is refused unless each is a saved theorem the
+  audit covered, carried by the document as above, with every assumption the tree rests
+  on stated in the appendix. A `lemma` is not reportable. What is reported is written
+  into `session.json` and the transcript with the exact statements claimed. Prose is not
+  a way around it: at the end of every turn Hardy draws what the workspace still owes
+  under its own name, computed from the two trees rather than from anything the model
+  said, so a turn that ends "proved it" over an empty workspace is contradicted where
+  the user can see it. `/status` answers the same question on demand, and
+  `read_workspace` reports the same list to the model.
 - **Now (implemented):** a naming registry links Lean declarations to LaTeX labels
   for later translation review; this link is not itself a faithfulness grade.
 - **Now (implemented):** introducing an axiom pauses for human approval and records
@@ -40,13 +55,16 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   a later change to the type under that name. Binding approval to the type Lean
   reports — and re-checking it — is the drift detection the design calls for and
   this does not yet do.
-- **Known limit — a *verified modulo* Lean save does not require the writeup to
-  say so.** The per-module verdict records the assumption, and `request_assumption`
-  records a LaTeX name for it, but nothing refuses the save when the writeup tree
-  never mentions it. The writeup ratchet gates adding a new `theorem`, not
-  disclosing an assumption, so a compiled document can read as unconditional while
-  the qualification lives in `session.json`. The `save_latex` disclosure gate in
-  the design is what closes this.
+- **Now (implemented):** a *verified modulo* result must say so in the document. An
+  approved axiom the saved tree actually rests on — declared in a workspace file, or
+  found by the audit through an import — owes an `\appendix` entry in both languages:
+  the informal statement under a `\label` for its LaTeX name, and the exact
+  `axiom Name : statement` line Lean was given, quoted verbatim. Until it has one, no
+  report is accepted and no new `theorem` may be added. An approval nobody used owes
+  nothing, so the appendix lists what the work rests on rather than everything anyone
+  once asked about. What the appendix cannot fix is the limit above it: the Lean line
+  it quotes is the one Hardy was given, which for an imported axiom is still what the
+  *model* said that declaration says.
 - **Now (implemented):** saving Lean audits every *exported* theorem and lemma in
   the modules the save rebuilt — the edited one and everything importing it, since
   a dependent inherits whatever the edit brought in. An axiom reached through an

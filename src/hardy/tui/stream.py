@@ -110,6 +110,15 @@ def tool_finished(name: str, ok: bool | None, seconds: float) -> str:
     return f"{mark} {name or 'tool'} · {seconds:.1f}s"
 
 
+def notice(line: str) -> str:
+    """Hardy speaking, rather than the model.
+
+    Marked differently from prose on purpose: a line saying the workspace owes
+    a writeup is worth nothing if it reads as one more thing the model said.
+    """
+    return f"! {line}"
+
+
 class TurnPainter:
     """A turn's events, turned into lines. Shared by both terminals.
 
@@ -158,6 +167,13 @@ class TurnPainter:
             return [tool_finished(event.name or (started[0] if started else ""), event.ok, elapsed)]
         if event.kind == "reply":
             self._reply = event.text
+        if event.kind == "notice":
+            # Flushed first, for the same reason a tool call flushes: Hardy's
+            # verdict on the turn must not trail off the end of the model's
+            # last paragraph as though the model had written it.
+            lines = self._writer.flush()
+            self._writer = LineWriter(self._width)
+            return lines + [notice(line) for line in event.text.splitlines()]
         return []
 
     @staticmethod

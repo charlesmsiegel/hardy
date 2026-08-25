@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from hardy import doctor
+from hardy import completion, doctor
 from hardy.cas import CasError
 from hardy.tui import handlers
 from hardy.tui.ports import State
@@ -76,6 +76,26 @@ async def test_status_before_the_first_turn_claims_no_spend(ui, settings):
     await handlers.handle_status(ui, "", State(config=settings, session=session))
     assert "Nothing spent yet." in ui.text
     assert "$" not in ui.text
+
+
+async def test_status_asks_the_artifacts_what_the_work_still_owes(ui, settings):
+    """The user's own way past the conversation.
+
+    Someone who has just been told a theorem is finished must be able to ask
+    something other than the model, so `/status` reports what the two trees
+    carry and is free to disagree with what was said.
+    """
+    owed = (completion.Obligation("statement", "hardyOne", "the writeup quotes no Lean"),)
+    session = SimpleNamespace(usage=Usage(), obligations=lambda: owed)
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert "Not finished" in ui.text
+    assert "hardyOne" in ui.text
+
+
+async def test_status_says_so_when_nothing_is_outstanding(ui, settings):
+    session = SimpleNamespace(usage=Usage(), obligations=tuple)
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert "Nothing outstanding" in ui.text
 
 
 async def test_status_still_works_without_a_session(ui, settings):
