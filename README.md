@@ -213,10 +213,13 @@ was given, quoted verbatim. An approval nobody used owes nothing.
 
 **Nothing is finished until the artifacts say so.** Claiming a result is itself a
 tool call — `report_result`, naming the theorems it claims — and Hardy refuses it
-unless every claimed theorem has a *current* axiom audit behind it (a file edited
-on disk, or a workspace from before the audit existed, expires that and must be
-saved again), is carried by the document, and every assumption is stated in the
-appendix. Saying it in prose instead does not get around this: after every turn
+unless every claimed theorem is carried by the document and every assumption is
+stated in the appendix. Both halves must also be *current*: an axiom audit
+expires with the build signature it was established under, and the writeup is
+established only while the files on disk are the ones that compiled, so a Lean
+or TeX file edited behind Hardy's back is outstanding work until it is saved
+again. All of it is one list, so `/status`, the end-of-turn notice, and a
+refused report never disagree about what this workspace owes. Saying it in prose instead does not get around this: after every turn
 Hardy writes what the workspace still owes on the screen under its own name, read
 off the two trees rather than off anything the model said — including the case
 that has none to owe, where it says no theorem is saved and what was said rests

@@ -62,7 +62,11 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
             ui.write(f"  Obligations could not be read: {error}", style="error")
             return state
         ui.write("Work", style="normal")
-        if not outstanding:
+        if not getattr(state.session, "has_theorems", bool)():
+            # An empty tuple means two different things, and the wrong one here
+            # presented prose-only work as finished.
+            ui.write("  No theorem is saved: nothing here is reportable.")
+        elif not outstanding:
             ui.write("  Nothing outstanding: every saved theorem is written up.")
         else:
             ui.write("  Not finished. Nothing here may be reported as done until:")

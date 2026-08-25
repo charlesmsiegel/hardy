@@ -235,7 +235,7 @@ def test_a_turn_ends_with_hardys_own_verdict(tmp_path: Path):
     chat = session(tmp_path, runtime)
     notices = [event for event in chat.stream("Prove it.") if event.kind == "notice"]
     assert len(notices) == 1
-    assert "not finished" in notices[0].text
+    assert "None of this is reportable until it is settled" in notices[0].text
     assert "hardyOne" in notices[0].text
     assert [event for event in events(tmp_path) if event.get("type") == "obligations"]
 
@@ -346,3 +346,86 @@ def test_two_modules_sharing_a_theorem_name_owe_a_namespace(tmp_path: Path):
     assert refusal["ok"] is False
     assert "each declare a theorem called `result`" in refusal["output"]
     assert "namespace" in refusal["output"]
+
+
+def test_a_writeup_edited_behind_hardys_back_is_not_established(tmp_path: Path):
+    """The labels come from the last compile's .aux and everything else from
+    the files as they are now. Edited between the two, a document answers a
+    statement obligation with text nobody compiled."""
+    runtime = FakeChatRuntime([
+        call("save_lean", {"source": THEOREM}),
+        RECORD,
+        call("save_latex", {"source": CARRIED}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Prove and write up.")
+    assert chat.obligations() == ()
+    paper_path = tmp_path / "tex" / "writeup.tex"
+    paper_path.write_text(paper_path.read_text() + "\n% edited on disk\n", encoding="utf-8")
+    owed = chat.obligations()
+    assert [item.kind for item in owed] == ["label"]
+    assert "not the one that was compiled" in owed[0].detail
+    refusal = chat._tool("report_result", {"theorems": ["hardyOne"], "summary": "True holds."})
+    assert refusal.ok is False
+
+
+def test_a_stale_audit_is_outstanding_everywhere_and_not_only_at_a_report(tmp_path: Path):
+    """`/status` and the closing notice have to agree with `report_result`.
+
+    Counted only at report time, an edited Lean file left both saying nothing
+    was outstanding -- so the claim the notice exists to contradict went
+    uncontradicted, and only a model that tried to report properly found out.
+    """
+    runtime = FakeChatRuntime([
+        call("save_lean", {"source": THEOREM}),
+        RECORD,
+        call("save_latex", {"source": CARRIED}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Prove and write up.")
+    saved = tmp_path / "lean" / "Main.lean"
+    saved.write_text(saved.read_text() + "-- edited on disk\n", encoding="utf-8")
+    owed = chat.obligations()
+    assert [item.subject for item in owed] == ["hardyOne"]
+    assert "no longer established" in owed[0].detail
+
+
+def test_a_notice_does_not_contradict_a_report_it_accepted(tmp_path: Path):
+    """One theorem carried and reported, another still owed. The report stands;
+    the notice is about what is outstanding, not about the workspace."""
+    second = "import Mathlib\ntheorem hardyTwo : True := by exact True.intro\n"
+    runtime = FakeChatRuntime([
+        call("save_lean", {"source": THEOREM}),
+        RECORD,
+        call("save_latex", {"source": CARRIED}),
+        REPORT,
+        call("save_lean", {"path": "Two.lean", "source": second}),
+        {"role": "assistant", "content": "One reported, one to go."},
+    ])
+    chat = session(tmp_path, runtime)
+    notices = [event for event in chat.stream("Prove, report, prove.") if event.kind == "notice"]
+    assert results(tmp_path, "report_result")[-1]["ok"] is True
+    assert "hardyTwo" in notices[0].text
+    assert "Nothing here may be reported" not in notices[0].text
+
+
+def test_the_reply_is_drawn_before_the_notice_that_contradicts_it(tmp_path: Path):
+    """A backend that reports no partial text holds its whole reply for
+    `finish`, which used to print the claim underneath the warning about it."""
+    from hardy.models import TurnEvent
+    from hardy.tui import stream
+
+    painter = stream.TurnPainter(80)
+    drawn: list[str] = []
+    for event in (
+        TurnEvent("reply", text="Proved it."),
+        TurnEvent("notice", text="Hardy: no theorem is saved in this workspace."),
+    ):
+        drawn.extend(painter.draw(event))
+    drawn.extend(painter.finish())
+    rendered = "\n".join(drawn)
+    assert "Proved it." in rendered
+    assert rendered.count("Proved it.") == 1, "the reply must not be drawn twice"
+    assert rendered.index("Proved it.") < rendered.index("no theorem is saved")

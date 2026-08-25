@@ -270,3 +270,75 @@ def test_tex_escapes_do_not_hide_the_approved_wording() -> None:
         used={"Sylow.first"},
         labels={"thm:one", "asm:sylow"},
     ) == ()
+
+
+def test_an_input_shown_in_a_listing_pulls_in_nothing() -> None:
+    r"""`\input{hidden}` displayed in a listing is an example of an inclusion.
+
+    TeX never reads the file, so a statement quoted there is in front of
+    nobody -- while the label the real document makes still counts, which is
+    what made this a way to satisfy every obligation with an invisible file.
+    """
+    tex = {
+        "writeup.tex": (
+            "\\begin{document}\nOne.\n"
+            "\\begin{verbatim}\n\\input{hidden}\n\\end{verbatim}\n"
+            "\\end{document}\n"
+        ),
+        "hidden.tex": "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n",
+    }
+    assert kinds(owed(tex)) == ["statement"]
+
+
+def test_an_appendix_shown_in_a_listing_opens_nothing() -> None:
+    body = (
+        "\\begin{verbatim}\n" + STATEMENT + "\n\\appendix\n\\end{verbatim}\n"
+        "Sylow's first theorem.\\label{asm:sylow}\n"
+        "\\begin{verbatim}\naxiom Sylow.first : True\n\\end{verbatim}"
+    )
+    found = owed(
+        document(body),
+        assumptions=[SYLOW],
+        used={"Sylow.first"},
+        labels={"thm:one", "asm:sylow"},
+    )
+    assert "appendix" in kinds(found)
+
+
+def test_a_lean_listing_is_not_the_informal_statement() -> None:
+    """An approval whose wording happens to appear in the Lean quotation was
+    answered by that quotation -- the listing standing in for the explanation
+    it exists to be checked against."""
+    assumption = {**SYLOW, "informal_statement": "True"}
+    body = (
+        "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n"
+        "\\appendix\n\\label{asm:sylow}\n"
+        "\\begin{verbatim}\naxiom Sylow.first : True\n\\end{verbatim}"
+    )
+    found = owed(
+        document(body),
+        assumptions=[assumption],
+        used={"Sylow.first"},
+        labels={"thm:one", "asm:sylow"},
+    )
+    assert kinds(found) == ["assumption"]
+
+
+def test_a_quotation_must_begin_at_a_token_boundary() -> None:
+    """`FAKEtheorem t : True` ends where `theorem t : True` ends."""
+    body = "\\begin{verbatim}\nFAKE" + STATEMENT + "\n\\end{verbatim}"
+    assert kinds(owed(document(body))) == ["statement"]
+
+
+def test_whitespace_inside_a_string_literal_is_not_collapsed() -> None:
+    mine = 'theorem one : "a  b" = "a  b"'
+    theirs = 'theorem one : "a b" = "a b"'
+    tex = document("\\begin{verbatim}\n" + theirs + "\n\\end{verbatim}")
+    assert kinds(owed(tex, theorems={"hardyOne": mine})) == ["statement"]
+
+
+def test_a_statement_may_still_be_rewrapped_around_its_literals() -> None:
+    mine = 'theorem one : "a  b" = "a  b"'
+    theirs = 'theorem one :\n    "a  b" = "a  b"'
+    tex = document("\\begin{verbatim}\n" + theirs + "\n\\end{verbatim}")
+    assert owed(tex, theorems={"hardyOne": mine}) == ()

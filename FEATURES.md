@@ -42,10 +42,19 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   the user can see it — that case has no obligations to list, so it is named directly:
   no theorem is saved, and what was said rests on the conversation alone. `/status`
   answers the same question on demand, and `read_workspace` reports the same list to
-  the model. A report also requires a *current* audit for each theorem it claims: a
-  verdict expires with the build signature it was established under, so a file edited
-  on disk behind Hardy's back, or a workspace reopened from before the audit existed,
-  must be saved again before anything in it can be reported.
+  the model — one list behind all three, so a refusal, a status line, and a notice
+  never disagree. Currency is part of it on both sides: an axiom audit expires with
+  the build signature it was established under, and the writeup counts only while the
+  `.tex` files on disk are the ones that compiled the labels being relied on. A Lean
+  or TeX file edited behind Hardy's back, or a workspace reopened from before the
+  audit existed, is outstanding work until it is saved again.
+- **Known limit — what a listing must be quoted *as*.** The document is read the way
+  LaTeX reads it: comments dropped, verbatim environments taken as displayed text, and
+  `\input` followed only where TeX would execute it. That is a scan, not a TeX
+  engine, so a document that reaches its listings through macro expansion or a
+  conditional branch is read as not quoting them, and owes a plain listing instead.
+  Refusing in that direction is the safe one — the alternative is crediting a
+  quotation no reader was shown.
 - **Now (implemented):** a naming registry links Lean declarations to LaTeX labels
   for later translation review; this link is not itself a faithfulness grade.
 - **Now (implemented):** introducing an axiom pauses for human approval and records
