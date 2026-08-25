@@ -295,6 +295,35 @@ def elaborate(
     )
 
 
+def environment_identity(lean_project: Path | None) -> EnvironmentIdentity:
+    """Identify the exact Lean environment a run is frozen against.
+
+    Here rather than in `cli.py` because the command line is not the only
+    thing that needs it: premise retrieval has to name the corpus it
+    searched, and the interactive session builds a `LeanService` for exactly
+    that reason. It took a whole `Config` to read one field, which is what
+    put it out of reach.
+
+    The manifest digest is taken over the bytes on disk, not over a
+    re-serialisation of the parsed JSON, because `LeanSearchSource
+    ._manifest_matches` compares it against a fresh hash of the same file.
+    """
+    if lean_project is None:
+        raise ValueError("a pinned Lean environment needs lean_project set to a built Lake project")
+    manifest_path = lean_project / "lake-manifest.json"
+    if not manifest_path.exists():
+        raise ValueError(f"{manifest_path} is missing; run the installer to build the project")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    mathlib = next(item for item in manifest["packages"] if item["name"] == "mathlib")
+    return EnvironmentIdentity(
+        lean_version="4.32.0",
+        lean_commit="8c9756b28d64dab099da31a4c09229a9e6a2ef35",
+        mathlib_revision=mathlib["rev"],
+        lake_manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        imports=("Mathlib",),
+    )
+
+
 class LeanTools:
     """Direct Lean subprocess tools. Only use with trusted output."""
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
@@ -368,28 +367,9 @@ def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _c
     return 0 if final.healthy else 1
 
 
-def _environment_identity(config: configuration.Config) -> Any:
-    """Identify the exact Lean environment a run is frozen against."""
-    from .domain import EnvironmentIdentity
-
-    if config.lean_project is None:
-        raise ValueError("a staged run needs lean_project set to a built Lake project")
-    manifest_path = config.lean_project / "lake-manifest.json"
-    if not manifest_path.exists():
-        raise ValueError(f"{manifest_path} is missing; run the installer to build the project")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    mathlib = next(item for item in manifest["packages"] if item["name"] == "mathlib")
-    return EnvironmentIdentity(
-        lean_version="4.32.0",
-        lean_commit="8c9756b28d64dab099da31a4c09229a9e6a2ef35",
-        mathlib_revision=mathlib["rev"],
-        lake_manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
-        imports=("Mathlib",),
-    )
-
-
 def build_prove_workflow(config: configuration.Config, config_path: Path, *, backend: str = "claude"):
     """Assemble the staged workflow around the chosen backend."""
+    from . import lean as lean_module
     from . import retrieval
     from .lean import LeanService
     from .mcp_server import LeanToolRuntime
@@ -398,7 +378,7 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
     from .workflow import ProveWorkflow
     from .writeup import RunIdentities, build_writeup
 
-    environment = _environment_identity(config)
+    environment = lean_module.environment_identity(config.lean_project)
     lean = LeanService(
         lake=config.lake,
         lean_project=config.lean_project,
