@@ -128,7 +128,7 @@ installer is cheap and safe.
 | Recorded release origin | `~/.local/share/hardy/release-origin` | `%LOCALAPPDATA%\hardy\release-origin` |
 | Lean project | `~/.local/share/hardy/lean` | `%LOCALAPPDATA%\hardy\lean` |
 | `hardy` command | `~/.local/bin/hardy` | `%LOCALAPPDATA%\hardy\bin\hardy.cmd` |
-| Config file | `~/.config/hardy/config.toml` | `%APPDATA%\hardy\config.toml` |
+| Config file | `~/.hardy/config.toml` | `%USERPROFILE%\.hardy\config.toml` |
 | Lean toolchain | `~/.elan` | `%USERPROFILE%\.elan` |
 
 Nothing is installed system-wide except distribution packages (Python, git,
@@ -168,17 +168,29 @@ lean_project = "/home/you/.local/share/hardy/lean"
 lean_command = "lake env lean"
 lean_timeout = 180                # seconds per Lean invocation
 latex_command = "pdflatex -interaction=nonstopmode -halt-on-error"
-workspace = ".hardy"
+root = "/home/you/math"           # where your problems live, if you keep one place
 ```
 
 Each setting can be overridden by the matching `HARDY_*` environment variable
 (`HARDY_MODEL`, `HARDY_LEAN_PROJECT`, …) and then by a command-line flag, in
-that order. `HARDY_CONFIG` selects a different config file, as does `--config`.
+that order. `HARDY_CONFIG` selects a different config file, as does `--config`
+— always this global one; it does not follow `--root`.
 
 `lean_project` is what lets `hardy` run from any directory: Lean resolves
 imports through that Lake project rather than the directory you happen to be
 in. Point it at your own Lake project when you want your own Lean modules
 importable, or launch Hardy with `--lean-project /path/to/project`.
+
+`root` and `project` name the work itself: `root` is the directory holding one
+or more problems, each its own `<root>/<slug>/` tree, and `project` is which
+one is open. Pass them explicitly (`hardy chat --root /path/to/math --project
+sylow`), set `HARDY_ROOT`/`HARDY_PROJECT`, or default `root` here — `project`
+is better left to the repository, since a checkout usually knows which problem
+it holds. `<root>/.hardy/config.toml` is that repository's own committed file
+and may set `project`; nothing else, since it travels with a clone and Hardy
+runs the configured CAS command before the prompt ever appears. With no
+project named anywhere, a root holding exactly one already lands on it; an
+empty or ambiguous root falls back to `main`.
 
 ## Checking an installation
 

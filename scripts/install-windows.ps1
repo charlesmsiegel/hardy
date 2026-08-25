@@ -68,7 +68,7 @@ $Venv = Join-Path $Prefix 'venv'
 $LeanProject = Join-Path $Prefix 'lean'
 $LeanPackage = 'hardymath'
 $MathlibToolchain = 'leanprover-community/mathlib4:lean-toolchain'
-$ConfigPath = if ($env:HARDY_CONFIG) { $env:HARDY_CONFIG } else { Join-Path $env:APPDATA 'hardy\config.toml' }
+$ConfigPath = if ($env:HARDY_CONFIG) { $env:HARDY_CONFIG } else { Join-Path $HOME '.hardy\config.toml' }
 $ConfiguredModel = ''
 $Python = ''
 $RepoUrl = if ($env:HARDY_REPO_URL) { $env:HARDY_REPO_URL } else { 'https://github.com/charlesmsiegel/hardy' }
@@ -682,7 +682,7 @@ Start doing mathematics with an agent:
 Other useful commands:
 
   hardy doctor --deep     check Lean, Mathlib, LaTeX, and the model end to end
-  hardy chat --workspace .\my-project
+  hardy chat --root . --project my-project
 
 Open a new terminal first, so that $BinDir is on your PATH.
 "@

@@ -15,7 +15,7 @@
 
 HARDY_HOME="${HARDY_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/hardy}"
 HARDY_BIN_DIR="${HARDY_BIN_DIR:-$HOME/.local/bin}"
-HARDY_CONFIG="${HARDY_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/hardy/config.toml}"
+HARDY_CONFIG="${HARDY_CONFIG:-$HOME/.hardy/config.toml}"
 VENV="$HARDY_HOME/venv"
 LEAN_PROJECT="$HARDY_HOME/lean"
 LEAN_PACKAGE=hardymath
@@ -703,7 +703,7 @@ Start doing mathematics with an agent:
 Other useful commands:
 
   hardy doctor --deep     check Lean, Mathlib, LaTeX, and the model end to end
-  hardy chat --workspace ./my-project
+  hardy chat --root . --project my-project
   hardy prove             stage one claim from statement to a checked document
   hardy accept --force-budget-exhaustion-test
                           check the whole pipeline with no model and no network

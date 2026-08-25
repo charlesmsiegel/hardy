@@ -54,7 +54,7 @@ $Venv = Join-Path $Prefix 'venv'
 $LeanProject = Join-Path $Prefix 'lean'
 $SourceTree = Join-Path $Prefix 'src'
 $ElanHome = Join-Path $env:USERPROFILE '.elan'
-$ConfigPath = if ($env:HARDY_CONFIG) { $env:HARDY_CONFIG } else { Join-Path $env:APPDATA 'hardy\config.toml' }
+$ConfigPath = if ($env:HARDY_CONFIG) { $env:HARDY_CONFIG } else { Join-Path $HOME '.hardy\config.toml' }
 $script:Removed = 0
 $script:Kept = 0
 
