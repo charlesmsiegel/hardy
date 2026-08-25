@@ -105,6 +105,43 @@ class Layout:
     def shared_build(self) -> Path:
         return self.hardy_dir / BUILD_DIR / "lean"
 
+    def ensure(self) -> None:
+        """Make the directories exist and say what is not to be committed.
+
+        Idempotent: a second call must not disturb a tree that already holds
+        work, and must not rewrite an ignore file a user has since edited --
+        Hardy writes it once to state the rule, and it is theirs afterwards.
+        """
+        for directory in (self.problem, self.lean, self.tex, self.cas, self.local, self.hardy_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+        _write_once(self.problem / ".gitignore", PROBLEM_IGNORE)
+        _write_once(self.hardy_dir / ".gitignore", TOOLING_IGNORE)
+
+
+# Anchored, and deliberately so. A bare `.build/` matches a directory of that
+# name at any depth, so a CAS script or an authored subtree that legitimately
+# created `cas/.build/` would be silently excluded from the versioned project.
+# The leading slash confines each rule to the directory the file sits in.
+PROBLEM_IGNORE = (
+    "# Written by Hardy. Everything here is recomputable from the sources\n"
+    "# beside it, or belongs to this machine and this account.\n"
+    "/.build/\n"
+    "/.local/\n"
+)
+TOOLING_IGNORE = (
+    "# Written by Hardy. The oleans for this project's shared Lean library,\n"
+    "# rebuilt on demand and never committed.\n"
+    "/.build/\n"
+)
+
+
+def _write_once(path: Path, text: str) -> None:
+    """Write `text` to `path` only if nothing is there yet."""
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
 
 def global_dir() -> Path:
     """The user-level Hardy directory."""
