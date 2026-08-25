@@ -233,7 +233,7 @@ jobs:
           foreach ($forbidden in @('src', 'download', 'installers.new', 'lean')) {
             if (Test-Path (Join-Path $prefix $forbidden)) { throw "$forbidden should not exist after a release install" }
           }
-          $config = Join-Path $env:APPDATA 'hardy\config.toml'
+          $config = Join-Path $HOME '.hardy\config.toml'
           if (-not (Test-Path $config)) { throw 'no config file was written' }
           # The config the installer generated has to be one Hardy can read:
           # an unknown key here makes every later invocation fail outright.
