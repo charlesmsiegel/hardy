@@ -27,6 +27,7 @@ from .layout import (
     WriteGuard,
     global_build,
     global_lean,
+    guard_for,
 )
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
@@ -78,11 +79,6 @@ THREAD_KEY = "provider_session"
 #: project must not append a line to it saying that this machine had no ledger
 #: yet -- `.local/` is gitignored, so that is true of every clone there is.
 RECOVERED_KEY = "usage_recovered_turns"
-#: The two keys the ledger used to leave in `self.state` for `_context` to
-#: filter back out. Neither lands there any more, so `_context` no longer
-#: filters by this -- kept as a name so `USAGE_KEY` and `CURSOR_KEY` still read
-#: as a pair rather than two keys that happen to share a purpose.
-LEDGER_KEYS = (USAGE_KEY, CURSOR_KEY)
 
 
 class SchemaError(ValueError):
@@ -108,11 +104,6 @@ CHAT_TOOLS = [
     {"type": "function", "function": {"name": "request_assumption", "description": "Ask the human for permission to introduce an axiom when a result is unavailable. Never assume approval.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "lean_statement": {"type": "string"}, "latex_name": {"type": "string"}, "informal_statement": {"type": "string"}, "source": {"type": "string"}, "reason": {"type": "string"}}, "required": ["formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "report_result", "description": "Report finished work. The only way to call anything proved, done, or complete: say it in prose and Hardy contradicts you in front of the user. Refused unless every theorem named is saved Lean the kernel audited, the writeup creates its label and quotes its exact Lean statement verbatim, and every assumption the work rests on is stated in an appendix in both Lean and prose.", "parameters": {"type": "object", "properties": {"theorems": {"type": "array", "items": {"type": "string"}}, "summary": {"type": "string"}}, "required": ["theorems", "summary"], "additionalProperties": False}}},
 ]
-
-# A migrated workspace carries a bounded tail of its old conversation, enough to
-# resume sensibly without pretending the whole history is still in context.
-MIGRATED_TURNS = 20
-MIGRATED_CHARACTERS = 8000
 
 # The text lives in prompts/chat.md.j2. Kept under the old name because it is
 # what a reader of _build expects to see, and what the tests reach for.
@@ -325,12 +316,29 @@ class MathematicsSession:
         self._sync_provenance()
 
     def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
+        """The runtime, with the system prompt this project's record implies.
+
+        Nothing is carried in from the transcript for a workspace that has no
+        provider thread. There used to be: a `_carried` step read the tail of
+        `transcript.jsonl`, appended "This workspace predates the current
+        provider session" to the prompt, and wrote a `migration` event back
+        into the transcript. Its trigger was the absence of local state -- and
+        `.local/` is gitignored by design, so that absence is the NORMAL state
+        of a fresh clone, not evidence of an old workspace. Every clone, on
+        every first open, appended a line to the versioned trajectory before
+        any mathematics had happened and left the checkout dirty; open it on
+        another machine and it happened again. The claim was false too, since
+        a clone does not predate anything. `_recover_spend` had the identical
+        bug and lost it in `b15ed30`; there are no pre-SDK workspaces at
+        `schema_version` 2 for this one to serve, so it is simply gone rather
+        than moved into `.local/state.json`.
+        """
         prompt = SYSTEM_PROMPT
         if self.cas is not None:
             prompt += "\n\n" + chat_cas_prompt(self.cas.session.backend.name)
         return self._make_runtime(
             model=model,
-            system_prompt=prompt + self._context() + self._carried(session_id),
+            system_prompt=prompt + self._context(),
             specs=CHAT_TOOLS + (CAS_TOOLS if self.cas is not None else []),
             dispatch=self._dispatch,
             cwd=self.workspace,
@@ -395,34 +403,6 @@ class MathematicsSession:
         self.state.update(provenance(self.runtime))
         self._save_state()
         self._record({"type": "model", "reason": "switched", "previous": previous, **provenance(self.runtime)})
-
-    def _carried(self, session_id: str | None) -> str:
-        """What a workspace from before the SDK backend brings with it.
-
-        Its transcript is on disk but belongs to no provider thread, so without
-        this the first exchange after upgrading would start from nothing while
-        the artifacts on disk implied a conversation that had already happened.
-        """
-        if session_id or not self.transcript_path.exists():
-            return ""
-        said = []
-        for event in self._recorded():
-            # Not every event carries a message object: a `limit` event from the
-            # runtime this migration exists to leave behind carries a bare
-            # string, and reaching into it would stop the workspace reopening.
-            if event.get("type") not in {"user", "assistant"}:
-                continue
-            message = event.get("message")
-            content = message.get("content") if isinstance(message, dict) else None
-            if content:
-                said.append(f"{event['type']}: {content}")
-        if not said:
-            return ""
-        # From the end: a long older message must not displace the exchange
-        # the conversation actually left off in.
-        carried = "\n".join(said[-MIGRATED_TURNS:])[-MIGRATED_CHARACTERS:]
-        self._record({"type": "migration", "carried_turns": min(len(said), MIGRATED_TURNS)})
-        return f"\n\nThis workspace predates the current provider session. Earlier conversation, for context only:\n{carried}"
 
     def _read_state(self) -> dict[str, Any]:
         """The record, refusing a schema this version does not read.
@@ -500,8 +480,8 @@ class MathematicsSession:
     def _context(self) -> str:
         # The stored audit verdicts stay here, as they always have -- the system
         # prompt has no second, checked copy of them to contradict. The spend
-        # ledger used to be withheld here too, by name (`LEDGER_KEYS`); now it
-        # lives in `self.local` and was never in `self.state` to begin with, so
+        # ledger used to be withheld here too, by name; now it lives in
+        # `self.local` and was never in `self.state` to begin with, so
         # filtering `self.state` for it would be a no-op that reads as if it
         # still needed filtering.
         manifest = json.dumps(self._without(), ensure_ascii=False)
@@ -1495,7 +1475,7 @@ class MathematicsSession:
         # ordinary character, a different one to the compiler -- so the root
         # would be checked against the old fragment and then overwritten by a
         # candidate nothing had compiled.
-        relative, target = resolved
+        relative, _ = resolved
         result = self.latex.check(
             source,
             path=relative,
@@ -1505,8 +1485,18 @@ class MathematicsSession:
         )
         if not result.ok:
             return result
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(source.rstrip() + "\n", encoding="utf-8")
+        # `guard_for`, not a bare write to `target`. `_tex_path` proves the
+        # NAME is a relative, dot-free, colon-free path; it does not and cannot
+        # say where the directories of that name lead. `tex/sections -> $HOME`
+        # passed every one of its checks, and `save_latex("sections/one.tex")`
+        # then wrote a file of the model's choosing into the user's home
+        # directory. The guard proves each component against the one above it,
+        # at the moment of the write, and refuses a symlinked leaf outright --
+        # which is also what stops `writeup.tex -> ~/.bashrc`.
+        guard, name = guard_for(self.tex_root, relative, create=True)
+        with guard.open(name, "w", encoding="utf-8") as handle:
+            handle.write(source.rstrip() + "
+")
         # Stamped after the write, on a compile that succeeded, and only when
         # what was compiled is the writeup itself. Saving a fragment the root
         # does not include yet is checked through a probe document, which says
@@ -1689,11 +1679,17 @@ class MathematicsSession:
         A fragment pulled in with `\\input` cannot simply be dropped: the root
         would no longer compile while the last `writeup.pdf` sat beside it,
         still describing content the workspace no longer has.
+
+        Guarded, like every other write into the writeup tree. Unlinking
+        followed `tex/sections -> $HOME` all the way to a real file in the
+        user's home directory, and the restore below then wrote a file back
+        there; both go through the same proven chain now.
         """
         if target.resolve() == (self.tex_root / ROOT_DOCUMENT).resolve():
             return ToolResult(False, f"{ROOT_DOCUMENT} is the root document and cannot be deleted")
+        guard, name = guard_for(self.tex_root, target.relative_to(self.tex_root).as_posix())
         kept = target.read_text(encoding="utf-8")
-        target.unlink()
+        guard.unlink(name)
         root = self.tex_root / ROOT_DOCUMENT
         if root.is_file():
             checked = self.latex.check(
@@ -1703,8 +1699,9 @@ class MathematicsSession:
                 aux_dir=self.workspace / BUILD_DIR_TEX,
             )
             if not checked.ok:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(kept, encoding="utf-8")
+                guard.mkdir()
+                with guard.open(name, "w", encoding="utf-8") as handle:
+                    handle.write(kept)
                 return ToolResult(False, f"the writeup no longer compiles without {path}, so it was kept:\n{checked.output}")
             # This compile is as good as a save's, and the tree it compiled is
             # the tree on disk -- so it is stamped like one. Without this a
@@ -2506,9 +2503,8 @@ class MathematicsSession:
             return
         # Guarded on the way in as well as on the way out. A symlinked
         # transcript that were refused only at append time would first be read
-        # back as this workspace's own history -- carried into the system
-        # prompt by `_carried`, and counted as spend by `_recover_spend` --
-        # from a file belonging to whoever wrote the link.
+        # back as this workspace's own history -- counted as spend by
+        # `_recover_spend` -- from a file belonging to whoever wrote the link.
         with self._workspace_guard.open(TRANSCRIPT, encoding="utf-8", errors="replace") as handle:
             if start:
                 handle.seek(start)

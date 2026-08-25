@@ -611,21 +611,176 @@ def test_a_guard_refuses_a_directory_that_leaves_its_own_parent(tmp_path: Path):
         layout.WriteGuard(problem / ".local")
 
 
+@pytest.mark.parametrize("bad", ["a\x00b", "a\nb", "a\tb", "a\x7fb", "a\x1bb"])
+def test_a_slug_may_not_carry_a_control_character(bad: str):
+    """Reproduced: `project = "a\\x00b"` in a committed config raised
+
+    `ValueError: embedded null byte` out of the first syscall that touched the
+    path -- an uncaught traceback rather than the one-line refusal every other
+    bad slug gets, from a value a clone supplied. A newline is no better: the
+    slug is printed in banners and written into a lakefile stanza and a
+    `.gitignore`, and a name that can forge a line break in any of those is
+    not a directory name.
+    """
+    with pytest.raises(layout.LayoutError, match="control character"):
+        layout.validate_slug(bad)
+
+
+@needs_symlinks
+def test_a_dangling_problem_link_is_a_layout_error_not_a_traceback(tmp_path: Path):
+    """Reproduced: `FileExistsError`, which `cli.py` does not catch.
+
+    `ensure` proved every CHILD through `_ensure_dir` and then made the
+    problem directory itself with a bare `mkdir(parents=True, exist_ok=True)`
+    -- and on a dangling link that raises `FileExistsError`, which is not a
+    `LayoutError`, so `except layout.LayoutError` in `cli.py` missed it and
+    the user met a stack trace instead of the refusal the very next statement
+    was written to give them.
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "sylow").symlink_to(tmp_path / "nowhere", target_is_directory=True)
+    with pytest.raises(layout.LayoutError):
+        layout.Layout(root=root, slug="sylow").ensure()
+
+
+def test_the_tooling_ignore_covers_what_a_pre_branch_workspace_left_there(tmp_path: Path):
+    """Reproduced: upgrading un-ignored an old workspace's private state.
+
+    `unignore_tooling` strips a blanket `.hardy/` rule so the shared Lean and
+    the project config become trackable. On a pre-branch checkout that
+    directory is not empty scratch: it is the OLD workspace, still holding the
+    provider session id and the spend ledger in `session.json`, the trajectory
+    in `transcript.jsonl`, and every line ever typed at the prompt -- sent or
+    not -- in `input-history`. Stripping the rule handed all of it to the next
+    `git add -A`. Not migrating that data is a deliberate decision and it
+    stands; the decision was to leave it alone, not to un-protect it.
+    """
+    root = tmp_path / "root"
+    (root / layout.HARDY_DIR).mkdir(parents=True)
+    for name in ("session.json", "transcript.jsonl", "input-history"):
+        (root / layout.HARDY_DIR / name).write_text("private", encoding="utf-8")
+    (root / ".gitignore").write_text(".hardy/\n", encoding="utf-8")
+
+    resolved = layout.Layout(root=root, slug="sylow")
+    resolved.ensure()
+    assert resolved.unignore_tooling(root / ".gitignore") is True
+
+    rules = (root / layout.HARDY_DIR / ".gitignore").read_text(encoding="utf-8").splitlines()
+    for rule in ("/session.json", "/transcript.jsonl", "/input-history", "/.local/", "/.build/"):
+        assert rule in rules
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+def test_git_actually_ignores_the_old_workspace_after_an_upgrade(tmp_path: Path):
+    """The rules as git reads them, not as this module spells them.
+
+    A rule that looked right and matched nothing would leave the same secrets
+    exposed while this file asserted they were covered.
+    """
+    root = tmp_path / "root"
+    (root / layout.HARDY_DIR).mkdir(parents=True)
+    for name in ("session.json", "transcript.jsonl", "input-history"):
+        (root / layout.HARDY_DIR / name).write_text("private", encoding="utf-8")
+    (root / ".gitignore").write_text(".hardy/\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+
+    resolved = layout.Layout(root=root, slug="sylow")
+    resolved.ensure()
+    resolved.unignore_tooling(root / ".gitignore")
+
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"], cwd=root, check=True, capture_output=True, text=True
+    ).stdout.split()
+    for name in ("session.json", "transcript.jsonl", "input-history"):
+        assert f".hardy/{name}" not in staged, staged
+    # And the thing the un-ignoring was FOR is still trackable.
+    assert ".hardy/.gitignore" in staged
+
+
 # The ratchet. A guard nobody remembers to use is not a guarantee, and the
 # next file to live in a problem directory will be added by someone who never
 # read this module.
 
-GUARDED_MODULES = ("chat.py", "cas.py", "cas_export.py", "tui/shell.py")
-#: The two writes in those modules that do not go through a `WriteGuard`, by
-#: the function they sit in. Both write into the LaTeX tree at a path the
-#: model chose, which `workspace.safe_relative` has already confined to that
-#: tree -- a different mechanism for a different question, and the reason
-#: these are exceptions rather than omissions.
-UNGUARDED = {"_save_latex", "_delete_tex"}
+#: Every module that writes into a problem directory. `workspace.py` and
+#: `latex.py` are here because they are where the escapes of the last review
+#: actually were -- a scanner that covered neither reported a clean sweep
+#: while `save_lean` was writing through `lean/Escape -> /tmp/OUTSIDE` and
+#: `writeup.pdf` was being copied over whatever a clone pointed it at.
+GUARDED_MODULES = (
+    "chat.py",
+    "cas.py",
+    "cas_export.py",
+    "tui/shell.py",
+    "workspace.py",
+    "latex.py",
+    "lean.py",
+)
+
+#: Receivers that ARE a `WriteGuard`, spelled out. Not a suffix test on the
+#: unparsed text: `receiver.endswith("_log")` matched any local anyone chose
+#: to call `something_log`, and `endswith("guard")` matched `self._gate_guard`
+#: or a plain `guard` bound to anything at all -- so the exemption was handed
+#: out by naming convention, which is the one thing an attacker-shaped mistake
+#: gets to pick freely. A new guard has to be added here, which is a line a
+#: reviewer sees.
+GUARD_BINDINGS = frozenset({
+    "guard",
+    "shadow_guard",
+    "self._guard",
+    "self._log",
+    "session._log",
+    "self._workspace_guard",
+    "self._local_guard",
+    "WriteGuard(output_dir, create=True)",
+    "WriteGuard(aux_dir, create=True)",
+})
+
+#: Calls that put bytes on disk, or take them off it. `open` is here as a
+#: BUILTIN as well as a method: `open(path, "w")` parses as an `ast.Name` and
+#: a scanner that only looked at `ast.Attribute` never yielded it at all.
+#: `copyfile` is here because that is what wrote `writeup.pdf` -- it opens the
+#: destination `wb` and follows a symlink to do it, so a clone shipping
+#: `writeup.pdf -> ~/.bashrc` had `%PDF-` written into the user's shell
+#: profile. `unlink` is here because deleting follows every directory on the
+#: way to the file even though it never follows the file itself.
+WATCHED_METHODS = frozenset({"open", "write_text", "write_bytes", "touch", "unlink"})
+WATCHED_BUILTINS = frozenset({"open"})
+#: Watched only on the module they belong to, since `replace` and `open` are
+#: also ordinary string and file methods.
+WATCHED_FUNCTIONS = frozenset({
+    ("os", "open"),
+    ("os", "replace"),
+    ("shutil", "copyfile"),
+    ("shutil", "copy"),
+    ("shutil", "copy2"),
+})
+
+#: The writes that do not go through a guard, and the test that shows each one
+#: cannot leave the tree it belongs to. A NAMED TEST, not a mechanism someone
+#: believed in: this used to exempt `_save_latex` and `_delete_tex` on the
+#: grounds that `workspace.safe_relative` "has already confined the path to
+#: that tree", which is the name-versus-resolved-path confusion in as many
+#: words -- `safe_relative` proves a string is a relative path of Lean
+#: identifiers and says nothing whatever about where a directory of that name
+#: leads. That belief is what let `lean/Escape -> /tmp/OUTSIDE` accept
+#: `Escape/Owned.lean`, and both functions write through a guard now.
+UNGUARDED = {
+    # Into `tempfile.TemporaryDirectory`, and the tree copied in first has had
+    # every symlink dropped on the way -- so there is no link in the scratch
+    # tree for a write to follow out of it.
+    "check": "test_a_symlink_in_the_writeup_tree_is_not_copied_into_the_scratch_tree",
+}
 
 
 def _write_calls(source: str):
-    """Every `.open`/`.write_text`/`.write_bytes` call, with what it is on."""
+    """Every call that could put bytes on disk, with what it is on.
+
+    `ast.Attribute` was the whole of the old test's filter, which meant the
+    plain builtin `open(...)` -- an `ast.Name` -- was invisible to a ratchet
+    whose entire job is noticing an unguarded write.
+    """
     import ast
 
     tree = ast.parse(source)
@@ -635,11 +790,18 @@ def _write_calls(source: str):
             for child in ast.walk(node):
                 holder.setdefault(child, node.name)
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        if not isinstance(node, ast.Call):
             continue
-        if node.func.attr not in {"open", "write_text", "write_bytes"}:
+        where = holder.get(node, "<module>")
+        if isinstance(node.func, ast.Name):
+            if node.func.id in WATCHED_BUILTINS:
+                yield where, "<builtin>", node.func.id
             continue
-        yield holder.get(node, "<module>"), ast.unparse(node.func.value), node.func.attr
+        if not isinstance(node.func, ast.Attribute):
+            continue
+        receiver = ast.unparse(node.func.value)
+        if (receiver, node.func.attr) in WATCHED_FUNCTIONS or node.func.attr in WATCHED_METHODS:
+            yield where, receiver, node.func.attr
 
 
 def test_every_file_write_in_a_problem_goes_through_the_guard():
@@ -647,14 +809,80 @@ def test_every_file_write_in_a_problem_goes_through_the_guard():
 
     The mechanism is that a guard takes a NAME rather than a path, so there is
     no path to open -- but nothing stops a future writer from rebuilding one.
-    This is what stops it: a new `open`/`write_text`/`write_bytes` in these
-    modules fails here until someone either routes it through a guard or says
-    in `UNGUARDED` why it does not belong to a problem directory.
+    This is what stops it: a new write in these modules fails here until
+    someone either routes it through a guard named in `GUARD_BINDINGS` or adds
+    it to `UNGUARDED` with the test that demonstrates where it can land.
     """
     package = Path(layout.__file__).parent
     for module in GUARDED_MODULES:
         for function, receiver, call in _write_calls((package / module).read_text(encoding="utf-8")):
-            guarded = receiver.endswith(("guard", "_log")) or receiver == "guard"
+            guarded = receiver in GUARD_BINDINGS
             assert guarded or function in UNGUARDED, (
                 f"{module}:{function} calls {receiver}.{call}(...) outside a WriteGuard"
             )
+
+
+def test_the_ratchet_sees_the_writes_it_missed(tmp_path: Path):
+    """The previous ratchet passed while two modules were writing outside.
+
+    Each of these is a shape it was blind to, fed to it as source: the builtin
+    `open`, which is an `ast.Name` and was never yielded; `shutil.copyfile`,
+    which was not a watched name; and a receiver exempted for being SPELLED
+    like a guard, which is how `_save_latex` came to be trusted. A ratchet
+    that cannot see these is a ratchet that reports a clean sweep over the
+    holes it exists to find.
+    """
+    source = """
+def writes_through_the_builtin(path, text):
+    with open(path, "w") as handle:
+        handle.write(text)
+
+def copies_over_the_destination(pdf, target):
+    shutil.copyfile(pdf, target)
+
+def renames_over_the_destination(temporary, target):
+    os.replace(temporary, target)
+
+def opens_a_descriptor(path):
+    os.open(path, 0)
+
+def creates_it_empty(path):
+    path.touch()
+
+def deletes_through_the_directory(path):
+    path.unlink()
+
+def is_only_named_like_a_guard(path):
+    audit_log = path
+    audit_log.open("w")
+    plausible_guard = path
+    plausible_guard.write_text("x")
+"""
+    found = {(function, call) for function, _, call in _write_calls(source)}
+    assert found == {
+        ("writes_through_the_builtin", "open"),
+        ("copies_over_the_destination", "copyfile"),
+        ("renames_over_the_destination", "replace"),
+        ("opens_a_descriptor", "open"),
+        ("creates_it_empty", "touch"),
+        ("deletes_through_the_directory", "unlink"),
+        ("is_only_named_like_a_guard", "open"),
+        ("is_only_named_like_a_guard", "write_text"),
+    }
+    # And none of those receivers is accepted as a guard, which is the half of
+    # the old test that a string suffix gave away for free.
+    assert not any(receiver in GUARD_BINDINGS for _, receiver, _ in _write_calls(source))
+
+
+def test_the_ratchet_does_not_fire_on_an_ordinary_string_replace():
+    """`os.replace` is watched; `text.replace` is every other line of Python.
+
+    Watching the bare attribute name would make this test fail permanently on
+    prose handling, and a ratchet that cries wolf gets an exemption added
+    rather than a bug fixed.
+    """
+    source = """
+def normalises(text):
+    return text.replace("a", "b")
+"""
+    assert list(_write_calls(source)) == []

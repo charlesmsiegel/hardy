@@ -263,21 +263,31 @@ def test_tool_calls_are_serialized(tmp_path: Path):
     assert len(json.loads((tmp_path / "session.json").read_text())["names"]) == 8
 
 
-def test_a_workspace_from_before_the_sdk_carries_its_conversation(tmp_path: Path):
-    """Its transcript belongs to no provider thread, so without this the first
-    exchange after upgrading starts from nothing."""
+def test_opening_a_fresh_clone_appends_nothing_to_the_versioned_transcript(tmp_path: Path):
+    """Reproduced: every open of a clone appended a `migration` event, forever.
+
+    `.local/state.json` is gitignored by design, so its absence is what a
+    fresh clone always looks like -- and the carried-context migration fired
+    on exactly that. Opening a cloned project therefore wrote a line into the
+    versioned trajectory before any mathematics had happened, left the
+    checkout dirty, and did it again on the next machine. It also told the
+    model the workspace "predates the current provider session", which is
+    false for a clone.
+    """
     transcript = tmp_path / "transcript.jsonl"
     tmp_path.mkdir(parents=True, exist_ok=True)
-    transcript.write_text(
+    committed = (
         json.dumps({"type": "user", "message": {"role": "user", "content": "Prove Fermat."}}) + "\n"
-        + json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "Working on it."}}) + "\n",
-        encoding="utf-8",
+        + json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "Working on it."}}) + "\n"
     )
-    chat = session(tmp_path, FakeChatRuntime([]))
-    carried = chat.runtime.context["system_prompt"]
-    assert "Prove Fermat." in carried and "Working on it." in carried
-    events = [json.loads(line) for line in transcript.read_text().splitlines()]
-    assert any(event["type"] == "migration" for event in events)
+    transcript.write_text(committed, encoding="utf-8")
+
+    for _ in range(3):
+        chat = session(tmp_path, FakeChatRuntime([]))
+        assert "predates the current provider session" not in chat.runtime.context["system_prompt"]
+        # The file a clone brought with it, byte for byte, however often it is
+        # opened: nothing here is machine-local bookkeeping's to write.
+        assert transcript.read_text(encoding="utf-8") == committed
 
 
 def test_a_workspace_with_a_provider_thread_carries_nothing_extra(tmp_path: Path):
@@ -302,21 +312,14 @@ def test_the_provider_thread_survives_a_failed_exchange(tmp_path: Path):
     assert json.loads((tmp_path / ".local" / "state.json").read_text())["provider_session"] == "thread-after-error"
 
 
-def test_migration_keeps_the_newest_context_when_truncating(tmp_path: Path):
-    """A long older message must not displace the exchange the conversation
-    actually left off in."""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    lines = [json.dumps({"type": "user", "message": {"role": "user", "content": "x" * 9000}}),
-             json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "THE LATEST WORD"}})]
-    (tmp_path / "transcript.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    chat = session(tmp_path, FakeChatRuntime([]))
-    assert "THE LATEST WORD" in chat.runtime.context["system_prompt"]
+def test_a_transcript_event_that_carries_no_message_object_still_opens(tmp_path: Path):
+    """A `limit` event carries a bare string where others carry an object.
 
-
-def test_migration_ignores_events_that_carry_no_message(tmp_path: Path):
-    """A `limit` event from the runtime this migration exists to leave behind
-    carries a bare string, and reaching into it would stop the workspace
-    reopening at all."""
+    Any reader that reached into `event["message"]` for a key would raise on
+    that one, and every reader here runs while the session is being
+    constructed -- so the cost of the mistake is the workspace not opening at
+    all, not one event misread.
+    """
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "transcript.jsonl").write_text(
         json.dumps({"type": "user", "message": {"role": "user", "content": "Earlier question."}}) + "\n"
@@ -325,7 +328,7 @@ def test_migration_ignores_events_that_carry_no_message(tmp_path: Path):
         encoding="utf-8",
     )
     chat = session(tmp_path, FakeChatRuntime([]))
-    assert "Earlier question." in chat.runtime.context["system_prompt"]
+    assert chat.state["schema_version"] == 2
 
 
 def test_an_abandoned_turn_is_written_to_the_transcript(tmp_path: Path):

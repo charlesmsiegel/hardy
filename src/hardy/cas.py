@@ -2029,5 +2029,8 @@ def replay_in_fresh_kernel(
         outcomes.extend([None] * (len(cells) - len(outcomes)))
     finally:
         session.close()
-        (cwd / "replay-scratch.jsonl").unlink(missing_ok=True)
+        # Through the session's own guard: the scratch log is removed by the
+        # same proven directory it was written through, not by a path rebuilt
+        # here that nothing re-checks.
+        session._log.unlink(session.log_path.name, missing_ok=True)
     return outcomes

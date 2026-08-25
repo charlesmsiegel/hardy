@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .domain import EnvironmentIdentity, FrozenClaim, FrozenModel, RunLimits
+from .layout import WriteGuard
 from .models import Request, ToolResult
 from .process import ProcessResult, ProcessSpec, run_process
 from .workspace import QUALIFIED_NAME, declared_name
@@ -281,9 +282,15 @@ def elaborate(
         process = run(source_path)
     else:
         with tempfile.TemporaryDirectory(prefix="hardy-lean-") as temporary:
-            path = Path(temporary) / "Main.lean"
-            path.write_bytes(encoded)
-            process = run(path)
+            # Guarded even here. The directory is this function's own and
+            # nothing a repository wrote can reach it, so the proof is cheap
+            # and buys nothing today -- but a throwaway path written without a
+            # guard is the pattern the next writer copies into a directory
+            # that is not throwaway.
+            guard = WriteGuard(Path(temporary))
+            with guard.open("Main.lean", "wb") as handle:
+                handle.write(encoded)
+            process = run(guard.path("Main.lean"))
     diagnostics, open_goals = parse_lean_json(
         "\n".join(part for part in (process.stdout, process.stderr) if part)
     )
