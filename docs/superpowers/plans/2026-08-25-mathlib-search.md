@@ -1036,7 +1036,28 @@ Three readers over it:
   `ReplaySource` needs to exist. Storing only `corpus` left this unable to
   reconstruct anything without hard-coding production knowledge in the
   evaluation, which is the drift the wrapping was meant to avoid.
-- `recorded_seconds(engine, query) -> float` — see Finding 4 below.
+- `recorded_seconds(engine, query) -> float` — the duration the live call took.
+- `recorded_error(engine, query) -> str | None` — the failure recorded for that
+  call, or `None` when it succeeded.
+
+`record` therefore also takes `error: str | None`. A source that raised is taped
+as a failure with empty hits, and `ReplaySource` re-raises it rather than
+returning an empty list — otherwise a live run that hit a Loogle 503 would leave
+the previous successful cassette untouched, and the hermetic run after it would
+replay stale hits while claiming to reproduce the live numbers.
+
+Test it:
+
+```python
+def test_a_source_that_failed_live_is_replayed_as_a_failure(tmp_path) -> None:
+    """Not as an empty result. "The service was down" and "no such lemma"
+    are the two things this record exists to keep apart."""
+    tape = cassette.Cassette(tmp_path)
+    tape.record('loogle', '_ = _', [], kind='loogle', corpus='endpoint',
+                accepts=['conclusion'], seconds=0.2, error='RetrievalError: loogle: 503')
+
+    assert tape.recorded_error('loogle', '_ = _') == 'RetrievalError: loogle: 503'
+```
 
 The key stays `(engine, query)`. Without the recorded identity, a re-recording
 against a moved Mathlib keeps the same filenames and the same case ids while
@@ -1454,6 +1475,7 @@ import inspect
 import os
 from pathlib import Path
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
@@ -1528,6 +1550,13 @@ class ReplaySource:
         return getattr(shape, "query", shape)
 
     def search(self, goal: str, limit: int):
+        # A recorded failure is replayed as a failure. Replaying it as an empty
+        # result would turn "this source was down" into "this source found
+        # nothing", which is the substitution the whole provenance record
+        # exists to prevent.
+        error = self._tape.recorded_error(self._identity.name, goal)
+        if error is not None:
+            raise retrieval.RetrievalError(error)
         return tuple(
             DeclarationRecord(name=hit["name"], signature=hit.get("signature", ""))
             for hit in self._tape.replay(self._identity.name, goal)[:limit]
@@ -1582,13 +1611,34 @@ class RecordingSource:
         return self._inner.query_for(shape)
 
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
+        """Record what happened, including a failure.
+
+        `PremiseRetriever` catches a source error and returns a valid
+        incomplete ranking, so a `--live` run survives a Loogle 503. If only
+        successes were taped, that run would leave the *previous* successful
+        cassette in place and the hermetic run right after it would replay
+        stale hits -- reporting better recall than the live run actually
+        measured, under a baseline claiming to be the same numbers. With no
+        earlier cassette it fails with `CassetteMiss` instead, which is at
+        least loud but still wrong.
+        """
         identity = self._inner.identity
-        found = self._inner.search(goal, limit)
+        started = time.monotonic()
+        try:
+            found = self._inner.search(goal, limit)
+        except Exception as error:  # noqa: BLE001 - a failed source is an outcome
+            self._tape.record(
+                identity.name, goal, [], kind=identity.kind, corpus=identity.corpus,
+                accepts=sorted(self.accepts), seconds=time.monotonic() - started,
+                error=f"{type(error).__name__}: {error}",
+            )
+            raise
         self._tape.record(
-            identity.name,
-            goal,
+            identity.name, goal,
             [{"name": r.name, "signature": r.signature} for r in found],
-            corpus=identity.corpus,
+            kind=identity.kind, corpus=identity.corpus,
+            accepts=sorted(self.accepts), seconds=time.monotonic() - started,
+            error=None,
         )
         return found
 
