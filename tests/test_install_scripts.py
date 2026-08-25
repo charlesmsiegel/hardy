@@ -1140,3 +1140,29 @@ def test_the_installer_installs_the_cli_the_runtime_needs(tmp_path: Path):
     assert source.index("ensure_claude_cli") < source.index("\n\tverify")
     windows = POWERSHELL_SCRIPT.read_text(encoding="utf-8")
     assert "Install-ClaudeCli" in windows and "@anthropic-ai/claude-code" in windows
+
+
+def test_the_shell_installer_defaults_to_the_global_hardy_directory():
+    """The path is hard-coded in more places than config.py.
+
+    `common.sh` also passes HARDY_CONFIG into `hardy doctor`, so an installer
+    left pointing at the old location would keep writing a second config there
+    and the uninstaller would remove the wrong one.
+    """
+    text = Path("scripts/lib/common.sh").read_text(encoding="utf-8")
+    assert '$HOME/.hardy/config.toml' in text
+    assert "XDG_CONFIG_HOME" not in text
+
+
+def test_the_windows_installers_default_to_the_global_hardy_directory():
+    """Asserted against the config assignment, not against the token.
+
+    Both scripts legitimately keep `$env:LOCALAPPDATA` for the install prefix
+    and the bin directory, and `LOCALAPPDATA` contains the substring `APPDATA` —
+    so banning the token outright is an assertion that can never pass.
+    """
+    for script in ("scripts/install-windows.ps1", "scripts/uninstall-windows.ps1"):
+        text = Path(script).read_text(encoding="utf-8")
+        assignment = next(line for line in text.splitlines() if "$ConfigPath" in line and "=" in line)
+        assert ".hardy" in assignment, script
+        assert "$env:APPDATA" not in assignment, script

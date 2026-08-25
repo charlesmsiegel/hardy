@@ -145,7 +145,7 @@ download several gigabytes and take 10–30 minutes; `--skip-mathlib` omits it i
 you have your own Lake project.
 
 The installer asks for a model identity and stores it in
-`~/.config/hardy/config.toml` (`%APPDATA%\hardy\config.toml` on Windows). It also
+`~/.hardy/config.toml` on every platform. It also
 installs the Claude Code CLI when npm is available. There is no key to supply;
 sign in once with `claude login`. Every setting can be overridden by a `HARDY_*`
 environment variable or a flag, so an unattended install is:
@@ -168,23 +168,40 @@ reason to build one.
 
 ## Use
 
-The default `.hardy/` workspace contains a Lean tree under `lean/`, a writeup
-tree under `tex/` rooted at `writeup.tex`, the compiled `writeup.pdf`,
-`session.json`, and an append-only `transcript.jsonl`.
+A **root** is a directory holding one or more problems. Each is its own
+`<root>/<slug>/` tree — a Lean tree under `lean/`, a writeup tree under `tex/`
+rooted at `writeup.tex`, the compiled `writeup.pdf`, computer algebra
+artifacts under `cas/`, `session.json`, and an append-only `transcript.jsonl`
+— and all of it is meant to be committed: the sources and the record of what
+was claimed belong in git beside each other. Only `.build/` (recompiled
+oleans and LaTeX output) and `.local/` (the spend ledger, the provider's own
+session id, and terminal input history) are not; Hardy writes a `.gitignore`
+saying so the first time it opens a problem. `--root` names the directory and
+`--project` names the slug; with only one problem already there Hardy opens
+it without being asked, and a root with none starts one called `main`.
 
-Both trees hold as many files as the work needs. A Lean file's path is its
-module name — `lean/Group/Sylow.lean` is `import Group.Sylow` — so a development
-can be split and its pieces can import each other. Hardy compiles each file to
-an olean under `.hardy/.build/lean/` and puts that directory on `LEAN_PATH`
-beside Mathlib's, which is what makes the imports resolve; `lake env` augments
-that variable rather than replacing it, so no shared `lakefile.toml` is touched.
-Saving a file rebuilds everything that imports it and is refused whole if any of
-them breaks, so a save can never leave the workspace uncompilable. LaTeX
-fragments are `\input` from `writeup.tex` and are always compiled through it —
-so a split writeup is built fragment first, and `writeup.tex` is rewritten to
-include it afterwards, since a root referencing a file that does not exist yet
-will not compile. Deleting a fragment the root still includes is refused, as is
-deleting a Lean file another imports. Deleting a Lean file that holds a
+`<root>/.hardy/` sits beside the problems, not inside any of them: it is
+Hardy's own tooling for that root, committed like the rest. A small config
+file there may set which project is active — nothing else, since it travels
+with a clone and Hardy runs the configured CAS command before the prompt ever
+appears — and it reserves `lean/` for a Lean library shared across every
+problem in the root, built to its own `.build/lean/`, which like every
+`.build/` here is never committed.
+
+Both trees inside a problem hold as many files as the work needs. A Lean
+file's path is its module name — `lean/Group/Sylow.lean` is `import
+Group.Sylow` — so a development can be split and its pieces can import each
+other. Hardy compiles each file to an olean under the problem's own
+`.build/lean/` and puts that directory on `LEAN_PATH` beside Mathlib's, which
+is what makes the imports resolve; `lake env` augments that variable rather
+than replacing it, so no shared `lakefile.toml` is touched. Saving a file
+rebuilds everything that imports it and is refused whole if any of them
+breaks, so a save can never leave the problem uncompilable. LaTeX fragments
+are `\input` from `writeup.tex` and are always compiled through it — so a
+split writeup is built fragment first, and `writeup.tex` is rewritten to
+include it afterwards, since referencing a file that does not exist yet will
+not compile. Deleting a fragment `writeup.tex` still includes is refused, as
+is deleting a Lean file another imports. Deleting a Lean file that holds a
 registered declaration *is* allowed — an undocumented result must always be
 abandonable — and the naming registry drops the mappings it stranded, recording
 that in `transcript.jsonl`, since losing a formal-to-writeup link is a change to
@@ -241,7 +258,7 @@ which the installer points at the shared Mathlib project; set it to your own
 Lake project — in the config file or with `--lean-project` — to import your own
 Lean modules. Without it, Lean runs in the current directory as before.
 
-Computer algebra artifacts live under `.hardy/cas/`: an append-only
+A problem's computer algebra artifacts live under its own `cas/`: an append-only
 `cells.jsonl` recording every cell and who ran it, and, once exported,
 `session.py` (or `.sing`/`.m2`), `session.ipynb`, and an `export.json` naming
 both files by digest, recording which cells reproduced, and carrying a
@@ -338,7 +355,9 @@ line-based session instead, with no ghost text or selectors. If the real
 terminal session cannot start at all, Hardy falls back to that line-based
 session automatically rather than ending the run.
 
-Use `hardy chat --workspace path` to select a workspace. A staged run is
+Use `hardy chat --root path --project slug` to open a particular problem;
+either flag alone still narrows the choice, and both default to the current
+directory and to whichever problem is already there. A staged run is
 `hardy prove "every prime above two is odd"`, and its artifacts — request,
 frozen claim, trajectory, Lean source, verification, paper, and manifest — are
 written under `runs_root`. The retained batch check is
