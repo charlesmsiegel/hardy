@@ -115,9 +115,20 @@ class QueryShape(FrozenModel):
   first. Its function and its tests stay as they are.
 - **`constants`** is the global constant names appearing anywhere in the goal,
   hypotheses included, comma-separated -- Loogle's constant-list syntax. This is
-  what rescues causes 4 and 5: a goal whose conclusion is an unusable pattern
-  still names `List.reverse` and `List.length`, and a hypothesis `hK : IsCompact
-  K` still names `IsCompact`.
+  what rescues cause 4: a hypothesis `hK : IsCompact K` names `IsCompact`,
+  which the conclusion may never mention.
+
+  It rescues cause 5 only partly, and the difference matters. For
+  `xs : List α ⊢ xs.reverse.length = xs.length`, `xs.reverse.length` is one
+  token whose head `xs` is a local, so it is dropped; the hypothesis line
+  contributes `List` and nothing else. That is a weak query -- but it is a
+  query, where today's conclusion shape produces one both engines reject
+  outright. Recovering `List.reverse` and `List.length` would need the type of
+  `xs` and a model of how Lean elaborates projections, which is the elaborator
+  this design has already declined to reimplement. Whether `List` alone is
+  worth the call is a question for the evaluation, not for this document: the
+  per-shape metric is what answers it, and the answer may be to drop the
+  dot-notation cases from what this shape claims to fix.
 - **`description`** is a natural-language sentence, supplied by the caller as a
   new optional argument to `rank_premises`. Hardy cannot turn a goal into
   English; the model can, and it is the one component here that already knows
@@ -142,17 +153,26 @@ def accepts(self) -> frozenset[str]: ...
 def query_for(self, shape: QueryShape) -> str: ...
 ```
 
-| source | class | accepts | pinned |
+| source | class | kind | accepts | pinned |
 |---|---|---|---|
-| `lean-find` | `LeanFindSource` | `conclusion` | when toolchain and manifest match |
-| `loogle` | `LoogleSource` | `conclusion`, `constants` | only when self-hosted at a named revision |
-| `leansearch` | `LeanSearchNetSource` | `description` | never |
+| `lean-find` | `LeanFindSource` | `lean_search` | `conclusion` | when toolchain and manifest match |
+| `loogle` | `LoogleSource` | `loogle` | `conclusion`, `constants` | only when self-hosted at a named revision |
+| `leansearch` | `LeanSearchNetSource` | `leansearch` (new) | `description` | never |
 
 The existing `LeanSearchSource` class is renamed to `LeanFindSource`, matching
 the `name="lean-find"` its identity already carries. The new leansearch.net
 engine is `LeanSearchNetSource`. Neither name is reused with a changed meaning,
 because a reviewer reading a diff where `LeanSearchSource` silently became a
 different service is a reviewer who will miss something.
+
+`SourceKind` is `Literal["lean_search", "loogle", "embedding"]`
+(`retrieval.py:128`) and gains `"leansearch"`. This is not cosmetic. Fusion
+keys local-signature precedence on `identity.kind == "lean_search"`
+(`retrieval.py:1005`), so reusing that kind would let an unpinned
+leansearch.net rendering override the signature the model's own Lean is about
+to elaborate -- the exact confusion that precedence exists to prevent. Reusing
+`"loogle"` would instead put one service's answers under another's name in the
+provenance. A distinct kind, and local precedence stays tied to `lean-find`.
 
 `LeanSearchNetSource` follows `LoogleSource` exactly: bounded fetch, bounded
 response, strict UTF-8 decode, a `worst_case_seconds` that reports what can
@@ -226,6 +246,17 @@ actually proved something about. The model still submits through
 `lean_check_proof` or `save_lean`, and the FinalVerifier still rebuilds and
 rechecks. Nothing about the evidence story changes.
 
+**The scratch file must carry the caller's environment, not just Mathlib.**
+`LeanService.check_scratch` prepends `import Mathlib` and nothing else, while
+chat's own `check_lean` runs with `env={"LEAN_PATH": lean_workspace.lean_path()}`
+(`chat.py:450`) so a file can import modules saved earlier under the workspace
+tree. A `try_tactics` that dropped that would report unknown identifiers for
+declarations the session had just saved -- searching a different environment
+from the one the model is working in, which is worse than not searching. On the
+chat surface the call takes the workspace `LEAN_PATH` and the workspace imports;
+on the staged surface there is no workspace and `import Mathlib` is the whole
+environment, which is already what `lean_check_scratch` gives that model.
+
 Metered against a new `RunLimits.tactic_search_seconds`, default 300, separate
 from `retrieval_seconds` so neither kind of search can starve the other.
 `RunLimits` changing shape moves `RunManifest.schema_version` from 3 to 4, for
@@ -253,6 +284,18 @@ counted; one that retypes the same lemma differently is not. It is evidence of
 reuse, not a claim about causation, and the field documentation says this in
 those words rather than letting a reader infer a stronger claim.
 
+**The figure has to cross a process boundary.** On the Codex backend
+`codex_runtime` serves Hardy's tools by launching `python -m hardy.mcp_server`
+over stdio (`codex_runtime.py:85`), so `try_tactics` runs in a child process
+while `workflow.py:465` builds the `RunManifest` in the parent. A field alone
+gives the child no way to reach that manifest, and a Codex run that leaned
+heavily on `exact?` would finalize reporting zeros -- a figure that reads as
+"the model did it unaided" precisely when it did not. So the MCP runtime
+appends one record per tactic search to the run store as it happens, and
+finalization aggregates those records before hashing artifacts and writing the
+manifest. The in-process staged and chat surfaces write to the same store, so
+one path produces the figure rather than two that can disagree.
+
 Recorded as `RunManifest.automation`, a new top-level optional field --
 **not** inside `Grades`. An attribution figure is a measurement of how a run
 went, not a grade, and `Grades.require_verification_evidence` enforces a
@@ -269,6 +312,17 @@ document and reintroducing it with a new tool would be the same mistake twice.
 Four tools are added to `CHAT_TOOLS`, named to match its existing unprefixed
 convention: `rank_premises`, `search_declarations`, `inspect_declarations`,
 `try_tactics`.
+
+**Search and check must run the same toolchain.** Chat elaborates through
+`config.lean_command` (default `lake env lean`), while `LeanService` runs
+`config.lake` as `lake env lean --json`. Under the default configuration those
+are the same program; under a customised `HARDY_LEAN_COMMAND` -- a wrapper
+script, a bare `lean`, a second Lake binary -- they are not, and the model
+would search one environment, check the name it found in another, and read a
+provenance naming the identity derived from the configured project. The search
+runtime is therefore built only when `lean_command` is the `lake env lean` form
+that `config.lake` also denotes; anything else refuses with that as the reason,
+which is the same advertised-and-refusing path as a missing project.
 
 Chat reaches Lean through `LeanTools` with a placeholder `Request`, and its
 `_environment` is a cache-invalidation string, not an `EnvironmentIdentity`. It
@@ -362,6 +416,17 @@ Metrics: recall@1, recall@5, recall@10, MRR, and -- the one that says whether
 this design was right -- **which shape found the expected lemma**, per case and
 in aggregate. If the constants shape never wins a case the conclusion shape
 loses, it did not earn its complexity and should come out.
+
+Every cassette records the identity of what answered it: the endpoint for a
+remote engine, and the toolchain pin plus `lake-manifest.json` digest for
+`#find`. The key stays `(engine, query)`, but the runner refuses to replay a
+set whose recorded identities disagree with each other, and prints them beside
+the metrics. Without this a re-recording against a moved Mathlib keeps the same
+filenames and the same case ids while measuring a different corpus, and the
+baseline in this README would go on being compared against numbers that no
+longer mean the same thing -- an unreplayable measurement presented as a
+replayable one, which is the defect the whole provenance discipline exists to
+prevent.
 
 Hermetic by default. Engine responses are recorded once against the live
 services and checked in as cassettes, so the eval runs in CI with no network and
