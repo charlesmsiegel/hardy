@@ -1664,9 +1664,13 @@ class MathematicsSession:
                 return ToolResult(True, self.cas.reset().model_dump_json())
             if name == "cas_export":
                 report = export_session(self.cas.session, self.workspace / "cas")
+                # Stored relative to the problem, because the record is
+                # versioned: an absolute path names this machine and is stale
+                # the moment the project is cloned or moved. Resolved against
+                # the problem directory whenever it is read back.
                 self.state["cas_export"] = {
-                    "script": report.script_path,
-                    "notebook": report.notebook_path,
+                    "script": self._relative_reference(report.script_path),
+                    "notebook": self._relative_reference(report.notebook_path),
                     "reproduces": report.reproduces,
                 }
                 self._save_state()
@@ -1674,6 +1678,19 @@ class MathematicsSession:
         except CasError as error:
             return ToolResult(False, str(error))
         return ToolResult(False, f"unknown tool: {name}")
+
+    def _relative_reference(self, path: str) -> str:
+        """A path inside this problem, as the record should carry it.
+
+        POSIX separators regardless of platform, so a record written on Windows
+        reads the same everywhere. A path that somehow falls outside the
+        problem is stored as it came rather than forced: a wrong relative path
+        would be worse than an honest absolute one.
+        """
+        try:
+            return Path(path).resolve().relative_to(self.workspace.resolve()).as_posix()
+        except ValueError:
+            return str(path)
 
     def stream(self, text: str) -> Iterator[TurnEvent]:
         """One exchange, as it arrives. The SDK decides how many tools to call.
