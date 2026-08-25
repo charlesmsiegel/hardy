@@ -209,6 +209,24 @@ def test_the_move_drops_the_setting_that_no_longer_exists(tmp_path: Path):
     assert config.read_file(destination)["model"] == "x"
 
 
+def test_a_quoted_retired_key_is_dropped_too(tmp_path: Path):
+    """TOML permits a quoted key, which the unquoted regex would not match.
+
+    `"workspace" = ...` decodes to the same `workspace` setting `tomllib`
+    gives an unquoted key. Missing it here would delete the source and
+    install a destination still carrying the retired key -- and every later
+    load rejects it as unknown, so Hardy would not start at all.
+    """
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('model = "x"\n"workspace" = ".hardy"\n', encoding="utf-8")
+    destination = tmp_path / ".hardy" / "config.toml"
+
+    config.migrate_global(legacy, destination)
+
+    assert config.read_file(destination)["model"] == "x"
+
+
 def test_the_move_keeps_runs_root_which_is_still_a_live_setting(tmp_path: Path):
     """`runs_root` is out of scope for this change and stays readable by
 

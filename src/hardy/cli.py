@@ -85,8 +85,23 @@ def runtime_factory(default_model: str) -> Callable[..., Any]:
     return make
 
 
+def prepare_layout(config: configuration.Config) -> None:
+    """Make the project's directories and ignore rules exist before anything writes.
+
+    Called for its side effects at the start of every path that opens a
+    project. Without it `Layout.ensure` is reachable only from its own tests,
+    and a real run leaves the build tree and the machine-local state as
+    ordinary trackable files -- which is the whole thing this layout exists to
+    prevent.
+    """
+    config.layout.ensure()
+    config.layout.unignore_tooling(config.root / ".gitignore")
+
+
 def _chat(config: configuration.Config, *, plain: bool = False) -> int:
     from .tui import run_session
+
+    prepare_layout(config)
 
     # Built once, here -- not inside `build` below -- because `run_session`
     # can call its `session_factory` a second time (the interactive shell
