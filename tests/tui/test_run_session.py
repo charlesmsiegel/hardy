@@ -86,9 +86,8 @@ def test_a_schema_error_is_not_treated_as_a_rendering_problem(settings, monkeypa
     buffer = StringIO()
     with create_pipe_input() as pipe:
         output = Vt100_Output(buffer, lambda: Size(rows=24, columns=80))
-        with create_app_session(input=pipe, output=output):
-            with pytest.raises(chat.SchemaError):
-                run_session(settings, explode)
+        with create_app_session(input=pipe, output=output), pytest.raises(chat.SchemaError):
+            run_session(settings, explode)
 
     assert "Falling back" not in buffer.getvalue()
 
