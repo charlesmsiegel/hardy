@@ -18,6 +18,7 @@ from hardy.workspace import (
     name_aliases,
     parse_imports,
     safe_relative,
+    statements,
     strip_comments,
     unreadable_assumptions,
 )
@@ -496,3 +497,50 @@ def test_an_unterminated_guillemet_does_not_swallow_the_file():
     assert declarations("theorem «oops : True\ntheorem after : True := trivial\n")[
         "theorem"
     ] == ("after",)
+
+
+def test_statements_read_the_head_and_stop_at_the_proof():
+    """What a reader has to be able to compare, and nothing else."""
+    source = "@[simp] theorem one (n : Nat) : n = n := by rfl\n"
+    assert statements(source) == {"one": "theorem one (n : Nat) : n = n"}
+
+
+def test_a_statement_is_reported_under_the_name_lean_gives_it():
+    source = "namespace Hardy\ntheorem one : True := trivial\nend Hardy\n"
+    assert statements(source) == {"Hardy.one": "theorem one : True"}
+
+
+def test_a_binder_default_is_not_the_proof():
+    source = "theorem one (n : Nat := 3) : n = n := by rfl\n"
+    assert statements(source)["one"] == "theorem one (n : Nat := 3) : n = n"
+
+
+def test_a_let_in_the_proposition_is_not_the_proof():
+    """`theorem t : let n := 1; n = 1 := by rfl` is ordinary Lean.
+
+    Stopping at that first `:=` recorded the statement as `theorem t : let n`,
+    which left the rest of the proposition outside what a writeup has to quote
+    -- so a document could show a different one and still match.
+    """
+    source = "theorem one : let n := 1; n = 1 := by rfl\n"
+    assert statements(source)["one"] == "theorem one : let n := 1; n = 1"
+
+
+def test_a_string_literal_survives_into_the_statement():
+    """`strip_comments` blanks literals so a `--` inside one cannot open a
+    comment. Blanked here, `"a" = "a"` and `"b" = "b"` would be the same run of
+    spaces, and a writeup quoting either would match a theorem about the other.
+    """
+    source = 'theorem one : "a" = "a" := by rfl' + "\n"
+    assert statements(source)["one"] == 'theorem one : "a" = "a"'
+
+
+def test_a_comment_inside_a_statement_is_dropped():
+    source = "theorem one : True -- obviously\n  := trivial\n"
+    assert statements(source)["one"] == "theorem one : True"
+
+
+def test_a_theorem_written_inside_a_string_is_not_a_statement():
+    """The scan still runs on text that cannot lie about declarations."""
+    source = 'def s := "theorem fake : False := sorry"' + "\n"
+    assert statements(source) == {}

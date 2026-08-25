@@ -213,12 +213,15 @@ was given, quoted verbatim. An approval nobody used owes nothing.
 
 **Nothing is finished until the artifacts say so.** Claiming a result is itself a
 tool call — `report_result`, naming the theorems it claims — and Hardy refuses it
-unless the Lean is saved and audited, every claimed theorem is carried by the
-document, and the appendix states every assumption. Saying it in prose instead
-does not get around this: after every turn Hardy writes what the workspace still
-owes on the screen under its own name, read off the two trees rather than off
-anything the model said, and `/status` answers the same question whenever the
-user asks. A model may decline to report; it cannot report what the artifacts do
+unless every claimed theorem has a *current* axiom audit behind it (a file edited
+on disk, or a workspace from before the audit existed, expires that and must be
+saved again), is carried by the document, and every assumption is stated in the
+appendix. Saying it in prose instead does not get around this: after every turn
+Hardy writes what the workspace still owes on the screen under its own name, read
+off the two trees rather than off anything the model said — including the case
+that has none to owe, where it says no theorem is saved and what was said rests
+on the conversation alone. `/status` answers the same question whenever the user
+asks. A model may decline to report; it cannot report what the artifacts do
 not carry, and it cannot quietly leave the human-readable half out.
 
 The manifest links Lean declaration names to LaTeX labels and records every

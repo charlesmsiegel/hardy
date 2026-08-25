@@ -124,8 +124,14 @@ def test_an_assumption_the_work_rests_on_owes_an_appendix() -> None:
         assumptions=[SYLOW],
         used={"Sylow.first"},
     )
-    assert kinds(found) == ["appendix", "assumption", "assumption"]
+    assert kinds(found) == ["appendix", "assumption", "assumption", "assumption"]
     assert "Sylow.first" in found[0].detail
+    # Both languages and the link between them: the axiom Lean was given, the
+    # label that names the statement, and the mathematics itself.
+    details = " ".join(item.detail for item in found[1:])
+    assert "axiom Sylow.first : True" in details
+    assert "asm:sylow" in details
+    assert "Sylow's first theorem" in details
 
 
 def test_an_appendix_carrying_both_languages_settles_it() -> None:
@@ -185,3 +191,82 @@ def test_an_empty_workspace_owes_nothing() -> None:
 
 def test_a_settled_workspace_summarises_as_nothing_outstanding() -> None:
     assert completion.summary(()) == "nothing outstanding"
+
+
+def test_a_commented_out_listing_shows_the_reader_nothing() -> None:
+    r"""`% \begin{verbatim} ... \end{verbatim}` on one line displays nothing.
+
+    LaTeX discards the whole line, so a reader sees no Lean at all -- the same
+    reason the label gate reads the compiler's `.aux` rather than the source.
+    """
+    tex = document("One.\n%\\begin{verbatim} " + STATEMENT + " \\end{verbatim}")
+    assert kinds(owed(tex)) == ["statement"]
+
+
+def test_a_percent_inside_a_listing_is_lean_and_not_a_comment() -> None:
+    """`n % 2 = 0` is ordinary Lean, and stripping TeX comments inside a
+    verbatim block would cut the statement in half."""
+    statement = "theorem hardyOne : n % 2 = 0"
+    tex = document("\\begin{verbatim}\n" + statement + "\n\\end{verbatim}")
+    assert owed(tex, theorems={"hardyOne": statement}) == ()
+
+
+def test_a_listing_after_a_commented_line_still_counts() -> None:
+    body = "% a note\n\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}"
+    assert owed(document(body)) == ()
+
+
+def test_string_literals_are_compared_rather_than_blanked() -> None:
+    """Blanked, `"a" = "a"` and `"b" = "b"` are the same run of spaces."""
+    mine = 'theorem one : "a" = "a"'
+    theirs = 'theorem one : "b" = "b"'
+    tex = document("\\begin{verbatim}\n" + theirs + "\n\\end{verbatim}")
+    assert kinds(owed(tex, theorems={"hardyOne": mine})) == ["statement"]
+
+
+def test_an_appendix_with_a_bare_label_states_nothing() -> None:
+    """A label says the document identifies an assumption. It does not say
+    what was assumed, and the reader cannot look that up in session.json."""
+    body = (
+        "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n"
+        "\\appendix\n\\label{asm:sylow}\n"
+        "\\begin{verbatim}\naxiom Sylow.first : True\n\\end{verbatim}"
+    )
+    found = owed(
+        document(body),
+        assumptions=[SYLOW],
+        used={"Sylow.first"},
+        labels={"thm:one", "asm:sylow"},
+    )
+    assert kinds(found) == ["assumption"]
+    assert "Sylow's first theorem" in found[0].detail
+
+
+def test_the_approved_wording_may_sit_in_a_longer_sentence() -> None:
+    body = (
+        "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n"
+        "\\appendix\nWe assume Sylow's first theorem, unproved here.\\label{asm:sylow}\n"
+        "\\begin{verbatim}\naxiom Sylow.first : True\n\\end{verbatim}"
+    )
+    assert owed(
+        document(body),
+        assumptions=[SYLOW],
+        used={"Sylow.first"},
+        labels={"thm:one", "asm:sylow"},
+    ) == ()
+
+
+def test_tex_escapes_do_not_hide_the_approved_wording() -> None:
+    """A document that had to escape a character to compile still states it."""
+    assumption = {**SYLOW, "informal_statement": "100% of finite groups"}
+    body = (
+        "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n"
+        "\\appendix\n100\\% of finite groups.\\label{asm:sylow}\n"
+        "\\begin{verbatim}\naxiom Sylow.first : True\n\\end{verbatim}"
+    )
+    assert owed(
+        document(body),
+        assumptions=[assumption],
+        used={"Sylow.first"},
+        labels={"thm:one", "asm:sylow"},
+    ) == ()

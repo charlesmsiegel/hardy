@@ -950,6 +950,23 @@ class MathematicsSession:
             )
         return found
 
+    def _shared_names(self) -> dict[str, list[str]]:
+        """Theorem names more than one saved module declares.
+
+        Lean permits it while nothing imports both, and the workspace does not
+        make them import each other -- but everything downstream addresses a
+        theorem *by name*: the registry, the label, the statement the document
+        quotes. With two `result`s, one entry answers for both, and the second
+        theorem passes the ratchet (its name already exists) while disappearing
+        from the obligations entirely. So they are reported, and the model is
+        asked to put one in a namespace.
+        """
+        holders: dict[str, list[str]] = {}
+        for module, source in sorted(self.lean_workspace.sources().items()):
+            for name in declarations(source)["theorem"]:
+                holders.setdefault(name, []).append(module)
+        return {name: found for name, found in holders.items() if len(found) > 1}
+
     def _tex_sources(self) -> dict[str, str]:
         """The writeup tree as text, keyed by workspace-relative path."""
         if not self.tex_root.is_dir():
@@ -990,7 +1007,7 @@ class MathematicsSession:
         file it described -- and the one thing this must not do is report a
         theorem as written up because it *was*, before the statement changed.
         """
-        return completion.outstanding(
+        owed = completion.outstanding(
             theorems=self._saved_statements(),
             registry=self.state["names"],
             labels=self._labels(),
@@ -998,6 +1015,19 @@ class MathematicsSession:
             used=self._used_assumptions(),
             tex=self._tex_sources(),
         )
+        # Ahead of the rest: while two modules answer to one name, every
+        # obligation below is about whichever of them was read last.
+        shared = [
+            completion.Obligation(
+                "lean",
+                name,
+                f"{modules} each declare a theorem called `{name}`, so one name cannot "
+                "stand for both in the registry, the label, or the statement the writeup "
+                "quotes. Put one of them in a namespace.",
+            )
+            for name, modules in sorted(self._shared_names().items())
+        ]
+        return (*shared, *owed)
 
     def obligations(self) -> tuple[completion.Obligation, ...]:
         """What the workspace owes, for the human rather than the model.
@@ -1377,6 +1407,15 @@ class MathematicsSession:
                 f"{unknown} does not name exactly one saved theorem, so it cannot be "
                 f"reported. A lemma is not reportable either. Saved theorems: {sorted(saved)}",
             )
+        unaudited = self._audit_gaps(resolved)
+        if unaudited:
+            return ToolResult(
+                False,
+                "this report is refused: what these theorems rest on is not established "
+                f"against the workspace in front of us.\n{completion.describe(unaudited)}\n"
+                "Save each module again, so Lean is asked what its theorems depend on "
+                "now, and report once it comes back clean.",
+            )
         owed = self._obligations()
         # Everything about a claimed theorem, and every assumption obligation
         # whoever it belongs to: an appendix that does not say what the work
@@ -1424,6 +1463,58 @@ class MathematicsSession:
                 else ""
             ),
         )
+
+    def _audit_gaps(self, names: Iterable[str]) -> list[completion.Obligation]:
+        """Claimed theorems with no current audit behind them.
+
+        A save audits what it wrote and stamps the verdict with the build
+        signature it was established under; `_still_current` expires it when
+        anything beneath the module moves. Everything else here reads the
+        *source* tree, which a file edited on disk, a rebuilt Lake project, or
+        a workspace reopened from before the audit existed will happily satisfy
+        -- so a report could carry a theorem nobody had asked Lean about. The
+        strongest claim Hardy makes is the one place that must not be inferred
+        from text alone.
+        """
+        try:
+            signatures = self.lean_workspace.current_signatures()
+        except ImportCycle as error:
+            return [completion.Obligation("lean", "", f"the workspace does not order: {error}")]
+        stored = self.state.get("audit", {})
+        sources = self.lean_workspace.sources()
+        gaps: list[completion.Obligation] = []
+        for name in sorted(names):
+            covering = [
+                module
+                for module, source in sources.items()
+                if name in declarations(source)["theorem"]
+            ]
+            established = False
+            reasons: list[str] = []
+            for module in covering:
+                record = stored.get(module)
+                if record is None:
+                    reasons.append(f"{module} has never been audited")
+                    continue
+                current = self._still_current(module, record, signatures)
+                if current.get("stale"):
+                    reasons.append(f"{module}'s audit is no longer established")
+                elif not any(
+                    entry.get("name") == name
+                    for entry in current.get("declarations", ())
+                ):
+                    reasons.append(f"{module}'s audit does not cover {name}")
+                else:
+                    established = True
+            if not established:
+                gaps.append(
+                    completion.Obligation(
+                        "lean",
+                        name,
+                        "; ".join(reasons) or "nothing saved declares it",
+                    )
+                )
+        return gaps
 
     def _cas_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """The computer algebra tools. Errors are answers, not exceptions.
@@ -1555,8 +1646,26 @@ class MathematicsSession:
         """
         try:
             owed = self._obligations()
+            saved = self._saved_theorems()
         except Exception:  # noqa: BLE001 - a status line must never end a turn
             return []
+        if not saved:
+            # The turn that started all this: no tool call, no artifact, and a
+            # reply that says the thing is proved. There are no obligations to
+            # list because there is nothing to owe them -- which is exactly what
+            # the user has to be told, since silence here would read as assent.
+            # Said whenever the workspace holds no theorem, so it cannot be
+            # timed around by claiming a result before any work is saved.
+            self._record({"type": "obligations", "outstanding": [], "saved_theorems": 0})
+            return [
+                TurnEvent(
+                    "notice",
+                    text=(
+                        "Hardy: no theorem is saved in this workspace, so nothing here is "
+                        "reportable. Anything said above rests on the conversation alone."
+                    ),
+                )
+            ]
         if not owed:
             return []
         self._record({"type": "obligations", "outstanding": [item.as_dict() for item in owed]})
