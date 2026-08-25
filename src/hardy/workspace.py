@@ -320,7 +320,9 @@ def normalise_lean(text: str) -> str:
     mistake as blanking the literal, one layer further in.
 
     Raw strings are copied whole for the same reason, and because a backslash
-    in one is an ordinary character.
+    in one is an ordinary character. So are guillemet-quoted identifiers:
+    `«a  b»` and `«a b»` are two different names, and Lean is as literal inside
+    those as it is inside a string.
     """
     out: list[str] = []
     index = 0
@@ -332,6 +334,12 @@ def normalise_lean(text: str) -> str:
             closer = '"' + "#" * raw
             found = text.find(closer, index + 1 + raw + 1)
             end = length if found == -1 else found + len(closer)
+            out.append(text[index:end])
+            index = end
+            continue
+        if character == "«":
+            found = text.find("»", index + 1)
+            end = length if found == -1 else found + 1
             out.append(text[index:end])
             index = end
             continue
@@ -554,6 +562,14 @@ PROOF = ":="
 # The binders a proposition may carry that own a `:=` of their own. Their
 # assignment is part of the statement, not the start of the proof.
 BINDERS = frozenset({"let", "have", "suffices"})
+# The other way a declaration opens its proof. `theorem p : A ∧ B where left :=
+# ...` ends its statement at `where`, and reading on to that first field
+# assignment recorded `theorem p : A ∧ B where left` -- not a statement at all,
+# and one a writeup could quote followed by `:=` to satisfy the gate.
+# `by` is deliberately not here: a truncated statement is the *easy* one to
+# satisfy, so a boundary that fires wrongly weakens the gate. `where` is
+# reachable in ordinary Lean and `by` at depth zero before any `:=` is not.
+OPENS_PROOF = frozenset({"where"})
 
 
 def statements(source: str) -> dict[str, str]:
@@ -601,6 +617,9 @@ def _statement_end(text: str, start: int, bound: int) -> int:
     rest of the proposition outside what a writeup has to quote, which is the
     one thing this extent is for. So each binder that owns a `:=` consumes it,
     and the first one left over opens the proof.
+
+    And not every proof opens with one: `where` begins a structure proof whose
+    first field assignment is not the declaration's.
     """
     depth = 0
     binders = 0
@@ -617,6 +636,8 @@ def _statement_end(text: str, start: int, bound: int) -> int:
             binders -= 1
             index += len(PROOF)
             continue
+        elif depth == 0 and _word_at(text, index, OPENS_PROOF):
+            return index
         elif depth == 0 and _word_at(text, index, BINDERS):
             binders += 1
         index += 1

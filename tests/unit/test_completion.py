@@ -342,3 +342,72 @@ def test_a_statement_may_still_be_rewrapped_around_its_literals() -> None:
     theirs = 'theorem one :\n    "a  b" = "a  b"'
     tex = document("\\begin{verbatim}\n" + theirs + "\n\\end{verbatim}")
     assert owed(tex, theorems={"hardyOne": mine}) == ()
+
+
+def test_alltt_does_not_count_as_a_verbatim_quotation() -> None:
+    """`alltt` keeps TeX's grouping, so a listing of `{α : Type}` loses its
+    braces and shows the reader a statement Lean never saw."""
+    body = "\\begin{alltt}\n" + STATEMENT + "\n\\end{alltt}"
+    assert kinds(owed(document(body))) == ["statement"]
+
+
+def test_a_listing_in_a_false_branch_is_typeset_by_nobody() -> None:
+    body = (
+        "\\iffalse\n\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n\\fi\n"
+    )
+    assert kinds(owed(document(body))) == ["statement"]
+
+
+def test_a_listing_after_a_false_branch_still_counts() -> None:
+    body = (
+        "\\iffalse\nnot typeset\n\\fi\n"
+        "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}"
+    )
+    assert owed(document(body)) == ()
+
+
+def test_a_relative_inclusion_path_is_followed() -> None:
+    tex = {
+        "writeup.tex": "\\begin{document}\n\\input{./sections/one}\n\\end{document}\n",
+        "sections/one.tex": "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n",
+    }
+    assert owed(tex) == ()
+
+
+def test_a_disclosure_in_the_body_is_not_a_disclosure_in_the_appendix() -> None:
+    """Label, prose and listing in the body, with an empty `\appendix` after
+    them, cleared every check while the appendix stated nothing at all."""
+    body = (
+        "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n"
+        "Sylow's first theorem.\\label{asm:sylow}\n"
+        "\\begin{verbatim}\naxiom Sylow.first : True\n\\end{verbatim}\n"
+        "\\appendix\n"
+    )
+    found = owed(
+        document(body),
+        assumptions=[SYLOW],
+        used={"Sylow.first"},
+        labels={"thm:one", "asm:sylow"},
+    )
+    assert kinds(found) == ["assumption", "assumption"]
+
+
+def test_an_appendix_in_an_included_fragment_still_counts() -> None:
+    """Reading order, not file order: the appendix may live in its own file."""
+    tex = {
+        "writeup.tex": (
+            "\\begin{document}\n"
+            "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n"
+            "\\input{appendix}\n\\end{document}\n"
+        ),
+        "appendix.tex": (
+            "\\appendix\nSylow's first theorem.\\label{asm:sylow}\n"
+            "\\begin{verbatim}\naxiom Sylow.first : True\n\\end{verbatim}\n"
+        ),
+    }
+    assert owed(
+        tex,
+        assumptions=[SYLOW],
+        used={"Sylow.first"},
+        labels={"thm:one", "asm:sylow"},
+    ) == ()

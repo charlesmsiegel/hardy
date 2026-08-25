@@ -544,3 +544,16 @@ def test_a_theorem_written_inside_a_string_is_not_a_statement():
     """The scan still runs on text that cannot lie about declarations."""
     source = 'def s := "theorem fake : False := sorry"' + "\n"
     assert statements(source) == {}
+
+
+def test_a_where_proof_is_not_part_of_the_statement():
+    """`theorem p : A where left := ...` has no `:=` of its own; reading on to
+    the first field assignment recorded a fragment that is not a statement."""
+    source = "theorem pair : True ∧ True where\n  left := trivial\n"
+    assert statements(source)["pair"] == "theorem pair : True ∧ True"
+
+
+def test_whitespace_inside_a_quoted_identifier_survives():
+    """`«a  b»` and `«a b»` are different Lean names."""
+    source = "theorem «a  b» : True := trivial\n"
+    assert statements(source) == {"«a  b»": 'theorem «a  b» : True'}

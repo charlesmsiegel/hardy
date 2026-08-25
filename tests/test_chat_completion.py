@@ -27,10 +27,13 @@ APPROVAL = {
     "source": "Rotman, Theorem 4.12",
     "reason": "not found in Mathlib",
 }
+# The marker is what the stand-in Lean reports for `#print axioms`, and it is
+# there because the dependency has to be *real*: a report rests on what its own
+# theorem was found to depend on, not on what the workspace happens to contain.
 ASSUMED = (
     "import Mathlib\n"
     "axiom Sylow.first : True\n"
-    "theorem hardyOne : True := by exact True.intro\n"
+    "theorem hardyOne : True := by exact True.intro -- axioms: Sylow.first\n"
 )
 
 
@@ -429,3 +432,57 @@ def test_the_reply_is_drawn_before_the_notice_that_contradicts_it(tmp_path: Path
     assert "Proved it." in rendered
     assert rendered.count("Proved it.") == 1, "the reply must not be drawn twice"
     assert rendered.index("Proved it.") < rendered.index("no theorem is saved")
+
+
+def test_a_report_rests_on_what_its_own_theorems_rest_on(tmp_path: Path):
+    """Theorem A assumes Sylow; theorem B does not. Reporting B must not say
+    it is verified modulo Sylow -- the per-declaration audit already says
+    otherwise, and the report is the durable record."""
+    clean = "import Mathlib\ntheorem hardyTwo : True := by exact True.intro\n"
+    appendix = paper(
+        "One.\\label{thm:one}\n"
+        + quoted(STATEMENT)
+        + "Two.\\label{thm:two}\n"
+        + quoted("theorem hardyTwo : True")
+        + "\\appendix\nSylow's first theorem.\\label{asm:sylow}\n"
+        + quoted("axiom Sylow.first : True")
+    )
+    runtime = FakeChatRuntime([
+        call("request_assumption", APPROVAL),
+        call("save_lean", {"source": ASSUMED}),
+        RECORD,
+        call("record_name", {"formal_name": "hardyTwo", "latex_name": "thm:two", "description": "Two."}),
+        call("save_latex", {"source": appendix}),
+        call("save_lean", {"path": "Two.lean", "source": clean}),
+        call("report_result", {"theorems": ["hardyTwo"], "summary": "True holds, outright."}),
+        {"role": "assistant", "content": "Reported the clean one."},
+    ])
+    chat = session(tmp_path, runtime, approvals=[True])
+    chat.send("Assume for one, prove the other outright, report the other.")
+    report = results(tmp_path, "report_result")[-1]
+    assert report["ok"] is True, report
+    assert "no assumption beyond Lean's own" in report["output"]
+    assert state(tmp_path)["reports"][-1]["assumptions"] == []
+
+
+def test_deleting_a_fragment_leaves_a_writeup_that_is_still_established(tmp_path: Path):
+    """The deletion recompiles the root, so the tree on disk is the tree that
+    compiled. Not stamping it left a fresh writeup reading as stale, with a
+    save that changed nothing as the only way out."""
+    carried = "One.\\label{thm:one}\n" + quoted(STATEMENT)
+    runtime = FakeChatRuntime([
+        call("save_lean", {"source": THEOREM}),
+        RECORD,
+        call("save_latex", {"source": paper(carried)}),
+        call("save_latex", {"path": "sections/spare.tex", "source": "Spare.\n"}),
+        call("save_latex", {"source": paper(carried + "\\input{sections/spare}\n")}),
+        {"role": "assistant", "content": "Saved with a fragment."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Write it up with a spare fragment.")
+    assert all(item["ok"] for item in results(tmp_path)), results(tmp_path)
+    # Drop the inclusion first, so the fragment is unreferenced and removable.
+    chat._tool("save_latex", {"source": paper(carried)})
+    deleted = chat._tool("delete_file", {"path": "sections/spare.tex"})
+    assert deleted.ok is True, deleted
+    assert chat.obligations() == (), chat.obligations()

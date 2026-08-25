@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 from .latex import INCLUSION, ROOT_DOCUMENT, uncommented
 from .workspace import COMMAND, normalise_lean, strip_comments
@@ -30,9 +31,18 @@ from .workspace import COMMAND, normalise_lean, strip_comments
 # Where Lean may be quoted so that a reader sees what Lean saw. Outside one of
 # these TeX is free to eat an underscore, break a caret, or swallow a brace,
 # and a statement a human "checked" against a mangled copy was not checked.
+# `alltt` and `semiverbatim` are deliberately absent: both keep TeX's grouping
+# and command characters, so a listing of `theorem f {α : Type} : ...` loses its
+# braces to grouping and shows the reader a statement Lean never saw. An
+# environment belongs here only if every Lean character survives it.
 ENVIRONMENTS = frozenset(
-    {"verbatim", "verbatim*", "Verbatim", "Verbatim*", "lstlisting", "minted", "alltt", "semiverbatim"}
+    {"verbatim", "verbatim*", "Verbatim", "Verbatim*", "lstlisting", "minted"}
 )
+# A branch TeX compiles without typesetting. Bounded to the literal spelling:
+# this is a scanner, not a TeX engine, and the general conditional is a limit
+# stated in FEATURES.md rather than a case pretended to be handled.
+FALSE_BRANCH = re.compile(r"\\iffalse(?![A-Za-z])")
+BRANCH_END = re.compile(r"\\fi(?![A-Za-z])")
 # An environment opening, with whatever optional arguments it carries:
 # `\begin{Verbatim}[fontsize=\small]`, `\begin{minted}{lean}`.
 OPENING = re.compile(r"\\begin\{([A-Za-z*]+)\}((?:\[[^\]]*\]|\{[^}]*\})*)")
@@ -78,56 +88,33 @@ def normalise(text: str) -> str:
     return " ".join(text.split())
 
 
-def reachable(tex: Mapping[str, str]) -> dict[str, Displayed]:
-    r"""The writeup as a reader receives it: the root, and what it pulls in.
-
-    A fragment nothing `\input`s is not in the document, however carefully it
-    was written -- it is not typeset, not printed, and not in front of anybody.
-    Counting it would let a statement be "quoted" in a file the reader never
-    sees, which is the same as not quoting it.
-
-    Followed transitively from `writeup.tex`, because a section may pull in its
-    own subsections, and by the same spellings TeX itself accepts -- and only
-    through the inclusions TeX *executes*: an `\input{hidden}` displayed inside
-    a listing is an example of an inclusion, not one.
-    """
-    if ROOT_DOCUMENT not in tex:
-        return {}
-    found = {ROOT_DOCUMENT: displayed(tex[ROOT_DOCUMENT])}
-    pending = [ROOT_DOCUMENT]
-    while pending:
-        for name in INCLUSION.findall(found[pending.pop()].executed):
-            cleaned = name.strip().replace("\\", "/")
-            for candidate in (cleaned, f"{cleaned}.tex"):
-                if candidate in tex and candidate not in found:
-                    found[candidate] = displayed(tex[candidate])
-                    pending.append(candidate)
-    return found
-
-
 @dataclass(frozen=True)
 class Displayed:
-    r"""One TeX file, split the way LaTeX reads it.
+    r"""A TeX document, split the way LaTeX reads it.
 
     `executed` is what TeX runs -- outside every verbatim environment, with
-    comments dropped. `quoted` is what it puts in front of a reader unchanged.
-    Every question here is one or the other, and answering either with the raw
-    file has been wrong each time it was tried: an `\input` *shown* in a
-    listing pulls in nothing, an `\appendix` shown in one opens nothing, and
-    a Lean statement in a comment is displayed to nobody.
+    comments dropped and skipped branches gone. `quoted` is what it puts in
+    front of a reader unchanged, each block paired with where in `executed` it
+    was displayed. Every question here is one or the other, and answering
+    either with the raw file has been wrong each time it was tried: an `\input`
+    *shown* in a listing pulls in nothing, an `\appendix` shown in one opens
+    nothing, and a Lean statement in a comment is displayed to nobody.
+
+    The offsets are what let a question be about a *part* of the document --
+    "is this stated in the appendix" rather than "does it appear anywhere".
     """
 
     executed: str
-    quoted: tuple[str, ...]
+    quoted: tuple[tuple[int, str], ...]
 
 
 def displayed(source: str) -> Displayed:
-    r"""What one TeX file actually displays verbatim, block by block.
+    r"""What one TeX file runs and what it displays, in one scan.
 
     Scanned line by line rather than matched with one regex, because the two
-    halves of this read TeX in opposite directions and only a scanner can do
-    both. *Outside* an environment a `%` starts a comment, so
-    `% egin{verbatim} theorem t : True \end{verbatim}` displays nothing at
+    halves read TeX in opposite directions and only a scanner can do both.
+    *Outside* an environment a `%` starts a comment, so
+    `% \begin{verbatim} theorem t : True \end{verbatim}` displays nothing at
     all -- and a regex over the raw source found that statement and released a
     report on a document whose reader never saw a line of Lean. *Inside* one a
     `%` is an ordinary character, and Lean writes `n % 2 = 0`, so the comments
@@ -137,10 +124,19 @@ def displayed(source: str) -> Displayed:
     way: what LaTeX would put in front of a reader, not what the source
     contains somewhere.
     """
-    blocks: list[str] = []
+    blocks: list[tuple[int, str]] = []
     ran: list[str] = []
+    position = 0
+    started = 0
     pending: list[str] | None = None
+    skipping = False
     closing = ""
+
+    def emit(part: str) -> None:
+        nonlocal position
+        ran.append(part)
+        position += len(part)
+
     for raw in source.splitlines():
         line = raw
         while True:
@@ -150,16 +146,28 @@ def displayed(source: str) -> Displayed:
                     pending.append(line)
                     break
                 pending.append(line[:found])
-                blocks.append("\n".join(pending))
+                blocks.append((started, "\n".join(pending)))
                 pending = None
                 line = line[found + len(closing) :]
+                continue
+            if skipping:
+                # Inside `\iffalse`, where TeX compiles but typesets nothing.
+                # Nothing here is a quotation, an inclusion, or an appendix.
+                end = BRANCH_END.search(line)
+                if end is None:
+                    break
+                skipping = False
+                line = line[end.end() :]
                 continue
             # A comment truncates the line, and `uncommented` only ever cuts,
             # so an offset into what is left is an offset into the raw line --
             # which is what lets the content after an opening be taken from the
             # raw line, where a `%` is the character Lean wrote.
             visible = uncommented(line)
-            blocks.extend(match.group(2) for match in INLINE.finditer(visible))
+            blocks.extend(
+                (position + match.start(), match.group(2))
+                for match in INLINE.finditer(visible)
+            )
             opening = next(
                 (
                     match
@@ -168,20 +176,92 @@ def displayed(source: str) -> Displayed:
                 ),
                 None,
             )
+            skipped = FALSE_BRANCH.search(visible)
+            if skipped is not None and (opening is None or skipped.start() < opening.start()):
+                emit(visible[: skipped.start()])
+                skipping = True
+                line = line[skipped.end() :]
+                continue
             if opening is None:
                 # An inline `\verb` is displayed rather than run, but what is
                 # left of the line around it is TeX like any other, and cutting
                 # it out would break the sentence it sits in for no gain.
-                ran.append(visible)
+                emit(visible)
                 break
-            ran.append(visible[: opening.start()])
+            emit(visible[: opening.start()])
+            started = position
             pending = []
             closing = f"\\end{{{opening.group(1)}}}"
             line = line[opening.end() :]
-    return Displayed("\n".join(ran), tuple(blocks))
+        emit("\n")
+    return Displayed("".join(ran), tuple(blocks))
 
 
-def quoted_lean(tex: Mapping[str, Displayed]) -> tuple[str, ...]:
+def target(name: str, tex: Mapping[str, str]) -> str:
+    r"""The workspace path an `\input{...}` argument names, if any.
+
+    TeX lets the extension be dropped and reads `./section` as `section`, and a
+    fragment Hardy cannot match is one whose content never counts -- which
+    fails in the unhelpful direction, refusing a document whose reader can see
+    everything in it.
+    """
+    cleaned = PurePosixPath(name.strip().replace("\\", "/"))
+    parts = tuple(part for part in cleaned.parts if part != ".")
+    if not parts:
+        return ""
+    stem = str(PurePosixPath(*parts))
+    return next((found for found in (stem, f"{stem}.tex") if found in tex), "")
+
+
+def assemble(tex: Mapping[str, str]) -> Displayed:
+    r"""The whole document as a reader receives it, in reading order.
+
+    Inclusions are spliced where they occur rather than collected, because the
+    questions that follow are about *position*: whether an assumption is stated
+    in the appendix, or merely somewhere in the paper with an empty `\appendix`
+    at the end. A dict of files cannot answer that.
+
+    A fragment nothing `\input`s is absent for the reason it always was: it is
+    not typeset, and a statement quoted there is in front of nobody.
+    """
+    seen: set[str] = set()
+
+    def walk(path: str) -> Displayed:
+        if not path or path in seen or path not in tex:
+            return Displayed("", ())
+        seen.add(path)
+        page = displayed(tex[path])
+        parts: list[str] = []
+        quoted: list[tuple[int, str]] = []
+        length = 0
+        consumed = 0
+        for match in INCLUSION.finditer(page.executed):
+            head = page.executed[consumed : match.start()]
+            parts.append(head)
+            quoted.extend(
+                (length + offset - consumed, block)
+                for offset, block in page.quoted
+                if consumed <= offset < match.start()
+            )
+            length += len(head)
+            child = walk(target(match.group(1), tex))
+            parts.append(child.executed)
+            quoted.extend((length + offset, block) for offset, block in child.quoted)
+            length += len(child.executed)
+            consumed = match.end()
+        tail = page.executed[consumed:]
+        parts.append(tail)
+        quoted.extend(
+            (length + offset - consumed, block)
+            for offset, block in page.quoted
+            if offset >= consumed
+        )
+        return Displayed("".join(parts), tuple(quoted))
+
+    return walk(ROOT_DOCUMENT)
+
+
+def quoted_lean(document: Displayed) -> tuple[str, ...]:
     """Every scrap of Lean the writeup quotes verbatim, one block at a time.
 
     Kept apart rather than run together, because the comparison that follows
@@ -195,8 +275,7 @@ def quoted_lean(tex: Mapping[str, Displayed]) -> tuple[str, ...]:
     """
     blocks = [
         normalise_lean(strip_comments(block, keep_strings=True))
-        for page in tex.values()
-        for block in page.quoted
+        for _, block in document.quoted
     ]
     return tuple(block for block in blocks if block)
 
@@ -229,7 +308,7 @@ def quotes(statement: str, blocks: Sequence[str]) -> bool:
     return False
 
 
-def prose(tex: Mapping[str, Displayed]) -> str:
+def prose(document: Displayed) -> str:
     """What the writeup *says*, as TeX would read it: normalised, unescaped.
 
     Two jobs: telling "absent" from "present but outside a verbatim block" --
@@ -241,11 +320,11 @@ def prose(tex: Mapping[str, Displayed]) -> str:
     was "True": the Lean quotation stood in for the explanation it exists to be
     checked against.
     """
-    return ESCAPED.sub(r"\1", normalise("\n".join(page.executed for page in tex.values())))
+    return ESCAPED.sub(r"\1", normalise(document.executed))
 
 
-def has_appendix(tex: Mapping[str, Displayed]) -> bool:
-    return any(APPENDIX.search(page.executed) for page in tex.values())
+def has_appendix(document: Displayed) -> bool:
+    return APPENDIX.search(document.executed) is not None
 
 
 def covering(name: str, registry: Sequence[Mapping[str, str]]) -> Mapping[str, str] | None:
@@ -284,7 +363,7 @@ def outstanding(
     stated in an appendix in both languages. It does not mean the mathematics
     is right -- nothing here reads a proof.
     """
-    document = reachable(tex)
+    document = assemble(tex)
     quoted = quoted_lean(document)
     written = prose(document)
     statements = {name: normalise_lean(text) for name, text in theorems.items()}
@@ -328,7 +407,7 @@ def outstanding(
                     _statement_detail(statement, written),
                 )
             )
-    owed.extend(_assumption_obligations(assumptions, used, labels, quoted, written, document))
+    owed.extend(_assumption_obligations(assumptions, used, labels, document))
     return tuple(sorted(owed, key=lambda item: (KINDS.index(item.kind), item.subject)))
 
 
@@ -350,9 +429,7 @@ def _assumption_obligations(
     assumptions: Sequence[Mapping[str, str]],
     used: Collection[str],
     labels: Collection[str],
-    quoted: Sequence[str],
-    written: str,
-    tex: Mapping[str, str],
+    document: Displayed,
 ) -> list[Obligation]:
     r"""What the appendix of unproven assumptions still owes.
 
@@ -369,7 +446,19 @@ def _assumption_obligations(
     if not wanted:
         return []
     owed: list[Obligation] = []
-    if not has_appendix(tex):
+    # Everything below is asked of the appendix, not of the document: a
+    # disclosure in the body with an empty `\appendix` after it satisfied every
+    # check while the appendix itself stated nothing at all.
+    marker = APPENDIX.search(document.executed)
+    quoted = tuple(
+        normalise_lean(strip_comments(block, keep_strings=True))
+        for offset, block in document.quoted
+        if marker is not None and offset >= marker.start()
+    )
+    written = ESCAPED.sub(
+        r"\1", normalise(document.executed[marker.end() :] if marker else "")
+    )
+    if marker is None:
         owed.append(
             Obligation(
                 "appendix",
