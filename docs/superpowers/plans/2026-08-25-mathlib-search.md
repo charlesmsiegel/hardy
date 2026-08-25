@@ -1008,12 +1008,28 @@ class Cassette:
 
 - [ ] **Step 5b: Record which corpus answered**
 
-`record` takes a `corpus: str` -- the source's own `identity.corpus`, which
-already names the endpoint for a remote engine and the toolchain pin plus
-manifest digest for `#find` -- and stores it beside the hits. Add
-`identities() -> dict[str, set[str]]`, mapping each engine to every corpus
-string recorded for it. The runner prints them beside the metrics and refuses
-to replay a set where one engine shows more than one.
+`record` takes the **whole source descriptor**, not just a corpus string: a
+replay run has no live source to ask, so anything `recorded_sources()` must
+return has to be on the tape.
+
+```python
+    def record(self, engine, query, hits, *, kind, corpus, accepts, seconds) -> None:
+```
+
+stored as `{"engine", "kind", "corpus", "accepts", "seconds", "query", "hits"}`.
+`accepts` is a sorted list; `seconds` is what the live call actually took.
+
+Three readers over it:
+
+- `identities() -> dict[str, set[str]]` — engine to every corpus recorded for
+  it. The runner prints these beside the metrics and refuses to replay a set
+  where one engine shows more than one.
+- `recorded_sources() -> list[tuple[str, str, str, frozenset[str]]]` — name,
+  kind, corpus and accepted shapes per engine, which is exactly what
+  `ReplaySource` needs to exist. Storing only `corpus` left this unable to
+  reconstruct anything without hard-coding production knowledge in the
+  evaluation, which is the drift the wrapping was meant to avoid.
+- `recorded_seconds(engine, query) -> float` — see Finding 4 below.
 
 The key stays `(engine, query)`. Without the recorded identity, a re-recording
 against a moved Mathlib keeps the same filenames and the same case ids while
@@ -1025,17 +1041,41 @@ def test_a_set_recorded_against_two_corpora_is_refused_rather_than_replayed(tmp_
     """Same filenames, same case ids, different Mathlib. Replaying it would
     compare a baseline against numbers that no longer mean the same thing."""
     tape = cassette.Cassette(tmp_path)
-    tape.record('lean-find', '_ = _', [{'name': 'A'}], corpus='Mathlib aaaa')
-    tape.record('lean-find', '_ + _', [{'name': 'B'}], corpus='Mathlib bbbb')
+    tape.record('lean-find', '_ = _', [{'name': 'A'}], kind='lean_search',
+                corpus='Mathlib aaaa', accepts=['conclusion'], seconds=1.0)
+    tape.record('lean-find', '_ + _', [{'name': 'B'}], kind='lean_search',
+                corpus='Mathlib bbbb', accepts=['conclusion'], seconds=1.0)
 
     assert tape.identities()['lean-find'] == {'Mathlib aaaa', 'Mathlib bbbb'}
+
+
+def test_a_replay_source_can_be_rebuilt_from_the_tape_alone(tmp_path) -> None:
+    """A replay run has no live source to ask. Anything the adapter needs to
+    reconstruct one has to have been written down."""
+    tape = cassette.Cassette(tmp_path)
+    tape.record('loogle', '_ = _', [{'name': 'A'}], kind='loogle',
+                corpus='https://loogle.lean-lang.org/json',
+                accepts=['conclusion', 'constants'], seconds=19.0)
+
+    assert tape.recorded_sources() == [
+        ('loogle', 'loogle', 'https://loogle.lean-lang.org/json',
+         frozenset({'conclusion', 'constants'})),
+    ]
+
+
+def test_the_time_the_live_call_took_is_replayed_rather_than_remeasured(tmp_path) -> None:
+    """A cassette read takes microseconds where Loogle took nineteen seconds.
+    Timing the replay would report a latency the design never had."""
+    tape = cassette.Cassette(tmp_path)
+    tape.record('loogle', '_ = _', [{'name': 'A'}], kind='loogle',
+                corpus='endpoint', accepts=['conclusion'], seconds=19.0)
+
+    assert tape.recorded_seconds('loogle', '_ = _') == 19.0
 ```
 
-`RecordingSource.search` in Task 5 passes `self._inner.identity.corpus` when it
-records. `Cassette` also gains `recorded_sources() -> list[tuple[str, str, str,
-frozenset[str]]]` -- name, kind, corpus and accepted shapes per engine, read
-back off the tape -- because a replay run has no live source to ask, and asking
-one is what made the hermetic path crash.
+`RecordingSource.search` in Task 5 passes the whole descriptor off
+`self._inner.identity`, plus the wall-clock seconds it measured around the
+inner call.
 
 - [ ] **Step 6: Run test to verify it passes**
 
@@ -1104,7 +1144,7 @@ CASES = [
 
 
 class ScriptedRetriever:
-    def rank(self, goal, limit=10, description=None):
+    def rank(self, goal, limit=10, description=None, shapes=None):
         names = ['A', 'B', 'C'][:limit]
         return runner.Ranking(
             premises=tuple(names),
@@ -1137,6 +1177,29 @@ def test_a_case_records_which_shape_surfaced_its_lemma() -> None:
     report = runner.evaluate(CASES, lambda: ScriptedRetriever())
 
     assert report.by_shape == {'conclusion': 2}
+
+
+def test_a_shape_that_only_agreed_with_the_conclusion_gets_no_marginal_credit() -> None:
+    """The case the removal criterion has to be able to see.
+
+    A constants query returning a superset of the conclusion query raises both
+    co-occurrence counters while changing nothing. Only the ablation can tell
+    that apart from a shape that actually rescued something.
+    """
+    class BothShapes:
+        def rank(self, goal, limit=10, description=None, shapes=None):
+            names = ['A', 'B', 'C'][:limit]
+            found = ('conclusion',) if shapes == ('conclusion',) else ('conclusion', 'constants')
+            return runner.Ranking(
+                premises=tuple(names),
+                shapes_by_premise={name: found for name in names},
+                seconds=0.0,
+            )
+
+    report = runner.evaluate(CASES, lambda: BothShapes())
+
+    assert report.by_shape['constants'] == 2
+    assert report.marginal['constants'] == {'rescued': 0, 'promoted': 0}
 
 
 def test_the_expected_lemma_matches_on_any_of_the_names_a_case_accepts() -> None:
@@ -1203,6 +1266,9 @@ class Row:
 @dataclass
 class Report:
     rows: list[Row] = field(default_factory=list)
+    # case id -> the rank a conclusion-only ranking gave the expected lemma,
+    # or absent when it missed. The ablation `marginal` is taken against.
+    baseline_rank: dict[str, int | None] = field(default_factory=dict)
 
     def recall_at(self, k: int) -> float:
         if not self.rows:
@@ -1224,11 +1290,43 @@ class Report:
 
     @property
     def by_shape(self) -> dict[str, int]:
+        """Raw co-occurrence: how often each shape surfaced the lemma.
+
+        Reported, but **not** what decides whether a shape earns its keep. A
+        constants query returns a superset of the conclusion query often
+        enough that both counters rise together, so this number can make a
+        shape look valuable in exactly the case where it changed nothing. See
+        `marginal` for the figure the removal criterion actually reads.
+        """
         counts: dict[str, int] = {}
         for row in self.rows:
             for shape in row.found_by:
                 counts[shape] = counts.get(shape, 0) + 1
         return counts
+
+    @property
+    def marginal(self) -> dict[str, dict[str, int]]:
+        """What each shape added over a conclusion-only ranking.
+
+        `rescued`: the conclusion-only ranking missed the lemma and this one
+        found it. `promoted`: both found it and this one moved it into the top
+        5, or into first. A shape that rescues nothing and promotes nothing did
+        not earn its complexity, and this is the evidence that says so --
+        co-occurrence cannot.
+        """
+        out: dict[str, dict[str, int]] = {}
+        for row in self.rows:
+            base = self.baseline_rank.get(row.case_id)
+            for shape in row.found_by:
+                if shape == "conclusion":
+                    continue
+                entry = out.setdefault(shape, {"rescued": 0, "promoted": 0})
+                if base is None and row.found_rank is not None:
+                    entry["rescued"] += 1
+                elif base is not None and row.found_rank is not None:
+                    if row.found_rank <= 5 < base or row.found_rank == 1 < base:
+                        entry["promoted"] += 1
+        return out
 
     @property
     def seconds(self) -> float:
@@ -1238,6 +1336,20 @@ class Report:
 def evaluate(cases: list[dict], retriever_for) -> Report:
     report = Report()
     for case in cases:
+        # The ablation leg first: what a conclusion-only ranking finds. Every
+        # added shape is judged against this and not against nothing.
+        try:
+            base = retriever_for().rank(
+                case["goal"], limit=10, description=None, shapes=("conclusion",)
+            )
+            report.baseline_rank[case["id"]] = next(
+                (i for i, name in enumerate(base.premises, 1) if name in set(case["expect"])),
+                None,
+            )
+        except TypeError:
+            # Before Slice 3 there is only one shape, so the full run is the
+            # conclusion-only run and the ablation is a no-op.
+            report.baseline_rank[case["id"]] = None
         ranking = retriever_for().rank(
             case["goal"], limit=10, description=case.get("description")
         )
@@ -1268,6 +1380,10 @@ def render(report: Report) -> str:
     ]
     for shape, count in sorted(report.by_shape.items(), key=lambda item: -item[1]):
         lines.append(f"  {shape:<14} {count}")
+    lines.append("")
+    lines.append("marginal over conclusion-only  (what decides removal)")
+    for shape, counts in sorted(report.marginal.items()):
+        lines.append(f"  {shape:<14} rescued {counts['rescued']:<4} promoted {counts['promoted']}")
     lines.append("")
     lines.append("misses")
     for row in report.rows:
@@ -1397,13 +1513,20 @@ class ReplaySource:
         return 0.0
 
     def query_for(self, shape):
-        return shape.query
+        # Both protocols. The baseline is recorded and replayed *before*
+        # Slice 3 lands, and today's `PremiseRetriever` passes a plain string
+        # here -- so reading `.query` off it raises `AttributeError` on the
+        # documented default command, and no baseline can be produced at all.
+        return getattr(shape, "query", shape)
 
     def search(self, goal: str, limit: int):
         return tuple(
             DeclarationRecord(name=hit["name"], signature=hit.get("signature", ""))
             for hit in self._tape.replay(self._identity.name, goal)[:limit]
         )
+
+    def recorded_seconds(self, goal: str) -> float:
+        return self._tape.recorded_seconds(self._identity.name, goal)
 
 
 class RecordingSource:
@@ -1454,14 +1577,31 @@ def _service():
     )
 
 
-def _as_ranking(result) -> Ranking:
+def _shape_of(label: str) -> str:
+    """The shape half of an `engine/shape` source label.
+
+    Before Task 7 there is no shape half: `SourceRank.source` is `lean-find`
+    or `loogle`, and splitting on `/` yields the engine name. Reporting that
+    as a shape would put engine names in the baseline's shape table and make
+    it incomparable with every measurement taken after -- which is the one
+    job the baseline has.
+    """
+    engine, separator, shape = label.partition("/")
+    return shape if separator else "conclusion"
+
+
+def _as_ranking(result, seconds: float) -> Ranking:
     return Ranking(
         premises=tuple(premise.name for premise in result.premises),
         shapes_by_premise={
-            premise.name: tuple(sorted({item.source.split("/")[-1] for item in premise.ranks}))
+            premise.name: tuple(sorted({_shape_of(item.source) for item in premise.ranks}))
             for premise in result.premises
         },
-        seconds=result.seconds_spent,
+        # Recorded, not measured. A cassette read takes microseconds where the
+        # live call took twenty seconds, so `result.seconds_spent` off a replay
+        # reports a latency the design never had -- and the ladder's cost is
+        # one of the things this exists to watch.
+        seconds=seconds,
     )
 
 
@@ -1487,13 +1627,28 @@ def _factory(*, live: bool):
                 )
 
         class Adapted:
-            def rank(self, goal, limit=10, description=None):
-                retriever = retrieval.PremiseRetriever(sources=sources, limits=RunLimits())
+            def rank(self, goal, limit=10, description=None, shapes=None):
+                chosen = (
+                    sources
+                    if shapes is None
+                    else [s for s in sources if s.accepts & set(shapes)]
+                )
+                retriever = retrieval.PremiseRetriever(sources=chosen, limits=RunLimits())
                 try:
-                    return _as_ranking(retriever.rank(goal, limit, description=description))
+                    result = retriever.rank(goal, limit, description=description)
                 except TypeError:
                     # Before Slice 3, `rank` takes no description.
-                    return _as_ranking(retriever.rank(goal, limit))
+                    result = retriever.rank(goal, limit)
+                seconds = (
+                    result.seconds_spent
+                    if live
+                    else sum(
+                        source.recorded_seconds(outcome.query or goal)
+                        for source, outcome in zip(chosen, result.provenance.sources)
+                        if hasattr(source, "recorded_seconds")
+                    )
+                )
+                return _as_ranking(result, seconds)
 
         return Adapted()
 
@@ -2998,6 +3153,29 @@ class TacticSearch(FrozenModel):
     output_artifact: str | None = None
 ```
 
+Then close the other route. In `LeanService.check_scratch` (`lean.py:510`),
+before elaborating: if `self._search_tactics_in(source)` is non-empty, admit it
+against `tactic_search_seconds` the same way, and after the check append the
+same attribution record with the suggestions parsed out. A scratch check that
+runs no search tactic is unaffected and pays nothing.
+
+Add the test to `tests/unit/test_lean_try_tactics.py`:
+
+```python
+def test_a_search_tactic_run_through_the_scratch_check_is_metered_and_logged() -> None:
+    """Otherwise `try_tactics` is the honest route and `lean_check_scratch`
+    is the one that gets the same answer for free -- with the budget bounding
+    nothing in aggregate, and attribution reporting zero for a run that leaned
+    on automation throughout."""
+    lean = importlib.import_module('hardy.lean')
+    service = _service(lean, {'exact?': _result(lean, success=True, messages=[SUGGESTION])})
+
+    service.check_scratch('theorem tmp (n m : ℕ) : n + m = m + n := by exact?')
+
+    assert service.recorded_searches()
+    assert service.recorded_searches()[0].attempts[0].suggestions == ('exact Nat.add_comm n m',)
+```
+
 Add to `LeanService`, after `search_declarations`:
 
 ```python
@@ -3519,6 +3697,16 @@ class AutomationAttribution(FrozenModel):
     suggestions_offered: int = 0
     suggestions_reused: int = 0
 ```
+
+Extend that docstring with the second limit, which matters as much as the
+first:
+
+> Counts search-tactic use **Hardy observed**. Both routes are accounted --
+> `try_tactics`, and a search tactic written into `lean_check_scratch`, which
+> `check_scratch` detects and logs -- but detection is a word-boundary scan
+> over the source and can be evaded by a macro, an alias, or a rename. Zero
+> therefore means none was observed, not that none occurred. This figure is a
+> floor on both counts.
 
 and on `RunManifest`, beside `grades`:
 

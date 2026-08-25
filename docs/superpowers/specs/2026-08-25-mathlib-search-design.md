@@ -154,7 +154,7 @@ def query_for(self, shape: QueryShape) -> str: ...
 ```
 
 | source | class | kind | accepts | pinned |
-|---|---|---|---|
+|---|---|---|---|---|
 | `lean-find` | `LeanFindSource` | `lean_search` | `conclusion` | when toolchain and manifest match |
 | `loogle` | `LoogleSource` | `loogle` | `conclusion`, `constants` | only when self-hosted at a named revision |
 | `leansearch` | `LeanSearchNetSource` | `leansearch` (new) | `description` | never |
@@ -237,6 +237,28 @@ try_tactics(statement: str, tactics: list[str] | None = None,
 `statement` is a complete Lean theorem signature. Hardy appends `:= by <tactic>`
 for each tactic in turn and elaborates it in a scratch file under `import
 Mathlib`, then parses `Try this:` out of the info diagnostics.
+
+**`lean_check_scratch` is the same capability without the meter.** A model can
+write `theorem tmp : P := by exact?` into the scratch check, read the same
+`Try this:` line out of the diagnostics, and reuse it having never called
+`try_tactics`. Left alone, that makes `tactic_search_seconds` bound nothing in
+aggregate and lets a run that leaned on automation throughout report zero
+attribution -- the figure saying "unaided" about exactly the case it exists to
+catch.
+
+So the meter and the log sit at `check_scratch`, the choke point every surface
+already goes through, rather than at `try_tactics`. A scratch source whose
+tactic text contains a menu token, matched on word boundaries, is metered
+against the same budget and appends the same record. `try_tactics` becomes the
+*ergonomic* route -- a menu, parsed suggestions, per-tactic outcomes -- rather
+than the only accounted one.
+
+**And the figure says what it observed, not what happened.** A textual scan can
+be evaded: a tactic behind a macro, an alias, a `set_option` that renames it.
+So `AutomationAttribution` counts search-tactic use *Hardy observed*, zero means
+none was observed rather than none occurred, and the field documentation says
+so in those words. A measurement claiming more than its mechanism supports is
+the defect this whole design keeps warning about.
 
 The default menu is `exact?`, `apply?`, `hint`, `simp?` -- cheap first, and
 `hint` because it runs several tactics itself. `rw?`, `omega`, `norm_num`,
@@ -468,9 +490,21 @@ today: goals whose signal is in the hypotheses, and goals written with dot
 notation.
 
 Metrics: recall@1, recall@5, recall@10, MRR, and -- the one that says whether
-this design was right -- **which shape found the expected lemma**, per case and
-in aggregate. If the constants shape never wins a case the conclusion shape
-loses, it did not earn its complexity and should come out.
+this design was right -- **what each shape added that the others did not**.
+
+Counting every shape that surfaced the expected lemma cannot answer that. A
+constants query returns a superset of the conclusion query often enough that
+both counters rise together, and the table would then make `constants` look
+valuable in exactly the case where it changed nothing. So the run is an
+ablation: rank each case with the conclusion shape alone, then with each
+additional shape, and report per shape the cases it **rescued** (found where
+the conclusion-only ranking missed) and **promoted** (moved into the top 5 or
+top 1). Raw co-occurrence is reported beside those and clearly labelled,
+because it is easy to misread as the same thing.
+
+A shape that rescues nothing and promotes nothing did not earn its complexity
+and should come out. That is a decision the ablation can support and a
+co-occurrence count cannot.
 
 A replayed source is built from the recorded identity, not by wrapping a live
 source around a `None` service: `LeanFindSource.identity` dereferences
@@ -492,6 +526,13 @@ Hermetic by default. Engine responses are recorded once against the live
 services and checked in as cassettes, so the eval runs in CI with no network and
 no Lean toolchain. `--live` re-records. `#find` responses are cassetted too,
 since CI has no Mathlib build.
+
+Seconds are **recorded with the answer and replayed with it**, not measured off
+the replay. A cassette read takes microseconds where the live call took twenty
+seconds, so timing a replay would report a latency the design never had -- and
+the ladder's cost is one of the things this is here to watch. The hermetic run
+therefore reports what the live run measured; what it cannot report is drift
+since recording, which is what `--live` is for.
 
 Run with `uv run python eval/run_premise_eval.py`.
 
