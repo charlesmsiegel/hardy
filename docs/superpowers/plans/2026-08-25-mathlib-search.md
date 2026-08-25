@@ -329,6 +329,30 @@ def test_a_lean_command_that_is_not_the_configured_lake_yields_no_runtime(tmp_pa
     assert 'lean-shim' in detail
 
 
+def test_a_lake_elsewhere_on_disk_is_caught_even_though_the_names_agree(tmp_path) -> None:
+    """`HARDY_LAKE=/opt/pinned/lake` against the default `lake env lean`.
+
+    Both basenames are `lake`, so a name comparison calls them equivalent
+    while `PATH` resolves chat's to something else -- searching one Lean and
+    checking in another, under a provenance naming neither discrepancy.
+    """
+    configuration = importlib.import_module('hardy.config')
+    search_tools = importlib.import_module('hardy.search_tools')
+    elsewhere = tmp_path / 'pinned' / 'lake'
+    elsewhere.parent.mkdir()
+    elsewhere.write_text('#!/bin/sh\n', encoding='utf-8')
+    config = configuration.Config(
+        workspace=tmp_path / 'workspace',
+        lean_project=_project(tmp_path),
+        lake=elsewhere,
+    )
+
+    runtime, detail = search_tools.build_runtime(config)
+
+    assert runtime is None
+    assert 'lake' in detail
+
+
 def test_a_bad_goal_is_refused_as_an_answer_rather_than_an_exception(tmp_path) -> None:
     """The dispatchers catch `ValueError`, but a refusal the model can read
     beats a generic `invalid tool call`."""
@@ -377,6 +401,10 @@ from __future__ import annotations
 
 import json
 from typing import Any
+
+import os
+import shutil
+from pathlib import Path
 
 from .config import Config
 from .lean import LeanService, environment_identity
@@ -441,14 +469,28 @@ LAKE_ENV_LEAN = ("lake", "env", "lean")
 def _same_toolchain(config: Config) -> bool:
     """Whether searching and checking would run the same program.
 
-    Compared on the command's shape rather than by resolving both to inodes:
-    `lean_command` may name a wrapper that execs the right Lake, and no check
-    short of running it can tell. So the equivalence is asserted only for the
-    spelling that plainly denotes `config.lake`, and anything else is refused
-    with that as the reason -- a narrow rule that is right when it fires.
+    Resolved through `PATH` and compared by inode, not by basename. Comparing
+    names was the first attempt and does not work: with
+    `HARDY_LAKE=/opt/pinned/lake` and the default `lean_command`, both reduce
+    to `lake` while `PATH` resolves chat's to an unrelated binary -- the exact
+    split this exists to catch, passing it.
+
+    Anything that cannot be resolved is refused rather than assumed equal. A
+    wrapper that execs the right Lake is refused too, and that is the right
+    trade: no check short of running it could tell, and a false equivalence
+    here hands the model a declaration its own Lean cannot elaborate.
     """
     command = tuple(config.lean_command)
-    return command[1:] == LAKE_ENV_LEAN[1:] and Path(command[0]).name == Path(config.lake).name
+    if command[1:] != LAKE_ENV_LEAN[1:]:
+        return False
+    resolved = shutil.which(command[0])
+    lake = shutil.which(str(config.lake))
+    if resolved is None or lake is None:
+        return False
+    try:
+        return os.path.samefile(resolved, lake)
+    except OSError:
+        return False
 
 
 def build_runtime(config: Config) -> tuple[SearchToolRuntime | None, str]:
@@ -989,8 +1031,11 @@ def test_a_set_recorded_against_two_corpora_is_refused_rather_than_replayed(tmp_
     assert tape.identities()['lean-find'] == {'Mathlib aaaa', 'Mathlib bbbb'}
 ```
 
-`TapedSource.search` in Task 5 passes `self._inner.identity.corpus` when it
-records.
+`RecordingSource.search` in Task 5 passes `self._inner.identity.corpus` when it
+records. `Cassette` also gains `recorded_sources() -> list[tuple[str, str, str,
+frozenset[str]]]` -- name, kind, corpus and accepted shapes per engine, read
+back off the tape -- because a replay run has no live source to ask, and asking
+one is what made the hermetic path crash.
 
 - [ ] **Step 6: Run test to verify it passes**
 
@@ -1314,13 +1359,59 @@ class Ranking(NamedTuple):
 TAPE = Cassette(Path(__file__).parent / "premises" / "cassettes")
 
 
-class TapedSource:
-    """A real source's identity over a recorded answer."""
+class ReplaySource:
+    """A recorded answer under the identity that was recorded with it.
 
-    def __init__(self, inner, tape: Cassette, *, live: bool) -> None:
+    Not a wrapper around a live source. `build_retriever(None, ...)` builds a
+    `LeanFindSource(None, ...)`, and `PremiseRetriever` reads `source.identity`
+    before it ever calls `search` -- which dereferences
+    `self._service.environment` and raises `AttributeError` on the first case.
+    The hermetic path is the documented default, so that is every case.
+
+    The identity comes from the cassette instead, which is the honest source
+    for it anyway: the replayed answer was produced by that corpus, not by
+    whatever this machine is configured for now.
+    """
+
+    def __init__(self, name, kind, corpus, accepts, tape: Cassette) -> None:
+        self._identity = retrieval.SourceIdentity(
+            name=name, kind=kind, corpus=corpus, pinned=False
+        )
+        self._accepts = frozenset(accepts)
+        self._tape = tape
+
+    @property
+    def identity(self):
+        # Always unpinned. A replay cannot promise the corpus is still there,
+        # and the evaluation measures ranking quality rather than replayability.
+        return self._identity
+
+    @property
+    def accepts(self) -> frozenset[str]:
+        return self._accepts
+
+    @property
+    def worst_case_seconds(self) -> float:
+        # A replayed source costs nothing, so the budget never refuses one and
+        # the evaluation measures retrieval rather than metering.
+        return 0.0
+
+    def query_for(self, shape):
+        return shape.query
+
+    def search(self, goal: str, limit: int):
+        return tuple(
+            DeclarationRecord(name=hit["name"], signature=hit.get("signature", ""))
+            for hit in self._tape.replay(self._identity.name, goal)[:limit]
+        )
+
+
+class RecordingSource:
+    """A real source, taping what it answers. Only reached under `--live`."""
+
+    def __init__(self, inner, tape: Cassette) -> None:
         self._inner = inner
         self._tape = tape
-        self._live = live
 
     @property
     def identity(self):
@@ -1333,27 +1424,21 @@ class TapedSource:
 
     @property
     def worst_case_seconds(self) -> float:
-        # A replayed source costs nothing, so the budget never refuses one and
-        # the evaluation measures retrieval rather than metering.
-        return self._inner.worst_case_seconds if self._live else 0.0
+        return self._inner.worst_case_seconds
 
     def query_for(self, shape):
         return self._inner.query_for(shape)
 
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
-        engine = self._inner.identity.name
-        if self._live:
-            found = self._inner.search(goal, limit)
-            self._tape.record(
-                engine,
-                goal,
-                [{"name": r.name, "signature": r.signature} for r in found],
-            )
-            return found
-        return tuple(
-            DeclarationRecord(name=hit["name"], signature=hit.get("signature", ""))
-            for hit in self._tape.replay(engine, goal)[:limit]
+        identity = self._inner.identity
+        found = self._inner.search(goal, limit)
+        self._tape.record(
+            identity.name,
+            goal,
+            [{"name": r.name, "signature": r.signature} for r in found],
+            corpus=identity.corpus,
         )
+        return found
 
 
 def _service():
@@ -1382,12 +1467,24 @@ def _as_ranking(result) -> Ranking:
 
 def _factory(*, live: bool):
     def make():
-        service = _service() if live else None
-        # Wrapping what `build_retriever` chose, rather than listing sources
-        # here: the evaluation must measure the production source set, and a
-        # second list would silently drift from it.
-        chosen = retrieval.build_retriever(service, RunLimits())._sources  # noqa: SLF001
-        sources = [TapedSource(source, TAPE, live=live) for source in chosen]
+        if live:
+            # Wrapping what `build_retriever` chose, rather than listing sources
+            # here: the evaluation must measure the production source set, and a
+            # second list would silently drift from it.
+            chosen = retrieval.build_retriever(_service(), RunLimits())._sources  # noqa: SLF001
+            sources = [RecordingSource(source, TAPE) for source in chosen]
+        else:
+            # Rebuilt from the tape, never from a live source over a `None`
+            # service -- see `ReplaySource`. The set is whatever was recorded,
+            # which is by construction the production set at recording time.
+            sources = [
+                ReplaySource(name, kind, corpus, accepts, TAPE)
+                for name, kind, corpus, accepts in TAPE.recorded_sources()
+            ]
+            if not sources:
+                raise SystemExit(
+                    "no cassettes recorded; run with --live once against a built Mathlib"
+                )
 
         class Adapted:
             def rank(self, goal, limit=10, description=None):
@@ -2004,18 +2101,68 @@ In `_ranked`, change the signature to `(self, goal: str, shapes: tuple[QueryShap
         ]
 ```
 
-Then the provenance: `query_sha256` is taken over every query asked, so a ranking that asked different questions gets a different digest, and `query` keeps meaning what a reader expects:
+Then the two fields that name the question. **This cannot be done by hashing
+the shape list into the existing `query_sha256`**: the validator at
+`retrieval.py:322` recomputes that digest from `self.query` and would raise
+`ValueError` on every ranking constructed. And keeping one of three questions
+in a field named `query` would be a smaller lie told more quietly. So the pair
+is replaced.
+
+On `RetrievalProvenance`, `query_sha256: str` becomes:
 
 ```python
-            query_sha256=hashlib.sha256(
-                "\n".join(f"{shape.name}\t{shape.query}" for shape in shapes).encode("utf-8")
-            ).hexdigest(),
+    queries_sha256: str
 ```
 
+On `PremiseRanking`, `query: str` becomes:
+
 ```python
-            query=next(
-                (shape.query for shape in shapes if shape.name == "conclusion"), shapes[0].query
-            ),
+    queries: tuple[QueryShape, ...]
+```
+
+with one canonical rendering both sides agree on, beside `premises_digest`:
+
+```python
+def queries_digest(shapes: Sequence[QueryShape]) -> str:
+    """The questions a ranking asked, in the order it asked them.
+
+    Shape name as well as text, because `⊢ p` sent as a conclusion filter and
+    the same string sent as a constant list are two different searches, and a
+    digest that could not tell them apart would let one ranking's record
+    validate against the other's questions.
+    """
+    return hashlib.sha256(
+        "\n".join(f"{shape.name}\t{shape.query}" for shape in shapes).encode("utf-8")
+    ).hexdigest()
+```
+
+and in `claims_match_the_record_they_are_taken_over`, replace the `query` check:
+
+```python
+        if queries_digest(self.queries) != self.provenance.queries_sha256:
+            raise ValueError("queries do not hash to the queries_sha256 its provenance records")
+```
+
+The construction is then `queries=shapes` and
+`queries_sha256=queries_digest(shapes)`. A reader still meets the conclusion
+query first, because that is the order `search_queries` returns.
+
+Add the test that pins it, since this is the failure that would have reached
+every single call:
+
+```python
+def test_a_ranking_that_asked_three_questions_records_all_three() -> None:
+    """The validator recomputes this digest on every read. Hashing the
+    questions while naming only one of them raised on construction."""
+    retrieval = importlib.import_module('hardy.retrieval')
+    loogle = PerShapeSource(
+        _identity(retrieval, 'loogle', 'loogle', False), {}, {'conclusion', 'constants'}
+    )
+
+    ranking = _retriever(retrieval, [loogle]).rank(GOAL, limit=5, description='lengths agree')
+
+    assert [shape.name for shape in ranking.queries] == ['conclusion', 'constants', 'description']
+    assert retrieval.PremiseRanking.model_validate_json(ranking.model_dump_json())
 ```
 
 Bump the constant near line 104:
@@ -2699,6 +2846,25 @@ def test_the_statement_it_proved_something_about_travels_with_the_answer() -> No
     assert found.statement_sha256 == hashlib.sha256(statement.encode('utf-8')).hexdigest()
 
 
+def test_the_budget_is_spent_across_the_run_rather_than_refilled_per_call() -> None:
+    """Otherwise a model calling the tool twice gets the whole allowance
+    twice, and `budget_exhausted` never fires however many Lean processes a
+    run launches. The same defect `PremiseRetriever` documents about its own
+    budget."""
+    lean = importlib.import_module('hardy.lean')
+    service = _service(
+        lean,
+        {'exact?': _result(lean, success=False, duration_ms=30_000)},
+        tactic_search_seconds=30,
+    )
+
+    service.try_tactics('theorem tmp : True', tactics=['exact?'])
+    second = service.try_tactics('theorem tmp : True', tactics=['exact?'])
+
+    assert second.budget_exhausted
+    assert second.attempts == ()
+
+
 def test_the_budget_refuses_the_next_tactic_rather_than_interrupting_one() -> None:
     """The same discipline the official checks and premise retrieval follow."""
     lean = importlib.import_module('hardy.lean')
@@ -2744,6 +2910,14 @@ In `src/hardy/domain.py`, after `retrieval_seconds` (line 56):
     # buys roughly ten at `lean_process_seconds`.
     tactic_search_seconds: int = 300
 ```
+
+`RunManifest` gains **both** version-4 fields here, in one commit: the limit,
+and `automation: AutomationAttribution | None = None` with the
+`AutomationAttribution` type from Task 12. Adding the field in Task 10 and its
+value in Task 12 keeps one schema version describing one shape. Splitting them
+would leave a reader built at this commit rejecting a Task 12 manifest that
+claims the same version 4 — `extra="forbid"` makes every added field a breaking
+read, which is the whole reason the version moves.
 
 Extend the note at `domain.py:229` and bump the version:
 
@@ -2814,6 +2988,14 @@ class TacticSearch(FrozenModel):
     closed_by: str | None
     budget_exhausted: bool
     seconds_spent: float
+    # Like `LeanCheckResult`, `DeclarationSearch`, `DeclarationInspection` and
+    # `PremiseRanking`. Suggestions are not length-bounded and a failed `aesop`
+    # prints freely, so a result can exceed `model_observation_bytes` and
+    # `bound_tactic_search` needs somewhere to say so. Bounding drops whole
+    # attempts from the tail, never parts of one: a prefix of what happened,
+    # not an edited version of it.
+    observation_truncated: bool = False
+    output_artifact: str | None = None
 ```
 
 Add to `LeanService`, after `search_declarations`:
@@ -2847,8 +3029,23 @@ Add to `LeanService`, after `search_declarations`:
         closed_by: str | None = None
         spent = 0.0
         exhausted = False
+        # Across the service's whole life, not this call. A model calls this as
+        # often as it likes, so a budget reset per call is no budget at all --
+        # the same defect `PremiseRetriever` documents about `retrieval_seconds`,
+        # and the same fix: cumulative spend on the runtime, and one admission
+        # at a time so two concurrent calls are not both admitted against a
+        # figure the other is already spending.
+        with self._tactic_admission:
+            return self._try_tactics(statement, chosen, stop_on_first)
+
+    def _try_tactics(self, statement, chosen, stop_on_first) -> TacticSearch:
+        attempts: list[TacticAttempt] = []
+        closed_by: str | None = None
+        spent = 0.0
+        exhausted = False
         for tactic in chosen:
-            if spent + self._limits.lean_process_seconds > self._limits.tactic_search_seconds:
+            remaining = self._limits.tactic_search_seconds - self._tactic_spent - spent
+            if self._limits.lean_process_seconds > remaining:
                 exhausted = True
                 break
             check = self.check_scratch(f"{statement} := by\n  {tactic}\n")
@@ -2873,6 +3070,7 @@ Add to `LeanService`, after `search_declarations`:
                 closed_by = tactic
                 if stop_on_first:
                     break
+        self._tactic_spent += spent
         return TacticSearch(
             statement=statement,
             statement_sha256=hashlib.sha256(statement.encode("utf-8")).hexdigest(),
@@ -3073,8 +3271,23 @@ In `src/hardy/search_tools.py`, add `"try_tactics"` to `SEARCH_TOOL_NAMES` and:
     def try_tactics(
         self, statement: str, tactics: list[str] | None = None, stop_on_first: bool = True
     ) -> ToolResult:
-        return self._answer(lambda: self.service.try_tactics(statement, tactics, stop_on_first))
+        return self._answer(
+            lambda: self.service.try_tactics(
+                statement,
+                tactics,
+                stop_on_first,
+                imports=self._workspace_imports(),
+                lean_path=self._lean_path,
+            )
+        )
 ```
+
+`SearchToolRuntime` gains `workspace: Any = None` in its constructor (Task 2
+passes `None`; `cli._chat` passes the session's `LeanWorkspace`), with
+`_workspace_imports()` returning its module names and `_lean_path` returning
+`workspace.lean_path()` — both empty when there is no workspace, which is the
+staged and MCP case. The chat dispatcher passes nothing extra; the runtime
+already holds what it needs.
 
 **The scratch file must carry the session's own environment.**
 `LeanService.check_scratch` prepends `import Mathlib` and nothing else, while
@@ -3278,7 +3491,11 @@ Expected: FAIL with `AttributeError: module 'hardy.lean' has no attribute 'attri
 
 - [ ] **Step 3: Write the implementation**
 
-Add to `src/hardy/domain.py`:
+`AutomationAttribution` and the `RunManifest.automation` field were added in
+Task 10, with the schema bump they share. What lands here is the function that
+computes the figure and the wiring that fills the field.
+
+For reference, the type Task 10 added:
 
 ```python
 class AutomationAttribution(FrozenModel):
@@ -3353,17 +3570,37 @@ run that leaned heavily on `exact?` would finalize reporting zeros — a figure
 reading as "the model did it unaided" precisely when it did not, which is the
 one way this measurement can be actively misleading.
 
-So the record goes through the run store rather than through memory:
+So the record goes through a log on disk rather than through memory — but
+**not one inside the run directory**. `codex_runtime.py:99` sets the agent's
+`cwd` to the run directory and grants `Sandbox.workspace_write`, so a log
+written there is a log the model can rewrite, truncate or delete. The entire
+value of this figure is that it does not rest on the model's account of itself;
+a run that could zero its own attribution while leaning on `exact?` throughout
+would be worse than one that never measured.
 
-1. `bound_tactic_search` appends one JSON line per search to
-   `<run>/tactic_searches.jsonl` — a single-line `open(..., "a")` write, the
-   same append discipline the CAS cell log already uses.
-2. `workflow._finalize` reads that file, rebuilds the `TacticSearch` values, and
-   calls `attribution(...)` before hashing artifacts and writing the manifest.
+1. The parent chooses a path **beside** the run directory, outside the subtree
+   `workspace_write` grants — `run_dir.parent / f"{run_dir.name}.attribution.jsonl"`
+   — and passes it to the MCP process as `HARDY_ATTRIBUTION_LOG`, the way
+   `HARDY_RUN_DIR` and `HARDY_CONFIG` already travel (`mcp_server.py:229`).
+   Add it to that `required` tuple.
+2. `bound_tactic_search` appends one JSON line per search, using the protocol
+   `cas.py:919-1010` implements and not merely its name: one write of
+   `record + "\n"`, then `flush()`, then `os.fsync(fileno())`.
+3. `workflow._finalize` reads the log through the same torn-record repair
+   `CasSession._repair_interrupted_append` performs — read bytes, drop a
+   trailing fragment that is not a complete line, then parse. An MCP process
+   killed mid-append must not leave finalization unable to write a manifest at
+   all, which is what a bare `json.loads` per line would do.
+4. It then rebuilds the `TacticSearch` values and calls `attribution(...)`
+   before hashing artifacts and writing the manifest.
 
-Both in-process surfaces write to the same file, so one path produces the figure
-rather than two that can disagree. A missing file means no tactic search ran,
-which is `attribution([], body)` — zeros, not absent.
+Both in-process surfaces write to the same log, so one path produces the figure
+rather than two that can disagree.
+
+**A missing or unreadable log is `automation=None`, not zeros.** Absent means
+nobody measured; zeros mean the model worked unaided. Writing the second from
+the first is precisely the fabrication this arrangement exists to prevent, and
+`RunManifest.automation` is optional for that reason.
 
 Add two tests beside the existing manifest tests: one that a run which called
 `try_tactics` and accepted a proof reusing its suggestion reports
@@ -3375,10 +3612,28 @@ def test_a_search_recorded_by_a_child_process_still_reaches_the_manifest(tmp_pat
     which finalization never shares memory with. A figure counting only
     in-process calls would report zeros for exactly the runs that leaned
     hardest on automation."""
+
+
+def test_the_attribution_log_sits_outside_what_the_agent_may_write(tmp_path) -> None:
+    """`codex_runtime.py:99` gives the agent `workspace_write` over the run
+    directory. A log inside it is one the model can rewrite to claim it worked
+    unaided."""
+
+
+def test_a_torn_final_record_is_dropped_rather_than_failing_the_run(tmp_path) -> None:
+    """An MCP process killed mid-append must not leave finalization unable to
+    write a manifest. `cas.py` already solves this; the point is to use its
+    protocol and not just its name."""
+
+
+def test_a_missing_log_is_absent_attribution_rather_than_zeros(tmp_path) -> None:
+    """Absent says nobody measured; zeros say the model worked unaided.
+    Deriving the second from a missing file is the fabrication the log's
+    placement exists to prevent."""
 ```
 
-driven by writing `tactic_searches.jsonl` directly, since that file *is* the
-contract between the two processes.
+driven by writing the log file directly, since that file *is* the contract
+between the two processes.
 
 - [ ] **Step 6: Document it**
 
@@ -3402,3 +3657,10 @@ git commit -m "Say how much of a proof Lean's own search found, and no more than
 - [ ] `README.md`, `FEATURES.md`, `DESIGN.md` and `ARCHITECTURE.html` describe three sources, four tool surfaces and the attribution figure
 - [ ] The search tools refuse with a reason on a machine with no Lake project, rather than being absent
 - [ ] No module under `src/hardy/` imports anything from `eval/`
+
+
+> **Note for Task 10, Step 5:** `LeanService.__init__` (`lean.py:472`) gains
+> `self._tactic_spent = 0.0` and `self._tactic_admission = threading.Lock()`,
+> and `lean.py` gains `import threading`. The cumulative figure lives on the
+> service because that is what has the run's lifetime; a local in `try_tactics`
+> resets on every call.

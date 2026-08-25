@@ -192,6 +192,18 @@ source.accepts`, in this order:
 3. `loogle` / `constants`
 4. `leansearch` / `description`
 
+**The ranking carries every question, not one of them.** `PremiseRanking`
+today holds a single `query` and `RetrievalProvenance` a single `query_sha256`,
+and the validator at `retrieval.py:322` recomputes the second from the first.
+Keeping `query` as the conclusion shape while hashing all three would make
+every ranking raise `ValueError` on construction -- and keeping one of three
+questions in a field named `query` would be a smaller lie told more quietly.
+So the pair becomes `queries: tuple[QueryShape, ...]` on the ranking and
+`queries_sha256` on the provenance, over the canonical rendering
+`"\n".join(f"{shape.name}\t{shape.query}")`, and the validator recomputes from
+that. A reader still sees the conclusion query first, because that is the
+order `search_queries` returns.
+
 Each pair is admitted separately against `worst_case_seconds` and produces its
 own `SourceOutcome`, which gains a `shape` field beside the `query` it already
 carries. `SourceRank.source` becomes the pair label -- `"loogle/constants"` --
@@ -235,7 +247,15 @@ search") and bounds its cost, since each tactic is a separate Lean process.
 
 `TacticSearch` reports, per tactic: what was tried, whether it closed the
 statement, the suggestion text if any, the diagnostics, and the duration. It
-carries the exact statement and its sha256 at the top level.
+carries the exact statement and its sha256 at the top level, and --
+like `LeanCheckResult`, `DeclarationSearch`, `DeclarationInspection` and
+`PremiseRanking` before it -- `observation_truncated` and `output_artifact`.
+Suggestions are not length-bounded and a failed `aesop` prints freely, so a
+result can exceed `model_observation_bytes`; without the envelope the bound
+would have no valid value to return and no way to tell the model where the
+whole record went. Bounding drops whole attempts from the tail, never parts of
+one, so what survives is a prefix of what happened rather than an edited
+version of it.
 
 **What this is and is not.** A suggestion is a term Lean elaborated, which is a
 far stronger signal than a ranked name. It is not a proof of anything Hardy
@@ -258,7 +278,13 @@ on the staged surface there is no workspace and `import Mathlib` is the whole
 environment, which is already what `lean_check_scratch` gives that model.
 
 Metered against a new `RunLimits.tactic_search_seconds`, default 300, separate
-from `retrieval_seconds` so neither kind of search can starve the other.
+from `retrieval_seconds` so neither kind of search can starve the other. Spend
+accumulates across the run rather than resetting per call, and admission is
+serialised, for the reason `PremiseRetriever` already states about its own
+budget: a model may call the tool as often as it likes, so a budget reset per
+call is no budget at all, and two calls arriving together would each be
+admitted against a figure the other was already spending. The cumulative
+figure lives on the runtime, not in the call.
 `RunLimits` changing shape moves `RunManifest.schema_version` from 3 to 4, for
 the reason the comment at `domain.py:229` already gives.
 
@@ -291,10 +317,33 @@ while `workflow.py:465` builds the `RunManifest` in the parent. A field alone
 gives the child no way to reach that manifest, and a Codex run that leaned
 heavily on `exact?` would finalize reporting zeros -- a figure that reads as
 "the model did it unaided" precisely when it did not. So the MCP runtime
-appends one record per tactic search to the run store as it happens, and
-finalization aggregates those records before hashing artifacts and writing the
-manifest. The in-process staged and chat surfaces write to the same store, so
-one path produces the figure rather than two that can disagree.
+appends one record per tactic search as it happens, and finalization aggregates
+those records before hashing artifacts and writing the manifest.
+
+**Not inside the run directory.** `codex_runtime.py:99` sets the agent's `cwd`
+to the run directory and grants `Sandbox.workspace_write`, so a log written
+there is a log the model can rewrite, truncate or delete -- and the whole point
+of this figure is that it does not depend on the model's account of itself. A
+run could then report zero automation while leaning on it entirely, which is
+worse than not measuring. The log therefore lives beside the run directory
+rather than in it, at a path the parent chooses and passes to the MCP process
+by environment variable the way `HARDY_RUN_DIR` and `HARDY_CONFIG` already
+travel, outside the subtree `workspace_write` grants.
+
+**And absent stays absent.** If that path is unset or unreadable at
+finalization, `automation` is `None` -- nobody measured -- rather than a record
+of zeros. Zeros are a claim that the model worked unaided, and writing that
+claim from a missing file is exactly the fabrication this arrangement exists to
+prevent.
+
+Each record is appended with the protocol `cas.py` already implements for its
+cell log and not merely the name of it: one write of `record + "\n"` followed
+by an `fsync`, and a reader that detects a torn final record and drops it
+rather than failing. An interrupted MCP process must not be able to make
+finalization unable to write a manifest at all.
+
+The in-process staged and chat surfaces write to the same log, so one path
+produces the figure rather than two that can disagree.
 
 Recorded as `RunManifest.automation`, a new top-level optional field --
 **not** inside `Grades`. An attribution figure is a measurement of how a run
@@ -321,8 +370,14 @@ script, a bare `lean`, a second Lake binary -- they are not, and the model
 would search one environment, check the name it found in another, and read a
 provenance naming the identity derived from the configured project. The search
 runtime is therefore built only when `lean_command` is the `lake env lean` form
-that `config.lake` also denotes; anything else refuses with that as the reason,
-which is the same advertised-and-refusing path as a missing project.
+*and* its executable resolves to the same file as `config.lake`. Comparing
+basenames is not enough and was the first attempt at this: with
+`HARDY_LAKE=/opt/pinned/lake` and the default `lean_command`, both reduce to
+`lake` while `PATH` resolves chat's to something else entirely -- the exact
+split the check exists to catch, passing it. So both sides go through
+`shutil.which` and are compared by `os.path.samefile`, and anything that
+cannot be resolved is refused rather than assumed equal. Refusal takes the same
+advertised-and-refusing path as a missing project.
 
 Chat reaches Lean through `LeanTools` with a placeholder `Request`, and its
 `_environment` is a cache-invalidation string, not an `EnvironmentIdentity`. It
@@ -416,6 +471,11 @@ Metrics: recall@1, recall@5, recall@10, MRR, and -- the one that says whether
 this design was right -- **which shape found the expected lemma**, per case and
 in aggregate. If the constants shape never wins a case the conclusion shape
 loses, it did not earn its complexity and should come out.
+
+A replayed source is built from the recorded identity, not by wrapping a live
+source around a `None` service: `LeanFindSource.identity` dereferences
+`self._service.environment`, so the hermetic path -- the documented default --
+would crash on the first case before replaying anything.
 
 Every cassette records the identity of what answered it: the endpoint for a
 remote engine, and the toolchain pin plus `lake-manifest.json` digest for
