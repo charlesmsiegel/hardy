@@ -27,7 +27,8 @@ def configuration(tmp_path: Path, **overrides) -> Config:
         "lean_project": tmp_path / "lean",
         "lean_timeout": 180.0,
         "latex_command": ("pdflatex",),
-        "workspace": tmp_path / "workspace",
+        "root": tmp_path,
+        "project": "workspace",
     }
     settings.update(overrides)
     return Config(**settings)

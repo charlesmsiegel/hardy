@@ -324,7 +324,7 @@ async def test_status_is_allowed_while_a_turn_is_in_flight(settings):
     session = SlowSession()
     _, written = await blast(settings, session, "prove something\r\x1b/status\r\x03")
     assert "A turn is still running." in written
-    assert str(settings.workspace) in written
+    assert str(settings.layout.problem) in written
 
 
 @pytest.mark.parametrize(

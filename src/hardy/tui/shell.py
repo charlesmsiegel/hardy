@@ -221,8 +221,8 @@ class Shell:
 
         history: Any
         try:
-            config.workspace.mkdir(parents=True, exist_ok=True)
-            history = FileHistory(str(config.workspace / "input-history"))
+            config.layout.problem.mkdir(parents=True, exist_ok=True)
+            history = FileHistory(str(config.layout.problem / "input-history"))
         except OSError:
             history = InMemoryHistory()
 
