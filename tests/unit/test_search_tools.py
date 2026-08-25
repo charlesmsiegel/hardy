@@ -24,20 +24,43 @@ def _project(tmp_path: Path) -> Path:
     return project
 
 
+def _lake(tmp_path: Path) -> Path:
+    """A real executable named `lake`, on disk rather than on `PATH`.
+
+    `_same_toolchain` resolves through `shutil.which` and compares inodes, so
+    a config naming a `lake` that exists nowhere makes every test return
+    `None` for the same reason regardless of what it meant to exercise. An
+    absolute path sidesteps `PATH` entirely -- `shutil.which` on a path
+    containing a separator checks that exact file rather than searching --
+    so this test suite exercises the real resolve-and-compare code path
+    without depending on whether this machine happens to have a Lean
+    toolchain installed.
+    """
+    lake = tmp_path / 'bin' / 'lake'
+    lake.parent.mkdir(parents=True, exist_ok=True)
+    lake.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+    lake.chmod(0o755)
+    return lake
+
+
 def _config(tmp_path: Path, project: Path | None, **overrides):
     """`Config` has no defaults for `model`, `lean_command`, `lean_timeout`, or
     `latex_command`, so every test supplies them here rather than the brief's
     two-keyword form -- the fields a given test cares about are still passed
-    as overrides.
+    as overrides. `lean_command` and `lake` both default to the same on-disk
+    stub, so a test that does not care about the toolchain match still gets
+    one that resolves and agrees.
     """
     configuration = importlib.import_module('hardy.config')
+    lake = _lake(tmp_path)
     fields = dict(
         model=None,
-        lean_command=('lake', 'env', 'lean'),
+        lean_command=(str(lake), 'env', 'lean'),
         lean_project=project,
         lean_timeout=30.0,
         latex_command=('pdflatex',),
         workspace=tmp_path / 'workspace',
+        lake=lake,
     )
     fields.update(overrides)
     return configuration.Config(**fields)
@@ -144,14 +167,17 @@ def test_a_lean_command_that_is_not_the_configured_lake_yields_no_runtime(tmp_pa
 def test_a_lake_elsewhere_on_disk_is_caught_even_though_the_names_agree(tmp_path) -> None:
     """`HARDY_LAKE=/opt/pinned/lake` against the default `lake env lean`.
 
-    Both basenames are `lake`, so a name comparison calls them equivalent
-    while `PATH` resolves chat's to something else -- searching one Lean and
-    checking in another, under a provenance naming neither discrepancy.
+    Both basenames are `lake`, so a name comparison calls them equivalent.
+    Here `config.lake` is pinned to a *different*, genuinely existing `lake`
+    than the one `lean_command` resolves to -- both real files, so this
+    exercises `os.path.samefile` finding them unequal rather than merely
+    `shutil.which` finding nothing to compare.
     """
     search_tools = importlib.import_module('hardy.search_tools')
     elsewhere = tmp_path / 'pinned' / 'lake'
     elsewhere.parent.mkdir()
-    elsewhere.write_text('#!/bin/sh\n', encoding='utf-8')
+    elsewhere.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+    elsewhere.chmod(0o755)
     config = _config(tmp_path, _project(tmp_path), lake=elsewhere)
 
     runtime, detail = search_tools.build_runtime(config)
