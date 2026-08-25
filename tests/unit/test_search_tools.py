@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import pathlib
 from pathlib import Path
 
 MANIFEST = {'packages': [{'name': 'mathlib', 'rev': '81a5d257' + '0' * 32}]}
@@ -184,6 +185,34 @@ def test_a_lake_elsewhere_on_disk_is_caught_even_though_the_names_agree(tmp_path
 
     assert runtime is None
     assert 'lake' in detail
+
+
+def test_a_relative_lake_resolves_where_the_child_will_run_it(tmp_path) -> None:
+    """Both Lean facades run the child with `lean_project` as its working
+    directory, so `./bin/lake` on both sides is one program. Resolving it
+    against Hardy's own process directory instead refused search over a
+    difference that does not exist -- whenever Hardy was started anywhere but
+    inside the project."""
+    configuration = importlib.import_module('hardy.config')
+    search_tools = importlib.import_module('hardy.search_tools')
+    project = _project(tmp_path)
+    lake = project / 'bin' / 'lake'
+    lake.parent.mkdir(parents=True, exist_ok=True)
+    lake.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+    lake.chmod(0o755)
+    config = configuration.Config(
+        workspace=tmp_path / 'workspace',
+        lean_project=project,
+        lake=pathlib.Path('bin/lake'),
+        lean_command=('bin/lake', 'env', 'lean'),
+        model='claude-opus-5',
+        lean_timeout=180.0,
+        latex_command=('tectonic',),
+    )
+
+    runtime, detail = search_tools.build_runtime(config)
+
+    assert runtime is not None, detail
 
 
 def test_a_bad_goal_is_refused_as_an_answer_rather_than_an_exception(tmp_path) -> None:

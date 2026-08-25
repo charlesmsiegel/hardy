@@ -93,7 +93,21 @@ async def wait_for_turn_to_settle(built, *, timeout: float = 5.0) -> None:
         elapsed += step
 
 
-async def blast(settings, session, keys: str) -> tuple[int, str]:
+async def _wait_for_render(buffer: StringIO, text: str, timeout: float = 30.0) -> None:
+    """Wait until `text` has actually been drawn, rather than assuming it has.
+
+    Polled against the output buffer because that is the only place the answer
+    exists: prompt_toolkit renders on its own schedule, and the alternative --
+    reading the buffer once and hoping -- is a race that a loaded runner loses.
+    Silent on timeout: the caller's own assertion is the error message worth
+    reading, and raising here would replace it with a worse one.
+    """
+    end = time.monotonic() + timeout
+    while time.monotonic() < end and text not in buffer.getvalue():
+        await asyncio.sleep(0.01)
+
+
+async def blast(settings, session, keys: str, until: str | None = None) -> tuple[int, str]:
     """Send `keys`, deferring a trailing Ctrl+C until any turn it started
     has settled.
 
@@ -111,6 +125,14 @@ async def blast(settings, session, keys: str) -> tuple[int, str]:
     original intent (nothing about what starts the turn changes -- only
     when the final Ctrl+C lands) without ever risking a second, real press
     reaching the un-mocked `os._exit` none of these tests expect.
+
+    `until` names a string the caller needs *rendered* before the trailing
+    Ctrl+C is sent. `wait_for_turn_to_settle` waits for the turn, which is not
+    the same thing: a notice the escalation path draws afterwards can still be
+    unflushed when the app exits and the buffer is read. A test asserting on
+    that notice then fails while the behaviour it is about -- the escalation --
+    demonstrably happened, which is how this file went red on CI with
+    `session.escalated == 1` passing one line above the failure.
 
     Releases `session.release` (if the session has one) from a background
     timer, in case nothing else in a given test ever does -- `.run()` drives
@@ -138,6 +160,8 @@ async def blast(settings, session, keys: str) -> tuple[int, str]:
             if has_ctrl_c:
                 await asyncio.sleep(0.05)  # let `content` actually be read first
                 await wait_for_turn_to_settle(built)
+                if until is not None:
+                    await _wait_for_render(buffer, until)
                 pipe.send_text("\x03")
             code = await task
     return code, buffer.getvalue()
@@ -203,7 +227,7 @@ async def test_escape_says_it_interrupted_the_work_in_flight(settings):
 
 async def test_a_second_escape_escalates_from_interrupt_to_kill(settings):
     session = InterruptibleSession()
-    _, written = await blast(settings, session, "prove something\r\x1b \x1b \x03")
+    _, written = await blast(settings, session, "prove something\r\x1b \x1b \x03", until="killed")
     assert session.escalated == 1
     # The turn is cancelled once, not twice: the second press is about the
     # child that did not stop, not about the turn, which already has.
