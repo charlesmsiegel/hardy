@@ -674,6 +674,50 @@ def test_two_projects_and_no_active_setting_falls_back_to_main(tmp_path: Path):
     assert settings.project == "main"
 
 
+def test_a_project_config_cannot_name_an_executable(tmp_path: Path):
+    """The project layer selects a problem; it does not choose programs.
+
+    `.hardy/config.toml` is committed and arrives with any clone, and `_chat`
+    builds the CAS runtime -- which runs the configured executable to probe its
+    version -- before the prompt appears. An unrestricted merge would let a
+    repository run an arbitrary program the moment someone starts Hardy in it.
+    """
+    (tmp_path / ".hardy").mkdir()
+    (tmp_path / ".hardy" / "config.toml").write_text(
+        'project = "sylow"\ncas_command = "/tmp/evil"\nlean_command = "/tmp/evil"\n',
+        encoding="utf-8",
+    )
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path)
+    assert settings.project == "sylow"
+    assert settings.cas_command is None
+    assert "/tmp/evil" not in " ".join(settings.lean_command)
+
+
+def test_the_environment_names_the_root_before_the_project_config_is_found(tmp_path: Path, monkeypatch):
+    """Otherwise HARDY_ROOT is advertised and inert.
+
+    The project layer lives inside the root, so a root resolved after the
+    environment is read would send Hardy to the current directory for its
+    project config and open the wrong problem there.
+    """
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / ".hardy").mkdir(parents=True)
+    (elsewhere / ".hardy" / "config.toml").write_text('project = "sylow"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HARDY_ROOT", str(elsewhere))
+
+    settings = config.load(tmp_path / "absent.toml")
+
+    assert settings.root == elsewhere
+    assert settings.project == "sylow"
+
+
+def test_runs_root_survives(tmp_path: Path):
+    """Staged runs are out of scope; `prove` and `accept` still read this."""
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path)
+    assert settings.runs_root == Path("runs")
+
+
 def test_a_slug_that_escapes_the_root_is_refused(tmp_path: Path):
     (tmp_path / ".hardy").mkdir()
     (tmp_path / ".hardy" / "config.toml").write_text('project = "../other"\n', encoding="utf-8")
@@ -695,7 +739,7 @@ Expected: FAIL — `TypeError: load() got an unexpected keyword argument 'root'`
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `src/hardy/config.py`, remove `DEFAULT_WORKSPACE` and `DEFAULT_RUNS_ROOT`, and change `SETTINGS`:
+In `src/hardy/config.py`, remove `DEFAULT_WORKSPACE` **but keep `DEFAULT_RUNS_ROOT`** — `runs_root` is out of scope per the spec and is live in `workflow.py:132`, `acceptance.py:254,275`, and `cli.py:536,588`; removing it breaks `prove` and `accept`. Also correct Task 3's `RETIRED_SETTINGS` to `("workspace",)` — dropping `runs_root` during migration would silently discard a live user setting. Change `SETTINGS`:
 
 ```python
 SETTINGS = {
@@ -706,6 +750,7 @@ SETTINGS = {
     "latex_command": "HARDY_LATEX_COMMAND",
     "root": "HARDY_ROOT",
     "project": "HARDY_PROJECT",
+    "runs_root": "HARDY_RUNS_ROOT",
     "lake": "HARDY_LAKE",
     "elan": "HARDY_ELAN",
     "tectonic": "HARDY_TECTONIC",
@@ -714,9 +759,15 @@ SETTINGS = {
     "cas_backend": "HARDY_CAS_BACKEND",
     "cas_command": "HARDY_CAS_COMMAND",
 }
+
+# What a project's own committed config may say. Deliberately tiny: the file
+# travels with a clone, and Hardy runs the configured CAS executable before the
+# prompt appears. A repository gets to say which problem is active. It does not
+# get to say which programs run.
+PROJECT_SETTINGS = frozenset({"project"})
 ```
 
-In the `Config` dataclass, replace the `workspace: Path` field and the `runs_root` field with:
+In the `Config` dataclass, replace only the `workspace: Path` field (keep `runs_root` exactly as it is):
 
 ```python
     root: Path
@@ -791,10 +842,44 @@ def load(
 
     Precedence: global file, then project file, then environment, then flags.
     """
+    # The migration runs before the default path is read, and only when the
+    # caller named no file of its own: an explicit --config or HARDY_CONFIG is
+    # a deliberate choice about which file to use, not an upgrade to perform.
+    # Without this the relocation would be implemented, unit-tested, and never
+    # reached -- an upgrading user's model and toolchain settings would be
+    # silently ignored.
+    if path is None and not os.environ.get("HARDY_CONFIG"):
+        migrate_global()
     path = path or default_config_path()
-    resolved_root = Path(root).expanduser() if root else Path.cwd()
     values: dict[str, Any] = read_file(path)
-    project_values = read_file(resolved_root / layout.HARDY_DIR / "config.toml")
+
+    # The root is resolved before the project layer is located, because the
+    # project layer lives inside it. Reading the environment afterwards would
+    # make HARDY_ROOT advertised and inert: Hardy would take the project config
+    # from the current directory and open the wrong problem there.
+    def _root_from(source: dict[str, Any]) -> Path | None:
+        value = source.get("root")
+        return Path(str(value)).expanduser() if value else None
+
+    resolved_root = (
+        (Path(root).expanduser() if root else None)
+        or (Path(os.environ["HARDY_ROOT"]).expanduser() if os.environ.get("HARDY_ROOT") else None)
+        or _root_from(values)
+        or Path.cwd()
+    )
+
+    # Only PROJECT_SETTINGS are honoured from the project layer. That file is
+    # committed and arrives with any clone, and `_chat` builds the CAS runtime
+    # -- which calls `probe_version()` on the configured executable
+    # (`cas_tools.py:108`) -- before the prompt appears. An unrestricted merge
+    # would therefore let a repository run an arbitrary program the moment
+    # someone starts Hardy inside it. Selecting the active problem is what this
+    # layer is for; naming executables is not.
+    project_values = {
+        key: value
+        for key, value in read_file(resolved_root / layout.HARDY_DIR / "config.toml").items()
+        if key in PROJECT_SETTINGS
+    }
     values.update(project_values)
     for key, variable in SETTINGS.items():
         value = os.environ.get(variable)
@@ -828,6 +913,7 @@ def load(
         latex_command=tuple(shlex.split(text("latex_command", DEFAULT_LATEX_COMMAND))),
         root=resolved_root,
         project=active_project(resolved_root, project, values),
+        runs_root=location("runs_root") or Path(DEFAULT_RUNS_ROOT),
         lake=location("lake") or Path(DEFAULT_LAKE),
         elan=location("elan") or Path(DEFAULT_ELAN),
         tectonic=location("tectonic") or Path(DEFAULT_TECTONIC),
@@ -992,8 +1078,22 @@ Replace `_read_state` and add its counterpart:
 
 ```python
     def _read_state(self) -> dict[str, Any]:
+        """The record, refusing a schema this version does not read.
+
+        There is deliberately no reader for version 1. Accepting one anyway
+        would carry its `provider_session`, `usage` and `usage_cursor` into a
+        record that is now versioned -- and, since `WITHHELD` no longer names
+        those keys, into the model's context as well. Refusing is the honest
+        failure.
+        """
         if self.state_path.exists():
-            return json.loads(self.state_path.read_text(encoding="utf-8"))
+            stored = json.loads(self.state_path.read_text(encoding="utf-8"))
+            version = stored.get("schema_version")
+            if version != 2:
+                raise ValueError(
+                    f"{self.state_path} is schema version {version!r}; this Hardy reads version 2 only"
+                )
+            return stored
         # `audit` is absent until the first save; a workspace with none may not
         # read as a clean one.
         return {"schema_version": 2, "names": [], "assumptions": []}
@@ -1024,6 +1124,7 @@ Then, throughout `chat.py`, move exactly three keys from `self.state` to `self.l
 - `_remember_thread`: `self.state.get(THREAD_KEY)` → `self.local.get(THREAD_KEY)`; `self.state[THREAD_KEY] = thread` → `self.local[THREAD_KEY] = thread`; `self._save_state()` → `self._save_local()`.
 - `__init__`'s runtime build: `session_id=self.state.get("provider_session")` → `session_id=self.local.get(THREAD_KEY)`.
 - `_sync_provenance`'s runtime rebuild: the same substitution.
+- **`switch_model` (`chat.py:320`)**: `session_id=self.state.get("provider_session")` is a THIRD site and is easy to miss. Its docstring promises "the provider thread is carried over, so the new model inherits the conversation" — left unchanged, every `/model` switch would silently start a new thread and break that promise.
 - `_recover_spend`, `_ledger_cursor`, `_mark_ledger_read`, `_remember_spend`: every `self.state[USAGE_KEY]`, `self.state.get(USAGE_KEY)`, `self.state[CURSOR_KEY]`, `self.state.get(CURSOR_KEY)` becomes the `self.local` equivalent, and every `self._save_state()` in those methods becomes `self._save_local()`.
 
 Add the import to `chat.py`: `from .layout import LOCAL_DIR, LOCAL_STATE`.
@@ -1376,7 +1477,14 @@ git commit -m "Store an export reference the record can still resolve after a cl
 
 **Interfaces:**
 - Consumes: `layout.Layout.shared_lean`, `layout.Layout.shared_build`, `layout.global_lean`, `layout.global_build` from Task 1.
-- Produces: `MathematicsSession.shared_roots: tuple[tuple[Path, Path], ...]` (source, build) in resolution order; `MathematicsSession.shadowed_modules() -> dict[str, Path]` mapping a module name to the shared source it shadows.
+- Produces: `MathematicsSession.shared_roots: tuple[tuple[Path, Path], ...]` (source, build) in resolution order; `MathematicsSession.shadowed_modules() -> dict[str, Path]`; `MathematicsSession.build_shared() -> None`; `MathematicsSession._shared_digest() -> str`.
+
+**Three requirements this task must meet that an earlier draft of it missed. Read these before writing code:**
+
+1. **A path on `LEAN_PATH` is not a library.** Adding `<root>/.hardy/.build/lean` to the variable does nothing unless something compiles `.hardy/lean/*.lean` into it. `build_shared()` does that, on the same `compile_module` path the problem's own tree uses, and it runs before the first Lean invocation. Without it the advertised import simply fails.
+2. **The test must import, not match a string.** Asserting `str(path) in chat._lean_path()` passes against a completely non-functional implementation. The test must save a problem module that actually does `import CommAlg` and assert Lean accepted it.
+3. **The shared sources must reach the build and audit identities.** The spec requires their digests be stamped into the record "so a verdict names what it was computed against". `_shared_digest()` returns a digest over the shared sources, and it is mixed into `self._environment` — which already keys the olean cache and stamps each audit verdict. Without it, editing a shared library leaves both a stale olean and a stale verdict reading as current, which is exactly the class of failure the audit exists to prevent.
+4. **Shadowing must be reported to someone.** A `shadowed_modules()` that only its unit test ever calls satisfies nothing. Surface it in the `read_workspace` tool result, so the model sees it, and record a transcript event when a collision is first observed, so the record does.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1882,7 +1990,7 @@ git commit -m "Offer registration on a terminal, and decline it on a pipe"
 
 **Interfaces:**
 - Consumes: `layout.LOCAL_DIR` from Task 1, `Config.layout` from Task 4.
-- Produces: no new public names; the history file moves to `<slug>/.local/input-history`.
+- Produces: `tui.shell.history_path(config) -> Path` and `tui.shell.status_line(config) -> str`. Both are NEW public names, and the `/status` handler must be routed through `status_line` rather than formatting its own string — otherwise the test calls a helper that does not exist and `tests/tui` fails with `NameError`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1977,10 +2085,17 @@ def test_the_shell_installer_defaults_to_the_global_hardy_directory():
 
 
 def test_the_windows_installers_default_to_the_global_hardy_directory():
+    """Asserted against the config assignment, not against the token.
+
+    Both scripts legitimately keep `$env:LOCALAPPDATA` for the install prefix
+    and the bin directory, and `LOCALAPPDATA` contains the substring `APPDATA` —
+    so banning the token outright is an assertion that can never pass.
+    """
     for script in ("scripts/install-windows.ps1", "scripts/uninstall-windows.ps1"):
         text = Path(script).read_text(encoding="utf-8")
-        assert ".hardy" in text
-        assert "APPDATA" not in text, script
+        assignment = next(line for line in text.splitlines() if "$ConfigPath" in line and "=" in line)
+        assert ".hardy" in assignment, script
+        assert "$env:APPDATA" not in assignment, script
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
