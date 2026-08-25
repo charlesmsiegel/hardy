@@ -107,6 +107,122 @@ def test_ensure_does_not_overwrite_an_edited_ignore_file(tmp_path: Path):
     assert "notes.txt" in (resolved.problem / ".gitignore").read_text(encoding="utf-8")
 
 
+def test_a_symlinked_problem_directory_is_refused(tmp_path: Path):
+    r"""Validating the name is not validating the path.
+
+    A repository can contain `main -> ..`. The slug passes every check in
+    `validate_slug` — it is one component, not `..`, not absolute — and
+    `ensure()` then follows the link and creates `lean/`, `tex/`, `cas/`,
+    `.local/` and `.gitignore` OUTSIDE the root. Reproduced before this test
+    was written: with root `/tmp/x/root` and `main -> ..`, `ensure()` created
+    `/tmp/x/lean`.
+    """
+    (tmp_path / "root").mkdir()
+    (tmp_path / "root" / "main").symlink_to("..")
+    resolved = layout.Layout(root=tmp_path / "root", slug="main")
+
+    with pytest.raises(layout.LayoutError, match="outside"):
+        resolved.ensure()
+
+    assert not (tmp_path / "lean").exists(), "nothing may be created outside the root"
+
+
+def test_an_ordinary_directory_still_resolves(tmp_path: Path):
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.ensure()
+    assert resolved.resolved_problem() == (tmp_path / "sylow").resolve()
+
+
+def test_missing_rules_are_added_to_an_existing_ignore_file(tmp_path: Path):
+    """A pre-existing .gitignore must not leave machine-local state exposed.
+
+    Reproduced before this test was written: with `*.log` already in the
+    problem's .gitignore, `ensure()` returned without adding anything, so
+    `.local/` — the provider session id, the usage ledger, and the terminal
+    input history, which holds text typed and never sent — sat as ordinary
+    untracked files ready to be committed.
+    """
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.problem.mkdir(parents=True)
+    (resolved.problem / ".gitignore").write_text("*.log\n", encoding="utf-8")
+
+    resolved.ensure()
+
+    rules = (resolved.problem / ".gitignore").read_text(encoding="utf-8")
+    assert "*.log" in rules, "the user's own rules are preserved"
+    assert "/.local/" in rules
+    assert "/.build/" in rules
+
+
+def test_rules_already_present_are_not_duplicated(tmp_path: Path):
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.ensure()
+    resolved.ensure()
+    rules = (resolved.problem / ".gitignore").read_text(encoding="utf-8")
+    assert rules.count("/.local/") == 1
+    assert rules.count("/.build/") == 1
+
+
+@pytest.mark.parametrize("reserved", ["CON", "con", "PRN", "AUX", "NUL", "COM1", "LPT1", "trailing.", "trailing "])
+def test_a_windows_reserved_slug_is_refused_on_every_platform(reserved: str):
+    """Checked everywhere, not only on Windows.
+
+    The slug can arrive from a committed config that travels with a clone, so a
+    project accepted on Linux must not become uncreatable — or, with a trailing
+    dot, silently alias a different directory — when the same checkout is
+    opened on Windows.
+    """
+    with pytest.raises(layout.LayoutError):
+        layout.validate_slug(reserved)
+
+
+@pytest.mark.parametrize("bad", ['a:b', 'a*b', 'a?b', 'a"b', "a<b", "a>b", "a|b"])
+def test_windows_reserved_characters_are_refused(bad: str):
+    with pytest.raises(layout.LayoutError):
+        layout.validate_slug(bad)
+
+
+def test_a_dot_prefixed_slug_is_refused(tmp_path: Path):
+    """Not only `.hardy`: `.git` passed every prior check.
+
+    Verified before this test was written: `Layout(slug=".git").record` was
+    `<root>/.git/session.json`. `existing_projects` already skips dot-prefixed
+    children as not-a-project, so a slug like `.git` was nameable in a config
+    file but could never be discovered again -- and worse, it aimed Hardy's
+    own record and sources at version control's own directory.
+    """
+    with pytest.raises(layout.LayoutError):
+        layout.validate_slug(".git")
+
+
+def test_a_legacy_hardy_rule_is_removed_from_the_root_ignore(tmp_path: Path):
+    """Git does not traverse into an excluded directory.
+
+    Reproduced: with `.hardy/` in the root .gitignore, `git add -A` tracked
+    only .gitignore itself and `git check-ignore` reported `.hardy/config.toml`
+    excluded. Writing `.hardy/.gitignore` inside it changes nothing, so
+    repurposing `.hardy/` as committed tooling means the old rule must go.
+    """
+    root_ignore = tmp_path / ".gitignore"
+    root_ignore.write_text("*.log\n.hardy/\ndist/\n", encoding="utf-8")
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+
+    assert resolved.unignore_tooling(root_ignore) is True
+
+    kept = root_ignore.read_text(encoding="utf-8").splitlines()
+    assert ".hardy/" not in kept
+    assert "*.log" in kept, "the user's other rules are untouched"
+    assert "dist/" in kept
+
+
+def test_an_ignore_file_without_the_legacy_rule_is_left_alone(tmp_path: Path):
+    root_ignore = tmp_path / ".gitignore"
+    root_ignore.write_text("*.log\n", encoding="utf-8")
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    assert resolved.unignore_tooling(root_ignore) is False
+    assert root_ignore.read_text(encoding="utf-8") == "*.log\n"
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 def test_git_itself_agrees_the_rules_are_anchored(tmp_path: Path):
     """Asserting against git, not against our reading of gitignore syntax."""

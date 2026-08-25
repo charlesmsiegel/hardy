@@ -16,10 +16,12 @@ lean_project/
 # history is the durable record, not this.
 .superpowers/
 
-# The default workspace a `hardy` run creates in the current directory: the
-# lean/ and tex/ trees, the .build/ oleans, writeup.pdf, session.json, and
-# transcript.jsonl. Per-run state, never committed.
-.hardy/
+# A project Hardy creates in this checkout keeps its build tree and its
+# machine-local state out of git; its sources, writeup and record beside them
+# are versioned, and each project carries its own .gitignore saying so.
+.hardy/.build/
+*/.build/
+*/.local/
 
 # Built distributions. The release workflow builds them into dist/ and the
 # installer workflow into release/; both belong to a run, not to the checkout.

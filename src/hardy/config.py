@@ -104,7 +104,13 @@ def migrate_global(source: Path | None = None, destination: Path | None = None) 
     destination = destination or (layout.global_dir() / "config.toml")
     if not source.is_file() or destination.exists():
         return False
-    retired = re.compile(rf"^\s*(?:{'|'.join(RETIRED_SETTINGS)})\s*=")
+    # TOML permits a quoted key -- `"workspace" = ...` decodes identically to
+    # `workspace = ...` -- but the unquoted pattern below would not match it,
+    # so the migration would delete the source and install a destination
+    # still carrying the retired key, and `read_file` rejects that on every
+    # later load: Hardy would not start at all.
+    names = "|".join(RETIRED_SETTINGS)
+    retired = re.compile(rf"""^\s*(?:['"]?)(?:{names})(?:['"]?)\s*=""")
     kept = [
         line
         for line in source.read_text(encoding="utf-8-sig").splitlines()
