@@ -411,3 +411,62 @@ def test_an_appendix_in_an_included_fragment_still_counts() -> None:
         used={"Sylow.first"},
         labels={"thm:one", "asm:sylow"},
     ) == ()
+
+
+def test_a_transforming_listing_is_not_a_quotation() -> None:
+    """`literate={True}{{False}}4` renders `False` where the source says
+    `True`: the reader is shown a proposition Lean never saw."""
+    body = (
+        "\\begin{lstlisting}[literate={True}{{False}}4]\n"
+        + STATEMENT
+        + "\n\\end{lstlisting}"
+    )
+    assert kinds(owed(document(body))) == ["statement"]
+
+
+def test_an_ordinary_listing_configuration_still_quotes() -> None:
+    body = "\\begin{lstlisting}[language=Lean]\n" + STATEMENT + "\n\\end{lstlisting}"
+    assert owed(document(body)) == ()
+
+
+def test_a_listing_after_a_transforming_one_still_counts() -> None:
+    """The scan has to walk a rejected block to its end like any other."""
+    body = (
+        "\\begin{lstlisting}[literate={True}{{False}}4]\nnoise\n\\end{lstlisting}\n"
+        "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}"
+    )
+    assert owed(document(body)) == ()
+
+
+def test_prose_inside_an_unexpanded_definition_states_nothing() -> None:
+    r"""An appendix whose disclosure lives in a `\newcommand` nobody uses has
+    shown the reader nothing at all."""
+    body = (
+        "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n"
+        "\\appendix\n\\newcommand{\\hidden}{Sylow's first theorem}\n"
+        "\\label{asm:sylow}\n"
+        "\\begin{verbatim}\naxiom Sylow.first : True\n\\end{verbatim}"
+    )
+    found = owed(
+        document(body),
+        assumptions=[SYLOW],
+        used={"Sylow.first"},
+        labels={"thm:one", "asm:sylow"},
+    )
+    assert kinds(found) == ["assumption"]
+    assert "Sylow's first theorem" in found[0].detail
+
+
+def test_prose_beside_a_definition_still_counts() -> None:
+    body = (
+        "\\begin{verbatim}\n" + STATEMENT + "\n\\end{verbatim}\n"
+        "\\appendix\n\\newcommand{\\note}{unused}\n"
+        "Sylow's first theorem.\\label{asm:sylow}\n"
+        "\\begin{verbatim}\naxiom Sylow.first : True\n\\end{verbatim}"
+    )
+    assert owed(
+        document(body),
+        assumptions=[SYLOW],
+        used={"Sylow.first"},
+        labels={"thm:one", "asm:sylow"},
+    ) == ()

@@ -486,3 +486,32 @@ def test_deleting_a_fragment_leaves_a_writeup_that_is_still_established(tmp_path
     deleted = chat._tool("delete_file", {"path": "sections/spare.tex"})
     assert deleted.ok is True, deleted
     assert chat.obligations() == (), chat.obligations()
+
+
+def test_a_fragment_the_root_ignores_does_not_establish_the_writeup(tmp_path: Path):
+    r"""Saving a fragment `writeup.tex` does not `\input` yet is checked
+    through a probe document carrying the real preamble. That says the fragment
+    is sound and nothing about the writeup -- so it must not publish its PDF
+    over the one a human opens, and must not stamp the tree as compiled.
+    """
+    runtime = FakeChatRuntime([
+        call("save_lean", {"source": THEOREM}),
+        RECORD,
+        call("save_latex", {"source": CARRIED}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Prove and write up.")
+    assert chat.obligations() == ()
+    compiled = (tmp_path / "writeup.pdf").read_bytes()
+    saved = chat._tool(
+        "save_latex",
+        {"path": "sections/loose.tex", "source": "Loose.\\label{thm:loose}\n"},
+    )
+    assert saved.ok is True, saved
+    # The document a reader opens is still the document, not the probe.
+    assert (tmp_path / "writeup.pdf").read_bytes() == compiled
+    # And the tree is now ahead of what was compiled, which is the truth.
+    owed = chat.obligations()
+    assert [item.kind for item in owed] == ["label"]
+    assert "not the one that was compiled" in owed[0].detail
