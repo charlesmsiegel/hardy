@@ -2867,7 +2867,34 @@ def _records_from_leansearch(results: list, limit: int) -> tuple[DeclarationReco
     return tuple(records)
 ```
 
-Read `_records_from_hits` first and reuse whatever name-length and signature-length constants it uses rather than the names above.
+Read `_records_from_hits` first and reuse whatever name-length and
+signature-length constants it uses rather than the names above.
+
+**`_fetch_url` names Loogle in every transport error** (`retrieval.py:649-664`:
+"Loogle is unavailable", "Loogle rejected the request", "Loogle exceeded its
+deadline"). Reused as-is, a LeanSearch 503 is recorded in the *LeanSearch*
+source outcome saying Loogle is down, pointing an operator at the wrong
+service. Give it a `service: str = "Loogle"` parameter, interpolate it into the
+three messages, and have `LeanSearchNetSource` pass `"LeanSearch"` — a smaller
+change than a second fetcher, and it keeps one bounded-transfer implementation.
+`LoogleSource` keeps the default, so its messages do not move.
+
+Test it:
+
+```python
+def test_a_transport_failure_names_the_service_that_failed() -> None:
+    """The shared fetcher hard-coded Loogle, so a LeanSearch outage was
+    reported in the LeanSearch outcome as Loogle being down."""
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    def fetch(url, timeout):
+        raise retrieval.RetrievalTransportError('LeanSearch is unavailable: HTTP 503')
+
+    source = retrieval.LeanSearchNetSource(fetch=fetch)
+
+    with pytest.raises(retrieval.RetrievalError, match='LeanSearch'):
+        source.search('anything', 5)
+```
 
 Extend `build_retriever`:
 
@@ -3509,23 +3536,42 @@ In `src/hardy/search_tools.py`, add `"try_tactics"` to `SEARCH_TOOL_NAMES` and:
     def try_tactics(
         self, statement: str, tactics: list[str] | None = None, stop_on_first: bool = True
     ) -> ToolResult:
+        # Through the same bound the staged and MCP surfaces apply. `_answer`
+        # only serialises, so without this a failed `aesop`'s diagnostics reach
+        # the model unbounded on the one surface a human is watching -- with
+        # neither `observation_truncated` set nor `output_artifact` naming
+        # where the whole record went.
         return self._answer(
-            lambda: self.service.try_tactics(
-                statement,
-                tactics,
-                stop_on_first,
-                imports=self._workspace_imports(),
-                lean_path=self._lean_path,
+            lambda: self._bound.bound_tactic_search(
+                self.service.try_tactics(
+                    statement,
+                    tactics,
+                    stop_on_first,
+                    imports=self._workspace_imports(),
+                    lean_path=self._lean_path,
+                )
             )
         )
 ```
 
-`SearchToolRuntime` gains `workspace: Any = None` in its constructor (Task 2
-passes `None`; `cli._chat` passes the session's `LeanWorkspace`), with
-`_workspace_imports()` returning its module names and `_lean_path` returning
-`workspace.lean_path()` — both empty when there is no workspace, which is the
-staged and MCP case. The chat dispatcher passes nothing extra; the runtime
-already holds what it needs.
+`SearchToolRuntime` gains `bind_workspace(workspace)` and a `self._workspace`
+defaulting to `None`, with `_workspace_imports()` returning its module names and
+`_lean_path` returning `workspace.lean_path()` — both empty when unbound, which
+is the staged and MCP case.
+
+**Bound after construction, not passed in.** `cli._chat` builds the runtime
+before calling `build`, and `MathematicsSession` creates its own
+`LeanWorkspace` inside `__init__` — so there is no moment at which `_chat`
+holds a workspace to hand over. The session does the binding instead, in
+`__init__` right after `self.lean_workspace` exists:
+
+```python
+        if search is not None:
+            search.bind_workspace(self.lean_workspace)
+```
+
+One line, in the only place where both objects exist at once. Task 3 already
+passes `search` into the session, so nothing new crosses the boundary.
 
 **The scratch file must carry the session's own environment.**
 `LeanService.check_scratch` prepends `import Mathlib` and nothing else, while
@@ -3545,16 +3591,21 @@ Add to `tests/test_chat_search.py`, with `FakeSearch.try_tactics` recording the
 keyword arguments it was given:
 
 ```python
-def test_tactic_search_in_a_session_sees_the_modules_the_session_saved(session_factory) -> None:
+def test_a_session_binds_its_workspace_into_the_search_runtime(session_factory, tmp_path) -> None:
     """A goal about a declaration saved a minute ago is the ordinary case
-    here, and `import Mathlib` alone cannot elaborate it."""
-    search = FakeSearch()
-    session = session_factory(search=search, search_detail='Mathlib abcdef in /lean')
+    here, and `import Mathlib` alone cannot elaborate it. The session is the
+    only place holding both the runtime and the workspace it created.
+    """
+    search_tools = importlib.import_module('hardy.search_tools')
+    runtime, _ = search_tools.build_runtime(_config_with_project(tmp_path))
 
-    session._tool('try_tactics', {'statement': 'theorem tmp : True'})
+    session = session_factory(search=runtime, search_detail='Mathlib abcdef in /lean')
 
-    assert search.calls[0][1]['lean_path']
+    assert runtime._lean_path == session.lean_workspace.lean_path()
 ```
+
+asserted against the real runtime rather than a `FakeSearch`: the fake stands
+in for the runtime, so it can never observe a value the runtime itself holds.
 
 In `chat.py`'s `_search_tool`, before the `inspect_declarations` fallthrough:
 
