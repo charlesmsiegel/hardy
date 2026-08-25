@@ -88,7 +88,7 @@ assumed here.
     session.json              THE RECORD: names, approved assumptions, audit verdicts
     transcript.jsonl          THE RECORD: the conversation
     writeup.pdf               the artifact people share
-    .gitignore                written by Hardy: `.build/`, `.local/`
+    .gitignore                written by Hardy: `/.build/`, `/.local/` (anchored)
     .build/                   gitignored — oleans, tex aux
     .local/                   gitignored — provider session id, usage ledger,
                               usage_cursor, terminal input history
@@ -229,19 +229,37 @@ transcript is the same length or longer leaves the cursor arithmetically valid
 against a history that never produced it, and the provider thread resumes from
 the other branch's conversation.
 
-The ledger therefore stores a **transcript identity** beside the cursor — a
-digest of the transcript's first `cursor` bytes, the prefix the ledger actually
-accounts for. On open, the digest is recomputed and compared; a mismatch means
-divergence, and clears the provider thread and resets the ledger exactly as a
-short file does. The size test stays as the cheap first check, not as the whole
-test.
+So a **transcript identity** is stored — a length and a digest of the
+transcript's first that-many bytes. On open it is recomputed and compared; a
+mismatch means divergence, and clears the provider thread exactly as a short
+file does. The size test stays as the cheap first check, not as the whole test.
+
+**The identity is bound to the provider thread, not to the ledger cursor.** An
+earlier revision digested the prefix the ledger accounts for, which is not the
+same span and leaves a real gap: `_observed` appends the `result` and calls
+`_remember_thread` *before* the spend fold advances the cursor, so a crash in
+that window leaves a resumable thread whose last turn sits beyond the digested
+prefix. A later checkout that replaces only that tail while preserving the
+prefix would compare equal and resume with hidden branch context. The identity
+is therefore written with `provider_session`, covering the transcript as it
+stood when that thread was last recorded, and the ledger keeps its own cursor
+for its own purpose.
 
 ## Interfaces
 
-**Configuration.** `workspace` is replaced by `root` and `project`.
-`~/.hardy/config.toml` becomes the global config; if it is absent and the
-XDG/APPDATA file exists, that file is moved into place. `HARDY_CONFIG` continues
-to win over everything.
+**Configuration is two layers, not one.** `workspace` is replaced by `root` and
+`project`. `~/.hardy/config.toml` is the **global** layer; if it is absent and
+the XDG/APPDATA file exists, that file is moved into place.
+`<root>/.hardy/config.toml` is the **project** layer, and it is the file that
+names the active problem.
+
+`HARDY_CONFIG` selects the global file **only**. It cannot be allowed to win
+over everything as it does today (`config.py`): a user or wrapper pointing it at
+a custom settings file would otherwise suppress the committed active-project
+setting, and Hardy would silently fall through to `main` and open — and write —
+the wrong problem's record. The project layer is always read from the resolved
+root. Precedence is global file, then project file, then environment, then
+flags.
 
 **The move is a translation, not a copy.** `config.read_file` raises on any key
 outside `SETTINGS` (`config.py`), so relocating a file that still carries
@@ -296,12 +314,25 @@ scripted use. Declining is always safe, because Hardy's own resolution does not
 depend on it.
 
 Each problem is registered as **its own `lean_lib`, named for the slug**, never
-as a bare source root added to a shared one. Two problems both holding the
-natural default `lean/Main.lean` would otherwise put two modules named `Main`
-into one Lake build — ambiguous or invalid, and a direct contradiction of this
-design's own requirement that problems share no Lean namespace. Registration is
-refused rather than guessed if the host lakefile already defines a library of
-that name for a different directory.
+as a bare source root added to a shared one, and registration is refused rather
+than guessed if the host lakefile already defines a library of that name for a
+different directory.
+
+**A distinct Lake target is necessary and not sufficient**, which an earlier
+revision of this spec got wrong. A `lean_lib` name is a Lake target name; it
+does not rename the Lean modules underneath it. Two problems both holding the
+documented default `lean/Main.lean` (`README.md:177`, and this spec's own rule
+that the path *is* the module name) still expose two modules named `Main` to
+one Lake build, whatever their targets are called.
+
+So registration additionally **refuses when another registered problem in the
+same root already exposes a module of that name**, and says which problem holds
+it. The alternative — forcing every problem's sources under a slug-derived
+namespace directory — was rejected because it makes the module name a function
+of the directory the problem happens to sit in, so renaming a problem would
+rewrite every `import` in it. Refusing is honest and reversible; the user
+renames the file or declines registration. Hardy's own resolution order is
+unaffected either way, because it never shares a build root between problems.
 
 This does not change Hardy's own resolution order, which stays as described
 above: registration is for the user's toolchain and editor, not for Hardy's
@@ -374,6 +405,13 @@ problem.
   specifically.
 - Lakefile registration off a TTY declines without reading stdin, and never
   consumes a piped first message.
+- Registering a second problem that exposes a module name already exposed by a
+  registered problem is refused, and the message names the problem holding it.
+- The generated ignore rules are anchored: a legitimate `lean/.local/` or
+  `cas/.build/` inside authored work is **not** excluded, while the problem's
+  own `/.build/` and `/.local/` are.
+- `HARDY_CONFIG` pointed at a custom global file still loads the root's project
+  config, and the active problem is the one that config names.
 - Project selection under a non-TTY never reads stdin: it resolves to the
   active project, the only project, or `main`, and a piped first message is
   never consumed as a slug.
