@@ -101,7 +101,8 @@ def _staged_config(tmp_path, **overrides):
         'lean_project': lean_project,
         'lean_timeout': 30.0,
         'latex_command': ('pdflatex',),
-        'workspace': tmp_path / 'workspace',
+        'root': tmp_path,
+        'project': 'workspace',
         'runs_root': tmp_path / 'runs',
     }
     settings.update(overrides)

@@ -45,7 +45,7 @@ async def test_help_says_what_clear_does_not_do(ui, settings):
 async def test_status_reports_the_live_configuration(ui, settings):
     await handlers.handle_status(ui, "", State(config=settings, session=None))
     assert "claude-opus-5" in ui.text
-    assert str(settings.workspace) in ui.text
+    assert str(settings.layout.problem) in ui.text
     assert str(settings.path) in ui.text
 
 

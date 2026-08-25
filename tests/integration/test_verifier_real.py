@@ -22,7 +22,8 @@ def _hardy_config(**overrides):
         lean_project=None,
         lean_timeout=30.0,
         latex_command=('tectonic',),
-        workspace=Path('.') / '.hardy',
+        root=Path('.'),
+        project='main',
         limits=RunLimits(),
     )
     values.update(overrides)

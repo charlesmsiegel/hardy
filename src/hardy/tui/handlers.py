@@ -38,10 +38,10 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
     config = state.config
     ui.write("Session", style="normal")
     ui.write(f"  Model:        {config.model}")
-    ui.write(f"  Workspace:    {config.workspace}")
+    ui.write(f"  Workspace:    {config.layout.problem}")
     ui.write(f"  Lean project: {config.lean_project or 'current directory'}")
     ui.write(f"  Config file:  {config.config_path}")
-    ui.write(f"  Transcript:   {config.workspace / 'transcript.jsonl'}")
+    ui.write(f"  Transcript:   {config.layout.transcript}")
     # `getattr` because `/status` is safe in flight and the shell builds before
     # its session does -- there is a window where there is nothing to ask.
     spent = getattr(state.session, "usage", None)

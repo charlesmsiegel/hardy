@@ -90,7 +90,7 @@ def test_status_works_without_a_terminal(settings):
     itself and nowhere else in this path.
     """
     _, text, _ = run(settings, ["/status"])
-    assert str(settings.workspace) in text
+    assert str(settings.layout.problem) in text
     assert f"Model:        {settings.model}" in text
 
 

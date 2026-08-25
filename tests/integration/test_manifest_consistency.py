@@ -18,7 +18,8 @@ def _config(runs_root, limits=None):
         lean_project=None,
         lean_timeout=30.0,
         latex_command=('tectonic',),
-        workspace=runs_root / 'workspace',
+        root=runs_root,
+        project='workspace',
         runs_root=runs_root,
         limits=limits or _RunLimits(),
     )
