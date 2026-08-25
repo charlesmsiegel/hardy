@@ -139,6 +139,10 @@ class Layout:
     def shared_build(self) -> Path:
         return self.hardy_dir / BUILD_DIR / "lean"
 
+    @property
+    def input_history(self) -> Path:
+        return self.local / "input-history"
+
     def resolved_problem(self) -> Path:
         """The problem directory, proven to be inside the root.
 
@@ -168,10 +172,20 @@ class Layout:
         self.root.mkdir(parents=True, exist_ok=True)
         self.problem.mkdir(parents=True, exist_ok=True)
         self.resolved_problem()
+        root = self.root.resolve()
+        # `resolved_problem` proves the problem DIRECTORY is inside the root;
+        # it says nothing about what gets created beneath it. Each child is
+        # exactly as followable as `problem` itself was -- `sylow/.local ->
+        # ../../outside` would otherwise land `state.json`, the provider
+        # session id and the spend ledger, outside the root and outside the
+        # `/.local/` rule meant to keep it off a clone.
         for directory in (self.lean, self.tex, self.cas, self.local, self.hardy_dir):
-            directory.mkdir(parents=True, exist_ok=True)
-        _ensure_rules(self.problem / ".gitignore", PROBLEM_HEADER, PROBLEM_RULES)
-        _ensure_rules(self.hardy_dir / ".gitignore", TOOLING_HEADER, TOOLING_RULES)
+            _ensure_dir(directory, root)
+        # And the ignore files themselves are just as followable as any other
+        # file `ensure` touches: `sylow/.gitignore -> ../../target.sh` writes
+        # Hardy's rules onto whatever the symlink names the moment this runs.
+        _ensure_rules(self.problem / ".gitignore", PROBLEM_HEADER, PROBLEM_RULES, root=root)
+        _ensure_rules(self.hardy_dir / ".gitignore", TOOLING_HEADER, TOOLING_RULES, root=root)
 
     def unignore_tooling(self, root_ignore: Path) -> bool:
         """Drop a legacy rule excluding the whole tooling directory.
@@ -180,16 +194,27 @@ class Layout:
         will not descend into an excluded directory, so the `.gitignore` this
         layout writes *inside* `.hardy/` cannot make its config and shared Lean
         trackable while the parent rule stands. Only the exact whole-directory
-        forms are removed; anything more specific a user wrote is theirs.
+        forms are removed; anything more specific a user wrote is theirs. Both
+        the anchored (`.hardy/`, `/.hardy/`) and the `**/`-glob spellings are
+        covered, since either is a plausible way to have written "ignore this
+        directory wherever it is" by hand.
         """
         if not root_ignore.is_file():
             return False
-        legacy = {HARDY_DIR, f"{HARDY_DIR}/", f"/{HARDY_DIR}", f"/{HARDY_DIR}/"}
-        lines = root_ignore.read_text(encoding="utf-8").splitlines()
+        _refuse_if_outside(root_ignore, self.root.resolve())
+        legacy = {
+            HARDY_DIR,
+            f"{HARDY_DIR}/",
+            f"/{HARDY_DIR}",
+            f"/{HARDY_DIR}/",
+            f"**/{HARDY_DIR}",
+            f"**/{HARDY_DIR}/",
+        }
+        lines, terminator = _read_lines(root_ignore)
         kept = [line for line in lines if line.strip() not in legacy]
         if len(kept) == len(lines):
             return False
-        root_ignore.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        _write_lines(root_ignore, terminator.join(kept) + terminator)
         return True
 
 
@@ -209,7 +234,68 @@ TOOLING_HEADER = (
 TOOLING_RULES = ("/.build/",)
 
 
-def _ensure_rules(path: Path, header: str, rules: tuple[str, ...]) -> None:
+def _refuse_if_outside(path: Path, root: Path) -> Path:
+    """`path`, resolved, refusing to land outside `root`.
+
+    Checked before `ensure` reads or writes through ANY path built from the
+    slug, not only the problem directory itself: `resolved_problem` proves
+    that one directory is inside the root, but a file or directory beneath it
+    can be its own symlink. `sylow/.gitignore -> ../../target.sh` passes
+    every earlier check untouched, and writing through it lands Hardy's
+    ignore rules on `target.sh` instead -- point that at `~/.bashrc` and a
+    cloned repository gets Hardy to edit a user's shell config the moment a
+    chat session starts.
+    """
+    resolved = path.resolve()
+    if resolved != root and root not in resolved.parents:
+        raise LayoutError(f"{path} resolves to {resolved}, which is outside {root}")
+    return resolved
+
+
+def _ensure_dir(directory: Path, root: Path) -> None:
+    """Create `directory`, refusing to follow a symlink that leaves `root`.
+
+    Checked as a symlink *before* `mkdir` runs, not after: `mkdir(exist_ok=
+    True)` on a path that is already a symlink neither creates anything nor
+    raises (if the target exists) or raises the wrong thing entirely (if the
+    target is missing), so a post-hoc check alone would either miss the
+    escape or surface a confusing `FileExistsError` instead of `LayoutError`.
+    """
+    if directory.is_symlink():
+        _refuse_if_outside(directory, root)
+        return
+    directory.mkdir(parents=True, exist_ok=True)
+    _refuse_if_outside(directory, root)
+
+
+def _read_lines(path: Path) -> tuple[list[str], str]:
+    """The lines in `path`, and the line terminator already used there.
+
+    Read with `newline=""`, not `Path.read_text`'s default: universal-newline
+    mode silently translates every `\\r\\n` to `\\n` on the way in, so by the
+    time `.splitlines()` ran there would be nothing left to notice, and a
+    CRLF file would already read as LF before this function ever got a vote.
+    """
+    if not path.exists():
+        return [], "\n"
+    with path.open(encoding="utf-8", newline="") as handle:
+        raw = handle.read()
+    return raw.splitlines(), ("\r\n" if "\r\n" in raw else "\n")
+
+
+def _write_lines(path: Path, text: str) -> None:
+    """Write `text` to `path` without `write_text`'s default newline translation.
+
+    That default translates every `\\n` in `text` to `os.linesep` on Windows,
+    which would turn the `\\r\\n` this module builds explicitly into `\\r\\r\\n`
+    -- corrupting the very terminator `_read_lines` was just careful to
+    preserve.
+    """
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+
+
+def _ensure_rules(path: Path, header: str, rules: tuple[str, ...], *, root: Path) -> None:
     """Make sure `rules` are in `path`, leaving whatever else is there alone.
 
     Appending rather than writing once. A problem directory may already carry a
@@ -218,7 +304,8 @@ def _ensure_rules(path: Path, header: str, rules: tuple[str, ...]) -> None:
     input history, which holds text typed and never sent, sat as ordinary
     untracked files waiting to be committed.
     """
-    existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    _refuse_if_outside(path, root)
+    existing, terminator = _read_lines(path)
     missing = [rule for rule in rules if rule not in existing]
     if not missing:
         return
@@ -229,7 +316,7 @@ def _ensure_rules(path: Path, header: str, rules: tuple[str, ...]) -> None:
         lines.extend(header.rstrip("\n").splitlines())
     lines.extend(missing)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _write_lines(path, terminator.join(lines) + terminator)
 
 
 def global_dir() -> Path:
