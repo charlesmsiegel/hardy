@@ -83,6 +83,8 @@ def test_a_plain_slug_is_accepted():
         "",                  # nothing at all
         "   ",               # nothing at all, with whitespace
         ".hardy",            # collides with the tooling directory
+        ".git",              # would put the record inside the repository's git directory
+        ".anything",         # every dot-prefixed name, for the same reason
     ],
 )
 def test_a_slug_that_could_escape_or_collide_is_refused(bad: str):
@@ -165,8 +167,14 @@ def validate_slug(slug: str) -> str:
         raise LayoutError("a project slug may not be empty")
     if text in {".", ".."}:
         raise LayoutError(f"a project slug may not be {text!r}")
-    if text == HARDY_DIR:
-        raise LayoutError(f"{HARDY_DIR!r} is Hardy's own directory, not a project")
+    if text.startswith("."):
+        # Refuses `.hardy` and `.git` alike, and everything else beginning with
+        # a dot. `.git` was accepted before this: a committed project config
+        # naming it put `session.json` and `transcript.jsonl` inside the
+        # repository's own git directory. It also settles a mismatch --
+        # `existing_projects` skips dot-prefixed children, so such a project
+        # was nameable but never discoverable.
+        raise LayoutError(f"a project slug may not begin with a dot: {slug!r}")
     # Both separators, on every platform: a backslash is an ordinary character
     # on POSIX, so a value written on Windows must not become a one-component
     # name here that names two directories there.
@@ -2381,21 +2389,147 @@ def _ensure_rules(path: Path, header: str, rules: tuple[str, ...]) -> None:
 Run: `uv run --extra test pytest tests/test_layout.py -v`
 Expected: PASS, including the six earlier tests from Task 2 — `test_ensure_does_not_overwrite_an_edited_ignore_file` must still pass, because appending a missing rule is not overwriting an edit.
 
-- [ ] **Step 5: Run the whole suite**
+- [ ] **Step 5: Wire `ensure()` into the path that opens a project**
+
+Write the test first, in `tests/unit/test_chat_wiring.py`:
+
+```python
+def test_opening_a_project_creates_its_layout(tmp_path: Path):
+    """Otherwise every ignore rule this plan writes is inert.
+
+    `grep -rn "ensure()" src/` returned nothing before this test: the
+    directories and the anchored ignore rules existed only in unit tests, so a
+    real run left `.build/` and `.local/` as ordinary trackable files.
+    """
+    settings = configuration.load(tmp_path / "absent.toml", root=tmp_path, project="sylow")
+    cli.prepare_layout(settings)
+
+    problem = tmp_path / "sylow"
+    assert (problem / "lean").is_dir()
+    assert "/.local/" in (problem / ".gitignore").read_text(encoding="utf-8")
+```
+
+Then in `src/hardy/cli.py`, add the function and call it at the top of `_chat`, **before** `cas_tools.build_runtime` — the CAS runtime writes its log under `<slug>/cas/`, so the directories must exist first:
+
+```python
+def prepare_layout(config: configuration.Config) -> None:
+    """Make the project's directories and ignore rules exist before anything writes.
+
+    Called for its side effects at the start of every path that opens a
+    project. Without it `Layout.ensure` is reachable only from its own tests,
+    and a real run leaves the build tree and the machine-local state as
+    ordinary trackable files -- which is the whole thing this layout exists to
+    prevent.
+    """
+    config.layout.ensure()
+    config.layout.unignore_tooling(config.root / ".gitignore")
+```
+
+- [ ] **Step 6: Stop a legacy root ignore from silencing the tooling directory**
+
+Test, in `tests/test_layout.py`:
+
+```python
+def test_a_legacy_hardy_rule_is_removed_from_the_root_ignore(tmp_path: Path):
+    """Git does not traverse into an excluded directory.
+
+    Reproduced: with `.hardy/` in the root .gitignore, `git add -A` tracked
+    only .gitignore itself and `git check-ignore` reported `.hardy/config.toml`
+    excluded. Writing `.hardy/.gitignore` inside it changes nothing, so
+    repurposing `.hardy/` as committed tooling means the old rule must go.
+    """
+    root_ignore = tmp_path / ".gitignore"
+    root_ignore.write_text("*.log\n.hardy/\ndist/\n", encoding="utf-8")
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+
+    assert resolved.unignore_tooling(root_ignore) is True
+
+    kept = root_ignore.read_text(encoding="utf-8").splitlines()
+    assert ".hardy/" not in kept
+    assert "*.log" in kept, "the user's other rules are untouched"
+    assert "dist/" in kept
+
+
+def test_an_ignore_file_without_the_legacy_rule_is_left_alone(tmp_path: Path):
+    root_ignore = tmp_path / ".gitignore"
+    root_ignore.write_text("*.log\n", encoding="utf-8")
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    assert resolved.unignore_tooling(root_ignore) is False
+    assert root_ignore.read_text(encoding="utf-8") == "*.log\n"
+```
+
+Implementation, in `Layout`:
+
+```python
+    def unignore_tooling(self, root_ignore: Path) -> bool:
+        """Drop a legacy rule excluding the whole tooling directory.
+
+        `.hardy/` used to be scratch, and roots created then still say so. Git
+        will not descend into an excluded directory, so the `.gitignore` this
+        layout writes *inside* `.hardy/` cannot make its config and shared Lean
+        trackable while the parent rule stands. Only the exact whole-directory
+        forms are removed; anything more specific a user wrote is theirs.
+        """
+        if not root_ignore.is_file():
+            return False
+        legacy = {HARDY_DIR, f"{HARDY_DIR}/", f"/{HARDY_DIR}", f"/{HARDY_DIR}/"}
+        lines = root_ignore.read_text(encoding="utf-8").splitlines()
+        kept = [line for line in lines if line.strip() not in legacy]
+        if len(kept) == len(lines):
+            return False
+        root_ignore.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        return True
+```
+
+- [ ] **Step 7: Match a quoted key in the config migration**
+
+TOML permits a quoted key, which `tomllib` decodes as the ordinary setting but the line-based regex in `migrate_global` does not match. The migration would then delete the source and install a destination still carrying the retired key — and every later load rejects it as unknown, so Hardy will not start at all.
+
+Test, in `tests/test_config.py`:
+
+```python
+def test_a_quoted_retired_key_is_dropped_too(tmp_path: Path):
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('model = "x"\n"workspace" = ".hardy"\n', encoding="utf-8")
+    destination = tmp_path / ".hardy" / "config.toml"
+
+    config.migrate_global(legacy, destination)
+
+    assert config.read_file(destination)["model"] == "x"
+```
+
+In `config.py`, widen the pattern so an optionally-quoted key matches. Build it from `RETIRED_SETTINGS` as before, allowing an optional single or double quote on each side of the name before the `=`.
+
+- [ ] **Step 8: Fix this repository's own `.gitignore`**
+
+Replace the `.hardy/` block (the one whose comment calls it "Per-run state, never committed") with rules that are true of the new layout:
+
+```
+# A project Hardy creates in this checkout keeps its build tree and its
+# machine-local state out of git; its sources, writeup and record beside them
+# are versioned, and each project carries its own .gitignore saying so.
+.hardy/.build/
+*/.build/
+*/.local/
+```
+
+- [ ] **Step 9: Run the whole suite**
 
 Run: `uv run --extra test pytest -q`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add -A
-git commit -m "Check the path and not only the name, and never leave .local unignored"
+git commit -m "Check the path and not only the name, and make the rules actually run"
 ```
 
 ---
 
 ## Self-Review
+
 
 **Spec coverage.** Every section of the spec maps to a task: the layout and anchored ignores to Tasks 1–2; `~/.hardy/` and the translated config move to Task 3; two config layers, `HARDY_CONFIG` scoping, slug validation, non-TTY project selection and the `--workspace` removal to Task 4; the `.local/` split to Task 5; the transcript identity bound to the thread to Task 6; the deleted migration to Task 7; relative CAS references to Task 8; shared libraries and shadow reporting to Task 9; lakefile registration with both refusals to Tasks 10–11; input history and `/status` to Task 12; installers, `.gitignore` and prose to Task 13.
 
