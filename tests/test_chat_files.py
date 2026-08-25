@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
+from hardy import chat as chat_module
+from hardy.cas_export import ExportReport
 from test_chat import FakeChatRuntime, call, session
 from workspace_helpers import results
 
@@ -211,3 +214,70 @@ def test_the_root_document_cannot_be_deleted(tmp_path: Path):
     chat.send("Delete the writeup.")
     assert results(tmp_path)[-1]["ok"] is False
     assert (tmp_path / "tex" / "writeup.tex").exists()
+
+
+def test_relative_reference_relativizes_a_path_inside_the_problem_and_leaves_others_alone(tmp_path: Path):
+    """`_relative_reference` in isolation, without a CAS kernel behind it.
+
+    A path inside the problem becomes a POSIX-relative string regardless of
+    how it was spelled going in (a symlink hop, `..` segments); a path outside
+    the problem is handed back unchanged rather than forced into a `../..`
+    relative path that would be wrong the moment the record moved with the
+    project and the outside path did not.
+    """
+    chat = session(tmp_path, FakeChatRuntime([]))
+    inside = tmp_path / "cas" / "sessions" / "one.py"
+    inside.parent.mkdir(parents=True)
+    inside.write_text("# cell\n", encoding="utf-8")
+
+    assert chat._relative_reference(str(inside)) == "cas/sessions/one.py"
+
+    outside = tmp_path.parent / "elsewhere.py"
+    assert chat._relative_reference(str(outside)) == str(outside)
+
+
+def test_cas_export_stores_paths_relative_to_the_problem(tmp_path: Path, monkeypatch):
+    """What lands in `session.json` for `cas_export`, without a real CAS kernel.
+
+    No test in this repository builds a CAS-enabled session: the shared
+    `session()` helper has no `cas=` parameter and there is no
+    `fake_cas_runtime`. Building that scaffolding here would be a large
+    detour from a path-storage change, so instead `export_session` is
+    monkeypatched to return a real `ExportReport` -- built with every field
+    named, so this test breaks if those field names change -- pointing at
+    real files under the problem's `cas/` directory, and `_cas_tool` is
+    dispatched directly, exactly as `_dispatch` would route the model's call.
+    """
+    chat = session(tmp_path, FakeChatRuntime([]))
+    cas_dir = chat.workspace / "cas"
+    cas_dir.mkdir(exist_ok=True)
+    script_path = cas_dir / "session.py"
+    notebook_path = cas_dir / "session.ipynb"
+    manifest_path = cas_dir / "manifest.json"
+    script_path.write_text("# exported cell\n", encoding="utf-8")
+    notebook_path.write_text("{}", encoding="utf-8")
+    manifest_path.write_text("{}", encoding="utf-8")
+    stub_report = ExportReport(
+        script_path=str(script_path),
+        notebook_path=str(notebook_path),
+        manifest_path=str(manifest_path),
+        backend="fake",
+        verified=1,
+    )
+    monkeypatch.setattr(chat_module, "export_session", lambda *_args, **_kwargs: stub_report)
+    # `_cas_tool` only needs `self.cas.session` to hand to the (monkeypatched)
+    # `export_session`; a real CAS kernel is not part of what this test checks.
+    chat.cas = SimpleNamespace(session=object())
+
+    result = chat._cas_tool("cas_export", {})
+    assert result.ok
+
+    record = json.loads((tmp_path / "session.json").read_text(encoding="utf-8"))
+    stored = record["cas_export"]
+    for key in ("script", "notebook"):
+        reference = stored[key]
+        assert not Path(reference).is_absolute(), reference
+        assert reference.startswith("cas/"), reference
+        assert (tmp_path / reference).resolve().exists()
+    assert (tmp_path / stored["script"]).resolve() == script_path.resolve()
+    assert (tmp_path / stored["notebook"]).resolve() == notebook_path.resolve()
