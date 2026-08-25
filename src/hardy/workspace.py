@@ -178,7 +178,7 @@ def _raw_string_opener(source: str, index: int) -> int | None:
     return hashes
 
 
-def strip_comments(source: str) -> str:
+def strip_comments(source: str, *, keep_strings: bool = False) -> str:
     """`source` with its comments blanked out, line structure preserved.
 
     One pass serves both the import scan and the declaration scan, because
@@ -197,6 +197,14 @@ def strip_comments(source: str) -> str:
     reported as a declaration. It is not one, and a caller that has to *name*
     every declaration -- the axiom audit does -- would ask Lean about something
     that does not exist and refuse the file forever.
+
+    `keep_strings` copies literals through instead, for the caller that has to
+    *compare* two pieces of Lean rather than scan one: with strings blanked,
+    `"a" = "a"` and `"b" = "b"` are the same run of spaces, so a writeup could
+    quote a proposition about different values and pass for quoting this one.
+    That caller (`statements`) never scans with it -- it finds declarations on
+    the blanked text and only reads their extent with strings intact, so a
+    `theorem` inside a string still cannot invent a declaration.
     """
     out = list(source)
     index = 0
@@ -232,6 +240,11 @@ def strip_comments(source: str) -> str:
                 index = closing + 1
                 continue
         raw = _raw_string_opener(source, index)
+        if raw is not None and keep_strings:
+            closer = '"' + "#" * raw
+            found = source.find(closer, index + 1 + raw + 1)
+            index = length if found == -1 else found + len(closer)
+            continue
         if raw is not None:
             # `r"..."`, `r#"..."#`, `r##"..."##`. A backslash is an ordinary
             # character here, and the literal ends only at a quote followed by
@@ -249,6 +262,17 @@ def strip_comments(source: str) -> str:
                 if index + offset < length:
                     out[index + offset] = " "
             index = min(index + len(closer), length)
+            continue
+        if character == '"' and keep_strings:
+            index += 1
+            while index < length:
+                if source[index] == "\\":
+                    index += 2
+                    continue
+                if source[index] == '"':
+                    index += 1
+                    break
+                index += 1
             continue
         if character == '"':
             out[index] = " "
@@ -478,6 +502,9 @@ def _scan(text: str) -> list[tuple[re.Match[str], tuple[str, ...]]]:
 CLOSERS = {"(": ")", "[": "]", "{": "}", "⟨": "⟩"}
 OPENERS = {closer: opener for opener, closer in CLOSERS.items()}
 PROOF = ":="
+# The binders a proposition may carry that own a `:=` of their own. Their
+# assignment is part of the statement, not the start of the proof.
+BINDERS = frozenset({"let", "have", "suffices"})
 
 
 def statements(source: str) -> dict[str, str]:
@@ -499,7 +526,14 @@ def statements(source: str) -> dict[str, str]:
     found: dict[str, str] = {}
     for position, (match, prefix) in enumerate(scanned):
         bound = scanned[position + 1][0].start() if position + 1 < len(scanned) else len(text)
-        head = text[match.start(2) : _statement_end(text, match.end(), bound)]
+        start, end = match.start(2), _statement_end(text, match.end(), bound)
+        # Found on the blanked text, read off the original. `strip_comments`
+        # preserves every position, so the extent a scan established over text
+        # that cannot lie about declarations can be sliced out of the source
+        # that still has its string literals -- and a proposition about `"a"`
+        # stays a proposition about `"a"` rather than about two spaces. Its own
+        # comments still go, with the strings kept this time.
+        head = strip_comments(source[start:end], keep_strings=True)
         found[declared_name(match.group(3), prefix)] = " ".join(head.split())
     return found
 
@@ -511,25 +545,48 @@ def _statement_end(text: str, start: int, bound: int) -> int:
     branch, or nothing at all because the file is mid-edit -- has no `:=` to
     find, and stopping at the next declaration keeps the statement bounded
     rather than swallowing the rest of the file.
+
+    Not every top-level `:=` is the proof. `theorem t : let n := 1; n = 1 :=
+    by rfl` is an ordinary Lean statement whose *proposition* contains one, and
+    stopping there recorded the statement as `theorem t : let n` -- leaving the
+    rest of the proposition outside what a writeup has to quote, which is the
+    one thing this extent is for. So each binder that owns a `:=` consumes it,
+    and the first one left over opens the proof.
     """
     depth = 0
+    binders = 0
     index = start
     while index < bound:
         character = text[index]
-        if character == '"':
-            index += 1
-            while index < bound and text[index] != '"':
-                index += 2 if text[index] == "\\" else 1
-            index += 1
-            continue
         if character in CLOSERS:
             depth += 1
         elif character in OPENERS:
             depth = max(depth - 1, 0)
         elif depth == 0 and text.startswith(PROOF, index):
-            return index
+            if not binders:
+                return index
+            binders -= 1
+            index += len(PROOF)
+            continue
+        elif depth == 0 and _word_at(text, index, BINDERS):
+            binders += 1
         index += 1
     return bound
+
+
+def _word_at(text: str, index: int, words: Collection[str]) -> bool:
+    """Whether one of `words` begins at `index` as a whole token.
+
+    `let` in `letter` is not a binder, and neither is the one in `x.let`.
+    """
+    if index and (text[index - 1].isalnum() or text[index - 1] in "_'.«"):
+        return False
+    for word in words:
+        if text.startswith(word, index):
+            after = index + len(word)
+            if after >= len(text) or not (text[after].isalnum() or text[after] in "_'!?"):
+                return True
+    return False
 
 
 def name_aliases(name: str) -> tuple[str, ...]:

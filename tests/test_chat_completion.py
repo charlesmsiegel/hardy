@@ -264,3 +264,85 @@ def test_a_save_says_what_the_work_still_owes(tmp_path: Path):
     assert saved["ok"] is True
     assert "Not reportable yet" in saved["output"]
     assert "hardyOne" in saved["output"]
+
+
+def test_a_claim_over_an_empty_workspace_is_contradicted(tmp_path: Path):
+    """No tool call, no artifact, and a reply that says it is proved.
+
+    There are no obligations to list, because there is nothing to owe them --
+    which is exactly what has to be said, since silence would read as assent.
+    """
+    runtime = FakeChatRuntime([{"role": "assistant", "content": "Proved it. Sylow follows."}])
+    chat = session(tmp_path, runtime)
+    notices = [event for event in chat.stream("Prove Sylow.") if event.kind == "notice"]
+    assert len(notices) == 1
+    assert "no theorem is saved" in notices[0].text
+    assert "rests on the conversation alone" in notices[0].text
+
+
+def test_a_lemma_only_workspace_is_still_not_reportable(tmp_path: Path):
+    runtime = FakeChatRuntime([
+        call("save_lean", {"source": LEMMA}),
+        {"role": "assistant", "content": "Done."},
+    ])
+    chat = session(tmp_path, runtime)
+    notices = [event for event in chat.stream("Prove it.") if event.kind == "notice"]
+    assert "no theorem is saved" in notices[0].text
+
+
+def test_a_file_edited_behind_hardys_back_cannot_be_reported(tmp_path: Path):
+    """Everything else here reads the source tree, which an edit on disk
+    satisfies. The audit is a fact about the build the save established, and it
+    expires when anything beneath the module moves -- so the strongest claim
+    Hardy makes is the one place that may not be inferred from text."""
+    runtime = FakeChatRuntime([
+        call("save_lean", {"source": THEOREM}),
+        RECORD,
+        call("save_latex", {"source": CARRIED}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Prove and write up.")
+    saved = tmp_path / "lean" / "Main.lean"
+    # The statement is untouched, so only the audit can object.
+    saved.write_text(saved.read_text() + "-- edited on disk\n", encoding="utf-8")
+    refusal = chat._tool("report_result", {"theorems": ["hardyOne"], "summary": "True holds."})
+    assert refusal.ok is False
+    assert "no longer established" in refusal.output
+
+
+def test_a_workspace_from_before_the_audit_cannot_be_reported(tmp_path: Path):
+    runtime = FakeChatRuntime([
+        call("save_lean", {"source": THEOREM}),
+        RECORD,
+        call("save_latex", {"source": CARRIED}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Prove and write up.")
+    chat.state.pop("audit")
+    refusal = chat._tool("report_result", {"theorems": ["hardyOne"], "summary": "True holds."})
+    assert refusal.ok is False
+    assert "never been audited" in refusal.output
+
+
+def test_two_modules_sharing_a_theorem_name_owe_a_namespace(tmp_path: Path):
+    """One name cannot stand for both in the registry, the label, or the
+    statement the writeup quotes -- and the second save slips past the ratchet
+    precisely because the name is already there."""
+    first = "import Mathlib\ntheorem result : True := by exact True.intro\n"
+    second = "import Mathlib\ntheorem result : True ∧ True := by exact True.intro\n"
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "A.lean", "source": first}),
+        call("record_name", {"formal_name": "result", "latex_name": "thm:one", "description": "One."}),
+        call("save_latex", {"source": paper("One.\\label{thm:one}\n" + quoted("theorem result : True"))}),
+        call("save_lean", {"path": "B.lean", "source": second}),
+        call("report_result", {"theorems": ["result"], "summary": "True holds."}),
+        {"role": "assistant", "content": "Refused."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Prove the same name twice.")
+    refusal = results(tmp_path, "report_result")[-1]
+    assert refusal["ok"] is False
+    assert "each declare a theorem called `result`" in refusal["output"]
+    assert "namespace" in refusal["output"]

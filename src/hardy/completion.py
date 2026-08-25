@@ -30,13 +30,17 @@ from .workspace import COMMAND, strip_comments
 # Where Lean may be quoted so that a reader sees what Lean saw. Outside one of
 # these TeX is free to eat an underscore, break a caret, or swallow a brace,
 # and a statement a human "checked" against a mangled copy was not checked.
-VERBATIM = re.compile(
-    r"\\begin\{(verbatim\*?|Verbatim\*?|lstlisting|minted|alltt|semiverbatim)\}"
-    r"((?:\[[^\]]*\]|\{[^}]*\})*)(.*?)\\end\{\1\}",
-    re.DOTALL,
+ENVIRONMENTS = frozenset(
+    {"verbatim", "verbatim*", "Verbatim", "Verbatim*", "lstlisting", "minted", "alltt", "semiverbatim"}
 )
+# An environment opening, with whatever optional arguments it carries:
+# `\begin{Verbatim}[fontsize=\small]`, `\begin{minted}{lean}`.
+OPENING = re.compile(r"\\begin\{([A-Za-z*]+)\}((?:\[[^\]]*\]|\{[^}]*\})*)")
 # `\verb|...|`, `\lstinline{...}`: one delimiter, whatever character it is.
-INLINE = re.compile(r"\\(?:verb|lstinline)\*?(?:\[[^\]]*\])?(.)(.*?)\1", re.DOTALL)
+INLINE = re.compile(r"\\(?:verb|lstinline)\*?(?:\[[^\]]*\])?(.)(.*?)\1")
+# TeX escapes, undone, so prose written for a compiler can be compared with the
+# plain sentence a human approved.
+ESCAPED = re.compile(r"\\([%$&#_{}])")
 # The command that opens an appendix. Bounded so `\appendixtitle` does not
 # answer for it.
 APPENDIX = re.compile(r"\\appendix(?![A-Za-z])")
@@ -99,6 +103,60 @@ def reachable(tex: Mapping[str, str]) -> dict[str, str]:
     return found
 
 
+def verbatim_blocks(source: str) -> list[str]:
+    r"""What one TeX file actually displays verbatim, block by block.
+
+    Scanned line by line rather than matched with one regex, because the two
+    halves of this read TeX in opposite directions and only a scanner can do
+    both. *Outside* an environment a `%` starts a comment, so
+    `% egin{verbatim} theorem t : True \end{verbatim}` displays nothing at
+    all -- and a regex over the raw source found that statement and released a
+    report on a document whose reader never saw a line of Lean. *Inside* one a
+    `%` is an ordinary character, and Lean writes `n % 2 = 0`, so the comments
+    cannot simply be stripped first either.
+
+    This is the same rule the label gate already lived by, arrived at the same
+    way: what LaTeX would put in front of a reader, not what the source
+    contains somewhere.
+    """
+    blocks: list[str] = []
+    pending: list[str] | None = None
+    closing = ""
+    for raw in source.splitlines():
+        line = raw
+        while True:
+            if pending is not None:
+                found = line.find(closing)
+                if found < 0:
+                    pending.append(line)
+                    break
+                pending.append(line[:found])
+                blocks.append("\n".join(pending))
+                pending = None
+                line = line[found + len(closing) :]
+                continue
+            # A comment truncates the line, and `uncommented` only ever cuts,
+            # so an offset into what is left is an offset into the raw line --
+            # which is what lets the content after an opening be taken from the
+            # raw line, where a `%` is the character Lean wrote.
+            visible = uncommented(line)
+            blocks.extend(match.group(2) for match in INLINE.finditer(visible))
+            opening = next(
+                (
+                    match
+                    for match in OPENING.finditer(visible)
+                    if match.group(1) in ENVIRONMENTS
+                ),
+                None,
+            )
+            if opening is None:
+                break
+            pending = []
+            closing = f"\\end{{{opening.group(1)}}}"
+            line = line[opening.end() :]
+    return blocks
+
+
 def quoted_lean(tex: Mapping[str, str]) -> tuple[str, ...]:
     """Every scrap of Lean the writeup quotes verbatim, one block at a time.
 
@@ -108,14 +166,14 @@ def quoted_lean(tex: Mapping[str, str]) -> tuple[str, ...]:
 
     Lean comments are dropped, on both sides of that comparison, so a paper may
     annotate the listing it shows without the annotation being read as part of
-    the statement.
+    the statement. String literals are kept, on both sides for the same reason:
+    blanked, `"a" = "a"` and `"b" = "b"` are the same run of spaces.
     """
-    blocks: list[str] = []
-    for source in tex.values():
-        for match in VERBATIM.finditer(source):
-            blocks.append(normalise(strip_comments(match.group(3))))
-        for match in INLINE.finditer(source):
-            blocks.append(normalise(strip_comments(match.group(2))))
+    blocks = [
+        normalise(strip_comments(block, keep_strings=True))
+        for source in tex.values()
+        for block in verbatim_blocks(source)
+    ]
     return tuple(block for block in blocks if block)
 
 
@@ -143,12 +201,15 @@ def quotes(statement: str, blocks: Sequence[str]) -> bool:
 
 
 def prose(tex: Mapping[str, str]) -> str:
-    """The whole writeup as TeX would read it, normalised.
+    """The whole writeup as TeX would read it, normalised and unescaped.
 
-    Only ever used to tell "absent" from "present but outside a verbatim
-    block". The second is a different mistake and deserves a different answer.
+    Two jobs: telling "absent" from "present but outside a verbatim block" --
+    a different mistake, deserving a different answer -- and finding the plain
+    sentence a human approved in a document that had to escape it to compile.
     """
-    return normalise("\n".join(uncommented(source) for source in tex.values()))
+    return ESCAPED.sub(
+        r"\1", normalise("\n".join(uncommented(source) for source in tex.values()))
+    )
 
 
 def has_appendix(tex: Mapping[str, str]) -> bool:
@@ -234,7 +295,7 @@ def outstanding(
                     _statement_detail(statement, written),
                 )
             )
-    owed.extend(_assumption_obligations(assumptions, used, labels, quoted, document))
+    owed.extend(_assumption_obligations(assumptions, used, labels, quoted, written, document))
     return tuple(sorted(owed, key=lambda item: (KINDS.index(item.kind), item.subject)))
 
 
@@ -257,6 +318,7 @@ def _assumption_obligations(
     used: Collection[str],
     labels: Collection[str],
     quoted: Sequence[str],
+    written: str,
     tex: Mapping[str, str],
 ) -> list[Obligation]:
     r"""What the appendix of unproven assumptions still owes.
@@ -301,8 +363,27 @@ def _assumption_obligations(
                 Obligation(
                     "assumption",
                     name,
-                    f"the appendix creates no \\label{{{latex_name}}} for it, so the "
-                    "informal statement of what was assumed is missing",
+                    f"the appendix creates no \\label{{{latex_name}}}, so nothing in the "
+                    "document is identified as the statement of this assumption",
+                )
+            )
+        # Trailing punctuation is dropped from what is searched for, so an
+        # appendix may write "Sylow's first theorem, assumed here" for an
+        # approval that ended in a full stop. The wording still has to be the
+        # wording a human approved; only the sentence it sits in is free.
+        informal = normalise(str(item.get("informal_statement") or "")).rstrip(" .,;:")
+        if informal and informal not in written:
+            # The label alone was enough here once, which made an empty
+            # `\label{asm:x}` a complete disclosure: the reader was told that
+            # *something* was assumed and never what. The Lean line above says
+            # what Lean was told; this says what a human approved, and the
+            # whole reason to write both down is that the two can differ.
+            owed.append(
+                Obligation(
+                    "assumption",
+                    name,
+                    "the appendix does not state, in ordinary mathematics, what was "
+                    f"assumed. Write it out: {informal}",
                 )
             )
     return owed

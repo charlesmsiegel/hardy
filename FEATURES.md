@@ -39,8 +39,13 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   a way around it: at the end of every turn Hardy draws what the workspace still owes
   under its own name, computed from the two trees rather than from anything the model
   said, so a turn that ends "proved it" over an empty workspace is contradicted where
-  the user can see it. `/status` answers the same question on demand, and
-  `read_workspace` reports the same list to the model.
+  the user can see it — that case has no obligations to list, so it is named directly:
+  no theorem is saved, and what was said rests on the conversation alone. `/status`
+  answers the same question on demand, and `read_workspace` reports the same list to
+  the model. A report also requires a *current* audit for each theorem it claims: a
+  verdict expires with the build signature it was established under, so a file edited
+  on disk behind Hardy's back, or a workspace reopened from before the audit existed,
+  must be saved again before anything in it can be reported.
 - **Now (implemented):** a naming registry links Lean declarations to LaTeX labels
   for later translation review; this link is not itself a faithfulness grade.
 - **Now (implemented):** introducing an axiom pauses for human approval and records
