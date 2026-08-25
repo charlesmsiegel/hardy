@@ -25,7 +25,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from .latex import INCLUSION, ROOT_DOCUMENT, uncommented
-from .workspace import COMMAND, strip_comments
+from .workspace import COMMAND, normalise_lean, strip_comments
 
 # Where Lean may be quoted so that a reader sees what Lean saw. Outside one of
 # these TeX is free to eat an underscore, break a caret, or swallow a brace,
@@ -78,7 +78,7 @@ def normalise(text: str) -> str:
     return " ".join(text.split())
 
 
-def reachable(tex: Mapping[str, str]) -> dict[str, str]:
+def reachable(tex: Mapping[str, str]) -> dict[str, Displayed]:
     r"""The writeup as a reader receives it: the root, and what it pulls in.
 
     A fragment nothing `\input`s is not in the document, however carefully it
@@ -87,23 +87,41 @@ def reachable(tex: Mapping[str, str]) -> dict[str, str]:
     sees, which is the same as not quoting it.
 
     Followed transitively from `writeup.tex`, because a section may pull in its
-    own subsections, and by the same spellings TeX itself accepts.
+    own subsections, and by the same spellings TeX itself accepts -- and only
+    through the inclusions TeX *executes*: an `\input{hidden}` displayed inside
+    a listing is an example of an inclusion, not one.
     """
     if ROOT_DOCUMENT not in tex:
         return {}
-    found = {ROOT_DOCUMENT: tex[ROOT_DOCUMENT]}
+    found = {ROOT_DOCUMENT: displayed(tex[ROOT_DOCUMENT])}
     pending = [ROOT_DOCUMENT]
     while pending:
-        for name in INCLUSION.findall(uncommented(tex[pending.pop()])):
+        for name in INCLUSION.findall(found[pending.pop()].executed):
             cleaned = name.strip().replace("\\", "/")
             for candidate in (cleaned, f"{cleaned}.tex"):
                 if candidate in tex and candidate not in found:
-                    found[candidate] = tex[candidate]
+                    found[candidate] = displayed(tex[candidate])
                     pending.append(candidate)
     return found
 
 
-def verbatim_blocks(source: str) -> list[str]:
+@dataclass(frozen=True)
+class Displayed:
+    r"""One TeX file, split the way LaTeX reads it.
+
+    `executed` is what TeX runs -- outside every verbatim environment, with
+    comments dropped. `quoted` is what it puts in front of a reader unchanged.
+    Every question here is one or the other, and answering either with the raw
+    file has been wrong each time it was tried: an `\input` *shown* in a
+    listing pulls in nothing, an `\appendix` shown in one opens nothing, and
+    a Lean statement in a comment is displayed to nobody.
+    """
+
+    executed: str
+    quoted: tuple[str, ...]
+
+
+def displayed(source: str) -> Displayed:
     r"""What one TeX file actually displays verbatim, block by block.
 
     Scanned line by line rather than matched with one regex, because the two
@@ -120,6 +138,7 @@ def verbatim_blocks(source: str) -> list[str]:
     contains somewhere.
     """
     blocks: list[str] = []
+    ran: list[str] = []
     pending: list[str] | None = None
     closing = ""
     for raw in source.splitlines():
@@ -150,14 +169,19 @@ def verbatim_blocks(source: str) -> list[str]:
                 None,
             )
             if opening is None:
+                # An inline `\verb` is displayed rather than run, but what is
+                # left of the line around it is TeX like any other, and cutting
+                # it out would break the sentence it sits in for no gain.
+                ran.append(visible)
                 break
+            ran.append(visible[: opening.start()])
             pending = []
             closing = f"\\end{{{opening.group(1)}}}"
             line = line[opening.end() :]
-    return blocks
+    return Displayed("\n".join(ran), tuple(blocks))
 
 
-def quoted_lean(tex: Mapping[str, str]) -> tuple[str, ...]:
+def quoted_lean(tex: Mapping[str, Displayed]) -> tuple[str, ...]:
     """Every scrap of Lean the writeup quotes verbatim, one block at a time.
 
     Kept apart rather than run together, because the comparison that follows
@@ -170,9 +194,9 @@ def quoted_lean(tex: Mapping[str, str]) -> tuple[str, ...]:
     blanked, `"a" = "a"` and `"b" = "b"` are the same run of spaces.
     """
     blocks = [
-        normalise(strip_comments(block, keep_strings=True))
-        for source in tex.values()
-        for block in verbatim_blocks(source)
+        normalise_lean(strip_comments(block, keep_strings=True))
+        for page in tex.values()
+        for block in page.quoted
     ]
     return tuple(block for block in blocks if block)
 
@@ -193,27 +217,35 @@ def quotes(statement: str, blocks: Sequence[str]) -> bool:
             found = block.find(statement, start)
             if found < 0:
                 break
+            start = found + 1
+            # Both ends, and for the same reason. `FAKEtheorem t : True` ends
+            # exactly where `theorem t : True` does, so a trailing check alone
+            # accepted a listing whose declaration is a different token.
+            if found and (block[found - 1].isalnum() or block[found - 1] in "_'.«"):
+                continue
             rest = block[found + len(statement) :].lstrip()
             if not rest or rest.startswith(PROOF) or COMMAND.match(rest):
                 return True
-            start = found + 1
     return False
 
 
-def prose(tex: Mapping[str, str]) -> str:
-    """The whole writeup as TeX would read it, normalised and unescaped.
+def prose(tex: Mapping[str, Displayed]) -> str:
+    """What the writeup *says*, as TeX would read it: normalised, unescaped.
 
     Two jobs: telling "absent" from "present but outside a verbatim block" --
     a different mistake, deserving a different answer -- and finding the plain
     sentence a human approved in a document that had to escape it to compile.
+
+    Listings are not prose and are left out of it. With them in, an appendix
+    quoting `axiom X : True` answered for an approval whose informal statement
+    was "True": the Lean quotation stood in for the explanation it exists to be
+    checked against.
     """
-    return ESCAPED.sub(
-        r"\1", normalise("\n".join(uncommented(source) for source in tex.values()))
-    )
+    return ESCAPED.sub(r"\1", normalise("\n".join(page.executed for page in tex.values())))
 
 
-def has_appendix(tex: Mapping[str, str]) -> bool:
-    return any(APPENDIX.search(uncommented(source)) for source in tex.values())
+def has_appendix(tex: Mapping[str, Displayed]) -> bool:
+    return any(APPENDIX.search(page.executed) for page in tex.values())
 
 
 def covering(name: str, registry: Sequence[Mapping[str, str]]) -> Mapping[str, str] | None:
@@ -255,6 +287,7 @@ def outstanding(
     document = reachable(tex)
     quoted = quoted_lean(document)
     written = prose(document)
+    statements = {name: normalise_lean(text) for name, text in theorems.items()}
     owed: list[Obligation] = []
     # A leaf name is only allowed to stand for a qualified declaration while
     # exactly one declaration carries it. `A.result` and `B.result` both answer
@@ -286,7 +319,7 @@ def outstanding(
                     f"the writeup creates no \\label{{{latex_name}}}; save_latex a section that does",
                 )
             )
-        statement = normalise(theorems[name])
+        statement = statements[name]
         if not quotes(statement, quoted):
             owed.append(
                 Obligation(

@@ -309,6 +309,55 @@ def strip_comments(source: str, *, keep_strings: bool = False) -> str:
     return "".join(out)
 
 
+def normalise_lean(text: str) -> str:
+    """Lean with its whitespace collapsed -- outside string literals.
+
+    Two pieces of Lean that differ only in how they were wrapped are the same
+    Lean, which is what lets a paper break a long statement across lines. Two
+    that differ *inside* a literal are not: `"a  b"` and `"a b"` are different
+    strings, and collapsing both to the second let a writeup quote a
+    proposition about one and match a theorem about the other -- the same
+    mistake as blanking the literal, one layer further in.
+
+    Raw strings are copied whole for the same reason, and because a backslash
+    in one is an ordinary character.
+    """
+    out: list[str] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        character = text[index]
+        raw = _raw_string_opener(text, index)
+        if raw is not None:
+            closer = '"' + "#" * raw
+            found = text.find(closer, index + 1 + raw + 1)
+            end = length if found == -1 else found + len(closer)
+            out.append(text[index:end])
+            index = end
+            continue
+        if character == '"':
+            start = index
+            index += 1
+            while index < length:
+                if text[index] == "\\":
+                    index += 2
+                    continue
+                if text[index] == '"':
+                    index += 1
+                    break
+                index += 1
+            out.append(text[start:index])
+            continue
+        if character.isspace():
+            if out and out[-1] != " ":
+                out.append(" ")
+            index += 1
+            continue
+        out.append(character)
+        index += 1
+    return "".join(out).strip()
+
+
 ASSUMPTION = re.compile(
     rf"^{WRAPPER}(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|scoped|local)\s+)*"
     rf"(?:axiom|constant)\s+({QUALIFIED_NAME})\s*:(.*)$"
@@ -534,7 +583,7 @@ def statements(source: str) -> dict[str, str]:
         # stays a proposition about `"a"` rather than about two spaces. Its own
         # comments still go, with the strings kept this time.
         head = strip_comments(source[start:end], keep_strings=True)
-        found[declared_name(match.group(3), prefix)] = " ".join(head.split())
+        found[declared_name(match.group(3), prefix)] = normalise_lean(head)
     return found
 
 

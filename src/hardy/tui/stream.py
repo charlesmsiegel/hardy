@@ -137,6 +137,9 @@ class TurnPainter:
         self._active: dict[str, tuple[str, float]] = {}
         self._reply = ""
         self._spoke = False
+        # Whether the whole reply has already been drawn for a backend that
+        # never streamed it, so `finish` does not draw it a second time.
+        self._drawn = False
 
     @property
     def running(self) -> str:
@@ -173,6 +176,14 @@ class TurnPainter:
             # last paragraph as though the model had written it.
             lines = self._writer.flush()
             self._writer = LineWriter(self._width)
+            # And a backend that reports no partial text has said nothing yet:
+            # its whole reply is still held for `finish`. Drawn here instead,
+            # because a line contradicting a claim has to come *after* the
+            # claim -- printed before it, it reads as a preamble to a result
+            # the reader has not seen yet.
+            if not self._spoke and self._reply and not self._drawn:
+                lines = lines + transcript.hardy_lines(self._reply, self._width)
+                self._drawn = True
             return lines + [notice(line) for line in event.text.splitlines()]
         return []
 
@@ -190,7 +201,7 @@ class TurnPainter:
     def finish(self) -> list[str]:
         lines = self._writer.flush()
         self._active.clear()
-        if self._spoke:
+        if self._spoke or self._drawn:
             return lines
         # Nothing was streamed. A backend that does not report partial text is
         # allowed to exist -- the plain path has to keep working, streaming or

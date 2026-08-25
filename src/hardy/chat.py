@@ -1017,6 +1017,14 @@ class MathematicsSession:
         )
         # Ahead of the rest: while two modules answer to one name, every
         # obligation below is about whichever of them was read last.
+        #
+        # The audit gaps are here rather than only inside `report_result`
+        # because all three surfaces have to agree. With them counted only at
+        # report time, a workspace whose Lean was edited on disk refused the
+        # report while `/status` and the end-of-turn notice said nothing was
+        # outstanding -- so the claim the notice exists to contradict went
+        # uncontradicted, and only a model that tried to report properly ever
+        # found out.
         shared = [
             completion.Obligation(
                 "lean",
@@ -1027,7 +1035,16 @@ class MathematicsSession:
             )
             for name, modules in sorted(self._shared_names().items())
         ]
-        return (*shared, *owed)
+        return (*shared, *self._audit_gaps(self._saved_theorems()), *self._stale_writeup(), *owed)
+
+    def has_theorems(self) -> bool:
+        """Whether anything here could be reported at all.
+
+        No obligations means two different things -- everything is written up,
+        or there is nothing to write up -- and a reader of `/status` must not
+        be shown the first when the second is true.
+        """
+        return bool(self._saved_theorems())
 
     def obligations(self) -> tuple[completion.Obligation, ...]:
         """What the workspace owes, for the human rather than the model.
@@ -1113,6 +1130,10 @@ class MathematicsSession:
             return result
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source.rstrip() + "\n", encoding="utf-8")
+        # Stamped after the write and only on a compile that succeeded: this is
+        # the record that the tree on disk is the tree those labels came from.
+        self.state["tex_signature"] = self._tex_signature()
+        self._save_state()
         # Advisory rather than a refusal. With the save_lean ratchet in place a
         # hard gate here would deadlock: Lean blocked for want of a writeup,
         # and the writeup blocked for not yet covering everything registered.
@@ -1407,23 +1428,18 @@ class MathematicsSession:
                 f"{unknown} does not name exactly one saved theorem, so it cannot be "
                 f"reported. A lemma is not reportable either. Saved theorems: {sorted(saved)}",
             )
-        unaudited = self._audit_gaps(resolved)
-        if unaudited:
-            return ToolResult(
-                False,
-                "this report is refused: what these theorems rest on is not established "
-                f"against the workspace in front of us.\n{completion.describe(unaudited)}\n"
-                "Save each module again, so Lean is asked what its theorems depend on "
-                "now, and report once it comes back clean.",
-            )
         owed = self._obligations()
-        # Everything about a claimed theorem, and every assumption obligation
-        # whoever it belongs to: an appendix that does not say what the work
-        # rests on makes *this* report unbelievable, not somebody else's.
+        # Everything about a claimed theorem, every assumption obligation
+        # whoever it belongs to -- an appendix that does not say what the work
+        # rests on makes *this* report unbelievable, not somebody else's -- and
+        # everything with no subject at all, which is what an obligation about
+        # the document itself looks like.
         blocking = [
             item
             for item in owed
-            if item.subject in resolved or item.kind in {"appendix", "assumption"}
+            if not item.subject
+            or item.subject in resolved
+            or item.kind in {"appendix", "assumption"}
         ]
         if blocking:
             return ToolResult(
@@ -1463,6 +1479,42 @@ class MathematicsSession:
                 else ""
             ),
         )
+
+    def _tex_signature(self) -> str:
+        """What the writeup tree hashes to, as a whole."""
+        digest = hashlib.sha256()
+        for path, source in sorted(self._tex_sources().items()):
+            digest.update(path.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(source.encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    def _stale_writeup(self) -> list[completion.Obligation]:
+        """Whether the labels on hand describe the documents on hand.
+
+        `_labels` reads the `.aux` the last successful compile wrote, and
+        everything else reads the `.tex` files as they are now. A file edited
+        on disk between the two answers a statement obligation with text
+        nobody compiled, while still counting the labels of the document that
+        was -- and can just as easily have made the document uncompilable.
+        The Lean side expires a verdict by build signature for exactly this
+        reason; this is that, for the half a reader actually holds.
+        """
+        stamped = self.state.get("tex_signature")
+        if not self._tex_sources() or stamped == self._tex_signature():
+            return []
+        return [
+            completion.Obligation(
+                "label",
+                "",
+                "the writeup on disk is not the one that was compiled, so its labels and "
+                "listings are not established. Run save_latex again."
+                if stamped
+                else "no compile of this writeup tree is on record, so its labels and "
+                "listings are not established. Run save_latex again.",
+            )
+        ]
 
     def _audit_gaps(self, names: Iterable[str]) -> list[completion.Obligation]:
         """Claimed theorems with no current audit behind them.
@@ -1673,8 +1725,12 @@ class MathematicsSession:
             TurnEvent(
                 "notice",
                 text=(
-                    f"Hardy: not finished — {completion.summary(owed)}. Nothing here may be "
-                    f"reported as done until these are settled:\n{completion.describe(owed)}"
+                    # About what is outstanding, not about the workspace as a
+                    # whole: a theorem already reported was reportable, and a
+                    # blanket "nothing here may be reported" contradicted a
+                    # report Hardy itself had just accepted.
+                    f"Hardy: {completion.summary(owed)}. None of this is reportable until "
+                    f"it is settled:\n{completion.describe(owed)}"
                 ),
             )
         ]

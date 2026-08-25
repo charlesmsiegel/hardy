@@ -86,16 +86,25 @@ async def test_status_asks_the_artifacts_what_the_work_still_owes(ui, settings):
     carry and is free to disagree with what was said.
     """
     owed = (completion.Obligation("statement", "hardyOne", "the writeup quotes no Lean"),)
-    session = SimpleNamespace(usage=Usage(), obligations=lambda: owed)
+    session = SimpleNamespace(usage=Usage(), obligations=lambda: owed, has_theorems=lambda: True)
     await handlers.handle_status(ui, "", State(config=settings, session=session))
     assert "Not finished" in ui.text
     assert "hardyOne" in ui.text
 
 
 async def test_status_says_so_when_nothing_is_outstanding(ui, settings):
-    session = SimpleNamespace(usage=Usage(), obligations=tuple)
+    session = SimpleNamespace(usage=Usage(), obligations=tuple, has_theorems=lambda: True)
     await handlers.handle_status(ui, "", State(config=settings, session=session))
     assert "Nothing outstanding" in ui.text
+
+
+async def test_status_does_not_call_an_empty_workspace_written_up(ui, settings):
+    """No obligations means two different things, and only one of them is
+    "finished". The other is that there is nothing to finish."""
+    session = SimpleNamespace(usage=Usage(), obligations=tuple, has_theorems=lambda: False)
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert "No theorem is saved" in ui.text
+    assert "written up" not in ui.text
 
 
 async def test_status_still_works_without_a_session(ui, settings):
