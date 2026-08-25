@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 
 from prompt_toolkit.application import create_app_session
@@ -103,6 +104,28 @@ def test_the_style_defines_every_name_the_ports_declare():
     names = dict(shell.STYLE.style_rules)
     for style in ("user", "hardy", "system", "error", "warning", "hint"):
         assert any(rule.startswith(style) for rule in names), style
+
+
+# -- input history -----------------------------------------------------
+
+
+def test_input_history_lives_under_local_not_the_problem_directory(settings):
+    """Every line typed here, sent or not, is machine-local.
+
+    Previously written to `<problem>/input-history`, which the problem's own
+    `.gitignore` (`/.build/`, `/.local/`) does not cover -- so text a user
+    typed and never sent sat as an ordinary trackable file, exactly the
+    provider-session-id and spend-ledger leak `.local/` exists to prevent for
+    everything else.
+    """
+    with create_pipe_input() as pipe:
+        built = shell.Shell(
+            settings, None, handlers.build_registry(), input=pipe, output=_vt100(StringIO(), {"rows": 24, "cols": 80})
+        )
+        history_path = Path(built._box.buffer.history.filename)
+        assert history_path == settings.layout.input_history
+        assert history_path.parent == settings.layout.local
+        assert not (settings.layout.problem / "input-history").exists()
 
 
 # -- the capped, resize-following box -------------------------------------

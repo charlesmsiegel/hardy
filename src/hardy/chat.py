@@ -38,9 +38,8 @@ from .workspace import (
     unreadable_assumptions,
 )
 
-# Where the two artifact trees live inside a workspace. A session written
-# before they existed kept one file of each at the top level; `_migrate_layout`
-# moves those in rather than leaving a workspace that reads as empty.
+# Where the two artifact trees live inside a workspace, and the path a tool
+# call gets when it names neither -- the one file most sessions ever need.
 LEAN_DIR = "lean"
 BUILD_DIR = ".build/lean"
 BUILD_DIR_TEX = ".build/tex"
@@ -225,7 +224,6 @@ class MathematicsSession:
             environment=self._environment,
             external=self._external_stamp,
         )
-        self._migrate_layout()
         self._make_runtime = make_runtime
         # The SDK may call several tools at once, each on its own thread, but
         # these run Lean, rewrite session.json, and stop to ask a human for
@@ -602,25 +600,6 @@ class MathematicsSession:
             except OSError:
                 continue
         return stamp
-
-    def _migrate_layout(self) -> None:
-        """Move a workspace written before the trees existed into them.
-
-        Without this, reopening a workspace would show an empty tree while
-        `Main.lean` sat beside it, and the model would start again from nothing
-        on top of work it could no longer see.
-        """
-        moves = ((DEFAULT_LEAN_PATH, self.lean_workspace.root), (DEFAULT_TEX_PATH, self.tex_root))
-        moved = []
-        for filename, destination in moves:
-            legacy = self.workspace / filename
-            if not legacy.is_file() or (destination / filename).exists():
-                continue
-            destination.mkdir(parents=True, exist_ok=True)
-            os.replace(legacy, destination / filename)
-            moved.append(filename)
-        if moved:
-            self._record({"type": "migration", "reason": "layout", "moved": moved})
 
     def _check_lean(self, path: str, source: str) -> ToolResult:
         try:

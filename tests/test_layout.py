@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,6 +10,12 @@ from pathlib import Path
 import pytest
 
 from hardy import layout
+
+# `Path.symlink_to` raises `OSError` on Windows unless Developer Mode (or an
+# elevated process) is on -- these tests are about a Linux-clone attack in
+# any case, so they are skipped there rather than asserting a platform
+# permission failure.
+needs_symlinks = pytest.mark.skipif(os.name == "nt", reason="symlink_to needs Developer Mode on Windows")
 
 
 def test_a_plain_slug_is_accepted():
@@ -99,7 +106,7 @@ def test_the_tooling_directory_ignores_only_its_build(tmp_path: Path):
 
 
 def test_ensure_does_not_overwrite_an_edited_ignore_file(tmp_path: Path):
-    """The file is the user's once it exists; Hardy writes it, then leaves it."""
+    """The file is the user's once it exists; Hardy appends what is missing and leaves the rest."""
     resolved = layout.Layout(root=tmp_path, slug="sylow")
     resolved.ensure()
     (resolved.problem / ".gitignore").write_text("/.build/\n/.local/\nnotes.txt\n", encoding="utf-8")
@@ -107,6 +114,7 @@ def test_ensure_does_not_overwrite_an_edited_ignore_file(tmp_path: Path):
     assert "notes.txt" in (resolved.problem / ".gitignore").read_text(encoding="utf-8")
 
 
+@needs_symlinks
 def test_a_symlinked_problem_directory_is_refused(tmp_path: Path):
     r"""Validating the name is not validating the path.
 
@@ -152,6 +160,70 @@ def test_missing_rules_are_added_to_an_existing_ignore_file(tmp_path: Path):
     assert "*.log" in rules, "the user's own rules are preserved"
     assert "/.local/" in rules
     assert "/.build/" in rules
+
+
+@needs_symlinks
+def test_a_symlinked_ignore_file_is_refused_not_followed(tmp_path: Path):
+    """`resolved_problem` guards the problem DIRECTORY; nothing guarded the FILES.
+
+    Reproduced before this test was written: `sylow/.gitignore ->
+    ../../target.sh`, then `ensure()`, left `target.sh` ending in
+    `/.build/\\n/.local/\\n`. Point that symlink at `~/.bashrc` and a cloned
+    repository gets Hardy to append to a user's shell config the moment chat
+    starts.
+    """
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.problem.mkdir(parents=True)
+    target = tmp_path.parent / "target.sh"
+    target.write_text("echo hi\n", encoding="utf-8")
+    (resolved.problem / ".gitignore").symlink_to(Path("..") / ".." / "target.sh")
+
+    with pytest.raises(layout.LayoutError, match="outside"):
+        resolved.ensure()
+
+    assert target.read_text(encoding="utf-8") == "echo hi\n", "the symlink target must not be written through"
+
+
+@needs_symlinks
+def test_a_symlinked_child_directory_is_refused_not_followed(tmp_path: Path):
+    """`resolved_problem` covers one path out of the several `ensure()` creates.
+
+    Reproduced before this test was written: `sylow/.local -> ../../outside`
+    put `state.json` -- the provider session id and the spend ledger -- in a
+    directory outside the root and outside the `/.local/` rule meant to keep
+    it off a clone.
+    """
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.problem.mkdir(parents=True)
+    outside = tmp_path.parent / "outside"
+    outside.mkdir()
+    (resolved.problem / ".local").symlink_to(Path("..") / ".." / "outside")
+
+    with pytest.raises(layout.LayoutError, match="outside"):
+        resolved.ensure()
+
+    assert not (outside / "state.json").exists()
+
+
+def test_missing_rules_preserve_an_existing_crlf_ignore_file(tmp_path: Path):
+    """`.gitignore` is a version-controlled file; Hardy must not launder its line endings.
+
+    `str.splitlines()` followed by a bare `\\n`-join would silently convert
+    a Windows-authored CRLF `.gitignore` to LF the moment one rule is
+    appended to it, dirtying every line of a file this call had no reason to
+    touch beyond the one it is adding.
+    """
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+    resolved.problem.mkdir(parents=True)
+    (resolved.problem / ".gitignore").write_bytes(b"*.log\r\n")
+
+    resolved.ensure()
+
+    raw = (resolved.problem / ".gitignore").read_bytes()
+    stripped = raw.replace(b"\r\n", b"")
+    assert b"\n" not in stripped and b"\r" not in stripped, "every line ending must be CRLF, none bare"
+    assert b"*.log\r\n" in raw
+    assert b"/.local/\r\n" in raw
 
 
 def test_rules_already_present_are_not_duplicated(tmp_path: Path):
@@ -215,12 +287,51 @@ def test_a_legacy_hardy_rule_is_removed_from_the_root_ignore(tmp_path: Path):
     assert "dist/" in kept
 
 
+def test_a_glob_spelled_legacy_rule_is_also_removed(tmp_path: Path):
+    """`.hardy/` is not the only plausible spelling of "ignore this directory".
+
+    Reproduced: a root `.gitignore` written with `**/.hardy/` -- a common
+    hand-written idiom for "wherever it is" -- was not in the `legacy` set,
+    so `unignore_tooling` returned `False` and `.hardy/config.toml` stayed
+    excluded from `git check-ignore` exactly as with the unglobbed spelling.
+    """
+    root_ignore = tmp_path / ".gitignore"
+    root_ignore.write_text("*.log\n**/.hardy/\ndist/\n", encoding="utf-8")
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+
+    assert resolved.unignore_tooling(root_ignore) is True
+
+    kept = root_ignore.read_text(encoding="utf-8").splitlines()
+    assert "**/.hardy/" not in kept
+    assert "*.log" in kept
+    assert "dist/" in kept
+
+
 def test_an_ignore_file_without_the_legacy_rule_is_left_alone(tmp_path: Path):
     root_ignore = tmp_path / ".gitignore"
     root_ignore.write_text("*.log\n", encoding="utf-8")
     resolved = layout.Layout(root=tmp_path, slug="sylow")
     assert resolved.unignore_tooling(root_ignore) is False
     assert root_ignore.read_text(encoding="utf-8") == "*.log\n"
+
+
+def test_unignore_tooling_preserves_an_existing_crlf_ignore_file(tmp_path: Path):
+    """The same laundering risk as `_ensure_rules`, on a file Hardy did not write.
+
+    This one edits a root `.gitignore` a user is more likely to have hand-
+    authored -- and on Windows -- than the problem-level file Hardy writes
+    itself, so the CRLF terminator matters here at least as much.
+    """
+    root_ignore = tmp_path / ".gitignore"
+    root_ignore.write_bytes(b"*.log\r\n.hardy/\r\ndist/\r\n")
+    resolved = layout.Layout(root=tmp_path, slug="sylow")
+
+    assert resolved.unignore_tooling(root_ignore) is True
+
+    raw = root_ignore.read_bytes()
+    stripped = raw.replace(b"\r\n", b"")
+    assert b"\n" not in stripped and b"\r" not in stripped, "every line ending must be CRLF, none bare"
+    assert raw == b"*.log\r\ndist/\r\n"
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")

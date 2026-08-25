@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
@@ -13,37 +12,18 @@ BASIC = "import Mathlib\nlemma hardyBasic : True := by exact True.intro\n"
 MAIN = "import Basic\nlemma hardyMain : True := by exact True.intro\n"
 
 
-def test_a_flat_workspace_is_migrated_on_open(tmp_path: Path):
+def test_a_top_level_lean_file_is_left_alone_not_migrated(tmp_path: Path):
+    """`_migrate_layout` was deleted: opening a project must not move files.
+
+    A host repository's own top-level `Main.lean` -- one that has nothing to
+    do with Hardy -- would otherwise be silently moved into `lean/` the
+    moment a chat session opened, breaking whatever imported it and dirtying
+    a checkout Hardy was never asked to touch.
+    """
     (tmp_path / "Main.lean").write_text("import Mathlib\ndef a := 1\n", encoding="utf-8")
-    (tmp_path / "writeup.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
     session(tmp_path, FakeChatRuntime([]))
-    assert (tmp_path / "lean" / "Main.lean").read_text().startswith("import Mathlib")
-    assert (tmp_path / "tex" / "writeup.tex").read_text().startswith("\\documentclass")
-    assert not (tmp_path / "Main.lean").exists()
-    assert not (tmp_path / "writeup.tex").exists()
-    events = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
-    migration = next(event for event in events if event["type"] == "migration")
-    assert migration["reason"] == "layout"
-    assert sorted(migration["moved"]) == ["Main.lean", "writeup.tex"]
-
-
-def test_a_new_workspace_records_no_migration(tmp_path: Path):
-    session(tmp_path, FakeChatRuntime([]))
-    transcript = tmp_path / "transcript.jsonl"
-    events = (
-        [json.loads(line) for line in transcript.read_text().splitlines()]
-        if transcript.exists()
-        else []
-    )
-    assert not [event for event in events if event["type"] == "migration"]
-
-
-def test_migration_does_not_overwrite_an_already_migrated_file(tmp_path: Path):
-    (tmp_path / "lean").mkdir()
-    (tmp_path / "lean" / "Main.lean").write_text("the real one\n", encoding="utf-8")
-    (tmp_path / "Main.lean").write_text("a stale leftover\n", encoding="utf-8")
-    session(tmp_path, FakeChatRuntime([]))
-    assert (tmp_path / "lean" / "Main.lean").read_text() == "the real one\n"
+    assert (tmp_path / "Main.lean").read_text().startswith("import Mathlib")
+    assert not (tmp_path / "lean" / "Main.lean").exists()
 
 
 def test_saving_two_files_lets_one_import_the_other(tmp_path: Path):
@@ -165,14 +145,17 @@ def test_an_unelaborable_save_never_reaches_lean(tmp_path: Path):
     assert reached == []
 
 
-def test_a_migrated_workspace_can_be_imported_without_a_prior_build(tmp_path: Path):
-    """A migrated Main.lean has no olean, and the .build cache is disposable.
+def test_a_hand_placed_lean_file_can_be_imported_without_a_prior_build(tmp_path: Path):
+    """A hand-placed Main.lean has no olean, and the .build cache is disposable.
 
     The save path must therefore compile what the candidate imports rather than
     assume it is already built, or a valid workspace would need an unrelated
-    check or resave before it could be used at all.
+    check or resave before it could be used at all. Placed directly under
+    `lean/` rather than migrated from the top level: `_migrate_layout` is
+    gone, so this is now the only way an unbuilt file gets there.
     """
-    (tmp_path / "Main.lean").write_text(
+    (tmp_path / "lean").mkdir(parents=True)
+    (tmp_path / "lean" / "Main.lean").write_text(
         "import Mathlib\nlemma hardyMain : True := by exact True.intro\n", encoding="utf-8"
     )
     runtime = FakeChatRuntime([
@@ -180,7 +163,7 @@ def test_a_migrated_workspace_can_be_imported_without_a_prior_build(tmp_path: Pa
         {"role": "assistant", "content": "Saved."},
     ])
     chat = session(tmp_path, runtime)
-    chat.send("Build on the migrated file.")
+    chat.send("Build on the unbuilt file.")
     assert results(tmp_path)[-1]["ok"] is True, results(tmp_path)
     assert (tmp_path / "lean" / "Extra.lean").exists()
 

@@ -221,8 +221,12 @@ class Shell:
 
         history: Any
         try:
-            config.layout.problem.mkdir(parents=True, exist_ok=True)
-            history = FileHistory(str(config.layout.problem / "input-history"))
+            # Under `.local/`, not the problem directory: every line typed
+            # here, sent or not, is machine-local the same way the provider
+            # thread and the spend ledger are, and the problem directory's
+            # own `.gitignore` does not cover it.
+            config.layout.local.mkdir(parents=True, exist_ok=True)
+            history = FileHistory(str(config.layout.input_history))
         except OSError:
             history = InMemoryHistory()
 
