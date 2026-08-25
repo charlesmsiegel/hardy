@@ -144,20 +144,14 @@ class Layout:
         return self.local / "input-history"
 
     def resolved_problem(self) -> Path:
-        """The problem directory, proven to be inside the root.
+        """The problem directory, proven to be a direct child of the root.
 
         `validate_slug` checks the NAME; this checks the PATH, and they are not
         the same question. A repository may ship `main -> ..` as a symlink: the
         slug passes every name check, and following it would put this project's
         sources, record and ignore file outside the root Hardy was pointed at.
         """
-        root = self.root.resolve()
-        problem = self.problem.resolve()
-        if problem.parent != root:
-            raise LayoutError(
-                f"{self.problem} resolves to {problem}, which is outside {root}"
-            )
-        return problem
+        return _refuse_unless_direct_child(self.problem, self.root.resolve())
 
     def ensure(self) -> None:
         """Make the directories exist and say what is not to be committed.
@@ -171,21 +165,28 @@ class Layout:
         # otherwise have every mkdir below land outside the root.
         self.root.mkdir(parents=True, exist_ok=True)
         self.problem.mkdir(parents=True, exist_ok=True)
-        self.resolved_problem()
+        problem = self.resolved_problem()
         root = self.root.resolve()
-        # `resolved_problem` proves the problem DIRECTORY is inside the root;
-        # it says nothing about what gets created beneath it. Each child is
-        # exactly as followable as `problem` itself was -- `sylow/.local ->
-        # ../../outside` would otherwise land `state.json`, the provider
-        # session id and the spend ledger, outside the root and outside the
-        # `/.local/` rule meant to keep it off a clone.
-        for directory in (self.lean, self.tex, self.cas, self.local, self.hardy_dir):
-            _ensure_dir(directory, root)
-        # And the ignore files themselves are just as followable as any other
-        # file `ensure` touches: `sylow/.gitignore -> ../../target.sh` writes
-        # Hardy's rules onto whatever the symlink names the moment this runs.
-        _ensure_rules(self.problem / ".gitignore", PROBLEM_HEADER, PROBLEM_RULES, root=root)
-        _ensure_rules(self.hardy_dir / ".gitignore", TOOLING_HEADER, TOOLING_RULES, root=root)
+        # `resolved_problem` proves the problem DIRECTORY is a direct child of
+        # the root; it says nothing about what gets created beneath it, and
+        # "somewhere under the root" is not tight enough for that either:
+        # `sylow/.local -> ../other-project/.local` is still under the root,
+        # but it is another problem's directory -- outside `sylow` and outside
+        # the `/.local/` rule meant to cover it. Each of these must resolve to
+        # being `sylow`'s own, immediate child; `.hardy` must resolve to being
+        # the root's.
+        for directory in (self.lean, self.tex, self.cas, self.local, self.build):
+            _ensure_dir(directory, problem)
+        _ensure_dir(self.hardy_dir, root)
+        # The ignore files this layout generates have no legitimate reason to
+        # be symlinks at all -- unlike a directory, which a user might
+        # reasonably have linked in from elsewhere, a file Hardy writes itself
+        # is refused outright rather than resolved and checked, the moment it
+        # is anything but a plain file already inside its owning directory.
+        _refuse_if_symlink(self.problem / ".gitignore")
+        _ensure_rules(self.problem / ".gitignore", PROBLEM_HEADER, PROBLEM_RULES)
+        _refuse_if_symlink(self.hardy_dir / ".gitignore")
+        _ensure_rules(self.hardy_dir / ".gitignore", TOOLING_HEADER, TOOLING_RULES)
 
     def unignore_tooling(self, root_ignore: Path) -> bool:
         """Drop a legacy rule excluding the whole tooling directory.
@@ -201,7 +202,7 @@ class Layout:
         """
         if not root_ignore.is_file():
             return False
-        _refuse_if_outside(root_ignore, self.root.resolve())
+        _refuse_unless_direct_child(root_ignore, self.root.resolve())
         legacy = {
             HARDY_DIR,
             f"{HARDY_DIR}/",
@@ -234,38 +235,53 @@ TOOLING_HEADER = (
 TOOLING_RULES = ("/.build/",)
 
 
-def _refuse_if_outside(path: Path, root: Path) -> Path:
-    """`path`, resolved, refusing to land outside `root`.
+def _refuse_unless_direct_child(path: Path, parent: Path) -> Path:
+    """`path`, resolved, refusing to land anywhere but directly inside `parent`.
 
-    Checked before `ensure` reads or writes through ANY path built from the
-    slug, not only the problem directory itself: `resolved_problem` proves
-    that one directory is inside the root, but a file or directory beneath it
-    can be its own symlink. `sylow/.gitignore -> ../../target.sh` passes
-    every earlier check untouched, and writing through it lands Hardy's
-    ignore rules on `target.sh` instead -- point that at `~/.bashrc` and a
-    cloned repository gets Hardy to edit a user's shell config the moment a
-    chat session starts.
+    "Somewhere under the root" is not the right test: `sylow/.gitignore ->
+    ../README.md` and `sylow/.local -> ../other-project/.local` both resolve
+    to a location under the project root, so a check that only asked "is this
+    inside the root" would accept both -- the first appends Hardy's ignore
+    rules to a README the moment a chat session starts, and the second puts
+    this problem's provider state inside a sibling project, outside the
+    `/.local/` rule meant to cover it. Every path a slug can influence must
+    resolve to being its OWN owning directory's immediate child, not merely
+    somewhere beneath the root at large.
     """
     resolved = path.resolve()
-    if resolved != root and root not in resolved.parents:
-        raise LayoutError(f"{path} resolves to {resolved}, which is outside {root}")
+    if resolved.parent != parent:
+        raise LayoutError(f"{path} resolves to {resolved}, which is outside {parent}")
     return resolved
 
 
-def _ensure_dir(directory: Path, root: Path) -> None:
-    """Create `directory`, refusing to follow a symlink that leaves `root`.
+def _refuse_if_symlink(path: Path) -> None:
+    """Refuse `path` outright if it is already a symlink, without resolving it.
+
+    Both `.gitignore` files here are files Hardy itself generates and rewrites
+    on every `ensure()`; unlike a directory, a project has no legitimate
+    reason to have replaced one with a symlink, so this does not even ask
+    where a symlink would lead -- being a symlink at all is refused.
+    """
+    if path.is_symlink():
+        raise LayoutError(f"{path} is a symlink; refusing to read or write through it")
+
+
+def _ensure_dir(directory: Path, parent: Path) -> None:
+    """Create `directory`, refusing to follow a symlink that leaves `parent`.
 
     Checked as a symlink *before* `mkdir` runs, not after: `mkdir(exist_ok=
     True)` on a path that is already a symlink neither creates anything nor
     raises (if the target exists) or raises the wrong thing entirely (if the
     target is missing), so a post-hoc check alone would either miss the
     escape or surface a confusing `FileExistsError` instead of `LayoutError`.
+    `parent` is the directory's own owning directory, not the project root at
+    large -- see `_refuse_unless_direct_child`.
     """
     if directory.is_symlink():
-        _refuse_if_outside(directory, root)
+        _refuse_unless_direct_child(directory, parent)
         return
     directory.mkdir(parents=True, exist_ok=True)
-    _refuse_if_outside(directory, root)
+    _refuse_unless_direct_child(directory, parent)
 
 
 def _read_lines(path: Path) -> tuple[list[str], str]:
@@ -275,10 +291,17 @@ def _read_lines(path: Path) -> tuple[list[str], str]:
     mode silently translates every `\\r\\n` to `\\n` on the way in, so by the
     time `.splitlines()` ran there would be nothing left to notice, and a
     CRLF file would already read as LF before this function ever got a vote.
+
+    Decoded with `errors="surrogateescape"`: git does not require an ignore
+    file to be UTF-8, and a strict decode would raise `UnicodeDecodeError` on
+    a legacy-locale byte in a file Hardy edits but does not own -- after
+    `ensure()` has already created part of the layout. Surrogate-escaping
+    round-trips those bytes through `str` untouched instead, so a `.gitignore`
+    Hardy cannot read as text is still one it can safely append a line to.
     """
     if not path.exists():
         return [], "\n"
-    with path.open(encoding="utf-8", newline="") as handle:
+    with path.open(encoding="utf-8", errors="surrogateescape", newline="") as handle:
         raw = handle.read()
     return raw.splitlines(), ("\r\n" if "\r\n" in raw else "\n")
 
@@ -289,13 +312,15 @@ def _write_lines(path: Path, text: str) -> None:
     That default translates every `\\n` in `text` to `os.linesep` on Windows,
     which would turn the `\\r\\n` this module builds explicitly into `\\r\\r\\n`
     -- corrupting the very terminator `_read_lines` was just careful to
-    preserve.
+    preserve. `errors="surrogateescape"` mirrors `_read_lines`, so a
+    non-UTF-8 byte read out of the file round-trips back through unharmed
+    rather than raising on the way out.
     """
-    with path.open("w", encoding="utf-8", newline="") as handle:
+    with path.open("w", encoding="utf-8", errors="surrogateescape", newline="") as handle:
         handle.write(text)
 
 
-def _ensure_rules(path: Path, header: str, rules: tuple[str, ...], *, root: Path) -> None:
+def _ensure_rules(path: Path, header: str, rules: tuple[str, ...]) -> None:
     """Make sure `rules` are in `path`, leaving whatever else is there alone.
 
     Appending rather than writing once. A problem directory may already carry a
@@ -304,7 +329,6 @@ def _ensure_rules(path: Path, header: str, rules: tuple[str, ...], *, root: Path
     input history, which holds text typed and never sent, sat as ordinary
     untracked files waiting to be committed.
     """
-    _refuse_if_outside(path, root)
     existing, terminator = _read_lines(path)
     missing = [rule for rule in rules if rule not in existing]
     if not missing:

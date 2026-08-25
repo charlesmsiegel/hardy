@@ -18,10 +18,12 @@ lean_project/
 
 # A project Hardy creates in this checkout keeps its build tree and its
 # machine-local state out of git; its sources, writeup and record beside them
-# are versioned, and each project carries its own .gitignore saying so.
+# are versioned, and each project carries its own .gitignore saying so. Only
+# this checkout's own .hardy/.build/ belongs here: a project-wide */.build/
+# or */.local/ would hide those names under every top-level directory, not
+# only Hardy's own projects, silently dropping unrelated files from `git
+# status`.
 .hardy/.build/
-*/.build/
-*/.local/
 
 # Built distributions. The release workflow builds them into dist/ and the
 # installer workflow into release/; both belong to a run, not to the checkout.

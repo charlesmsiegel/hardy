@@ -29,6 +29,7 @@ def run_session(config, session_factory: Callable[[Any], Any], *, plain: bool = 
         return _run_plain(config, session_factory)
 
     from .. import cli
+    from ..chat import SchemaError
     from .handlers import build_registry
     from .shell import Shell
 
@@ -37,6 +38,13 @@ def run_session(config, session_factory: Callable[[Any], Any], *, plain: bool = 
         session = session_factory(cli.confirm_assumption(shell))
         shell.attach(session)
         return shell.run()
+    except SchemaError:
+        # Not a session-startup problem the plain fallback could recover
+        # from -- refusing an old-schema record is deliberate, and retrying
+        # in `_run_plain` would only raise the identical refusal a second
+        # time, uncaught, right after a misleading "Falling back to the
+        # plain session" line. Let `_chat` report it once, cleanly, instead.
+        raise
     except Exception as error:  # noqa: BLE001 - never end a session over rendering
         print(f"Falling back to the plain session: {error}", file=sys.stderr)
         return _run_plain(config, session_factory)
