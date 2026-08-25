@@ -759,6 +759,21 @@ class LeanWorkspace:
         # report a check that never ran under the current one.
         self._environment = environment
 
+    def rebind_environment(self, environment: str) -> None:
+        """Say that what this workspace builds against has changed.
+
+        The environment is normally fixed for a workspace's life, because a
+        toolchain does not move while a session runs. A shared Lean library
+        does: it is the user's own tree, edited in the user's own editor, and
+        the session holding this workspace notices between one Lean call and
+        the next. Rebuilding the identity rather than the workspace keeps one
+        answer to "what was this built against" -- the signatures, the olean
+        cache and every audit verdict stamped from them all move together, so
+        an edit to a shared source cannot leave a cached artifact and a stored
+        verdict agreeing with each other about a tree that no longer exists.
+        """
+        self._environment = environment
+
     @property
     def index_path(self) -> Path:
         return self.build / "index.json"
