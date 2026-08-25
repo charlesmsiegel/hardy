@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 
 import pytest
 
 from hardy.cas import CasError, CellOutcome
 from hardy.cas_export import export_session
+from hardy.layout import LayoutError
 
 
 def test_export_writes_a_script_a_notebook_and_a_manifest(tmp_path, cas_session) -> None:
@@ -325,3 +327,49 @@ def test_only_accepted_cells_reach_the_script(tmp_path, cas_session) -> None:
     script = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
     assert "keep" in script
     assert "boom" not in script
+
+
+needs_symlinks = pytest.mark.skipif(
+    os.name == "nt", reason="symlink_to needs Developer Mode on Windows"
+)
+
+
+@needs_symlinks
+def test_an_export_directory_that_leaves_the_problem_is_refused(tmp_path, cas_session) -> None:
+    """`cas/` is versioned, so a clone can ship it as a link out of the tree."""
+    problem = tmp_path / "sylow"
+    problem.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (problem / "cas").symlink_to(elsewhere, target_is_directory=True)
+    session = cas_session()
+    try:
+        session.execute("a")
+        with pytest.raises(LayoutError):
+            export_session(session, problem / "cas")
+    finally:
+        session.close()
+    assert list(elsewhere.iterdir()) == []
+
+
+@needs_symlinks
+def test_a_symlinked_replay_directory_does_not_become_a_kernel_cwd(tmp_path, cas_session) -> None:
+    """The replay kernel runs the user's own cells, which write files.
+
+    `shutil.rmtree(..., ignore_errors=True)` says nothing when it declines to
+    remove a link, so the scratch tree used to become whatever it pointed at
+    and the cells ran there.
+    """
+    directory = tmp_path / "cas"
+    directory.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (directory / "replay").symlink_to(elsewhere, target_is_directory=True)
+    session = cas_session()
+    try:
+        session.execute("a")
+        with pytest.raises(LayoutError):
+            export_session(session, directory)
+    finally:
+        session.close()
+    assert list(elsewhere.iterdir()) == []

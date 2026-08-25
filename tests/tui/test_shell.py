@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import os
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.application.current import set_app
 from prompt_toolkit.data_structures import Size
@@ -126,6 +128,31 @@ def test_input_history_lives_under_local_not_the_problem_directory(settings):
         assert history_path == settings.layout.input_history
         assert history_path.parent == settings.layout.local
         assert not (settings.layout.problem / "input-history").exists()
+        # Written through the guard, not merely aimed at a checked path:
+        # prompt_toolkit opens this file itself, once per accepted line, for
+        # the rest of the session.
+        built._box.buffer.history.store_string("theorem hardyOne")
+        assert "theorem hardyOne" in history_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink_to needs Developer Mode on Windows")
+def test_a_symlinked_input_history_falls_back_to_memory(settings):
+    """Every line typed here, sent or not, goes in this file.
+
+    A link out of the project is therefore both an escape and a disclosure --
+    and neither is worth ending a terminal over, so the refusal costs the
+    history rather than the session.
+    """
+    settings.layout.local.mkdir(parents=True, exist_ok=True)
+    victim = settings.root / "victim.sh"
+    victim.write_text("#!/bin/sh\n", encoding="utf-8")
+    settings.layout.input_history.symlink_to(victim)
+    with create_pipe_input() as pipe:
+        built = shell.Shell(
+            settings, None, handlers.build_registry(), input=pipe, output=_vt100(StringIO(), {"rows": 24, "cols": 80})
+        )
+        built._box.buffer.history.store_string("theorem hardyOne")
+    assert victim.read_text(encoding="utf-8") == "#!/bin/sh\n"
 
 
 # -- the capped, resize-following box -------------------------------------

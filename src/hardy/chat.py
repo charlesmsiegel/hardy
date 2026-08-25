@@ -18,7 +18,16 @@ from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .latex import ROOT_DOCUMENT, LatexTools, compiles_document
-from .layout import LOCAL_DIR, LOCAL_STATE, Layout, global_build, global_lean
+from .layout import (
+    LOCAL_DIR,
+    LOCAL_STATE,
+    RECORD,
+    TRANSCRIPT,
+    Layout,
+    WriteGuard,
+    global_build,
+    global_lean,
+)
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
@@ -63,6 +72,12 @@ USAGE_KEY = "usage"
 #: ledger it belongs to.
 CURSOR_KEY = "usage_cursor"
 THREAD_KEY = "provider_session"
+#: How many `result` events `_recover_spend` replayed to build the stored
+#: ledger. Machine-local, like the ledger: the transcript it was rebuilt from
+#: is the versioned record of the mathematics, and a fresh clone opening a
+#: project must not append a line to it saying that this machine had no ledger
+#: yet -- `.local/` is gitignored, so that is true of every clone there is.
+RECOVERED_KEY = "usage_recovered_turns"
 #: The two keys the ledger used to leave in `self.state` for `_context` to
 #: filter back out. Neither lands there any more, so `_context` no longer
 #: filters by this -- kept as a name so `USAGE_KEY` and `CURSOR_KEY` still read
@@ -186,12 +201,6 @@ def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None
     return "\0".join(parts)
 
 
-def _atomic_json(path: Path, value: Any) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
-
-
 class MathematicsSession:
     def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", root: Path | None = None):
         self.workspace = workspace
@@ -205,7 +214,17 @@ class MathematicsSession:
         # (the interactive session, real or plain) has it without needing to
         # keep its own `build_runtime` call in sync with this one.
         self.cas_detail = cas_detail
-        self.workspace.mkdir(parents=True, exist_ok=True)
+        # Every file this session writes into the problem goes through one of
+        # these two, and nothing else may. `Layout.ensure` proved the shape of
+        # the tree before the process got here; that proof was true at startup
+        # and says nothing about an append minutes later, and `transcript.jsonl`
+        # is a tracked file a clone can ship as a symlink pointing anywhere.
+        # The guard re-proves the directory at each write -- see `WriteGuard`.
+        #
+        # `create=True` rather than `mkdir` because `mkdir(exist_ok=True)` on a
+        # workspace that is already a symlink succeeds silently, on someone
+        # else's directory.
+        self._workspace_guard = WriteGuard(workspace, create=True)
         # The root the problem sits in. Derived rather than demanded, because
         # every caller already knows the problem directory and none of them
         # should have to restate the layout to get the project's shared Lean.
@@ -220,14 +239,17 @@ class MathematicsSession:
         placeholder = Request("example : True", "interactive workspace", ("Mathlib",))
         self.lean = LeanTools(placeholder, lean_command, timeout=lean_timeout, project=lean_project)
         self.latex = LatexTools(latex_command)
-        self.state_path = workspace / "session.json"
-        self.transcript_path = workspace / "transcript.jsonl"
+        # Named through `layout`, not spelled again here: these two paths and
+        # the names the guard is asked for have to agree, and two string
+        # literals that must match are one edit away from not matching.
+        self.state_path = workspace / RECORD
+        self.transcript_path = workspace / TRANSCRIPT
         # Machine-local state, beside the record but never part of it. The
         # record is versioned and describes the mathematics; the provider
         # thread and the spend ledger describe this machine and this account,
         # and a clone of the project must not inherit either.
         self.local_path = workspace / LOCAL_DIR / LOCAL_STATE
-        self.local_path.parent.mkdir(parents=True, exist_ok=True)
+        self._local_guard = WriteGuard(workspace / LOCAL_DIR, create=True)
         # The Lean tree and the writeup tree. Both are directories now: a
         # development outgrows one file, and so does the document about it.
         self.tex_root = workspace / TEX_DIR
@@ -285,8 +307,8 @@ class MathematicsSession:
         self._spend = threading.Lock()
         # `session.json` is written from more than one thread -- a tool call
         # under the gate above, and `_observed` remembering the provider thread
-        # on the runtime's own thread -- and `_atomic_json` replaces a temporary
-        # file at a fixed path. Two writers at once would interleave into it.
+        # on the runtime's own thread -- and `WriteGuard.write_json` replaces a
+        # temporary file at a fixed path. Two writers at once would interleave.
         self._writes = threading.Lock()
         # State first: the runtime is built from the system prompt, which embeds
         # the manifest, and it resumes the provider thread the local state
@@ -412,7 +434,8 @@ class MathematicsSession:
         failure.
         """
         if self.state_path.exists():
-            stored = json.loads(self.state_path.read_text(encoding="utf-8"))
+            with self._workspace_guard.open(RECORD, encoding="utf-8") as handle:
+                stored = json.loads(handle.read())
             version = stored.get("schema_version")
             if version != 2:
                 raise SchemaError(
@@ -433,7 +456,8 @@ class MathematicsSession:
         if not self.local_path.exists():
             return {}
         try:
-            loaded = json.loads(self.local_path.read_text(encoding="utf-8"))
+            with self._local_guard.open(LOCAL_STATE, encoding="utf-8") as handle:
+                loaded = json.loads(handle.read())
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             # UnicodeDecodeError is in the list deliberately: it is not a
             # subclass of the others, and without it a file of invalid bytes
@@ -445,12 +469,12 @@ class MathematicsSession:
     def _save_state(self) -> None:
         """The one door `session.json` is written through, from any thread."""
         with self._writes:
-            _atomic_json(self.state_path, self.state)
+            self._workspace_guard.write_json(RECORD, self.state)
 
     def _save_local(self) -> None:
         """The one door `.local/state.json` is written through, from any thread."""
         with self._writes:
-            _atomic_json(self.local_path, self.local)
+            self._local_guard.write_json(LOCAL_STATE, self.local)
 
     def _sync_provenance(self) -> None:
         """Make the record agree with what is actually about to answer.
@@ -492,7 +516,7 @@ class MathematicsSession:
         the file's current size may already include one nobody has folded.
         """
         event = {"timestamp": time.time(), **event}
-        with self.transcript_path.open("a", encoding="utf-8") as handle:
+        with self._workspace_guard.open(TRANSCRIPT, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
             return handle.tell()
 
@@ -2296,7 +2320,7 @@ class MathematicsSession:
             length = self._transcript_end()
         digest = hashlib.sha256()
         if length and self.transcript_path.exists():
-            with self.transcript_path.open("rb") as handle:
+            with self._workspace_guard.open(TRANSCRIPT, "rb") as handle:
                 remaining = length
                 while remaining > 0:
                     chunk = handle.read(min(remaining, 1 << 20))
@@ -2362,6 +2386,16 @@ class MathematicsSession:
 
         Once. The result is saved immediately, so the next open takes the
         stored ledger and no transcript is ever counted twice.
+
+        Nothing about it is written to `transcript.jsonl`. It used to append a
+        `migration` event there, and `.local/state.json` is gitignored by
+        design, so the absence this recovers from is the NORMAL state of a
+        fresh clone rather than evidence of an old workspace -- which meant
+        that merely opening a cloned project appended machine-local
+        bookkeeping to the versioned trajectory, before any mathematics or any
+        model interaction had happened, and left the checkout dirty. What was
+        recovered is recorded in `.local/state.json` beside the ledger it
+        describes, which is where a fact about this machine belongs.
         """
         # A ledger that would not read is treated exactly as a missing one, and
         # so is its cursor: the cursor's only meaning is "the ledger beside me
@@ -2380,7 +2414,14 @@ class MathematicsSession:
         if not counted:
             return recovered
         self.local[USAGE_KEY] = recovered.as_dict()
-        self._record({"type": "migration", "reason": "spend", "recovered_turns": counted})
+        # Accumulated, not overwritten. This runs on every open, and the tail
+        # case -- a `result` appended before the process died, folded in on the
+        # next open -- would otherwise replace "3 exchanges rebuilt from the
+        # transcript" with "1" and make the note say the opposite of the truth.
+        held_turns = self.local.get(RECOVERED_KEY)
+        held_turns = held_turns if isinstance(held_turns, int) and not isinstance(held_turns, bool) and held_turns >= 0 else 0
+        self.local[RECOVERED_KEY] = held_turns + counted
+        # Saves the ledger, the note above, and the cursor in one write.
         self._mark_ledger_read(self._transcript_end())
         return recovered
 
@@ -2463,7 +2504,12 @@ class MathematicsSession:
         """
         if not self.transcript_path.exists():
             return
-        with self.transcript_path.open(encoding="utf-8", errors="replace") as handle:
+        # Guarded on the way in as well as on the way out. A symlinked
+        # transcript that were refused only at append time would first be read
+        # back as this workspace's own history -- carried into the system
+        # prompt by `_carried`, and counted as spend by `_recover_spend` --
+        # from a file belonging to whoever wrote the link.
+        with self._workspace_guard.open(TRANSCRIPT, encoding="utf-8", errors="replace") as handle:
             if start:
                 handle.seek(start)
             for line in handle:

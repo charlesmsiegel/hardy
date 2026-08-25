@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
+from hardy import layout
 from hardy.chat import MathematicsSession, final_text
 from hardy.models import TurnEvent
 
@@ -428,3 +430,85 @@ def test_the_next_turn_is_not_born_cancelled(tmp_path: Path):
     chat.cancel()
     assert chat.send("Try again.") == "Recorded."
     assert json.loads((tmp_path / "session.json").read_text())["names"]
+
+
+# -- writes that have to land inside the problem ---------------------------
+#
+# `Layout.ensure` proves the shape of the tree when the project opens. These
+# are the files it never enumerates because a clone brings them with it, and
+# the writes into them happen minutes later.
+
+needs_symlinks = pytest.mark.skipif(
+    os.name == "nt", reason="symlink_to needs Developer Mode on Windows"
+)
+
+
+def _cloned_problem(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A root, a problem inside it, and a file outside the root to aim at."""
+    root = tmp_path / "root"
+    problem = root / "sylow"
+    problem.mkdir(parents=True)
+    victim = tmp_path / "victim.sh"
+    victim.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+    return root, problem, victim
+
+
+@needs_symlinks
+def test_a_cloned_transcript_symlink_does_not_survive_the_first_event(tmp_path: Path):
+    """The escape, reproduced: `sylow/transcript.jsonl -> ../../victim.sh`.
+
+    It is a tracked file -- the problem `.gitignore` covers `/.build/` and
+    `/.local/` and nothing else -- so a repository can ship it as a link, and
+    `ensure()` passes because it never enumerates it. Every recorded event
+    used to be appended straight through it, outside the root.
+    """
+    root, problem, victim = _cloned_problem(tmp_path)
+    (problem / "transcript.jsonl").symlink_to(victim)
+    layout.Layout(root=root, slug="sylow").ensure()  # setup is happy, as it was
+
+    with pytest.raises(layout.LayoutError) as refusal:
+        session(problem, FakeChatRuntime([]))
+    assert "transcript.jsonl" in str(refusal.value)
+    assert victim.read_text(encoding="utf-8") == "#!/bin/sh\necho mine\n"
+
+
+@needs_symlinks
+def test_a_transcript_replaced_while_the_session_runs_is_refused_too(tmp_path: Path):
+    """The proof has to be renewed at the write, not held from startup."""
+    root, problem, victim = _cloned_problem(tmp_path)
+    chat = session(problem, FakeChatRuntime([]))
+    chat._record({"type": "user", "message": {"role": "user", "content": "One."}})
+    (problem / "transcript.jsonl").unlink()
+    (problem / "transcript.jsonl").symlink_to(victim)
+
+    with pytest.raises(layout.LayoutError):
+        chat._record({"type": "user", "message": {"role": "user", "content": "Two."}})
+    assert victim.read_text(encoding="utf-8") == "#!/bin/sh\necho mine\n"
+
+
+@needs_symlinks
+def test_the_record_and_the_local_state_are_guarded_at_the_write(tmp_path: Path):
+    """`os.replace` made these safe by accident; nothing said they had to be."""
+    root, problem, victim = _cloned_problem(tmp_path)
+    chat = session(problem, FakeChatRuntime([]))
+    (problem / "session.json").unlink(missing_ok=True)
+    (problem / "session.json").symlink_to(victim)
+    with pytest.raises(layout.LayoutError):
+        chat._save_state()
+
+    (problem / ".local" / "state.json").unlink(missing_ok=True)
+    (problem / ".local" / "state.json").symlink_to(victim)
+    with pytest.raises(layout.LayoutError):
+        chat._save_local()
+    assert victim.read_text(encoding="utf-8") == "#!/bin/sh\necho mine\n"
+
+
+@needs_symlinks
+def test_a_problem_directory_that_leaves_its_root_is_refused_when_the_session_opens(tmp_path: Path):
+    """`ensure` refuses this; a session opened on the same layout must too."""
+    root, problem, _ = _cloned_problem(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (root / "linked").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(layout.LayoutError):
+        session(root / "linked", FakeChatRuntime([]))

@@ -18,6 +18,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output.vt100 import Vt100_Output
 
 from hardy import chat, runner
+from hardy.layout import LayoutError
 from hardy.tui import run_session
 
 from .conftest import Streams
@@ -90,6 +91,30 @@ def test_a_schema_error_is_not_treated_as_a_rendering_problem(settings, monkeypa
                 run_session(settings, explode)
 
     assert "Falling back" not in buffer.getvalue()
+
+
+def test_a_write_guard_refusal_is_not_treated_as_a_rendering_problem_either(settings, monkeypatch, capsys):
+    """A refusal is as deliberate as the schema one, and as unrecoverable.
+
+    A `transcript.jsonl` that is a symlink out of the project is still one in
+    the plain session, so "Falling back to the plain session" would be both a
+    wrong diagnosis and a second attempt at the same refused write.
+    """
+    monkeypatch.setattr("hardy.tui._is_interactive", lambda: True)
+
+    def explode(confirm):
+        raise LayoutError("transcript.jsonl is a symlink to ../../victim.sh")
+
+    buffer = StringIO()
+    with create_pipe_input() as pipe:
+        output = Vt100_Output(buffer, lambda: Size(rows=24, columns=80))
+        with create_app_session(input=pipe, output=output), pytest.raises(LayoutError):
+            run_session(settings, explode)
+
+    # On stderr, where the fallback line is actually printed -- checking the
+    # rendered screen would pass whether or not the fallback ran, and the
+    # fallback is the whole of what this test is about.
+    assert "Falling back" not in capsys.readouterr().err
 
 
 def test_the_session_factory_is_called_exactly_once_on_the_plain_path(settings, monkeypatch):

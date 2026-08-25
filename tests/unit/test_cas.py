@@ -27,6 +27,7 @@ from hardy.cas import (
 )
 from hardy.cas_export import export_session
 from hardy.domain import RunLimits
+from hardy.layout import LayoutError
 
 
 def test_state_carries_between_cells(tmp_path, cas_session) -> None:
@@ -803,5 +804,53 @@ def test_a_replay_refuses_cells_recorded_by_another_backend(tmp_path, cas_sessio
                 limits=RunLimits(),
                 cwd=tmp_path / "replay",
             )
+    finally:
+        session.close()
+
+
+# ------------------------------------------- a log that leaves the project
+
+needs_symlinks = pytest.mark.skipif(
+    os.name == "nt", reason="symlink_to needs Developer Mode on Windows"
+)
+
+
+@needs_symlinks
+def test_a_symlinked_cell_log_is_not_truncated_through(tmp_path, cas_session) -> None:
+    """The worst of the escapes, because loading the log REPAIRS it.
+
+    `cells.jsonl` is versioned, so a clone can ship it as a link. A file that
+    does not end in a newline reads as an append cut off mid-write, and
+    `_truncate_log` opens `r+b` and cuts the fragment off -- so opening a
+    session used to destroy whatever the link named rather than merely growing
+    it. `Layout.ensure` cannot help: it runs once, and never enumerates this
+    file.
+    """
+    cas = tmp_path / "sylow" / "cas"
+    cas.mkdir(parents=True)
+    victim = tmp_path / "important.csv"
+    victim.write_text("a,b,c\n1,2,3\n4,5,6 (no trailing newline)", encoding="utf-8")
+    (cas / "cells.jsonl").symlink_to(victim)
+
+    with pytest.raises(LayoutError):
+        cas_session(cas)
+    assert victim.read_text(encoding="utf-8") == "a,b,c\n1,2,3\n4,5,6 (no trailing newline)"
+
+
+@needs_symlinks
+def test_a_cell_log_symlinked_after_the_session_opened_is_refused(tmp_path, cas_session) -> None:
+    """Every append proves where it lands, not just the first one."""
+    cas = tmp_path / "sylow" / "cas"
+    cas.mkdir(parents=True)
+    session = cas_session(cas)
+    try:
+        session.execute("a")
+        (cas / "cells.jsonl").unlink()
+        victim = tmp_path / "victim.sh"
+        victim.write_text("#!/bin/sh\n", encoding="utf-8")
+        (cas / "cells.jsonl").symlink_to(victim)
+        with pytest.raises(LayoutError):
+            session.execute("b")
+        assert victim.read_text(encoding="utf-8") == "#!/bin/sh\n"
     finally:
         session.close()

@@ -30,6 +30,7 @@ def run_session(config, session_factory: Callable[[Any], Any], *, plain: bool = 
 
     from .. import cli
     from ..chat import SchemaError
+    from ..layout import LayoutError
     from .handlers import build_registry
     from .shell import Shell
 
@@ -38,12 +39,16 @@ def run_session(config, session_factory: Callable[[Any], Any], *, plain: bool = 
         session = session_factory(cli.confirm_assumption(shell))
         shell.attach(session)
         return shell.run()
-    except SchemaError:
+    except (SchemaError, LayoutError):
         # Not a session-startup problem the plain fallback could recover
         # from -- refusing an old-schema record is deliberate, and retrying
         # in `_run_plain` would only raise the identical refusal a second
         # time, uncaught, right after a misleading "Falling back to the
         # plain session" line. Let `_chat` report it once, cleanly, instead.
+        #
+        # A `WriteGuard` refusal is exactly as deliberate: a `transcript.jsonl`
+        # that is a symlink out of the project is still one in the plain
+        # session, and "Falling back" would be a lie about a security refusal.
         raise
     except Exception as error:  # noqa: BLE001 - never end a session over rendering
         print(f"Falling back to the plain session: {error}", file=sys.stderr)

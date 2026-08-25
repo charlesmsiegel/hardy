@@ -212,11 +212,17 @@ def _chat(
 
     try:
         return run_session(config, build, plain=plain)
-    except SchemaError as error:
+    except (SchemaError, layout.LayoutError) as error:
         # Reaches here whichever path `run_session` took: the plain path
         # raises it straight out of `build`, and the interactive path (see
         # `tui.run_session`) refuses to let its fallback-on-any-exception
         # catch swallow this one and misreport it as a rendering problem.
+        #
+        # `LayoutError` for the same reason and from a later moment still: a
+        # `WriteGuard` refusing a symlinked `transcript.jsonl` or a
+        # `cells.jsonl` that leaves the project raises while the session is
+        # opening, or in the middle of one, and the user is owed the sentence
+        # naming the path rather than a traceback out of an append.
         # `_report` always either raises or exits -- nothing here returns.
         _report(error)
         raise AssertionError("unreachable: _report always raises or exits")

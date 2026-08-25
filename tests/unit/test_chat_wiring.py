@@ -196,6 +196,38 @@ def test_chat_wraps_a_layout_error_through_the_given_parser(tmp_path, monkeypatc
     assert "boom: outside the root" in capsys.readouterr().err
 
 
+def test_chat_wraps_a_write_guard_refusal_through_the_given_parser(tmp_path, monkeypatch, capsys):
+    """A guard refusal arrives later than `ensure`'s, and must read the same.
+
+    `prepare_layout` runs before the session exists; a `WriteGuard` refuses
+    while one is opening -- a `transcript.jsonl` the clone shipped as a
+    symlink -- or in the middle of a turn. Without this it left `run_session`
+    as a raw traceback, or as a "Falling back to the plain session" line
+    followed by one.
+    """
+
+    def explode(*args, **kwargs):
+        raise cli.layout.LayoutError(
+            "/root/sylow/transcript.jsonl is a symlink to /elsewhere/victim.sh; "
+            "refusing to read or write through it"
+        )
+
+    def fake_build_runtime(**kwargs):
+        return FakeCasRuntime(), "fakecas 1.0"
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
+    monkeypatch.setattr(cli, "MathematicsSession", explode)
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli._chat(settings(tmp_path), plain=True, parser=parser)
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "transcript.jsonl is a symlink" in err
+    assert "Falling back" not in err
+
+
 def test_chat_without_a_parser_lets_a_layout_error_propagate(tmp_path, monkeypatch):
     """A direct caller with no parser to hand -- a test, an embedding -- gets
     the real exception rather than a silently swallowed one."""
