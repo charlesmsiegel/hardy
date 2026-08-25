@@ -224,8 +224,11 @@ def _chat(
         # opening, or in the middle of one, and the user is owed the sentence
         # naming the path rather than a traceback out of an append.
         # `_report` always either raises or exits -- nothing here returns.
+        # `from None`: the AssertionError is a statement about this function's
+        # control flow, not a failure caused by `error`, and chaining it would
+        # print the original traceback under a claim about unreachability.
         _report(error)
-        raise AssertionError("unreachable: _report always raises or exits")
+        raise AssertionError("unreachable: _report always raises or exits") from None
     finally:
         # Not reached at all if a forced double-Ctrl+C exit inside the shell
         # reaches `os._exit` -- that bypasses every `finally` in the process,
