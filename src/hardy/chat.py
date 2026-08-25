@@ -271,7 +271,7 @@ class MathematicsSession:
         self.usage = self._recover_spend()
         # The runtime needs a way to reach the tools, and the tools need the
         # workspace, so it is built here rather than handed in ready-made.
-        self.runtime = self._build(session_id=self.local.get(THREAD_KEY))
+        self.runtime = self._build(session_id=self._carried_thread())
         self._sync_provenance()
 
     def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
@@ -341,7 +341,7 @@ class MathematicsSession:
         thread is carried over, so the new model inherits the conversation.
         """
         previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint")}
-        self.runtime = self._build(model=model, session_id=self.local.get(THREAD_KEY))
+        self.runtime = self._build(model=model, session_id=self._carried_thread())
         self.state.update(provenance(self.runtime))
         self._save_state()
         self._record({"type": "model", "reason": "switched", "previous": previous, **provenance(self.runtime)})
@@ -1946,11 +1946,64 @@ class MathematicsSession:
         self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
         return result
 
+    def _transcript_identity(self, length: int | None = None) -> dict[str, Any]:
+        """What the transcript is, as far as `length` bytes in.
+
+        A length alone cannot answer this. Checking out a divergent branch
+        whose transcript is the same size or longer leaves every arithmetic
+        check satisfied against a history that never produced this thread.
+        """
+        if length is None:
+            length = self._transcript_end()
+        digest = hashlib.sha256()
+        if length and self.transcript_path.exists():
+            with self.transcript_path.open("rb") as handle:
+                remaining = length
+                while remaining > 0:
+                    chunk = handle.read(min(remaining, 1 << 20))
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    remaining -= len(chunk)
+        return {"transcript_length": length, "transcript_digest": digest.hexdigest()}
+
+    def _carried_thread(self) -> str | None:
+        """The provider thread this project may resume, if the record still fits it.
+
+        The thread is bound to the transcript it was recorded against, and the
+        binding is checked here rather than trusted. A thread whose transcript
+        has been shortened or replaced is dropped: losing a resumable
+        conversation is cheap, and answering from context the record cannot
+        account for is the thing this project exists to prevent.
+        """
+        thread = self.local.get(THREAD_KEY)
+        if not thread:
+            return None
+        length = self.local.get("transcript_length")
+        if not isinstance(length, int) or isinstance(length, bool) or length < 0:
+            return None
+        if length > self._transcript_end():
+            return None
+        if self._transcript_identity(length)["transcript_digest"] != self.local.get("transcript_digest"):
+            return None
+        return str(thread)
+
     def _remember_thread(self) -> None:
+        """Record the provider thread, and what the transcript was when it was.
+
+        Written together and never apart: an identity that did not travel with
+        the thread would describe some other moment, and a thread with no
+        identity cannot be checked at all.
+        """
         thread = getattr(self.runtime, "session_id", None)
-        if thread and self.local.get(THREAD_KEY) != thread:
-            self.local[THREAD_KEY] = thread
-            self._save_local()
+        if not thread:
+            return
+        identity = self._transcript_identity()
+        if self.local.get(THREAD_KEY) == thread and self.local.get("transcript_length") == identity["transcript_length"]:
+            return
+        self.local[THREAD_KEY] = thread
+        self.local.update(identity)
+        self._save_local()
 
     def _recover_spend(self) -> Usage:
         """The workspace's running total, rebuilt from its history if need be.
