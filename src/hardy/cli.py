@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
-from . import cas_tools, claude_runtime, doctor, latency, layout
+from . import cas_tools, claude_runtime, doctor, lakefile, latency, layout
 from . import config as configuration
 from .cas import CasError
 from .cas_export import export_session
@@ -97,11 +97,56 @@ def prepare_layout(config: configuration.Config) -> None:
     config.layout.unignore_tooling(config.root / ".gitignore")
 
 
+def offer_registration(
+    config: configuration.Config,
+    *,
+    interactive: bool,
+    choice: bool | None,
+    ask: Callable[[str], str] = input,
+) -> str | None:
+    """Register this problem with a host Lake project, if asked to.
+
+    Never reads stdin. `choice` is what a flag or a TTY prompt already decided;
+    None off a TTY means declined, because asking on a piped launch would block
+    at EOF or take the first chat message for an answer. Declining is always
+    safe -- Hardy's own resolution does not depend on registration.
+    """
+    host = config.root / "lakefile.toml"
+    if not host.is_file() or choice is False:
+        return None
+    slug = config.project
+    source = f"{slug}/lean"
+    existing = lakefile.registered_libraries(host)
+    # Idempotent ONLY when the existing entry is the one we would write. A
+    # library of this name pointing somewhere else is a conflict the user needs
+    # told about, and returning here would swallow `register`'s refusal and
+    # leave `--register-lakefile` silently doing nothing.
+    if existing.get(slug) == source:
+        return None
+    if choice is None:
+        if not interactive:
+            return None
+        # The offer this function exists to make. Without it registration is
+        # reachable only through the flag, and the promise that Hardy "offers
+        # to register" is never kept on the interactive path it was written for.
+        answer = ask(f"Register {slug}/lean with {host.name} so `lake build` sees it? [y/N] ")
+        if answer.strip().lower() not in {"y", "yes"}:
+            return None
+    try:
+        stanza = lakefile.register(host, config.root, slug)
+    except lakefile.RegistrationRefused as refusal:
+        return f"Not registering {slug} with {host.name}: {refusal}"
+    with host.open("a", encoding="utf-8") as handle:
+        handle.write(stanza)
+    return f"Registered {slug} with {host.name} as a lean_lib; `lake build` now sees its modules."
+
+
 def _chat(
     config: configuration.Config,
     *,
     plain: bool = False,
     parser: argparse.ArgumentParser | None = None,
+    args: argparse.Namespace | None = None,
 ) -> int:
     from .tui import run_session
 
@@ -125,6 +170,18 @@ def _chat(
         prepare_layout(config)
     except layout.LayoutError as error:
         _report(error)
+
+    # A TTY on both ends, not just stdin: stdout piped to a file or another
+    # process means there is nowhere for the prompt to be seen, so treating
+    # that as interactive would print a question no one can answer and then
+    # read whatever arrives on stdin as if it were the reply.
+    notice = offer_registration(
+        config,
+        interactive=sys.stdin.isatty() and sys.stdout.isatty(),
+        choice=getattr(args, "register_lakefile", None),
+    )
+    if notice:
+        print(notice)
 
     # Built once, here -- not inside `build` below -- because `run_session`
     # can call its `session_factory` a second time (the interactive shell
@@ -800,6 +857,20 @@ def build_parser() -> argparse.ArgumentParser:
     chat = subparsers.add_parser("chat", help="start or resume an interactive session")
     chat.add_argument("--root", type=Path, help="project root (default: the current directory)")
     chat.add_argument("--project", help=f"which problem to open (default: the active one, or {layout.DEFAULT_SLUG})")
+    registration = chat.add_mutually_exclusive_group()
+    registration.add_argument(
+        "--register-lakefile",
+        dest="register_lakefile",
+        action="store_true",
+        default=None,
+        help="add this problem to the host lakefile.toml as a lean_lib",
+    )
+    registration.add_argument(
+        "--no-register-lakefile",
+        dest="register_lakefile",
+        action="store_false",
+        help="never touch the host lakefile.toml",
+    )
     check = subparsers.add_parser("doctor", help="check that Lean, LaTeX, and the model are usable")
     check.add_argument("--deep", action="store_true", help="also compile a Mathlib probe file, which can take minutes")
     # The evidence DESIGN.md and issue #54 defer warm pools until. Separate from
@@ -860,7 +931,7 @@ def main() -> int:
     if args.command == "batch":
         return _batch(args, config, parser)
     # No subcommand is intentionally the primary interactive experience.
-    return _chat(config, plain=args.plain, parser=parser)
+    return _chat(config, plain=args.plain, parser=parser, args=args)
 
 
 if __name__ == "__main__":

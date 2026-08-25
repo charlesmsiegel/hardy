@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from hardy import cli
+from hardy import config as configuration
 from hardy.lean import LeanTools
 from hardy.models import Request
 from hardy.runner import run
@@ -488,3 +490,60 @@ def test_a_root_qualified_batch_target_is_reported_as_lean_names_it():
     The workspace scanner normalised this; the batch target path did not."""
     request = Request.from_dict({"declaration": "theorem _root_.bar : True", "informal_claim": "x"})
     assert LeanTools(request, ("true",)).target_name == "bar"
+
+
+def test_registration_is_declined_off_a_tty_without_reading_stdin(tmp_path: Path, monkeypatch):
+    """A second prompt on a surviving path, with the same failure as the first.
+
+    On a piped launch under a root holding a lakefile, asking would block at
+    EOF or take the first chat message for an answer.
+    """
+    (tmp_path / "lakefile.toml").write_text('name = "host"\n', encoding="utf-8")
+    (tmp_path / "sylow" / "lean").mkdir(parents=True)
+
+    def explode():
+        raise AssertionError("stdin must not be read when there is no TTY")
+
+    monkeypatch.setattr("builtins.input", lambda *_: explode())
+    settings = configuration.load(tmp_path / "absent.toml", root=tmp_path, project="sylow")
+
+    assert cli.offer_registration(settings, interactive=False, choice=None) is None
+    assert 'name = "sylow"' not in (tmp_path / "lakefile.toml").read_text(encoding="utf-8")
+
+
+def test_an_explicit_flag_registers_without_a_tty(tmp_path: Path):
+    (tmp_path / "lakefile.toml").write_text('name = "host"\n', encoding="utf-8")
+    (tmp_path / "sylow" / "lean").mkdir(parents=True)
+    settings = configuration.load(tmp_path / "absent.toml", root=tmp_path, project="sylow")
+
+    message = cli.offer_registration(settings, interactive=False, choice=True)
+
+    assert "sylow" in message
+    assert 'name = "sylow"' in (tmp_path / "lakefile.toml").read_text(encoding="utf-8")
+
+
+def test_registering_a_colliding_module_reports_the_refusal(tmp_path: Path):
+    (tmp_path / "lakefile.toml").write_text(
+        'name = "host"\n\n[[lean_lib]]\nname = "galois"\nsrcDir = "galois/lean"\n', encoding="utf-8"
+    )
+    for slug in ("galois", "sylow"):
+        (tmp_path / slug / "lean").mkdir(parents=True)
+        (tmp_path / slug / "lean" / "Main.lean").write_text("import Mathlib\n", encoding="utf-8")
+    settings = configuration.load(tmp_path / "absent.toml", root=tmp_path, project="sylow")
+
+    message = cli.offer_registration(settings, interactive=False, choice=True)
+
+    assert "Main" in message
+    assert "galois" in message
+    assert 'name = "sylow"' not in (tmp_path / "lakefile.toml").read_text(encoding="utf-8")
+
+
+def test_registering_twice_does_not_append_twice(tmp_path: Path):
+    (tmp_path / "lakefile.toml").write_text('name = "host"\n', encoding="utf-8")
+    (tmp_path / "sylow" / "lean").mkdir(parents=True)
+    settings = configuration.load(tmp_path / "absent.toml", root=tmp_path, project="sylow")
+
+    cli.offer_registration(settings, interactive=False, choice=True)
+    cli.offer_registration(settings, interactive=False, choice=True)
+
+    assert (tmp_path / "lakefile.toml").read_text(encoding="utf-8").count('name = "sylow"') == 1
