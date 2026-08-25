@@ -8,6 +8,7 @@ has cost nothing so far is worse than not being told at all.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from pathlib import Path
@@ -518,3 +519,68 @@ def test_the_record_still_carries_the_things_that_are_evidence(tmp_path: Path):
     assert record["schema_version"] == 2
     assert "names" in record
     assert "assumptions" in record
+
+
+def test_a_shortened_transcript_clears_the_provider_thread(tmp_path: Path):
+    """A checkout that rewinds the record must not leave a resumable thread.
+
+    `.local/` is gitignored, so it survives the checkout that rewinds the
+    versioned transcript. Resuming the thread would answer from turns the
+    record does not contain.
+    """
+    chat = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "one"}]))
+    chat.send("hello")
+    assert chat.local.get("provider_session")
+
+    transcript = tmp_path / "transcript.jsonl"
+    kept = transcript.read_text(encoding="utf-8").splitlines()[:1]
+    transcript.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+    reopened = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "two"}]))
+    assert reopened._carried_thread() is None
+
+
+def test_a_divergent_transcript_of_the_same_length_clears_it_too(tmp_path: Path):
+    """The size test alone passes this case, which is why it is not the whole test.
+
+    A different branch, not a truncation: the file is the same length and the
+    cursor stays arithmetically valid against a history that never produced it.
+    """
+    chat = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "one"}]))
+    chat.send("hello")
+
+    transcript = tmp_path / "transcript.jsonl"
+    original = transcript.read_bytes()
+    # Same length, different content: flip one byte deep in the file.
+    diverged = bytearray(original)
+    diverged[len(diverged) // 2] ^= 0x20
+    transcript.write_bytes(bytes(diverged))
+    assert len(transcript.read_bytes()) == len(original)
+
+    reopened = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "two"}]))
+    assert reopened._carried_thread() is None
+
+
+def test_an_untouched_transcript_keeps_the_thread(tmp_path: Path):
+    chat = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "one"}]))
+    chat.send("hello")
+    thread = chat.local["provider_session"]
+
+    reopened = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "two"}]))
+    assert reopened._carried_thread() == thread
+
+
+def test_the_identity_is_recorded_with_the_thread_not_with_the_cursor(tmp_path: Path):
+    """The two spans differ, and the gap is real.
+
+    `_observed` appends the result and remembers the thread *before* the spend
+    fold advances the cursor, so a crash in that window leaves a thread whose
+    last turn sits beyond the ledger's prefix.
+    """
+    chat = session(tmp_path, FakeChatRuntime([{"role": "assistant", "content": "one"}]))
+    chat.send("hello")
+    length = chat.local["transcript_length"]
+    digest = chat.local["transcript_digest"]
+
+    seen = (tmp_path / "transcript.jsonl").read_bytes()[:length]
+    assert hashlib.sha256(seen).hexdigest() == digest
