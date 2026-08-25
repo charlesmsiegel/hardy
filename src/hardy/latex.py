@@ -7,6 +7,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from .layout import WriteGuard
 from .models import ToolResult
 from .process import run_guarded
 
@@ -81,6 +82,21 @@ def _probe_root(root: str, path: str) -> str:
     return f"{head}{BODY}\n{body}\\end{{document}}\n"
 
 
+def _links(directory: str, names: list[str]) -> set[str]:
+    """The entries `copytree` must leave behind: the symlinks.
+
+    Neither of `copytree`'s two settings is safe on a tree a repository wrote.
+    With `symlinks=False` -- the default, and what this used to do -- a
+    `tex/sections -> $HOME` is copied by CONTENT, so every check dragged the
+    user's home directory into the scratch dir and then handed it to a TeX
+    process that can `\\input` any of it. With `symlinks=True` the link is
+    recreated, and the candidate written to `sections/one.tex` afterwards lands
+    in `$HOME` instead. So neither: a symlink in the writeup tree is not part
+    of the writeup, and the compile behaves as though it were simply absent.
+    """
+    return {name for name in names if Path(directory, name).is_symlink()}
+
+
 class LatexTools:
     """Direct LaTeX subprocess checks. Only use with trusted output."""
 
@@ -114,7 +130,7 @@ class LatexTools:
         with tempfile.TemporaryDirectory(prefix="hardy-tex-") as directory:
             work = Path(directory)
             if tree is not None and tree.is_dir():
-                shutil.copytree(tree, work, dirs_exist_ok=True)
+                shutil.copytree(tree, work, dirs_exist_ok=True, ignore=_links)
             candidate = work / path
             candidate.parent.mkdir(parents=True, exist_ok=True)
             candidate.write_text(source, encoding="utf-8")
@@ -166,8 +182,15 @@ class LatexTools:
                 # handing the completion gate labels that the writeup does not
                 # create, from a document nobody will ever read.
                 if actual and outcome.returncode == 0 and output_dir is not None and pdf.exists():
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(pdf, output_dir / "writeup.pdf")
+                    # Through a guard, not `shutil.copyfile`. That call opens
+                    # the DESTINATION `wb` and follows a symlink to do it, and
+                    # `writeup.pdf` is a versioned file that travels with a
+                    # clone: a repository shipping `writeup.pdf -> ~/.bashrc`
+                    # got `%PDF-...` written over the user's shell profile on
+                    # the first successful save. `write_bytes` refuses a
+                    # symlinked leaf outright and replaces the target
+                    # atomically instead of truncating it in place.
+                    WriteGuard(output_dir, create=True).write_bytes("writeup.pdf", pdf.read_bytes())
                     # The compiler's own record of the labels it created. What
                     # a caller needs to know is which labels LaTeX *made*, not
                     # which ones appear in the text -- a `\label` inside
@@ -175,8 +198,7 @@ class LatexTools:
                     # created.
                     aux = work / "writeup.aux"
                     if aux_dir is not None and aux.exists():
-                        aux_dir.mkdir(parents=True, exist_ok=True)
-                        shutil.copyfile(aux, aux_dir / "writeup.aux")
+                        WriteGuard(aux_dir, create=True).write_bytes("writeup.aux", aux.read_bytes())
                 return ToolResult(
                     outcome.returncode == 0,
                     f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n{output}",

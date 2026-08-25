@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
-from hardy import chat as chat_module
-from hardy.cas_export import ExportReport
+import pytest
 from test_chat import FakeChatRuntime, call, session
 from workspace_helpers import results
+
+from hardy import chat as chat_module
+from hardy.cas_export import ExportReport
 
 BASIC = "import Mathlib\nlemma hardyBasic : True := by exact True.intro\n"
 MAIN = "import Basic\nlemma hardyMain : True := by exact True.intro\n"
@@ -281,3 +284,113 @@ def test_cas_export_stores_paths_relative_to_the_problem(tmp_path: Path, monkeyp
         assert (tmp_path / reference).resolve().exists()
     assert (tmp_path / stored["script"]).resolve() == script_path.resolve()
     assert (tmp_path / stored["notebook"]).resolve() == notebook_path.resolve()
+
+
+needs_symlinks = pytest.mark.skipif(os.name == "nt", reason="symlink_to needs Developer Mode on Windows")
+
+
+@needs_symlinks
+def test_save_lean_cannot_write_through_a_symlinked_subdirectory(tmp_path: Path):
+    """Reproduced: a model-chosen file, written wherever a clone pointed.
+
+    `Layout.ensure` proves `lean/` is the problem's own child and stops there,
+    because it cannot know which subdirectories a development will grow. A
+    repository can ship `lean/Escape -> /tmp/OUTSIDE` -- git versions that
+    happily -- and `safe_relative("Escape/Owned.lean")` accepted it, because
+    what it proves is that the NAME is a relative path of Lean identifiers,
+    which says nothing at all about where a directory of that name leads. The
+    save then landed outside the root with content chosen entirely by the
+    model.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    lean = tmp_path / "lean"
+    lean.mkdir()
+    (lean / "Escape").symlink_to(outside, target_is_directory=True)
+
+    runtime = FakeChatRuntime([
+        call("save_lean", {"path": "Escape/Owned.lean", "source": BASIC}),
+        {"role": "assistant", "content": "Tried."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Save it.")
+
+    assert results(tmp_path)[-1]["ok"] is False
+    assert list(outside.iterdir()) == []
+
+
+@needs_symlinks
+def test_save_latex_cannot_write_through_a_symlinked_subdirectory(tmp_path: Path):
+    """The same escape through the writeup tree, and the same reason.
+
+    `_tex_path` proves the string is relative, dot-free and colon-free. A
+    `tex/sections -> <somewhere>` shipped by a clone made
+    `save_latex("sections/one.tex")` write a file of the model's choosing into
+    that somewhere.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    tex = tmp_path / "tex"
+    tex.mkdir()
+    (tex / "writeup.tex").write_text(ROOT_WITH_INPUT, encoding="utf-8")
+    (tex / "sections").symlink_to(outside, target_is_directory=True)
+
+    runtime = FakeChatRuntime([
+        call("save_latex", {"path": "sections/one.tex", "source": "Section one.\n"}),
+        {"role": "assistant", "content": "Tried."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Save it.")
+
+    assert results(tmp_path)[-1]["ok"] is False
+    assert list(outside.iterdir()) == []
+
+
+@needs_symlinks
+def test_delete_file_cannot_unlink_through_a_symlinked_subdirectory(tmp_path: Path):
+    """`os.unlink` never follows the FILE; it follows every directory above it.
+
+    So a shipped `tex/sections -> <somewhere>` turned `delete_file` into a
+    tool that removes a file in that somewhere.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "one.tex").write_text("Not the project's.\n", encoding="utf-8")
+    tex = tmp_path / "tex"
+    tex.mkdir()
+    (tex / "writeup.tex").write_text(PLAIN_ROOT, encoding="utf-8")
+    (tex / "sections").symlink_to(outside, target_is_directory=True)
+
+    runtime = FakeChatRuntime([
+        call("delete_file", {"path": "sections/one.tex"}),
+        {"role": "assistant", "content": "Tried."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Delete it.")
+
+    assert results(tmp_path)[-1]["ok"] is False
+    assert (outside / "one.tex").read_text(encoding="utf-8") == "Not the project's.\n"
+
+
+@needs_symlinks
+def test_a_symlinked_writeup_tex_is_refused_rather_than_overwritten(tmp_path: Path):
+    """The leaf, not only the directories above it.
+
+    `writeup.tex` is versioned too, so a clone can ship it as a link to any
+    file the user owns and have the first save replace that file's contents.
+    """
+    victim = tmp_path / "notes.txt"
+    victim.write_text("Mine.\n", encoding="utf-8")
+    tex = tmp_path / "tex"
+    tex.mkdir()
+    (tex / "writeup.tex").symlink_to(victim)
+
+    runtime = FakeChatRuntime([
+        call("save_latex", {"source": PLAIN_ROOT}),
+        {"role": "assistant", "content": "Tried."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Save it.")
+
+    assert results(tmp_path)[-1]["ok"] is False
+    assert victim.read_text(encoding="utf-8") == "Mine.\n"

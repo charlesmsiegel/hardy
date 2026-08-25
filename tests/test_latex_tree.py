@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
+import pytest
+
+from hardy import layout
 from hardy.latex import LatexTools
 
 COMMAND = (sys.executable, str(Path(__file__).with_name("fake_latex.py")))
@@ -264,3 +268,62 @@ def test_a_second_escape_does_not_wait_out_the_first_presss_grace(tmp_path: Path
     # Well inside the 2s grace the first press started, let alone the 4s the
     # full ladder takes when nobody presses again.
     assert elapsed < 1.5
+
+
+needs_symlinks = pytest.mark.skipif(os.name == "nt", reason="symlink_to needs Developer Mode on Windows")
+
+
+@needs_symlinks
+def test_a_symlink_in_the_writeup_tree_is_not_copied_into_the_scratch_tree(tmp_path: Path):
+    """Neither of `copytree`'s two settings is safe on a tree a clone wrote.
+
+    Reproduced with the default, `symlinks=False`: `tex/sections -> $HOME` was
+    copied BY CONTENT, so every check dragged the whole of the user's home
+    directory into the scratch tree and handed it to a TeX process that can
+    `\\input` any of it -- which is what the compile succeeding here used to
+    demonstrate. `symlinks=True` is worse: the link is recreated, and the
+    candidate written to `sections/one.tex` afterwards lands in the linked
+    directory instead.
+
+    This is also the test `UNGUARDED` names for `latex.check`. Its three
+    writes go into a `TemporaryDirectory`, and they cannot leave it because
+    nothing in the scratch tree is a link for them to follow out.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.tex").write_text("The user's private notes.\n", encoding="utf-8")
+    tree = tmp_path / "tex"
+    tree.mkdir()
+    (tree / "sections").symlink_to(outside, target_is_directory=True)
+    document = (
+        "\\documentclass{article}\n\\begin{document}\\input{sections/secret}\\end{document}\n"
+    )
+
+    result = LatexTools(COMMAND).check(document, tree=tree)
+
+    # The compiler could not reach it, because it was never copied in.
+    assert not result.ok
+    assert "not found" in result.output
+    # And nothing was written back out through the link either.
+    assert sorted(item.name for item in outside.iterdir()) == ["secret.tex"]
+
+
+@needs_symlinks
+def test_a_symlinked_writeup_pdf_is_refused_rather_than_written_through(tmp_path: Path):
+    """Reproduced: `%PDF-` written into whatever a clone pointed the PDF at.
+
+    `writeup.pdf` is versioned and travels with a clone, and `shutil.copyfile`
+    opens its DESTINATION `wb` -- following the symlink to do it. A repository
+    shipping `writeup.pdf -> ~/.bashrc` had the file destroyed on the first
+    successful save, before anyone had read a line of the project.
+    """
+    victim = tmp_path / "bashrc"
+    victim.write_text("export PATH=/usr/bin\n", encoding="utf-8")
+    output = tmp_path / "workspace"
+    output.mkdir()
+    (output / "writeup.pdf").symlink_to(victim)
+
+    with pytest.raises(layout.LayoutError):
+        LatexTools(COMMAND).check(FINE, output_dir=output)
+
+    assert victim.read_text(encoding="utf-8") == "export PATH=/usr/bin\n"

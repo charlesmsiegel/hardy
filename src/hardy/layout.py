@@ -20,7 +20,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 #: The tooling directory, which is Hardy's own and never a problem.
@@ -63,6 +63,16 @@ def validate_slug(slug: str) -> str:
         raise LayoutError("a project slug may not be empty")
     if text in {".", ".."}:
         raise LayoutError(f"a project slug may not be {text!r}")
+    # Control characters, before anything tries to use this as a path. A NUL is
+    # the one that matters most: `project = "a\x00b"` in a committed config
+    # passed every check below and only failed at the first syscall, as an
+    # uncaught `ValueError: embedded null byte` with a traceback rather than
+    # the one-line refusal every other bad slug gets. A newline or a tab is
+    # refused for the same reason a reserved character is -- a slug is printed
+    # in banners, written into a `.gitignore` and into a lakefile stanza, and a
+    # name that can forge a line break in any of them is not a directory name.
+    if any(character < " " or character == "\x7f" for character in text):
+        raise LayoutError(f"a project slug may not contain control characters: {slug!r}")
     if text == HARDY_DIR:
         raise LayoutError(f"{HARDY_DIR!r} is Hardy's own directory, not a project")
     # Both separators, on every platform: a backslash is an ordinary character
@@ -177,7 +187,13 @@ class Layout:
         # Before anything is created: a symlinked problem directory would
         # otherwise have every mkdir below land outside the root.
         self.root.mkdir(parents=True, exist_ok=True)
-        self.problem.mkdir(parents=True, exist_ok=True)
+        # Through `_ensure_dir`, the same helper every child below uses, and
+        # not a bare `mkdir`. A DANGLING `<root>/sylow -> <base>/nowhere` makes
+        # `mkdir(exist_ok=True)` raise `FileExistsError` -- which is not a
+        # `LayoutError`, so `cli.py`'s `except layout.LayoutError` misses it
+        # and the user meets a traceback instead of the one-line refusal the
+        # very next statement was written to give them.
+        _ensure_dir(self.problem, self.root.resolve())
         problem = self.resolved_problem()
         root = self.root.resolve()
         # `resolved_problem` proves the problem DIRECTORY is a direct child of
@@ -242,10 +258,19 @@ PROBLEM_HEADER = (
 )
 PROBLEM_RULES = ("/.build/", "/.local/")
 TOOLING_HEADER = (
-    "# Written by Hardy. The oleans for this project's shared Lean library,\n"
-    "# rebuilt on demand and never committed.\n"
+    "# Written by Hardy. Oleans for this project's shared Lean library, and\n"
+    "# whatever an older layout left here when this was the whole workspace.\n"
+    "# None of it is committed.\n"
 )
-TOOLING_RULES = ("/.build/",)
+# `/.build/` is this directory's own oleans. The rest are here because
+# `unignore_tooling` strips a blanket `.hardy/` rule from the root, and on a
+# pre-branch checkout that directory is not empty scratch: it is the OLD
+# workspace, still holding the provider session id and the spend ledger
+# (`session.json`), the trajectory (`transcript.jsonl`), and every line ever
+# typed at the prompt whether or not it was sent (`input-history`). Not
+# migrating that data is a deliberate decision and it stands -- but the
+# decision was to leave it alone, not to hand it to the next `git add -A`.
+TOOLING_RULES = ("/.build/", "/.local/", "/session.json", "/transcript.jsonl", "/input-history")
 
 
 def _refuse_unless_direct_child(path: Path, parent: Path) -> Path:
@@ -395,6 +420,24 @@ class WriteGuard:
     A file is named to this class rather than handed to it as a path, which is
     the point: a new file inside a guarded directory cannot be written without
     going through here, because there is no path to open.
+
+    THE THREAT MODEL, stated so the next reader does not have to guess at it.
+    This defends against symlinks SHIPPED IN A REPOSITORY: a clone is a
+    hostile artifact, Hardy opens one before any human has looked at it, and
+    `git` will happily version `transcript.jsonl -> ../../victim.sh`. That is
+    the whole of it.
+
+    It is NOT a sandbox for the model. Hardy runs model-authored Lean and
+    model-authored CAS code as ordinary subprocesses, by design, so a model
+    that wanted to write outside the project would write a Lean `IO` action
+    and never come near this class.
+
+    It is NOT a defence against a concurrent local attacker either. There is a
+    TOCTOU window between the `stat` in `confirm` and the `open` that follows,
+    narrowed by `O_NOFOLLOW` but not closed, and it cannot be closed in pure
+    Python without `openat`. Given the paragraph above -- an adversary who can
+    race Hardy on its own filesystem can simply read the source it is about to
+    run -- that window buys nothing worth another round of work.
     """
 
     def __init__(self, directory: Path, *, create: bool = False) -> None:
@@ -552,6 +595,21 @@ class WriteGuard:
             if temporary is not None:
                 Path(temporary).unlink(missing_ok=True)
 
+    def unlink(self, name: str, *, missing_ok: bool = False) -> None:
+        """Remove `name` from this directory, or refuse.
+
+        Deleting needs the same proof writing does. `delete_file` reaches a
+        model-chosen path, and `<problem>/tex/sections -> $HOME` turned that
+        tool into one that unlinks a file in the user's home directory --
+        `os.unlink` never follows a final symlink, but every DIRECTORY
+        component on the way to it is followed, which is the whole escape.
+        `confirm` is what re-proves those components; `_leaf` refuses a link in
+        the last position as well, since nothing behind this guard has any
+        business being one.
+        """
+        self.confirm()
+        _leaf(self.directory / _name(name)).unlink(missing_ok=missing_ok)
+
     def write_json(self, name: str, value: Any) -> None:
         """Replace `name` with `value` as JSON, whole or not at all.
 
@@ -562,6 +620,38 @@ class WriteGuard:
         the rename is atomic whether or not the bytes have reached the disk.
         """
         self.write_bytes(name, (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8"), sync=False)
+
+
+def guard_for(base: Path, relative: str | PurePosixPath, *, create: bool = False) -> tuple[WriteGuard, str]:
+    """A guard for the directory a nested file lands in, and that file's name.
+
+    `Layout.ensure` proves `lean/` and `tex/` are the problem's own children
+    and then stops, because it cannot know which subdirectories a development
+    will grow. The paths reaching those two trees are multi-component and
+    model-chosen -- `Escape/Owned.lean`, `sections/one.tex` -- so the proof has
+    to be carried the rest of the way down.
+
+    One guard per component, not one guard on the leaf directory. A single
+    guard on `lean/Escape` would ACCEPT `lean/Escape -> /tmp/OUTSIDE`: the rule
+    is "resolved, this is its own parent's immediate child", and
+    `/tmp/OUTSIDE`'s parent really is what `lean/Escape` resolves to, so the
+    check passes and the file lands outside the root with content the model
+    chose entirely. Proving each component against the one above it is what
+    makes the chain say something about `base`. Reproduced before this existed:
+    `lean/Escape -> /tmp/OUTSIDE` plus `save_lean("Escape/Owned.lean", ...)`
+    wrote `/tmp/OUTSIDE/Owned.lean`.
+
+    `create=True` makes the intermediate directories as it goes, which is what
+    a save into a new subdirectory needs; `create=False` proves what is there
+    without bringing anything into existence.
+    """
+    parts = PurePosixPath(str(relative).replace("\\", "/")).parts
+    if not parts:
+        raise LayoutError(f"{relative!r} does not name a file inside {base}")
+    guard = WriteGuard(base, create=create)
+    for part in parts[:-1]:
+        guard = WriteGuard(guard.directory / _name(part), create=create)
+    return guard, _name(parts[-1])
 
 
 def _name(name: str) -> str:

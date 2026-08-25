@@ -257,10 +257,10 @@ def test_a_multiline_retired_value_is_migrated_cleanly(tmp_path: Path):
 def test_the_move_keeps_runs_root_which_is_still_a_live_setting(tmp_path: Path):
     """`runs_root` is out of scope for this change and stays readable by
 
-    `workflow.py`, `acceptance.py`, and `cli.py`. Only `workspace` is retired;
-    a `RETIRED_SETTINGS` that widened back to `("workspace", "runs_root")`
-    would silently discard a live user setting on every upgrade, so this pins
-    `runs_root` surviving the move right alongside `workspace` being dropped.
+    `workflow.py`, `acceptance.py`, and `cli.py`. The move keeps what
+    `SETTINGS` names, so a live setting must survive it; this pins `runs_root`
+    coming through right alongside `workspace` being dropped, which is the
+    pair a narrowed or widened allowlist would get wrong.
     """
     legacy = tmp_path / "legacy" / "config.toml"
     legacy.parent.mkdir(parents=True)
@@ -349,7 +349,7 @@ def test_an_empty_root_falls_back_to_main_without_reading_stdin(tmp_path: Path):
     Prompting here would hang `hardy batch` and CI, fail at EOF, or consume the
     first piped message as a slug.
     """
-    settings = config.load(tmp_path / "absent.toml", root=tmp_path, interactive=False)
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path)
     assert settings.project == "main"
 
 
@@ -358,7 +358,7 @@ def test_two_projects_and_no_active_setting_falls_back_to_main(tmp_path: Path):
     for slug in ("galois", "sylow"):
         (tmp_path / slug).mkdir()
         (tmp_path / slug / "session.json").write_text("{}", encoding="utf-8")
-    settings = config.load(tmp_path / "absent.toml", root=tmp_path, interactive=False)
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path)
     assert settings.project == "main"
 
 
@@ -411,3 +411,61 @@ def test_a_slug_that_escapes_the_root_is_refused(tmp_path: Path):
     (tmp_path / ".hardy" / "config.toml").write_text('project = "../other"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="one directory name"):
         config.load(tmp_path / "absent.toml", root=tmp_path)
+
+
+def test_the_move_keeps_only_settings_this_hardy_understands(tmp_path: Path):
+    """Reproduced: the migration deleted the config and bricked the install.
+
+    Dropping a fixed list of retired keys copied every OTHER unrecognised key
+    through verbatim, and `read_file` refuses those exactly as flatly -- so a
+    legacy file carrying anything Hardy no longer knows produced a destination
+    that will not load, and then unlinked the source. There was no config left
+    to repair from and no command left to repair with: `doctor` reads the same
+    file and failed the same way.
+    """
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        'model = "x"\nworkspace = ".hardy"\nlegacy_thing = "y"\n', encoding="utf-8"
+    )
+    destination = tmp_path / ".hardy" / "config.toml"
+
+    assert config.migrate_global(legacy, destination) is True
+
+    assert "legacy_thing" not in destination.read_text(encoding="utf-8")
+    # The proof that matters: what the migration produced is a file Hardy loads.
+    assert config.read_file(destination) == {"model": "x"}
+
+
+def test_a_project_config_says_how_many_settings_it_dropped(tmp_path: Path, capsys):
+    """Silence here is a trap for the user who writes `model = ...` in it.
+
+    The key is known to `read_file`, so nothing refuses the file; it is simply
+    not one this layer may set, and a user watching Hardy go on with the old
+    model has nothing anywhere to tell them why.
+    """
+    (tmp_path / ".hardy").mkdir()
+    (tmp_path / ".hardy" / "config.toml").write_text(
+        'project = "sylow"\nmodel = "some-other-model"\n', encoding="utf-8"
+    )
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path)
+    assert settings.model == config.DEFAULT_MODEL
+    said = capsys.readouterr().out
+    assert "ignoring 1 settings" in said
+    assert "may only set: project" in said
+
+
+def test_a_directory_named_something_no_slug_may_be_is_not_offered(tmp_path: Path):
+    """`existing_projects` answers `active_project`, so its list becomes a slug.
+
+    A directory carrying a record can be named anything an unpacking tool or a
+    checkout put there, including a name `validate_slug` refuses -- and the
+    single-project case returns that name as the slug the session opens,
+    getting past the check every other route into a slug goes through.
+    """
+    (tmp_path / ".hardy").mkdir()
+    for name in ("com1", "galois"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "session.json").write_text("{}", encoding="utf-8")
+
+    assert config.existing_projects(tmp_path) == ["galois"]

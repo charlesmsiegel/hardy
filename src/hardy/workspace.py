@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shutil
 import tempfile
@@ -20,6 +19,7 @@ from collections.abc import Callable, Collection, Mapping
 from pathlib import Path, PurePosixPath
 
 from .domain import FrozenModel
+from .layout import WriteGuard, guard_for
 
 # Lean identifiers are Unicode: `theorem α` and `theorem h₁` are ordinary, and
 # an ASCII-only pattern would not see them -- so a theorem could be saved that
@@ -101,6 +101,11 @@ def module_name(relative: PurePosixPath) -> str:
 
 def module_path(name: str) -> PurePosixPath:
     return PurePosixPath(*name.split(".")).with_suffix(".lean")
+
+
+def _olean_relative(name: str) -> PurePosixPath:
+    """Where a module's compiled artifact sits under a build directory."""
+    return PurePosixPath(*name.split(".")).with_suffix(".olean")
 
 
 def declared_name(name: str, prefix: tuple[str, ...] = ()) -> str:
@@ -795,11 +800,17 @@ class LeanWorkspace:
         return str(self.build)
 
     def olean(self, module: str) -> Path:
-        return (self.build / PurePosixPath(*module.split("."))).with_suffix(".olean")
+        return self.build / _olean_relative(module)
 
     def forget(self, module: str) -> None:
-        """Drop a module's compiled artifact and its cache entry."""
-        self.olean(module).unlink(missing_ok=True)
+        """Drop a module's compiled artifact and its cache entry.
+
+        Guarded, because deletion follows every directory component on the way
+        to the file even though it never follows the file itself: `.build/Foo`
+        replaced by a link makes this unlink somebody else's `Bar.olean`.
+        """
+        guard, name = guard_for(self.build, _olean_relative(module))
+        guard.unlink(name, missing_ok=True)
         index = self._index()
         if index.pop(module, None) is not None:
             self._write_index(index)
@@ -815,10 +826,18 @@ class LeanWorkspace:
         return loaded if isinstance(loaded, dict) else {}
 
     def _write_index(self, index: dict[str, str]) -> None:
-        self.build.mkdir(parents=True, exist_ok=True)
-        temporary = self.index_path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(temporary, self.index_path)
+        """Replace the build index, whole or not at all.
+
+        Guarded like everything else Hardy writes into a problem. The old
+        version wrote a fixed `index.json.tmp` beside it and renamed: a
+        repository that shipped that name as a symlink got the new bytes
+        written straight through it, and the rename then put the link where
+        the index belongs. `write_bytes` opens its temporary with
+        `O_CREAT | O_EXCL` under a name nobody can have shipped.
+        """
+        guard = WriteGuard(self.build)
+        guard.mkdir()
+        guard.write_bytes("index.json", (json.dumps(index, indent=2, sort_keys=True) + "\n").encode("utf-8"), sync=False)
 
     def _signatures(self, sources: Mapping[str, str], order: tuple[str, ...]) -> dict[str, str]:
         """What each module's build depends on, its dependencies included.
@@ -913,7 +932,6 @@ class LeanWorkspace:
             shutil.copytree(self.build, shadow_build)
         else:
             shadow_build.mkdir(parents=True)
-        target = shadow_root / relative
         shadow = LeanWorkspace(
             shadow_root,
             shadow_build,
@@ -921,8 +939,15 @@ class LeanWorkspace:
             environment=self._environment,
             external=self._external,
         )
+        # Through a guard in the shadow as well as in `commit`, and for the
+        # same reason: the shadow is a `copytree` of the real tree, so a
+        # subdirectory the real tree links out of the project arrives here as
+        # a real directory holding whatever that link pointed at -- and a
+        # writer that trusted "it is only a temporary directory" would be
+        # trusting a shape a repository chose.
+        shadow_guard, shadow_name = guard_for(shadow_root, relative, create=True)
         if source is None:
-            target.unlink(missing_ok=True)
+            shadow_guard.unlink(shadow_name, missing_ok=True)
             # The olean has to go with the source. Left behind, the module is
             # absent from `sources()` -- so Hardy reads any later `import` of
             # it as external and never builds it -- while Lean still resolves
@@ -930,17 +955,24 @@ class LeanWorkspace:
             # depend on source that is no longer in the workspace.
             shadow.forget(module_name(relative))
         else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(source, encoding="utf-8")
+            with shadow_guard.open(shadow_name, "w", encoding="utf-8") as handle:
+                handle.write(source)
 
         def commit() -> None:
-            self.root.mkdir(parents=True, exist_ok=True)
-            real = self.root / relative
+            # `guard_for`, not `self.root / relative`. `safe_relative` has
+            # already proven this is a workspace-relative Lean path made of
+            # identifiers, which is a statement about the NAME and says
+            # nothing about where the directories of that name lead:
+            # `lean/Escape -> /tmp/OUTSIDE` accepted `Escape/Owned.lean` and
+            # wrote a model-chosen file outside the project entirely.
+            # `guard_for` proves each component against the one above it, so
+            # the chain says something about `self.root`.
+            guard, name = guard_for(self.root, relative, create=True)
             if source is None:
-                real.unlink(missing_ok=True)
+                guard.unlink(name, missing_ok=True)
             else:
-                real.parent.mkdir(parents=True, exist_ok=True)
-                real.write_text(source, encoding="utf-8")
+                with guard.open(name, "w", encoding="utf-8") as handle:
+                    handle.write(source)
             if self.build.is_dir():
                 shutil.rmtree(self.build)
             shutil.copytree(shadow_build, self.build)

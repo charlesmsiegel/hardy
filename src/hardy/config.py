@@ -83,18 +83,26 @@ def legacy_config_path() -> Path:
     return Path(home) / "hardy" / "config.toml"
 
 
-#: Settings that existed once and do not any more. A migrated file carrying one
-#: would be rejected by `read_file`, so the move drops them.
-RETIRED_SETTINGS = ("workspace",)
-
-
 def migrate_global(source: Path | None = None, destination: Path | None = None) -> bool:
-    """Move a pre-`~/.hardy/` config into place, dropping retired settings.
+    """Move a pre-`~/.hardy/` config into place, keeping the settings that exist.
 
     A translation rather than a copy. `read_file` refuses any key outside
     `SETTINGS`, and every installer-written config carries `workspace`, which
     this change removes -- so relocating the file verbatim would leave Hardy
     unable to load its own configuration.
+
+    An ALLOWLIST, not a list of known-retired keys. That is the whole of the
+    difference between a migration and a brick. Excluding a fixed
+    `RETIRED_SETTINGS` copied every OTHER unrecognised key through verbatim,
+    and `read_file` refuses those just as flatly -- so a legacy file carrying
+    anything Hardy no longer knows (a setting retired in some later version, a
+    typo, a key from a fork) produced a destination that cannot be loaded, and
+    then DELETED the source. Reproduced: a legacy config of
+    `model = "x"`, `workspace = ".hardy"`, `legacy_thing = "y"` migrated to a
+    destination still carrying `legacy_thing`, after which every hardy
+    invocation -- `doctor` included, so there was nothing left to diagnose
+    with -- failed on an unknown setting, with the original gone. Keeping only
+    what `SETTINGS` names cannot fail that way for any key, present or future.
 
     Parsed and re-serialized, not line-filtered: a legacy file may spell a
     retired key as a multiline value -- `workspace = \"\"\"` with the string
@@ -116,7 +124,7 @@ def migrate_global(source: Path | None = None, destination: Path | None = None) 
     if not source.is_file() or destination.exists():
         return False
     values = tomllib.loads(source.read_text(encoding="utf-8-sig"))
-    kept = {key: value for key, value in values.items() if key not in RETIRED_SETTINGS}
+    kept = {key: value for key, value in values.items() if key in SETTINGS}
     lines = [_render_toml_line(key, value) for key, value in kept.items()]
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")
@@ -210,6 +218,14 @@ def existing_projects(root: Path) -> list[str]:
     A directory counts as a project when Hardy has written its record there.
     An empty directory a user happened to create is not one, and neither is
     `.hardy/`, which `validate_slug` refuses anyway.
+
+    Every name is put through `validate_slug` before it is offered. This list
+    is not only shown: `active_project` will RETURN one of these as the slug a
+    session opens when the root holds exactly one project, and a directory can
+    carry a name no slug is allowed to have -- `com1/`, `trailing /`, one with
+    a colon in it -- because a checkout, an unpacked archive or another tool
+    put it there rather than Hardy. Handing such a name back would smuggle
+    past the very check every other route into a slug goes through.
     """
     if not root.is_dir():
         return []
@@ -217,8 +233,16 @@ def existing_projects(root: Path) -> list[str]:
     for child in sorted(root.iterdir()):
         if not child.is_dir() or child.name.startswith("."):
             continue
-        if (child / layout.RECORD).is_file():
-            found.append(child.name)
+        if not (child / layout.RECORD).is_file():
+            continue
+        try:
+            # Compared, not just called: `validate_slug` trims outer whitespace
+            # as a convenience for a hand-typed value, so `" main"` comes back
+            # as `"main"` -- a slug naming a directory that is not this one.
+            if layout.validate_slug(child.name) == child.name:
+                found.append(child.name)
+        except layout.LayoutError:
+            continue
     return found
 
 
@@ -243,7 +267,6 @@ def load(
     *,
     root: Path | None = None,
     project: str | None = None,
-    interactive: bool = False,
     **overrides: Any,
 ) -> Config:
     """Resolve configuration from both layers, the environment, and CLI flags.
@@ -290,11 +313,17 @@ def load(
     # would therefore let a repository run an arbitrary program the moment
     # someone starts Hardy inside it. Selecting the active problem is what this
     # layer is for; naming executables is not.
-    project_values = {
-        key: value
-        for key, value in read_file(resolved_root / layout.HARDY_DIR / "config.toml").items()
-        if key in PROJECT_SETTINGS
-    }
+    project_path = resolved_root / layout.HARDY_DIR / "config.toml"
+    project_file = read_file(project_path)
+    project_values = {key: value for key, value in project_file.items() if key in PROJECT_SETTINGS}
+    # Said out loud, once. A key Hardy knows but this layer may not set is
+    # dropped in silence otherwise, and a user who put `model = ...` in the
+    # committed config would watch Hardy go on using the old model with
+    # nothing anywhere to say why. One line naming the count, the file and
+    # what the layer accepts is enough to end that hunt.
+    dropped = len(project_file) - len(project_values)
+    if dropped:
+        print(f"ignoring {dropped} settings in {project_path}; a project config may only set: {', '.join(sorted(PROJECT_SETTINGS))}")
     values.update(project_values)
     for key, variable in SETTINGS.items():
         value = os.environ.get(variable)
