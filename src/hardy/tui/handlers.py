@@ -14,6 +14,7 @@ from .. import catalog, doctor, process
 from .. import config as configuration
 from ..cas import CasError
 from ..cas_export import export_session
+from .banner import status_line
 from .commands import Command, canonical
 from .ports import Choice, State, Ui
 
@@ -38,7 +39,7 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
     config = state.config
     ui.write("Session", style="normal")
     ui.write(f"  Model:        {config.model}")
-    ui.write(f"  Workspace:    {config.layout.problem}")
+    ui.write(f"  {status_line(config)}")
     ui.write(f"  Lean project: {config.lean_project or 'current directory'}")
     ui.write(f"  Config file:  {config.config_path}")
     ui.write(f"  Transcript:   {config.layout.transcript}")
@@ -237,7 +238,11 @@ async def handle_cas(ui: Ui, argument: str, state: State) -> State:
             ui.write("CAS session reset; the next cell starts a clean kernel.")
             return state
         if argument == "export":
-            report = export_session(cas.session, session.workspace / "cas")
+            # `config.layout.cas`, not `session.workspace / "cas"`: both name
+            # the same directory today, but only the layout module owns that
+            # decision -- spelling it out here again is how the two paths
+            # drift apart the moment one of them changes.
+            report = export_session(cas.session, state.config.layout.cas)
             ui.write(f"Wrote {report.script_path} and {report.notebook_path}")
             ui.write(
                 f"Replay: {report.verified} verified, {report.diverged} diverged, "
@@ -300,7 +305,7 @@ def build_registry() -> list[Command]:
             "cas", "compute in the shared kernel", handle_cas,
             argument_hint="[state|reset|export|expr]",
         ),
-        Command("status", "show workspace, model, and paths", handle_status, safe_in_flight=True),
+        Command("status", "show the project, model, and paths", handle_status, safe_in_flight=True),
         Command("doctor", "check that Lean and LaTeX are usable", handle_doctor),
         Command("clear", "clear the screen; deletes nothing", handle_clear, safe_in_flight=True),
         exit_command,
