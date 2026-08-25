@@ -218,10 +218,23 @@ disk — the session's answers would then depend on context the record does not
 contain, which is precisely the property this design exists to guarantee.
 
 So the provider thread is bound to the transcript tip and **cleared whenever
-the transcript is shortened or replaced** — the same condition
-`_recover_spend` already detects for the cursor, acted on for both. Losing a
-resumable thread is the cheap half of that trade; a record that does not
-account for its own answers is the expensive half.
+the transcript is shortened or diverges**. Losing a resumable thread is the
+cheap half of that trade; a record that does not account for its own answers is
+the expensive half.
+
+**The existing condition is not sufficient for this, and reusing it would be a
+bug.** `_recover_spend` tests only `cursor > size` (`chat.py`). That catches a
+*shortened* transcript and nothing else: checking out a divergent branch whose
+transcript is the same length or longer leaves the cursor arithmetically valid
+against a history that never produced it, and the provider thread resumes from
+the other branch's conversation.
+
+The ledger therefore stores a **transcript identity** beside the cursor — a
+digest of the transcript's first `cursor` bytes, the prefix the ledger actually
+accounts for. On open, the digest is recomputed and compared; a mismatch means
+divergence, and clears the provider thread and resets the ledger exactly as a
+short file does. The size test stays as the cheap first check, not as the whole
+test.
 
 ## Interfaces
 
@@ -273,6 +286,14 @@ claims to manage.
 register `<slug>/lean` so the user's own `lake build` sees the modules. It asks,
 it is idempotent, and it is declinable — declining costs nothing, because
 imports still resolve through `lean_project` as they do today.
+
+**Registration never prompts off a TTY.** This is a second prompt on the same
+surviving path as project selection, and it has the same failure: on a piped or
+plain launch under a root holding a `lakefile.toml`, asking would block at EOF
+or eat the first chat line. Non-interactively it declines deterministically, and
+an explicit `--register-lakefile` / `--no-register-lakefile` flag covers
+scripted use. Declining is always safe, because Hardy's own resolution does not
+depend on it.
 
 Each problem is registered as **its own `lean_lib`, named for the slug**, never
 as a bare source root added to a shared one. Two problems both holding the
@@ -344,9 +365,15 @@ problem.
 - The save-time guarantees are unchanged by the move: refuse-whole on a broken
   dependent, dependents rebuilt, per-module audit verdicts, the documentation
   ratchet.
-- A shortened or replaced `transcript.jsonl` clears `provider_session` as well
-  as resetting the cursor, so the next turn starts a fresh provider thread
-  rather than resuming one the record cannot account for.
+- A shortened `transcript.jsonl` clears `provider_session` as well as resetting
+  the cursor, so the next turn starts a fresh provider thread rather than
+  resuming one the record cannot account for.
+- A *divergent* `transcript.jsonl` of the same length or longer — a different
+  branch, not a truncation — is caught by the stored prefix digest and clears
+  the thread too. A size check alone passes this case, so the test asserts it
+  specifically.
+- Lakefile registration off a TTY declines without reading stdin, and never
+  consumes a piped first message.
 - Project selection under a non-TTY never reads stdin: it resolves to the
   active project, the only project, or `main`, and a piped first message is
   never consumed as a slug.
