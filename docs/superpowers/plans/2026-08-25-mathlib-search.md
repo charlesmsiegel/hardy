@@ -1297,6 +1297,9 @@ class Report:
     # case id -> the rank a conclusion-only ranking gave the expected lemma,
     # or absent when it missed. The ablation `marginal` is taken against.
     baseline_rank: dict[str, int | None] = field(default_factory=dict)
+    # engine -> the corpus that answered, printed beside the metrics. A number
+    # whose corpus is not stated cannot be compared with a later one.
+    corpora: dict[str, str] = field(default_factory=dict)
 
     def recall_at(self, k: int) -> float:
         if not self.rows:
@@ -1397,6 +1400,7 @@ def evaluate(cases: list[dict], retriever_for) -> Report:
 
 def render(report: Report) -> str:
     lines = [
+        f"corpora        {report.corpora or 'live'}",
         f"cases          {len(report.rows)}",
         f"recall@1       {report.recall_at(1):.3f}",
         f"recall@5       {report.recall_at(5):.3f}",
@@ -1696,6 +1700,21 @@ def _factory(*, live: bool):
             # Rebuilt from the tape, never from a live source over a `None`
             # service -- see `ReplaySource`. The set is whatever was recorded,
             # which is by construction the production set at recording time.
+            # Checked before anything is built. `identities()` exists to catch
+            # a tape holding two corpora for one engine -- which is what an
+            # interrupted re-recording leaves behind -- and a factory that
+            # never calls it scores a hybrid corpus no live run ever used,
+            # under a baseline claiming to be reproducible.
+            mixed = {
+                engine: sorted(corpora)
+                for engine, corpora in TAPE.identities().items()
+                if len(corpora) > 1
+            }
+            if mixed:
+                raise SystemExit(
+                    "cassette set holds more than one corpus per engine, so it reproduces no "
+                    f"single live run: {mixed}. Re-record with --live."
+                )
             sources = [
                 ReplaySource(name, kind, corpus, accepts, TAPE)
                 for name, kind, corpus, accepts in TAPE.recorded_sources()
