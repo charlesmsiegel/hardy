@@ -307,6 +307,28 @@ def test_a_ranking_comes_back_as_json_a_model_can_read(tmp_path, monkeypatch) ->
     assert json.loads(result.output)['query'] == '_ + _ = _ + _'
 
 
+def test_a_lean_command_that_is_not_the_configured_lake_yields_no_runtime(tmp_path) -> None:
+    """Otherwise the model searches one environment and checks in another.
+
+    Chat elaborates through `lean_command`; search would run `config.lake`.
+    Under the default they are one program, and a custom wrapper is exactly
+    the configuration where a name found in one Lean does not elaborate in
+    the other.
+    """
+    configuration = importlib.import_module('hardy.config')
+    search_tools = importlib.import_module('hardy.search_tools')
+    config = configuration.Config(
+        workspace=tmp_path / 'workspace',
+        lean_project=_project(tmp_path),
+        lean_command=('/opt/wrapper/lean-shim',),
+    )
+
+    runtime, detail = search_tools.build_runtime(config)
+
+    assert runtime is None
+    assert 'lean-shim' in detail
+
+
 def test_a_bad_goal_is_refused_as_an_answer_rather_than_an_exception(tmp_path) -> None:
     """The dispatchers catch `ValueError`, but a refusal the model can read
     beats a generic `invalid tool call`."""
@@ -407,8 +429,36 @@ class SearchToolRuntime:
         return ToolResult(True, value.model_dump_json())
 
 
+# Chat elaborates through `config.lean_command` (default `lake env lean`),
+# while `LeanService` runs `config.lake` as `lake env lean --json`. Under the
+# default those are one program. Under a customised `HARDY_LEAN_COMMAND` -- a
+# wrapper script, a bare `lean`, a second Lake binary -- they are not, and the
+# model would search one environment and check the name it found in another,
+# reading a provenance that names neither discrepancy.
+LAKE_ENV_LEAN = ("lake", "env", "lean")
+
+
+def _same_toolchain(config: Config) -> bool:
+    """Whether searching and checking would run the same program.
+
+    Compared on the command's shape rather than by resolving both to inodes:
+    `lean_command` may name a wrapper that execs the right Lake, and no check
+    short of running it can tell. So the equivalence is asserted only for the
+    spelling that plainly denotes `config.lake`, and anything else is refused
+    with that as the reason -- a narrow rule that is right when it fires.
+    """
+    command = tuple(config.lean_command)
+    return command[1:] == LAKE_ENV_LEAN[1:] and Path(command[0]).name == Path(config.lake).name
+
+
 def build_runtime(config: Config) -> tuple[SearchToolRuntime | None, str]:
     """A search runtime for this configuration, or None and the reason why."""
+    if not _same_toolchain(config):
+        return None, (
+            f"lean_command is {' '.join(config.lean_command)!r} but search would run "
+            f"{config.lake}; searching one toolchain and checking in another would hand the "
+            "model a declaration its own Lean cannot elaborate"
+        )
     try:
         environment = environment_identity(config.lean_project)
     except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
@@ -756,7 +806,7 @@ Create `eval/premises/cases.json`. Start with these five, which cover the shapes
       "description": "the length of a reversed list equals the length of the list",
       "expect": ["List.length_reverse"],
       "provenance": "Mathlib.Data.List.Basic",
-      "why": "dot notation: the conclusion shape is unusable today and both sources reject it"
+      "why": "dot notation: the conclusion shape is unusable today and both sources reject it. The constants shape recovers only `List` from the hypothesis, not `List.reverse` -- whether that is enough is what the per-shape metric decides"
     },
     {
       "id": "compact-continuous-max",
@@ -913,6 +963,34 @@ class Cassette:
             raise CassetteMiss(f"{engine} was never recorded answering {query!r}")
         return json.loads(path.read_text(encoding="utf-8"))["hits"]
 ```
+
+- [ ] **Step 5b: Record which corpus answered**
+
+`record` takes a `corpus: str` -- the source's own `identity.corpus`, which
+already names the endpoint for a remote engine and the toolchain pin plus
+manifest digest for `#find` -- and stores it beside the hits. Add
+`identities() -> dict[str, set[str]]`, mapping each engine to every corpus
+string recorded for it. The runner prints them beside the metrics and refuses
+to replay a set where one engine shows more than one.
+
+The key stays `(engine, query)`. Without the recorded identity, a re-recording
+against a moved Mathlib keeps the same filenames and the same case ids while
+measuring a different corpus, and `eval/README.md`'s baseline would go on being
+compared against numbers that no longer mean the same thing. Test it:
+
+```python
+def test_a_set_recorded_against_two_corpora_is_refused_rather_than_replayed(tmp_path) -> None:
+    """Same filenames, same case ids, different Mathlib. Replaying it would
+    compare a baseline against numbers that no longer mean the same thing."""
+    tape = cassette.Cassette(tmp_path)
+    tape.record('lean-find', '_ = _', [{'name': 'A'}], corpus='Mathlib aaaa')
+    tape.record('lean-find', '_ + _', [{'name': 'B'}], corpus='Mathlib bbbb')
+
+    assert tape.identities()['lean-find'] == {'Mathlib aaaa', 'Mathlib bbbb'}
+```
+
+`TapedSource.search` in Task 5 passes `self._inner.identity.corpus` when it
+records.
 
 - [ ] **Step 6: Run test to verify it passes**
 
@@ -1573,6 +1651,13 @@ def _global_constants(goal: str) -> tuple[str, ...]:
 ```
 
 Add `Literal` to the `typing` import at the top of `retrieval.py` if it is not already there.
+
+Note what the dot-notation test does *not* claim. `xs.reverse.length` is one
+token whose head `xs` is a local, so it is dropped entirely; only the
+hypothesis line's `List` survives. Recovering `List.reverse` would need the
+type of `xs` and a model of how Lean elaborates projections. `List` alone is a
+weak query, and it may turn out not to be worth the call -- Task 7 Step 8 is
+where that gets decided, on evidence rather than on this paragraph.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2456,7 +2541,21 @@ def build_retriever(service: object, limits: RunLimits) -> PremiseRetriever:
     )
 ```
 
-If `SourceIdentity.kind` is a `Literal`, widen it to include `"leansearch"`.
+`SourceKind` is `Literal["lean_search", "loogle", "embedding"]` at
+`retrieval.py:128`; add `"leansearch"`. This is load-bearing, not cosmetic:
+`retrieval.py:1005` keys local-signature precedence on
+`identity.kind == "lean_search"`, so reusing that kind would let an unpinned
+remote rendering override the signature the model's own Lean is about to
+elaborate. Add a test for it to `tests/unit/test_retrieval_leansearch.py`:
+
+```python
+def test_a_remote_signature_never_displaces_the_pinned_environments() -> None:
+    """Precedence is keyed on the kind, so a new remote source sharing
+    `lean_search` would silently take the local authority's place."""
+    retrieval = importlib.import_module('hardy.retrieval')
+
+    assert _source(retrieval, PAYLOAD).identity.kind != 'lean_search'
+```
 
 - [ ] **Step 6: Run the tests**
 
@@ -2977,6 +3076,35 @@ In `src/hardy/search_tools.py`, add `"try_tactics"` to `SEARCH_TOOL_NAMES` and:
         return self._answer(lambda: self.service.try_tactics(statement, tactics, stop_on_first))
 ```
 
+**The scratch file must carry the session's own environment.**
+`LeanService.check_scratch` prepends `import Mathlib` and nothing else, while
+chat's `check_lean` runs with `env={"LEAN_PATH": lean_workspace.lean_path()}`
+(`chat.py:450`) so a file can import modules the session saved earlier. A
+`try_tactics` without that reports unknown identifiers for declarations the
+model just wrote — searching a different environment from the one it is working
+in, which is worse than not searching.
+
+So `LeanService.try_tactics` takes two more keyword arguments,
+`imports: Sequence[str] = ()` and `lean_path: str | None = None`, threads them
+into the scratch source and the process environment, and `SearchToolRuntime`
+passes the session's. On the staged and MCP surfaces there is no workspace and
+both stay empty, which is already what `lean_check_scratch` gives that model.
+
+Add to `tests/test_chat_search.py`, with `FakeSearch.try_tactics` recording the
+keyword arguments it was given:
+
+```python
+def test_tactic_search_in_a_session_sees_the_modules_the_session_saved(session_factory) -> None:
+    """A goal about a declaration saved a minute ago is the ordinary case
+    here, and `import Mathlib` alone cannot elaborate it."""
+    search = FakeSearch()
+    session = session_factory(search=search, search_detail='Mathlib abcdef in /lean')
+
+    session._tool('try_tactics', {'statement': 'theorem tmp : True'})
+
+    assert search.calls[0][1]['lean_path']
+```
+
 In `chat.py`'s `_search_tool`, before the `inspect_declarations` fallthrough:
 
 ```python
@@ -3217,9 +3345,40 @@ Expected: 5 passed
 grep -rn 'RunManifest(' src/hardy/
 ```
 
-In whichever module assembles the manifest for a completed `prove` run, set `automation=attribution(searches, accepted_proof_body)`. If the run's tactic searches are not retained anywhere, keep them as they happen — a list on `LeanToolRuntime`, appended to in the same place `bound_tactic_search` is called.
+The manifest is built at `workflow.py:465`, in the **parent** process. But
+`codex_runtime.py:85` serves Hardy's tools by launching `python -m hardy.mcp_server`
+over stdio, so on that backend `try_tactics` runs in a child the parent never
+shares memory with. A list held on `LeanToolRuntime` would be lost, and a Codex
+run that leaned heavily on `exact?` would finalize reporting zeros — a figure
+reading as "the model did it unaided" precisely when it did not, which is the
+one way this measurement can be actively misleading.
 
-Add a test beside the existing manifest tests asserting that a run which called `try_tactics` and accepted a proof reusing its suggestion reports `suggestions_reused == 1`.
+So the record goes through the run store rather than through memory:
+
+1. `bound_tactic_search` appends one JSON line per search to
+   `<run>/tactic_searches.jsonl` — a single-line `open(..., "a")` write, the
+   same append discipline the CAS cell log already uses.
+2. `workflow._finalize` reads that file, rebuilds the `TacticSearch` values, and
+   calls `attribution(...)` before hashing artifacts and writing the manifest.
+
+Both in-process surfaces write to the same file, so one path produces the figure
+rather than two that can disagree. A missing file means no tactic search ran,
+which is `attribution([], body)` — zeros, not absent.
+
+Add two tests beside the existing manifest tests: one that a run which called
+`try_tactics` and accepted a proof reusing its suggestion reports
+`suggestions_reused == 1`, and one that pins the process boundary —
+
+```python
+def test_a_search_recorded_by_a_child_process_still_reaches_the_manifest(tmp_path) -> None:
+    """On the Codex backend `try_tactics` runs inside `hardy.mcp_server`,
+    which finalization never shares memory with. A figure counting only
+    in-process calls would report zeros for exactly the runs that leaned
+    hardest on automation."""
+```
+
+driven by writing `tactic_searches.jsonl` directly, since that file *is* the
+contract between the two processes.
 
 - [ ] **Step 6: Document it**
 
