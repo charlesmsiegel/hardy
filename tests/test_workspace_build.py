@@ -5,10 +5,12 @@ import os
 import sys
 from pathlib import Path, PurePosixPath
 
+import pytest
 from test_chat import FakeChatRuntime, call, factory
 from workspace_helpers import events, results
 
 from hardy.chat import MathematicsSession
+from hardy.layout import LayoutError
 from hardy.workspace import LeanWorkspace
 
 
@@ -554,3 +556,147 @@ def test_a_project_library_may_rest_on_the_users_own(tmp_path: Path, monkeypatch
     chat.build_shared()
     assert chat._shared_failures == ()
     assert (root / ".hardy" / ".build" / "lean" / "CommAlg.olean").is_file()
+
+
+def test_an_orphaned_olean_is_purged_before_a_problem_can_import_it(tmp_path: Path):
+    """A shared module's source is deleted; its olean must go with it.
+
+    Reproduced before the fix: delete `.hardy/lean/CommAlg.lean` and
+    `CommAlg.olean` stayed in the shared build, which stays on `LEAN_PATH` --
+    so a problem could still `import CommAlg` and save an AUDITED theorem
+    resting on source that no longer exists, with a freshly recomputed shared
+    digest recorded beside it saying the build was current. `build_modules`
+    cannot notice: it only ever walks the modules that do exist.
+    """
+    root, problem, library = project(tmp_path)
+    chat = session(problem, saving(), root=root)
+    chat.build_shared()
+    olean = root / ".hardy" / ".build" / "lean" / "CommAlg.olean"
+    assert olean.is_file()
+
+    (library / "CommAlg.lean").unlink()
+    chat.build_shared()
+
+    assert not olean.exists()
+    assert "CommAlg" not in json.loads(
+        (root / ".hardy" / ".build" / "lean" / "index.json").read_text(encoding="utf-8")
+    )
+
+
+def test_a_renamed_shared_module_leaves_no_artifact_under_the_old_name(tmp_path: Path):
+    """A rename is a delete and an add, and only the add used to be noticed."""
+    root, problem, library = project(tmp_path)
+    chat = session(problem, saving(), root=root)
+    chat.build_shared()
+    build = root / ".hardy" / ".build" / "lean"
+    assert (build / "CommAlg.olean").is_file()
+
+    (library / "CommAlg.lean").rename(library / "Commutative.lean")
+    chat.build_shared()
+
+    assert not (build / "CommAlg.olean").exists()
+    assert (build / "Commutative.olean").is_file()
+
+
+def test_the_personal_library_does_not_compile_against_the_project_build(tmp_path: Path, monkeypatch):
+    """A personal olean must not be produced from whichever project ran last.
+
+    `~/.hardy/lean` is shared across every project; a project's `.hardy` is
+    not. Handing the project build directory to the personal library's compile
+    let `import CommAlg` there resolve against the current checkout, so the
+    same global olean meant different things in different projects.
+    """
+    home = tmp_path / "home" / ".hardy"
+    (home / "lean").mkdir(parents=True)
+    (home / "lean" / "Personal.lean").write_text(SHARED_LEAN, encoding="utf-8")
+    monkeypatch.setattr("hardy.chat.global_lean", lambda: home / "lean")
+    monkeypatch.setattr("hardy.chat.global_build", lambda: home / ".build" / "lean")
+    root, problem, _ = project(tmp_path)
+    chat = session(problem, saving(), root=root)
+
+    project_build = root / ".hardy" / ".build" / "lean"
+    personal_build = home / ".build" / "lean"
+
+    # Compiling the personal library sees nothing nearer than itself.
+    assert chat._compile_path(personal_build).split(os.pathsep) == [str(personal_build)]
+    # The project library still sees the personal one, which it may rest on.
+    assert chat._compile_path(project_build).split(os.pathsep) == [
+        str(project_build),
+        str(personal_build),
+    ]
+    # And the problem's own build sees both shared libraries.
+    assert chat._compile_path(chat.lean_workspace.build).split(os.pathsep) == [
+        str(chat.lean_workspace.build),
+        str(project_build),
+        str(personal_build),
+    ]
+
+
+needs_symlinks = pytest.mark.skipif(
+    os.name == "nt", reason="symlink_to needs Developer Mode on Windows"
+)
+
+
+@needs_symlinks
+def test_a_symlinked_source_never_reaches_discovery_or_the_build(tmp_path: Path):
+    """The most serious of the round: the audit believing what it cannot check.
+
+    Reproduced before the fix: `lean/Imported.lean -> <host file>` was
+    enumerated by `rglob` as an ordinary module, read through by `read_text`,
+    copied by content into the staging shadow, compiled, and graded by the
+    axiom audit -- so Hardy saved a kernel-checked theorem whose source is not
+    in the versioned problem and changes or vanishes on another machine.
+    """
+    compiled: list[str] = []
+    space = workspace(tmp_path, compiled)
+    write(space, "Main.lean", "import Mathlib\ndef a := 1\n")
+    outside = tmp_path / "host.lean"
+    outside.write_text("import Mathlib\ndef stolen := 2\n", encoding="utf-8")
+    (space.root / "Imported.lean").symlink_to(outside)
+
+    for call_it in (
+        space.sources,
+        space.current_signatures,
+        lambda: space.build_modules(("Main",)),
+        lambda: space.stage(PurePosixPath("Main.lean"), "import Mathlib\n"),
+    ):
+        try:
+            call_it()
+        except LayoutError:
+            continue
+        raise AssertionError("a symlinked source reached the workspace")
+    assert compiled == []
+
+
+@needs_symlinks
+def test_reading_one_module_refuses_a_symlink_too(tmp_path: Path):
+    """`read` is what shows the model the workspace's own source."""
+    space = workspace(tmp_path, [])
+    space.root.mkdir(parents=True)
+    outside = tmp_path / "host.lean"
+    outside.write_text("import Mathlib\n", encoding="utf-8")
+    (space.root / "Main.lean").symlink_to(outside)
+    with pytest.raises(LayoutError, match="symlink"):
+        space.read(PurePosixPath("Main.lean"))
+
+
+@needs_symlinks
+def test_a_symlinked_shared_source_is_neither_listed_nor_built(tmp_path: Path):
+    """A shared tree is inside the project too, and gets the same rule.
+
+    `<root>/.hardy/lean` travels with a clone. Before this the listing offered
+    the link's target as an importable module and the digest hashed the host
+    file's bytes; now the tree refuses as a whole, and the user is told through
+    `unbuildable` rather than by an import that resolves to somebody else's file.
+    """
+    root, problem, library = project(tmp_path, shared=None)
+    outside = tmp_path / "host.lean"
+    outside.write_text(SHARED_LEAN, encoding="utf-8")
+    (library / "CommAlg.lean").symlink_to(outside)
+
+    chat = session(problem, saving(), root=root)
+    chat.build_shared()
+
+    assert chat._shared_listing(chat.shadowed_modules())["modules"] == {}
+    assert any("symlink" in failure for failure in chat._shared_failures)
+    assert not (root / ".hardy" / ".build" / "lean" / "CommAlg.olean").exists()

@@ -24,7 +24,9 @@ from .layout import (
     RECORD,
     TRANSCRIPT,
     Layout,
+    LayoutError,
     WriteGuard,
+    files_under,
     global_build,
     global_lean,
     guard_for,
@@ -592,13 +594,37 @@ class MathematicsSession:
         fails to compile on save, which is the worst shape this bug can take:
         the workspace looks green right up to the moment it is written to.
         """
-        entries = [str(build_root), *(str(build) for _, build in self.shared_roots if build != build_root)]
+        builds = [build for _, build in self.shared_roots]
+        # A shared library sees only the libraries FURTHER OUT than itself.
+        # `shared_roots` is in resolution order -- the project's `.hardy` first,
+        # the user's `~/.hardy` after it -- so a project library may rest on the
+        # personal one and not the reverse. Handing the project build to the
+        # personal library's compile let a global olean be produced against
+        # whichever project happened to run last: the same
+        # `~/.hardy/lean/CommAlg.olean` would then mean different things in
+        # different checkouts, and the first project to open would import the
+        # other's build without either saying so.
+        visible = builds[builds.index(build_root) + 1 :] if build_root in builds else builds
+        entries = [str(build_root), *(str(build) for build in visible)]
         return os.pathsep.join(entries)
 
     def _modules_under(self, source: Path) -> Iterator[tuple[str, Path]]:
-        """Every Lean module a shared source tree offers, by name."""
-        for path in sorted(source.rglob("*.lean")):
-            yield module_name(PurePosixPath(path.relative_to(source).as_posix())), path
+        """Every Lean module a shared source tree offers, by name.
+
+        Through `files_under`, which refuses a symlink anywhere in the tree, so
+        this cannot advertise a module `build_shared` will not build: that pass
+        reads the same tree through the same walk and reports the refusal in
+        `unbuildable`, which is where the user is told what is wrong. Yielding
+        the link's target here instead would put a host file's name in the
+        model's listing and in the shared digest, for a module nothing can
+        compile -- the container proven, the thing inside it not.
+        """
+        try:
+            found = files_under(source, ".lean")
+        except (LayoutError, OSError):
+            return
+        for relative in found:
+            yield module_name(relative), Path(source, *relative.parts)
 
     def _shared_digest(self) -> str:
         """What every shared Lean source this session can import currently is.
@@ -737,11 +763,18 @@ class MathematicsSession:
         # second, which reads as a flaky build rather than an ordering bug.
         for space in reversed(self._shared_spaces):
             try:
+                # Before anything is built, and on every pass. A module deleted
+                # or renamed in the user's own editor leaves its olean on
+                # `LEAN_PATH`, so a problem could import a name whose source is
+                # gone and save an AUDITED theorem resting on it. Reconciling
+                # here is what makes the shared digest recorded beside that
+                # save describe a build made only from files that exist.
+                space.prune_orphans()
                 sources = space.sources()
                 failure = space.build_modules(tuple(sources)) if sources else None
             except ImportCycle as error:
                 failure = BuildFailure(module=str(space.root), output=str(error))
-            except OSError as error:
+            except (LayoutError, OSError) as error:
                 # A shared tree that cannot be read is a fact to report, not a
                 # traceback out of a tool call the model asked for.
                 failure = BuildFailure(module=str(space.root), output=str(error))

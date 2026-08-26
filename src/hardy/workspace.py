@@ -19,7 +19,7 @@ from collections.abc import Callable, Collection, Mapping
 from pathlib import Path, PurePosixPath
 
 from .domain import FrozenModel
-from .layout import WriteGuard, guard_for
+from .layout import WriteGuard, files_under, guard_for, read_text
 
 # Lean identifiers are Unicode: `theorem α` and `theorem h₁` are ordinary, and
 # an ASCII-only pattern would not see them -- so a theorem could be saved that
@@ -106,6 +106,16 @@ def module_path(name: str) -> PurePosixPath:
 def _olean_relative(name: str) -> PurePosixPath:
     """Where a module's compiled artifact sits under a build directory."""
     return PurePosixPath(*name.split(".")).with_suffix(".olean")
+
+
+def _olean_module(relative: PurePosixPath) -> str:
+    """The module an artifact path names, the inverse of `_olean_relative`.
+
+    Not `module_name`: that one strips exactly the five characters of `.lean`,
+    so `Foo.olean` came back as the module `Foo.o` and an orphan sweep keyed on
+    it would delete nothing while reporting a name nobody recognises.
+    """
+    return ".".join((*relative.parts[:-1], relative.name.removesuffix(".olean")))
 
 
 def declared_name(name: str, prefix: tuple[str, ...] = ()) -> str:
@@ -784,17 +794,36 @@ class LeanWorkspace:
         return self.build / "index.json"
 
     def sources(self) -> dict[str, str]:
+        """Every module in the tree, by name, read through the layout guard.
+
+        Discovery is a read, and it was the last unguarded one. `rglob` reports
+        a symlinked `lean/Imported.lean` as an ordinary module and `read_text`
+        follows it without a word, so a repository could put a host file into
+        the workspace: Hardy compiled it, the axiom audit graded it, and a
+        kernel-checked theorem was saved against source that is not in the
+        versioned problem and is not there at all on the next machine. That is
+        the audit believing something it cannot check, so `files_under` refuses
+        a symlink anywhere in the tree rather than skipping it.
+        """
         if not self.root.is_dir():
             return {}
         found = {}
-        for path in sorted(self.root.rglob("*.lean")):
-            relative = PurePosixPath(path.relative_to(self.root).as_posix())
-            found[module_name(relative)] = path.read_text(encoding="utf-8")
+        for relative in files_under(self.root, ".lean"):
+            found[module_name(relative)] = read_text(self.root, relative)
         return found
 
     def read(self, relative: PurePosixPath) -> str | None:
+        """One module's text, or None if there is no such file.
+
+        Guarded for the same reason `sources` is: what this returns is shown to
+        the model as the workspace's own source and diffed against what it
+        saves, so a link followed here is a host file presented as the
+        problem's.
+        """
         path = self.root / relative
-        return path.read_text(encoding="utf-8") if path.is_file() else None
+        if not path.is_file():
+            return None
+        return read_text(self.root, relative)
 
     def lean_path(self) -> str:
         return str(self.build)
@@ -814,6 +843,43 @@ class LeanWorkspace:
         index = self._index()
         if index.pop(module, None) is not None:
             self._write_index(index)
+
+    def prune_orphans(self) -> tuple[str, ...]:
+        """Drop every compiled artifact whose source is no longer in the tree.
+
+        A shared library is the user's own directory, edited in the user's own
+        editor, and deleting or renaming a module there left `CommAlg.olean`
+        and its index entry behind. The build directory stays on `LEAN_PATH`,
+        so a problem could go on importing a module that has no source: the
+        proof compiled, the axiom audit graded it, and Hardy saved a
+        kernel-checked theorem resting on a file nobody can read -- with a
+        freshly recomputed shared digest recorded beside it, saying the build
+        was current. `build_modules` cannot notice, because it only ever walks
+        the modules that DO exist.
+
+        Returns what it removed, so a caller can say so rather than silently
+        changing what an import resolves to.
+        """
+        if not self.build.is_dir():
+            return ()
+        keep = set(self.sources())
+        removed = []
+        for relative in files_under(self.build, ".olean"):
+            module = _olean_module(relative)
+            if module not in keep:
+                self.forget(module)
+                removed.append(module)
+        # The index as well as the artifacts: an entry naming a module with
+        # neither source nor olean is a claim about a build that never
+        # happened, and `forget` only reaches the ones that left a file behind.
+        index = self._index()
+        stale = [module for module in index if module not in keep]
+        if stale:
+            for module in stale:
+                index.pop(module)
+            self._write_index(index)
+            removed.extend(module for module in stale if module not in removed)
+        return tuple(sorted(removed))
 
     def _index(self) -> dict[str, str]:
         if not self.index_path.is_file():
@@ -925,6 +991,13 @@ class LeanWorkspace:
         shadow_root = temporary / "lean"
         shadow_build = temporary / "build"
         if self.root.is_dir():
+            # Proven before it is copied, not after. `copytree` follows a
+            # symlink by CONTENT, so a linked `lean/Imported.lean` arrives in
+            # the shadow as a real file with the host's bytes in it -- at which
+            # point every later check in the shadow is asking about a tree that
+            # nothing on disk actually is. `files_under` refuses a symlink
+            # anywhere beneath the root, which is the same walk `sources` does.
+            files_under(self.root, ".lean")
             shutil.copytree(self.root, shadow_root)
         else:
             shadow_root.mkdir(parents=True)

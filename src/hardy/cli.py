@@ -114,9 +114,25 @@ def offer_registration(
     host = config.root / "lakefile.toml"
     if not host.is_file() or choice is False:
         return None
+    # Before the host lakefile is touched at all. A launch that was going to
+    # decline anyway must not be able to fail on the host's file: a malformed
+    # `lakefile.toml` made `registered_libraries` raise `RegistrationRefused`
+    # out of a startup path that had not yet asked anybody anything, so Hardy
+    # would not start in a directory it never needed to read. Hardy's own
+    # resolution does not depend on registration, which is what makes an early
+    # return the honest answer rather than a dodge.
+    if choice is None and not interactive:
+        return None
     slug = config.project
     source = f"{slug}/lean"
-    existing = lakefile.registered_libraries(host)
+    try:
+        existing = lakefile.registered_libraries(host)
+    except lakefile.RegistrationRefused as refusal:
+        # A file Hardy cannot read, or one that is a symlink to another
+        # project's build definition, is a reason to decline out loud -- not a
+        # traceback, and not a silent skip that leaves `--register-lakefile`
+        # looking like it worked.
+        return f"Not registering {slug} with {host.name}: {refusal}"
     # Idempotent ONLY when the existing entry is the one we would write. A
     # library of this name pointing somewhere else is a conflict the user needs
     # told about, and returning here would swallow `register`'s refusal and
@@ -124,8 +140,6 @@ def offer_registration(
     if existing.get(slug) == source:
         return None
     if choice is None:
-        if not interactive:
-            return None
         # The offer this function exists to make. Without it registration is
         # reachable only through the flag, and the promise that Hardy "offers
         # to register" is never kept on the interactive path it was written for.
@@ -134,10 +148,13 @@ def offer_registration(
             return None
     try:
         stanza = lakefile.register(host, config.root, slug)
+        # Through `lakefile.append_stanza`, which re-proves the file is the
+        # root's own at the moment of the write: `host.open("a")` follows a
+        # symlink, so `<root>/lakefile.toml -> ../other/lakefile.toml` had
+        # Hardy register a library in somebody else's project.
+        lakefile.append_stanza(host, stanza)
     except lakefile.RegistrationRefused as refusal:
         return f"Not registering {slug} with {host.name}: {refusal}"
-    with host.open("a", encoding="utf-8") as handle:
-        handle.write(stanza)
     return f"Registered {slug} with {host.name} as a lean_lib; `lake build` now sees its modules."
 
 

@@ -595,12 +595,31 @@ function Install-Latex {
 
 function ConvertTo-TomlString($value) { $value -replace '\\', '\\\\' -replace '"', '\"' }
 
+# Before the file below is created, and that order is the whole point. Hardy's
+# own `migrate_global` moves a pre-`~/.hardy` config into place and DECLINES
+# when the destination already exists -- so an installer that wrote the new file
+# first left an upgrading user's model, commands and timeouts stranded in the
+# legacy file (`%APPDATA%\hardy\config.toml`) forever, with nothing left to
+# trigger the move. Run through the installed Hardy rather than reimplemented
+# here: only it knows where the legacy file lives and which settings survive.
+function Move-LegacyConfig {
+    if (Test-Path $ConfigPath) { return }
+    $venvPython = Join-Path $Venv 'Scripts\python.exe'
+    if (-not (Test-Path $venvPython)) { return }
+    $program = 'import sys; from pathlib import Path; from hardy.config import migrate_global; sys.exit(0 if migrate_global(destination=Path(sys.argv[1])) else 1)'
+    & $venvPython -c $program $ConfigPath 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Detail "moved your settings from the older config location into $ConfigPath"
+    }
+}
+
 function Write-Config {
     if ($NoConfig) {
         Write-Step 'Skipping the config file (-NoConfig)'
         return
     }
     Write-Step "Writing $ConfigPath"
+    Move-LegacyConfig
     if (Test-Path $ConfigPath) {
         Write-Detail 'config already exists; leaving your model and key untouched'
         if (-not $SkipMathlib -and -not (Select-String -Path $ConfigPath -Pattern '^\s*lean_project' -Quiet)) {
