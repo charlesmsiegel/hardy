@@ -4,6 +4,7 @@ import os
 import re
 import shlex
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -277,12 +278,29 @@ def existing_projects(root: Path) -> list[str]:
     return found
 
 
-def active_project(root: Path, stated: str | None, project_values: dict[str, Any]) -> str:
+def active_project(
+    root: Path,
+    stated: str | None,
+    project_values: dict[str, Any],
+    choose: Callable[[list[str]], str | None] | None = None,
+) -> str:
     """Which problem this run opens.
 
-    Deterministic, and it never reads stdin: prompting on a piped launch would
-    hang, fail at EOF, or take the first chat message for a slug. The caller
-    that has a TTY may ask first and pass the answer in as `stated`.
+    It never reads stdin itself: prompting on a piped launch would hang, fail
+    at EOF, or take the first chat message for a slug. Without a `choose` it is
+    entirely deterministic, and that path is unchanged -- one recorded problem
+    opens itself, anything else opens `main`.
+
+    `choose` is what a caller WITH a terminal supplies, and it is the promise
+    the old docstring made and nothing kept. A root holding several recorded
+    problems, no `project` in either config layer and no `--project` is an
+    ambiguity, and an interactive launch resolved it in silence by opening --
+    or creating -- `main`, so a user with `sylow/` and `burnside/` on disk got
+    a third, empty problem and no hint that the other two existed. It is
+    consulted only where the ambiguity is real: a stated slug, a configured
+    one, or a single recorded problem is an answer already, and asking about
+    an answer nobody is missing is how a prompt becomes noise. Declining --
+    returning None, which is what an empty line means -- keeps the old default.
     """
     for candidate in (stated, project_values.get("project")):
         if candidate:
@@ -290,6 +308,10 @@ def active_project(root: Path, stated: str | None, project_values: dict[str, Any
     present = existing_projects(root)
     if len(present) == 1:
         return present[0]
+    if choose is not None and len(present) > 1:
+        chosen = choose(present)
+        if chosen:
+            return layout.validate_slug(str(chosen))
     return layout.DEFAULT_SLUG
 
 
@@ -298,6 +320,7 @@ def load(
     *,
     root: Path | None = None,
     project: str | None = None,
+    choose: Callable[[list[str]], str | None] | None = None,
     **overrides: Any,
 ) -> Config:
     """Resolve configuration from both layers, the environment, and CLI flags.
@@ -389,7 +412,10 @@ def load(
         lean_timeout=lean_timeout,
         latex_command=tuple(shlex.split(text("latex_command", DEFAULT_LATEX_COMMAND))),
         root=resolved_root,
-        project=active_project(resolved_root, project, values),
+        # `choose` reaches here rather than the caller asking first because
+        # the root the question is about is resolved in this function, from
+        # three layers the caller does not otherwise take apart.
+        project=active_project(resolved_root, project, values, choose),
         runs_root=location("runs_root") or Path(DEFAULT_RUNS_ROOT),
         lake=location("lake") or Path(DEFAULT_LAKE),
         elan=location("elan") or Path(DEFAULT_ELAN),

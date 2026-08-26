@@ -773,14 +773,15 @@ WATCHED_FUNCTIONS = frozenset({
 #: exemption is a promise about one specific function's writes, which cannot be
 #: made on behalf of a function that does not exist yet.
 UNGUARDED = {
-    # Into `tempfile.TemporaryDirectory`, and the tree copied in first has had
-    # every symlink dropped on the way -- so there is no link in the scratch
-    # tree for a write to follow out of it. The two writes that LEAVE that
-    # scratch tree -- `writeup.pdf` and `writeup.aux`, both versioned files a
-    # clone controls -- are deliberately not in this function: they live in
-    # `latex._publish`, which has no exemption, so reverting either of them to
-    # `shutil.copyfile` fails this ratchet rather than passing it.
-    ("latex.py", "check"): "test_a_symlink_in_the_writeup_tree_is_not_copied_into_the_scratch_tree",
+    # Into `tempfile.TemporaryDirectory`, and `_copy_tree` refuses outright
+    # rather than copying a tree with a symlink anywhere in it -- so there is
+    # no link in the scratch tree for a write to follow out of it. The two
+    # writes that LEAVE that scratch tree -- `writeup.pdf` and `writeup.aux`,
+    # both versioned files a clone controls -- are deliberately not in this
+    # function: they live in `latex._publish`, which has no exemption, so
+    # reverting either of them to `shutil.copyfile` fails this ratchet rather
+    # than passing it.
+    ("latex.py", "check"): "test_a_symlink_in_the_writeup_tree_is_refused_rather_than_skipped",
 }
 
 

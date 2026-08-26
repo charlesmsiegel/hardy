@@ -882,10 +882,21 @@ class LeanWorkspace:
         return tuple(sorted(removed))
 
     def _index(self) -> dict[str, str]:
+        """What this build root has already compiled, or nothing.
+
+        Read through the guard for the same reason `_write_index` writes
+        through one: `.build/` is gitignored, which is not the same as
+        untrackable, and a repository that ships `.build/lean/index.json` as a
+        link had Hardy take another tree's record of what was built as this
+        one's -- and skip compiling a module on the strength of it. A
+        `LayoutError` is deliberately allowed out: a half-written index costs
+        a rebuild, but a link is a repository saying something Hardy cannot
+        honour, and every other project path answers that the same way.
+        """
         if not self.index_path.is_file():
             return {}
         try:
-            loaded = json.loads(self.index_path.read_text(encoding="utf-8"))
+            loaded = json.loads(read_text(self.build, "index.json"))
         except (json.JSONDecodeError, OSError):
             # A half-written index must cost a rebuild, never a crash on open.
             return {}

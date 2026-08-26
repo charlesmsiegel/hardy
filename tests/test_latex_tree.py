@@ -274,20 +274,28 @@ needs_symlinks = pytest.mark.skipif(os.name == "nt", reason="symlink_to needs De
 
 
 @needs_symlinks
-def test_a_symlink_in_the_writeup_tree_is_not_copied_into_the_scratch_tree(tmp_path: Path):
+def test_a_symlink_in_the_writeup_tree_is_refused_rather_than_skipped(tmp_path: Path):
     """Neither of `copytree`'s two settings is safe on a tree a clone wrote.
 
     Reproduced with the default, `symlinks=False`: `tex/sections -> $HOME` was
     copied BY CONTENT, so every check dragged the whole of the user's home
     directory into the scratch tree and handed it to a TeX process that can
-    `\\input` any of it -- which is what the compile succeeding here used to
-    demonstrate. `symlinks=True` is worse: the link is recreated, and the
-    candidate written to `sections/one.tex` afterwards lands in the linked
+    `\\input` any of it. `symlinks=True` is worse: the link is recreated, and
+    the candidate written to `sections/one.tex` afterwards lands in the linked
     directory instead.
+
+    Skipping the links was the answer after that, and it was still wrong in
+    two ways. The tree TeX compiled then differed silently from the tree a
+    reader sees -- `files_under`'s reason for refusing rather than skipping --
+    and it disagreed with the guard that writes the source afterwards, which
+    refuses a link outright, so a `save_latex` into a linked directory
+    compiled, PUBLISHED its PDF and its labels, and only then was refused the
+    write. One rule for the whole tree ends both.
 
     This is also the test `UNGUARDED` names for `latex.check`. Its three
     writes go into a `TemporaryDirectory`, and they cannot leave it because
-    nothing in the scratch tree is a link for them to follow out.
+    nothing in the scratch tree is a link for them to follow out -- there is
+    no link anywhere in a tree this refuses to copy.
     """
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -299,13 +307,31 @@ def test_a_symlink_in_the_writeup_tree_is_not_copied_into_the_scratch_tree(tmp_p
         "\\documentclass{article}\n\\begin{document}\\input{sections/secret}\\end{document}\n"
     )
 
-    result = LatexTools(COMMAND).check(document, tree=tree)
+    with pytest.raises(layout.LayoutError):
+        LatexTools(COMMAND).check(document, tree=tree)
 
-    # The compiler could not reach it, because it was never copied in.
-    assert not result.ok
-    assert "not found" in result.output
-    # And nothing was written back out through the link either.
+    # Nothing was read out of it and nothing was written back through it.
     assert sorted(item.name for item in outside.iterdir()) == ["secret.tex"]
+
+
+@needs_symlinks
+def test_a_symlinked_fragment_is_refused_rather_than_compiled_around(tmp_path: Path):
+    """The leaf, not only a directory -- and this is the exfiltration route.
+
+    `tex/leak.tex -> ~/.ssh/id_rsa` was skipped by the copy, so the compile
+    said nothing about it, while `read_file` and the writeup listing read the
+    very same file straight through the link. One rule for the tree means the
+    compile refuses it too, in the same sentence.
+    """
+    victim = tmp_path / "id_rsa"
+    victim.write_text("SECRET-PRIVATE-KEY-MATERIAL\n", encoding="utf-8")
+    tree = tmp_path / "tex"
+    tree.mkdir()
+    (tree / "writeup.tex").write_text(ROOT, encoding="utf-8")
+    (tree / "leak.tex").symlink_to(victim)
+
+    with pytest.raises(layout.LayoutError):
+        LatexTools(COMMAND).check(ROOT, tree=tree)
 
 
 @needs_symlinks

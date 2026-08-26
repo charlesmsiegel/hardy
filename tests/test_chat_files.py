@@ -394,3 +394,145 @@ def test_a_symlinked_writeup_tex_is_refused_rather_than_overwritten(tmp_path: Pa
 
     assert results(tmp_path)[-1]["ok"] is False
     assert victim.read_text(encoding="utf-8") == "Mine.\n"
+
+
+SECRET = "SECRET-PRIVATE-KEY-MATERIAL\n"
+
+
+@needs_symlinks
+def test_read_file_refuses_a_linked_writeup_file_rather_than_returning_it(tmp_path: Path):
+    """Reproduced: local-file exfiltration, through a tool that only reads.
+
+    A cloned problem shipping `tex/leak.tex -> ~/.ssh/id_rsa` made `read_file`
+    return the key. `_resolve` proved the NAME was a workspace path and
+    `Path.read_text` followed the link without a word, and what `read_file`
+    returns goes straight into the model's context -- so any file the user can
+    read was handed to the model provider by a repository they merely opened.
+    """
+    victim = tmp_path / "id_rsa"
+    victim.write_text(SECRET, encoding="utf-8")
+    tex = tmp_path / "tex"
+    tex.mkdir()
+    (tex / "leak.tex").symlink_to(victim)
+
+    runtime = FakeChatRuntime([
+        call("read_file", {"path": "leak.tex"}),
+        {"role": "assistant", "content": "Tried."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Read it.")
+
+    last = results(tmp_path)[-1]
+    assert last["ok"] is False
+    assert SECRET.strip() not in last["output"]
+
+
+@needs_symlinks
+def test_read_file_refuses_a_linked_lean_file_rather_than_returning_it(tmp_path: Path):
+    """The same one line, in the tree the last round did guard everywhere else.
+
+    `sources()`, `read()` and `stage()` went through the layout guard;
+    `read_file` did not, so `lean/Leak.lean -> ~/.ssh/id_rsa` leaked exactly
+    as the writeup tree did.
+    """
+    victim = tmp_path / "id_rsa"
+    victim.write_text(SECRET, encoding="utf-8")
+    lean = tmp_path / "lean"
+    lean.mkdir()
+    (lean / "Leak.lean").symlink_to(victim)
+
+    runtime = FakeChatRuntime([
+        call("read_file", {"path": "Leak.lean"}),
+        {"role": "assistant", "content": "Tried."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Read it.")
+
+    last = results(tmp_path)[-1]
+    assert last["ok"] is False
+    assert SECRET.strip() not in last["output"]
+
+
+@needs_symlinks
+def test_the_writeup_listing_refuses_a_linked_fragment(tmp_path: Path):
+    """Discovery is a read, and it was the route that needed no tool argument.
+
+    `rglob` reported `tex/leak.tex` as one of the project's own fragments, so
+    the listing advertised a host file to the model, its text answered the
+    writeup obligations, and it was hashed into `tex_signature` as the
+    project's own. Refused rather than skipped, for `files_under`'s reason.
+    """
+    victim = tmp_path / "id_rsa"
+    victim.write_text(SECRET, encoding="utf-8")
+    tex = tmp_path / "tex"
+    tex.mkdir()
+    (tex / "writeup.tex").write_text(PLAIN_ROOT, encoding="utf-8")
+    (tex / "leak.tex").symlink_to(victim)
+
+    runtime = FakeChatRuntime([
+        call("read_workspace", {}),
+        {"role": "assistant", "content": "Tried."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("What is here?")
+
+    last = results(tmp_path)[-1]
+    assert last["ok"] is False
+    assert SECRET.strip() not in last["output"]
+
+
+@needs_symlinks
+def test_a_linked_aux_cannot_hand_the_completion_gate_its_labels(tmp_path: Path):
+    """`.build/` is gitignored, which is not the same as untrackable.
+
+    A repository that ships `.build/tex/writeup.aux` as a link to a file full
+    of `\\newlabel` lines had those counted as labels LaTeX created here -- the
+    documentation gate released by a file nobody in this project wrote.
+    """
+    forged = tmp_path / "forged.aux"
+    forged.write_text("\\newlabel{thm:invented}{{1}{1}}\n", encoding="utf-8")
+    build = tmp_path / ".build" / "tex"
+    build.mkdir(parents=True)
+    (build / "writeup.aux").symlink_to(forged)
+
+    runtime = FakeChatRuntime([
+        call("read_workspace", {}),
+        {"role": "assistant", "content": "Tried."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("What is here?")
+
+    last = results(tmp_path)[-1]
+    assert last["ok"] is False
+    assert "thm:invented" not in last["output"]
+
+
+def test_no_pdf_is_published_when_the_writeup_source_cannot_be_saved(tmp_path: Path):
+    """Reproduced: a committed PDF describing source that is not on disk.
+
+    `latex.check` published `writeup.pdf` and `.build/tex/writeup.aux` from
+    the candidate and the guarded write of the source ran afterwards, so any
+    write that failed left the outputs and the labels standing while the old
+    source and its old `tex_signature` stayed put -- the stale-writeup check
+    still read as current, over a PDF describing text nobody has. Here a
+    directory sits where the fragment should be, which is a write the
+    filesystem simply will not take.
+    """
+    tex = tmp_path / "tex"
+    tex.mkdir()
+    (tex / "writeup.tex").write_text(ROOT_WITH_INPUT, encoding="utf-8")
+    (tex / "sections" / "one.tex").mkdir(parents=True)
+
+    runtime = FakeChatRuntime([
+        call("save_latex", {"path": "sections/one.tex", "source": "Section one.\n"}),
+        {"role": "assistant", "content": "Tried."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Save it.")
+
+    last = results(tmp_path)[-1]
+    assert last["ok"] is False
+    assert "could not be saved" in last["output"]
+    # The two outputs a successful save publishes, neither of them published.
+    assert not (tmp_path / "writeup.pdf").exists()
+    assert not (tmp_path / ".build" / "tex" / "writeup.aux").exists()

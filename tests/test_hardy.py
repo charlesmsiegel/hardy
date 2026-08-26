@@ -593,3 +593,41 @@ def test_registering_twice_does_not_append_twice(tmp_path: Path):
     cli.offer_registration(settings, interactive=False, choice=True)
 
     assert (tmp_path / "lakefile.toml").read_text(encoding="utf-8").count('name = "sylow"') == 1
+
+
+def test_the_project_prompt_reaches_the_chat_launch_that_has_a_terminal(monkeypatch):
+    """Reproduced: the prompt the docstring promised and no caller ever made.
+
+    Configuration is resolved before `_chat` learns whether it has a terminal,
+    so nothing was in a position to hand `active_project` an answer. It is
+    handed one here, and only here: a piped launch stays deterministic, and a
+    subcommand that merely reads the same configuration is never stopped to
+    answer a question its author did not ask.
+    """
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    parser = cli.build_parser()
+
+    assert cli._project_prompt(parser.parse_args([])) is cli.choose_project
+    assert cli._project_prompt(parser.parse_args(["chat"])) is cli.choose_project
+    assert cli._project_prompt(parser.parse_args(["doctor"])) is None
+
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    assert cli._project_prompt(parser.parse_args([])) is None
+
+
+def test_the_project_prompt_takes_a_number_a_name_or_neither(capsys):
+    """A slug is a directory name, so typing one has to work; so does a number.
+
+    Anything else declines instead of looping. This runs before a session
+    exists, and a prompt that cannot be escaped at startup is worse than one
+    that gives up and can be answered with `--project`.
+    """
+    present = ["galois", "sylow"]
+    assert cli.choose_project(present, ask=lambda _: "2\n") == "sylow"
+    assert cli.choose_project(present, ask=lambda _: " galois ") == "galois"
+    assert cli.choose_project(present, ask=lambda _: "") is None
+    assert cli.choose_project(present, ask=lambda _: "3") is None
+    assert cli.choose_project(present, ask=lambda _: "burnside") is None
+    # Both problems were named, so a user who declines still learned they exist.
+    assert "galois" in capsys.readouterr().out

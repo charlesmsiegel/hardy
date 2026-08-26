@@ -60,12 +60,63 @@ def confirm_assumption(ui: Any) -> Callable[[dict[str, str]], bool]:
     return confirm
 
 
+def choose_project(present: list[str], ask: Callable[[str], str] = input) -> str | None:
+    """Ask which recorded problem to open, or None to keep the default.
+
+    Only reached from a launch with a terminal on both ends -- see
+    `_project_prompt`. Several recorded problems with nothing naming one is a
+    real ambiguity, and Hardy used to resolve it in silence by opening, or
+    creating, `main`: a user with `sylow/` and `burnside/` on disk got a third
+    empty problem and never learned the other two were there.
+
+    A number or a name, because a slug is a directory name and typing one is
+    the obvious thing to try; an empty line declines and leaves the old
+    default in place. Anything unrecognised declines too rather than looping:
+    this runs before a session exists, and a prompt that cannot be escaped at
+    startup is worse than one that gives up and can be answered with
+    `--project`.
+    """
+    print("Several problems are recorded here and none is configured as active:")
+    for index, slug in enumerate(present, start=1):
+        print(f"  {index}. {slug}")
+    answer = ask(
+        f"Which one? [number, name, or Enter for {layout.DEFAULT_SLUG}] "
+    ).strip()
+    if not answer:
+        return None
+    if answer.isdigit() and 1 <= int(answer) <= len(present):
+        return present[int(answer) - 1]
+    if answer in present:
+        return answer
+    print(f"{answer!r} is not one of them; opening {layout.DEFAULT_SLUG}. Use --project to be explicit.")
+    return None
+
+
+def _project_prompt(args: argparse.Namespace) -> Callable[[list[str]], str | None] | None:
+    """The project chooser, when there is a terminal for it and a session to open.
+
+    A TTY on both ends, for `_chat`'s reason: stdout piped somewhere means
+    there is nowhere for the question to be seen, so asking would print into a
+    file and then read the next thing on stdin as the answer. Only for the
+    interactive session, too -- `doctor`, `latency` and `batch` resolve the
+    same configuration, and stopping any of them to ask which problem is
+    active would make a scripted invocation hang on a question its author
+    never asked for.
+    """
+    if getattr(args, "command", None) not in (None, "chat"):
+        return None
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return None
+    return choose_project
+
+
 def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> configuration.Config:
     try:
         return configuration.load(
             args.config,
             root=getattr(args, "root", None),
             project=getattr(args, "project", None),
+            choose=_project_prompt(args),
             model=args.model,
             lean_command=args.lean_command,
             lean_project=args.lean_project,

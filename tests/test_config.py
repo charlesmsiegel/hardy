@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy import config
+from hardy import config, layout
 
 
 @pytest.fixture(autouse=True)
@@ -514,3 +514,71 @@ def test_every_control_character_round_trips_through_the_move(tmp_path: Path, va
 
     assert config.migrate_global(legacy, destination) is True
     assert config.read_file(destination)["model"] == value
+
+
+def _recorded(root: Path, *slugs: str) -> None:
+    (root / ".hardy").mkdir(exist_ok=True)
+    for slug in slugs:
+        (root / slug).mkdir()
+        (root / slug / "session.json").write_text("{}", encoding="utf-8")
+
+
+def test_several_projects_and_a_terminal_ask_rather_than_opening_main(tmp_path: Path):
+    """Reproduced: an interactive launch silently opening a third, empty problem.
+
+    A root holding `galois/` and `sylow/`, no `project` in either config layer
+    and no `--project` is a real ambiguity, and it was resolved in silence by
+    opening -- or creating -- `main`. The user was never told the other two
+    were there. `choose` is the answer a caller with a terminal supplies.
+    """
+    _recorded(tmp_path, "galois", "sylow")
+    asked: list[list[str]] = []
+
+    def choose(present: list[str]) -> str:
+        asked.append(present)
+        return "sylow"
+
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path, choose=choose)
+
+    assert asked == [["galois", "sylow"]]
+    assert settings.project == "sylow"
+
+
+def test_declining_the_prompt_keeps_the_old_default(tmp_path: Path):
+    """An empty line is an answer, and it is the answer this always gave."""
+    _recorded(tmp_path, "galois", "sylow")
+    settings = config.load(tmp_path / "absent.toml", root=tmp_path, choose=lambda present: None)
+    assert settings.project == "main"
+
+
+def test_nothing_ambiguous_is_never_asked_about(tmp_path: Path):
+    """A prompt about a question nobody is missing is noise.
+
+    A stated slug, a configured one, and a single recorded problem are each an
+    answer already -- so none of them reaches the chooser.
+    """
+    _recorded(tmp_path, "galois")
+    asked: list[list[str]] = []
+
+    def choose(present: list[str]) -> str:
+        asked.append(present)
+        return "sylow"
+
+    assert config.load(tmp_path / "absent.toml", root=tmp_path, choose=choose).project == "galois"
+    _recorded(tmp_path, "sylow")
+    assert (
+        config.load(tmp_path / "absent.toml", root=tmp_path, project="galois", choose=choose).project
+        == "galois"
+    )
+    assert asked == []
+
+
+def test_a_chosen_slug_is_still_validated(tmp_path: Path):
+    """The chooser's answer is a slug like any other.
+
+    It arrives from a human at a terminal rather than from a file, which makes
+    it no less a directory name Hardy is about to write a record through.
+    """
+    _recorded(tmp_path, "galois", "sylow")
+    with pytest.raises(layout.LayoutError):
+        config.load(tmp_path / "absent.toml", root=tmp_path, choose=lambda present: "../elsewhere")

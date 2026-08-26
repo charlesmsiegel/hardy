@@ -30,6 +30,8 @@ from .layout import (
     global_build,
     global_lean,
     guard_for,
+    read_bytes,
+    read_text,
 )
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
@@ -81,6 +83,17 @@ THREAD_KEY = "provider_session"
 #: project must not append a line to it saying that this machine had no ledger
 #: yet -- `.local/` is gitignored, so that is true of every clone there is.
 RECOVERED_KEY = "usage_recovered_turns"
+
+
+class WriteupNotSaved(ValueError):
+    """A writeup file the compiler accepted and the filesystem would not take.
+
+    Raised out of the callback `latex.check` runs before it publishes
+    anything, so that a save which cannot land takes the PDF and the labels
+    with it. Its own type because the callback runs deep inside the compile
+    and the refusal has to be told apart there from a compiler problem: the
+    tool answers "this file could not be saved", not "LaTeX failed".
+    """
 
 
 class SchemaError(ValueError):
@@ -407,17 +420,37 @@ class MathematicsSession:
         self._record({"type": "model", "reason": "switched", "previous": previous, **provenance(self.runtime)})
 
     def _read_state(self) -> dict[str, Any]:
-        """The record, refusing a schema this version does not read.
+        """The record, refusing anything this version does not read.
 
         There is deliberately no reader for version 1. Accepting one anyway
         would carry its `provider_session`, `usage` and `usage_cursor` into a
         record that is now versioned -- and, since `WITHHELD` no longer names
         those keys, into the model's context as well. Refusing is the honest
         failure.
+
+        Being unreadable at all is refused the same way, and that is the point
+        of the three lines below. `session.json` is versioned: it comes back
+        with a merge conflict in it, gets hand-edited, gets truncated by a
+        full disk. Left to `json.loads` and `dict.get`, a conflicted record
+        raised `JSONDecodeError` and a record holding `[]` raised
+        `AttributeError` -- neither a `SchemaError`, so the interactive shell
+        did not recognise either as a deliberate refusal, announced a fallback
+        to the plain session, ran the identical load a second time, and ended
+        the session on a stack trace. That is exactly the failure `SchemaError`
+        exists to prevent, so every way the record can fail to be a version-2
+        object is translated into one.
         """
         if self.state_path.exists():
-            with self._workspace_guard.open(RECORD, encoding="utf-8") as handle:
-                stored = json.loads(handle.read())
+            try:
+                with self._workspace_guard.open(RECORD, encoding="utf-8") as handle:
+                    stored = json.loads(handle.read())
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                raise SchemaError(f"{self.state_path} is not readable JSON: {error}") from None
+            if not isinstance(stored, dict):
+                raise SchemaError(
+                    f"{self.state_path} holds a {type(stored).__name__}, not the record object "
+                    "this Hardy reads"
+                )
             version = stored.get("schema_version")
             if version != 2:
                 raise SchemaError(
@@ -659,7 +692,14 @@ class MathematicsSession:
                 digest.update(b"\0")
                 digest.update(name.encode("utf-8"))
                 try:
-                    digest.update(hashlib.sha256(path.read_bytes()).hexdigest().encode("ascii"))
+                    # `read_bytes`, not `path.read_bytes`. `files_under` proved
+                    # the whole tree a moment ago, and re-proving the one file
+                    # at the moment it is read is what `sources()` does too --
+                    # this digest stamps every audit verdict the session
+                    # stores, so it may not be taken over a file that is not
+                    # the one the walk found.
+                    content = read_bytes(source, path.relative_to(source))
+                    digest.update(hashlib.sha256(content).hexdigest().encode("ascii"))
                 except OSError:
                     # An unreadable file makes the identity coarser, not the
                     # session dead. Constant rather than timestamped: a value
@@ -1312,11 +1352,21 @@ class MathematicsSession:
 
         Still derived rather than stored: the file is a build artifact of the
         last successful save, and if it is absent nothing is documented yet.
+
+        Read through the guard, like every other file in a project. `.build/`
+        is gitignored but not untrackable -- a repository that ships
+        `.build/tex/writeup.aux` as a link to a file full of `\\newlabel` lines
+        would have had Hardy count those labels as ones LaTeX created here,
+        which is the completion gate released by a file nobody in this project
+        wrote. Absent is still nothing documented yet; a link is a refusal.
         """
-        aux = self.workspace / BUILD_DIR_TEX / "writeup.aux"
-        if not aux.is_file():
+        try:
+            written = read_text(
+                self.workspace, f"{BUILD_DIR_TEX}/writeup.aux", errors="replace"
+            )
+        except (FileNotFoundError, NotADirectoryError):
             return set()
-        return set(NEWLABEL.findall(aux.read_text(encoding="utf-8", errors="replace")))
+        return set(NEWLABEL.findall(written))
 
     def _saved_theorems(self) -> set[str]:
         found: set[str] = set()
@@ -1358,19 +1408,33 @@ class MathematicsSession:
         return {name: found for name, found in holders.items() if len(found) > 1}
 
     def _tex_sources(self) -> dict[str, str]:
-        """The writeup tree as text, keyed by workspace-relative path."""
+        """The writeup tree as text, keyed by workspace-relative path.
+
+        Discovered and read through the layout guard, exactly as
+        `LeanWorkspace.sources` is. `rglob` reports a symlinked `tex/leak.tex`
+        as an ordinary fragment and `read_text` follows it without a word, so
+        a repository could put a host file into the writeup: its text answered
+        the statement obligations, it was hashed into `tex_signature` as the
+        project's own, and `read_file` handed it back verbatim. A symlink under
+        `tex/` is refused rather than skipped, for `files_under`'s reason --
+        leaving it out silently would make the tree Hardy judges differ from
+        the tree a reader sees.
+        """
         if not self.tex_root.is_dir():
             return {}
         found: dict[str, str] = {}
-        for path in sorted(self.tex_root.rglob("*.tex")):
+        for relative in files_under(self.tex_root, ".tex"):
             try:
-                found[path.relative_to(self.tex_root).as_posix()] = path.read_text(
-                    encoding="utf-8", errors="replace"
+                found[relative.as_posix()] = read_text(
+                    self.tex_root, relative, errors="replace"
                 )
             except OSError:
                 # Unreadable is not empty, but a listing that raises here would
                 # take the turn with it. The obligation it leaves standing is
                 # the safe direction: the file cannot be shown to say anything.
+                # A `LayoutError` is deliberately NOT swallowed here: that one
+                # is a refusal about what the tree is, not a file that happens
+                # to be unreadable.
                 continue
         return found
 
@@ -1509,37 +1573,57 @@ class MathematicsSession:
         # would be checked against the old fragment and then overwritten by a
         # candidate nothing had compiled.
         relative, _ = resolved
-        result = self.latex.check(
-            source,
-            path=relative,
-            tree=self.tex_root,
-            output_dir=self.workspace,
-            aux_dir=self.workspace / BUILD_DIR_TEX,
-        )
+
+        def _write() -> None:
+            # `guard_for`, not a bare write to `target`. `_tex_path` proves the
+            # NAME is a relative, dot-free, colon-free path; it does not and
+            # cannot say where the directories of that name lead.
+            # `tex/sections -> $HOME` passed every one of its checks, and
+            # `save_latex("sections/one.tex")` then wrote a file of the model's
+            # choosing into the user's home directory. The guard proves each
+            # component against the one above it, at the moment of the write,
+            # and refuses a symlinked leaf outright -- which is also what stops
+            # `writeup.tex -> ~/.bashrc`.
+            try:
+                guard, name = guard_for(self.tex_root, relative, create=True)
+                with guard.open(name, "w", encoding="utf-8") as handle:
+                    handle.write(source.rstrip() + "\n")
+            except OSError as error:
+                # Raised on, never swallowed: the whole point of running here
+                # is that `check` publishes nothing when this fails. Wrapped
+                # so the answer names the save -- a directory sitting where
+                # the file should be, a full disk -- instead of reading as a
+                # compiler failure. A `LayoutError` needs no wrapper: it
+                # already says which path it refused and why.
+                raise WriteupNotSaved(f"{relative} could not be saved: {error}") from None
+
+        # Handed to `check` rather than run after it. `check` publishes
+        # `writeup.pdf` and `.build/tex/writeup.aux` from the candidate, and
+        # doing that first meant a write the guard refused left a committed PDF
+        # and a set of labels describing source that is not on disk, while the
+        # unchanged `tex_signature` reported the writeup as freshly compiled.
+        # The save is now the last thing that can fail before anything is
+        # published, so a failure leaves the workspace as it was.
+        try:
+            result = self.latex.check(
+                source,
+                path=relative,
+                tree=self.tex_root,
+                output_dir=self.workspace,
+                aux_dir=self.workspace / BUILD_DIR_TEX,
+                commit=_write,
+            )
+        except WriteupNotSaved as error:
+            return ToolResult(False, str(error), source)
         if not result.ok:
             return result
-        # `guard_for`, not a bare write to `target`. `_tex_path` proves the
-        # NAME is a relative, dot-free, colon-free path; it does not and cannot
-        # say where the directories of that name lead. `tex/sections -> $HOME`
-        # passed every one of its checks, and `save_latex("sections/one.tex")`
-        # then wrote a file of the model's choosing into the user's home
-        # directory. The guard proves each component against the one above it,
-        # at the moment of the write, and refuses a symlinked leaf outright --
-        # which is also what stops `writeup.tex -> ~/.bashrc`.
-        guard, name = guard_for(self.tex_root, relative, create=True)
-        with guard.open(name, "w", encoding="utf-8") as handle:
-            handle.write(source.rstrip() + "
-")
         # Stamped after the write, on a compile that succeeded, and only when
         # what was compiled is the writeup itself. Saving a fragment the root
         # does not include yet is checked through a probe document, which says
         # the fragment is sound and nothing about the writeup -- stamping that
         # would mark the tree established on the strength of a document nobody
         # will read.
-        root = self.tex_root / ROOT_DOCUMENT
-        if compiles_document(
-            root.read_text(encoding="utf-8") if root.is_file() else "", relative
-        ):
+        if compiles_document(self._tex_root_source(), relative):
             self.state["tex_signature"] = self._tex_signature()
             self._save_state()
         # Advisory rather than a refusal. With the save_lean ratchet in place a
@@ -1561,6 +1645,19 @@ class MathematicsSession:
         if note:
             return ToolResult(True, f"{result.output}\n\nSaved.{note}", source)
         return result
+
+    def _tex_root_source(self) -> str:
+        """The saved root document's text, or empty when there is none.
+
+        Through the guard, because `writeup.tex` is versioned and a clone may
+        ship it as a link: read with `Path.read_text` it was a host file whose
+        `\\input` lines decided whether a save counted as compiling the writeup,
+        and whose whole text was then handed to LaTeX as this project's root.
+        """
+        root = self.tex_root / ROOT_DOCUMENT
+        if not root.is_file():
+            return ""
+        return read_text(self.tex_root, ROOT_DOCUMENT)
 
     def _tex_path(self, path: str) -> tuple[str, Path] | ToolResult:
         """The workspace-relative writeup path, and where it lives on disk."""
@@ -1610,8 +1707,11 @@ class MathematicsSession:
                 "theorems": list(found["theorem"]),
                 "lemmas": list(found["lemma"]),
             })
+        # `files_under`, not `rglob`: discovery is a read. A symlinked
+        # `tex/leak.tex` was listed here as one of the project's own files,
+        # which is the model being told to go and read a host file.
         tex = (
-            sorted(path.relative_to(self.tex_root).as_posix() for path in self.tex_root.rglob("*.tex"))
+            sorted(relative.as_posix() for relative in files_under(self.tex_root, ".tex"))
             if self.tex_root.is_dir()
             else []
         )
@@ -1656,19 +1756,38 @@ class MathematicsSession:
         }
 
     def _read_file(self, path: str) -> ToolResult:
+        """One workspace file's text, proven to BE that file.
+
+        Reproduced, and it is why every read in this module now goes through
+        the guard: a cloned problem shipping `tex/leak.tex -> ~/.ssh/id_rsa`
+        made `read_file` return the key, because `Path.read_text` follows a
+        link without a word and `_resolve` only ever proved the NAME was a
+        workspace path. `read_file` puts whatever it returns straight into the
+        model's context, so that is any file the user can read handed to the
+        model provider by a repository they merely opened. The Lean half was
+        the same hole with the same one line at the end of it.
+        """
         resolved = self._resolve(path)
         if isinstance(resolved, ToolResult):
             return resolved
-        target, _ = resolved
+        target, kind, relative = resolved
         if not target.is_file():
             return ToolResult(False, f"no such workspace file: {path}")
-        return ToolResult(True, target.read_text(encoding="utf-8"))
+        try:
+            if kind == "lean":
+                found = self.lean_workspace.read(PurePosixPath(relative))
+                return ToolResult(found is not None, found or f"no such workspace file: {path}")
+            return ToolResult(True, read_text(self.tex_root, relative))
+        except OSError as error:
+            # A `LayoutError` is left to the dispatcher, which reports it as
+            # the refusal it is; this is for a file that is simply unreadable.
+            return ToolResult(False, f"{path} could not be read: {error}")
 
     def _delete_file(self, path: str) -> ToolResult:
         resolved = self._resolve(path)
         if isinstance(resolved, ToolResult):
             return resolved
-        target, kind = resolved
+        target, kind, _ = resolved
         if not target.is_file():
             return ToolResult(False, f"no such workspace file: {path}")
         if kind == "tex":
@@ -1720,13 +1839,14 @@ class MathematicsSession:
         """
         if target.resolve() == (self.tex_root / ROOT_DOCUMENT).resolve():
             return ToolResult(False, f"{ROOT_DOCUMENT} is the root document and cannot be deleted")
-        guard, name = guard_for(self.tex_root, target.relative_to(self.tex_root).as_posix())
-        kept = target.read_text(encoding="utf-8")
+        relative = target.relative_to(self.tex_root).as_posix()
+        guard, name = guard_for(self.tex_root, relative)
+        kept = read_text(self.tex_root, relative)
         guard.unlink(name)
         root = self.tex_root / ROOT_DOCUMENT
         if root.is_file():
             checked = self.latex.check(
-                root.read_text(encoding="utf-8"),
+                self._tex_root_source(),
                 tree=self.tex_root,
                 output_dir=self.workspace,
                 aux_dir=self.workspace / BUILD_DIR_TEX,
@@ -1744,17 +1864,27 @@ class MathematicsSession:
             self._save_state()
         return ToolResult(True, f"deleted {path}")
 
-    def _resolve(self, path: str) -> tuple[Path, str] | ToolResult:
-        """Where a tool path lives: the Lean tree or the writeup tree."""
+    def _resolve(self, path: str) -> tuple[Path, str, str] | ToolResult:
+        """Where a tool path lives: the Lean tree or the writeup tree.
+
+        The tree-relative path comes back beside the absolute one because that
+        is what a guarded read or write takes -- a guard is given a tree and a
+        name inside it, never a path to open, and rebuilding the relative half
+        at each call site is how one of them came to skip the guard entirely.
+        """
         cleaned = str(path).replace("\\", "/")
         if cleaned.endswith(".lean"):
             try:
-                return self.lean_workspace.root / safe_relative(cleaned), "lean"
+                relative = safe_relative(cleaned)
             except WorkspacePathError as error:
                 return ToolResult(False, str(error))
+            return self.lean_workspace.root / relative, "lean", relative.as_posix()
         if cleaned.endswith(".tex"):
-            target = self._tex_target(cleaned)
-            return target if isinstance(target, ToolResult) else (target, "tex")
+            resolved = self._tex_path(cleaned)
+            if isinstance(resolved, ToolResult):
+                return resolved
+            relative, target = resolved
+            return target, "tex", relative
         return ToolResult(False, f"not a workspace file: {path!r}")
 
     def _tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:

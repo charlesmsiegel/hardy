@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
-from .layout import WriteGuard
+from .layout import WriteGuard, files_under, guard_for, read_bytes
 from .models import ToolResult
 from .process import run_guarded
 
@@ -82,19 +82,31 @@ def _probe_root(root: str, path: str) -> str:
     return f"{head}{BODY}\n{body}\\end{{document}}\n"
 
 
-def _links(directory: str, names: list[str]) -> set[str]:
-    """The entries `copytree` must leave behind: the symlinks.
+def _copy_tree(tree: Path, work: Path) -> None:
+    r"""Copy the saved writeup into the scratch tree, refusing any symlink in it.
 
     Neither of `copytree`'s two settings is safe on a tree a repository wrote.
-    With `symlinks=False` -- the default, and what this used to do -- a
-    `tex/sections -> $HOME` is copied by CONTENT, so every check dragged the
-    user's home directory into the scratch dir and then handed it to a TeX
-    process that can `\\input` any of it. With `symlinks=True` the link is
-    recreated, and the candidate written to `sections/one.tex` afterwards lands
-    in `$HOME` instead. So neither: a symlink in the writeup tree is not part
-    of the writeup, and the compile behaves as though it were simply absent.
+    With `symlinks=False` -- the default -- a `tex/sections -> $HOME` is copied
+    by CONTENT, so every check dragged the user's home directory into the
+    scratch dir and then handed it to a TeX process that can `\input` any of
+    it. With `symlinks=True` the link is recreated, and the candidate written
+    to `sections/one.tex` afterwards lands in `$HOME` instead.
+
+    Skipping the links was the answer before this one, and it was still wrong
+    in the way `files_under` describes: the tree TeX compiles then differs from
+    the tree a reader sees, silently. Worse, it disagreed with the guard that
+    writes the source afterwards, which refuses a link outright -- so
+    `save_latex` could compile a document, publish its PDF and its labels, and
+    only then be refused the write, leaving `writeup.pdf` describing source
+    that is not on disk. One rule for the whole tree ends both: a symlink under
+    `tex/` is refused here, at the same moment and with the same sentence as
+    everywhere else in a project.
     """
-    return {name for name in names if Path(directory, name).is_symlink()}
+    for relative in files_under(tree, ""):
+        guard, name = guard_for(work, relative, create=True)
+        # Not fsynced: every byte here lands in a `TemporaryDirectory` this
+        # process is about to hand to TeX and then delete.
+        guard.write_bytes(name, read_bytes(tree, relative), sync=False)
 
 
 def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> None:
@@ -144,6 +156,7 @@ class LatexTools:
         tree: Path | None = None,
         output_dir: Path | None = None,
         aux_dir: Path | None = None,
+        commit: Callable[[], None] | None = None,
     ) -> ToolResult:
         r"""Compile a candidate against the documents already saved.
 
@@ -151,6 +164,18 @@ class LatexTools:
         is what gets compiled whatever file the candidate is: a fragment has no
         preamble and would fail on its own for a reason that says nothing about
         the mathematics.
+
+        `commit` is what a caller must have succeed before this publishes
+        anything, and it is the fix for an ordering that could not be made safe
+        from the outside. `save_latex` compiled the candidate, `check`
+        published `writeup.pdf` and `.build/tex/writeup.aux` from it, and only
+        THEN did the guarded write of the source run -- so a write the guard
+        refused, or one the filesystem would not take, left a committed PDF and
+        a set of labels describing source that is not on disk, while the
+        unchanged `tex_signature` went on reporting the writeup as freshly
+        compiled. Saving the source is the last thing that can fail, so it is
+        made to happen before the outputs leave the scratch tree: if it raises,
+        nothing is published and the workspace is exactly as it was.
         """
         started = time.monotonic()
         # Whether what gets compiled is the document itself. A probe carries the
@@ -161,7 +186,7 @@ class LatexTools:
         with tempfile.TemporaryDirectory(prefix="hardy-tex-") as directory:
             work = Path(directory)
             if tree is not None and tree.is_dir():
-                shutil.copytree(tree, work, dirs_exist_ok=True, ignore=_links)
+                _copy_tree(tree, work)
             candidate = work / path
             candidate.parent.mkdir(parents=True, exist_ok=True)
             candidate.write_text(source, encoding="utf-8")
@@ -183,6 +208,11 @@ class LatexTools:
                 # carrying the real preamble.
                 root.write_text(_probe_root(root.read_text(encoding="utf-8"), path), encoding="utf-8")
                 actual = False
+            # Only the compiler runs under this `try`. `commit` and `_publish`
+            # used to sit inside it, where a `FileNotFoundError` out of either
+            # -- the writeup directory removed underneath the session, say --
+            # came back as "LaTeX executable not found", which is a sentence
+            # about a machine that is fine.
             try:
                 # `run_guarded` rather than `run_process`: a TeX installation
                 # needs the environment Hardy was started with, and
@@ -197,30 +227,34 @@ class LatexTools:
                     raise subprocess.TimeoutExpired(
                         self.command, self.timeout, outcome.stdout, outcome.stderr
                     )
-                output = (outcome.stdout + outcome.stderr).strip()[-self.output_limit :]
-                elapsed = time.monotonic() - started
-                if outcome.interrupted:
-                    # Stopped, not judged. A compile nobody let finish has no
-                    # verdict about the source, and reporting its exit status as
-                    # one would read as LaTeX rejecting the document.
-                    return ToolResult(
-                        False, f"interrupted after {elapsed:.3f}s\n{output}", source
-                    )
-                pdf = work / "writeup.pdf"
-                # Published only from the real document. A probe's output was
-                # being written over `writeup.pdf` -- so the file a human opens
-                # became a page holding one fragment -- and its `.aux` was
-                # handing the completion gate labels that the writeup does not
-                # create, from a document nobody will ever read.
-                if actual and outcome.returncode == 0 and output_dir is not None and pdf.exists():
-                    _publish(work, output_dir, aux_dir)
-                return ToolResult(
-                    outcome.returncode == 0,
-                    f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n{output}",
-                    source,
-                )
             except subprocess.TimeoutExpired as error:
                 output = ((error.stdout or "") + (error.stderr or ""))[-self.output_limit :]
                 return ToolResult(False, f"timeout after {self.timeout:.1f}s\n{output}", source)
             except FileNotFoundError:
                 return ToolResult(False, f"LaTeX executable not found: {self.command[0]}", source)
+            output = (outcome.stdout + outcome.stderr).strip()[-self.output_limit :]
+            elapsed = time.monotonic() - started
+            if outcome.interrupted:
+                # Stopped, not judged. A compile nobody let finish has no
+                # verdict about the source, and reporting its exit status as
+                # one would read as LaTeX rejecting the document.
+                return ToolResult(False, f"interrupted after {elapsed:.3f}s\n{output}", source)
+            # Before a single byte leaves the scratch tree, and deliberately
+            # allowed to raise: see the note on `commit` above. A fragment
+            # compiled through a probe still has to be saved, so this does not
+            # wait on `actual` the way publication does.
+            if outcome.returncode == 0 and commit is not None:
+                commit()
+            pdf = work / "writeup.pdf"
+            # Published only from the real document. A probe's output was
+            # being written over `writeup.pdf` -- so the file a human opens
+            # became a page holding one fragment -- and its `.aux` was
+            # handing the completion gate labels that the writeup does not
+            # create, from a document nobody will ever read.
+            if actual and outcome.returncode == 0 and output_dir is not None and pdf.exists():
+                _publish(work, output_dir, aux_dir)
+            return ToolResult(
+                outcome.returncode == 0,
+                f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n{output}",
+                source,
+            )
