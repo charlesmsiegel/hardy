@@ -147,6 +147,28 @@ def test_search_prefers_a_hit_in_the_last_component(tmp_path) -> None:
     assert ModuleIndex(project).search("Sylow")[0] == "Mathlib.GroupTheory.Sylow"
 
 
+def test_the_projects_own_sources_do_not_enter_the_index(tmp_path) -> None:
+    """The index says what a package ships, never what a file asked for.
+
+    `Main.lean` in the fixture imports `Mathlib.GroupTheory.Sylow`; if it had
+    imported the *wrong* name, reading it would put that name in the index and
+    `nearest` would report the missing module as installed -- turning the one
+    tool that could correct the graded run's mistake into a tool that confirms
+    it.
+    """
+    project = _project(tmp_path)
+    (project / "Main.lean").write_text(
+        "import Mathlib.GroupTheory.Sylow.Basic\n", encoding="utf-8"
+    )
+
+    assert "Mathlib.GroupTheory.Sylow.Basic" not in ModuleIndex(project).names()
+
+
+def test_an_index_ships_the_module_it_is_named_for(tmp_path) -> None:
+    """Nothing imports `Mathlib`, so nothing else would put it in the list."""
+    assert "Mathlib" in ModuleIndex(_project(tmp_path)).names()
+
+
 def test_no_project_is_an_empty_index_rather_than_an_error(tmp_path) -> None:
     index = ModuleIndex(None)
 
@@ -234,20 +256,30 @@ class ModuleIndex:
                 # An unreadable index costs suggestions, never the session.
                 continue
             found.update(parse_imports(source))
+            # The index ships the module it is named for, and nothing imports
+            # it -- so without this, `import Mathlib` names a module this index
+            # says does not exist.
+            found.add(path.stem)
         return tuple(sorted(found))
 
     def _index_files(self) -> list[Path]:
-        """Each package's root index, and the project's own.
+        """Each package's root index. Deliberately not the project's own sources.
 
-        Depth 1 on purpose: a package's index sits at its root, and recursing
-        would read every source file in Mathlib to learn what Mathlib.lean
-        already says.
+        `parse_imports` reports what a file *imports*, not what exists. Reading
+        the workspace's own `Main.lean` would therefore have put
+        `Mathlib.GroupTheory.Sylow.Basic` into this index the moment the model
+        wrote that import -- and `nearest` would have answered that the missing
+        module is installed, which is worse than answering nothing. An index is
+        a list of what a package ships, and only a package's root index is one.
+
+        Depth 1: a package's index sits at its root, and recursing would read
+        every source file in Mathlib to learn what `Mathlib.lean` already says.
         """
         assert self.project is not None
-        roots = [self.project, *sorted((self.project / ".lake" / "packages").glob("*"))]
+        packages = self.project / ".lake" / "packages"
         return [
             path
-            for root in roots
+            for root in sorted(packages.glob("*"))
             if root.is_dir()
             for path in sorted(root.glob("*.lean"))
             if path.name not in NOT_AN_INDEX
@@ -300,7 +332,7 @@ class ModuleIndex:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run --extra test pytest tests/unit/test_modules.py -v`
-Expected: PASS, eight tests.
+Expected: PASS, ten tests.
 
 - [ ] **Step 5: Lint**
 
@@ -606,15 +638,16 @@ Add to `src/hardy/lean.py`, near the other module-level helpers:
 MISSING_MODULE = re.compile(r"object file '[^']*' of module ([\w.'!?«»]+) does not exist")
 
 
-def translate_missing_modules(output: str, modules: object | None) -> str:
+def translate_missing_modules(output: str, modules: "ModuleIndex | None") -> str:
     """`output` with a sentence about modules above it, when that is the error.
 
     Prepended rather than substituted. Hardy does not hide what a tool said,
     and the file path Lean names is still the fact a human debugging a genuinely
     broken installation needs.
 
-    `modules` is a `ModuleIndex`; typed loosely so `lean.py` does not import it
-    and create a cycle with `workspace`.
+    Typed under `TYPE_CHECKING` rather than loosely: `modules.py` imports only
+    `workspace`, and `workspace` imports neither, so there is no cycle to dodge
+    and no reason to give up the type.
     """
     if modules is None:
         return output
@@ -643,16 +676,27 @@ def translate_missing_modules(output: str, modules: object | None) -> str:
     return "\n".join((*lines, "", output))
 ```
 
-Ensure `import re` is present at the top of `lean.py`.
+Ensure `import re` is present at the top of `lean.py`, and add the type-only import:
+
+```python
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .modules import ModuleIndex
+```
+
+`modules.py` imports `workspace`; `workspace` imports only `domain` and `layout`. There is no cycle, so this is a real annotation rather than a workaround.
 
 - [ ] **Step 4: Apply it at the one choke point**
 
-`_observe` (lean.py:416) is where every `LeanTools` answer is assembled, so the translation goes there and every surface — `check_lean`, `save_lean`, the staged tools, the MCP server — inherits it.
+`_observe` (lean.py:416) is where every `LeanTools` answer is assembled, so the translation goes there and both `check_lean` and `save_lean` inherit it.
+
+It reaches **`LeanTools` callers only**. `lean.py` defines two façades and `LeanService` (lean.py:516) is the other one, so the staged tools and the MCP server are untouched. That is deliberate: the interactive session is the surface the failure happened on, and widening it is a separate change rather than a claim this task makes.
 
 Add a keyword parameter to `LeanTools.__init__` (lean.py:337), after `runner`:
 
 ```python
-        modules: object | None = None,
+        modules: "ModuleIndex | None" = None,
 ```
 
 and in the body:
@@ -756,6 +800,21 @@ def test_a_statement_carrying_universe_parameters_is_refused(session) -> None:
     assert refusal is not None
 
 
+def test_a_second_declaration_smuggled_onto_a_new_line_is_refused(session) -> None:
+    """`ASSUMPTION` reads both lines happily, so the request would round-trip
+    and an approval granted for `True` would carry `axiom extra : False`."""
+    refusal = session._assumption_shape("f", "True\naxiom extra : False")
+
+    assert refusal is not None
+    assert "one line" in refusal
+
+
+def test_a_binder_only_statement_is_not_caught_here(session) -> None:
+    """Documented, not hidden. `axiom f : (G : Type*) : True` parses; only
+    elaboration can say it is not Lean, and that is Task 6's job."""
+    assert session._assumption_shape("f", "(G : Type*) : True") is None
+
+
 def test_an_ordinary_statement_passes(session) -> None:
     assert session._assumption_shape("comm", "forall a b : Nat, a + b = b + a") is None
 
@@ -813,13 +872,26 @@ Add to `MathematicsSession`, beside the other private helpers:
         that opens a declaration, and an axiom's statement is a type and never
         a command; `unreadable_assumptions` is what `save_lean` itself calls.
 
-        This gate alone is not sufficient and is not meant to be. The double
-        header `axiom N : axiom N (binders) : ...` *parses* -- the name reads as
-        `N` and the statement as everything after the first colon -- so only
-        elaboration can call it nonsense. What this catches is the case worth
-        catching cheaply, with a sentence the model can act on.
+        A statement is also one line. `True\naxiom extra : False` is two
+        declarations, and `ASSUMPTION` reads both happily -- so without this the
+        request round-trips and an approval granted for the first smuggles the
+        second past. Approved statements are stored whitespace-collapsed anyway
+        (chat.py:565), so refusing a newline costs nothing a caller needed.
+
+        This gate is not sufficient and is not meant to be. A binder-only
+        statement -- `(G : Type*) : True` -- matches neither check, because
+        `axiom f : (G : Type*) : True` parses by taking everything after the
+        first colon. It is not valid Lean and only elaboration can say so, which
+        is what `_assumption_probe` is for. `opaque`, and any declaration
+        keyword `COMMAND` does not list, land in the same place.
         """
         statement = lean_statement.strip()
+        if "\n" in statement or "\r" in statement:
+            return (
+                "a statement is one line and one type. Multiple lines can carry a "
+                "second declaration, which an approval of the first would not cover. "
+                "Collapse it to one line."
+            )
         if COMMAND.match(statement):
             return (
                 f"a statement may not itself be a declaration: `{statement[:60]}` opens one. "
@@ -838,7 +910,11 @@ Add to `MathematicsSession`, beside the other private helpers:
         return None
 ```
 
-Add `COMMAND` and `unreadable_assumptions` to the existing `from .workspace import (...)` block at chat.py:40.
+Add `COMMAND` and `unreadable_assumptions` to the existing `from .workspace import (...)` block at chat.py:40. Task 6 additionally needs `normalise_lean` from the same block — check whether it is already imported before adding it:
+
+```bash
+sed -n '40,55p' src/hardy/chat.py
+```
 
 Call it first in the `request_assumption` branch (chat.py:1916), before `self.confirm`:
 
@@ -854,7 +930,7 @@ Call it first in the `request_assumption` branch (chat.py:1916), before `self.co
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run --extra test pytest tests/unit/test_assumption_gates.py -v`
-Expected: PASS, five tests.
+Expected: PASS, seven tests.
 
 - [ ] **Step 5: Commit**
 
@@ -954,10 +1030,66 @@ def test_the_caveat_reaches_the_approval_prompt(session, approvals, fake_lean) -
     assert "could not be checked" in approvals[0]["checked"]
 ```
 
-Add a `fake_lean` fixture to `tests/unit/conftest.py` that replaces the session's `_run_lean_source` with one returning a `ToolResult` built from its attributes. Model it on `tests/fake_lean.py`, which already exists — read it first:
+Add a `fake_lean` fixture to `tests/unit/conftest.py` replacing the session's `_run_lean_source`. It must return a **`LeanToolResult`**, not a base `ToolResult`: `_assumption_probe` reads `timed_out`, `interrupted` and `diagnostics`, and `models.ToolResult` (models.py:40) carries only `ok`, `output` and `source`, so a base result raises `AttributeError`.
+
+```python
+@pytest.fixture
+def fake_lean(session, monkeypatch):
+    from hardy.lean import LeanDiagnostic, LeanToolResult
+
+    class Fake:
+        closes_with: str | None = None   # a tactic name, or None for "proves nothing"
+        suggestion: str = ""
+        elaborates: bool = True
+        output: str = ""
+        raises: Exception | None = None
+        last_source: str = ""
+
+        def __call__(self, source: str):
+            self.last_source = source
+            if self.raises is not None:
+                raise self.raises
+            diagnostics = []
+            if not self.elaborates:
+                diagnostics.append(
+                    LeanDiagnostic(severity="error", message=self.output, line=3, column=0)
+                )
+            else:
+                for index, tactic in enumerate(session.PROBES):
+                    line = 5 + index
+                    if tactic == self.closes_with:
+                        if self.suggestion:
+                            diagnostics.append(LeanDiagnostic(
+                                severity="information",
+                                message=f"Try this: {self.suggestion}",
+                                line=line, column=0,
+                            ))
+                        continue
+                    diagnostics.append(LeanDiagnostic(
+                        severity="error", message="unsolved goals", line=line, column=0
+                    ))
+            return LeanToolResult(
+                not diagnostics,
+                self.output,
+                source,
+                diagnostics=tuple(diagnostics),
+                open_goals=(),
+                timed_out=False,
+                output_overflow=False,
+                interrupted=False,
+                observation_truncated=False,
+                source_sha256="",
+            )
+
+    fake = Fake()
+    monkeypatch.setattr(session, "_run_lean_source", fake)
+    return fake
+```
+
+Read `LeanToolResult`'s real field list before writing this and match it exactly:
 
 ```bash
-sed -n '1,60p' tests/fake_lean.py
+grep -n 'class LeanToolResult' -A 20 src/hardy/lean.py
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -994,11 +1126,20 @@ Expected: FAIL — no `_assumption_probe`.
         where every axiom is approved unchecked *or* one where none can be: the
         caveat carries the uncertainty to the human, who is the one deciding.
         """
-        statement = declaration.split(":", 1)[1].strip()
+        # Collapsed to one line before anything else. The probe reads which
+        # tactic closed the goal from `LeanDiagnostic.line`, Hardy keeps only a
+        # diagnostic's *start* line (`endPos` is discarded at lean.py:194), and
+        # a two-line statement would attribute an error to the wrong tactic --
+        # possibly reporting a probe as succeeding when it failed.
+        statement = normalise_lean(declaration.split(":", 1)[1]).strip()
         examples = "\n".join(
             f"example : {statement} := by {tactic}" for tactic in self.PROBES
         )
-        source = f"import Mathlib\n\n{declaration}\n\n{examples}\n"
+        head = declaration.split(":", 1)[0].strip()
+        # Exactly this layout, and a test asserts it: `import Mathlib` on line
+        # 1, blank, the declaration on line 3, blank, then one example per line
+        # from line 5. The arithmetic below is that layout and nothing else.
+        source = f"import Mathlib\n\n{head} : {statement}\n\n{examples}\n"
         try:
             result = self._run_lean_source(source)
         except Exception as error:  # noqa: BLE001 - an unrunnable probe is a caveat, never a crash
@@ -1345,7 +1486,9 @@ git commit -m "Put the goal beside the axiom a human is asked to approve"
 
 **Interfaces:**
 - Consumes: `completion.assemble`, `completion.displayed`, `completion.Displayed`.
-- Produces: `Obligation(kind="theorem", subject="", detail=...)`. `report_result` needs no change — its blocking rule already covers a subject-less obligation (chat.py:2005).
+- Produces: `Obligation(kind="theorem", subject="", detail=...)`. `report_result` needs no change — its blocking rule already covers a subject-less obligation (`if not item.subject`, chat.py:2004).
+
+The obligation names the environment and its labels, **not the file**: `assemble` splices every fragment into one pathless `Displayed` (completion.py:241), so a filename is not available without a second traversal, and the environment plus its labels is enough to find it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1452,6 +1595,21 @@ def test_a_theorem_environment_in_a_fragment_counts() -> None:
     assert [item.kind for item in owed if item.kind == "theorem"] == ["theorem"]
 
 
+def test_a_theorem_inside_an_unexpanded_macro_is_not_an_assertion() -> None:
+    r"""`executed` keeps a `\newcommand` body; `without_definitions` is what
+    knows the difference between defining a block and typesetting one."""
+    owed = outstanding(
+        theorems={},
+        registry=[],
+        labels=set(),
+        assumptions=[],
+        used=set(),
+        tex=_tex("\newcommand{\exampleblock}{\begin{theorem}No.\end{theorem}}"),
+    )
+
+    assert not [item for item in owed if item.kind == "theorem"]
+
+
 def test_a_theorem_shown_inside_a_listing_is_not_an_assertion() -> None:
     """`displayed` already separates what TeX runs from what it shows; a
     `\\begin{theorem}` inside a verbatim block is an illustration."""
@@ -1514,20 +1672,28 @@ def asserted_theorems(document: Displayed) -> tuple[tuple[str, str], ...]:
     r"""Each theorem environment the document *runs*, with the labels inside it.
 
     Read from `executed`, so a `\begin{theorem}` inside a listing is an
-    illustration rather than an assertion -- which is the same distinction
-    `quoted_lean` relies on from the other side.
+    illustration rather than an assertion -- the same distinction `quoted_lean`
+    relies on from the other side -- and then through `without_definitions`,
+    because `executed` still holds the *body* of a `\newcommand`. A macro that
+    is never expanded asserts nothing:
+
+        \newcommand{\exampleblock}{\begin{theorem}Not asserted.\end{theorem}}
+
+    Without that second step the gate's first false positive is a document that
+    was honest, which is how a mechanical rule loses its authority.
 
     Bodies are matched from `\begin{env}` to the next `\end{env}`. Theorem
     environments do not nest in practice, and this is a scanner rather than a
     TeX engine: the limit is stated in FEATURES.md rather than pretended away.
     """
+    text = without_definitions(document.executed)
     found: list[tuple[str, str]] = []
     for name in sorted(theorem_environments(document)):
         opening = re.compile(rf"\\begin\{{{re.escape(name)}\}}")
         closing = re.compile(rf"\\end\{{{re.escape(name)}\}}")
-        for match in opening.finditer(document.executed):
-            end = closing.search(document.executed, match.end())
-            body = document.executed[match.end() : end.start() if end else len(document.executed)]
+        for match in opening.finditer(text):
+            end = closing.search(text, match.end())
+            body = text[match.end() : end.start() if end else len(text)]
             found.append((name, " ".join(LABEL.findall(body))))
     return tuple(found)
 ```
@@ -1716,16 +1882,18 @@ def stamped(source: str, stamp: str | None) -> str:
 
 Ensure `import re` is at the top of `latex.py`.
 
-In `LatexTools.check`, add `stamp: str | None = None` to the signature and apply it to what is written into the scratch tree — **both** the candidate and the root, since either may be the compiled document:
+In `LatexTools.check`, add `stamp: str | None = None` to the signature.
+
+Apply it to **the root, after the root has been resolved** — never to `source` as such. Saving a fragment writes the fragment to scratch and compiles the root that includes it; stamping `source` there would inject the banner into a file with no `\begin{document}`, produce nothing, and publish an unstamped PDF. Leave the existing `root.write_text(...)` and `candidate.write_text(...)` calls as they are, and add one step immediately before the compiler runs:
 
 ```python
-            candidate.write_text(stamped(source, stamp), encoding="utf-8")
-```
-
-and where the root is written from `source`:
-
-```python
-                root.write_text(stamped(source, stamp), encoding="utf-8")
+            # The root is what gets compiled, so the root is what gets stamped
+            # -- whichever file this call is nominally about. Stamping `source`
+            # instead put the banner into a fragment with no `\begin{document}`,
+            # so saving a section published an unstamped PDF while save_latex on
+            # the root published a stamped one.
+            if stamp:
+                root.write_text(stamped(root.read_text(encoding="utf-8"), stamp), encoding="utf-8")
 ```
 
 The `commit` callback is untouched. It writes the author's source, which is the whole point.
@@ -1744,7 +1912,12 @@ In `chat.py`, add to `MathematicsSession`:
         """
         owed = self._obligations()
         unbacked = sum(1 for item in owed if item.kind == "theorem")
-        checked = len(self._saved_theorems())
+        # Not `len(self._saved_theorems())`. That is a textual scan of the
+        # sources (chat.py:1371) and would call a theorem machine-checked while
+        # `_audit_gaps` was simultaneously reporting it as unestablished. A
+        # banner that overstates is worse than no banner.
+        gaps = {item.subject for item in owed if item.kind == "lean"}
+        checked = len(self._saved_theorems() - gaps)
         assumed = len(self.state["assumptions"])
         reported = len(self.state.get("reports", ()))
         parts = [
@@ -1779,16 +1952,46 @@ grep -n '^from\|^import' src/hardy/writeup.py
 
 `writeup.py` imports `domain`, `process`, `storage`, `verifier` — none of which import `chat` — so it is safe. If that has changed, move `escape_tex_text` to `latex.py` and import it from there instead.
 
-- [ ] **Step 5: Pass it at both call sites**
+- [ ] **Step 5: Pass it at every call site, and there are three**
 
-In `_check_latex` and `_save_latex`, add `stamp=self._stamp()` to the `self.latex.check(...)` calls.
+```bash
+grep -n 'self.latex.check(' src/hardy/chat.py
+```
 
-- [ ] **Step 6: Run the tests**
+Add `stamp=self._stamp()` to each: `_check_latex`, `_save_latex`, **and the recompile inside `delete_file`** (chat.py:1848). That third one publishes `writeup.pdf` and re-stamps `tex_signature`; without the argument, deleting a fragment silently replaces a stamped PDF with an unstamped one and records it as current.
+
+- [ ] **Step 6: Make a changed stamp make the writeup stale**
+
+The stamp's text depends on session state — theorem count, assumptions, reports, goal — and `_tex_signature` hashes only the saved sources (chat.py:2066). Left alone, a successful `report_result` leaves a published PDF still reading "no result has been reported", with nothing marking it stale.
+
+In `_tex_signature`, fold the stamp in:
+
+```python
+        # The banner is part of the published document, so a change to what it
+        # would say makes the PDF as stale as an edit to the source does.
+        # Without this, report_result succeeded and the PDF went on saying that
+        # no result had been reported, with `_stale_writeup` seeing nothing wrong.
+        digest.update(self._stamp().encode("utf-8"))
+        digest.update(b"\0")
+```
+
+Add a test to `tests/unit/test_latex_stamp.py`:
+
+```python
+def test_reporting_a_result_makes_the_writeup_stale(session) -> None:
+    """The saved .tex has not changed. What the banner would say has."""
+    before = session._tex_signature()
+    session.state.setdefault("reports", []).append({"theorems": ["t"], "summary": "s"})
+
+    assert session._tex_signature() != before
+```
+
+- [ ] **Step 7: Run the tests**
 
 Run: `uv run --extra test pytest tests/unit/test_latex_stamp.py tests/test_latex_tree.py tests/test_chat_completion.py -v`
 Expected: PASS.
 
-- [ ] **Step 7: Whole suite, lint, commit**
+- [ ] **Step 8: Whole suite, lint, commit**
 
 ```bash
 uv run --extra test pytest
@@ -1799,131 +2002,104 @@ git commit -m "Make the document say how much of itself Lean checked"
 
 ---
 
-# Slice 5 — A log that does not bury Hardy's answer
+# Slice 5 — Hardy's answer goes first
 
-### Task 10: Trim a successful compile
+### Task 10: Put Hardy's sentences ahead of the compiler log
 
 **Files:**
-- Modify: `src/hardy/latex.py` (`LatexTools.check`, new `_summarise`)
+- Modify: `src/hardy/chat.py` (`_save_latex`, where the answer is composed)
 - Test: `tests/unit/test_latex_log.py`
 
-**Interfaces:**
-- Produces: `latex.summarise(output: str) -> str`.
+**Interfaces:** none new. This is an ordering change.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Understand what was rejected, and why**
+
+The first design filtered the compiler log on success, keeping errors, warnings and the `Output written on` line. It was withdrawn under review and must not be reinstated: a filter cannot know what matters. It loses the continuation lines of a multi-line package warning, `Overfull`/`Underfull` boxes, `No file …` notices, rerun instructions that do not contain the word *Warning*, and any `\typeout` a model wrote to ask the engine a question. Each is something a caller might have needed, traded for a shorter message.
+
+Nothing is filtered. The order changes.
+
+- [ ] **Step 2: Write the failing test**
 
 Create `tests/unit/test_latex_log.py`:
 
 ```python
-"""A successful compile is not 4.8 KB of font paths.
+"""Hardy's sentences go above pdfTeX's, not below them.
 
-The graded run's last `save_latex` returned 4,879 bytes, of which the part that
-mattered -- "Still missing labels for registered names" -- was the last line.
-Failure output is untouched: that is where the errors are, and a truncated
-failure teaches nothing.
+The graded run's last `save_latex` returned 4,879 bytes. "Saved.", the missing
+labels, and what the workspace still owed were the last two lines, under a wall
+of font paths -- and `LatexTools.check` already tail-truncates its output
+(latex.py:235), so a long enough log can push them out entirely.
+
+Nothing is filtered here. A filter cannot know which of pdfTeX's lines a caller
+needed, and the information a reordering loses is none.
 """
 
 from __future__ import annotations
 
-from hardy.latex import summarise
+
+def test_hardy_s_note_precedes_the_compiler_log(session, fake_latex) -> None:
+    fake_latex.output = "Output written on writeup.pdf (5 pages)."
+
+    result = session._save_latex("writeup.tex", ROOT_WITH_A_THEOREM)
+
+    assert result.output.index("Saved.") < result.output.index("Output written on")
 
 
-LOG = """This is pdfTeX, Version 3.141592653
-entering extended mode
-(writeup.tex
-LaTeX2e <2023-11-01>
-(C:\\MiKTeX\\tex/latex/base\\article.cls
-Document Class: article 2023/05/17 v1.4n
-LaTeX Warning: Reference `Foo' on page 1 undefined on input line 12.
-<C:/MiKTeX/fonts/type1/public/amsfonts/cm/cmr10.pfb>
-<C:/MiKTeX/fonts/type1/public/amsfonts/cm/cmr7.pfb>
-Output written on writeup.pdf (5 pages, 165086 bytes).
-Transcript written on writeup.log."""
+def test_the_compiler_log_is_not_filtered(session, fake_latex) -> None:
+    fake_latex.output = "Overfull \hbox (3.0pt too wide) in paragraph at lines 4--5"
+
+    result = session._save_latex("writeup.tex", ROOT_WITH_A_THEOREM)
+
+    assert "Overfull" in result.output
 
 
-def test_the_output_line_survives() -> None:
-    assert "Output written on writeup.pdf (5 pages, 165086 bytes)." in summarise(LOG)
+def test_what_is_still_owed_precedes_the_log_too(session, fake_latex) -> None:
+    result = session._save_latex("writeup.tex", ROOT_WITH_AN_UNBACKED_THEOREM)
 
-
-def test_warnings_survive() -> None:
-    assert "LaTeX Warning: Reference `Foo'" in summarise(LOG)
-
-
-def test_font_paths_do_not() -> None:
-    assert "cmr10.pfb" not in summarise(LOG)
-
-
-def test_errors_survive() -> None:
-    assert "! Undefined control sequence." in summarise(f"{LOG}\n! Undefined control sequence.")
-
-
-def test_it_is_much_shorter() -> None:
-    assert len(summarise(LOG)) < len(LOG) // 2
+    assert result.output.index("backed by nothing") < result.output.index("exit=")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+`ROOT_WITH_A_THEOREM` and `ROOT_WITH_AN_UNBACKED_THEOREM` are minimal documents; reuse the `THEOREM_STYLE` preamble from Task 8's tests. `fake_latex` drives the session against `tests/fake_latex.py` — read how `tests/test_latex_tree.py` builds a `LatexTools` around it and follow that.
+
+- [ ] **Step 3: Run tests to verify they fail**
 
 Run: `uv run --extra test pytest tests/unit/test_latex_log.py -v`
-Expected: FAIL — `ImportError: cannot import name 'summarise'`.
+Expected: FAIL — Hardy's text currently follows the log.
 
-- [ ] **Step 3: Write it**
+- [ ] **Step 4: Reorder the answer**
 
-```python
-# What a reader of a *successful* compile needs from a TeX log: what went
-# wrong-ish, and what came out. Everything else is the engine narrating which
-# font files it opened.
-KEPT = re.compile(r"^(?:!|Output written on|.*\bWarning\b)")
-
-
-def summarise(output: str) -> str:
-    """A successful compile's log, reduced to the lines that carry information.
-
-    Called only on success. A failed compile is returned whole: the error is
-    the reason the call was made, and trimming one is how a model is left with
-    nothing to act on.
-    """
-    kept = [line for line in output.splitlines() if KEPT.match(line.strip())]
-    return "\n".join(kept) if kept else ""
-```
-
-- [ ] **Step 4: Apply it on success only**
-
-In `LatexTools.check`, the final return currently reads:
+In `_save_latex` (chat.py:1641), the success path currently composes:
 
 ```python
-            return ToolResult(
-                outcome.returncode == 0,
-                f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n{output}",
-                source,
-            )
+            return ToolResult(True, f"{result.output}\n\nSaved.{note}", source)
 ```
 
-Change the body to summarise when the compile succeeded:
+Change it so Hardy's own sentences lead:
 
 ```python
-            # Trimmed only on success. Hardy's own answer -- what is still
-            # owed, which labels are missing -- is appended to this by the
-            # caller, and it was arriving under 4.8 KB of font paths.
-            shown = summarise(output) if outcome.returncode == 0 else output
-            return ToolResult(
-                outcome.returncode == 0,
-                f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n{shown}".rstrip(),
-                source,
-            )
+            # Hardy first, pdfTeX second. The compiler log is kept whole -- a
+            # filter cannot know which of its lines a caller needed -- but it
+            # is no longer what a reader has to get through before reaching the
+            # sentence saying the work is not finished. `check` tail-truncates
+            # its output, so with the note appended a long log could push it
+            # out of the message entirely.
+            return ToolResult(True, f"Saved.{note}\n\n{result.output}", source)
 ```
+
+Check the surrounding branch for the other composition (the `result` returned unchanged when `note` is empty) and give it the same order.
 
 - [ ] **Step 5: Run the tests**
 
-Run: `uv run --extra test pytest tests/unit/test_latex_log.py tests/test_latex_tree.py -v`
-Expected: PASS. Some existing tests may assert on log substrings that are now trimmed; if one does, check whether the substring is information a model needs. If it is, widen `KEPT`; if it is not, update the test and say so in the commit.
+Run: `uv run --extra test pytest tests/unit/test_latex_log.py tests/test_latex_tree.py tests/test_chat_completion.py -v`
+Expected: PASS. Existing tests asserting on the composed string's shape may need their expectations flipped; that is the change, not a regression.
 
 - [ ] **Step 6: Whole suite, lint, commit**
 
 ```bash
 uv run --extra test pytest
 uv run ruff check src tests && uv run ruff format --check src tests
-git add src/hardy/latex.py tests/unit/test_latex_log.py
-git commit -m "Stop burying what Hardy said under what pdfTeX said"
+git add src/hardy/chat.py tests/unit/test_latex_log.py
+git commit -m "Say what is still owed before quoting pdfTeX at length"
 ```
 
 ---

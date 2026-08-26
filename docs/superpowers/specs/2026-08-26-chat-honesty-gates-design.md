@@ -61,7 +61,7 @@ Five slices, each independently useful, ordered by leverage:
 | 2 | An assumption Hardy cannot later accept is refused at the request | 4, 5 |
 | 3 | A stated goal, shown at every approval | 3 |
 | 4 | The writeup owes its theorems, and the PDF says what it is | 6 |
-| 5 | A compiler log that does not bury Hardy's own answer | 6 |
+| 5 | Hardy's answer goes first, ahead of the compiler log | 6 |
 
 Out of scope, stated so nobody looks for it: Hardy does not judge whether an
 assumption is *too strong*. That is the human's call, and Slice 3 exists to
@@ -117,12 +117,27 @@ carries `public import Mathlib.GroupTheory.Sylow` on line 4887. Reading that
 one file is milliseconds; walking the `.olean` tree on this Windows machine
 took over two minutes and is rejected for that reason.
 
-Discovery is a depth-1 glob of `<project>/.lake/packages/*/*.lean` plus
-`<project>/*.lean`. Every line matching the import pattern contributes a name;
-everything else (including `lakefile.lean`, which the glob will pick up) is
-ignored, so a non-index file costs nothing but is not an error. `public import`
-and `meta import` are ordinary Lean and are parsed — `workspace.IMPORT_PREFIX`
-already encodes that and is reused rather than re-derived.
+Discovery is a depth-1 glob of `<project>/.lake/packages/*/*.lean`, minus
+`lakefile.lean`. **The project's own `.lean` files are deliberately not read.**
+`workspace.parse_imports` reports what a file imports, not what exists, so
+reading the workspace's own sources would have put `Mathlib.GroupTheory.Sylow.Basic`
+into the index the moment the model wrote that import — and `nearest` would then
+have answered that the missing module is installed. The index must be a list of
+what a *package ships*, and only a package's own root index is that.
+
+Each index also contributes its own stem: `Mathlib.lean` ships the module
+`Mathlib`, which nothing else imports and which `import Mathlib` needs.
+
+`public import` and `meta import` are ordinary Lean and are parsed —
+`workspace.parse_imports` already handles both (`tests/test_workspace.py:338`)
+and is reused rather than re-derived. It abandons the header at the first
+non-import line, which is exactly right for an index file and is why a
+`lakefile.lean` must be excluded rather than merely tolerated: it opens
+`import Lake` and would contribute the module `Lake`.
+
+**Stated limit:** a package that ships no root `.lean` index is invisible to
+this. `nearest` then has nothing to offer and says so, which is the failure
+direction that costs a suggestion rather than inventing one.
 
 **Interface.**
 
@@ -195,8 +210,13 @@ not be read and names the project directory, because "no module index found at
 `<path>`" is actionable and silence is not.
 
 The pass applies to `check_lean` and `save_lean` alike — the failure appeared in
-both — and lives in `LeanTools` rather than in `chat.py` so the staged and MCP
-surfaces inherit it.
+both — and lives in `LeanTools._observe`, the one point every `LeanTools` answer
+is assembled at.
+
+It does **not** reach the staged or MCP surfaces. `lean.py` defines two façades
+and `LeanService` (lean.py:516) is the other one; a translation in `LeanTools`
+covers the interactive session and nothing else. That is the surface the failure
+happened on, and widening it is a separate change rather than a claim made here.
 
 ### 3.5 Prompt
 
@@ -233,15 +253,27 @@ declaration, and an axiom's statement is a *type*, never a command — so
 the **constructed declaration line**. Both ends therefore ask the same code
 about the same string.
 
-Note what the shape gate alone cannot catch, and why §4.2 is not optional: the
-double header `axiom N : axiom N (G : Type*) … : …` *parses*. `ASSUMPTION`
-reads the name as `N` and the statement as everything after the first colon, so
-the request round-trips cleanly and only Lean can say it is nonsense. This is
-also the trap the graded run fell into — the approved text carried binders, so
-matching the approval required a declaration `unreadable_assumptions` refuses,
-while satisfying that parser produced a statement that no longer matched the
-approval. Elaborating the constructed line closes the loop: what the human
-approves is the exact text `save_lean` will later be handed.
+A third refusal, from the same reading: `lean_statement` may not span lines.
+A statement is one type, and `True
+axiom extra : False` is two declarations —
+both of which `ASSUMPTION` reads happily, so the request would round-trip and
+smuggle a second axiom past an approval granted for the first. Approved
+statements are stored whitespace-collapsed anyway (chat.py:565), so this costs
+nothing a caller needed.
+
+What the shape gate does **not** catch, and why §4.2 is not optional: a
+binder-only statement such as `(G : Type*) : True` matches neither `COMMAND` nor
+`unreadable_assumptions` — `axiom f : (G : Type*) : True` parses, taking
+everything after the first colon. It is not valid Lean, and only elaboration can
+say so. `opaque` and any future declaration keyword absent from `COMMAND` land
+in the same place.
+
+This is the trap the graded run fell into, from the other side: the approved
+text carried binders, so matching the approval required a declaration
+`unreadable_assumptions` refuses, while satisfying that parser produced a
+statement that no longer matched the approval. Elaborating the constructed line
+closes the loop — what the human approves is the exact text `save_lean` will
+later be handed.
 
 ### 4.2 Elaboration
 
@@ -257,6 +289,15 @@ the first, and it is paid once per axiom rather than once per turn.
 
 ### 4.3 Triviality
 
+The statement is whitespace-collapsed with `workspace.normalise_lean` first, so
+the declaration and each probe occupy exactly one line. The probe reads which
+tactic closed the goal from `LeanDiagnostic.line`, and Hardy keeps only a
+diagnostic's *start* line (lean.py:72 — `endPos` is discarded at lean.py:194);
+a two-line statement would therefore attribute an error to the wrong tactic and
+could report a probe as succeeding when it failed. One line per declaration is
+what makes the arithmetic sound, and the layout is asserted in a test rather
+than assumed.
+
 The **same** compile appends
 
 ```lean
@@ -267,8 +308,16 @@ example : STATEMENT := by exact?
 ```
 
 Lean reports diagnostics per declaration, so one compile says which tactics
-closed the statement and `exact?` prints the term it found. If any closes it,
-Hardy refuses **without asking the human**:
+closed the statement. An error Lean could not place — a diagnostic with no
+`line` — counts against the declaration and never in a probe's favour: "no error
+on that line" must mean the tactic closed the goal, not that Hardy could not tell
+where the error was.
+
+`exact?` prints the term it found, and Hardy quotes it when it can. The literal
+`Try this:` prefix is Lean's and is **not pinned by any fixture in this
+repository**, so it is treated as a bonus: when the prefix is absent the refusal
+names the tactic instead. Nothing depends on it. If any probe closes the
+statement, Hardy refuses **without asking the human**:
 
 > Lean proves this outright, so it is a theorem, not an assumption:
 > `theorem NAME : STATEMENT := by simp`
@@ -365,11 +414,28 @@ qualifies and `\newtheorem{lemma}[theorem]{Lemma}` does not — which matches
 Hardy's existing split, where a `lemma` is scaffolding that owes no writeup and
 a `theorem` is what you would report. `\newtheorem*` is included.
 
-**The rule.** Every theorem-like environment in the executed text of the
-writeup tree must contain a `\label{L}` where `L` is a registered `latex_name`
-whose `formal_name` is either a saved Lean theorem or an approved assumption.
-An environment with no label, or with a label nothing backs, is one obligation
-naming the file and the environment.
+**The rule.** Every theorem-like environment the document *runs* must contain a
+`\label{L}` where `L` is a registered `latex_name` whose `formal_name` is either
+a saved Lean theorem or an approved assumption. An environment with no label, or
+with a label nothing backs, is one obligation.
+
+"Runs" is `Displayed.executed` passed through `completion.without_definitions`
+(completion.py:336), not `executed` alone. `executed` already excludes verbatim
+blocks, comments and untaken branches, but it still contains the *body* of a
+`\newcommand`, and
+
+```tex
+\newcommand{\exampleblock}{\begin{theorem}Not asserted.\end{theorem}}
+```
+
+asserts nothing if the macro is never used. `without_definitions` exists for
+exactly this distinction and the appendix gate already relies on it; the theorem
+gate must too, or its first false positive is a document that was honest.
+
+The obligation names the environment, not the file. `assemble` splices fragments
+into one pathless `Displayed` (completion.py:241), so there is no filename to
+report without a second traversal — and the environment name plus its labels is
+enough to find it.
 
 Both halves of the backing matter: `record_name` registers assumptions too
 (chat.py:1921), and an appendix stating an approved axiom inside a theorem
@@ -401,6 +467,19 @@ saved `.tex`, so the model cannot remove it and the source stays the author's.
 inserts it. What the stamp *says* is computed by the session, which is the only
 thing that knows.
 
+**What gets stamped.** The **root document in the scratch tree**, after the root
+has been resolved — never the candidate as such. Saving a fragment writes the
+fragment to scratch and compiles the root that includes it; stamping `source`
+would put the banner into a fragment that has no `\begin{document}`, produce
+nothing, and publish an unstamped PDF. The root is what is compiled and the root
+is what is stamped, whichever file the call is about.
+
+**Every publication path.** `_save_latex` is not the only one. `delete_file`
+recompiles and republishes the writeup when a fragment is removed
+(chat.py:1848), and re-stamps `tex_signature` afterwards. It gets the stamp too;
+otherwise deleting a fragment silently replaces a stamped PDF with an unstamped
+one and records it as current.
+
 **Placement.** Immediately after `\begin{document}`. On `article` this typesets
 above `\maketitle`, which is correct for a provenance banner. If
 `\begin{document}` is not found the stamp is skipped silently — a document that
@@ -419,10 +498,26 @@ Hardy — 0 theorems machine-checked, 4 assumptions approved by the user,
 Goal, as stated by the user: No finite simple nonabelian group of order < 60.
 ```
 
-The counts are the ones the obligations already compute. When everything is
-clean it reads as an assurance rather than a warning, and it always appears —
-a banner present only on failure is a banner a reader learns to expect the
-absence of.
+The counts come from the obligations, which are already computed from the
+artifacts. "Machine-checked" means a saved theorem with **no outstanding audit
+gap** — not `_saved_theorems()`, which is a textual scan of the sources
+(chat.py:1371) and would count a theorem `_audit_gaps` is simultaneously
+reporting as unestablished. A banner that overstates is worse than none.
+
+When everything is clean it reads as an assurance rather than a warning, and it
+always appears — a banner present only on failure is one a reader learns to
+expect the absence of.
+
+**Staleness.** The stamp's text depends on session state — theorem count,
+assumptions, reports, goal — none of which `tex_signature` hashes
+(chat.py:2066). Left alone, a successful `report_result` would leave a published
+PDF still reading *"no result has been reported"* with nothing marking it stale.
+So the stamp text is hashed into `tex_signature` alongside the sources. A change
+to what the banner would say then makes the writeup stale exactly as an edit to
+the source does, and `_stale_writeup` already knows what to do about it.
+
+The `.aux` needs no such care: `_labels` reads label *names* (`NEWLABEL.findall`,
+chat.py:1369), so a banner shifting a page number changes nothing it reads.
 
 **Applied on every compile**, `check_latex` included, so what the model sees
 compiled is what a reader gets. `tex_signature` hashes the *saved* sources
@@ -431,17 +526,31 @@ compiled is what a reader gets. `tex_signature` hashes the *saved* sources
 
 ---
 
-## 7. Slice 5 — A compiler log that does not bury Hardy's answer
+## 7. Slice 5 — Hardy's answer goes first
 
 `save_latex` returned 4,879 bytes on the last successful compile of the graded
-run, of which the meaningful part was two lines at the end. On **success**,
-the compiler log is reduced to: the `exit=` and `elapsed=` line, any line
-containing `Warning` or beginning `!`, and the `Output written on …` line.
-**Failure output is untouched** — that is where the errors are, and truncating
-a failure is how a model learns nothing.
+run. Hardy's own sentences — `Saved.`, the missing labels, what the workspace
+still owes — were the last two lines, under a wall of font paths.
 
-Hardy's own text (`Saved.`, missing labels, outstanding obligations) is
-unchanged and now sits where it can be read.
+The first design here filtered the compiler log on success, keeping errors,
+warnings and the `Output written on` line. That is the wrong fix and it was
+withdrawn: a filter cannot know what matters. It loses the continuation lines of
+a multi-line package warning, `Overfull`/`Underfull` boxes, `No file …` notices,
+rerun instructions that do not contain the word *Warning*, and any `\typeout` a
+model wrote to ask the engine a question. Every one of those is a thing a caller
+might have needed, traded away for a shorter message.
+
+**So nothing is filtered. The order is changed.** `_save_latex` composes its
+answer as Hardy's text *first* and the compiler log after it, rather than the
+other way round. The information content is identical, the log stays complete
+for a human debugging a real TeX problem, and the sentence that says the work is
+not finished is the first thing read rather than the last.
+
+`LatexTools.check` already tail-truncates its output to `output_limit`
+(latex.py:235, 12,000 bytes by default), on success and failure alike. That
+predates this design and is left alone — but it is the reason the ordering
+matters more than it looks: with Hardy's text appended, a log long enough to
+truncate can push it out entirely.
 
 ---
 
@@ -467,7 +576,8 @@ unchanged and now sits where it can be read.
   environments; `lemma` exempt; assumption-backed accepted.
 - `test_latex_stamp.py` — injected into the compiled copy, absent from the
   saved source, skipped without `\begin{document}`, escaped.
-- `test_latex_log.py` — success trimmed, failure not.
+- `test_latex_log.py` — Hardy's text precedes the compiler log, and the log
+  itself is unfiltered.
 
 **Live.** After the suite passes: a real `hardy chat` session on the identical
 prompt with `claude-haiku-4-5`, driven the same way (the same two user turns,
