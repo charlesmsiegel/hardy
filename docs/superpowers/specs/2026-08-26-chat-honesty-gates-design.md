@@ -611,6 +611,48 @@ is an honest artifact, and it is the outcome this design is for. A run that
 produces confident prose over nothing fails, whatever grade a reader would give
 the prose.
 
+## 9a. What the live run showed
+
+Run on `claude-haiku-4-5`, the same two turns as the graded transcript, with the
+approvals a mathematician would give.
+
+**Held.**
+
+- The import sequence that ended the graded session was recovered from, one
+  correction at a time: `Sylow.Basic` → `Sylow`, `SimpleGroup` dropped,
+  `Data.Nat.Prime` → `Data.Nat.Prime.Basic`, `Algebra.Group.Card` dropped. Haiku
+  reached a compiling file. Previously it wrote *"The Mathlib cache is missing"*
+  and never attempted Lean again.
+- `search_modules` was called five times unprompted.
+- **No goal-subsuming assumption was approved.** Seven were proposed and seven
+  declined, with the goal printed above each. The graded run approved the
+  assignment itself as a single axiom.
+- Every approved assumption was elaborated by Lean before the human saw it.
+- The PDF carries, on page one, above an abstract claiming "a complete
+  formalization": *Hardy — 0 theorems machine-checked by Lean, 3 assumptions
+  approved by the user. Goal, as stated by the user: …*
+
+**Did not hold.**
+
+- **Zero theorems machine-checked.** Eighteen `save_lean` attempts, all refused;
+  eight for containing `sorry`. Haiku could not do the mathematics. This design
+  never claimed it would (§9), and the artifact is now honest about it rather
+  than confident over nothing — but the mathematical outcome is unchanged.
+
+**Two gaps this exposed, neither closed here.**
+
+1. **A namespaced assumption can never be declared.** `request_assumption`
+   registers `prime_order_cyclic`; `save_lean` qualifies by the enclosing
+   namespace and refuses `FiniteGroupClassification.prime_order_cyclic` as
+   unapproved. Three of the eighteen failures were this. It is the same family
+   as the double-header bug — request time and save time disagreeing — and it
+   reaches the axiom audit, so it wants its own change and its own review.
+2. **The theorem gate is silent on prose.** This writeup declared no
+   `\newtheorem` and asserted its result in `\section` prose and an abstract, so
+   §6.1 owed nothing. The banner is what carried the truth. A document that
+   claims a complete proof in prose over zero saved theorems is still
+   mechanically unremarkable to Hardy.
+
 ## 9. What this design does not claim
 
 It does not claim Haiku will prove the theorem. Orders 12, 24, 30, 36, 48 and
