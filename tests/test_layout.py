@@ -130,7 +130,7 @@ def test_a_symlinked_problem_directory_is_refused(tmp_path: Path):
     (tmp_path / "root" / "main").symlink_to("..")
     resolved = layout.Layout(root=tmp_path / "root", slug="main")
 
-    with pytest.raises(layout.LayoutError, match="outside"):
+    with pytest.raises(layout.LayoutError, match="resolves to"):
         resolved.ensure()
 
     assert not (tmp_path / "lean").exists(), "nothing may be created outside the root"
@@ -225,7 +225,7 @@ def test_a_child_directory_symlinked_into_a_sibling_project_is_refused(tmp_path:
     sibling_local.mkdir(parents=True)
     (resolved.problem / ".local").symlink_to(Path("..") / "other-project" / ".local")
 
-    with pytest.raises(layout.LayoutError, match="outside"):
+    with pytest.raises(layout.LayoutError, match="resolves to"):
         resolved.ensure()
 
     assert not any(sibling_local.iterdir())
@@ -246,7 +246,7 @@ def test_a_symlinked_child_directory_is_refused_not_followed(tmp_path: Path):
     outside.mkdir()
     (resolved.problem / ".local").symlink_to(Path("..") / ".." / "outside")
 
-    with pytest.raises(layout.LayoutError, match="outside"):
+    with pytest.raises(layout.LayoutError, match="resolves to"):
         resolved.ensure()
 
     # Not `assert not (outside / "state.json").exists()`: `state.json` is
@@ -275,7 +275,7 @@ def test_a_symlinked_build_directory_is_refused_not_followed(tmp_path: Path):
     outside.mkdir()
     (resolved.problem / ".build").symlink_to(Path("..") / ".." / "outside-build")
 
-    with pytest.raises(layout.LayoutError, match="outside"):
+    with pytest.raises(layout.LayoutError, match="resolves to"):
         resolved.ensure()
 
     assert not any(outside.iterdir())
@@ -766,11 +766,21 @@ WATCHED_FUNCTIONS = frozenset({
 #: identifiers and says nothing whatever about where a directory of that name
 #: leads. That belief is what let `lean/Escape -> /tmp/OUTSIDE` accept
 #: `Escape/Owned.lean`, and both functions write through a guard now.
+#:
+#: KEYED BY (MODULE, FUNCTION), not by the bare name. A bare `"check"` exempted
+#: any function called `check` in any watched module, so a name as ordinary as
+#: that handed out the exemption to code nobody had looked at -- and the
+#: exemption is a promise about one specific function's writes, which cannot be
+#: made on behalf of a function that does not exist yet.
 UNGUARDED = {
     # Into `tempfile.TemporaryDirectory`, and the tree copied in first has had
     # every symlink dropped on the way -- so there is no link in the scratch
-    # tree for a write to follow out of it.
-    "check": "test_a_symlink_in_the_writeup_tree_is_not_copied_into_the_scratch_tree",
+    # tree for a write to follow out of it. The two writes that LEAVE that
+    # scratch tree -- `writeup.pdf` and `writeup.aux`, both versioned files a
+    # clone controls -- are deliberately not in this function: they live in
+    # `latex._publish`, which has no exemption, so reverting either of them to
+    # `shutil.copyfile` fails this ratchet rather than passing it.
+    ("latex.py", "check"): "test_a_symlink_in_the_writeup_tree_is_not_copied_into_the_scratch_tree",
 }
 
 
@@ -817,9 +827,31 @@ def test_every_file_write_in_a_problem_goes_through_the_guard():
     for module in GUARDED_MODULES:
         for function, receiver, call in _write_calls((package / module).read_text(encoding="utf-8")):
             guarded = receiver in GUARD_BINDINGS
-            assert guarded or function in UNGUARDED, (
+            assert guarded or (module, function) in UNGUARDED, (
                 f"{module}:{function} calls {receiver}.{call}(...) outside a WriteGuard"
             )
+
+
+def test_the_exemption_is_keyed_to_one_module_and_one_function():
+    """An exemption is a promise about ONE function's writes.
+
+    Keyed by the bare name, `"check"` exempted any function so called in any
+    watched module -- a name common enough that the exemption would be handed
+    out to code nobody had looked at. And `latex.check`'s own entry covered the
+    two writes that leave its scratch directory for versioned files, so
+    reverting those to `shutil.copyfile` left this ratchet reporting a clean
+    sweep. They live in `latex._publish` now, which no exemption covers.
+    """
+    assert all(isinstance(key, tuple) and len(key) == 2 for key in UNGUARDED)
+    assert ("latex.py", "check") in UNGUARDED
+    package = Path(layout.__file__).parent
+    publishing = {
+        (function, call)
+        for function, _, call in _write_calls((package / "latex.py").read_text(encoding="utf-8"))
+        if function == "_publish"
+    }
+    assert publishing, "the writes that leave the scratch tree must be their own function"
+    assert not any(("latex.py", function) in UNGUARDED for function, _ in publishing)
 
 
 def test_the_ratchet_sees_the_writes_it_missed(tmp_path: Path):
@@ -886,3 +918,143 @@ def normalises(text):
     return text.replace("a", "b")
 """
     assert list(_write_calls(source)) == []
+
+
+# The review round these tests answer. Seven separate findings turned out to be
+# one defect wearing seven hats: every round, a guard proved the CONTAINER and
+# not the thing inside it. These pin the invariant itself rather than the seven
+# instances -- every path Hardy reads or writes inside a project must resolve to
+# a real, non-symlink entry at exactly its expected location -- so the eighth
+# hat has nowhere to be worn.
+
+
+@needs_symlinks
+def test_a_sibling_alias_with_the_right_parent_is_refused(tmp_path: Path):
+    """`<problem>/.local -> tex` has a correct PARENT and is still an escape.
+
+    Reproduced before the fix: the check asked whether the resolved path's
+    parent was the problem directory, and for a link to a sibling it is -- so
+    the guard accepted it, and `.local/state.json` (the provider session id, the
+    spend ledger) was written into the versioned `tex/` tree, outside the
+    `/.local/` rule that exists to keep it off the machine's git history.
+    """
+    problem = tmp_path / "sylow"
+    (problem / "tex").mkdir(parents=True)
+    (problem / ".local").symlink_to(Path("tex"))
+    with pytest.raises(layout.LayoutError, match="resolves to"):
+        layout.WriteGuard(problem / ".local")
+
+
+@needs_symlinks
+def test_a_root_child_aliasing_another_problem_is_refused(tmp_path: Path):
+    """`<root>/main -> other-project` opens somebody else's problem.
+
+    Same shape as the sibling alias, one level up: the resolved path's parent is
+    the root, so a parentage check passes and Hardy writes this session's record
+    and sources into a different problem's directory.
+    """
+    (tmp_path / "other-project").mkdir()
+    (tmp_path / "main").symlink_to(Path("other-project"))
+    with pytest.raises(layout.LayoutError, match="resolves to"):
+        layout.Layout(root=tmp_path, slug="main").resolved_problem()
+
+
+@needs_symlinks
+def test_a_symlinked_leaf_is_refused_by_the_reading_walk(tmp_path: Path):
+    """Discovery is a read, and it was the last unguarded one.
+
+    `Path.rglob` reports a symlinked source as an ordinary file and
+    `read_text` follows it, so a repository shipping `lean/Imported.lean ->
+    <host file>` had that file discovered as a workspace module, compiled,
+    AUDITED, and saved as part of a kernel-checked result -- while not being in
+    the versioned problem at all.
+    """
+    tree = tmp_path / "lean"
+    tree.mkdir()
+    outside = tmp_path / "outside.lean"
+    outside.write_text("theorem elsewhere : True := trivial\n", encoding="utf-8")
+    (tree / "Imported.lean").symlink_to(outside)
+    with pytest.raises(layout.LayoutError, match="symlink"):
+        layout.files_under(tree, ".lean")
+
+
+@needs_symlinks
+def test_a_symlinked_directory_in_the_middle_is_refused_by_the_reading_walk(tmp_path: Path):
+    """A linked SUBTREE is the same escape with more files in it."""
+    tree = tmp_path / "lean"
+    (tree / "Real").mkdir(parents=True)
+    (tmp_path / "elsewhere").mkdir()
+    (tmp_path / "elsewhere" / "Hidden.lean").write_text("", encoding="utf-8")
+    (tree / "Linked").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    with pytest.raises(layout.LayoutError, match="symlink"):
+        layout.files_under(tree, ".lean")
+
+
+def test_the_reading_walk_finds_what_is_really_there(tmp_path: Path):
+    """The refusal is not the whole behaviour: an ordinary tree still enumerates."""
+    (tmp_path / "Real").mkdir()
+    (tmp_path / "Main.lean").write_text("", encoding="utf-8")
+    (tmp_path / "Real" / "Deep.lean").write_text("", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("", encoding="utf-8")
+    assert [str(item) for item in layout.files_under(tmp_path, ".lean")] == [
+        "Main.lean",
+        "Real/Deep.lean",
+    ]
+
+
+@needs_symlinks
+def test_reading_a_named_file_refuses_a_symlinked_leaf(tmp_path: Path):
+    """`read_text` proves the same thing the write path does."""
+    (tmp_path / "lean").mkdir()
+    target = tmp_path / "host.lean"
+    target.write_text("host\n", encoding="utf-8")
+    (tmp_path / "lean" / "Main.lean").symlink_to(target)
+    with pytest.raises(layout.LayoutError, match="symlink"):
+        layout.read_text(tmp_path / "lean", "Main.lean")
+
+
+def test_a_root_that_is_a_regular_file_is_a_layout_error(tmp_path: Path):
+    """A bad `--root` must reach the user as one line, not as a traceback.
+
+    `cli.py` catches `LayoutError` and nothing else, so the `NotADirectoryError`
+    this used to raise went all the way out.
+    """
+    occupied = tmp_path / "file"
+    occupied.write_text("not a directory\n", encoding="utf-8")
+    with pytest.raises(layout.LayoutError, match="cannot be used as a project root"):
+        layout.Layout(root=occupied, slug="main").ensure()
+
+
+def test_a_root_whose_parent_is_a_regular_file_is_a_layout_error(tmp_path: Path):
+    """The same, for a location whose parent cannot be created."""
+    occupied = tmp_path / "file"
+    occupied.write_text("not a directory\n", encoding="utf-8")
+    with pytest.raises(layout.LayoutError, match="cannot be used as a project root"):
+        layout.Layout(root=occupied / "below", slug="main").ensure()
+
+
+def test_a_root_that_is_the_home_directory_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """`<root>/.hardy` must never be the user-level `~/.hardy`.
+
+    Run from `$HOME` they are one directory: `unignore_tooling` then strips
+    `.hardy/` out of a dotfiles repository's ignore rules -- offering every
+    global setting to the next `git add` -- and config loading treats the same
+    file as both the project layer and the user layer.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    with pytest.raises(layout.LayoutError, match="user-level directory"):
+        layout.Layout(root=tmp_path, slug="main").ensure()
+    # And a project inside the home directory is still perfectly fine.
+    layout.Layout(root=tmp_path / "work", slug="main").ensure()
+
+
+def test_the_cas_scratch_trees_are_ignored(tmp_path: Path):
+    """`cas/` is versioned; the kernel scratch trees inside it are not.
+
+    Both are reset before each export and never removed, so before this rule
+    they sat in a versioned directory matched by no ignore line at all.
+    """
+    layout.Layout(root=tmp_path, slug="sylow").ensure()
+    rules = (tmp_path / "sylow" / ".gitignore").read_text(encoding="utf-8")
+    assert "/cas/replay/" in rules
+    assert "/cas/script-run/" in rules

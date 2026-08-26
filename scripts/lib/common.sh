@@ -622,12 +622,28 @@ ensure_claude_cli() {
 
 toml_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
+# Before the file below is created, and that order is the whole point. Hardy's
+# own `migrate_global` moves a pre-`~/.hardy` config into place and DECLINES
+# when the destination already exists -- so an installer that wrote the new
+# file first left an upgrading user's model, commands and timeouts stranded in
+# the legacy file forever, with nothing left to trigger the move. Run through
+# the installed Hardy rather than reimplemented in shell: only it knows where
+# the legacy file lives on each platform and which settings still exist.
+migrate_legacy_config() {
+	[ -e "$HARDY_CONFIG" ] && return 0
+	[ -x "$VENV/bin/python" ] || return 0
+	"$VENV/bin/python" -c 'import sys; from pathlib import Path; from hardy.config import migrate_global; sys.exit(0 if migrate_global(destination=Path(sys.argv[1])) else 1)' "$HARDY_CONFIG" 2>/dev/null &&
+		say "moved your settings from the older config location into $HARDY_CONFIG"
+	return 0
+}
+
 write_config() {
 	if [ "$WRITE_CONFIG" = 0 ]; then
 		step "Skipping the config file (--no-config)"
 		return
 	fi
 	step "Writing $HARDY_CONFIG"
+	migrate_legacy_config
 	local model="${HARDY_MODEL:-}"
 	if [ -e "$HARDY_CONFIG" ]; then
 		say "config already exists; leaving your model and key untouched"

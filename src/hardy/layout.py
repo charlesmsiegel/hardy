@@ -32,6 +32,12 @@ TRANSCRIPT = "transcript.jsonl"
 LOCAL_STATE = "state.json"
 INPUT_HISTORY = "input-history"
 DEFAULT_SLUG = "main"
+#: The working directories a CAS export gives a kernel that runs the user's own
+#: cells. Named here rather than in `cas_export.py` because the ignore rules
+#: below have to name the same directories, and two spellings of one name is
+#: how `cas/replay/` came to be a versioned, committable tree: reset before
+#: every export, never removed, and sitting inside a `cas/` that IS committed.
+CAS_SCRATCH = ("replay", "script-run")
 
 # Names Windows cannot use as a directory, whatever the extension, plus the
 # characters it forbids. Enforced on every platform because a slug reaches here
@@ -174,7 +180,7 @@ class Layout:
         slug passes every name check, and following it would put this project's
         sources, record and ignore file outside the root Hardy was pointed at.
         """
-        return _refuse_unless_direct_child(self.problem, self.root.resolve())
+        return resolve_named_child(self.problem, self.root.resolve())
 
     def ensure(self) -> None:
         """Make the directories exist and say what is not to be committed.
@@ -183,7 +189,21 @@ class Layout:
         work, and must append rather than skip when an ignore file already
         exists -- a user's own `.gitignore`, left alone entirely, previously
         meant `.local/` was never added and machine-local state sat untracked.
+
+        Every `OSError` the filesystem can raise on the way becomes a
+        `LayoutError`, because the caller in `cli.py` catches only that: a
+        `--root` naming a regular file, a directory the user cannot enter, or a
+        location whose parent cannot be created each reached the user as a raw
+        traceback instead of the one-line refusal every bad `--root` gets.
         """
+        try:
+            self._ensure()
+        except OSError as error:
+            raise LayoutError(f"{self.root} cannot be used as a project root: {error}") from None
+
+    def _ensure(self) -> None:
+        """The work `ensure` does, so it has one place to translate failures."""
+        self.refuse_global_collision()
         # Before anything is created: a symlinked problem directory would
         # otherwise have every mkdir below land outside the root.
         self.root.mkdir(parents=True, exist_ok=True)
@@ -217,6 +237,29 @@ class Layout:
         _refuse_if_symlink(self.hardy_dir / ".gitignore")
         _ensure_rules(self.hardy_dir / ".gitignore", TOOLING_HEADER, TOOLING_RULES)
 
+    def refuse_global_collision(self) -> None:
+        """Refuse a root whose tooling directory IS the user-level one.
+
+        Run Hardy from `$HOME` and `<root>/.hardy` and `~/.hardy` are one
+        directory wearing two hats. Two things then go wrong at once, and
+        neither announces itself. `unignore_tooling` strips `.hardy/` from the
+        root's ignore rules -- which, in a dotfiles repository, is a rule the
+        user wrote deliberately, and removing it offers the whole of Hardy's
+        global state to the next `git add`. And config loading treats the two
+        layers as distinct, so the project layer and the user layer become the
+        same file: a per-project setting silently becomes a global one.
+
+        Refused rather than reconciled. There is no arrangement of one
+        directory that is honestly both, and a user who meant to keep a project
+        in their home directory can say `--root ~/work` and lose nothing.
+        """
+        if self.hardy_dir.expanduser().resolve() == global_dir().expanduser().resolve():
+            raise LayoutError(
+                f"{self.hardy_dir} is also Hardy's user-level directory; "
+                "run Hardy from a project directory rather than from your home directory, "
+                "or pass --root pointing somewhere else"
+            )
+
     def unignore_tooling(self, root_ignore: Path) -> bool:
         """Drop a legacy rule excluding the whole tooling directory.
 
@@ -229,9 +272,18 @@ class Layout:
         covered, since either is a plausible way to have written "ignore this
         directory wherever it is" by hand.
         """
+        try:
+            return self._unignore_tooling(root_ignore)
+        except OSError as error:
+            # Translated for the same reason `ensure` translates: this runs
+            # beside it in `prepare_layout`, under one `except LayoutError`.
+            raise LayoutError(f"{root_ignore} cannot be edited: {error}") from None
+
+    def _unignore_tooling(self, root_ignore: Path) -> bool:
+        self.refuse_global_collision()
         if not root_ignore.is_file():
             return False
-        _refuse_unless_direct_child(root_ignore, self.root.resolve())
+        resolve_named_child(root_ignore, self.root.resolve())
         legacy = {
             HARDY_DIR,
             f"{HARDY_DIR}/",
@@ -256,7 +308,7 @@ PROBLEM_HEADER = (
     "# Written by Hardy. Everything here is recomputable from the sources\n"
     "# beside it, or belongs to this machine and this account.\n"
 )
-PROBLEM_RULES = ("/.build/", "/.local/")
+PROBLEM_RULES = ("/.build/", "/.local/", *(f"/cas/{name}/" for name in CAS_SCRATCH))
 TOOLING_HEADER = (
     "# Written by Hardy. Oleans for this project's shared Lean library, and\n"
     "# whatever an older layout left here when this was the whole workspace.\n"
@@ -273,22 +325,33 @@ TOOLING_HEADER = (
 TOOLING_RULES = ("/.build/", "/.local/", "/session.json", "/transcript.jsonl", "/input-history")
 
 
-def _refuse_unless_direct_child(path: Path, parent: Path) -> Path:
-    """`path`, resolved, refusing to land anywhere but directly inside `parent`.
+def resolve_named_child(path: Path, parent: Path) -> Path:
+    """`path`, proven to BE `parent`'s child of exactly that name.
 
-    "Somewhere under the root" is not the right test: `sylow/.gitignore ->
-    ../README.md` and `sylow/.local -> ../other-project/.local` both resolve
-    to a location under the project root, so a check that only asked "is this
-    inside the root" would accept both -- the first appends Hardy's ignore
-    rules to a README the moment a chat session starts, and the second puts
-    this problem's provider state inside a sibling project, outside the
-    `/.local/` rule meant to cover it. Every path a slug can influence must
-    resolve to being its OWN owning directory's immediate child, not merely
-    somewhere beneath the root at large.
+    THE INVARIANT THIS WHOLE MODULE ENFORCES, stated in one function so there
+    is one place to read it and one place to change it:
+
+        every path Hardy reads or writes inside a project must resolve to a
+        real, non-symlink entry at exactly its expected location.
+
+    Identity, not parentage, and the difference is the entire history of this
+    check. "Somewhere under the root" was the first version, and it accepted
+    `sylow/.gitignore -> ../README.md`. "Its own parent's immediate child" was
+    the second, and it accepts `<problem>/.local -> tex`: the resolved path is
+    a sibling, so its PARENT is right and the check passes -- while machine-
+    local provider state lands in the tracked TeX tree, outside the `/.local/`
+    rule written to cover it. `<root>/main -> other-project` opens a different
+    problem the same way. Asking `resolved == parent / path.name` is the only
+    form of the question that a link cannot satisfy, because a symlink by
+    definition resolves somewhere its own name is not.
     """
     resolved = path.resolve()
-    if resolved.parent != parent:
-        raise LayoutError(f"{path} resolves to {resolved}, which is outside {parent}")
+    expected = parent / path.name
+    if resolved != expected:
+        raise LayoutError(
+            f"{path} resolves to {resolved}, not to {expected}; "
+            "refusing to read or write through it"
+        )
     return resolved
 
 
@@ -316,10 +379,10 @@ def _ensure_dir(directory: Path, parent: Path) -> None:
     large -- see `_refuse_unless_direct_child`.
     """
     if directory.is_symlink():
-        _refuse_unless_direct_child(directory, parent)
+        resolve_named_child(directory, parent)
         return
     directory.mkdir(parents=True, exist_ok=True)
-    _refuse_unless_direct_child(directory, parent)
+    resolve_named_child(directory, parent)
 
 
 def _read_lines(path: Path) -> tuple[list[str], str]:
@@ -458,7 +521,7 @@ class WriteGuard:
 
     def _prove(self) -> None:
         """Resolve the directory, check it against its parent, and pin it."""
-        self._resolved = _refuse_unless_direct_child(self.directory, self.directory.parent.resolve())
+        self._resolved = resolve_named_child(self.directory, self.directory.parent.resolve())
         self._identity = _identity(self.directory)
 
     def _make(self) -> None:
@@ -652,6 +715,55 @@ def guard_for(base: Path, relative: str | PurePosixPath, *, create: bool = False
     for part in parts[:-1]:
         guard = WriteGuard(guard.directory / _name(part), create=create)
     return guard, _name(parts[-1])
+
+
+def read_text(base: Path, relative: str | PurePosixPath, *, encoding: str = "utf-8") -> str:
+    """The text of a file inside `base`, proven to be that file.
+
+    READS, not only writes. `LeanWorkspace.sources()` used `Path.read_text`,
+    which follows a symlink without a word: a repository shipping
+    `lean/Imported.lean -> ~/notes/Scratch.lean` had Hardy discover that host
+    file as a workspace module, compile it, AUDIT it, and save a kernel-checked
+    theorem whose source is not in the versioned problem at all -- and which
+    changes or vanishes on the next machine. An audit that believes something
+    it cannot check is the one failure this whole module exists to prevent, so
+    every read of a project file goes through the same proof its writes do.
+    """
+    guard, name = guard_for(base, relative)
+    with guard.open(name, "r", encoding=encoding) as handle:
+        return handle.read()
+
+
+def files_under(base: Path, suffix: str) -> tuple[PurePosixPath, ...]:
+    """Every file beneath `base` whose name ends in `suffix`, or a refusal.
+
+    `Path.rglob` reports a symlinked entry as an ordinary match and descends
+    through a symlinked directory as if it were one, so discovery was the way
+    a host file entered the workspace even after every writer was guarded.
+    This refuses instead of skipping: a symlink in a source tree is a
+    repository saying something Hardy cannot honour, and quietly leaving it out
+    would make the tree Hardy compiles differ from the tree a reader sees.
+
+    Sorted, because callers build digests and build orders from the result and
+    those must not depend on directory order.
+    """
+    found: list[PurePosixPath] = []
+    _collect(base, base, suffix, found)
+    return tuple(sorted(found))
+
+
+def _collect(base: Path, directory: Path, suffix: str, found: list[PurePosixPath]) -> None:
+    """Walk one directory, refusing any symlink met on the way."""
+    with os.scandir(directory) as entries:
+        listing = sorted(entries, key=lambda entry: entry.name)
+    for entry in listing:
+        path = Path(entry.path)
+        if entry.is_symlink():
+            raise LayoutError(f"{path} is a symlink; refusing to read or write through it")
+        if entry.is_dir():
+            _collect(base, path, suffix, found)
+        elif entry.name.endswith(suffix):
+            found.append(PurePosixPath(path.relative_to(base).as_posix()))
 
 
 def _name(name: str) -> str:

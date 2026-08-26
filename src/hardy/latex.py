@@ -97,6 +97,37 @@ def _links(directory: str, names: list[str]) -> set[str]:
     return {name for name in names if Path(directory, name).is_symlink()}
 
 
+def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> None:
+    r"""Copy the compiled document out of the scratch tree, through a guard.
+
+    Its own function, and not part of `check`, because of what the ratchet in
+    `tests/test_layout.py` can then say. `check`'s remaining writes all land in
+    a `TemporaryDirectory` this process just made, so it carries a documented
+    exemption -- and an exemption on the whole function covered these two
+    writes as well, which are the ones that LEAVE the scratch tree for a
+    versioned file a clone controls. Reverting them to `shutil.copyfile` would
+    have left the ratchet reporting a clean sweep. Out here they are ordinary
+    watched writes with no exemption over them.
+
+    Through a guard rather than `shutil.copyfile` for the reason that call was
+    a bug: it opens the DESTINATION `wb` and follows a symlink to do it, and
+    `writeup.pdf` is a versioned file that travels with a clone, so a
+    repository shipping `writeup.pdf -> ~/.bashrc` got `%PDF-...` written over
+    the user's shell profile on the first successful save. `write_bytes`
+    refuses a symlinked leaf outright and replaces the target atomically
+    instead of truncating it in place.
+    """
+    guard = WriteGuard(output_dir, create=True)
+    guard.write_bytes("writeup.pdf", (work / "writeup.pdf").read_bytes())
+    # The compiler's own record of the labels it created. What a caller needs
+    # to know is which labels LaTeX *made*, not which ones appear in the text
+    # -- a `\label` inside `\verb` or a discarded branch is written down but
+    # never created.
+    aux = work / "writeup.aux"
+    if aux_dir is not None and aux.exists():
+        WriteGuard(aux_dir, create=True).write_bytes("writeup.aux", aux.read_bytes())
+
+
 class LatexTools:
     """Direct LaTeX subprocess checks. Only use with trusted output."""
 
@@ -182,23 +213,7 @@ class LatexTools:
                 # handing the completion gate labels that the writeup does not
                 # create, from a document nobody will ever read.
                 if actual and outcome.returncode == 0 and output_dir is not None and pdf.exists():
-                    # Through a guard, not `shutil.copyfile`. That call opens
-                    # the DESTINATION `wb` and follows a symlink to do it, and
-                    # `writeup.pdf` is a versioned file that travels with a
-                    # clone: a repository shipping `writeup.pdf -> ~/.bashrc`
-                    # got `%PDF-...` written over the user's shell profile on
-                    # the first successful save. `write_bytes` refuses a
-                    # symlinked leaf outright and replaces the target
-                    # atomically instead of truncating it in place.
-                    WriteGuard(output_dir, create=True).write_bytes("writeup.pdf", pdf.read_bytes())
-                    # The compiler's own record of the labels it created. What
-                    # a caller needs to know is which labels LaTeX *made*, not
-                    # which ones appear in the text -- a `\label` inside
-                    # `\verb` or a discarded branch is written down but never
-                    # created.
-                    aux = work / "writeup.aux"
-                    if aux_dir is not None and aux.exists():
-                        WriteGuard(aux_dir, create=True).write_bytes("writeup.aux", aux.read_bytes())
+                    _publish(work, output_dir, aux_dir)
                 return ToolResult(
                     outcome.returncode == 0,
                     f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n{output}",

@@ -148,8 +148,39 @@ def _render_toml_line(key: str, value: Any) -> str:
         return f"{key} = {'true' if value else 'false'}"
     if isinstance(value, (int, float)):
         return f"{key} = {value}"
-    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
-    return f'{key} = "{escaped}"'
+    return f'{key} = "{_toml_string(str(value))}"'
+
+
+def _toml_string(text: str) -> str:
+    """`text` as the body of a TOML basic string, control characters included.
+
+    A basic string may not contain a raw control character at all, and a legacy
+    config is free to hold one: a triple-quoted `model` whose text runs over
+    two lines parses to a value with a newline in it, which the old escaping
+    passed through untouched into a single-line quoted value. The result was a
+    `config.toml` that `tomllib` refuses
+    -- written after the source had been read and just before it was DELETED,
+    so the settings were not recoverable and Hardy would not start. Every
+    control character gets an escape here, so whatever a legacy file held
+    round-trips into a file that parses back to the same string.
+    """
+    escaped = []
+    for character in text:
+        if character in {"\\", '"'}:
+            escaped.append("\\" + character)
+        elif character in _TOML_ESCAPES:
+            escaped.append(_TOML_ESCAPES[character])
+        elif character < " " or character == "\x7f":
+            escaped.append(f"\\u{ord(character):04X}")
+        else:
+            escaped.append(character)
+    return "".join(escaped)
+
+
+#: The escapes TOML spells with a letter. Everything else that is a control
+#: character goes out as `\uXXXX`, which the grammar accepts anywhere a basic
+#: string does.
+_TOML_ESCAPES = {"\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r"}
 
 
 @dataclass(frozen=True)

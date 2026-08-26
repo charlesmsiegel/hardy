@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import threading
 from pathlib import Path
@@ -437,6 +438,69 @@ def test_an_unattended_install_writes_only_settings_the_parser_accepts(tmp_path:
     target = tmp_path / "written.toml"
     target.write_text(written, encoding="utf-8")
     assert configuration.load(target).model == "claude-opus-5"
+
+
+@posix_only
+def test_the_installer_migrates_the_legacy_config_before_it_writes_one(tmp_path: Path):
+    """An upgrading user's settings must not be stranded by the installer.
+
+    `migrate_global` declines when the destination already exists, and the
+    installer wrote `~/.hardy/config.toml` directly -- so re-running it left
+    the model, commands and timeouts sitting in the legacy file forever, with
+    nothing left that could ever trigger the move. Migrating first is the whole
+    fix, and this pins the ORDER rather than the migration, which has its own
+    tests in `test_config.py`.
+    """
+    if shutil.which("bash") is None:
+        pytest.skip("bash is not available")
+    legacy = tmp_path / "xdg" / "hardy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('model = "legacy-model"\nlean_timeout = 90\n', encoding="utf-8")
+
+    venv_python = tmp_path / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+    venv_python.chmod(0o755)
+
+    target = tmp_path / "config.toml"
+    driver = tmp_path / "drive.sh"
+    driver.write_text(
+        "set -eu\n"
+        "WRITE_CONFIG=1; SKIP_MATHLIB=1; ASSUME_YES=1; LEAN_PROJECT=/tmp/lean\n"
+        f'HARDY_CONFIG="{target}"\n'
+        f'. "{SCRIPTS / "lib/common.sh"}"\n'
+        f'VENV="{tmp_path / "venv"}"\n'
+        "write_config >/dev/null 2>&1\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["bash", str(driver)],
+        check=True,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path),
+            "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
+            "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src"),
+        },
+    )
+
+    written = target.read_text(encoding="utf-8")
+    assert 'model = "legacy-model"' in written
+    assert "lean_timeout = 90" in written
+    assert not legacy.exists(), "the legacy file is removed once its settings have moved"
+
+
+@posix_only
+def test_the_windows_installer_migrates_before_it_writes_too(tmp_path: Path):
+    """The same ordering, asserted on the script text.
+
+    PowerShell is not available to run here, so this pins the one thing that
+    made the POSIX version wrong: `Move-LegacyConfig` has to be called before
+    the `Test-Path` that returns early on an existing config.
+    """
+    text = (SCRIPTS / "install-windows.ps1").read_text(encoding="utf-8")
+    body = text.split("function Write-Config {", 1)[1]
+    assert body.index("Move-LegacyConfig") < body.index("if (Test-Path $ConfigPath)")
 
 
 # --- installing from a published release ------------------------------------

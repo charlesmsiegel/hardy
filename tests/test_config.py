@@ -469,3 +469,48 @@ def test_a_directory_named_something_no_slug_may_be_is_not_offered(tmp_path: Pat
         (tmp_path / name / "session.json").write_text("{}", encoding="utf-8")
 
     assert config.existing_projects(tmp_path) == ["galois"]
+
+
+def test_a_multiline_value_in_a_legacy_config_survives_the_move(tmp_path: Path):
+    """The same brick as the retired-key one, reached through a live key.
+
+    A legacy `model` written as a triple-quoted string spanning two lines
+    parses to a value with a newline in it. The serialiser escaped only `\\`
+    and `"`, so that newline went out raw inside a single-line quoted value --
+    which TOML's grammar forbids -- and the source was then DELETED. The
+    destination was a file `tomllib` refuses and the settings were gone, so
+    Hardy could not start and had nothing left to start from.
+    """
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('model = """foo\nbar"""\nlean_timeout = 90\n', encoding="utf-8")
+    destination = tmp_path / ".hardy" / "config.toml"
+
+    assert config.migrate_global(legacy, destination) is True
+
+    # The proof that matters: the migrated file parses, and says what it said.
+    assert config.read_file(destination)["model"] == "foo\nbar"
+    assert not legacy.exists()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["tab\there", "carriage\rreturn", "nul\x00byte", "delete\x7fchar", 'quote"and\\slash'],
+)
+def test_every_control_character_round_trips_through_the_move(tmp_path: Path, value: str):
+    """One escaping rule for the whole class, not a patch for the newline.
+
+    A migration that can brick on one control character can brick on any of
+    them, and the source is deleted either way.
+    """
+    legacy = tmp_path / "legacy" / "config.toml"
+    legacy.parent.mkdir(parents=True)
+    # Every character as `\uXXXX`, which TOML accepts anywhere a basic string
+    # does. Written here rather than through the code under test, so the
+    # fixture cannot agree with a serialiser that is wrong.
+    literal = "".join(f"\\u{ord(character):04X}" for character in value)
+    legacy.write_text(f'model = "{literal}"\n', encoding="utf-8")
+    destination = tmp_path / ".hardy" / "config.toml"
+
+    assert config.migrate_global(legacy, destination) is True
+    assert config.read_file(destination)["model"] == value

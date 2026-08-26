@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -536,6 +537,51 @@ def test_registering_a_colliding_module_reports_the_refusal(tmp_path: Path):
     assert "Main" in message
     assert "galois" in message
     assert 'name = "sylow"' not in (tmp_path / "lakefile.toml").read_text(encoding="utf-8")
+
+
+def test_a_malformed_host_lakefile_does_not_stop_a_launch_that_would_decline(tmp_path: Path):
+    """A launch that was never going to register must not die on the host file.
+
+    `registered_libraries` was called before anything asked whether the user
+    wanted registration at all, and its `RegistrationRefused` escaped uncaught
+    -- so a broken `lakefile.toml` under the root meant Hardy would not start,
+    on a non-interactive launch that would have declined anyway. Hardy's own
+    resolution never consults the host lakefile, which is what makes declining
+    the honest answer.
+    """
+    (tmp_path / "lakefile.toml").write_text("name = \"host\"\nthis is not toml\n", encoding="utf-8")
+    (tmp_path / "sylow" / "lean").mkdir(parents=True)
+    settings = configuration.load(tmp_path / "absent.toml", root=tmp_path, project="sylow")
+
+    assert cli.offer_registration(settings, interactive=False, choice=None) is None
+
+
+def test_a_malformed_host_lakefile_is_reported_when_registration_was_asked_for(tmp_path: Path):
+    """Declining silently is right only when nobody asked. With the flag, say so."""
+    (tmp_path / "lakefile.toml").write_text("name = \"host\"\nthis is not toml\n", encoding="utf-8")
+    (tmp_path / "sylow" / "lean").mkdir(parents=True)
+    settings = configuration.load(tmp_path / "absent.toml", root=tmp_path, project="sylow")
+
+    message = cli.offer_registration(settings, interactive=False, choice=True)
+
+    assert "Not registering sylow" in message
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink_to needs Developer Mode on Windows")
+def test_a_symlinked_host_lakefile_is_not_appended_to(tmp_path: Path):
+    """The append opens the destination and follows the link to do it."""
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "lakefile.toml").write_text('name = "other"\n', encoding="utf-8")
+    root = tmp_path / "root"
+    (root / "sylow" / "lean").mkdir(parents=True)
+    (root / "lakefile.toml").symlink_to(other / "lakefile.toml")
+    settings = configuration.load(tmp_path / "absent.toml", root=root, project="sylow")
+
+    message = cli.offer_registration(settings, interactive=False, choice=True)
+
+    assert "Not registering sylow" in message
+    assert (other / "lakefile.toml").read_text(encoding="utf-8") == 'name = "other"\n'
 
 
 def test_registering_twice_does_not_append_twice(tmp_path: Path):
