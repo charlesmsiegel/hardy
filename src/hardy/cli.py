@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
-from . import cas_tools, claude_runtime, doctor, lakefile, latency, layout
+from . import cas_tools, claude_runtime, doctor, lakefile, latency, layout, search_tools
 from . import config as configuration
 from .cas import CasError
 from .cas_export import export_session
@@ -265,6 +265,13 @@ def _chat(
         cwd=config.layout.cas,
     )
 
+    # Built here for the same reason the CAS runtime is: `run_session` can call
+    # its factory twice when the interactive shell falls back to the plain one,
+    # and reading the Lake manifest and hashing it twice is waste. Unlike the
+    # CAS runtime a None here is still offered to the model -- as a tool that
+    # refuses and says why.
+    search, search_detail = search_tools.build_runtime(config)
+
     def build(confirm: Callable[[dict[str, str]], bool]) -> MathematicsSession:
         return MathematicsSession(
             config.layout.problem,
@@ -276,6 +283,8 @@ def _chat(
             lean_timeout=config.lean_timeout,
             cas=cas,
             cas_detail=cas_detail,
+            search=search,
+            search_detail=search_detail,
         )
 
     try:

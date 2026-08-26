@@ -465,8 +465,11 @@ Priority labels are sequencing hints:
 ## Retrieval and memory
 
 - **Now (implemented):** `rank_premises` ranks declarations for a goal by fusing
-  Lean's own `#find` with Loogle, offered on both the in-process staged tools and
-  the MCP server. Every ranking carries the provenance of each source that was
+  Lean's own `#find` with Loogle, offered on the in-process staged tools, the MCP
+  server, and the interactive session. The interactive session offers them even
+  when no Lake project is configured, where they refuse and name the reason: a
+  model handed no search tool concludes Hardy cannot search, rather than that
+  this machine is not set up. Every ranking carries the provenance of each source that was
   asked — what it searched, whether it answered, and what it spent — under a
   digest a reader can recompute, and reports whether it can be replayed at all:
   Lean's search runs in the environment the run is frozen under, while the public
@@ -477,6 +480,13 @@ Priority labels are sequencing hints:
   source was skipped, and what remains of the budget, rather than returning a
   shorter list that reads as complete. Wall-clock rather than CPU: a remote index
   spends its CPU elsewhere, and how long Hardy waits is what Hardy can enforce.
+- **Now (implemented):** `search_modules` answers which module to `import` for a
+  name, read from each Lake package's own root `.lean` index rather than from the
+  build tree. It is the only search that works when Lean itself will not run,
+  which is when it is most needed: Lean reports an unresolvable import by naming
+  a missing `.olean`, and a model reads that as a damaged installation. The same
+  index turns that error into `unknown module X ... Nearest installed: Y`, with
+  Lean's original words kept below it.
 - **Later:** a versioned embedding index served by a persistent retrieval service.
   `IndexIdentity` already requires the model, tokenizer, pooling, corpus, and
   index identities of any embedding source, and no source carries one yet.

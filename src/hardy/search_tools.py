@@ -29,9 +29,90 @@ from typing import Any
 from .config import Config
 from .lean import LeanService, environment_identity
 from .models import ToolResult
+from .modules import ModuleIndex
 from .retrieval import PremiseRetriever, build_retriever
 
-SEARCH_TOOL_NAMES = frozenset({"rank_premises", "search_declarations", "inspect_declarations"})
+SEARCH_TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "rank_premises",
+            "description": (
+                "Rank the Mathlib declarations most likely to help with one goal. Paste "
+                "the goal exactly as Lean printed it, hypotheses and all. A ranking is a "
+                "heuristic, never evidence -- confirm any name with inspect_declarations "
+                "before relying on it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string"},
+                    "description": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["goal"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_declarations",
+            "description": (
+                "Search the pinned Lean environment for declarations whose result type "
+                "matches a pattern, with `_` for holes. Use rank_premises instead when you "
+                "do not already know the shape you are looking for."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "inspect_declarations",
+            "description": (
+                "Resolve up to 20 exact Lean declaration names to their signatures in the "
+                "pinned environment. This is how a name from a ranking is confirmed before "
+                "it is used."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "names": {"type": "array", "items": {"type": "string"}, "maxItems": 20}
+                },
+                "required": ["names"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_modules",
+            "description": (
+                "Find the module to `import` for a name you have in mind. Module paths are "
+                "not stable across Mathlib versions and a remembered one is a guess: "
+                "`Mathlib.GroupTheory.Sylow.Basic` was a real module once and is now "
+                "`Mathlib.GroupTheory.Sylow`. Check here before importing. This answers "
+                "from the project's package index, so it works even when Lean will not run."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+SEARCH_TOOL_NAMES = tuple(spec["function"]["name"] for spec in SEARCH_TOOLS)
 
 # What one `inspect_declarations` call may resolve. The session bounds a model
 # observation elsewhere; this bounds the work before it is done.
@@ -41,9 +122,12 @@ MAX_NAMES = 20
 class SearchToolRuntime:
     """The search tools, bound to one pinned environment."""
 
-    def __init__(self, service: LeanService, retriever: PremiseRetriever) -> None:
+    def __init__(
+        self, service: LeanService, retriever: PremiseRetriever, modules: ModuleIndex
+    ) -> None:
         self.service = service
         self.retriever = retriever
+        self.modules = modules
 
     def rank_premises(self, goal: str, limit: int = 10) -> ToolResult:
         return self._answer(lambda: self.retriever.rank(goal, limit))
@@ -64,6 +148,26 @@ class SearchToolRuntime:
         return self._answer(
             lambda: self.service.inspect_declarations(tuple(str(name) for name in names))
         )
+
+    def search_modules(self, query: str, limit: int = 20) -> ToolResult:
+        """Module names, from the package index rather than from Lean.
+
+        Deliberately not routed through `_answer`. The other three run a Lean
+        process and report what it said; this one reads a file that Lake
+        already wrote. A machine whose Lean will not start is exactly the
+        machine on which a model most needs to be told what a module is called
+        -- which is the position the graded session was in when it decided the
+        installation was broken and stopped writing Lean.
+        """
+        found = self.modules.search(query, limit)
+        if not found:
+            where = f" under {self.modules.project}" if self.modules.project else ""
+            return ToolResult(
+                False,
+                f"no module in this project has `{query}` in its name; "
+                f"{len(self.modules.names())} modules were read from the package index{where}",
+            )
+        return ToolResult(True, json.dumps({"modules": list(found)}, ensure_ascii=False))
 
     def _answer(self, call: Any) -> ToolResult:
         """Every refusal is an answer the model can read.
@@ -158,6 +262,10 @@ def build_runtime(config: Config) -> tuple[SearchToolRuntime | None, str]:
         limits=config.limits,
     )
     return (
-        SearchToolRuntime(service, build_retriever(service, config.limits)),
+        SearchToolRuntime(
+            service,
+            build_retriever(service, config.limits),
+            ModuleIndex(config.lean_project),
+        ),
         f"Mathlib {environment.mathlib_revision[:12]} in {config.lean_project}",
     )

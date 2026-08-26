@@ -36,6 +36,7 @@ from .layout import (
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
+from .search_tools import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
 from .usage import Usage
 from .workspace import (
     BuildFailure,
@@ -107,7 +108,7 @@ class SchemaError(ValueError):
     """
 
 
-CHAT_TOOLS = [
+CHAT_TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "save_lean", "description": "Check and save one Lean file in the workspace tree, defaulting to Main.lean. Every file importing it is rebuilt and the save is refused whole if any of them breaks. Completed saved work must contain no sorry or admit.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "check_latex", "description": "Compile a candidate LaTeX file against the saved document tree without keeping it. `path` defaults to writeup.tex, the root document.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -119,6 +120,11 @@ CHAT_TOOLS = [
     {"type": "function", "function": {"name": "request_assumption", "description": "Ask the human for permission to introduce an axiom when a result is unavailable. Never assume approval.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "lean_statement": {"type": "string"}, "latex_name": {"type": "string"}, "informal_statement": {"type": "string"}, "source": {"type": "string"}, "reason": {"type": "string"}}, "required": ["formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "report_result", "description": "Report finished work. The only way to call anything proved, done, or complete: say it in prose and Hardy contradicts you in front of the user. Refused unless every theorem named is saved Lean the kernel audited, the writeup creates its label and quotes its exact Lean statement verbatim, and every assumption the work rests on is stated in an appendix in both Lean and prose.", "parameters": {"type": "object", "properties": {"theorems": {"type": "array", "items": {"type": "string"}}, "summary": {"type": "string"}}, "required": ["theorems", "summary"], "additionalProperties": False}}},
 ]
+
+# Always offered, unlike the cas_* tools, and refusing with a reason when
+# there is no Lake project. See `search_tools` for why absence is reported
+# rather than hidden.
+CHAT_TOOLS += SEARCH_TOOLS
 
 # The text lives in prompts/chat.md.j2. Kept under the old name because it is
 # what a reader of _build expects to see, and what the tests reach for.
@@ -208,7 +214,7 @@ def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", root: Path | None = None):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -220,6 +226,16 @@ class MathematicsSession:
         # (the interactive session, real or plain) has it without needing to
         # keep its own `build_runtime` call in sync with this one.
         self.cas_detail = cas_detail
+        # None when no pinned Lake project was found. Unlike `cas`, the tools
+        # are still advertised and refuse with the reason: a CAS backend is
+        # optional, a Lean project is what Hardy is for, and a model handed no
+        # search tool concludes Hardy cannot search rather than that this
+        # machine is not set up. That conclusion is not hypothetical -- a
+        # session that guessed `Mathlib.GroupTheory.Sylow.Basic` had no way to
+        # find out it wanted `Mathlib.GroupTheory.Sylow`, and stopped writing
+        # Lean.
+        self.search = search
+        self.search_detail = search_detail
         # Every file this session writes into the problem goes through one of
         # these two, and nothing else may. `Layout.ensure` proved the shape of
         # the tree before the process got here; that proof was true at startup
@@ -1898,6 +1914,8 @@ class MathematicsSession:
             return self._save_latex(str(arguments.get("path") or DEFAULT_TEX_PATH), str(arguments["source"]))
         if name in CAS_TOOL_NAMES:
             return self._cas_tool(name, arguments)
+        if name in SEARCH_TOOL_NAMES:
+            return self._search_tool(name, arguments)
         if name == "read_workspace":
             return ToolResult(True, json.dumps(self._workspace_listing(), ensure_ascii=False))
         if name == "read_file":
@@ -2150,6 +2168,32 @@ class MathematicsSession:
                     )
                 )
         return gaps
+
+    def _search_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        """Search, or the reason this machine cannot.
+
+        The refusal carries `search_detail` verbatim, because that string is
+        the actionable part -- "lean_project is not set" is something the user
+        can fix, and the model can only relay what it was told.
+        """
+        if self.search is None:
+            return ToolResult(False, f"search is unavailable: {self.search_detail}")
+        if name == "rank_premises":
+            return self.search.rank_premises(
+                str(arguments["goal"]), int(arguments.get("limit") or 10)
+            )
+        if name == "search_declarations":
+            return self.search.search_declarations(
+                str(arguments["query"]), int(arguments.get("limit") or 10)
+            )
+        if name == "search_modules":
+            return self.search.search_modules(
+                str(arguments["query"]), int(arguments.get("limit") or 20)
+            )
+        names = arguments.get("names") or []
+        if not isinstance(names, list):
+            return ToolResult(False, "names must be a list of declaration names")
+        return self.search.inspect_declarations([str(item) for item in names])
 
     def _cas_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """The computer algebra tools. Errors are answers, not exceptions.

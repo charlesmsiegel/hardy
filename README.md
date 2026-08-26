@@ -81,7 +81,9 @@ pipeline with no model, no network, and no toolchain. The earlier one-shot proof
 experiment remains available as `hardy batch`, but is secondary.
 
 While it proves, the model can ask `rank_premises` which declarations are worth
-looking at for a goal, fusing Lean's own `#find` with Loogle. Retrieval spends a
+looking at for a goal, fusing Lean's own `#find` with Loogle, and `search_modules`
+which module to `import` for a name it has in mind — read from the package index
+Lake already wrote, so it answers even on a machine where Lean will not start. Retrieval spends a
 metered budget, and a ranking names every source it asked, what that source
 searched, and whether the order can be replayed at all — Lean's search runs in
 the environment the run is frozen under, while the public Loogle tracks a Mathlib
