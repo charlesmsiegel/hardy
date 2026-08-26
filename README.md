@@ -11,15 +11,19 @@ that people and machines can inspect.
 
 ## Status
 
-Hardy is in active development and is not finished. The proof loop, the Lean
-integration, the axiom audit, the writeup binding, and the report gate are all
-built, and the acceptance suite is written to exercise them end to end.
+Hardy is in active development. The proof loop has been exercised against a real
+Mathlib installation and proves results at roughly the level of graduate
+coursework without difficulty.
 
-What does not exist yet is evidence about how well it does the thing it is for.
-There are no benchmark results here, and no measured rate at which an approved
-formalization turns out to mean something other than the informal claim it came
-from. That measurement is the point of the next phase, and until it exists every
-claim in this document is about mechanism rather than performance.
+What does not exist yet is a controlled measurement of what the harness itself
+contributes. One is in progress: a fixed weak model, run with Hardy against the
+same model run without it, on a result that is long and bookkeeping-heavy rather
+than deep — that there is no nonabelian simple group of order less than 60. The
+question is not only whether the harnessed run succeeds more often, but whether
+the unharnessed one produces proofs that *appear* complete while resting on
+`sorry`, on an axiom nobody approved, or on a statement that drifted from the
+informal claim. Until that experiment reports, everything below describes
+mechanism rather than performance, and there are no benchmark numbers here.
 
 The issue tracker is a working backlog rather than a defect list. An open issue
 here usually records a design decision made and not yet acted on, and issue
@@ -417,7 +421,7 @@ documents whose claims are affected in the same change.
 
 ## License
 
-Apache-2.0
+[Apache-2.0](LICENSE).
 
 ## Related
 
