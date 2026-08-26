@@ -147,3 +147,119 @@ def echoing_sentinel_session(tmp_path):
     yield make
     for session in sessions:
         session.close()
+
+
+# --- The interactive session, for the gates that run inside it ----------------
+
+FAKE_LEAN = Path(__file__).parents[1] / "fake_lean.py"
+FAKE_LATEX = Path(__file__).parents[1] / "fake_latex.py"
+
+
+@pytest.fixture
+def approvals():
+    """Every proposal `confirm` was shown.
+
+    Asserting this list is empty is how a test says the gate ran *before* the
+    human was asked -- which is the property that matters, and is invisible if
+    `confirm` simply returns False.
+    """
+    return []
+
+
+@pytest.fixture
+def session_factory(tmp_path):
+    from hardy.chat import MathematicsSession
+
+    class Runtime:
+        model = "fake"
+
+        def stream(self, text):
+            return iter(())
+
+        def ask(self, text):
+            return ""
+
+        def cancel(self):
+            pass
+
+    def build(**overrides):
+        workspace = overrides.pop("workspace", tmp_path / "problem")
+        workspace.mkdir(parents=True, exist_ok=True)
+        return MathematicsSession(
+            workspace,
+            lambda model=None, **context: Runtime(),
+            (sys.executable, str(FAKE_LEAN)),
+            (sys.executable, str(FAKE_LATEX)),
+            overrides.pop("confirm", lambda proposal: True),
+            **overrides,
+        )
+
+    return build
+
+
+@pytest.fixture
+def session(session_factory, approvals):
+    def confirm(proposal):
+        approvals.append(dict(proposal))
+        return True
+
+    return session_factory(confirm=confirm)
+
+
+@pytest.fixture
+def fake_lean(session, monkeypatch):
+    """Lean's answers to `_assumption_probe`, without a kernel.
+
+    Returns a `LeanToolResult`, not a base `ToolResult`: the probe reads
+    `timed_out`, `interrupted` and `diagnostics`, and the base result carries
+    none of them.
+    """
+    from hardy.lean import LeanDiagnostic, LeanToolResult
+
+    class Fake:
+        closes_with: str | None = None
+        suggestion: str = ""
+        elaborates: bool = True
+        output: str = ""
+        raises: Exception | None = None
+        last_source: str = ""
+
+        def __call__(self, source: str, timeout: float | None = None):
+            self.last_source = source
+            self.last_timeout = timeout
+            if self.raises is not None:
+                raise self.raises
+            diagnostics = []
+            if not self.elaborates:
+                diagnostics.append(
+                    LeanDiagnostic(severity="error", message=self.output, line=3, column=0)
+                )
+            else:
+                for index, tactic in enumerate(session.PROBES):
+                    line = 5 + index
+                    if tactic == self.closes_with:
+                        if self.suggestion:
+                            diagnostics.append(
+                                LeanDiagnostic(
+                                    severity="information",
+                                    message=f"Try this: {self.suggestion}",
+                                    line=line,
+                                    column=0,
+                                )
+                            )
+                        continue
+                    diagnostics.append(
+                        LeanDiagnostic(
+                            severity="error", message="unsolved goals", line=line, column=0
+                        )
+                    )
+            return LeanToolResult(
+                not diagnostics,
+                self.output,
+                source,
+                diagnostics=tuple(diagnostics),
+            )
+
+    fake = Fake()
+    monkeypatch.setattr(session, "_run_lean_source", fake)
+    return fake

@@ -39,6 +39,11 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
     config = state.config
     ui.write("Session", style="normal")
     ui.write(f"  Model:        {config.model}")
+    # `getattr` for the reason the `spent` line below gives: `/status` is safe
+    # in flight and the shell is built before its session is.
+    stated = getattr(state.session, "goal", None)
+    if stated is not None:
+        ui.write(f"  Goal:         {stated() or 'not set (/goal)'}")
     ui.write(f"  {status_line(config)}")
     ui.write(f"  Lean project: {config.lean_project or 'current directory'}")
     ui.write(f"  Config file:  {config.config_path}")
@@ -294,6 +299,29 @@ async def handle_cas(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
+async def handle_goal(ui: Ui, argument: str, state: State) -> State:
+    """Set what this session is for, or report it.
+
+    Read at every axiom approval and printed on the writeup. Hardy makes no
+    judgment about the goal; it only makes sure a human is never asked to
+    approve an assumption with the assignment off-screen.
+
+    `safe_in_flight` stays False, the default: changing what a session is for
+    while a turn is running is not something anyone has thought through.
+    """
+    session = state.session
+    if session is None:
+        ui.write("No session yet.", style="error")
+        return state
+    if not argument:
+        current = session.goal()
+        ui.write(f"Goal: {current}" if current else "No goal set. /goal <text> sets one.")
+        return state
+    session.set_goal(argument)
+    ui.write(f"Goal: {argument}")
+    return state
+
+
 def build_registry() -> list[Command]:
     exit_command = Command(
         "exit", "leave the session", handle_exit, safe_in_flight=True
@@ -305,6 +333,7 @@ def build_registry() -> list[Command]:
             "cas", "compute in the shared kernel", handle_cas,
             argument_hint="[state|reset|export|expr]",
         ),
+        Command("goal", "state what this session is for", handle_goal, argument_hint="[text]"),
         Command("status", "show the project, model, and paths", handle_status, safe_in_flight=True),
         Command("doctor", "check that Lean and LaTeX are usable", handle_doctor),
         Command("clear", "clear the screen; deletes nothing", handle_clear, safe_in_flight=True),

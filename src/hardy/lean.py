@@ -456,6 +456,7 @@ class LeanTools:
         argv: tuple[str, ...] | None = None,
         env: dict[str, str] | None = None,
         source_path: Path | None = None,
+        timeout: float | None = None,
     ) -> LeanToolResult:
         if self.project is not None and not self.project.is_dir():
             return LeanToolResult(False, f"Lean project directory not found: {self.project}", source)
@@ -464,7 +465,7 @@ class LeanTools:
                 source,
                 argv=argv if argv is not None else (*self.lean_command, "--json"),
                 cwd=self.project if self.project is not None else Path.cwd(),
-                timeout_seconds=self.timeout,
+                timeout_seconds=self.timeout if timeout is None else timeout,
                 max_output_bytes=self.max_output_bytes,
                 env=env,
                 source_path=source_path,
@@ -516,13 +517,19 @@ class LeanTools:
         *,
         env: dict[str, str] | None = None,
         audit: Sequence[str] = (),
+        timeout: float | None = None,
     ) -> LeanToolResult:
         """Run a complete Lean source file, without claiming it is hole-free.
 
         `audit` holds `#print` targets, so a caller can ask for both an axiom
         set (`axioms Foo`) and a declaration (`Bar`) in one elaboration.
+
+        `timeout` overrides this instance's for one call. The assumption probe
+        needs it: it elaborates `import Mathlib`, which costs about 20 seconds
+        warm on a developer machine and over three minutes when the oleans are
+        cold, against a session default of 180.
         """
-        return self._run(self.with_audit(source, audit), env=env)
+        return self._run(self.with_audit(source, audit), env=env, timeout=timeout)
 
     def compile_module(
         self,

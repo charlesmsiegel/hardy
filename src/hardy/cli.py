@@ -43,11 +43,21 @@ def confirm_assumption(ui: Any) -> Callable[[dict[str, str]], bool]:
     def confirm(proposal: dict[str, str]) -> bool:
         blocking = ui.from_thread
         try:
+            # The goal first, and the absence of one shown rather than hidden.
+            # Nobody can judge whether an assumption is too strong without the
+            # assignment in front of them, and Hardy does not judge it for them:
+            # the session that approved `no_simple_nonabelian_composite_orders`
+            # -- the assignment itself, for 28 of the orders -- spent 170
+            # seconds on a well-argued paragraph with nothing beside it.
+            goal = proposal.get("goal") or ""
+            blocking.write("Goal, as you stated it:", style="normal")
+            blocking.write(f"  {goal}" if goal else "  not set -- /goal sets one")
             blocking.write("Hardy wants to introduce an assumption:", style="warning")
             blocking.write(f"  Informal: {proposal['informal_statement']}")
             blocking.write(f"  Lean: axiom {proposal['formal_name']} : {proposal['lean_statement']}")
             blocking.write(f"  Source: {proposal['source']}")
             blocking.write(f"  Reason: {proposal['reason']}")
+            blocking.write(f"  Checked: {proposal.get('checked', 'not checked')}")
             picked = blocking.choose(
                 f"Approve the assumption {proposal['formal_name']}?",
                 [Choice("no", "No, decline it"), Choice("yes", "Yes, approve it")],

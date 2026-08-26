@@ -40,6 +40,7 @@ from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
 from .search_tools import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
 from .usage import Usage
 from .workspace import (
+    COMMAND,
     BuildFailure,
     ImportCycle,
     LeanWorkspace,
@@ -50,6 +51,7 @@ from .workspace import (
     internal_imports,
     module_name,
     module_path,
+    normalise_lean,
     safe_relative,
     statements,
     unreadable_assumptions,
@@ -212,6 +214,27 @@ def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None
                 # for it to be wrong.
                 parts.append(f"{name}:unreadable")
     return "\0".join(parts)
+
+
+# What one assumption probe may spend. Generous because it is paid once per
+# axiom request rather than per turn, and because the alternative -- timing out
+# and telling the human the statement is unchecked -- is the outcome the probe
+# exists to avoid.
+PROBE_SECONDS = 600.0
+
+
+def _probe_suggestion(result: Any, line: int) -> str:
+    """What `exact?` offered on `line`, if anything.
+
+    `exact?` reports its term as an informational diagnostic. Every other probe
+    reports nothing at all when it succeeds, so the caller falls back to naming
+    the tactic. The literal `Try this:` prefix is Lean's and is not pinned by
+    any fixture here -- treated as a bonus, and nothing depends on it.
+    """
+    for diagnostic in getattr(result, "diagnostics", ()):
+        if diagnostic.line == line and "Try this:" in diagnostic.message:
+            return diagnostic.message.split("Try this:", 1)[1].strip()
+    return ""
 
 
 class MathematicsSession:
@@ -606,8 +629,147 @@ class MathematicsSession:
             return ToolResult(False, f"could not read `{unreadable[0]}` as `axiom NAME : STATEMENT`; an assumption must be approved by request_assumption and then declared in exactly that shape, without binders or universe parameters", source)
         return None
 
-    def _run_lean_source(self, source: str) -> ToolResult:
-        return self.lean.run_source(source, env={"LEAN_PATH": self._lean_path()})
+    def _run_lean_source(self, source: str, timeout: float | None = None) -> ToolResult:
+        return self.lean.run_source(
+            source, env={"LEAN_PATH": self._lean_path()}, timeout=timeout
+        )
+
+    def _assumption_shape(self, formal_name: str, lean_statement: str) -> str | None:
+        """Why this could never be declared, or None.
+
+        `request_assumption` used to accept anything and wrap it in
+        `axiom NAME : ...`, so it could approve text `save_lean` would refuse
+        forever. That is not hypothetical: a session was told to declare
+        `axiom cyclic_of_prime_order : axiom cyclic_of_prime_order (G : Type*)
+        ... : ...` -- a double header nothing can parse -- and spent ten turns
+        discovering there was no spelling that satisfied both ends. Matching the
+        approval required binders the parser refuses; satisfying the parser
+        produced a statement that no longer matched the approval.
+
+        So both ends now ask the same code about the same string. `COMMAND` is
+        what recognises a line opening a declaration, and an axiom's statement
+        is a type, never a command. `unreadable_assumptions` is what `save_lean`
+        itself calls.
+
+        A statement is also one line. `True\\naxiom extra : False` is two
+        declarations and `ASSUMPTION` reads both happily, so without this the
+        request round-trips and an approval granted for the first carries the
+        second. Approved statements are stored whitespace-collapsed anyway, so
+        refusing a newline costs nothing a caller needed.
+
+        Not sufficient, and not meant to be. A binder-only statement --
+        `(G : Type*) : True` -- matches neither check, because
+        `axiom f : (G : Type*) : True` parses by taking everything after the
+        first colon. It is not valid Lean and only elaboration can say so, which
+        is what `_assumption_probe` is for. `opaque`, and any declaration
+        keyword `COMMAND` does not list, land there too.
+        """
+        statement = lean_statement.strip()
+        if "\n" in statement or "\r" in statement:
+            return (
+                "a statement is one line and one type. More than one line can carry a "
+                "second declaration, which an approval of the first would not cover. "
+                "Collapse it to one line."
+            )
+        if COMMAND.match(statement):
+            return (
+                f"a statement may not itself be a declaration, and `{statement[:60]}` "
+                f"opens one. Pass only the statement -- the type after the colon -- and "
+                f"Hardy writes `axiom {formal_name} :` in front of it. Binders belong "
+                f"inside the statement as `forall`, not before the colon."
+            )
+        declaration = f"axiom {formal_name} : {statement}"
+        if unreadable_assumptions(declaration):
+            return (
+                f"`{declaration[:80]}` cannot be read as `axiom NAME : STATEMENT`, so "
+                f"save_lean could never accept it. An assumption carries no binders and "
+                f"no universe parameters."
+            )
+        return None
+
+    # Tried in order, and the order is part of the message: `trivial` closing a
+    # statement is damning, while `exact?` closing it says the result was in
+    # Mathlib all along.
+    PROBES = ("trivial", "simp", "tauto", "exact?")
+
+    def _assumption_probe(self, declaration: str) -> tuple[str | None, str]:
+        r"""Ask Lean about a proposed axiom before any human is asked.
+
+        Two questions in one elaboration, because Lean reports diagnostics per
+        declaration and a second process buys nothing: does this elaborate at
+        all, and can any of `PROBES` close it.
+
+        A statement Lean proves is not an assumption -- it is a theorem nobody
+        has saved yet -- and the graded run's appendix is what that looks like
+        when nothing asks. `exists a b : G, a * b = b * a` was offered as the
+        meaning of "abelian"; it says some pair commutes, which is true in every
+        group, and `exact ⟨1, 1, rfl⟩` closes it.
+
+        `import Mathlib` rather than the workspace's own imports. An assumption
+        may mention anything, and a narrower import set turns "that name does
+        not exist" into "I did not import that name", which is a different
+        sentence and a misleading one.
+
+        Returns a refusal or None, and a caveat that is empty unless the probe
+        could not be run. A machine whose Lean will not start must not be one
+        where every axiom is approved unchecked, nor one where none can be: the
+        caveat carries the uncertainty to the human, who is the one deciding.
+        """
+        head, _, tail = declaration.partition(":")
+        # Collapsed to one line before anything else. Which tactic closed the
+        # goal is read from `LeanDiagnostic.line`, and Hardy keeps only a
+        # diagnostic's start line -- Lean's `endPos` is discarded -- so a
+        # two-line statement would attribute an error to the wrong tactic and
+        # could report a probe as succeeding when it failed.
+        statement = normalise_lean(tail).strip()
+        examples = "\n".join(f"example : {statement} := by {tactic}" for tactic in self.PROBES)
+        # Exactly this layout, and `test_assumption_gates` asserts it: the
+        # import on line 1, blank, the declaration on line 3, blank, then one
+        # example per line from line 5. The arithmetic below is that layout.
+        source = f"import Mathlib\n\n{head.strip()} : {statement}\n\n{examples}\n"
+        try:
+            # Its own timeout, not the session's. `import Mathlib` costs about
+            # 20 seconds warm and over three minutes cold, against a session
+            # default of 180 -- so on a cold machine the *first* axiom request,
+            # which is the one most worth checking, would have degraded to
+            # "could not be checked" every time.
+            result = self._run_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
+        except Exception as error:  # noqa: BLE001 - an unrunnable probe is a caveat, never a crash
+            return None, f"Lean could not be checked ({error})."
+        if getattr(result, "timed_out", False) or getattr(result, "interrupted", False):
+            return None, "Lean could not be checked (the elaboration did not finish)."
+        errors = [item for item in result.diagnostics if item.severity == "error"]
+        if not result.ok and not errors:
+            # Lean failed and said nothing this can read. Every conclusion below
+            # is drawn from *which line* an error landed on, so with no errors
+            # to place, "no error on line 5" would read as "`trivial` closed the
+            # goal" -- turning an unusable answer into a confident refusal.
+            return None, "Lean could not be checked (it failed without diagnostics Hardy could read)."
+        placed = {item.line for item in errors if item.line is not None}
+        # An error Lean could not place counts against the declaration and never
+        # in a probe's favour: "no error on that line" must mean the tactic
+        # closed the goal, not that Hardy could not tell where the error was.
+        unplaced = any(item.line is None for item in errors)
+        declaration_line = 3
+        if unplaced or any(line <= declaration_line for line in placed):
+            return (
+                f"Lean does not accept this statement, so nothing can be built on it:\n"
+                f"{result.output}\n"
+                f"Fix the statement and request it again.",
+                "",
+            )
+        for index, tactic in enumerate(self.PROBES):
+            if declaration_line + 2 + index in placed:
+                continue
+            proof = _probe_suggestion(result, declaration_line + 2 + index) or f"by {tactic}"
+            return (
+                f"Lean proves this outright, so it is a theorem, not an assumption:\n"
+                f"  theorem {head.strip().removeprefix('axiom').strip()} : "
+                f"{statement} := {proof}\n"
+                f"Save it with save_lean instead of assuming it.",
+                "",
+            )
+        return None, ""
 
     def _lean_path(self, space: LeanWorkspace | None = None) -> str:
         """Where Lean looks for a module, nearest first.
@@ -1519,6 +1681,26 @@ class MathematicsSession:
         ]
         return (*shared, *self._audit_gaps(self._saved_theorems()), *self._stale_writeup(), *owed)
 
+    def goal(self) -> str:
+        """What the user said this session is for, or "".
+
+        Additive and optional, so `schema_version` stays 2: that version exists
+        to refuse records this build cannot read, and a string it can ignore is
+        not one of those. A record written before goals existed loads with "".
+
+        Read at every axiom approval and printed on the writeup. Hardy makes no
+        judgment about it -- the claim is narrow and is the whole point: a human
+        is never asked to approve an axiom with the assignment off-screen. The
+        session that approved `no_simple_nonabelian_composite_orders`, which is
+        the assignment itself for 28 of the orders, spent 170 seconds reading a
+        well-argued paragraph with nothing beside it to compare against.
+        """
+        return str(self.state.get("goal") or "")
+
+    def set_goal(self, text: str) -> None:
+        self.state["goal"] = text.strip()
+        self._save_state()
+
     def has_theorems(self) -> bool:
         """Whether anything here could be reported at all.
 
@@ -1945,15 +2127,34 @@ class MathematicsSession:
             return ToolResult(True, f"recorded mapping: {entry}")
         if name == "request_assumption":
             proposal = {key: str(arguments[key]) for key in ("formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason")}
+            # Both gates run before `confirm`. Nobody should be asked to approve
+            # a statement Hardy has not read, and nobody should be asked at all
+            # about one that could never be declared or that Lean proves itself.
+            refusal = self._assumption_shape(proposal["formal_name"], proposal["lean_statement"])
+            if refusal is not None:
+                return ToolResult(False, refusal)
+            # Built once and reused: the text elaborated, the text approved, and
+            # the text the model is told to write are one string, which is the
+            # whole point.
+            declaration = f"axiom {proposal['formal_name']} : {proposal['lean_statement'].strip()}"
+            refusal, caveat = self._assumption_probe(declaration)
+            if refusal is not None:
+                return ToolResult(False, refusal)
+            # Carried to the prompt rather than swallowed: a human approving an
+            # unchecked statement is owed the word "unchecked".
+            proposal["checked"] = caveat or "Lean elaborated this statement and could not prove it."
+            proposal["goal"] = self.goal()
             if not self.confirm(proposal):
                 return ToolResult(False, "The user declined this assumption. Do not use it.")
-            proposal["status"] = "user-approved"
-            if not any(item["formal_name"] == proposal["formal_name"] for item in self.state["assumptions"]):
-                self.state["assumptions"].append(proposal)
-                mapping = {"formal_name": proposal["formal_name"], "latex_name": proposal["latex_name"], "description": proposal["informal_statement"]}
+            # `checked` and `goal` describe this one request, not the
+            # assumption, and have no business in the durable record.
+            record = {key: value for key, value in proposal.items() if key not in {"checked", "goal"}}
+            record["status"] = "user-approved"
+            if not any(item["formal_name"] == record["formal_name"] for item in self.state["assumptions"]):
+                self.state["assumptions"].append(record)
+                mapping = {"formal_name": record["formal_name"], "latex_name": record["latex_name"], "description": record["informal_statement"]}
                 self.state["names"].append(mapping)
                 self._save_state()
-            declaration = f"axiom {proposal['formal_name']} : {proposal['lean_statement']}"
             return ToolResult(
                 True,
                 f"User approved. Declare exactly `{declaration}`, disclose source "
