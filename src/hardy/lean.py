@@ -19,7 +19,7 @@ import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .domain import EnvironmentIdentity, FrozenClaim, FrozenModel, RunLimits
 from .layout import WriteGuard
@@ -27,7 +27,64 @@ from .models import Request, ToolResult
 from .process import ProcessResult, ProcessSpec, run_process
 from .workspace import QUALIFIED_NAME, declared_name
 
+if TYPE_CHECKING:
+    from .modules import ModuleIndex
+
 HOLE = re.compile(r"\b(sorry|admit)\b")
+# Lean's report for an import it cannot resolve. It names the `.olean` first,
+# which is why it reads as a damaged installation rather than as a wrong path.
+MISSING_MODULE = re.compile(r"object file '[^']*' of module ([\w.'!?«»]+) does not exist")
+
+
+def translate_missing_modules(output: str, modules: ModuleIndex | None) -> str:
+    """`output` with a sentence about modules above it, when that is the error.
+
+    Prepended rather than substituted. Hardy does not hide what a tool said,
+    and the file path Lean names is still the fact a human debugging a genuinely
+    broken installation needs.
+
+    The misreading this exists for is not hypothetical. A session handed
+    `object file '...Sylow/Basic.olean' ... does not exist` concluded that the
+    Mathlib cache was missing and never wrote Lean again. Mathlib was complete;
+    the module had been flattened to `Mathlib.GroupTheory.Sylow`, and the whole
+    session went to prose because nothing said so.
+
+    Reaches `LeanTools` callers only -- the interactive session and the batch
+    runner. `LeanService`, which serves the staged workflow and the MCP server,
+    is the other façade and is deliberately left alone: this closes the surface
+    the failure happened on rather than claiming to close every one.
+    """
+    if modules is None:
+        return output
+    # `dict.fromkeys` rather than a set: Lean repeats the error once per
+    # importing file, and a wall of identical paragraphs is how a translation
+    # becomes the noise it was meant to cut through. Order is kept because the
+    # first one named is usually the one the author wrote.
+    missing = list(dict.fromkeys(MISSING_MODULE.findall(output)))
+    if not missing:
+        return output
+    known = modules.names()
+    lines: list[str] = []
+    for name in missing:
+        if not known:
+            lines.append(
+                f"unknown module {name}: no module index could be read under "
+                f"{modules.project}, so Hardy cannot say what is installed here."
+            )
+            continue
+        nearest = modules.nearest(name)
+        suggestion = f" Nearest installed: {', '.join(nearest)}." if nearest else ""
+        lines.append(
+            f"unknown module {name}: it is not in the Lean project configured "
+            f"here.{suggestion}"
+        )
+    lines.append(
+        "This is a wrong import, not a broken installation. "
+        "Use search_modules to find the module you meant."
+    )
+    return "\n".join((*lines, "", output))
+
+
 # A Lean declaration name: identifier components joined by dots. Stricter than
 # `[A-Za-z_][A-Za-z0-9_'.]*`, which admits `Foo..bar` and `Foo.`, and wider --
 # `\w` is Unicode-aware here, so `α`, `x₁`, and `Nat.add_comm'` all pass, as
@@ -343,6 +400,7 @@ class LeanTools:
         project: Path | None = None,
         max_output_bytes: int = DEFAULT_PROCESS_OUTPUT_BYTES,
         runner: Callable[[ProcessSpec], ProcessResult] = run_process,
+        modules: ModuleIndex | None = None,
     ):
         self.request = request
         self.lean_command = lean_command
@@ -353,6 +411,9 @@ class LeanTools:
         self.project = project
         self.max_output_bytes = max_output_bytes
         self._runner = runner
+        # A `ModuleIndex`, or None where nobody built one. Held so `_observe`
+        # can say which module Lean meant rather than which file it looked for.
+        self.modules = modules
 
     @property
     def target_name(self) -> str | None:
@@ -434,7 +495,7 @@ class LeanTools:
             body = body[-self.output_limit :]
         return LeanToolResult(
             elaboration.success,
-            f"{header}\n{body}" if body else header,
+            translate_missing_modules(f"{header}\n{body}" if body else header, self.modules),
             source,
             diagnostics=elaboration.diagnostics,
             open_goals=elaboration.open_goals,

@@ -35,6 +35,7 @@ from .layout import (
 )
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
+from .modules import ModuleIndex
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
 from .search_tools import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
 from .usage import Usage
@@ -259,7 +260,18 @@ class MathematicsSession:
         # project with no shared library must cost nothing and error nowhere.
         self.shared_roots: tuple[tuple[Path, Path], ...] = self._discover_shared()
         placeholder = Request("example : True", "interactive workspace", ("Mathlib",))
-        self.lean = LeanTools(placeholder, lean_command, timeout=lean_timeout, project=lean_project)
+        # One index for the session, shared by the two things that need to know
+        # what this project ships: the `search_modules` tool, and the sentence
+        # `LeanTools` puts above Lean's "object file ... does not exist" so a
+        # wrong import stops reading as a broken toolchain.
+        self.modules = ModuleIndex(lean_project)
+        self.lean = LeanTools(
+            placeholder,
+            lean_command,
+            timeout=lean_timeout,
+            project=lean_project,
+            modules=self.modules,
+        )
         self.latex = LatexTools(latex_command)
         # Named through `layout`, not spelled again here: these two paths and
         # the names the guard is asked for have to agree, and two string
