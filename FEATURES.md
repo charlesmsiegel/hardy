@@ -64,6 +64,20 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   does not model, is read as not carrying them and owes a plain listing or a plain
   sentence instead. Refusing in that direction is the safe one; the failure to avoid is
   crediting a quotation no reader was shown.
+- **Now (implemented):** a theorem the document *asserts* must leave the reader something
+  to check it against. Every environment declared with `\newtheorem{...}{Theorem}` must
+  carry a `\label` for a recorded name that resolves to a saved Lean theorem or to an
+  approved assumption; one that does not is an outstanding obligation, advisory at
+  `save_latex` and blocking at `report_result`. An environment titled anything else —
+  `Lemma`, `Remark` — is exempt, matching Hardy's existing split where a `lemma` is
+  scaffolding and a `theorem` is what you would report. The graded writeup that motivated
+  this carried four theorem environments, one label, and nothing behind any of them.
+- **Known limit — the theorem scan.** `\newtheorem` is read from the whole writeup tree
+  rather than only the root, environment bodies are matched from `\begin{env}` to the
+  next `\end{env}` and do not nest, and a document titling its theorems in another
+  language is out of scope. Macro definition bodies are excluded, so a `\begin{theorem}`
+  inside a `\newcommand` nobody expands asserts nothing — without that the first false
+  positive would be a document that was honest.
 - **Now (implemented):** only a compile of the writeup itself publishes anything. Saving
   a fragment the root does not `\input` yet is checked through a probe document carrying
   the real preamble — that answers whether the fragment is sound and nothing about the

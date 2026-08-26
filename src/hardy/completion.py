@@ -78,7 +78,19 @@ PROOF = ":="
 
 #: The kinds an obligation comes in, worst first. Order is what `describe`
 #: reports in and what a caller showing only the first should show.
-KINDS = ("lean", "statement", "record", "label", "appendix", "assumption")
+#:
+#: `theorem` sits second: a document asserting a claim nothing backs is worse
+#: than one that backs its claims imprecisely, and not as bad as having no Lean
+#: at all.
+KINDS = ("lean", "theorem", "statement", "record", "label", "appendix", "assumption")
+# `\newtheorem{theorem}{Theorem}` declares an environment; the last group is the
+# word printed in front of the number. Matched on that word rather than on the
+# environment name, because the name is the author's private choice while the
+# printed word is what makes a reader treat the block as a result:
+# `\newtheorem{thm}{Theorem}` is a theorem and `\newtheorem{theorem}[thm]{Remark}`
+# is not.
+NEWTHEOREM = re.compile(r"\\newtheorem\*?\s*\{([A-Za-z*]+)\}\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}")
+LABEL = re.compile(r"\\label\{([^}]*)\}")
 
 
 @dataclass(frozen=True)
@@ -396,6 +408,93 @@ def covering(name: str, registry: Sequence[Mapping[str, str]]) -> Mapping[str, s
     return None
 
 
+def theorem_environments(document: Displayed) -> frozenset[str]:
+    r"""Environment names the document declares as printing "Theorem".
+
+    A `lemma` is deliberately not one. Hardy already treats a saved `lemma` as
+    scaffolding that owes no writeup and a `theorem` as what you would report;
+    the document side of that rule says the same thing.
+    """
+    return frozenset(
+        name
+        for name, title in NEWTHEOREM.findall(document.executed)
+        if title.strip().rstrip(".").lower() == "theorem"
+    )
+
+
+def asserted_theorems(document: Displayed) -> tuple[tuple[str, str], ...]:
+    r"""Each theorem environment the document *runs*, with the labels inside it.
+
+    Read from `executed`, so a `\begin{theorem}` inside a listing is an
+    illustration rather than an assertion -- the same distinction `quoted_lean`
+    relies on from the other side -- and then through `without_definitions`,
+    because `executed` still holds the *body* of a `\newcommand`. A macro that
+    is never expanded asserts nothing:
+
+        \newcommand{\exampleblock}{\begin{theorem}Not asserted.\end{theorem}}
+
+    Without that second step this gate's first false positive is a document
+    that was honest, which is how a mechanical rule loses its authority.
+
+    Bodies are matched from `\begin{env}` to the next `\end{env}`. Theorem
+    environments do not nest in practice, and this is a scanner rather than a
+    TeX engine: the limit is stated in FEATURES.md rather than pretended away.
+    """
+    text = without_definitions(document.executed)
+    found: list[tuple[str, str]] = []
+    for name in sorted(theorem_environments(document)):
+        opening = re.compile(rf"\\begin\{{{re.escape(name)}\}}")
+        closing = re.compile(rf"\\end\{{{re.escape(name)}\}}")
+        for match in opening.finditer(text):
+            end = closing.search(text, match.end())
+            body = text[match.end() : end.start() if end else len(text)]
+            found.append((name, " ".join(LABEL.findall(body))))
+    return tuple(found)
+
+
+def _theorem_obligations(
+    document: Displayed,
+    theorems: Mapping[str, str],
+    registry: Sequence[Mapping[str, str]],
+    labels: Collection[str],
+    assumptions: Sequence[Mapping[str, str]],
+) -> list[Obligation]:
+    r"""Every asserted theorem the reader has nothing to check against.
+
+    A label backs an environment when it names something real: a saved Lean
+    theorem, or an assumption a human approved. Both halves matter -- an
+    appendix stating an approved axiom inside a theorem environment is honest,
+    and the appendix is exactly where an assumption is supposed to be displayed.
+
+    The graded writeup had four theorem environments, one label, and nothing
+    behind any of them.
+    """
+    approved = {str(item["formal_name"]) for item in assumptions}
+    backed = {
+        str(entry.get("latex_name") or "")
+        for entry in registry
+        if str(entry.get("formal_name") or "") in theorems
+        or str(entry.get("formal_name") or "") in approved
+    }
+    owed: list[Obligation] = []
+    for name, found in asserted_theorems(document):
+        carried = [label for label in found.split() if label in backed and label in labels]
+        if carried:
+            continue
+        owed.append(
+            Obligation(
+                "theorem",
+                "",
+                f"a \\begin{{{name}}} in the writeup is backed by nothing: it carries "
+                + ("no \\label" if not found else f"only \\label{{{found}}}")
+                + ", and a reader has no saved theorem or stated assumption to check it "
+                "against. Label it for a recorded name, or state it as prose rather than "
+                "as a theorem.",
+            )
+        )
+    return owed
+
+
 def outstanding(
     *,
     theorems: Mapping[str, str],
@@ -462,6 +561,7 @@ def outstanding(
                     _statement_detail(statement, written),
                 )
             )
+    owed.extend(_theorem_obligations(document, theorems, registry, labels, assumptions))
     owed.extend(_assumption_obligations(assumptions, used, labels, document))
     return tuple(sorted(owed, key=lambda item: (KINDS.index(item.kind), item.subject)))
 
