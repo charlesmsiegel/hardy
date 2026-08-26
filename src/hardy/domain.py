@@ -29,7 +29,14 @@ class RunLimits(FrozenModel):
     active_seconds: int = 1_800
     proof_seconds: int = 1_200
     official_checks: int = 40
-    lean_process_seconds: int = 30
+    # Every source Hardy sends Lean opens with `import Mathlib`, and that import
+    # alone was measured at ~21s warm and 223s cold on a developer machine. At
+    # the old 30 it left about nine seconds of actual work warm and could not
+    # finish at all cold -- so `search_declarations` timed out on every call,
+    # every time, and reported the timeout as a search that found nothing. The
+    # run as a whole is still bounded by `active_seconds` and `proof_seconds`;
+    # this only stops a single process being killed before Mathlib has loaded.
+    lean_process_seconds: int = 180
     tex_process_seconds: int = 120
     formalization_proposals: int = 5
     model_observation_bytes: int = 32 * 1024

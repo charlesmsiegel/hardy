@@ -119,6 +119,36 @@ SEARCH_TOOL_NAMES = tuple(spec["function"]["name"] for spec in SEARCH_TOOLS)
 MAX_NAMES = 20
 
 
+def _did_not_finish(value: Any) -> str:
+    """Why this answer is not a report about Mathlib, or "".
+
+    A search that timed out comes back as `success=False, timed_out=True,
+    results=[]`, and it was being handed to the model as a *successful* tool
+    call whose answer was an empty list. There is no way to read that except
+    "Mathlib does not have it", and that is what a session concluded -- about
+    `IsSimpleGroup`, which Mathlib has, before going on to assume four classical
+    theorems Mathlib proves.
+
+    This is the same distinction `inspect_declarations` refuses to blur when it
+    will not truncate a name list: "not found" and "not asked" are different
+    answers, and only one of them is evidence.
+    """
+    if getattr(value, "timed_out", False):
+        return (
+            "This search did not finish, so it is NOT a report that nothing matched -- "
+            "Lean was stopped before it answered. Do not conclude the result is absent "
+            "from Mathlib. Narrow the query, or ask the user to raise the Lean process "
+            "timeout."
+        )
+    if getattr(value, "success", True) is False:
+        return (
+            "This search failed, so it is NOT a report that nothing matched. Do not "
+            "conclude the result is absent from Mathlib; the diagnostics below say what "
+            "went wrong."
+        )
+    return ""
+
+
 class SearchToolRuntime:
     """The search tools, bound to one pinned environment."""
 
@@ -185,6 +215,9 @@ class SearchToolRuntime:
             return ToolResult(False, str(error))
         except Exception as error:  # noqa: BLE001 - a failed search is an answer, not a crash
             return ToolResult(False, f"{type(error).__name__}: {error}")
+        unfinished = _did_not_finish(value)
+        if unfinished:
+            return ToolResult(False, f"{unfinished}\n{value.model_dump_json()}")
         return ToolResult(True, value.model_dump_json())
 
 

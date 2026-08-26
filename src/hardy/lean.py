@@ -636,8 +636,18 @@ class LeanService:
         resolved = []
         unavailable = []
         for name in names:
+            # `startswith(f"{name} ")` was the test, and it reported almost every
+            # Mathlib declaration as unavailable. Lean prints a
+            # universe-polymorphic declaration with its universe list attached to
+            # the name -- `IsCyclic.{u} (G : Type u) [Pow G Int] : Prop`,
+            # `Subgroup.Normal.{u_1} {G : Type u_1} ...` -- so the space never
+            # came where the test wanted it. Almost everything in Mathlib about
+            # types is universe-polymorphic, so the one search tool that does not
+            # hang was answering "no such declaration" about declarations that
+            # exist. A model asking whether `IsSimpleGroup` was real got told no.
+            head = re.compile(rf"{re.escape(name)}(?:\.\{{[^}}]*\}})?(?=[\s:])")
             diagnostic = next(
-                (item for item in check.diagnostics if item.message.startswith(f"{name} ")),
+                (item for item in check.diagnostics if head.match(item.message)),
                 None,
             )
             if diagnostic is None:
