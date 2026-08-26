@@ -156,6 +156,37 @@ def test_a_schema_1_record_is_refused_with_its_own_error_type(tmp_path: Path):
         spending(tmp_path)
 
 
+def test_a_record_that_is_not_readable_json_is_refused_the_same_way(tmp_path: Path):
+    """Reproduced: a merge conflict in `session.json`, answered with a traceback.
+
+    `session.json` is versioned, so it comes back conflicted, hand-edited or
+    truncated. `json.loads` raised `JSONDecodeError` -- not a `SchemaError`,
+    so the interactive shell did not recognise a deliberate refusal, announced
+    a fallback to the plain session, ran the identical load a second time and
+    ended on a stack trace: the exact failure the `SchemaError` path was built
+    to prevent.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "session.json").write_text(
+        '<<<<<<< HEAD\n{"schema_version": 2}\n=======\n{"schema_version": 2}\n>>>>>>> other\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(chat.SchemaError, match="not readable JSON"):
+        spending(tmp_path)
+
+
+def test_a_record_that_is_valid_json_but_not_an_object_is_refused(tmp_path: Path):
+    """`[]` parses, and then `stored.get` raised `AttributeError`.
+
+    Valid JSON is not the same as the record this reads, and the shape has to
+    be checked before anything asks it for a key.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "session.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(chat.SchemaError, match="not the record object"):
+        spending(tmp_path)
+
+
 def test_a_workspace_written_before_the_ledger_existed_still_opens(tmp_path: Path):
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "session.json").write_text(

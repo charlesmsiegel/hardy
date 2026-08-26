@@ -11,7 +11,7 @@ import tomllib
 from pathlib import Path
 
 from .layout import LayoutError, files_under, resolve_named_child
-from .workspace import module_name
+from .workspace import WorkspacePathError, module_name, safe_relative
 
 #: What Hardy's own template puts in a fresh `lean/`, and so the root to
 #: declare when a problem has no sources yet. An empty `roots` array is a
@@ -57,17 +57,40 @@ def exposed_modules(lean_root: Path) -> set[str]:
     Through `files_under`, which refuses a symlink anywhere in the tree, so the
     collision check is asked about the modules that are really there. A linked
     source counted here would answer for a file the host build cannot reach.
+
+    Every name is then put through `safe_relative`, which is where Hardy
+    already keeps the rule for what a Lean module component may be. Nothing
+    Hardy writes can break it -- `save_lean` goes through the same function --
+    but a clone can, and `Bad".lean` is a perfectly legal POSIX filename.
+    Counted as a module it was rendered straight into `roots = ["Bad""]`, which
+    is not TOML: the stanza appended to the user's own `lakefile.toml` broke
+    `lake build` and then broke Hardy's own startup, which parses that file
+    before it offers to register anything. Refusing is the cheap half of the
+    choice the reviewer left open -- registration is a convenience for the
+    user's editor and declining always costs nothing -- and it keeps one rule
+    for a module component rather than inventing a TOML-escaping second one.
     """
     if not lean_root.is_dir():
         return set()
     try:
-        return {module_name(relative) for relative in files_under(lean_root, ".lean")}
+        found = files_under(lean_root, ".lean")
     except LayoutError as error:
         # A refusal, not a traceback. Registration is a convenience for the
         # user's own editor and declining costs nothing, so a source tree that
         # cannot be enumerated honestly is reported the way every other
         # registration problem is.
         raise RegistrationRefused(str(error)) from None
+    names = set()
+    for relative in found:
+        try:
+            safe_relative(relative.as_posix())
+        except WorkspacePathError as error:
+            raise RegistrationRefused(
+                f"{lean_root / relative} is not a Lean module Lake could build ({error}); "
+                "rename it, or decline registration -- Hardy's own resolution does not need it"
+            ) from None
+        names.add(module_name(relative))
+    return names
 
 
 def registered_libraries(lakefile: Path) -> dict[str, str]:

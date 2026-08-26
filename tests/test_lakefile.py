@@ -147,3 +147,40 @@ def test_a_symlinked_source_stops_the_collision_scan(tmp_path: Path):
     (lean / "Main.lean").symlink_to(outside)
     with pytest.raises(lakefile.RegistrationRefused, match="symlink"):
         lakefile.exposed_modules(lean)
+
+
+@pytest.mark.skipif(os.name == "nt", reason='a double quote is not a legal Windows filename')
+def test_a_module_name_toml_cannot_hold_is_refused_rather_than_written_out(tmp_path: Path):
+    r"""Reproduced: `roots = ["Bad""]` appended to the user's own lakefile.
+
+    `Bad".lean` is a legal POSIX filename and a clone can ship one. Counted as
+    a module it was rendered into the `roots` array with nothing escaping it,
+    so the stanza Hardy appended was not TOML: `lake build` broke, and so did
+    Hardy's next startup, which parses that same file before it offers to
+    register anything. `safe_relative` already owns the rule for what a Lean
+    module component may be, and a name that is not one is not a module Lake
+    could build under any escaping.
+    """
+    host = write(tmp_path / "lakefile.toml", 'name = "host"\n')
+    write(tmp_path / "sylow" / "lean" / 'Bad".lean', "import Mathlib\n")
+
+    with pytest.raises(lakefile.RegistrationRefused, match="not a Lean module"):
+        lakefile.register(host, tmp_path, "sylow")
+
+    # And nothing was appended: the file is still the one the user wrote.
+    assert host.read_text(encoding="utf-8") == 'name = "host"\n'
+
+
+def test_a_module_name_that_is_not_an_identifier_is_refused(tmp_path: Path):
+    """The same rule, without needing a character Windows forbids.
+
+    A digit cannot open a Lean identifier, so `1Bad.lean` is not a module
+    either -- and it would have been rendered into `roots` as valid TOML
+    naming a module Lake cannot resolve, which is the quieter half of the
+    same bug.
+    """
+    lean = tmp_path / "lean"
+    write(lean / "1Bad.lean", "import Mathlib\n")
+
+    with pytest.raises(lakefile.RegistrationRefused, match="not a Lean module"):
+        lakefile.exposed_modules(lean)

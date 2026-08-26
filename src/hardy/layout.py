@@ -717,7 +717,7 @@ def guard_for(base: Path, relative: str | PurePosixPath, *, create: bool = False
     return guard, _name(parts[-1])
 
 
-def read_text(base: Path, relative: str | PurePosixPath, *, encoding: str = "utf-8") -> str:
+def read_text(base: Path, relative: str | PurePosixPath, *, encoding: str = "utf-8", errors: str | None = None) -> str:
     """The text of a file inside `base`, proven to be that file.
 
     READS, not only writes. `LeanWorkspace.sources()` used `Path.read_text`,
@@ -730,7 +730,22 @@ def read_text(base: Path, relative: str | PurePosixPath, *, encoding: str = "utf
     every read of a project file goes through the same proof its writes do.
     """
     guard, name = guard_for(base, relative)
-    with guard.open(name, "r", encoding=encoding) as handle:
+    with guard.open(name, "r", encoding=encoding, errors=errors) as handle:
+        return handle.read()
+
+
+def read_bytes(base: Path, relative: str | PurePosixPath) -> bytes:
+    """The bytes of a file inside `base`, proven to be that file.
+
+    `read_text`'s counterpart, for a project tree that is not all text. The
+    writeup is copied into a LaTeX scratch directory before every compile, and
+    that tree carries figures and `.bib` files beside the `.tex` -- decoding
+    those to copy them would corrupt them, and copying them with
+    `shutil.copytree` is what followed a link out of the project in the first
+    place.
+    """
+    guard, name = guard_for(base, relative)
+    with guard.open(name, "rb") as handle:
         return handle.read()
 
 
