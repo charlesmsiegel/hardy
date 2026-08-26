@@ -107,6 +107,27 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   once asked about. What the appendix cannot fix is the limit above it: the Lean line
   it quotes is the one Hardy was given, which for an imported axiom is still what the
   *model* said that declaration says.
+- **Now (implemented):** `request_assumption` settles three things before any human
+  is asked. The statement must be a statement — not a whole `axiom Name : ...`
+  declaration, not binders before the colon, not more than one line — checked with the
+  same code `save_lean` uses, so the two ends cannot approve text the other refuses.
+  The constructed declaration is then elaborated verbatim, and four tactics are tried
+  against it in the same pass: a statement Lean proves outright is a theorem nobody has
+  saved yet, and the refusal hands back the proof. The probe carries its own timeout,
+  because `import Mathlib` costs seconds warm and minutes cold; when it genuinely cannot
+  run, the caveat travels to the approval prompt rather than being resolved silently in
+  either direction.
+- **Now (implemented):** `/goal` records what the session is for, in the user's words.
+  It is printed above every assumption request and on the writeup itself. Hardy makes no
+  judgment about the relationship between the two — the claim is only that a human is
+  never asked to approve an axiom with the assignment off-screen.
+- **Now (implemented):** every compile of the writeup carries a provenance banner on
+  page one, injected into the scratch copy the compiler is handed rather than into the
+  saved source, so it cannot be edited out of the document a reader opens. It states how
+  many theorems Lean checked, how many assumptions the user approved, how many theorem
+  environments are backed by neither, and the stated goal. A change to what it would
+  *overstate* — a newly approved assumption, a changed goal — makes the writeup stale
+  exactly as an edit to the source does.
 - **Now (implemented):** saving Lean audits every *exported* theorem and lemma in
   the modules the save rebuilt — the edited one and everything importing it, since
   a dependent inherits whatever the edit brought in. An axiom reached through an

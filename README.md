@@ -61,6 +61,14 @@ and save LaTeX, inspect the workspace, maintain a formal-to-LaTeX naming
 registry, and request explicit permission for assumptions with provenance. It
 saves the conversation and artifacts after every change.
 
+An assumption is elaborated before anyone is asked to approve it, and refused if
+Lean can prove it outright — a statement the kernel closes is a theorem nobody
+saved yet, not an assumption. `/goal` records what the session is for and prints
+it beside every such request, so nobody approves an axiom with the assignment
+off-screen. And every compile stamps page one of the writeup with how many
+theorems Lean checked, how many assumptions were approved, and how many of the
+document's own theorem environments are backed by neither.
+
 A persistent computer algebra session sits alongside them, so the question of
 what is worth proving can be answered by computing rather than by guessing.
 State carries between cells, `/cas` lets you drive the same kernel yourself, and
