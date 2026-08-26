@@ -691,7 +691,16 @@ class MathematicsSession:
     # Tried in order, and the order is part of the message: `trivial` closing a
     # statement is damning, while `exact?` closing it says the result was in
     # Mathlib all along.
-    PROBES = ("trivial", "simp", "tauto", "exact?")
+    #
+    # What this catches is what standard automation closes, which is not the
+    # same as every logically weak statement, and the difference is worth
+    # stating. The graded appendix offered `exists a b : G, a * b = b * a` as the
+    # meaning of "abelian". It is true in every group -- `exact <1, 1, rfl>`
+    # closes it -- and *none* of these tactics find that witness, `exact?`
+    # included; only writing the term does. So this gate is a filter, not a
+    # decision procedure. It did catch `exists P : Sylow p G, True` on a live
+    # run, which is the same species of vacuity stated a little more carelessly.
+    PROBES = ("trivial", "simp", "tauto", "aesop", "exact?")
 
     def _assumption_probe(self, declaration: str) -> tuple[str | None, str]:
         r"""Ask Lean about a proposed axiom before any human is asked.
@@ -701,10 +710,9 @@ class MathematicsSession:
         all, and can any of `PROBES` close it.
 
         A statement Lean proves is not an assumption -- it is a theorem nobody
-        has saved yet -- and the graded run's appendix is what that looks like
-        when nothing asks. `exists a b : G, a * b = b * a` was offered as the
-        meaning of "abelian"; it says some pair commutes, which is true in every
-        group, and `exact ⟨1, 1, rfl⟩` closes it.
+        has saved yet. See `PROBES` for what that does and does not reach: it is
+        a filter over what standard automation closes, not a decision procedure,
+        and the graded appendix's own error is outside it.
 
         `import Mathlib` rather than the workspace's own imports. An assumption
         may mention anything, and a narrower import set turns "that name does
@@ -724,10 +732,21 @@ class MathematicsSession:
         # could report a probe as succeeding when it failed.
         statement = normalise_lean(tail).strip()
         examples = "\n".join(f"example : {statement} := by {tactic}" for tactic in self.PROBES)
-        # Exactly this layout, and `test_assumption_gates` asserts it: the
-        # import on line 1, blank, the declaration on line 3, blank, then one
-        # example per line from line 5. The arithmetic below is that layout.
-        source = f"import Mathlib\n\n{head.strip()} : {statement}\n\n{examples}\n"
+        # The probes come FIRST and the axiom LAST, which is the whole design of
+        # this file rather than a formatting choice. With the axiom declared
+        # above them it is in scope, and `exact?` closes every statement by
+        # citing it:
+        #
+        #     theorem sylow_first : ... := exact fun {G} ... => sylow_first p a
+        #
+        # A live run refused seven honest requests that way, Sylow's theorems
+        # among them, each "proved" from itself. Lean resolves names in order, so
+        # putting the axiom after the probes is what makes the question real.
+        #
+        # Exactly this layout, and `test_assumption_gates` asserts it: the import
+        # on line 1, blank, one example per line from line 3, blank, then the
+        # declaration last. The arithmetic below is that layout.
+        source = f"import Mathlib\n\n{examples}\n\n{head.strip()} : {statement}\n"
         try:
             # Its own timeout, not the session's. `import Mathlib` costs about
             # 20 seconds warm and over three minutes cold, against a session
@@ -751,8 +770,13 @@ class MathematicsSession:
         # in a probe's favour: "no error on that line" must mean the tactic
         # closed the goal, not that Hardy could not tell where the error was.
         unplaced = any(item.line is None for item in errors)
-        declaration_line = 3
-        if unplaced or any(line <= declaration_line for line in placed):
+        first_probe = 3
+        declaration_line = first_probe + len(self.PROBES) + 1
+        # The declaration is read first, and an error Lean could not place is
+        # read against it. A statement Lean will not accept fails on every probe
+        # line too, and "every tactic failed" would otherwise be reported back as
+        # a clean assumption.
+        if unplaced or declaration_line in placed:
             return (
                 f"Lean does not accept this statement, so nothing can be built on it:\n"
                 f"{result.output}\n"
@@ -760,9 +784,9 @@ class MathematicsSession:
                 "",
             )
         for index, tactic in enumerate(self.PROBES):
-            if declaration_line + 2 + index in placed:
+            if first_probe + index in placed:
                 continue
-            proof = _probe_suggestion(result, declaration_line + 2 + index) or f"by {tactic}"
+            proof = _probe_suggestion(result, first_probe + index) or f"by {tactic}"
             return (
                 f"Lean proves this outright, so it is a theorem, not an assumption:\n"
                 f"  theorem {head.strip().removeprefix('axiom').strip()} : "
@@ -2482,7 +2506,15 @@ class MathematicsSession:
         can fix, and the model can only relay what it was told.
         """
         if self.search is None:
-            return ToolResult(False, f"search is unavailable: {self.search_detail}")
+            # A reason, always. `search is unavailable: ` with nothing after the
+            # colon is what a model actually got on one run, and it is worse
+            # than no message: it names no fault anyone can fix, and the model
+            # went back to guessing module names.
+            return ToolResult(
+                False,
+                "search is unavailable: "
+                + (self.search_detail or "no reason was recorded when this session was built"),
+            )
         if name == "rank_premises":
             return self.search.rank_premises(
                 str(arguments["goal"]), int(arguments.get("limit") or 10)

@@ -323,9 +323,28 @@ statement, Hardy refuses **without asking the human**:
 > `theorem NAME : STATEMENT := by simp`
 > Save it with `save_lean` instead.
 
-This is the gate that kills `∃ a b : G, a * b = b * a` — `exact ⟨1, 1, rfl⟩`
-closes it. Handing back the proof rather than only the verdict is the design
-decision: a refusal that leaves the model where it was buys nothing.
+Handing back the proof rather than only the verdict is the design decision: a
+refusal that leaves the model where it was buys nothing.
+
+**Corrected after the live run.** The first draft of this section claimed the
+gate kills `∃ a b : G, a * b = b * a`, the graded appendix's "abelian". It does
+not. The statement is true in every group and `exact ⟨1, 1, rfl⟩` closes it, but
+no tactic in the ladder finds that witness — `trivial`, `simp`, `tauto`,
+`aesop`, `exact?` and every `intros <;> …` variant were measured against it and
+all fail. This gate is a **filter over what standard automation closes, not a
+decision procedure.** It did catch `∃ P : Sylow p G, True` on the live run,
+which is the same species of vacuity stated a little more carelessly, and it
+catches anything already provable from Mathlib — which is its other job: *this
+is not an assumption, it is a lemma you have not looked up.*
+
+What actually stands between the graded appendix and a reader is §5: the human
+sees the goal beside a statement Lean has accepted, and decides.
+
+**Also corrected after the live run: the axiom is declared *after* the probes.**
+With it above them it is in scope, and `exact?` closes every statement by citing
+the axiom under test — seven honest requests were refused that way in one run,
+Sylow's theorems among them, each "proved" from itself. Lean resolves names in
+order, so the ordering is what makes the question real.
 
 **Failure of the probe is not a refusal.** If the compile times out or the
 toolchain is unavailable, the request proceeds to the human, and the approval

@@ -230,13 +230,19 @@ def fake_lean(session, monkeypatch):
             if self.raises is not None:
                 raise self.raises
             diagnostics = []
+            # The layout the probe builds: import on 1, probes from 3, the
+            # declaration last. The axiom sits *after* the probes so `exact?`
+            # cannot close a statement by citing the axiom being proposed.
+            declaration_line = 3 + len(session.PROBES) + 1
             if not self.elaborates:
                 diagnostics.append(
-                    LeanDiagnostic(severity="error", message=self.output, line=3, column=0)
+                    LeanDiagnostic(
+                        severity="error", message=self.output, line=declaration_line, column=0
+                    )
                 )
             else:
                 for index, tactic in enumerate(session.PROBES):
-                    line = 5 + index
+                    line = 3 + index
                     if tactic == self.closes_with:
                         if self.suggestion:
                             diagnostics.append(

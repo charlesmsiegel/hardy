@@ -128,3 +128,16 @@ def test_the_refusal_is_recorded_in_the_transcript_like_any_other_answer(
         if json.loads(entry).get("name") == "rank_premises"
     ]
     assert len(recorded) == 1
+
+
+def test_an_unavailable_search_always_names_a_reason(session_factory) -> None:
+    """`search is unavailable: ` with nothing after the colon is what a model
+    got on one run. It names no fault anyone can fix, and the model went back
+    to guessing module names."""
+    session = session_factory(search=None, search_detail="")
+
+    result = session._tool("search_modules", {"query": "Sylow"})
+
+    assert not result.ok
+    assert result.output.rstrip().rstrip(":") != "search is unavailable"
+    assert len(result.output) > len("search is unavailable: ")

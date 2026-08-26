@@ -179,8 +179,20 @@ def test_the_probe_source_puts_one_example_per_line(session, fake_lean) -> None:
 
     lines = fake_lean.last_source.splitlines()
     assert lines[0] == "import Mathlib"
-    assert lines[2] == "axiom f : True"
-    assert [line.split(" := by ")[1] for line in lines[4:] if line] == list(session.PROBES)
+    probes = lines[2 : 2 + len(session.PROBES)]
+    assert [line.split(" := by ")[1] for line in probes] == list(session.PROBES)
+    assert lines[-1] == "axiom f : True"
+
+
+def test_the_axiom_is_declared_after_the_probes_not_before(session, fake_lean) -> None:
+    """Lean resolves names in order, and an axiom in scope answers its own
+    question. Declared first, `exact?` closed every statement by citing the
+    axiom being proposed -- a live run refused seven honest requests that way,
+    Sylow's theorems among them, each "proved" from itself."""
+    session._assumption_probe("axiom sylow_first : True")
+
+    source = fake_lean.last_source
+    assert source.index("example") < source.index("axiom sylow_first")
 
 
 def test_a_multiline_statement_is_collapsed_before_probing(session, fake_lean) -> None:
@@ -188,7 +200,7 @@ def test_a_multiline_statement_is_collapsed_before_probing(session, fake_lean) -
     arithmetic breaks silently if a declaration ever spans two lines."""
     session._assumption_probe("axiom f : forall a\n  b : Nat, a = a")
 
-    assert fake_lean.last_source.splitlines()[2] == "axiom f : forall a b : Nat, a = a"
+    assert fake_lean.last_source.splitlines()[-1] == "axiom f : forall a b : Nat, a = a"
 
 
 # --- What reaches the human ----------------------------------------------------
