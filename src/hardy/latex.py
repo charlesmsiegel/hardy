@@ -14,6 +14,38 @@ from .process import run_guarded
 # Fragments are `\input` from one document, and that document is what a
 # compiler is ever pointed at.
 ROOT_DOCUMENT = "writeup.tex"
+BEGIN_DOCUMENT = re.compile(r"\\begin\{document\}")
+
+
+def stamped(source: str, stamp: str | None) -> str:
+    r"""`source` with a provenance banner after `\begin{document}`.
+
+    Applied to the scratch copy `check` compiles, never to the file that is
+    saved: the source stays the author's, and the banner cannot be edited out
+    of the document a reader opens.
+
+    Before `\maketitle` rather than after, which puts it on page one above the
+    title. That is where a provenance banner belongs, and burying it is how the
+    graded run's own warning went unread -- Hardy said "Still missing labels for
+    registered names" under 4.8 KB of pdfTeX font paths, and the PDF went out
+    anyway.
+
+    A document with no `\begin{document}` is returned untouched. It is a
+    fragment being probed, or a file too broken to compile, and neither is worth
+    failing a compile over: breaking the build to enforce a banner inverts the
+    priority.
+    """
+    if not stamp:
+        return source
+    found = BEGIN_DOCUMENT.search(source)
+    if found is None:
+        return source
+    banner = (
+        "\n\\begingroup\\footnotesize\\noindent\n"
+        f"{stamp}\n"
+        "\\par\\endgroup\\medskip\\hrule\\medskip\n"
+    )
+    return source[: found.end()] + banner + source[found.end() :]
 BODY = "\\begin{document}"
 INCLUSION = re.compile(r"\\(?:input|include|subfile)\s*\{([^}]*)\}")
 
@@ -157,6 +189,7 @@ class LatexTools:
         output_dir: Path | None = None,
         aux_dir: Path | None = None,
         commit: Callable[[], None] | None = None,
+        stamp: str | None = None,
     ) -> ToolResult:
         r"""Compile a candidate against the documents already saved.
 
@@ -213,6 +246,15 @@ class LatexTools:
             # -- the writeup directory removed underneath the session, say --
             # came back as "LaTeX executable not found", which is a sentence
             # about a machine that is fine.
+            #
+            # The root is what gets compiled, so the root is what gets stamped
+            # -- whichever file this call is nominally about, and after the root
+            # has been resolved. Stamping `source` instead put the banner into a
+            # fragment with no `\begin{document}`, where it vanished, so saving
+            # a section published an unstamped PDF while saving the root
+            # published a stamped one.
+            if stamp:
+                root.write_text(stamped(root.read_text(encoding="utf-8"), stamp), encoding="utf-8")
             try:
                 # `run_guarded` rather than `run_process`: a TeX installation
                 # needs the environment Hardy was started with, and

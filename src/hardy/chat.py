@@ -56,6 +56,7 @@ from .workspace import (
     statements,
     unreadable_assumptions,
 )
+from .writeup import escape_tex_text
 
 # Where the two artifact trees live inside a workspace, and the path a tool
 # call gets when it names neither -- the one file most sessions ever need.
@@ -1771,7 +1772,7 @@ class MathematicsSession:
         if isinstance(resolved, ToolResult):
             return resolved
         relative, _ = resolved
-        return self.latex.check(source, path=relative, tree=self.tex_root)
+        return self.latex.check(source, path=relative, tree=self.tex_root, stamp=self._stamp())
 
     def _save_latex(self, path: str, source: str) -> ToolResult:
         resolved = self._tex_path(path)
@@ -1822,6 +1823,7 @@ class MathematicsSession:
                 output_dir=self.workspace,
                 aux_dir=self.workspace / BUILD_DIR_TEX,
                 commit=_write,
+                stamp=self._stamp(),
             )
         except WriteupNotSaved as error:
             return ToolResult(False, str(error), source)
@@ -1852,8 +1854,19 @@ class MathematicsSession:
         note = self._owed_note()
         if missing:
             note = f"\n\nStill missing labels for registered names: {missing}{note}"
+        # Hardy first, pdfTeX second. The graded run's last save returned 4,879
+        # bytes, of which the part that mattered -- "Still missing labels for
+        # registered names" -- was the last line, under a wall of font paths.
+        #
+        # The log is kept whole. Filtering it on success was tried and withdrawn:
+        # a filter cannot know which of pdfTeX's lines a caller needed, and it
+        # loses the continuation lines of a multi-line warning, `Overfull` boxes,
+        # `No file ...` notices, rerun instructions, and any `\typeout` a model
+        # wrote to ask the engine a question. Reordering costs nothing and fixes
+        # the same problem -- and `check` tail-truncates its output, so with the
+        # note appended a long enough log could push it out entirely.
         if note:
-            return ToolResult(True, f"{result.output}\n\nSaved.{note}", source)
+            return ToolResult(True, f"Saved.{note}\n\n{result.output}", source)
         return result
 
     def _tex_root_source(self) -> str:
@@ -2060,6 +2073,11 @@ class MathematicsSession:
                 tree=self.tex_root,
                 output_dir=self.workspace,
                 aux_dir=self.workspace / BUILD_DIR_TEX,
+                # This path publishes writeup.pdf too, and re-stamps the
+                # signature afterwards. Without the banner, deleting a fragment
+                # silently replaced a stamped PDF with an unstamped one and
+                # recorded it as current.
+                stamp=self._stamp(),
             )
             if not checked.ok:
                 guard.mkdir()
@@ -2294,6 +2312,47 @@ class MathematicsSession:
                     found.update(set(entry.get("axioms", ())) & approved)
         return found
 
+    def _stamp(self) -> str:
+        r"""What the document is, printed in the document.
+
+        Every count here is one the obligations already compute; nothing new is
+        judged. It appears on every compile, clean or not: a banner that shows up
+        only on failure is one a reader learns to read the absence of.
+
+        "Machine-checked" is a saved theorem with no outstanding audit gap, not
+        `len(self._saved_theorems())`. That is a textual scan of the sources and
+        would call a theorem machine-checked while `_audit_gaps` was
+        simultaneously reporting it unestablished. A banner that overstates is
+        worse than no banner.
+
+        It says nothing about whether a result was *reported*. That is the
+        session's own bookkeeping rather than a property of the document, and
+        counting it here made every accepted report stale the PDF -- so a second
+        report was blocked behind a recompile that changed no source. What a
+        reader needs is already here: how much Lean checked, how much was
+        assumed, and how much the document asserts on neither footing.
+        """
+        owed = self._obligations()
+        unbacked = sum(1 for item in owed if item.kind == "theorem")
+        gaps = {item.subject for item in owed if item.kind == "lean"}
+        checked = len(self._saved_theorems() - gaps)
+        assumed = len(self.state["assumptions"])
+        parts = [
+            f"\\textbf{{Hardy}} --- {checked} theorem{'' if checked == 1 else 's'} "
+            f"machine-checked by Lean, {assumed} assumption{'' if assumed == 1 else 's'} "
+            f"approved by the user"
+        ]
+        if unbacked:
+            parts.append(
+                f"{unbacked} theorem environment{'' if unbacked == 1 else 's'} here "
+                f"{'is' if unbacked == 1 else 'are'} backed by neither"
+            )
+        text = ". ".join(parts) + "."
+        goal = self.goal()
+        if goal:
+            text += f"\\\\ Goal, as stated by the user: {escape_tex_text(goal)}"
+        return text
+
     def _tex_signature(self) -> str:
         """What the writeup tree hashes to, as a whole."""
         digest = hashlib.sha256()
@@ -2302,7 +2361,40 @@ class MathematicsSession:
             digest.update(b"\0")
             digest.update(source.encode("utf-8"))
             digest.update(b"\0")
+        # The banner is part of the published document, so a change to what it
+        # would say makes the PDF as stale as an edit to the source does.
+        # Without this, report_result succeeded and the published PDF went on
+        # saying that no result had been reported, with `_stale_writeup` seeing
+        # nothing wrong -- the counts live in the record, which this never read.
+        #
+        # The stamp's *inputs*, not `self._stamp()`. Calling it recurses:
+        # `_stamp` asks for the obligations, `_stale_writeup` is one of them,
+        # and it asks for this signature. Everything the banner is computed from
+        # is either hashed above (the tex sources) or listed here.
+        digest.update(json.dumps(self._stamp_inputs(), sort_keys=True).encode("utf-8"))
+        digest.update(b"\0")
         return digest.hexdigest()
+
+    def _stamp_inputs(self) -> dict[str, Any]:
+        """The banner inputs a stale PDF would *overstate*, and only those.
+
+        Not everything `_stamp` reads. The distinction is which direction a
+        stale banner errs in. A PDF compiled before the latest `save_lean` says
+        one theorem is machine-checked where there are now two -- it understates,
+        and the ratchet already forces the writeup to carry that theorem before
+        anything is reportable. Counting it here bought nothing and cost a
+        recompile after every Lean save.
+
+        An assumption approved after the compile is the other direction: the
+        banner goes on saying nothing was assumed while the work rests on
+        something, which is the failure this whole design exists to prevent. A
+        changed goal is the same -- the document prints the wrong assignment.
+        Both stale the writeup.
+        """
+        return {
+            "goal": self.goal(),
+            "assumptions": sorted(str(item["formal_name"]) for item in self.state["assumptions"]),
+        }
 
     def _stale_writeup(self) -> list[completion.Obligation]:
         """Whether the labels on hand describe the documents on hand.
