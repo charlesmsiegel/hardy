@@ -1104,3 +1104,29 @@ def test_an_assumption_under_an_open_theorem_does_not_block_the_next_skeleton(tm
     )
     assert not reported.ok
     assert "Papers.Smith.main" in reported.output
+
+
+def test_an_approved_axiom_does_not_authorise_a_theorem_sharing_its_leaf(tmp_path: Path):
+    """`request_assumption` records its own naming entry, so the registry holds
+    `t` the moment an axiom called `t` is approved. The leaf fallback then let
+    `theorem A.t` be stated with no result mapping of its own -- and because
+    `completion` reads the registry by the same rule, the *axiom's* label could
+    then satisfy the theorem's record and label obligations. A reader following
+    that link lands on the appendix entry for an assumption, not on the theorem
+    it is supposed to describe.
+    """
+    approval = dict(APPROVAL, formal_name="t", latex_name="asm:t")
+    source = "import Mathlib\nnamespace A\ntheorem t : True := by exact True.intro\nend A\n"
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("request_assumption", approval, "ask"),
+            call("save_lean", {"source": source}, "lean"),
+        ]),
+        approvals=[True],
+        registered=(),
+    )
+    chat.send("Approve an axiom, then state a theorem with the same last name.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"], refusal["output"]
+    assert "lemma" in refusal["output"]
