@@ -11,12 +11,25 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from test_chat import FakeChatRuntime, call, session
+from test_chat import FakeChatRuntime, call
+from test_chat import session as _session
 from workspace_helpers import results
 
 CLEAN = "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro\n"
 ASSUMED = CLEAN.rstrip() + " -- axioms: Papers.Smith.main\n"
 HOLED = CLEAN.rstrip() + " -- axioms: sorryAx\n"
+#: The results these tests state. `theorem` is reserved to names `record_name`
+#: has mapped, and none of these tests is about that rule -- they are about
+#: what a declaration rests on -- so the fixture registers them and each test
+#: goes on saying only what it is for.
+RESULTS = ("HardyTarget", "Foo.HardyTarget", "HardySecond", "A", "B", "Top", "«first result»")
+
+
+def session(tmp_path: Path, runtime: FakeChatRuntime, **kwargs):
+    kwargs.setdefault("registered", RESULTS)
+    return _session(tmp_path, runtime, **kwargs)
+
+
 APPROVAL = {
     "formal_name": "Papers.Smith.main",
     "lean_statement": "True",
@@ -116,19 +129,42 @@ def test_approving_an_imported_assumption_does_not_brick_the_workspace(tmp_path:
 
 def test_a_registered_theorem_that_vanishes_is_still_caught(tmp_path: Path):
     """The exemption above is for approved assumptions only. A theorem the
-    registry points at must still be required to exist."""
+    registry points at must still be required to survive.
+
+    Judged against what the tree held before, not against the registry alone.
+    A name is now registered *ahead* of the declaration it maps -- `theorem` is
+    reserved to registered results, so the order is record and then save -- and
+    a guard asked only of the staged tree refused every save in between,
+    including the one that would have introduced the theorem. A name that never
+    existed has not vanished; this one did.
+    """
+    gone = "import Mathlib\n\nlemma hardyElse : True := by exact True.intro\n"
     chat = session(
         tmp_path,
         FakeChatRuntime([
-            call("record_name", {"formal_name": "Vanished", "latex_name": "thm:v",
-                                 "description": "not in any file"}, "name"),
             call("save_lean", {"source": CLEAN}, "lean"),
+            call("save_lean", {"source": gone}, "lean"),
         ]),
     )
-    chat.send("Register something absent, then save.")
+    chat.send("Save the theorem, then overwrite it away.")
     refusal = results(tmp_path, "save_lean")[-1]
     assert not refusal["ok"]
-    assert "Vanished" in refusal["output"]
+    assert "HardyTarget" in refusal["output"]
+
+
+def test_a_name_registered_before_its_declaration_blocks_nothing(tmp_path: Path):
+    """The order `theorem` now requires: record the result, then state it."""
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("record_name", {"formal_name": "HardyLater", "latex_name": "thm:later",
+                                 "description": "coming in a moment"}, "name"),
+            call("save_lean", {"path": "Helper.lean",
+                               "source": "import Mathlib\n\nlemma hardyHelp : True := by exact True.intro\n"}, "lean"),
+        ]),
+    )
+    chat.send("Register the result, then save a helper.")
+    assert results(tmp_path, "save_lean")[-1]["ok"]
 
 
 def test_a_verdict_from_another_toolchain_is_not_reported_as_current(tmp_path: Path):
@@ -552,7 +588,10 @@ def test_closing_the_hole_moves_the_obligation_to_the_writeup(tmp_path: Path):
     chat.send("Save it, then close it.")
     kinds = {item.kind for item in chat.obligations()}
     assert "open" not in kinds
-    assert "record" in kinds
+    # The fixture registered it, so what a closed theorem owes now is the
+    # document's half: a label the compiler really made, and its statement
+    # quoted where a reader can compare.
+    assert "label" in kinds
 
 
 def test_an_open_theorem_does_not_block_the_next_one(tmp_path: Path):

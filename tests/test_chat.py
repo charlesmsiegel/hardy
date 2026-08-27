@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -79,23 +80,49 @@ def factory(runtime_class, script):
     return make
 
 
-def session(tmp_path: Path, runtime: FakeChatRuntime, approvals=(), lean_command=None) -> MathematicsSession:
+def session(
+    tmp_path: Path,
+    runtime: FakeChatRuntime,
+    approvals=(),
+    lean_command=None,
+    registered: Sequence[str] = (),
+) -> MathematicsSession:
+    """A session, optionally opened with results already registered.
+
+    `theorem` is reserved to names `record_name` has mapped, so a test whose
+    subject is anything else -- what a declaration rests on, how a tree builds,
+    what a document owes -- would otherwise have to script a `record_name` call
+    it is not about, and shift every index it asserts on. The registry is
+    durable session state, so starting with an entry in it is a state a real
+    workspace reaches.
+    """
     answers = iter(approvals)
-    return MathematicsSession(
+    chat = MathematicsSession(
         tmp_path,
         factory(type(runtime), runtime.script),
         lean_command or (sys.executable, str(Path(__file__).with_name("fake_lean.py"))),
         (sys.executable, str(Path(__file__).with_name("fake_latex.py"))),
         lambda proposal: next(answers),
     )
+    for name in registered:
+        chat.state["names"].append(
+            {
+                "formal_name": name,
+                "latex_name": f"thm:{name.rsplit('.', 1)[-1].strip('«»').replace(' ', '-')}",
+                "description": f"{name}, registered by the fixture.",
+            }
+        )
+    if registered:
+        chat._save_state()
+    return chat
 
 
 def test_chat_checks_and_saves_linked_artifacts(tmp_path: Path):
     lean = "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro"
     latex = "\\documentclass{article}\n\\begin{document}True.\\label{thm:true}\\end{document}"
     runtime = FakeChatRuntime([
-        call("save_lean", {"source": lean}, "lean"),
         call("record_name", {"formal_name": "HardyTarget", "latex_name": "thm:true", "description": "True is true."}, "name"),
+        call("save_lean", {"source": lean}, "lean"),
         call("save_latex", {"source": latex}, "latex"),
         {"role": "assistant", "content": "Lean checked the theorem and the writeup compiles."},
     ])
@@ -108,8 +135,9 @@ def test_chat_checks_and_saves_linked_artifacts(tmp_path: Path):
     state = json.loads((tmp_path / "session.json").read_text())
     assert state["names"][0]["formal_name"] == "HardyTarget"
     events = [json.loads(line) for line in (tmp_path / "transcript.jsonl").read_text().splitlines()]
-    # Every tool the SDK asked for, and what Hardy's execution of it produced.
-    assert [event["name"] for event in events if event["type"] == "tool"] == ["save_lean", "record_name", "save_latex"]
+    # Every tool the SDK asked for, in order. `record_name` opens the sequence
+    # because `theorem` is reserved to results it has already mapped.
+    assert [event["name"] for event in events if event["type"] == "tool"] == ["record_name", "save_lean", "save_latex"]
     assert all(event["result"]["ok"] for event in events if event["type"] == "tool")
 
 

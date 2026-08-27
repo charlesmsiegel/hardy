@@ -207,3 +207,65 @@ def test_the_identity_follows_the_project_and_the_command(tmp_path: Path):
     assert _toolchain_identity(("lean",), project) != base
     assert _toolchain_identity(("lake", "env", "lean"), tmp_path / "other") != base
     assert _toolchain_identity(("lake", "env", "lean"), project) == base
+
+
+def test_an_unregistered_theorem_is_refused_and_told_about_lemma(tmp_path: Path):
+    """The keyword is the ratchet's hinge, and the model never reaches for it."""
+    runtime = FakeChatRuntime([
+        call("save_lean", {"source": "import Mathlib\ntheorem hardyStep : True := by exact True.intro\n"}),
+        {"role": "assistant", "content": "Refused."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Save a step as a theorem.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "lemma" in refusal["output"] and "record_name" in refusal["output"]
+    assert not (tmp_path / "lean" / "Main.lean").exists()
+
+
+def test_a_registered_theorem_saves(tmp_path: Path):
+    runtime = FakeChatRuntime([
+        call("record_name", {"formal_name": "hardyStep", "latex_name": "thm:step", "description": "The step."}),
+        call("save_lean", {"source": "import Mathlib\ntheorem hardyStep : True := by exact True.intro\n"}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Register it, then save it.")
+    assert results(tmp_path, "save_lean")[-1]["ok"]
+
+
+def test_a_lemma_needs_no_registration(tmp_path: Path):
+    runtime = FakeChatRuntime([
+        call("save_lean", {"source": "import Mathlib\nlemma hardyStep : True := by exact True.intro\n"}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Save a lemma.")
+    assert results(tmp_path, "save_lean")[-1]["ok"]
+
+
+def test_registering_a_name_does_not_block_an_unrelated_save(tmp_path: Path):
+    """Registration comes first, so the tree is briefly behind the registry."""
+    runtime = FakeChatRuntime([
+        call("record_name", {"formal_name": "hardyMain", "latex_name": "thm:main", "description": "The result."}),
+        call("save_lean", {"path": "Helper.lean", "source": "import Mathlib\nlemma hardyHelp : True := by exact True.intro\n"}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Register the result, then save a helper.")
+    assert results(tmp_path, "save_lean")[-1]["ok"]
+
+
+def test_a_registered_theorem_that_disappears_is_still_refused(tmp_path: Path):
+    """The guard exists so a mapped declaration cannot vanish. It still does."""
+    runtime = FakeChatRuntime([
+        call("record_name", {"formal_name": "hardyStep", "latex_name": "thm:step", "description": "The step."}),
+        call("save_lean", {"source": "import Mathlib\ntheorem hardyStep : True := by exact True.intro\n"}),
+        call("save_lean", {"source": "import Mathlib\nlemma hardyOther : True := by exact True.intro\n"}),
+        {"role": "assistant", "content": "Refused."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Save it, then overwrite it away.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "hardyStep" in refusal["output"]
