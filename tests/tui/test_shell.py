@@ -582,3 +582,47 @@ async def test_a_resize_while_a_prompt_is_open_never_touches_the_outer_screen(se
     assert code == 0
     assert got["answer"] == "ok"
     assert recorded.erases, "sanity: suspension itself must have recorded an erase"
+
+
+# -- Esc against a project reopen -----------------------------------------
+
+
+def test_escape_reaches_a_reopen_in_flight_not_the_old_session(settings):
+    """`/project switch` runs on a worker precisely so this key stays live.
+
+    The kernel it may be stuck probing belongs to neither session -- not the
+    one being replaced, which is what `state.session` is, and not yet the one
+    being built -- so reaching only the session reported that nothing was
+    running while the switch went on waiting out the probe.
+    """
+    stopped = []
+
+    class Reopening:
+        def __call__(self, slug, confirm, current): ...
+
+        def cancel(self) -> bool:
+            stopped.append(True)
+            return True
+
+    session = SimpleNamespace(interrupt_work=lambda: pytest.fail("the old session was signalled"))
+    built = shell.Shell(settings, session, handlers.build_registry(), reopen=Reopening())
+    built._stop_command()
+
+    assert stopped == [True]
+
+
+def test_escape_still_reaches_a_running_cell_when_no_reopen_is_in_flight(settings):
+    """An opener with nothing open answers False, so the cell keeps the press."""
+    asked = []
+
+    class Idle:
+        def __call__(self, slug, confirm, current): ...
+
+        def cancel(self) -> bool:
+            return False
+
+    session = SimpleNamespace(interrupt_work=lambda: asked.append(True) or 1)
+    built = shell.Shell(settings, session, handlers.build_registry(), reopen=Idle())
+    built._stop_command()
+
+    assert asked == [True]
