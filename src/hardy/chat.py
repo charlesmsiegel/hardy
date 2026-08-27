@@ -395,8 +395,11 @@ class MathematicsSession:
         # What the project itself says it is for, read before the runtime is
         # built because the system prompt embeds it. One file at the root and
         # no ancestor of it; absent, unreadable or switched off, and nothing
-        # is added. `project_context=False` is a deliberately clean condition,
-        # not an error, and is recorded as one.
+        # is added. `project_context=False` is a deliberate choice, not an
+        # error, and is recorded as one. It governs what this run's system
+        # prompt carries and not what a resumed provider thread remembers --
+        # see `_sync_project_context` for why the record makes that sound, and
+        # `_carried_thread` for the case where a thread IS dropped.
         self.project_context: ProjectContext | None
         self.project_context, self.project_context_detail = (
             read_project_context(self.root) if project_context else (None, "not read (project_context is off)")

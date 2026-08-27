@@ -590,8 +590,8 @@ def test_project_context_is_on_by_default(tmp_path: Path, monkeypatch):
 
 
 def test_project_context_can_be_switched_off_in_every_layer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """A clean interactive condition has to be available without editing the
-    project's own `AGENTS.md` out of the way."""
+    """Running without the project's instructions has to be available without
+    editing the project's own `AGENTS.md` out of the way."""
     path = write(tmp_path / "config.toml", "project_context = false\n")
     assert config.load(path).project_context is False
 

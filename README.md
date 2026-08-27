@@ -171,7 +171,13 @@ whole lines only — and the model is told when it is looking at a fragment.
 `hardy prove` and `hardy batch` never read it at all: a graded run whose
 instructions came partly from a project-local file is not comparable to another
 run. `--no-project-context`, `project_context = false`, or
-`HARDY_PROJECT_CONTEXT=0` gives an interactive session the same clean condition.
+`HARDY_PROJECT_CONTEXT=0` stop an interactive session reading it at all. That
+governs what this run's system prompt carries, and not what the conversation
+already remembers: reopening a workspace resumes the provider thread as it
+always has, so turns produced while the file *was* being sent are still in the
+conversation. The transcript marks the boundary — the full text at the turn it
+was read, a `withheld` event at the turn it stopped — so the record accounts
+for both sides of it. A workspace that never read one is clean outright.
 
 ### What it does get to do, and why that matters
 
