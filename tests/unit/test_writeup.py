@@ -7,6 +7,24 @@ NOW = datetime(2026, 7, 24, tzinfo=UTC)
 RUN_ID = UUID('12345678-1234-5678-1234-567812345678')
 
 
+
+def _agreed_review(domain, claim_hash='a' * 64, model='reviewer-model'):
+    """An agreeing independent faithfulness verdict.
+
+    `Grades` refuses a `user_approved` faithfulness grade without one, which
+    is the point of the gate: approval names two readers, not one.
+    """
+    return domain.FaithfulnessVerdict(
+        claim_sha256=claim_hash,
+        reviewer_model=model,
+        prompt_sha256='d' * 64,
+        outcome=domain.FaithfulnessOutcome.AGREED,
+        review=domain.FaithfulnessReview(
+            formalization_entails_claim=True,
+            claim_entails_formalization=True,
+        ),
+    )
+
 def _claim(domain):
     proposal = domain.FormalizationProposal(
         restatement='For all n, the claim holds.',
@@ -90,6 +108,7 @@ def test_verified_writeup_owns_statuses_signature_axioms_and_identities(tmp_path
     grades = domain.Grades(
         formal=domain.FormalStatus.KERNEL_VERIFIED,
         faithfulness=domain.FaithfulnessStatus.USER_APPROVED,
+        faithfulness_review=_agreed_review(domain, claim.content_hash),
         informal=domain.InformalStatus.NOT_INDEPENDENTLY_ASSESSED,
         verification_sha256=evidence.digest,
         verification_evidence=evidence,
@@ -141,7 +160,13 @@ def test_verified_writeup_owns_statuses_signature_axioms_and_identities(tmp_path
     assert result.pdf_artifact is not None
     assert (store.path / 'writeup' / 'paper.pdf').read_bytes().startswith(b'%PDF-')
     assert 'Formal status: Kernel verified' in tex
-    assert 'Faithfulness: User approved' in tex
+    # Not the bare grade: the document is the half a reader may hold on its
+    # own, and "User approved" alone reads as one person's say-so rather than
+    # a translation something with no stake in it also read.
+    assert (
+        'Faithfulness: User approved; independently reviewed by reviewer-model (agreed)'
+        in tex
+    )
     assert 'Informal completeness: Not independently assessed' in tex
     assert 'Document status: TeX compiled' in tex
     assert 'theorem demo (n : Nat) : n + 0 = n' in tex
@@ -162,6 +187,7 @@ def test_tex_failure_preserves_mathematical_grades_and_marks_saved_source(tmp_pa
     grades = domain.Grades(
         formal=domain.FormalStatus.PARTIAL,
         faithfulness=domain.FaithfulnessStatus.USER_APPROVED,
+        faithfulness_review=_agreed_review(domain, claim.content_hash),
         informal=domain.InformalStatus.KNOWN_GAPS,
         known_gaps=('induction step remains',),
     )

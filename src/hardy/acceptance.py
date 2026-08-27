@@ -31,6 +31,9 @@ from .config import Config
 from .domain import (
     DocumentStatus,
     EnvironmentIdentity,
+    FaithfulnessReview,
+    FaithfulnessStatus,
+    FaithfulnessVerdict,
     FormalizationProposal,
     FormalStatus,
     FrozenClaim,
@@ -68,6 +71,13 @@ class _AutomaticTerminal:
     def revision_text(self) -> str:
         return ""
 
+    def show_faithfulness(self, verdict) -> None:
+        # The fixture's reader agrees; a disputed verdict here would mean the
+        # gate refused the deterministic claim, which is a broken fixture
+        # rather than a run to carry on with.
+        if not verdict.agreed:
+            raise RuntimeError("deterministic translation was not found faithful")
+
     def acknowledge_unsafe_execution(self) -> bool:
         return True
 
@@ -93,6 +103,13 @@ class _DeterministicRuntime:
         return SimpleNamespace(claim=claim)
 
     def run_structured(self, thread, stage, prompt, output_type):
+        if stage == "faithfulness":
+            return FaithfulnessReview(
+                formalization_entails_claim=True,
+                claim_entails_formalization=True,
+                divergences=(),
+                notes="Deterministic fixture reader.",
+            )
         if stage == "formalization":
             return FormalizationProposal(
                 restatement="Two equals two.",
@@ -365,6 +382,50 @@ def _lean_source_issues(source: str, claim: FrozenClaim) -> list[str]:
     return issues
 
 
+def _faithfulness_issues(
+    manifest: RunManifest,
+    claim: FrozenClaim | None,
+    verdict_path: Path,
+) -> list[str]:
+    """Check the recorded faithfulness verdict against the run it grades.
+
+    The manifest's copy and `faithfulness.json` were written by the same run,
+    so agreeing with each other establishes little on its own -- but the
+    verdict names the claim it read, and that is checkable against the frozen
+    claim on disk. A verdict about a different statement is a verdict about
+    something else, and an approved grade with no verdict beside it is the
+    self-asserted translation this gate exists to refuse.
+    """
+    issues: list[str] = []
+    graded = manifest.grades.faithfulness_review
+    if graded is None:
+        if verdict_path.exists():
+            issues.append("faithfulness.json exists but the manifest records no review")
+        if manifest.grades.faithfulness is FaithfulnessStatus.USER_APPROVED:
+            # Unreachable for a manifest that validated, and reported rather
+            # than trusted: this function says what is wrong, it does not
+            # assume the writer got it right.
+            issues.append("approved faithfulness grade carries no independent review")
+        return issues
+    if not verdict_path.exists():
+        issues.append("recorded faithfulness review has no faithfulness.json")
+    else:
+        try:
+            saved = FaithfulnessVerdict.model_validate_json(
+                verdict_path.read_text(encoding="utf-8")
+            )
+        except ValidationError:
+            issues.append("faithfulness.json is not a self-consistent verdict")
+        else:
+            if saved != graded:
+                issues.append("graded faithfulness review differs from faithfulness.json")
+    if claim is None:
+        issues.append("faithfulness review names no Frozen Claim in this run")
+    elif graded.claim_sha256 != claim.content_hash:
+        issues.append("faithfulness review names a different Frozen Claim")
+    return issues
+
+
 def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str, ...]:
     """Report every way a run's artifacts disagree with each other."""
     issues = []
@@ -411,6 +472,7 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
                 issues.append("terminal reason differs from manifest")
             if terminal.get("grades") != manifest.grades.model_dump(mode="json"):
                 issues.append("terminal grades differ from manifest")
+    issues.extend(_faithfulness_issues(manifest, claim, run_dir / "faithfulness.json"))
     main = run_dir / "lean" / "Main.lean"
     verification_path = run_dir / "lean" / "verification.json"
     if manifest.grades.formal is FormalStatus.KERNEL_VERIFIED:

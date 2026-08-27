@@ -204,8 +204,34 @@ Priority labels are sequencing hints:
   derived from — claim, Lean source, axioms, toolchain — and the release audit
   recomputes that hash from the run directory rather than comparing two copies
   of it.
-- **Next — Statement faithfulness gate:** use an independent prompt or model to
-  compare the user's claim with its Lean formalization before proof search.
+- **Now (implemented) — Statement faithfulness gate:** before any proof search,
+  an independent reader compares the user's claim with the frozen Lean
+  formalization and says whether they state the same thing. It is asked from a
+  thread of its own, with no Lean tools, and is given the user's words and the
+  Lean signature only — not the formalization conversation, and not the
+  proposal's own restatement or interpretation choices, which are the
+  formalizer's account of its own work. `faithfulness_model` points the read at
+  a different model when independent weights are wanted as well as independent
+  context. It is asked for two entailments rather than a confidence, because a
+  wrong translation is usually produced at high confidence. The gate is
+  fail-closed and terminal: a disputed translation — or a reader that could not
+  be reached — stops the run and surfaces the mismatch, since a halt costs one
+  question and a proof of the wrong theorem costs the whole run. The verdict is
+  written to `faithfulness.json`, recorded in the trajectory beside the frozen
+  claim, and carried in the manifest, where `user_approved` now means the human
+  approved *and* an independent reader agreed: the grade cannot be reached by
+  approval alone, and a `kernel_verified` result cannot be recorded without it.
+- **Known limit — an agreement is a second reading, not a proof.** The gate
+  establishes that the translation was read by something with no stake in it;
+  it does not establish that the reader was right. A pass is heuristic and
+  carries none of the kernel's authority, which is why `faithfulness` stays a
+  grade of its own rather than folding into the formal one. By default the
+  reader is the run's own model on a fresh thread, so the independence it buys
+  is of context rather than of weights or provider — a blind spot the whole
+  model shares survives the check, and closing that needs
+  `faithfulness_model` pointed somewhere genuinely different. The verdict is
+  also a single read: no second reader, no disagreement between readers to
+  escalate.
 - **Next — Critique workflow:** inspect user, literature, or generated proofs and
   produce a structured ledger of gaps.
 - **Next — Repair workflow:** patch one gap locally, without changing the claim,

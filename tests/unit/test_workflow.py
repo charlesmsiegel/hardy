@@ -1,3 +1,4 @@
+import dataclasses
 import importlib
 import json
 from datetime import UTC, datetime
@@ -36,6 +37,16 @@ def _proposal(domain, proposition='2 = 2'):
         proposition=proposition,
     )
 
+
+
+def _review(domain, agrees=True, divergences=()):
+    """What the independent faithfulness reader answers."""
+    return domain.FaithfulnessReview(
+        formalization_entails_claim=agrees,
+        claim_entails_formalization=True,
+        divergences=tuple(divergences),
+        notes='Fixture reader.',
+    )
 
 def _environment(domain):
     return domain.EnvironmentIdentity(
@@ -96,6 +107,7 @@ class Terminal:
         self.revisions = list(revisions)
         self.acknowledge = acknowledge
         self.shown = []
+        self.verdicts = []
         self.result = None
 
     def show_formalization(self, proposal, elaboration):
@@ -106,6 +118,9 @@ class Terminal:
 
     def revision_text(self):
         return self.revisions.pop(0)
+
+    def show_faithfulness(self, verdict):
+        self.verdicts.append(verdict)
 
     def acknowledge_unsafe_execution(self):
         return self.acknowledge
@@ -127,6 +142,7 @@ def _scripted_controller(
     limits=None,
     monotonic=None,
     interrupt_stage=None,
+    reviews=None,
 ):
     config_module = importlib.import_module('hardy.config')
     codex_runtime = importlib.import_module('hardy.codex_runtime')
@@ -139,6 +155,9 @@ def _scripted_controller(
     proposals = list(proposals or [_proposal(domain)])
     elaborations = list(elaborations or [True] * len(proposals))
     proof_results = list(proof_results or [True])
+    # What the independent faithfulness reader answers, in order. An entry may
+    # be an exception to raise, which is how an unreachable reader is scripted.
+    reviews = list(reviews or [])
     state = SimpleNamespace(
         starts=[], handles=[], prompts=[], verifier_calls=0, cancelled=None
     )
@@ -157,6 +176,11 @@ def _scripted_controller(
             state.prompts.append((stage, prompt))
             if stage == interrupt_stage:
                 raise KeyboardInterrupt
+            if stage == 'faithfulness':
+                answer = reviews.pop(0) if reviews else _review(domain)
+                if isinstance(answer, Exception):
+                    raise answer
+                return answer
             if stage == 'formalization':
                 return proposals.pop(0) if proposals else _proposal(domain)
             return writeup.WriteupContent(
@@ -168,6 +192,8 @@ def _scripted_controller(
 
         def run_proof(self, thread, prompt):
             state.prompts.append(('proof', prompt))
+            if interrupt_stage == 'proof':
+                raise KeyboardInterrupt
             return codex_runtime.ProofSubmission(
                 proof_body='by rfl', informal_proof='Reflexivity.'
             )
@@ -270,6 +296,8 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
 
         def run_structured(self, thread, stage, prompt, output_type):
             prompts.append((stage, prompt))
+            if stage == 'faithfulness':
+                return _review(domain)
             if stage == 'formalization':
                 return _proposal(domain)
             return writeup.WriteupContent(
@@ -362,9 +390,14 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
         terminal,
     )
 
+    # Formalizing, then the faithfulness reader, then proving. The first two
+    # are started with no claim, so neither is offered Lean tools: the reader
+    # is comparing two texts, and one that can elaborate the statement can be
+    # persuaded it is fine because Lean accepted it.
     assert starts[0] is None
-    assert starts[1] is not None
-    assert starts[1].content_hash == manifest.claim_sha256
+    assert starts[1] is None
+    assert starts[2] is not None
+    assert starts[2].content_hash == manifest.claim_sha256
     assert manifest.phase is domain.RunPhase.COMPLETED
     assert manifest.grades.formal is domain.FormalStatus.KERNEL_VERIFIED
     assert manifest.grades.faithfulness is domain.FaithfulnessStatus.USER_APPROVED
@@ -574,3 +607,177 @@ def test_user_wait_is_excluded_from_active_time(tmp_path) -> None:
 
     assert manifest.timings_ms['user_wait_excluded'] == 100_000
     assert manifest.timings_ms['active'] == 0
+
+
+def test_a_disputed_translation_stops_the_run_before_any_proof_search(tmp_path) -> None:
+    """The gate the whole workflow is arranged around.
+
+    Kernel acceptance would say a Lean statement was proved and nothing about
+    whether it is the claim the user made, so a translation the independent
+    reader will not accept stops here — before the proving budget is spent,
+    and before any downstream signal can read green on the wrong theorem.
+    """
+    domain = importlib.import_module('hardy.domain')
+    workflow, _, controller, state = _scripted_controller(
+        tmp_path,
+        reviews=[
+            _review(
+                domain,
+                agrees=False,
+                divergences=('the Lean states 2 = 2, the claim is about every prime',),
+            )
+        ],
+    )
+    terminal = Terminal()
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Every prime above two is odd.', model='gpt-test'),
+        terminal,
+    )
+
+    assert state.verifier_calls == 0
+    assert not [stage for stage, _ in state.prompts if stage == 'proof']
+    assert manifest.phase is domain.RunPhase.CANCELLED
+    assert manifest.terminal_reason is domain.TerminalReason.FAITHFULNESS_DISPUTED
+    assert manifest.grades.formal is domain.FormalStatus.NOT_FORMALIZED
+    assert manifest.grades.faithfulness is domain.FaithfulnessStatus.NOT_APPROVED
+    assert manifest.grades.known_gaps == (
+        'The independent faithfulness review disputed the translation: '
+        'the Lean states 2 = 2, the claim is about every prime',
+    )
+    # Surfaced for the human, not merely logged: a mismatch nobody is shown is
+    # a mismatch nobody can resolve.
+    assert [verdict.outcome for verdict in terminal.verdicts] == [
+        domain.FaithfulnessOutcome.DISPUTED
+    ]
+    run_dir = next(tmp_path.iterdir())
+    assert not (run_dir / 'lean' / 'Main.lean').exists()
+    assert not (run_dir / 'writeup').exists()
+
+
+def test_a_disputed_run_records_the_verdict_beside_the_claim_it_read(tmp_path) -> None:
+    domain = importlib.import_module('hardy.domain')
+    workflow, _, controller, _ = _scripted_controller(
+        tmp_path,
+        reviews=[_review(domain, agrees=False, divergences=('the quantifier moved',))],
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    run_dir = next(tmp_path.iterdir())
+    verdict = manifest.grades.faithfulness_review
+    assert verdict is not None
+    assert verdict.claim_sha256 == manifest.claim_sha256
+    assert verdict.reviewer_model == 'gpt-test'
+    saved = domain.FaithfulnessVerdict.model_validate_json(
+        (run_dir / 'faithfulness.json').read_text(encoding='utf-8')
+    )
+    assert saved == verdict
+    events = [
+        json.loads(line)
+        for line in (run_dir / 'trajectory.jsonl').read_text(encoding='utf-8').splitlines()
+    ]
+    kinds = [event['kind'] for event in events]
+    assert 'faithfulness.verdict' in kinds
+    # Before proving was ever entered, which is the ordering the gate is for.
+    assert kinds.index('faithfulness.verdict') < len(kinds) - 1
+    assert not any(
+        event['payload'].get('to') == 'proving'
+        for event in events
+        if event['kind'] == 'workflow.transition'
+    )
+
+
+def test_a_reader_that_cannot_be_reached_stops_the_run_too(tmp_path) -> None:
+    """Fail-closed: an unobtainable review is not a passed review."""
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path,
+        reviews=[ValueError('faithfulness turn returned no structured final response')],
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    assert state.verifier_calls == 0
+    assert manifest.terminal_reason is domain.TerminalReason.FAITHFULNESS_DISPUTED
+    assert manifest.grades.faithfulness_review.outcome is (
+        domain.FaithfulnessOutcome.UNAVAILABLE
+    )
+    assert 'could not be obtained' in manifest.grades.known_gaps[0]
+
+
+def test_a_verified_run_carries_the_review_that_let_it_start(tmp_path) -> None:
+    workflow, domain, controller, _ = _scripted_controller(tmp_path)
+    terminal = Terminal()
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), terminal
+    )
+
+    assert manifest.grades.formal is domain.FormalStatus.KERNEL_VERIFIED
+    assert manifest.grades.faithfulness is domain.FaithfulnessStatus.USER_APPROVED
+    verdict = manifest.grades.faithfulness_review
+    assert verdict is not None and verdict.agreed
+    assert verdict.claim_sha256 == manifest.claim_sha256
+    # Shown on a pass as well: a gate whose only visible output is a refusal
+    # leaves a reader unable to tell a checked run from an unchecked one.
+    assert [item.outcome for item in terminal.verdicts] == [
+        domain.FaithfulnessOutcome.AGREED
+    ]
+
+
+def test_the_reviewer_model_can_be_configured_away_from_the_run_model(tmp_path) -> None:
+    """Independent context is the default; independent weights are a setting."""
+    config_module = importlib.import_module('hardy.config')
+    domain = importlib.import_module('hardy.domain')
+    workflow, _, controller, _ = _scripted_controller(tmp_path)
+    controller._config = dataclasses.replace(
+        _config(config_module, domain, tmp_path), faithfulness_model='a-second-model'
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    assert manifest.grades.faithfulness_review.reviewer_model == 'a-second-model'
+
+
+def test_a_cancelled_proof_still_reports_that_the_translation_was_read(tmp_path) -> None:
+    """The verdict is a fact about the claim, not about how the run ended."""
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path, interrupt_stage='proof'
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert manifest.grades.faithfulness is domain.FaithfulnessStatus.USER_APPROVED
+    assert manifest.grades.faithfulness_review.agreed
+
+
+def test_a_cancellation_during_the_review_reaches_the_reader_s_own_thread(
+    tmp_path,
+) -> None:
+    """The reader has a live provider thread behind it like any other stage.
+
+    Cancelling the formalizing thread instead would leave the reader running
+    while `_finalize` hashes the run directory, and an event appended after
+    that leaves a manifest naming the hash of a file that changed after it was
+    read.
+    """
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path, interrupt_stage='faithfulness'
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert state.cancelled is state.handles[-1]
+    assert state.cancelled is not state.handles[0]

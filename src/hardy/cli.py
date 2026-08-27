@@ -838,12 +838,45 @@ class ConsoleTerminal:
     def revision_text(self) -> str:
         return self._input("Describe the required interpretation change: ").strip()
 
+    def show_faithfulness(self, verdict: Any) -> None:
+        """Say what the independent reader said, agreement included.
+
+        Printed on a pass as well as a halt: a gate whose only visible output
+        is a refusal leaves a user unable to tell a run that was checked from
+        one where the check never ran.
+        """
+        self._output(
+            f"\nIndependent faithfulness review by {verdict.reviewer_model}: "
+            f"{verdict.outcome.value}"
+        )
+        if verdict.review is None:
+            self._output(verdict.detail)
+        else:
+            for divergence in verdict.review.divergences:
+                self._output(f"  divergence: {divergence}")
+            if verdict.review.notes:
+                self._output(f"  notes: {verdict.review.notes}")
+        # An unreachable reader halts the run exactly as a refusal does, so it
+        # gets the same sentence: the user is owed the reason the run ended,
+        # not only the reason the reader gave when there was one.
+        if not verdict.agreed:
+            self._output(
+                "The run stops here. Restate the claim, or ask for a "
+                "formalization that says what you meant."
+            )
+
     def show_result(self, manifest: Any) -> None:
         self._output("\nHardy result")
         self._output(f"Run ID: {manifest.run_id}")
         self._output(f"Phase: {manifest.phase.value}")
         self._output(f"Formal: {manifest.grades.formal.value}")
-        self._output(f"Faithfulness: {manifest.grades.faithfulness.value}")
+        review = manifest.grades.faithfulness_review
+        checked = (
+            f" ({review.outcome.value} by {review.reviewer_model})"
+            if review is not None
+            else " (no independent review)"
+        )
+        self._output(f"Faithfulness: {manifest.grades.faithfulness.value}{checked}")
         self._output(f"Informal: {manifest.grades.informal.value}")
         self._output(f"Document: {manifest.grades.document.value}")
         for gap in manifest.grades.known_gaps:

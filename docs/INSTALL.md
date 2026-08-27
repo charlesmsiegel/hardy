@@ -164,6 +164,7 @@ The config file is TOML and every key is optional:
 
 ```toml
 model = "claude-opus-5"         # any Claude model your subscription can reach
+faithfulness_model = "claude-opus-5"  # who reads the translation back; defaults to `model`
 lean_project = "/home/you/.local/share/hardy/lean"
 lean_command = "lake env lean"
 lean_timeout = 180                # seconds per Lean invocation
@@ -175,6 +176,12 @@ Each setting can be overridden by the matching `HARDY_*` environment variable
 (`HARDY_MODEL`, `HARDY_LEAN_PROJECT`, …) and then by a command-line flag, in
 that order. `HARDY_CONFIG` selects a different config file, as does `--config`
 — always this global one; it does not follow `--root`.
+
+`faithfulness_model` is who checks, before any proof search, that the Lean
+`hardy prove` froze says what you said. Left unset it is `model`, which is
+already independent of the exchange that wrote the formalization — the reader
+gets a conversation of its own, your words, and the Lean signature, and nothing
+else. Naming a different model here buys independent weights as well.
 
 `lean_project` is what lets `hardy` run from any directory: Lean resolves
 imports through that Lake project rather than the directory you happen to be

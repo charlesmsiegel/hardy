@@ -25,7 +25,7 @@ from ..domain import FrozenClaim
 
 # Bumped whenever a staged template changes. The hash below identifies the text
 # exactly; this names the revision a human can talk about.
-PROMPT_SET_VERSION = "2026-08-27.1"
+PROMPT_SET_VERSION = "2026-08-27.2"
 
 SUFFIX = ".md.j2"
 
@@ -113,13 +113,33 @@ def cas_spill_note(*, artifact: str | None, capture_truncated: bool) -> str:
 BATCH_SYSTEM_PROMPT = render("batch/system")
 
 
-def proof_prompt(claim: FrozenClaim) -> str:
+def claim_signature(claim: FrozenClaim) -> str:
+    """The Lean line a frozen claim states, as every surface must quote it."""
     binders = f" {claim.proposal.binders.strip()}" if claim.proposal.binders.strip() else ""
-    signature = (
+    return (
         f"theorem {claim.proposal.theorem_name}{binders} : "
         f"{claim.proposal.proposition.strip()}"
     )
-    return render("staged/proof", claim_hash=claim.content_hash, signature=signature)
+
+
+def proof_prompt(claim: FrozenClaim) -> str:
+    return render("staged/proof", claim_hash=claim.content_hash, signature=claim_signature(claim))
+
+
+def faithfulness_prompt(claim: FrozenClaim) -> str:
+    """The independent reader's question: the claim and the Lean, and nothing else.
+
+    Deliberately not given the proposal's restatement, domains or
+    interpretation choices. Those are the formalizer's gloss on its own work,
+    and a reader handed them is reading the translation through the account
+    that produced it -- which is the shared context this gate exists to
+    defeat. What is left is the two texts that have to say the same thing.
+    """
+    return render(
+        "staged/faithfulness",
+        claim=claim.original_text.strip(),
+        signature=claim_signature(claim),
+    )
 
 
 def batch_task_prompt(informal_claim: str, declaration: str, imports: tuple[str, ...]) -> str:
@@ -161,6 +181,7 @@ def _prompt_set_payload() -> dict[str, str]:
     return {
         "base": source("staged/base"),
         "developer": source("staged/developer"),
+        "faithfulness": source("staged/faithfulness"),
         "formalization": source("staged/formalization"),
         "proof": source("staged/proof"),
         "structure": source("staged/structure"),

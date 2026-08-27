@@ -9,7 +9,10 @@ import pytest
 from hardy.domain import (
     DocumentStatus,
     EnvironmentIdentity,
+    FaithfulnessOutcome,
+    FaithfulnessReview,
     FaithfulnessStatus,
+    FaithfulnessVerdict,
     FormalizationProposal,
     FormalStatus,
     Grades,
@@ -20,6 +23,20 @@ from hardy.domain import (
 from hardy.storage import RunStore
 from hardy.verifier import VerificationResult
 from hardy.writeup import RunIdentities, WriteupContent, build_writeup
+
+
+def _agreed_review(claim_hash):
+    """An agreeing independent faithfulness verdict, as the gate records one."""
+    return FaithfulnessVerdict(
+        claim_sha256=claim_hash,
+        reviewer_model='reviewer-model',
+        prompt_sha256='d' * 64,
+        outcome=FaithfulnessOutcome.AGREED,
+        review=FaithfulnessReview(
+            formalization_entails_claim=True,
+            claim_entails_formalization=True,
+        ),
+    )
 
 
 def _hardy_config(**overrides):
@@ -125,6 +142,7 @@ def test_real_tectonic_compiles_verified_and_partial_writeups(tmp_path) -> None:
     verified_grades = Grades(
         formal=FormalStatus.KERNEL_VERIFIED,
         faithfulness=FaithfulnessStatus.USER_APPROVED,
+        faithfulness_review=_agreed_review(claim.content_hash),
         informal=InformalStatus.NOT_INDEPENDENTLY_ASSESSED,
         verification_sha256=evidence.digest,
         verification_evidence=evidence,
@@ -132,6 +150,7 @@ def test_real_tectonic_compiles_verified_and_partial_writeups(tmp_path) -> None:
     partial_grades = Grades(
         formal=FormalStatus.PARTIAL,
         faithfulness=FaithfulnessStatus.USER_APPROVED,
+        faithfulness_review=_agreed_review(claim.content_hash),
         informal=InformalStatus.KNOWN_GAPS,
         known_gaps=('No accepted Lean proof.',),
     )

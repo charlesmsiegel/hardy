@@ -138,6 +138,7 @@ class TerminalReason(str, Enum):
     PROOF_INCOMPLETE = "proof_incomplete"
     FORBIDDEN_HOLE = "forbidden_hole"
     STATEMENT_MISMATCH = "statement_mismatch"
+    FAITHFULNESS_DISPUTED = "faithfulness_disputed"
     UNEXPECTED_AXIOM = "unexpected_axiom"
     AGENT_RUNTIME_FAILURE = "agent_runtime_failure"
     TIMEOUT_BUDGET_EXHAUSTED = "timeout_budget_exhausted"
@@ -153,8 +154,102 @@ class FormalStatus(str, Enum):
 
 
 class FaithfulnessStatus(str, Enum):
+    """Whether the translation from the user's words to Lean was established.
+
+    `user_approved` names two witnesses, not one: the human approved the
+    proposal, *and* an independent reader that never saw the conversation
+    which wrote it agreed the Lean says the same thing. `Grades` enforces the
+    second half, so the value cannot be reached by approval alone.
+    """
+
     USER_APPROVED = "user_approved"
     NOT_APPROVED = "not_approved"
+
+
+class FaithfulnessOutcome(str, Enum):
+    AGREED = "agreed"
+    DISPUTED = "disputed"
+    # The reader could not be reached, or answered with something that is not
+    # a review. Kept distinct from `disputed` because they are different
+    # facts, and treated the same way by the gate because neither is a pass.
+    UNAVAILABLE = "unavailable"
+
+
+class FaithfulnessReview(FrozenModel):
+    """The independent reader's answer, in the shape it is asked for.
+
+    Two entailments rather than a score. A wrong translation is usually
+    produced at high confidence -- the model is fluent in Lean, so it renders
+    a confident statement of a slightly different claim -- so asking "how sure
+    are you" would miss precisely the mismatches this exists to catch. Asking
+    both directions separately is what distinguishes a formalization that
+    overstates the claim from one that understates it, and either is a
+    divergence.
+
+    `divergences` outranks the two flags: a reader that lists a problem and
+    then answers yes twice has found something, and this reads it as a
+    finding. Being unsure is a divergence, by the prompt's instruction.
+    """
+
+    formalization_entails_claim: bool
+    claim_entails_formalization: bool
+    divergences: tuple[str, ...] = ()
+    notes: str = ""
+
+    @property
+    def agrees(self) -> bool:
+        return (
+            self.formalization_entails_claim
+            and self.claim_entails_formalization
+            and not self.divergences
+        )
+
+
+class FaithfulnessVerdict(FrozenModel):
+    """One independent read of one translation, and what produced it.
+
+    Persisted as `faithfulness.json` and carried in the manifest, so a later
+    reader can see that the translation was checked and by what without
+    re-running the check. The claim hash ties the verdict to the exact frozen
+    statement it read: a verdict naming a different claim is a verdict about
+    something else.
+    """
+
+    claim_sha256: str
+    reviewer_model: str
+    # The rendered question, hashed. `prompt_set_sha256` covers the template;
+    # this covers the text this claim actually produced from it, which is what
+    # the reader was asked.
+    prompt_sha256: str
+    outcome: FaithfulnessOutcome
+    review: FaithfulnessReview | None = None
+    detail: str = ""
+
+    @property
+    def agreed(self) -> bool:
+        return self.outcome is FaithfulnessOutcome.AGREED
+
+    @model_validator(mode="after")
+    def outcome_must_follow_the_review(self) -> FaithfulnessVerdict:
+        """Refuse a verdict that does not follow from the answer it names.
+
+        Same reason `Grades` recomputes its verification digest: a record
+        whose summary can disagree with its evidence is a record that has to
+        be believed. Here the summary is the outcome and the evidence is the
+        reader's own two answers, so `agreed` cannot be written over a review
+        that listed divergences.
+        """
+        if self.outcome is FaithfulnessOutcome.UNAVAILABLE:
+            if self.review is not None:
+                raise ValueError("an unavailable review carries no answer")
+            if not self.detail:
+                raise ValueError("an unavailable review must say why it is unavailable")
+            return self
+        if self.review is None:
+            raise ValueError(f"a {self.outcome.value} verdict requires the review it grades")
+        if self.review.agrees is not (self.outcome is FaithfulnessOutcome.AGREED):
+            raise ValueError("verdict does not follow from the review it names")
+        return self
 
 
 class InformalStatus(str, Enum):
@@ -206,6 +301,7 @@ class Grades(FrozenModel):
     known_gaps: tuple[str, ...] = ()
     verification_sha256: str | None = None
     verification_evidence: VerificationEvidence | None = None
+    faithfulness_review: FaithfulnessVerdict | None = None
 
     @model_validator(mode="after")
     def require_verification_evidence(self) -> Grades:
@@ -231,6 +327,36 @@ class Grades(FrozenModel):
             raise ValueError("verification_sha256 does not match its evidence")
         return self
 
+    @model_validator(mode="after")
+    def approval_requires_an_independent_reader(self) -> Grades:
+        """Tie the faithfulness grade to the reader that agreed with it.
+
+        Kernel acceptance says a Lean statement was proved; it says nothing
+        about whether that statement is the claim the user made. So the
+        translation carries its own evidence, on the same terms the formal
+        grade carries its verification record: `user_approved` holds exactly
+        when an independent reader that never saw the conversation which wrote
+        the formalization read it and agreed. A disputed verdict cannot wear
+        the approved grade, and the grade cannot be self-asserted with no
+        verdict behind it at all.
+
+        The last clause is the one the whole gate rests on: a kernel-verified
+        result whose translation was disputed is a proof of the wrong theorem,
+        and this refuses to record one.
+        """
+        review = self.faithfulness_review
+        approved = self.faithfulness is FaithfulnessStatus.USER_APPROVED
+        agreed = review is not None and review.agreed
+        if approved and not agreed:
+            raise ValueError(
+                "user_approved faithfulness requires an agreeing independent review"
+            )
+        if agreed and not approved:
+            raise ValueError("an agreeing independent review without an approved grade")
+        if self.formal is FormalStatus.KERNEL_VERIFIED and not approved:
+            raise ValueError("kernel_verified requires an approved, independently read claim")
+        return self
+
 
 class RunManifest(BaseModel):
     # `extra="forbid"` makes every added field a breaking read, so the version
@@ -241,10 +367,13 @@ class RunManifest(BaseModel):
     # stopped accepting. 3 added `limits.retrieval_seconds`, so a version-2
     # reader would reject every manifest written since premise retrieval
     # landed; leaving the version at 2 would have let one number name two
-    # incompatible shapes.
+    # incompatible shapes. 4 added `grades.faithfulness_review`, and with it
+    # the rule that `user_approved` names an independent reader's agreement --
+    # a version-3 manifest's approval was the human's alone, which is exactly
+    # the weaker claim this version stopped accepting.
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
     run_id: UUID
     created_at: datetime
     phase: RunPhase

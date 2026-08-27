@@ -166,3 +166,103 @@ def test_staged_runtime_factory_records_cas_tool_results_in_the_trajectory(
     # The event's own `type` is already "cas", so prefixing it named the
     # subsystem twice and the thing recorded not at all.
     assert cas_events[0]['kind'] == 'cas.cell'
+
+
+def _verdict(domain, outcome, **overrides):
+    values = dict(
+        claim_sha256='a' * 64,
+        reviewer_model='reviewer-model',
+        prompt_sha256='d' * 64,
+        outcome=outcome,
+    )
+    values.update(overrides)
+    return domain.FaithfulnessVerdict(**values)
+
+
+def test_console_terminal_shows_the_divergences_and_says_the_run_stops() -> None:
+    """A mismatch nobody is shown is a mismatch nobody can resolve."""
+    cli = importlib.import_module('hardy.cli')
+    domain = importlib.import_module('hardy.domain')
+    output = []
+    terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
+
+    terminal.show_faithfulness(
+        _verdict(
+            domain,
+            domain.FaithfulnessOutcome.DISPUTED,
+            review=domain.FaithfulnessReview(
+                formalization_entails_claim=False,
+                claim_entails_formalization=True,
+                divergences=('the Lean fixes n = 0 rather than quantifying over n',),
+                notes='The claim is general.',
+            ),
+        )
+    )
+
+    rendered = '\n'.join(output)
+    assert 'Independent faithfulness review by reviewer-model: disputed' in rendered
+    assert 'the Lean fixes n = 0 rather than quantifying over n' in rendered
+    assert 'The run stops here.' in rendered
+
+
+def test_console_terminal_reports_an_agreement_too() -> None:
+    """Otherwise a user cannot tell a checked run from one where the gate
+    never ran: silence would look the same either way."""
+    cli = importlib.import_module('hardy.cli')
+    domain = importlib.import_module('hardy.domain')
+    output = []
+    terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
+
+    terminal.show_faithfulness(
+        _verdict(
+            domain,
+            domain.FaithfulnessOutcome.AGREED,
+            review=domain.FaithfulnessReview(
+                formalization_entails_claim=True,
+                claim_entails_formalization=True,
+            ),
+        )
+    )
+
+    rendered = '\n'.join(output)
+    assert 'Independent faithfulness review by reviewer-model: agreed' in rendered
+    assert 'The run stops here.' not in rendered
+
+
+def test_console_terminal_says_why_a_review_could_not_be_obtained() -> None:
+    cli = importlib.import_module('hardy.cli')
+    domain = importlib.import_module('hardy.domain')
+    output = []
+    terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
+
+    terminal.show_faithfulness(
+        _verdict(
+            domain,
+            domain.FaithfulnessOutcome.UNAVAILABLE,
+            detail='ValueError: faithfulness turn returned no structured final response',
+        )
+    )
+
+    rendered = '\n'.join(output)
+    assert 'unavailable' in rendered
+    assert 'no structured final response' in rendered
+    assert 'The run stops here.' in rendered
+
+
+def test_the_result_summary_says_whether_the_translation_was_read() -> None:
+    cli = importlib.import_module('hardy.cli')
+    domain = importlib.import_module('hardy.domain')
+    output = []
+    terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
+
+    terminal.show_result(
+        domain.RunManifest(
+            run_id=UUID('12345678-1234-5678-1234-567812345678'),
+            created_at=datetime(2026, 8, 27, tzinfo=UTC),
+            phase=domain.RunPhase.CANCELLED,
+            model='gpt-test',
+            prompt_set_sha256='p' * 64,
+        )
+    )
+
+    assert 'Faithfulness: not_approved (no independent review)' in '\n'.join(output)
