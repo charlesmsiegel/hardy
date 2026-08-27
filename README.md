@@ -150,6 +150,22 @@ report Hardy cannot read is a refusal rather than a pass. `prove` and `batch` ru
 unattended and so refuse anything beyond Lean's own three axioms; a saved
 interactive artifact can rest on an assumption a human approved, and says which.
 
+An interactive workspace may also hold an unfinished proof. A single theorem can
+take thousands of lines and many turns, and a file with a `sorry` still in it can
+be saved, imported, and built on — which is how the skeleton survives between
+turns instead of living in a context window and being re-sent whole on every
+check. The kernel is what keeps that honest: `#print axioms` reports `sorryAx`
+through imports, so a theorem resting on a hole anywhere beneath it is named as
+open after every save, in `/status`, on the user's screen at the end of each
+turn, and in the document's own banner. A report that names one is graded
+*partial*, and must still quote its statement where a reader can see which half
+of the work was done.
+
+For the same reason `theorem` is reserved. A save may not introduce one whose
+name `record_name` has not already mapped to a place in the document, so
+scaffolding is stated as a `lemma` — which owes no writeup and is free to save —
+rather than as a claim the writeup ratchet will then demand a paragraph for.
+
 ## Models and authentication
 
 Hardy talks to Claude through the Claude Code agent SDK, so it runs on your
