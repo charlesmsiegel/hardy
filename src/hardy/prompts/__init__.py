@@ -133,6 +133,17 @@ def _prompt_set_payload() -> dict[str, str]:
     folding them in here would instead churn the staged hash for edits no
     staged run ever saw. If a batch record ever carries a prompt-set hash, it
     must cover `batch/*` -- as its own hash, not by widening this one.
+
+    One asymmetry this does not close, recorded so it is not mistaken for
+    coverage: the Codex backend hands the response schema to the SDK as
+    `output_schema` (`codex_runtime.py:117`) and never appends
+    `STRUCTURE_INSTRUCTION`, so a `--backend codex` run records a hash over a
+    template it was not sent, and `RunManifest` carries no backend field to
+    tell the two apart. That is the conservative direction of the same error --
+    identical instructions can now hash differently across a `structure` edit,
+    where before different instructions hashed identically -- but it is still
+    wrong, and closing it means a per-backend hash plus a manifest that says
+    which backend ran -- a `schema_version` bump, deliberately not made here.
     """
     return {
         "base": source("staged/base"),
