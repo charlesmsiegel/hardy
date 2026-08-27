@@ -38,6 +38,7 @@ from .models import Request, ToolResult, TurnEvent
 from .modules import ModuleIndex
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
 from .search_tools import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
+from .truncation import truncate
 from .usage import Usage
 from .workspace import (
     COMMAND,
@@ -118,7 +119,7 @@ CHAT_TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "check_latex", "description": "Compile a candidate LaTeX file against the saved document tree without keeping it. `path` defaults to writeup.tex, the root document.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "save_latex", "description": "Compile and save one LaTeX file in the writeup tree, defaulting to writeup.tex. Fragments are \\input from the root document.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "read_workspace", "description": "List the workspace: the manifest, every Lean file with its module name and declarations, and every LaTeX file.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}},
-    {"type": "function", "function": {"name": "read_file", "description": "Read one workspace file, Lean or LaTeX, by its path.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "read_file", "description": "Read one workspace file, Lean or LaTeX, by its path. Long files come back truncated from the top; the reply says so and names the `start_line` to pass to read the next part. `start_line` is 1-based and defaults to 1.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "start_line": {"type": "integer"}}, "required": ["path"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "delete_file", "description": "Delete one workspace file. Refused if another workspace file imports it.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "record_name", "description": "Record the durable correspondence between a Lean declaration and its LaTeX label/name.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "latex_name": {"type": "string"}, "description": {"type": "string"}}, "required": ["formal_name", "latex_name", "description"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "request_assumption", "description": "Ask the human for permission to introduce an axiom when a result is unavailable. Never assume approval.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "lean_statement": {"type": "string"}, "latex_name": {"type": "string"}, "informal_statement": {"type": "string"}, "source": {"type": "string"}, "reason": {"type": "string"}}, "required": ["formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason"], "additionalProperties": False}}},
@@ -2002,8 +2003,8 @@ class MathematicsSession:
             },
         }
 
-    def _read_file(self, path: str) -> ToolResult:
-        """One workspace file's text, proven to BE that file.
+    def _read_file(self, path: str, start_line: int = 1) -> ToolResult:
+        """One workspace file's text, bounded, and proven to BE that file.
 
         Reproduced, and it is why every read in this module now goes through
         the guard: a cloned problem shipping `tex/leak.tex -> ~/.ssh/id_rsa`
@@ -2013,6 +2014,19 @@ class MathematicsSession:
         model's context, so that is any file the user can read handed to the
         model provider by a repository they merely opened. The Lean half was
         the same hole with the same one line at the end of it.
+
+        That same sentence -- whatever this returns goes straight into the
+        model's context -- is why it is bounded. It was the one tool result
+        with no limit on it, which held only because workspace files are
+        model-written and small; a bounded context that is bounded except for
+        one tool is not bounded. Head truncation, unlike Lean's: a file read
+        wants the top, where the imports and the statement are, and an error
+        wants the bottom.
+
+        `start_line` is the answer to "then how do I see the rest", and the
+        truncation notice names it. Without it the bound would be a wall
+        rather than a page, and a model that cannot reach the end of a file it
+        wrote is worse off than one handed the whole thing.
         """
         resolved = self._resolve(path)
         if isinstance(resolved, ToolResult):
@@ -2020,15 +2034,49 @@ class MathematicsSession:
         target, kind, relative = resolved
         if not target.is_file():
             return ToolResult(False, f"no such workspace file: {path}")
+        if start_line < 1:
+            return ToolResult(False, f"start_line is 1-based; got {start_line}")
         try:
             if kind == "lean":
                 found = self.lean_workspace.read(PurePosixPath(relative))
-                return ToolResult(found is not None, found or f"no such workspace file: {path}")
-            return ToolResult(True, read_text(self.tex_root, relative))
+                if found is None:
+                    return ToolResult(False, f"no such workspace file: {path}")
+            else:
+                found = read_text(self.tex_root, relative)
         except OSError as error:
             # A `LayoutError` is left to the dispatcher, which reports it as
             # the refusal it is; this is for a file that is simply unreadable.
             return ToolResult(False, f"{path} could not be read: {error}")
+        return self._bounded_file(path, found, start_line)
+
+    @staticmethod
+    def _bounded_file(path: str, source: str, start_line: int) -> ToolResult:
+        """A file's text cut to fit, with a note saying so when it was cut.
+
+        The note comes first and not last. A model reading a fragment from the
+        top and stopping at the point it has what it wants would never reach a
+        trailing notice, and the whole purpose of the notice is that it be
+        read before the text is believed to be the file.
+
+        Nothing is prepended to a whole small file: the common read stays
+        exactly the bytes on disk, so a model quoting what it was handed
+        quotes the file.
+        """
+        observation = truncate(source, keep="head", start_line=start_line)
+        if not observation.truncated and start_line == 1:
+            return ToolResult(True, observation.text)
+        if not observation.text and start_line > observation.total_lines:
+            return ToolResult(
+                False,
+                f"{path} has {observation.total_lines} lines; start_line={start_line} is past the end",
+            )
+        rest = (
+            f" Call read_file again with start_line={observation.next_line} for the rest."
+            if observation.next_line is not None
+            else ""
+        )
+        note = f"{path}: {observation.summary}.{rest}"
+        return ToolResult(True, f"{note}\n\n{observation.text}")
 
     def _delete_file(self, path: str) -> ToolResult:
         resolved = self._resolve(path)
@@ -2155,7 +2203,7 @@ class MathematicsSession:
         if name == "read_workspace":
             return ToolResult(True, json.dumps(self._workspace_listing(), ensure_ascii=False))
         if name == "read_file":
-            return self._read_file(str(arguments["path"]))
+            return self._read_file(str(arguments["path"]), int(arguments.get("start_line", 1) or 1))
         if name == "delete_file":
             return self._delete_file(str(arguments["path"]))
         if name == "record_name":

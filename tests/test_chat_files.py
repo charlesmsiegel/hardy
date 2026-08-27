@@ -536,3 +536,183 @@ def test_no_pdf_is_published_when_the_writeup_source_cannot_be_saved(tmp_path: P
     # The two outputs a successful save publishes, neither of them published.
     assert not (tmp_path / "writeup.pdf").exists()
     assert not (tmp_path / ".build" / "tex" / "writeup.aux").exists()
+
+
+def _long_lean(count: int) -> str:
+    return "import Mathlib\n" + "".join(
+        f"lemma hardyBig{index} : True := by exact True.intro\n" for index in range(count)
+    )
+
+
+def test_read_file_bounds_a_large_file_rather_than_returning_all_of_it(tmp_path: Path):
+    """It was the one tool result with no limit on it.
+
+    Lean output keeps its tail, a CAS value too large to return spills to an
+    artifact, and `read_workspace` stopped returning bodies because they would
+    flood the context -- while `read_file` did `read_text` and handed back
+    whatever came out. It held only because workspace files are model-written
+    and usually small, and a bounded context that is bounded except for one
+    tool is not bounded.
+    """
+    lean = tmp_path / "lean"
+    lean.mkdir()
+    source = _long_lean(4_000)
+    (lean / "Big.lean").write_text(source, encoding="utf-8")
+
+    runtime = FakeChatRuntime([
+        call("read_file", {"path": "Big.lean"}),
+        {"role": "assistant", "content": "Read."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Show me the file.")
+
+    last = results(tmp_path)[-1]
+    assert last["ok"] is True
+    assert len(last["output"]) < len(source)
+    assert len(last["output"].encode("utf-8")) <= 32 * 1024 + 512
+
+
+def test_read_file_keeps_the_head_and_says_how_to_ask_for_the_rest(tmp_path: Path):
+    """Head truncation, unlike Lean's, and a fragment that says it is one.
+
+    A file read wants the top, where the imports and the statement are; an
+    error wants the bottom. A model handed a silent fragment believes it has
+    the file, so the note comes first -- before the text, because a reader
+    that stops when it has what it wants never reaches a trailing one.
+    """
+    lean = tmp_path / "lean"
+    lean.mkdir()
+    (lean / "Big.lean").write_text(_long_lean(4_000), encoding="utf-8")
+
+    runtime = FakeChatRuntime([
+        call("read_file", {"path": "Big.lean"}),
+        {"role": "assistant", "content": "Read."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Show me the file.")
+
+    output = results(tmp_path)[-1]["output"]
+    note, body = output.split("\n\n", 1)
+    assert note.startswith("Big.lean: lines 1-")
+    assert "of 4001" in note
+    assert "start_line=" in note
+    assert body.startswith("import Mathlib\n")
+    assert "hardyBig0 " in body
+    assert "hardyBig3999 " not in body
+
+
+def test_read_file_returns_the_next_part_from_the_start_line_it_named(tmp_path: Path):
+    """The bound has to be a page and not a wall.
+
+    A model that cannot reach the end of a file it wrote is worse off than one
+    handed the whole thing, so the notice names the argument that continues
+    the read and that argument has to actually continue it.
+    """
+    lean = tmp_path / "lean"
+    lean.mkdir()
+    (lean / "Big.lean").write_text(_long_lean(4_000), encoding="utf-8")
+
+    runtime = FakeChatRuntime([
+        call("read_file", {"path": "Big.lean"}),
+        {"role": "assistant", "content": "Read."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Show me the file.")
+    note = results(tmp_path)[-1]["output"].split("\n\n", 1)[0]
+    resume = int(note.split("start_line=")[1].split(" ")[0])
+
+    runtime = FakeChatRuntime([
+        call("read_file", {"path": "Big.lean", "start_line": resume}),
+        {"role": "assistant", "content": "Read on."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Show me the rest.")
+
+    output = results(tmp_path)[-1]["output"]
+    note, body = output.split("\n\n", 1)
+    assert note.startswith(f"Big.lean: lines {resume}-")
+    # The line the first read stopped before, and no repetition of the line
+    # before it: a page that overlaps or skips is worse than no page at all.
+    assert body.startswith(f"lemma hardyBig{resume - 2} ")
+
+
+def test_read_file_refuses_a_start_line_past_the_end_of_the_file(tmp_path: Path):
+    lean = tmp_path / "lean"
+    lean.mkdir()
+    (lean / "Basic.lean").write_text(BASIC, encoding="utf-8")
+
+    runtime = FakeChatRuntime([
+        call("read_file", {"path": "Basic.lean", "start_line": 99}),
+        {"role": "assistant", "content": "Tried."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Read from line 99.")
+
+    last = results(tmp_path)[-1]
+    assert last["ok"] is False
+    assert "past the end" in last["output"]
+
+
+def test_read_file_returns_a_small_file_exactly_as_it_is_on_disk(tmp_path: Path):
+    """No note on the common read.
+
+    A model quoting what it was handed has to be quoting the file, so nothing
+    is prepended to a whole file that fits -- the bound is only visible when
+    it did something.
+    """
+    lean = tmp_path / "lean"
+    lean.mkdir()
+    (lean / "Basic.lean").write_text(BASIC, encoding="utf-8")
+
+    runtime = FakeChatRuntime([
+        call("read_file", {"path": "Basic.lean"}),
+        {"role": "assistant", "content": "Read."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Show me the file.")
+
+    assert results(tmp_path)[-1]["output"] == BASIC
+
+
+def test_read_file_bounds_the_writeup_tree_too(tmp_path: Path):
+    """Both halves, because the hole was in the one line both ended at."""
+    tex = tmp_path / "tex"
+    tex.mkdir()
+    source = "\\documentclass{article}\n" + "".join(
+        f"% padding line {index}\n" for index in range(4_000)
+    )
+    (tex / "big.tex").write_text(source, encoding="utf-8")
+
+    runtime = FakeChatRuntime([
+        call("read_file", {"path": "big.tex"}),
+        {"role": "assistant", "content": "Read."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Show me the writeup.")
+
+    last = results(tmp_path)[-1]
+    assert last["ok"] is True
+    assert len(last["output"]) < len(source)
+    assert last["output"].split("\n\n", 1)[0].startswith("big.tex: lines 1-")
+
+
+def test_read_file_says_the_last_page_reached_the_end(tmp_path: Path):
+    """The page that finishes the file still says which lines it is.
+
+    A model handed a bare tail with no note has no way to tell "the rest of
+    the file" from "another fragment", and would keep asking.
+    """
+    lean = tmp_path / "lean"
+    lean.mkdir()
+    (lean / "Small.lean").write_text(_long_lean(3), encoding="utf-8")
+
+    runtime = FakeChatRuntime([
+        call("read_file", {"path": "Small.lean", "start_line": 3}),
+        {"role": "assistant", "content": "Read."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Read from line 3.")
+
+    note, body = results(tmp_path)[-1]["output"].split("\n\n", 1)
+    assert note == "Small.lean: lines 3-4 of 4 (92 of 153 bytes); to the end of the file."
+    assert body.startswith("lemma hardyBig1 ")
