@@ -294,12 +294,25 @@ def _head_of_container(value, limit: int) -> str:
 
 
 class _Stream:
-    """One captured descriptor: bounded retention, and an end marker to find.
+    """One captured descriptor, fenced at both ends by markers in the pipe.
 
     Retention stops at the cap; reading does not. A cell whose helper never
     stops writing must not be able to block on a full pipe, and a marker
     written after the flood must still be found, so the scan runs over a
     rolling window rather than over what was kept.
+
+    Two markers, not one, and for the same reason the sentinel backends use
+    two. Arming a capture only says "start keeping things now" -- it says
+    nothing about what is already sitting in the OS pipe unread, so a helper
+    from the previous cell that wrote a moment before the next cell began had
+    its bytes retained as that cell's output, with nothing marked incomplete.
+    A begin marker written into the pipe at arm time is ordered behind exactly
+    those bytes, so finding it is proof that everything in front of it belongs
+    to somebody else.
+
+    What no marker can fix is a helper still writing *while* the next cell
+    runs: those bytes land inside the fence and are indistinguishable from the
+    cell's own. That needs isolation, not framing.
     """
 
     def __init__(self, read_fd: int, limit: int) -> None:
@@ -308,31 +321,37 @@ class _Stream:
         self.kept = bytearray()
         self.pending = bytearray()
         self.truncated = False
+        self.begin = b""
         self.marker = b""
+        self.seen_begin = False
         self.done = False
-        # Whether anything arrived while no cell was listening. Carried across
-        # `arm` on purpose: it is read by the cell that follows, which is the
-        # first one in a position to report it.
+        # Whether anything was discarded that belongs to no cell of this
+        # capture: written between cells, ahead of the begin marker, or behind
+        # the end marker. It is what `capture_truncated` reports.
         self.stray = False
         # The descriptor is gone: a cell closed it, or the pipe broke. Nothing
         # more will ever arrive, so a wait for this cell's marker would be a
         # wait for something that cannot come.
         self.closed = False
 
-    def arm(self, marker: bytes) -> bool:
-        """Start a cell's capture, reporting whether stray bytes preceded it."""
-        stray = self.stray
+    def arm(self, begin: bytes, marker: bytes) -> None:
+        """Start a cell's capture, keeping nothing until `begin` comes round."""
         self.kept.clear()
         self.pending.clear()
         self.truncated = False
+        self.begin = begin
         self.marker = marker
+        self.seen_begin = False
         self.done = False
-        self.stray = False
-        return stray
+        # `stray` is deliberately *not* cleared here. Bytes that arrived and
+        # were drained between cells set it before this cell existed, and this
+        # cell is the first one in a position to report them; `settle` clears
+        # it once it has. The begin marker covers the other half -- bytes
+        # written before the arm but still sitting unread in the pipe.
 
     def feed(self, chunk: bytes) -> None:
         if self.done or not self.marker:
-            # Between cells, or after this cell's marker was found. A pipe
+            # Between cells, or after this cell's end marker was found. A pipe
             # orders the writes already made; it says nothing about a child
             # the cell spawned that prints after the cell has returned. Those
             # bytes belong to a cell whose record is already written, so they
@@ -342,6 +361,8 @@ class _Stream:
             self.stray = True
             return
         self.pending.extend(chunk)
+        if not self.seen_begin and not self._open_the_fence():
+            return
         at = self.pending.find(self.marker)
         if at != -1:
             self._retain(self.pending[:at])
@@ -362,6 +383,34 @@ class _Stream:
         if len(self.pending) > keep:
             self._retain(self.pending[: len(self.pending) - keep])
             del self.pending[: len(self.pending) - keep]
+
+    def _open_the_fence(self) -> bool:
+        """Discard everything ahead of the begin marker. True once it is past.
+
+        Anything in front of it was written before this cell was armed and is
+        somebody else's, so it is dropped and admitted to rather than kept.
+        """
+        at = self.pending.find(self.begin)
+        if at != -1:
+            if at > 0:
+                self.stray = True
+            del self.pending[: at + len(self.begin)]
+            self.seen_begin = True
+            return True
+        # The begin marker never arrived -- its write failed, or the descriptor
+        # was replaced by a cell -- but the end marker did. Waiting for a fence
+        # post that is not coming would cost this cell the whole settle grace
+        # and then report an empty capture, so the cell is taken unfenced and
+        # said to be incomplete.
+        if self.marker in self.pending:
+            self.stray = True
+            self.seen_begin = True
+            return True
+        keep = max(len(self.begin), len(self.marker)) - 1
+        if len(self.pending) > keep:
+            self.stray = True
+            del self.pending[: len(self.pending) - keep]
+        return False
 
     def _retain(self, data: bytes) -> None:
         room = max(0, self.limit - len(self.kept))
@@ -475,21 +524,26 @@ class _Capture:
                 stream.feed(chunk)
                 self._changed.notify_all()
 
-    def begin(self) -> tuple[bytes, bool]:
-        """Arm both streams for one cell.
+    def begin(self) -> bytes:
+        """Arm both streams for one cell and fence the start of its output.
 
-        Returns the marker that ends the cell, and whether anything was
-        written while no cell was listening -- a helper the *previous* cell
-        left running, whose bytes were discarded because the record they
-        belonged to was already written.
+        The begin marker goes out through the descriptors, like the end one,
+        so pipe order does the work: anything a previous cell's helper had
+        already written is necessarily in front of it and is dropped rather
+        than kept as this cell's.
         """
-        marker = f"\0«hardy-capture:{uuid.uuid4().hex}»\0".encode()
+        nonce = uuid.uuid4().hex
+        begin = f"\0«hardy-cell-begin:{nonce}»\0".encode()
+        marker = f"\0«hardy-capture:{nonce}»\0".encode()
         with self._changed:
-            # Every stream armed, then the answers combined. `any` over a
-            # generator would stop at the first True and leave the other
-            # descriptor unarmed for the whole cell.
-            stray = any([stream.arm(marker) for stream in self.streams.values()])
-        return marker, stray
+            for stream in self.streams.values():
+                stream.arm(begin, marker)
+        for fd in (1, 2):
+            with contextlib.suppress(Exception):
+                (sys.stdout if fd == 1 else sys.stderr).flush()
+            with contextlib.suppress(OSError):
+                os.write(fd, begin)
+        return marker
 
     def settle(self, marker: bytes) -> tuple[str, str, bool]:
         """Close the cell's capture and return what both descriptors carried.
@@ -520,10 +574,18 @@ class _Capture:
             captured = (
                 out_text,
                 err_text,
-                out.truncated or err.truncated or not (out_exact and err_exact),
+                out.truncated
+                or err.truncated
+                or out.stray
+                or err.stray
+                or not (out_exact and err_exact),
             )
             for stream in self.streams.values():
                 stream.marker = b""
+                # Cleared only now that it has been reported. Anything arriving
+                # from here on belongs to the next cell's account of what it
+                # could not keep.
+                stream.stray = False
             return captured
 
     def write_reply(self, payload: bytes) -> None:
@@ -547,13 +609,14 @@ class _Capture:
 # binds a plain instance or a `def`-defined function cannot have its state
 # checked across a restart, and now says so instead of claiming otherwise.
 _OPAQUE = re.compile(r" at 0x[0-9a-fA-F]+>")
-# The last-value binding, which the parent already compares as `value_repr`.
-# Nothing else is filtered by name: `__`-prefixed names are the interpreter's
-# own *and* a perfectly ordinary thing for a cell to bind, and skipping them
-# all meant a silent `__cache = random.random()` was invisible to every digest.
-# The baseline identity check below is what excludes the interpreter's, and it
-# excludes exactly those -- a rebound one is state again, as it should be.
-_NOT_STATE = frozenset({"_"})
+# The object the driver last bound to `_`, so the digest can tell its own
+# last-value binding -- already compared as `value_repr` -- from a cell that
+# assigned `_` itself. Skipping the name unconditionally hid the second:
+# `_ = random.random()` has no `value_repr` at all, so namespaces holding
+# `_ = 1` and `_ = 2` fingerprinted alike and a rebuild could report itself
+# faithful over a different `_`. Identity rather than a flag, because the
+# binding outlives the cell that made it.
+LAST_DISPLAYED: object = object()
 
 
 def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
@@ -579,9 +642,9 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
     # `sorted` over mixed types raises -- which used to lose the whole digest
     # for the namespace rather than describe it.
     for name in sorted(namespace, key=repr):
-        if name in _NOT_STATE:
-            continue
         value = namespace[name]
+        if name == "_" and value is LAST_DISPLAYED:
+            continue
         if name in baseline and baseline[name] is value:
             continue
         rendered, truncated = bounded_repr(value, limit)
@@ -623,7 +686,7 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     if parsed.body and isinstance(parsed.body[-1], ast.Expr):
         trailing = ast.Expression(parsed.body.pop().value)
 
-    marker, stray = capture.begin()
+    marker = capture.begin()
     status, value_repr, oversized = "ok", "", False
     try:
         if parsed.body:
@@ -631,7 +694,8 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
         if trailing is not None:
             value = eval(compile(trailing, CELL_FILENAME, "eval"), namespace)
             if value is not None:
-                namespace["_"] = value
+                global LAST_DISPLAYED
+                namespace["_"] = LAST_DISPLAYED = value
                 value_repr, oversized = bounded_repr(value, limit)
     # Hardy asked for this one, so it is reported under its own name rather
     # than as the cell having gone wrong -- and, far more importantly, it is
@@ -656,7 +720,7 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     return {
         "status": status,
         **fields,
-        "capture_truncated": truncated or overran or oversized or stray,
+        "capture_truncated": truncated or overran or oversized,
     }
 
 

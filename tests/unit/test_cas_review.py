@@ -16,7 +16,7 @@ import time
 import pytest
 
 from hardy.cas import CasError, CasSession, backend_for
-from hardy.cas_driver import HEADER_BYTES, bounded_repr, state_digest
+from hardy.cas_driver import HEADER_BYTES, _Stream, bounded_repr, state_digest
 from hardy.cas_export import TRANSCRIPT_BEGIN, export_session
 from hardy.domain import RunLimits
 
@@ -634,3 +634,82 @@ def test_a_script_whose_output_is_still_arriving_is_not_verified(
     report = export_session(sympy_session, tmp_path / "cas")
     assert report.script_verdict in {"unverified", "diverged"}, report.model_dump_json(indent=2)
     assert report.reproduces is False
+
+
+# ---------------------------------------------------- and the fourth review's
+
+
+def test_a_cell_that_assigns_underscore_itself_is_state(sympy_session) -> None:
+    """`_` is normally the driver's last-value binding, already compared as
+    `value_repr`. A cell is free to assign it directly, and then it is state
+    like any other: `_ = random.random()` has no `value_repr` at all, so
+    skipping the name unconditionally let two namespaces holding different
+    `_` fingerprint alike."""
+    assert state_digest({"_": 1}, {}, 4096) != state_digest({"_": 2}, {}, 4096)
+
+    sympy_session.execute("import random")
+    quiet = sympy_session.execute("_ = random.random()")
+    assert quiet.value_repr == ""
+    assert quiet.state_digest, "an assigned `_` has to reach the digest"
+
+    sympy_session._drop_kernel()
+    with pytest.raises(CasError, match="did not reproduce"):
+        sympy_session.execute("1 + 1")
+
+
+def test_the_drivers_own_last_value_is_not_counted_twice(sympy_session) -> None:
+    """The skip still has to work for the binding it was written for, or every
+    session with a trailing expression would be reported unverified."""
+    sympy_session.execute("x = symbols('x')")
+    sympy_session.execute("x**2 + 1")
+    sympy_session._drop_kernel()
+
+    rebuilt = sympy_session.execute("x")
+    assert rebuilt.status == "ok"
+    assert "not verified" not in rebuilt.restart_note
+
+
+def test_a_capture_keeps_nothing_written_before_its_fence() -> None:
+    """Arming a capture says "keep things from now"; it says nothing about what
+    is already sitting unread in the pipe. A helper that wrote a moment before
+    the next cell began had its bytes kept as that cell's output, with nothing
+    marked incomplete. A begin marker written into the pipe is ordered behind
+    exactly those bytes, so finding it proves what is in front is somebody
+    else's.
+
+    Driven at the stream rather than through a session, because the window is
+    a race by construction: whether unread bytes are still in the pipe when a
+    cell arms depends on the drain thread's timing, and a test that had to win
+    that race to mean anything would pass for the wrong reason when it lost.
+    """
+    stream = _Stream(read_fd=-1, limit=4096)
+    stream.arm(b"<begin>", b"<end>")
+    stream.feed(b"from the last cell\n<begin>mine\n<end>")
+
+    text, exact = stream.text()
+    assert text == "mine\n"
+    assert exact is True
+    assert stream.done is True
+    assert stream.stray is True, "what was in front of the fence has to be admitted to"
+
+
+def test_a_capture_whose_fence_never_arrived_does_not_wait_it_out() -> None:
+    """A begin marker whose write failed must not cost the cell its whole
+    settle grace and then report nothing. The cell is taken unfenced and said
+    to be incomplete."""
+    stream = _Stream(read_fd=-1, limit=4096)
+    stream.arm(b"<begin>", b"<end>")
+    stream.feed(b"unfenced\n<end>")
+
+    assert stream.done is True
+    assert stream.text()[0] == "unfenced\n"
+    assert stream.stray is True
+
+
+def test_the_fence_does_not_cost_an_ordinary_cell_its_output(sympy_session) -> None:
+    """Both markers are Hardy's own and neither belongs in the record."""
+    record = sympy_session.execute("print('kept'); 1 + 1")
+    assert record.stdout == "kept\n"
+    assert record.value_repr == "2"
+    assert record.capture_truncated is False
+    assert "hardy-cell-begin" not in record.stdout
