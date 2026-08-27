@@ -158,7 +158,21 @@ def _load(root: Path, name: str) -> tuple[bytes, int, str]:
     instructions would be decoded into memory to show two thousand lines of
     it.
     """
-    guard, leaf = guard_for(root, name)
+    # Canonical, because the leaf guard asks whether a path resolves to its
+    # own parent's child of exactly that name -- a question a symlinked
+    # directory cannot answer yes to. `current -> releases/2026-08` is an
+    # ordinary way to name a checkout and every other part of the workspace
+    # already works through one (`Layout.ensure` proves the PROBLEM against the
+    # root, never the root against its own parent), so guarding the root as the
+    # user spelled it refused the read and the session lost every project
+    # instruction without a word about mathematics being the reason.
+    #
+    # It costs nothing that matters: the threat is a repository shipping
+    # `AGENTS.md -> ~/.ssh/id_rsa`, which is the LEAF, and the leaf is still
+    # refused twice over -- explicitly by the caller and again by the guard's
+    # own `O_NOFOLLOW`. What is relaxed is only the demand that the directory
+    # the user named be spelled canonically.
+    guard, leaf = guard_for(root.resolve(), name)
     digest = hashlib.sha256()
     head = bytearray()
     size = 0
