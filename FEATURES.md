@@ -428,8 +428,14 @@ Priority labels are sequencing hints:
   verification rather than the execution path, because recomputing a Gröbner
   basis every turn is not affordable.
 - **Now (implemented):** a rebuild after a kernel death compares every replayed
-  cell against its record and poisons the session on divergence. Running
-  without error is not the same as recovering. A replay Hardy signalled is
+  cell against its record -- what it printed *and*, on the default backend, a
+  digest of the namespace it left behind -- and poisons the session on
+  divergence. Running without error is not the same as recovering, and neither
+  is printing the same thing: a cell that binds a fresh random value, or an
+  accepted cell whose recorded state includes what a failed cell left behind,
+  reproduces empty output either way. Singular and Macaulay2 have no protocol
+  to carry a digest, so a rebuild there names the cells whose replay proved
+  nothing instead of reporting a rebuild as if it had been checked. A replay Hardy signalled is
   refused whatever it answered -- an `ok` most of all, since a cell that caught
   the stop can skip a mutation and still print what it printed before -- and
   the session is left retryable rather than poisoned, because a press says
@@ -445,9 +451,32 @@ Priority labels are sequencing hints:
   breaks the file is caught here rather than by the reader. `script_verdict`
   travels in `export.json` and the notebook, and an export reproduces only when
   the cells and the script both do.
+- **Now (implemented):** the published script prints two markers around its own
+  transcript, and the comparison against the record is equality between them
+  rather than a search for the record somewhere inside the output. What falls
+  outside the markers is the interpreter's own chrome by construction, so
+  nothing has to be guessed -- and extra output the session never saw is no
+  longer tolerated in front of or behind the record. A cell guarded by
+  `if __name__ == "__main__":` is silent under the driver and prints from the
+  published file; that used to export as `verified`.
+- **Now (implemented):** the default kernel captures at the *file descriptor*
+  rather than by rebinding `sys.stdout`, so output from `os.system`, a
+  subprocess, or a native library is the cell's output instead of bytes in
+  front of the length-prefixed reply. Those bytes used to be read as a
+  non-numeric frame header, which discarded the whole session's state over a
+  helper's chatter. The capture is drained and bounded as it arrives, so
+  `cas_output_bytes` bounds what is *held* and not only what is reported: a
+  cell printing in a loop used to grow an unbounded buffer inside the kernel.
+  A value whose own length already exceeds the budget is rendered head-first
+  and says so, rather than being built in full to be thrown away.
 - **Now (implemented):** a capture that hit `cas_output_bytes` is never called
   verified — a sentinel backend's cell is not accepted at all, since its error
-  banner may be in the discarded tail, and an export marks a truncated cell
+  banner may be in the discarded tail. The overflow is counted once *both*
+  streams have settled: stdout and stderr are two pipes drained by two threads,
+  and a cell that overran on stderr alone had its overflow recorded after the
+  reply was extracted and then cleared, so the record said nothing had been
+  discarded and the banner in the tail was classified from a clean prefix. The
+  same rule then holds for an export, which marks a truncated cell
   `unverified` rather than claiming matching prefixes are a reproduction. The
   script verdict goes `unverified` too, never `diverged`: "the script printed
   something else" is as much a claim about the unread tail as "it printed the
