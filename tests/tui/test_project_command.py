@@ -7,6 +7,7 @@ what was there or to open another one without leaving the session.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from pathlib import Path
 
@@ -427,3 +428,50 @@ async def test_an_unreadable_marker_is_answered_rather_than_raised(ui, root):
     assert after is state
     assert state.reopen.opened == []
     assert "not a Hardy project" in ui.text
+
+
+async def test_a_directory_that_cannot_be_listed_is_answered_not_raised(ui, root, monkeypatch):
+    """The listing can refuse as readily as the read, and for the same reasons.
+
+    An execute-only directory or a denying ACL makes `iterdir` raise, which
+    escaped the predicate and ended the plain session -- the same shape as the
+    undecodable marker one round earlier, one call further down.
+    """
+    layout.Layout(root=root, slug="locked").ensure()
+    real = Path.iterdir
+
+    def denied(self):
+        if self.name == "locked":
+            raise PermissionError(13, "Permission denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "iterdir", denied)
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
+
+    after = await handlers.handle_project(ui, "new locked", state)
+
+    assert after is state
+    assert state.reopen.opened == []
+    assert "not a Hardy project" in ui.text
+
+
+async def test_a_cancelled_switch_reaches_the_child_it_had_started(ui, root, monkeypatch):
+    """Cancelling the await does not stop the worker; the shell's exit joins it.
+
+    So a Ctrl+C during a switch waited on a computer algebra probe that could
+    still be starting. The session being replaced cannot be told to stop it --
+    the kernel is not its own, it is the one being built.
+    """
+    stopped = []
+    monkeypatch.setattr(handlers.process, "interrupt_children", lambda: stopped.append(True))
+    _record(root, "sylow")
+    _record(root, "burnside")
+
+    def reopen(slug, confirm, current):
+        raise asyncio.CancelledError
+
+    state = State(config=_settings(root, "sylow"), session=None, reopen=reopen)
+    with pytest.raises(asyncio.CancelledError):
+        await handlers.handle_project(ui, "switch burnside", state)
+
+    assert stopped == [True]
