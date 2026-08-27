@@ -25,7 +25,7 @@ from ..domain import FrozenClaim
 
 # Bumped whenever a staged template changes. The hash below identifies the text
 # exactly; this names the revision a human can talk about.
-PROMPT_SET_VERSION = "2026-08-27.2"
+PROMPT_SET_VERSION = "2026-08-27.3"
 
 SUFFIX = ".md.j2"
 
@@ -135,11 +135,39 @@ def faithfulness_prompt(claim: FrozenClaim) -> str:
     that produced it -- which is the shared context this gate exists to
     defeat. What is left is the two texts that have to say the same thing.
     """
+    text = claim.original_text.strip()
+    signature = claim_signature(claim)
     return render(
         "staged/faithfulness",
-        claim=claim.original_text.strip(),
-        signature=claim_signature(claim),
+        fence=_fence(text, signature),
+        claim=text,
+        signature=signature,
     )
+
+
+def _fence(*texts: str) -> str:
+    """A quoting marker none of `texts` contains, derived from them.
+
+    A fixed terminator is one a quoted text can write. Both texts here are
+    untrusted -- the claim is the user's and the Lean is a model's -- and a
+    Lean block comment holding a line equal to the terminator would have ended
+    its own fence, putting whatever followed where the reader reads
+    instructions. Deriving the marker from the bytes it has to survive removes
+    that move: to close the fence early a text would have to contain a digest
+    of itself.
+
+    Deterministic, because `prompt_sha256` must identify the question that was
+    actually asked and a random marker would make the same claim hash
+    differently on every run. Lengthened rather than trusted if the improbable
+    happens, so this cannot collide even in principle.
+    """
+    joined = "\u0000".join(texts).encode("utf-8")
+    digest = hashlib.sha256(joined).hexdigest()
+    for length in range(8, len(digest) + 1):
+        marker = "===HARDY-" + digest[:length] + "==="
+        if all(marker not in text for text in texts):
+            return marker
+    raise PromptError("could not derive a quoting marker the claim does not contain")
 
 
 def batch_task_prompt(informal_claim: str, declaration: str, imports: tuple[str, ...]) -> str:

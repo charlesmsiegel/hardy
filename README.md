@@ -88,10 +88,12 @@ independent verifier rebuilds and rechecks the result before anything is graded.
 That faithfulness check is the one gate a green kernel cannot stand in for:
 Lean's acceptance says a statement was proved and nothing about whether it is
 the claim you made. The reader is asked from a conversation of its own, with no
-Lean tools, and is given your words and the Lean signature alone — not the
+tools at all, and is given your words and the Lean signature alone — not the
 exchange that wrote the formalization, and not its own account of what it chose,
 because a model handed the reasoning behind a translation reads the translation
-through it. Set `faithfulness_model` to have a different model do the reading.
+through it. Denying it tools is the part that makes that real: the computer
+algebra kernel is shared and unsandboxed, so a reader holding those tools could
+simply read the run's own files. Set `faithfulness_model` to have a different model do the reading.
 It is asked whether each statement entails the other rather than how confident
 it is, since a wrong formalization is usually fluent and confident. A
 disagreement stops the run and shows you the mismatch, and so does a reader that

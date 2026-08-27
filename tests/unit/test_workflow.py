@@ -159,14 +159,17 @@ def _scripted_controller(
     # be an exception to raise, which is how an unreachable reader is scripted.
     reviews = list(reviews or [])
     state = SimpleNamespace(
-        starts=[], handles=[], prompts=[], verifier_calls=0, cancelled=None
+        starts=[], isolation=[], handles=[], prompts=[], verifier_calls=0, cancelled=None
     )
 
     class Runtime:
-        def start(self, *, model, run_dir, claim):
+        backend = 'fixture-backend'
+
+        def start(self, *, model, run_dir, claim, isolated=False, phase=None):
             if runtime_error:
                 raise RuntimeError('runtime fixture failure')
             state.starts.append(claim)
+            state.isolation.append(isolated)
             # Kept so a test can say *which* thread a cancellation reached, not
             # merely that one did: each stage has its own.
             state.handles.append(SimpleNamespace(claim=claim))
@@ -290,8 +293,10 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
     prompts = []
 
     class Runtime:
-        def start(self, *, model, run_dir, claim):
-            starts.append(claim)
+        backend = 'fixture-backend'
+
+        def start(self, *, model, run_dir, claim, isolated=False, phase=None):
+            starts.append((claim, isolated))
             return object()
 
         def run_structured(self, thread, stage, prompt, output_type):
@@ -394,10 +399,12 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
     # are started with no claim, so neither is offered Lean tools: the reader
     # is comparing two texts, and one that can elaborate the statement can be
     # persuaded it is fine because Lean accepted it.
-    assert starts[0] is None
-    assert starts[1] is None
-    assert starts[2] is not None
-    assert starts[2].content_hash == manifest.claim_sha256
+    assert [claim for claim, _ in starts][:2] == [None, None]
+    # Only the reader is isolated: no tools at all, and no sight of the run
+    # directory on a backend whose agent has its own file access.
+    assert [isolated for _, isolated in starts] == [False, True, False]
+    assert starts[2][0] is not None
+    assert starts[2][0].content_hash == manifest.claim_sha256
     assert manifest.phase is domain.RunPhase.COMPLETED
     assert manifest.grades.formal is domain.FormalStatus.KERNEL_VERIFIED
     assert manifest.grades.faithfulness is domain.FaithfulnessStatus.USER_APPROVED
@@ -781,3 +788,35 @@ def test_a_cancellation_during_the_review_reaches_the_reader_s_own_thread(
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
     assert state.cancelled is state.handles[-1]
     assert state.cancelled is not state.handles[0]
+
+
+def test_a_terminal_that_fails_cannot_deny_the_verdict_on_disk(tmp_path) -> None:
+    """The verdict is persisted before it is shown, so the grade is set before
+    it is shown too.
+
+    `review_translation` has already written `faithfulness.json` and the
+    trajectory event by the time the terminal is called. A `show_faithfulness`
+    that raises would otherwise finalize a manifest recording no review beside
+    a run directory that plainly holds one — exactly the disagreement the
+    release audit exists to report.
+    """
+    workflow, domain, controller, _ = _scripted_controller(tmp_path)
+
+    class FailingTerminal(Terminal):
+        def show_faithfulness(self, verdict):
+            raise RuntimeError('the terminal went away')
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'),
+        FailingTerminal(),
+    )
+
+    run_dir = next(tmp_path.iterdir())
+    assert manifest.terminal_reason is domain.TerminalReason.AGENT_RUNTIME_FAILURE
+    assert (run_dir / 'faithfulness.json').exists()
+    assert manifest.grades.faithfulness_review is not None
+    assert manifest.grades.faithfulness_review.agreed
+    # The record has to hold together, not merely contain the verdict.
+    acceptance = importlib.import_module('hardy.acceptance')
+    issues = acceptance.validate_run_consistency(run_dir, manifest)
+    assert not [issue for issue in issues if 'faithfulness' in issue], issues

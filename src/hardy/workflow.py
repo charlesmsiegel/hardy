@@ -314,6 +314,25 @@ class ProveWorkflow:
                     phase=state.phase,
                     on_thread=track_reader,
                 )
+                # Graded before it is shown, not after. `review_translation`
+                # has already written `faithfulness.json` and the trajectory
+                # event by now, so a `show_faithfulness` that raises -- or a
+                # Ctrl+C landing in it -- would finalize a manifest recording
+                # no review beside a run directory that plainly holds one,
+                # which is the inconsistency the release audit exists to
+                # report. Assigning here keeps the two halves of the record
+                # from ever disagreeing.
+                grades = (
+                    Grades(
+                        faithfulness=FaithfulnessStatus.USER_APPROVED,
+                        faithfulness_review=verdict,
+                    )
+                    if verdict.agreed
+                    else Grades(
+                        known_gaps=dispute_gaps(verdict),
+                        faithfulness_review=verdict,
+                    )
+                )
                 terminal.show_faithfulness(verdict)
                 if not verdict.agreed:
                     # Fail-closed, and terminal. Proceeding past a disputed
@@ -321,10 +340,6 @@ class ProveWorkflow:
                     # prevent: it would spend the whole proving budget, and
                     # every downstream signal would read green, on a statement
                     # nobody established the user asked for.
-                    grades = Grades(
-                        known_gaps=dispute_gaps(verdict),
-                        faithfulness_review=verdict,
-                    )
                     state.transition(RunPhase.CANCELLED)
                     return self._finalize(
                         request,
@@ -338,15 +353,10 @@ class ProveWorkflow:
                         TerminalReason.FAITHFULNESS_DISPUTED,
                         approved_claim,
                     )
-                # Recorded on the running grades rather than only at the end,
-                # so a run cancelled mid-proof still reports that its
-                # translation was read and by what. Nothing about the proof is
-                # claimed here; `formal` stays where it was.
+                # Kept for the final grades. The running `grades` above
+                # already carries it, so a run cancelled mid-proof still
+                # reports that its translation was read and by what.
                 approved_verdict = verdict
-                grades = Grades(
-                    faithfulness=FaithfulnessStatus.USER_APPROVED,
-                    faithfulness_review=verdict,
-                )
                 state.transition(RunPhase.PROVING)
                 break
             if approved_claim is None:
