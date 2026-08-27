@@ -85,6 +85,7 @@ def build_runtime(
     cwd: Path | None = None,
     spill: Callable[[str, str], str] | None = None,
     observe: Callable[[dict[str, Any]], None] | None = None,
+    on_session: Callable[[CasSession], None] | None = None,
 ) -> tuple[CasToolRuntime | None, str]:
     """Discover the backend and return a runtime, or None and the reason why.
 
@@ -104,6 +105,14 @@ def build_runtime(
         cwd=cwd,
         observe=observe,
     )
+    # Handed over before the probe, which is the only moment it can be: a
+    # caller on another thread has no other way to reach a kernel this
+    # function is about to block on. `probe_version` holds the session's own
+    # `_lock` for its whole duration and so does `close`, so the reach that
+    # works is `escalate`, which takes `_signal_lock` and never `_lock`
+    # precisely so it can arrive from outside.
+    if on_session is not None:
+        on_session(session)
     try:
         version = session.probe_version()
     except CasError as error:

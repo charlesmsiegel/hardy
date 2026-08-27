@@ -455,15 +455,34 @@ async def test_a_directory_that_cannot_be_listed_is_answered_not_raised(ui, root
     assert "not a Hardy project" in ui.text
 
 
-async def test_a_cancelled_switch_reaches_the_child_it_had_started(ui, root, monkeypatch):
+async def test_a_cancelled_switch_asks_the_opener_to_stop(ui, root):
     """Cancelling the await does not stop the worker; the shell's exit joins it.
 
-    So a Ctrl+C during a switch waited on a computer algebra probe that could
-    still be starting. The session being replaced cannot be told to stop it --
-    the kernel is not its own, it is the one being built.
+    `process.interrupt_children` was the first answer and cannot reach the
+    kernel: that register deliberately excludes a persistent CAS kernel, and
+    this one is not even the replaced session's -- it is the one being built,
+    which only the opener holds. So the opener is asked.
     """
-    stopped = []
-    monkeypatch.setattr(handlers.process, "interrupt_children", lambda: stopped.append(True))
+    _record(root, "sylow")
+    _record(root, "burnside")
+    asked = []
+
+    class Cancellable:
+        def __call__(self, slug, confirm, current):
+            raise asyncio.CancelledError
+
+        def cancel(self):
+            asked.append(True)
+
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Cancellable())
+    with pytest.raises(asyncio.CancelledError):
+        await handlers.handle_project(ui, "switch burnside", state)
+
+    assert asked == [True]
+
+
+async def test_a_reopener_with_nothing_to_cancel_is_left_alone(ui, root):
+    """Every plain-callable `reopen` in the tests, and any embedding's own."""
     _record(root, "sylow")
     _record(root, "burnside")
 
@@ -473,5 +492,3 @@ async def test_a_cancelled_switch_reaches_the_child_it_had_started(ui, root, mon
     state = State(config=_settings(root, "sylow"), session=None, reopen=reopen)
     with pytest.raises(asyncio.CancelledError):
         await handlers.handle_project(ui, "switch burnside", state)
-
-    assert stopped == [True]
