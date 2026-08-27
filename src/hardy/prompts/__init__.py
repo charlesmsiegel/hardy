@@ -92,6 +92,19 @@ def chat_cas_prompt(backend: str) -> str:
     return render("chat_cas", backend=backend)
 
 
+def chat_project_context_prompt(*, name: str, text: str, truncated: bool, shown: int, total: int) -> str:
+    """The user's own project instructions, framed as input rather than orders.
+
+    Deliberately outside `_prompt_set_payload`, so this text is *not* folded
+    into `PROMPT_SET_SHA256`. That hash identifies the instructions a staged
+    run was given, and staged runs never see this: an unattended graded run
+    whose prompt came partly from a project-local file is not comparable to
+    another run. Interactive work wants intent; benchmarking wants a fixed
+    condition.
+    """
+    return render("chat_project_context", name=name, text=text, truncated=truncated, shown=shown, total=total)
+
+
 def cas_spill_note(*, artifact: str | None, capture_truncated: bool) -> str:
     """What the model is told when an answer was too big to hand back."""
     return render("cas_spill", artifact=artifact, capture_truncated=capture_truncated)

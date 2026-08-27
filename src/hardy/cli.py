@@ -131,6 +131,10 @@ def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> config
             lean_command=args.lean_command,
             lean_project=args.lean_project,
             latex_command=args.latex_command,
+            # None rather than True when the flag is absent, so that omitting
+            # it leaves the config file and `HARDY_PROJECT_CONTEXT` alone
+            # instead of overriding them with a default nobody asked for.
+            project_context=False if getattr(args, "no_project_context", False) else None,
         )
     except (ValueError, OSError) as error:
         parser.error(str(error))
@@ -295,6 +299,7 @@ def _chat(
             cas_detail=cas_detail,
             search=search,
             search_detail=search_detail,
+            project_context=config.project_context,
         )
 
     try:
@@ -948,6 +953,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--plain",
         action="store_true",
         help="use the line-based session with no terminal control",
+    )
+    # Top-level rather than under `chat`, like `--plain`: an invocation with no
+    # subcommand is the primary interactive experience and has to be able to
+    # ask for a clean condition too.
+    parser.add_argument(
+        "--no-project-context",
+        action="store_true",
+        help="do not read the project's AGENTS.md or HARDY.md (or set project_context = false, or HARDY_PROJECT_CONTEXT=0)",
     )
     subparsers = parser.add_subparsers(dest="command")
     chat = subparsers.add_parser("chat", help="start or resume an interactive session")

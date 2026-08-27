@@ -277,3 +277,17 @@ async def test_cas_error_is_reported_not_raised(ui, settings, tmp_path):
     fake = FakeCas(run_error=CasError("kernel unreachable"))
     await handlers.handle_cas(ui, "1+1", cas_state(fake, settings, tmp_path))
     assert ui.written == [("error", "CAS: kernel unreachable")]
+
+
+async def test_status_names_the_project_instructions_the_session_is_carrying(ui, settings):
+    """They went into the system prompt, and a user must be able to find that
+    out from something other than the model."""
+    session = SimpleNamespace(project_context_detail="AGENTS.md (412 bytes)")
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert "AGENTS.md (412 bytes)" in ui.text
+
+
+async def test_status_says_nothing_about_instructions_when_there_are_none(ui, settings):
+    session = SimpleNamespace(project_context_detail="")
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert "Instructions" not in ui.text
