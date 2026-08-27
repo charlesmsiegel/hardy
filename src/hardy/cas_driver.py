@@ -662,31 +662,65 @@ def _record(digest, name: object, kind: bytes, payload: bytes) -> None:
     digest.update(b"\0")
 
 
-def _register(value: object, seen: dict[int, int], limit: int, depth: int = 0) -> None:
-    """Number `value` and everything reachable from it through containers.
+def _walk(
+    value: object,
+    seen: dict[int, int],
+    limit: int,
+    budget: list[int],
+    describe: bool = True,
+    depth: int = 0,
+) -> list[str] | None:
+    """Fingerprint the object *graph* rooted at `value`, or refuse.
 
-    Registering only the names themselves saw sharing at the top level and
-    nowhere else: `a = [[]]` with `b` bound either to `a[0]` or to a fresh
-    `[]` renders `[[]]` and `[]` both ways, so the two fingerprinted alike --
-    and after a rebuild `b.append(1)` either does or does not change `a`.
+    Hashing a rendering was never going to be enough, and each round of it
+    failed one level deeper: two names for one object, then a name bound to
+    something nested inside another, then two members of the same container
+    sharing one object. `[x, x]` and `[[], []]` render identically whatever
+    is done to the rendering, and `a[0].append(1); a[1]` tells them apart.
 
-    Bounded exactly as `_lower_bound` is, and for the same reason: a container
-    can hold itself, and this must not become an unbounded traversal. Past the
-    bound the graph is simply not numbered any further, which costs
-    resolution rather than correctness -- an unregistered object is rendered
-    by its repr, as it was before.
+    So the structure is walked rather than printed. Every object is numbered
+    on first sight and emitted as `@n` on every later one, so a reference is
+    part of the fingerprint wherever it occurs and at whatever depth. Only a
+    leaf -- something that is not a container Hardy can look inside -- falls
+    back to its repr, and the same two refusals apply there as before: a
+    prefix and a default repr are not fingerprints, and either gives up the
+    whole digest.
+
+    Bounded by a node budget and a depth cap, because a container can hold
+    itself and this must not become the unbounded traversal `_lower_bound`
+    exists to prevent. Exceeding either refuses rather than truncating: a
+    partial walk would be a fingerprint of part of the graph presented as one
+    of the whole.
+
+    `describe=False` numbers the graph without rendering it, for a name whose
+    value is not itself hashed -- the preamble's, or the displayed `_` -- but
+    whose position other names may refer to.
     """
-    if id(value) in seen:
-        return
+    marker = seen.get(id(value))
+    if marker is not None:
+        return [f"@{marker}"]
+    if budget[0] <= 0 or depth >= _ESTIMATE_DEPTH:
+        return None
     seen[id(value)] = len(seen)
-    if depth >= _ESTIMATE_DEPTH or type(value) not in _SIZED:  # noqa: E721 -- exact type
-        return
-    for key, entry in _members(value):
-        if len(seen) > limit:
-            return
-        _register(key, seen, limit, depth + 1)
-        if entry is not None:
-            _register(entry, seen, limit, depth + 1)
+    budget[0] -= 1
+    if type(value) in _SIZED:  # noqa: E721 -- exact type only
+        tokens = [type(value).__name__, "("]
+        for key, entry in _members(value):
+            for part in ((key,) if entry is None else (key, entry)):
+                inner = _walk(part, seen, limit, budget, describe, depth + 1)
+                if inner is None and describe:
+                    return None
+                if describe and inner is not None:
+                    tokens.extend(inner)
+                    tokens.append(",")
+        tokens.append(")")
+        return tokens if describe else []
+    if not describe:
+        return []
+    rendered, truncated = bounded_repr(value, limit)
+    if truncated or _OPAQUE.search(rendered):
+        return None
+    return [type(value).__name__, ":", rendered]
 
 
 def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
@@ -717,38 +751,41 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
     # fingerprint. The walk holds every value, so the ids cannot be reused
     # under it, and the order is the deterministic one below.
     seen: dict[int, int] = {}
+    # How many objects the walk may number before it gives up and refuses the
+    # digest. Generous against anything whose repr would have fitted the cap
+    # -- a container needs bytes per element too -- and finite, because a
+    # namespace can hold a graph no traversal would finish.
+    budget = [max(limit, 1024)]
     # `repr`, not the name itself: `globals()` accepts a non-string key, and
     # `sorted` over mixed types raises -- which used to lose the whole digest
     # for the namespace rather than describe it.
     for name in sorted(namespace, key=repr):
         value = namespace[name]
-        # Registered before any skip. A name whose repr is not hashed is still
-        # a *position* in the object graph, and leaving it out of `seen` let
-        # the graph be rebuilt differently for free: with `a = []; b = []` and
-        # a trailing `a if flag else b`, `_` was skipped without being
-        # recorded, so `a` and `b` took the same two ordinals either way and
-        # the two namespaces fingerprinted alike -- while a later
-        # `_.append(1); a` sees different state.
-        alias = seen.get(id(value))
-        _register(value, seen, limit)
-        if name == "_" and value is LAST_DISPLAYED:
+        # Walked before any skip, and numbered even when it is not described.
+        # A name whose value is not hashed is still a *position* in the object
+        # graph, and leaving it out of `seen` let the graph be rebuilt
+        # differently for free: with `a = []; b = []` and a trailing
+        # `a if flag else b`, `_` was skipped without being numbered, so `a`
+        # and `b` took the same two ordinals either way and the two namespaces
+        # fingerprinted alike -- while a later `_.append(1); a` sees different
+        # state.
+        skipped = (name == "_" and value is LAST_DISPLAYED) or (
+            name in baseline and baseline[name] is value
+        )
+        tokens = _walk(value, seen, limit, budget, describe=not skipped)
+        if skipped:
             continue
-        if name in baseline and baseline[name] is value:
-            continue
-        if alias is not None:
-            _record(digest, name, b"alias", str(alias).encode("ascii"))
-            continue
-        rendered, truncated = bounded_repr(value, limit)
-        if truncated or _OPAQUE.search(rendered):
-            # Neither a prefix nor a default repr is a fingerprint. Two values
-            # agreeing for the first `limit` bytes hash alike, and two
-            # instances of the same class render identically whatever they
-            # hold -- so either would let a rebuild holding the wrong one be
+        if tokens is None:
+            # A prefix, a default repr, and a graph too large or too deep to
+            # walk are all the same answer: Hardy could not see what is there.
+            # Two values agreeing for the first `limit` bytes hash alike, and
+            # two instances of the same class render identically whatever they
+            # hold -- either would let a rebuild holding the wrong one be
             # called faithful, which is the exact failure the digest exists to
             # prevent. No digest at all is the honest answer: the parent reads
             # an empty one as "not compared" and says so.
             return ""
-        _record(digest, name, b"value", rendered.encode("utf-8", errors="backslashreplace"))
+        _record(digest, name, b"value", "".join(tokens).encode("utf-8", errors="backslashreplace"))
     # A name the preamble bound and a cell removed contributes nothing to the
     # loop above, so a namespace missing it fingerprinted exactly like one
     # still holding it: `del symbols; 1 / 0` followed by an accepted `pass`
@@ -799,8 +836,10 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
                 # from its prefix, and skipping `_` as well would leave the
                 # differing tail in neither the repr nor the digest -- a
                 # replay could rebuild a different last element and match
-                # both. Left unset, `_` goes through the digest, truncates
-                # there too, and the fingerprint is withheld.
+                # both. Left unset, `_` goes through the digest instead --
+                # where it is walked rather than rendered, so the tail the
+                # repr lost is fingerprinted, and only a leaf too large to
+                # look at withholds the digest.
                 if not oversized:
                     LAST_DISPLAYED = value
     # Hardy asked for this one, so it is reported under its own name rather

@@ -437,14 +437,18 @@ Priority labels are sequencing hints:
   unverified whatever the cell printed, and the session says so rather than
   reporting a rebuild as if it had been checked. Digests go missing readily and
   on purpose: Singular and Macaulay2 have no protocol to carry one, an older
-  log has none, and the default kernel refuses to fingerprint a namespace it
-  could only see a prefix of -- or one holding a value whose repr is CPython's
+  log has none, and the default kernel refuses to fingerprint a namespace
+  holding a value it could only see a prefix of, or one whose repr is CPython's
   default `<Box object at 0x...>`, which says the type and the address and
-  nothing about what the object holds. What the digest compares is a repr, so
-  what it cannot see is an object whose repr is stable, concise, and silent
-  about its contents -- a module a cell has attached an attribute to, an open
-  file, a class with a `__repr__` of its own. A strong check with a named
-  limit, not a proof. Where the default backend records no digest, an export
+  nothing about what the object holds. The fingerprint is of the object
+  *graph*: every object is numbered on first sight and emitted as a
+  back-reference on every later one, so `a = []; b = a` does not fingerprint
+  like `a = []; b = []` and `[x, x]` does not fingerprint like `[[], []]` --
+  sharing is state, and a rebuild that loses it is refused. A repr is the
+  fallback for a leaf only, so what the digest cannot see is an object whose
+  repr is stable, concise, and silent about its contents -- a module a cell has
+  attached an attribute to, an open file, a class with a `__repr__` of its own.
+  A strong check with a named limit, not a proof. Where the default backend records no digest, an export
   marks that cell `unverified` for the same reason a rebuild does -- its replay
   reproduced everything Hardy can see and nothing more. A sentinel backend is
   untouched by that rule: every record there is digestless, so the absence says

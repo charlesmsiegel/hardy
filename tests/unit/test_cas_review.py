@@ -359,10 +359,19 @@ def test_a_namespace_seen_only_in_prefix_is_not_fingerprinted() -> None:
     bytes would hash alike. No digest at all is the honest answer; the parent
     reads an empty one as "not compared" and says so.
     """
-    first = {"a": ["z"] * 5_000 + ["end"]}
-    second = {"a": ["z"] * 5_000 + ["different"]}
+    first = {"a": "z" * 5_000 + "end"}
+    second = {"a": "z" * 5_000 + "different"}
     assert state_digest(first, {}, 4096) == ""
     assert state_digest(second, {}, 4096) == ""
+
+    # A *container* that long is a different case, and the refusal is not
+    # wanted there: the walk describes it member by member, so something whose
+    # repr would not have fitted is still fingerprinted exactly. The refusal
+    # is for a leaf — something Hardy can only look at through `repr`.
+    held = {"a": ["z"] * 5_000 + ["end"]}
+    apart = {"a": ["z"] * 5_000 + ["different"]}
+    assert state_digest(held, {}, 4096) != ""
+    assert state_digest(held, {}, 4096) != state_digest(apart, {}, 4096)
 
 
 def test_a_namespace_that_cannot_be_sorted_still_describes_itself() -> None:
@@ -828,10 +837,15 @@ def test_a_displayed_value_seen_only_in_prefix_is_not_skipped(sympy_session) -> 
         session.execute("import random")
         clipped = session.execute("[0] * 5000 + [random.random()]")
         assert clipped.capture_truncated is True
-        assert clipped.state_digest == "", (
-            "a value Hardy could only see in prefix cannot be fingerprinted, "
-            "and `_` holds the whole of it"
-        )
+        assert clipped.accepted is True
+        # `_` goes through the digest, so the tail that `value_repr` lost is
+        # fingerprinted after all — walked member by member rather than
+        # rendered, so being too long to print is no longer too long to
+        # check. A replay that rebuilds a different last element is refused.
+        assert clipped.state_digest != ""
+        session._drop_kernel()
+        with pytest.raises(CasError, match="did not reproduce"):
+            session.execute("1 + 1")
     finally:
         session.close()
 
@@ -1028,3 +1042,54 @@ def test_a_script_that_rewrites_the_published_file_is_not_verified(
     assert report.script_verdict == "failed", report.model_dump_json(indent=2)
     assert "changed on disk" in report.script_detail
     assert report.reproduces is False
+
+
+# ---------------------------------------------------- and the tenth review's
+
+
+def test_the_digest_tells_sharing_inside_a_container() -> None:
+    """Numbering the names caught sharing between them and nothing below.
+
+    `[x, x]` and `[[], []]` render identically whatever is done to the
+    rendering, and no amount of numbering the *names* separates them — the
+    two members are one object in the first and two in the second, and
+    `a[0].append(1); a[1]` tells them apart. So the structure is walked
+    rather than printed, and a reference is part of the fingerprint wherever
+    it occurs.
+    """
+    inner: list = []
+    assert state_digest({"a": [inner, inner]}, {}, 4096) != state_digest(
+        {"a": [[], []]}, {}, 4096
+    )
+
+    # At any depth, and through a name that is bound below another rather
+    # than beside it.
+    box: list = [[]]
+    assert state_digest({"a": box, "b": box[0]}, {}, 4096) != state_digest(
+        {"a": [[]], "b": []}, {}, 4096
+    )
+
+    # Two namespaces built the same way still agree, and the values inside
+    # are still compared rather than replaced by their positions.
+    other: list = []
+    assert state_digest({"a": [other, other]}, {}, 4096) == state_digest(
+        {"a": [inner, inner]}, {}, 4096
+    )
+    assert state_digest({"a": [[1]]}, {}, 4096) != state_digest({"a": [[2]]}, {}, 4096)
+
+
+def test_a_graph_too_large_to_walk_is_refused() -> None:
+    """A container can hold itself, and the walk is bounded so that it ends.
+
+    Exceeding the bound refuses rather than truncating: a fingerprint of part
+    of a graph, presented as one of the whole, is the same lie the truncated
+    repr was.
+    """
+    loop: list = []
+    loop.append(loop)
+    # Cyclic is fine — the second sight of an object is a reference, not a
+    # descent.
+    assert state_digest({"a": loop}, {}, 4096)
+
+    wide = {"a": [[] for _ in range(4096)]}
+    assert state_digest(wide, {}, 16) == "", "no digest at all is the honest answer"

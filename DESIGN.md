@@ -199,14 +199,22 @@ default backend can do this: Singular and Macaulay2 have no protocol to carry
 it, so a rebuild there names the cells whose replay proved nothing rather than
 reporting a rebuild as though it had been checked.
 
-What the digest compares is *reprs*, and a repr is not state. Where Hardy can
-see that a repr says nothing about what an object holds — CPython's default
-`<Box object at 0x…>`, or a value it could only render a prefix of — it refuses
-to fingerprint the namespace at all and the rebuild reports itself unverified.
-What it cannot see is an object whose repr is stable, concise, and silent about
-its contents: a module a cell has attached an attribute to, an open file, a
-class with a `__repr__` of its own. The digest catches everything from a plain
-assignment to a lost mutation, and it does not catch that. Making it total
+What the digest fingerprints is the object *graph*, not a rendering of it. A
+repr describes a value and is silent about identity: `a = []; b = a` and
+`a = []; b = []` render the same both ways, and after a rebuild `b.append(1)`
+either does or does not change `a`. So the namespace is walked rather than
+printed — every object numbered on first sight and emitted as a back-reference
+on every later one, at whatever depth it recurs — and `[x, x]` no longer
+fingerprints like `[[], []]`. Only a leaf, something that is not a container
+Hardy can look inside, falls back to its repr, and there a repr is still not
+state. Where Hardy can see that one says nothing about what an object holds —
+CPython's default `<Box object at 0x…>`, or a value it could only render a
+prefix of — it refuses to fingerprint the namespace at all and the rebuild
+reports itself unverified. What it cannot see is an object whose repr is
+stable, concise, and silent about its contents: a module a cell has attached an
+attribute to, an open file, a class with a `__repr__` of its own. The digest
+catches everything from a plain assignment to a lost mutation to a lost alias,
+and it does not catch that. Making it total
 would mean fingerprinting only a fixed list of types with canonical reprs,
 which would refuse far more sessions than it saves; the case for that trade has
 not been made, so what is here is a strong check with a named limit rather than
