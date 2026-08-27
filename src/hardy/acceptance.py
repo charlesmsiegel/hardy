@@ -106,11 +106,14 @@ class _DeterministicRuntime:
 
     def run_structured(self, thread, stage, prompt, output_type):
         if stage == "faithfulness":
+            # Silent, because an agreement is: a reservation in the notes is
+            # read as a refusal, so a fixture that annotated its own agreement
+            # would halt every deterministic run.
             return FaithfulnessReview(
                 formalization_entails_claim=True,
                 claim_entails_formalization=True,
                 divergences=(),
-                notes="Deterministic fixture reader.",
+                notes="",
             )
         if stage == "formalization":
             return FormalizationProposal(

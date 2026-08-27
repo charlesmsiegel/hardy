@@ -172,6 +172,20 @@ class FaithfulnessStatus(str, Enum):
     NOT_APPROVED = "not_approved"
 
 
+def schema_text(model: type[BaseModel]) -> str:
+    """The JSON Schema text a structured stage sends, rendered one way only.
+
+    Defined here rather than at each call site because two renderings of the
+    same schema are two different requests: the staged runtime appends this
+    string to the prompt, and the faithfulness gate persists it as the
+    response contract the reader answered. Rendered apart -- one compact and
+    one spaced, one escaping non-ASCII and one not -- the recorded identity
+    would describe a serialization nobody was sent, which is exactly what
+    hashing it was for.
+    """
+    return json.dumps(model.model_json_schema(), sort_keys=True)
+
+
 class FaithfulnessOutcome(str, Enum):
     AGREED = "agreed"
     DISPUTED = "disputed"
@@ -195,6 +209,15 @@ class FaithfulnessReview(FrozenModel):
     `divergences` outranks the two flags: a reader that lists a problem and
     then answers yes twice has found something, and this reads it as a
     finding. Being unsure is a divergence, by the prompt's instruction.
+
+    So does `notes`, and for the same reason. It is free-form and shown to the
+    user, so a reader could answer yes twice, leave `divergences` empty, and
+    explain a mismatch there -- a hole it actually reported, which the gate
+    would have stepped over on its way to proving. An agreement is therefore
+    silent: anything worth writing about the translation is a divergence, and
+    `notes` is where a refusal explains itself. The prompt says this outright,
+    so a reader that follows it never trips the rule; one that does not has
+    told us something, and a false halt is the cheap direction.
     """
 
     formalization_entails_claim: bool
@@ -208,6 +231,7 @@ class FaithfulnessReview(FrozenModel):
             self.formalization_entails_claim
             and self.claim_entails_formalization
             and not self.divergences
+            and not self.notes.strip()
         )
 
 

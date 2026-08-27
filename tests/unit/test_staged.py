@@ -236,3 +236,27 @@ def test_a_stage_deadline_reaches_the_runtime_that_enforces_it(tmp_path) -> None
     bounded, unbounded = _RecordingRuntime.instances
     assert bounded['wall_seconds'] == 30.0
     assert unbounded['wall_seconds'] is None
+
+
+def test_the_appended_schema_is_the_shared_rendering(tmp_path) -> None:
+    """The gate persists this exact text as the contract the reader answered,
+    so the runtime must not render its own equivalent serialization."""
+    domain = importlib.import_module('hardy.domain')
+    staged, store, runtime = _staged(tmp_path)
+
+    class _Asking:
+        def __init__(self, *args, **kwargs):
+            self.asked = []
+            _RecordingRuntime.instances.append({'runtime': self})
+
+        def ask(self, text):
+            self.asked.append(text)
+            return '{"formalization_entails_claim": true,' \
+                   ' "claim_entails_formalization": true}'
+
+    runtime._runtime_class = _Asking
+    thread = runtime.start(model='m', run_dir=store.path, claim=None, isolated=True)
+    runtime.run_structured(thread, 'faithfulness', 'Grade this.', domain.FaithfulnessReview)
+
+    sent = thread.runtime.asked[0]
+    assert sent.endswith(domain.schema_text(domain.FaithfulnessReview))
