@@ -44,13 +44,15 @@ class Reopener:
         self.root = root
         self.fail = fail
         self.opened: list[str] = []
+        self.carried: list[object] = []
 
-    def __call__(self, slug: str, ui) -> tuple[configuration.Config, object]:
+    def __call__(self, slug: str, ui, current) -> tuple[configuration.Config, object]:
         self.opened.append(slug)
+        self.carried.append(current)
         if self.fail is not None:
             raise self.fail
         (self.root / slug).mkdir(parents=True, exist_ok=True)
-        return _settings(self.root, slug), object()
+        return dataclasses.replace(current, project=slug), object()
 
 
 @pytest.fixture
@@ -276,3 +278,17 @@ def test_state_carries_a_reopener_and_defaults_to_none(root):
     state = State(config=_settings(root, "sylow"), session=None)
     assert state.reopen is None
     assert dataclasses.replace(state, reopen=Reopener(root)).reopen is not None
+
+
+async def test_the_switch_carries_the_configuration_the_session_is_running(ui, root):
+    """Not one the opener kept from launch: `/model` moves this and only this.
+
+    Without it a switch after `/model` silently reopens on the launch model.
+    """
+    _record(root, "sylow")
+    _record(root, "burnside")
+    running = dataclasses.replace(_settings(root, "sylow"), model="claude-haiku-4-5-20251001")
+    state = State(config=running, session=None, reopen=Reopener(root))
+    after = await handlers.handle_project(ui, "switch burnside", state)
+    assert state.reopen.carried == [running]
+    assert after.config.model == "claude-haiku-4-5-20251001"

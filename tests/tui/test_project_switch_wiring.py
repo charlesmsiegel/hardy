@@ -51,7 +51,7 @@ def test_plain_mode_hands_the_reopener_to_its_handlers(settings):
     printed: list[str] = []
     reopened = FakeSession()
 
-    def reopen(slug, ui):
+    def reopen(slug, ui, current):
         opened.append(slug)
         return settings, reopened
 
@@ -71,7 +71,7 @@ def test_run_session_threads_the_reopener_into_the_plain_state(settings, monkeyp
     (settings.root / "burnside" / layout.RECORD).write_text("{}", encoding="utf-8")
     opened: list[str] = []
 
-    def reopen(slug, ui):
+    def reopen(slug, ui, current):
         opened.append(slug)
         return settings, FakeSession()
 
@@ -81,7 +81,7 @@ def test_run_session_threads_the_reopener_into_the_plain_state(settings, monkeyp
 
 
 def test_the_shell_carries_the_reopener_in_its_state(settings):
-    def reopen(slug, ui): ...
+    def reopen(slug, ui, current): ...
 
     shell = Shell(settings, None, build_registry(), reopen=reopen)
     assert shell.state.reopen is reopen
@@ -127,7 +127,7 @@ async def test_a_switch_dispatched_by_the_shell_moves_the_session_and_its_histor
     (settings.root / "burnside" / layout.RECORD).write_text("{}", encoding="utf-8")
     opened: list[str] = []
 
-    def reopen(slug, ui):
+    def reopen(slug, ui, current):
         opened.append(slug)
         return dataclasses.replace(settings, project=slug), FakeSession()
 
