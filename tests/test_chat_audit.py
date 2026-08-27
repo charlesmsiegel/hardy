@@ -1069,3 +1069,38 @@ def test_two_declarations_sharing_a_leaf_are_attributed_apart(tmp_path: Path):
     }
     assert "sorryAx" in rested["A.t"]
     assert "sorryAx" not in rested["B.t"]
+
+
+def test_an_assumption_under_an_open_theorem_does_not_block_the_next_skeleton(tmp_path: Path):
+    """Open skeletons accumulate without LaTeX between them -- and an approved
+    axiom an *unfinished* proof leans on is not yet a claim owed to a reader.
+
+    The appendix obligation it raises is not an `open` one, so the ratchet
+    counted it and refused the next skeleton, putting a LaTeX round trip back
+    in the middle of exactly the workflow this change exists to open up.
+    """
+    first = CLEAN.rstrip() + " -- axioms: sorryAx, Papers.Smith.main\n"
+    second = (
+        "import Mathlib\n\ntheorem HardySecond : True := by exact True.intro"
+        " -- axioms: sorryAx\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("request_assumption", dict(APPROVAL), "ask"),
+            call("save_lean", {"source": first}, "lean"),
+            call("save_lean", {"path": "Second.lean", "source": second}, "lean"),
+        ]),
+        approvals=[True],
+    )
+    chat.send("Assume it, open one, then open another.")
+    saves = results(tmp_path, "save_lean")
+    assert all(item["ok"] for item in saves), saves[-1]["output"]
+    # The disclosure is still owed -- it is simply not what stops the next
+    # skeleton, and a report naming the theorem still has to settle it.
+    assert [item.kind for item in chat.obligations() if item.kind != "open"]
+    reported = chat._tool(
+        "report_result", {"theorems": ["HardyTarget"], "summary": "As far as I got."}
+    )
+    assert not reported.ok
+    assert "Papers.Smith.main" in reported.output
