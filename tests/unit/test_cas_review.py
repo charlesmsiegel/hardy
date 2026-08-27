@@ -762,3 +762,75 @@ def test_an_ordinary_traceback_still_follows_what_the_cell_printed(
     )
     assert record.status == "error"
     assert record.stderr.index("first") < record.stderr.index("ValueError")
+
+
+# ----------------------------------------------------- and the sixth review's
+
+
+def test_an_export_does_not_call_an_uncompared_namespace_verified(
+    sympy_session, tmp_path
+) -> None:
+    """`_restore` refuses to call a digestless replay a checked rebuild. An
+    export publishing the same replay as `verified` is the same overclaim on
+    the other path — and the export is the artifact a reader keeps."""
+    sympy_session.execute("import random")
+    sympy_session.execute("class Box: pass")
+    quiet = sympy_session.execute("box = Box(); box.payload = random.random()")
+    assert quiet.state_digest == "", "a default repr is not a fingerprint"
+
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.unverified >= 1, report.model_dump_json(indent=2)
+    assert report.reproduces is False
+    assert any("state not compared" in v.detail for v in report.verdicts)
+
+
+def test_an_export_of_a_fully_fingerprinted_session_still_verifies(
+    sympy_session, tmp_path
+) -> None:
+    """The refusal above must not have cost every export."""
+    sympy_session.execute("x = symbols('x')")
+    sympy_session.execute("factor(x**2 - 1)")
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.reproduces is True, report.model_dump_json(indent=2)
+
+
+def test_a_deleted_preamble_name_is_a_change_to_the_namespace(sympy_session) -> None:
+    """A name the preamble bound and a cell removed contributes nothing to a
+    walk of what is left, so a namespace missing it fingerprinted exactly like
+    one still holding it. `del symbols; 1 / 0` followed by an accepted `pass`
+    rebuilt with `symbols` quietly back, and was called faithful."""
+    broken = sympy_session.execute("del symbols; 1 / 0")
+    assert broken.status == "error"
+    assert broken.accepted is False
+
+    quiet = sympy_session.execute("pass")
+    assert quiet.accepted is True
+
+    sympy_session._drop_kernel()
+    with pytest.raises(CasError, match="did not reproduce"):
+        sympy_session.execute("1 + 1")
+
+
+def test_a_displayed_value_seen_only_in_prefix_is_not_skipped(sympy_session) -> None:
+    """The skip is justified by `value_repr` carrying the value, so it lasts
+    only while `value_repr` is the whole of it. A trailing value reported from
+    its prefix, skipped from the digest as well, would leave the differing
+    tail in neither — and a replay could rebuild a different one and match
+    both."""
+    session = CasSession(
+        backend=backend_for("sympy"),
+        command=None,
+        log_path=sympy_session.log_path.parent / "clipped.jsonl",
+        limits=RunLimits(cas_cell_seconds=120, cas_output_bytes=4_096),
+        cwd=sympy_session.cwd,
+    )
+    try:
+        session.execute("import random")
+        clipped = session.execute("[0] * 5000 + [random.random()]")
+        assert clipped.capture_truncated is True
+        assert clipped.state_digest == "", (
+            "a value Hardy could only see in prefix cannot be fingerprinted, "
+            "and `_` holds the whole of it"
+        )
+    finally:
+        session.close()

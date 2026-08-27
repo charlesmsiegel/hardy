@@ -322,6 +322,13 @@ class SympyBackend:
     # for the kernel and for the exported script alike, so the file a reader
     # runs is run the way its record was made.
     environment: dict[str, str] = {"PYTHONHASHSEED": "0"}
+    # This backend's protocol carries a fingerprint of the namespace, so a
+    # record without one means something specific happened -- a value Hardy
+    # could only see in prefix, or one whose repr says nothing about what it
+    # holds. Sentinel backends have no such protocol, where a missing digest
+    # is the norm and carries no signal; `records_state` is what lets an
+    # export tell those two silences apart.
+    records_state = True
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         return (
@@ -412,6 +419,10 @@ class _SentinelBackend:
     error_pattern: re.Pattern[str]
     echo: str
     environment: dict[str, str] = {}
+    # Neither Singular nor Macaulay2 can be asked what is in its namespace, so
+    # every record from them is digestless and no verdict can be drawn from
+    # that. What their replays check is what those replays can check.
+    records_state = False
 
     @property
     def transcript_prologue(self) -> tuple[str, ...]:

@@ -43,6 +43,7 @@ from .cas import (
     replay_in_fresh_kernel,
     reproduces,
     run_exported_script,
+    unobservable,
 )
 from .domain import FrozenModel
 from .layout import CAS_SCRATCH, WriteGuard
@@ -87,7 +88,15 @@ class ExportReport(FrozenModel):
         )
 
 
-def _verdicts(cells: tuple[CellRecord, ...], outcomes: list[Any]) -> list[CellVerdict]:
+def _verdicts(
+    cells: tuple[CellRecord, ...], outcomes: list[Any], backend: Any = None
+) -> list[CellVerdict]:
+    # Whether a missing digest on these records means anything. On the default
+    # backend it does: the protocol carries one, so its absence says Hardy
+    # could not fingerprint that namespace. On a sentinel backend every record
+    # is digestless and the absence says nothing at all, so drawing a verdict
+    # from it would mark every Singular and Macaulay2 cell unverified forever.
+    records_state = getattr(backend, "records_state", False)
     verdicts = []
     for record, outcome in zip(cells, outcomes, strict=True):
         if outcome is None:
@@ -122,6 +131,21 @@ def _verdicts(cells: tuple[CellRecord, ...], outcomes: list[Any]) -> list[CellVe
                     detail=(
                         "capture truncated at cas_output_bytes: the retained prefixes "
                         "match, and the discarded tails could not be compared"
+                    ),
+                )
+            )
+        elif records_state and unobservable(record):
+            # The replay reproduced everything Hardy can see and nothing more.
+            # `_restore` already refuses to call this a checked rebuild; an
+            # export publishing the same replay as `verified` would be the
+            # same overclaim on the other path.
+            verdicts.append(
+                CellVerdict(
+                    seq=record.seq,
+                    verdict="unverified",
+                    detail=(
+                        "output reproduced, state not compared: this kernel could not "
+                        "fingerprint the namespace this cell left"
                     ),
                 )
             )
@@ -609,7 +633,7 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
         budget_seconds=session.remaining_seconds,
         charge=session.charge,
     )
-    verdicts = _verdicts(cells, outcomes)
+    verdicts = _verdicts(cells, outcomes, session.backend)
 
     script_path = directory / f"session{session.backend.script_suffix}"
     notebook_path = directory / "session.ipynb"

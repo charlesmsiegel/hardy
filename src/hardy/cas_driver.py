@@ -668,6 +668,14 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
         digest.update(b"\0")
         digest.update(rendered.encode("utf-8", errors="backslashreplace"))
         digest.update(b"\0")
+    # A name the preamble bound and a cell removed contributes nothing to the
+    # loop above, so a namespace missing it fingerprinted exactly like one
+    # still holding it: `del symbols; 1 / 0` followed by an accepted `pass`
+    # rebuilt with `symbols` quietly back and was called faithful. Absence is
+    # as much a change as a new value, and is hashed as one.
+    for name in sorted((key for key in baseline if key not in namespace), key=repr):
+        digest.update(repr(name).encode("utf-8", errors="backslashreplace"))
+        digest.update(b"\0deleted\0")
     return digest.hexdigest()
 
 
@@ -703,8 +711,18 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
         if trailing is not None:
             value = eval(compile(trailing, CELL_FILENAME, "eval"), namespace)
             if value is not None:
-                namespace["_"] = LAST_DISPLAYED = value
+                namespace["_"] = value
                 value_repr, oversized = bounded_repr(value, limit)
+                # The skip below is justified by `value_repr` carrying this
+                # value, so it lasts only while `value_repr` is the whole of
+                # it. A trailing `[0] * 5000 + [random.random()]` is reported
+                # from its prefix, and skipping `_` as well would leave the
+                # differing tail in neither the repr nor the digest -- a
+                # replay could rebuild a different last element and match
+                # both. Left unset, `_` goes through the digest, truncates
+                # there too, and the fingerprint is withheld.
+                if not oversized:
+                    LAST_DISPLAYED = value
     # Hardy asked for this one, so it is reported under its own name rather
     # than as the cell having gone wrong -- and, far more importantly, it is
     # *answered*. Catching it here is what makes an interrupt cost one cell
