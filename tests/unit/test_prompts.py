@@ -119,8 +119,8 @@ def test_the_recorded_prompt_set_is_the_one_that_was_reviewed():
     this pin in the same commit — a deliberate act, not a side effect.
     """
     prompts = importlib.import_module("hardy.prompts")
-    assert prompts.PROMPT_SET_VERSION == "2026-08-02.1"
-    assert prompts.PROMPT_SET_SHA256 == "7ec02ba21dbf43030c0584482a03481fd8731d9efe3efa825fa21c2737d00616"
+    assert prompts.PROMPT_SET_VERSION == "2026-08-27.1"
+    assert prompts.PROMPT_SET_SHA256 == "1539ab66b8b01f4bad35f8d54fb782b1fdcf005a13a987edec7f206abb8f10b3"
 
 
 def test_each_entry_point_sends_the_template_rather_than_its_own_copy():
@@ -157,6 +157,36 @@ def test_the_prompt_set_hash_covers_the_template_files():
     payload = prompts._prompt_set_payload()
     assert payload["proof"] == prompts.source("staged/proof")
     assert payload["version"] == prompts.PROMPT_SET_VERSION
+
+
+def test_the_prompt_set_hash_covers_every_staged_template():
+    """Enumerated rather than listed, because the list was once wrong.
+
+    `staged/structure` was sent to the model on every staged turn and left out
+    of the payload, so editing the JSON contract a response must satisfy
+    changed what a run was told while its recorded `prompt_set_sha256` stayed
+    byte-identical. Reading the directory means the next template added cannot
+    repeat that quietly.
+    """
+    prompts = importlib.import_module("hardy.prompts")
+    payload = prompts._prompt_set_payload()
+    templates = sorted(path.name[: -len(prompts.SUFFIX)] for path in (SOURCE / "prompts" / "staged").glob(f"*{prompts.SUFFIX}"))
+    assert templates, "no staged templates found; the glob is looking in the wrong place"
+    missing = [name for name in templates if payload.get(name) != prompts.source(f"staged/{name}")]
+    assert not missing, f"staged templates the recorded hash does not cover: {missing}"
+
+
+def test_the_prompt_set_hash_is_the_staged_set_and_says_so():
+    """The other half of the decision, pinned so it stays a decision.
+
+    `chat` and `chat_cas` serve an interactive session, which is not a
+    comparable experimental unit, and `batch/*` runs record no prompt-set hash
+    at all — so there is no manifest for them to be absent from. Adding either
+    to the payload is defensible; doing it by accident is not.
+    """
+    prompts = importlib.import_module("hardy.prompts")
+    templates = {path.name[: -len(prompts.SUFFIX)] for path in (SOURCE / "prompts" / "staged").glob(f"*{prompts.SUFFIX}")}
+    assert set(prompts._prompt_set_payload()) == templates | {"version"}
 
 
 def test_the_chat_prompt_describes_the_file_tree():
