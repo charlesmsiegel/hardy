@@ -473,10 +473,20 @@ def _theorem_obligations(
     behind any of them.
     """
     approved = {str(item["formal_name"]) for item in assumptions}
+    # A bare entry stands for its sole qualified declaration here too. Every
+    # other check in this module resolves that alias, and an exact match alone
+    # left a correctly labelled environment for `A.t`, registered as `t`,
+    # reading as backed by nothing -- which refused the report that named it.
+    by_leaf: dict[str, list[str]] = {}
+    for name in theorems:
+        by_leaf.setdefault(name.rsplit(".", 1)[-1], []).append(name)
+    names = set(theorems) | {
+        leaf for leaf, carrying in by_leaf.items() if len(carrying) == 1
+    }
     backed = {
         str(entry.get("latex_name") or "")
         for entry in registry
-        if str(entry.get("formal_name") or "") in theorems
+        if str(entry.get("formal_name") or "") in names
         or str(entry.get("formal_name") or "") in approved
     }
     owed: list[Obligation] = []

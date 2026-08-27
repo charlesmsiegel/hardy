@@ -61,6 +61,7 @@ from .workspace import (
     normalise_lean,
     safe_relative,
     statements,
+    strip_comments,
     unreadable_assumptions,
 )
 from .writeup import escape_tex_text
@@ -1602,6 +1603,11 @@ class MathematicsSession:
         appears nowhere in the file. The textual fallback covers what
         `declarations` does not read -- an approved `axiom`, a `def`, a
         structure -- so a name backed by one of those is not reported as lost.
+
+        The fallback reads code, not comments or strings. A helper file saying
+        `-- HardyLater will go here` made this answer that the result already
+        existed, and tidying that line away later then read as the declaration
+        vanishing -- refusing a save over a name nothing ever declared.
         """
         declared: set[str] = set()
         for source in sources.values():
@@ -1615,7 +1621,7 @@ class MathematicsSession:
             if len(sharing) == 1:
                 return True
         return any(
-            re.search(rf"(?<![\w'.]){re.escape(formal_name)}(?![\w'])", source)
+            re.search(rf"(?<![\w'.]){re.escape(formal_name)}(?![\w'])", strip_comments(source))
             for source in sources.values()
         )
 

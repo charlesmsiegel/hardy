@@ -29,6 +29,12 @@ BUILTIN = {"Mathlib", "Init", "Std", "Lean", "Batteries"}
 # a hole, and a test naming it in a marker must not read as a `sorry`.
 HOLE = re.compile(r"\b(sorry|admit)\b")
 MARKER = re.compile(r"--\s*axioms:\s*(.*)")
+# Which of a module's declarations carry a literal hole. Written into the olean
+# beside the axiom marker, because the audit elaborates a file that *imports*
+# the module: without it, per-declaration attribution never reaches the probe
+# that asks, and every export of a module with one hole reports `sorryAx`.
+# Present only when there is at least one, so its absence means "no holes here".
+HOLED_MARK = re.compile(r"--\s*holed:\s*(.*)")
 EXPORTS = re.compile(r"--\s*exports:\s*(.*)")
 # A declaration another module can name. `private` deliberately makes one that
 # nothing outside this file can reach, which is exactly the visibility a caller
@@ -36,6 +42,15 @@ EXPORTS = re.compile(r"--\s*exports:\s*(.*)")
 DECLARED = re.compile(
     r"(?m)^\s*(?:(private|protected)\s+)?(?:theorem|lemma)\s+(«[^»\n]+»|\S+)"
 )
+# Where any declaration begins, used to cut the source into one chunk each.
+OPENS = re.compile(
+    r"(?m)^[ \t]*(?:(?:private|protected|noncomputable|nonrec)\s+)*"
+    r"(?:theorem|lemma|def|abbrev|instance|example)\b"
+)
+# A proof body this stand-in is willing to call elaborated. Everything else is
+# a type error, which is what keeps "only the hole is forgiven" honest: a file
+# whose hole sits beside a broken proof must not pass because of the hole.
+SETTLED = re.compile(r"\b(?:exact True\.intro|trivial|rfl|sorry|admit)\b")
 # Everything else a module puts in the environment under a global name. Not a
 # `#print axioms` target, but it still occupies the name -- two imported modules
 # defining the same `helper` collide exactly as two theorems would, and a
@@ -137,17 +152,65 @@ def listed(pattern: re.Pattern[str], text: str) -> list[str]:
 # What this elaboration would report: what the source itself declares, plus what
 # every workspace module it imports already carried into its olean.
 axioms = marked(source)
-# A literal `sorry` is what real Lean reports as `sorryAx`, so this stand-in
-# has to as well. Without it a test could only fake a hole through the marker,
-# which models a hole reached through an *import* and not one written here.
 code = code_only(source)
+
+
+def spans(text: str) -> list[tuple[str | None, str]]:
+    """Each declaration in `text`, as the name it declares and its body.
+
+    A declaration runs to the start of the next one, which is as much structure
+    as this stand-in needs: it is deciding what a body *looks* like, not
+    elaborating it.
+    """
+    starts = [match.start() for match in OPENS.finditer(text)]
+    found: list[tuple[str | None, str]] = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(text)
+        chunk = text[start:end]
+        named = DECLARED.search(chunk) or DEFINED.search(chunk)
+        found.append((named.group(2) if named else None, chunk))
+    return found
+
+
+# Which declarations carry a hole, rather than whether the module does. Real
+# `#print axioms` answers about one declaration, so a stand-in that attached
+# `sorryAx` to the whole module marked a finished theorem open whenever an
+# unfinished one sat beside it -- and every test about closing one hole while
+# another stays open would have been exercising the opposite of production.
+holed = {
+    name.strip("«»").rsplit(".", 1)[-1]
+    for name, body in spans(code)
+    if name and HOLE.search(body)
+}
+# The olean stays module-wide: an importer of a file with any hole in it is
+# reaching into a module that rests on one, and this stand-in's import model
+# has no finer grain than the module to offer.
+#
+# `from_hole` records that the hole written *here* is the only thing putting
+# `sorryAx` in this list. A marker saying `-- axioms: sorryAx`, or an import
+# carrying one, is module-wide by this stand-in's model and applies to every
+# declaration -- so only the literal case may be narrowed per declaration.
+# `plain` records that something said `sorryAx` without saying *which*
+# declaration carries it -- an `-- axioms:` marker here, or an imported olean
+# with no attribution. Then nothing may be narrowed: the stand-in has been told
+# the module rests on a hole and not where.
+plain = "sorryAx" in axioms
 if HOLE.search(code) and "sorryAx" not in axioms:
     axioms.append("sorryAx")
+# Holes reached through an import, and whether any import carries one at all.
+# A declaration *here* may use an imported holed one, and this stand-in has no
+# dependency graph to say which -- so when an import carries a hole, everything
+# this file declares reports it. That is the direction that over-reports.
+imported_holes: set[str] = set()
+imports_holed = False
 # What an importer of this file would be able to name. Private declarations are
 # left out on purpose: Lean mangles them so no other module can refer to them.
+# Read from `code`, so a `theorem` written inside a comment or a string exports
+# nothing -- it is not a declaration, and offering it as one would let a probe
+# ask Lean about a name that does not exist.
 exports = [
     name
-    for modifier, name in DECLARED.findall(source) + DEFINED.findall(source)
+    for modifier, name in DECLARED.findall(code) + DEFINED.findall(code)
     if modifier != "private"
 ]
 visible: list[str] = []
@@ -174,6 +237,12 @@ for line in source.splitlines():
         print(f"{path.name}:1:0: error: unknown module prefix '{name}'")
         raise SystemExit(1)
     carried = found.read_text(encoding="utf-8", errors="replace")
+    carried_holes = listed(HOLED_MARK, carried)
+    if carried_holes:
+        imports_holed = True
+        imported_holes.update(item.rsplit(".", 1)[-1] for item in carried_holes)
+    elif "sorryAx" in marked(carried):
+        plain = True
     axioms.extend(item for item in marked(carried) if item not in axioms)
     for item in listed(EXPORTS, carried):
         if item in visible:
@@ -194,6 +263,19 @@ def report_axioms() -> None:
     # To end of line, not to the first space: `theorem «first result»` is an
     # ordinary Lean declaration and `\S+` would report half its name.
     for name in re.findall(r"(?m)^#print axioms (.+?)\s*$", source):
+        # Per declaration, like the real thing. `sorryAx` is added for the one
+        # that actually carries the hole, not for everything the module exports.
+        reported = list(axioms)
+        leaf = name.strip("«»").rsplit(".", 1)[-1]
+        rests = (
+            leaf in holed
+            or leaf in imported_holes
+            # Declared here, beside an import that carries a hole: this
+            # stand-in cannot tell whether it uses one, so it says it does.
+            or (imports_holed and leaf in {item.strip("«»").rsplit(".", 1)[-1] for item in exports})
+        )
+        if "sorryAx" in reported and not plain and not rests:
+            reported.remove("sorryAx")
         # Asking about a name this file cannot see is an error, not silence --
         # a stand-in that answered anyway would hide the caller's real bug.
         # Matched on the last component too, because this stand-in does not
@@ -204,8 +286,8 @@ def report_axioms() -> None:
         if name not in reachable and name.rsplit(".", 1)[-1] not in reachable:
             print(f"{path.name}:1:0: error: unknown identifier '{name}'")
             raise SystemExit(1)
-        if axioms:
-            print(f"'{name}' depends on axioms: [{', '.join(axioms)}]")
+        if reported:
+            print(f"'{name}' depends on axioms: [{', '.join(reported)}]")
         else:
             print(f"'{name}' does not depend on any axioms")
     # `#print <name>` on its own prints the declaration Lean resolves.
@@ -219,6 +301,9 @@ def write_olean() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     # The marker rides along so an importer of this module sees the same axioms.
     trailer = f"-- axioms: {', '.join(axioms)}\n".encode() if axioms else b""
+    # Which declarations the hole belongs to, so an importer's probe can answer
+    # about one of them rather than about the module.
+    trailer += f"-- holed: {', '.join(sorted(holed))}\n".encode() if holed else b""
     # And the names an importer may use, for the same reason.
     trailer += f"-- exports: {', '.join(exports)}\n".encode() if exports else b""
     output.write_bytes(OLEAN_PREFIX + trailer)
@@ -251,6 +336,14 @@ if "trace_state" in source:
 # After `trace_state`, because the goal probe is built as `by trace_state
 # sorry` and its caller wants the goal printed rather than an olean written.
 if HOLE.search(code):
+    # Only the hole is forgiven. A declaration beside it whose body this
+    # stand-in does not recognise is still a type error, or a holed fixture
+    # would be accepted here while real Lean rejected the file -- and the
+    # feature's whole claim is that the file must otherwise elaborate.
+    broken = [name for name, chunk in spans(code) if not SETTLED.search(chunk)]
+    if broken:
+        print(f"{path.name}:3:28: error: type mismatch in {broken[0]}")
+        raise SystemExit(1)
     print(f"{path.name}:1:0: warning: declaration uses 'sorry'")
     report_axioms()
     write_olean()

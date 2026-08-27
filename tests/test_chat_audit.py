@@ -923,3 +923,118 @@ def test_closing_a_hole_on_its_own_is_always_allowed(tmp_path: Path):
     chat.send("Open it, then close it.")
     saves = results(tmp_path, "save_lean")
     assert all(item["ok"] for item in saves), saves
+
+
+def test_a_bare_registry_name_backs_an_open_theorem_environment(tmp_path: Path):
+    """The rest of `outstanding` lets a bare entry stand for its sole qualified
+    declaration; the environment scan did not, so a correctly labelled theorem
+    environment for `A.t` registered as `t` read as backed by nothing."""
+    source = (
+        "import Mathlib\nnamespace A\ntheorem t : True := by exact True.intro"
+        " -- axioms: sorryAx\nend A\n"
+    )
+    carried = (
+        "\\documentclass{article}\n"
+        "\\newtheorem{theorem}{Theorem}\n\\begin{document}\n"
+        "\\begin{theorem}\\label{thm:t}\nIt holds.\n\\end{theorem}\n"
+        "\\begin{verbatim}\ntheorem t : True\n\\end{verbatim}\n"
+        "\\end{document}\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("record_name", {"formal_name": "t", "latex_name": "thm:t",
+                                 "description": "A result."}, "name"),
+            call("save_lean", {"source": source}, "lean"),
+            call("save_latex", {"source": carried}, "tex"),
+        ]),
+        registered=(),
+    )
+    chat.send("Register a bare name, state it in a namespace, write it up.")
+    assert not [item for item in chat.obligations() if item.kind == "theorem"]
+    reported = chat._tool("report_result", {"theorems": ["A.t"], "summary": "So far."})
+    assert reported.ok, reported.output
+    assert "partial" in reported.output
+
+
+def test_a_registered_name_mentioned_only_in_a_comment_never_existed(tmp_path: Path):
+    """`_resolves` falls back to a textual scan, which reads comments. A helper
+    that merely names the coming result made the guard believe it existed, so
+    editing that comment away read as the declaration vanishing."""
+    mentions = (
+        "import Mathlib\n\n-- HardyLater will go here\n"
+        "lemma hardyHelp : True := by exact True.intro\n"
+    )
+    without = "import Mathlib\n\nlemma hardyHelp : True := by exact True.intro\n"
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("record_name", {"formal_name": "HardyLater", "latex_name": "thm:later",
+                                 "description": "coming"}, "name"),
+            call("save_lean", {"path": "Helper.lean", "source": mentions}, "lean"),
+            call("save_lean", {"path": "Helper.lean", "source": without}, "lean"),
+        ]),
+        registered=(),
+    )
+    chat.send("Mention the coming result, then tidy the comment away.")
+    saves = results(tmp_path, "save_lean")
+    assert all(item["ok"] for item in saves), saves
+
+
+def test_a_hole_marks_only_the_declaration_that_carries_it(tmp_path: Path):
+    """`#print axioms` answers about one declaration. A stand-in that attached
+    the hole to the whole module marked a finished theorem open whenever an
+    unfinished one sat beside it, so every test about closing one hole while
+    another stays open exercised the opposite of production."""
+    source = (
+        "import Mathlib\n\ntheorem HardyTarget : True := by sorry\n"
+        "theorem HardySecond : True := by exact True.intro\n"
+    )
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": source}, "lean")]))
+    chat.send("Save one open and one closed.")
+    assert results(tmp_path, "save_lean")[-1]["ok"]
+    rested = {
+        entry["name"]: entry["axioms"]
+        for entry in state(tmp_path)["audit"]["Main"]["declarations"]
+    }
+    assert "sorryAx" in rested["HardyTarget"]
+    assert "sorryAx" not in rested["HardySecond"]
+    assert [item.subject for item in chat.obligations() if item.kind == "open"] == [
+        "HardyTarget"
+    ]
+
+
+def test_only_the_hole_is_forgiven_not_the_rest_of_the_file(tmp_path: Path):
+    """A holed file still has to elaborate. Accepting one because it had a hole
+    would let a hermetic test assert that `save_lean` takes a file real Lean
+    rejects, which is the promise this whole change rests on."""
+    source = (
+        "import Mathlib\n\ntheorem HardyTarget : True := by sorry\n"
+        "theorem HardySecond : True := by nonsense_tactic\n"
+    )
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": source}, "lean")]))
+    chat.send("Save a skeleton with a broken proof beside it.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert not saved(tmp_path).exists()
+
+
+def test_a_theorem_importing_a_holed_module_is_still_open(tmp_path: Path):
+    """The direction attribution must never close. Narrowing a hole to the
+    declaration that writes it is only sound inside one file; across an import
+    this stand-in has no dependency graph, so anything declared beside a holed
+    import reports the hole rather than risking a false clean."""
+    holed = "import Mathlib\n\nlemma hardyStep : True := by sorry\n"
+    user = "import Step\n\ntheorem HardyTarget : True := by exact True.intro\n"
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"path": "Step.lean", "source": holed}, "lean"),
+            call("save_lean", {"source": user}, "lean"),
+        ]),
+    )
+    chat.send("Save a holed helper, then a theorem importing it.")
+    assert all(item["ok"] for item in results(tmp_path, "save_lean"))
+    assert "HardyTarget" in [
+        item.subject for item in chat.obligations() if item.kind == "open"
+    ]
