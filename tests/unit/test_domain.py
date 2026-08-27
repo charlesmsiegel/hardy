@@ -16,7 +16,14 @@ def test_default_limits_match_approved_design() -> None:
     assert limits.active_seconds == 1_800
     assert limits.proof_seconds == 1_200
     assert limits.official_checks == 40
-    assert limits.lean_process_seconds == 30
+    # Revised from 30 on measurement, not preference. Every source Hardy sends
+    # Lean opens with `import Mathlib`: that import alone took ~21s warm and
+    # 223s cold on a developer machine, and `exact?` on a one-line goal took
+    # 22s. At 30 the budget sat under the floor for any real work, and
+    # `search_declarations` timed out on every call while reporting the timeout
+    # as a search that found nothing. The run stays bounded by `proof_seconds`
+    # (1200), which still admits six checks at this size.
+    assert limits.lean_process_seconds == 180
     assert limits.tex_process_seconds == 120
     assert limits.formalization_proposals == 5
     assert limits.model_observation_bytes == 32 * 1024
