@@ -268,6 +268,13 @@ class ProjectOpener:
         from the file: `/model` may have moved the session since launch, and
         an explicit override here wins over the file even when the user also
         saved it, so re-reading would quietly reopen on the wrong model.
+
+        `project_context` comes from `current` for the same reason and a
+        different route: `--no-project-context` is a flag, so it lives in the
+        resolved configuration and in no file this would re-read. Left out, a
+        switch turned the project's own `AGENTS.md` back on for a user who had
+        just asked for it to be left alone -- a deliberate choice reversed by
+        an unrelated command.
         """
         args = self._args
         return configuration.load(
@@ -275,6 +282,7 @@ class ProjectOpener:
             root=getattr(args, "root", None) or current.root,
             project=slug,
             model=current.model,
+            project_context=current.project_context,
             lean_command=getattr(args, "lean_command", None),
             lean_project=getattr(args, "lean_project", None),
             latex_command=getattr(args, "latex_command", None),
@@ -317,6 +325,7 @@ class ProjectOpener:
                 cas_detail=cas_detail,
                 search=search,
                 search_detail=self._search_detail,
+                project_context=config.project_context,
             )
         except BaseException:
             # The kernel this call started, and only that one. The session the
