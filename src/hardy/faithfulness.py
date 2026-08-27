@@ -26,7 +26,6 @@ a review: neither is a pass, and there is no third option that proceeds.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 from collections.abc import Callable
 from pathlib import PurePosixPath
@@ -44,6 +43,7 @@ from .storage import RunStore
 
 ARTIFACT = PurePosixPath("faithfulness.json")
 PROMPT_ARTIFACT = PurePosixPath("faithfulness-prompt.md")
+SCHEMA_ARTIFACT = PurePosixPath("faithfulness-schema.json")
 
 
 def review_translation(
@@ -80,6 +80,7 @@ def review_translation(
     # which would leave `prompt_sha256` reproducible and yet not the identity
     # of the question -- the one thing it exists to be.
     asked = store.write_text(PROMPT_ARTIFACT, prompt)
+    schema = store.write_text(SCHEMA_ARTIFACT, _schema_source())
     identity = {
         "claim_sha256": claim.content_hash,
         "reviewer_model": model,
@@ -95,7 +96,12 @@ def review_translation(
         # `prompt_set_sha256` does not cover it. Without this, editing that
         # model would change the request and could change the answer while
         # every recorded hash stayed the same.
-        "response_schema_sha256": _schema_digest(),
+        #
+        # Kept as a file for the same reason the prompt is: a digest the
+        # release audit can only recompute from today's code would flag every
+        # run made under an earlier schema, while one taken over an artifact in
+        # the run directory is checkable against what that run actually used.
+        "response_schema_sha256": schema.sha256,
     }
     # A thread of its own, isolated: no tools, and for the backends whose
     # agent has its own file access, no sight of the run directory either.
@@ -157,15 +163,14 @@ def review_translation(
     return verdict
 
 
-def _schema_digest() -> str:
-    """The response schema the reader has to satisfy, hashed canonically."""
-    canonical = json.dumps(
+def _schema_source() -> str:
+    """The response schema the reader has to satisfy, canonically rendered."""
+    return json.dumps(
         FaithfulnessReview.model_json_schema(),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    )
 
 
 def _stop(runtime: Any, thread: Any) -> None:

@@ -234,7 +234,10 @@ Priority labels are sequencing hints:
   the run directory rather than self-asserted — recorded in the trajectory
   beside the frozen claim, and carried in the manifest along with the hash of
   the schema the answer had to satisfy — generated from the model rather than
-  written in a template, so nothing else covers it. The compiled document names
+  written in a template, so nothing else covers it. Both the question and that
+  schema are kept as artifacts, so the release audit recomputes their hashes
+  from what the run actually used rather than from whatever the code says
+  today. The compiled document names
   the reader, its backend and its verdict, and says outright when the reader's
   isolation was never established, because someone holding only the paper
   cannot go and check. There `user_approved`

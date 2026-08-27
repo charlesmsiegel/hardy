@@ -395,6 +395,7 @@ def _faithfulness_issues(
     claim: FrozenClaim | None,
     verdict_path: Path,
     prompt_path: Path,
+    schema_path: Path,
 ) -> list[str]:
     """Check the recorded faithfulness verdict against the run it grades.
 
@@ -436,6 +437,15 @@ def _faithfulness_issues(
         issues.append("faithfulness review names a prompt the run did not keep")
     elif hashlib.sha256(prompt_path.read_bytes()).hexdigest() != graded.prompt_sha256:
         issues.append("faithfulness prompt hash differs from faithfulness-prompt.md")
+    # The response contract, on the same terms as the prompt. Recorded and
+    # never rechecked, it would be one more number taken on trust -- and the
+    # schema is the half that says what the reader was made to answer.
+    if not graded.response_schema_sha256:
+        issues.append("faithfulness review records no response schema identity")
+    elif not schema_path.exists():
+        issues.append("faithfulness review names a schema the run did not keep")
+    elif hashlib.sha256(schema_path.read_bytes()).hexdigest() != graded.response_schema_sha256:
+        issues.append("faithfulness schema hash differs from faithfulness-schema.json")
     if claim is None:
         issues.append("faithfulness review names no Frozen Claim in this run")
     elif graded.claim_sha256 != claim.content_hash:
@@ -495,6 +505,7 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
             claim,
             run_dir / "faithfulness.json",
             run_dir / "faithfulness-prompt.md",
+            run_dir / "faithfulness-schema.json",
         )
     )
     main = run_dir / "lean" / "Main.lean"
