@@ -187,6 +187,18 @@ mutated the namespace, so a live session and a clean script can disagree
 without anything saying so. A rebuild that reconstructs different values
 poisons the session rather than reporting success.
 
+Comparing output is not the same as comparing state, and the difference is
+where a rebuild used to overclaim. `import random; x = random.random()` prints
+nothing at all: a replay that rebuilt a different `x` reproduced three empty
+fields and was called faithful, with every later cell then standing on a value
+nobody had compared. So the kernel fingerprints its own namespace after every
+cell and the record carries the digest, which closes the other half of the same
+hole for free — a cell whose recorded state includes what a *failed* cell left
+behind cannot be matched by a replay that never ran the failure. Only the
+default backend can do this: Singular and Macaulay2 have no protocol to carry
+it, so a rebuild there names the cells whose replay proved nothing rather than
+reporting a rebuild as though it had been checked.
+
 Persistence is also why the kernel is interrupted rather than timed out. A cell
 sent under the wrong monomial ordering can run far longer than intended, and
 killing the kernel to stop it discards every value the session accumulated —
@@ -204,6 +216,19 @@ against the record too. A kernel evaluates a trailing expression and reports its
 value where a plain script discards it, and a construct that is legal at the
 head of a cell can be illegal partway down a file. Both verdicts are published;
 an export reproduces only when both hold.
+
+The published script brackets its own transcript, because the alternative was
+to guess. Comparing the file's output against the record meant deciding which
+lines an interpreter had added on its own account — a startup banner, a
+trailing prompt — and the answer was to look for the record *inside* the
+transcript rather than requiring the two to be equal. That accepted far too
+much: extra output before or after the record still verified, and a session
+that recorded nothing accepted a script that printed anything. A cell guarded
+by `if __name__ == "__main__":` is silent under the driver and prints from the
+published file, and the export called that reproduction. Two statements the
+script prints itself say where its output begins and ends; what falls outside
+them is the interpreter's, and what falls between has to equal the record line
+for line.
 
 The same bounded runtime serves the interactive chat, staged runs, and the MCP
 server, so a cell costs the same budget whichever transport asked for it.
