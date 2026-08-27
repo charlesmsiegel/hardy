@@ -223,7 +223,9 @@ Priority labels are sequencing hints:
   wrong translation is usually produced at high confidence. The gate is
   fail-closed and terminal: a disputed translation — or a reader that could not
   be reached — stops the run and surfaces the mismatch, since a halt costs one
-  question and a proof of the wrong theorem costs the whole run. The verdict is
+  question and a proof of the wrong theorem costs the whole run. The two end
+  under different terminal reasons and different advice, because a translation
+  that was read and refused is not one nobody read. The verdict is
   written to `faithfulness.json` beside the rendered question as
   `faithfulness-prompt.md` — so the recorded prompt hash is recomputable from
   the run directory rather than self-asserted — recorded in the trajectory

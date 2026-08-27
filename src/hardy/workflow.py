@@ -31,6 +31,7 @@ from .config import Config
 from .domain import (
     DocumentStatus,
     EnvironmentIdentity,
+    FaithfulnessOutcome,
     FaithfulnessStatus,
     FaithfulnessVerdict,
     FormalizationProposal,
@@ -350,7 +351,14 @@ class ProveWorkflow:
                         active_started,
                         user_wait,
                         grades,
-                        TerminalReason.FAITHFULNESS_DISPUTED,
+                        # Which of the two it was. A run nobody read is not a
+                        # run whose translation was refused, and automation
+                        # reading `terminal_reason` acts on them differently.
+                        (
+                            TerminalReason.FAITHFULNESS_UNAVAILABLE
+                            if verdict.outcome is FaithfulnessOutcome.UNAVAILABLE
+                            else TerminalReason.FAITHFULNESS_DISPUTED
+                        ),
                         approved_claim,
                     )
                 # Kept for the final grades. The running `grades` above

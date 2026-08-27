@@ -247,6 +247,7 @@ def test_console_terminal_says_why_a_review_could_not_be_obtained() -> None:
     assert 'unavailable' in rendered
     assert 'no structured final response' in rendered
     assert 'The run stops here.' in rendered
+    assert 'No reader assessed the translation' in rendered
 
 
 def test_the_result_summary_says_whether_the_translation_was_read() -> None:
@@ -266,3 +267,28 @@ def test_the_result_summary_says_whether_the_translation_was_read() -> None:
     )
 
     assert 'Faithfulness: not_approved (no independent review)' in '\n'.join(output)
+
+
+def test_an_unavailable_review_does_not_tell_the_user_to_restate_the_claim() -> None:
+    """Nothing was read, so there is nothing to reword.
+
+    Sending the user to rewrite a claim no reader ever saw points them at
+    something that was never the problem.
+    """
+    cli = importlib.import_module('hardy.cli')
+    domain = importlib.import_module('hardy.domain')
+    output = []
+    terminal = cli.ConsoleTerminal(input_fn=lambda _: '', output=output.append)
+
+    terminal.show_faithfulness(
+        _verdict(
+            domain,
+            domain.FaithfulnessOutcome.UNAVAILABLE,
+            detail='ConnectionError: the provider closed the connection',
+        )
+    )
+
+    rendered = '\n'.join(output)
+    assert 'The run stops here.' in rendered
+    assert 'No reader assessed the translation' in rendered
+    assert 'Restate the claim' not in rendered
