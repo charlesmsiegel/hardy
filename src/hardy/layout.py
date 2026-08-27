@@ -172,6 +172,35 @@ class Layout:
     def input_history(self) -> Path:
         return self.local / INPUT_HISTORY
 
+    def is_bare_scaffold(self) -> bool:
+        """Whether the problem directory holds only what `ensure` made.
+
+        `ensure` runs before the record is written, so an attempt that failed
+        in between -- a refused transcript, a full disk -- leaves the trees and
+        the ignore file with nothing to find them by: `existing_projects` wants
+        a record, so `/project switch` cannot see it, and a bare
+        "does it exist" test reads it as somebody else's directory, so
+        `/project new` refuses it forever. The user is left with a name they
+        can never use again and no way to know why.
+
+        Answered by naming what Hardy itself creates rather than by deleting
+        anything: a directory holding one unexpected entry is somebody's work
+        and stays refused, and one holding only Hardy's own empty scaffold is
+        a second attempt at the same problem.
+
+        An EMPTY directory is not a leftover and is refused with the rest.
+        `ensure` creates `lean/` immediately after the problem directory
+        itself, so Hardy never leaves an empty one; a `mkdir` a user made for
+        their own reasons is theirs, and "every entry is one of ours" is
+        vacuously true of nothing at all.
+        """
+        if not self.problem.is_dir() or self.problem.is_symlink():
+            return False
+        made = {directory.name for directory in (self.lean, self.tex, self.cas, self.local, self.build)}
+        made.add(".gitignore")
+        present = list(self.problem.iterdir())
+        return bool(present) and all(child.name in made for child in present)
+
     def resolved_problem(self) -> Path:
         """The problem directory, proven to be a direct child of the root.
 

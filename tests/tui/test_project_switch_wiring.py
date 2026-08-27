@@ -21,6 +21,7 @@ from hardy import layout
 from hardy.tui import dispatch, run_session
 from hardy.tui.handlers import build_registry
 from hardy.tui.plain import run as run_plain
+from hardy.tui.ports import State
 from hardy.tui.shell import Shell
 
 from .conftest import Streams
@@ -51,7 +52,7 @@ def test_plain_mode_hands_the_reopener_to_its_handlers(settings):
     printed: list[str] = []
     reopened = FakeSession()
 
-    def reopen(slug, ui, current):
+    def reopen(slug, confirm, current):
         opened.append(slug)
         return settings, reopened
 
@@ -71,7 +72,7 @@ def test_run_session_threads_the_reopener_into_the_plain_state(settings, monkeyp
     (settings.root / "burnside" / layout.RECORD).write_text("{}", encoding="utf-8")
     opened: list[str] = []
 
-    def reopen(slug, ui, current):
+    def reopen(slug, confirm, current):
         opened.append(slug)
         return settings, FakeSession()
 
@@ -81,7 +82,7 @@ def test_run_session_threads_the_reopener_into_the_plain_state(settings, monkeyp
 
 
 def test_the_shell_carries_the_reopener_in_its_state(settings):
-    def reopen(slug, ui, current): ...
+    def reopen(slug, confirm, current): ...
 
     shell = Shell(settings, None, build_registry(), reopen=reopen)
     assert shell.state.reopen is reopen
@@ -127,7 +128,7 @@ async def test_a_switch_dispatched_by_the_shell_moves_the_session_and_its_histor
     (settings.root / "burnside" / layout.RECORD).write_text("{}", encoding="utf-8")
     opened: list[str] = []
 
-    def reopen(slug, ui, current):
+    def reopen(slug, confirm, current):
         opened.append(slug)
         return dataclasses.replace(settings, project=slug), FakeSession()
 
@@ -185,3 +186,91 @@ async def test_a_command_that_moves_no_files_leaves_the_history_alone(settings):
     assert terminal.state.config.model == "other"
     assert terminal._box.buffer.history is history
     assert terminal.history_path == settings.layout.local / "input-history"
+
+
+class Recording(Streams):
+    """A session that remembers the questions it was actually asked."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.asked: list[str] = []
+
+    def send(self, text: str) -> str:
+        self.asked.append(text)
+        return f"{self.name} answered"
+
+    def switch_model(self, model): ...
+    def record_abandonment(self, reason): ...
+
+
+def test_a_turn_after_a_switch_goes_to_the_problem_now_open(settings, tmp_path):
+    """`--plain` drove the session it was handed, not the one in its state.
+
+    After a switch that session belongs to the problem the user has left: its
+    provider thread, its transcript, and a computer algebra kernel the switch
+    has already closed. Every question after a switch went to it, and the
+    problem actually open received nothing.
+    """
+    (settings.root / "burnside").mkdir(parents=True, exist_ok=True)
+    (settings.root / "burnside" / layout.RECORD).write_text("{}", encoding="utf-8")
+    left, opened = Recording("sylow"), Recording("burnside")
+
+    def reopen(slug, confirm, current):
+        return dataclasses.replace(current, project=slug), opened
+
+    run_plain(
+        settings,
+        left,
+        out=lambda text: None,
+        read=_scripted(["/project switch burnside", "a question about burnside", "/exit"]),
+        reopen=reopen,
+    )
+
+    assert opened.asked == ["a question about burnside"]
+    assert left.asked == []
+
+
+def test_the_plain_fallback_keeps_the_problem_the_shell_had_switched_to(settings, monkeypatch):
+    """A rendering failure must not silently return to the abandoned problem.
+
+    `session_factory` reopens what `run_session` was called with and closes
+    over the kernel built for it -- the one the switch shut. Falling back on it
+    lands the user in the problem they left, with a dead kernel.
+    """
+    switched = dataclasses.replace(settings, project="burnside")
+    reopened: list[str] = []
+
+    def reopen(slug, confirm, current):
+        reopened.append(slug)
+        return switched, Recording(slug)
+
+    class Switched:
+        """A shell that has already switched, and then fails to draw."""
+
+        def __init__(self, config, session, registry, *, reopen=None, **kwargs):
+            self.state = State(config=switched, session=None, reopen=reopen)
+
+        def attach(self, session): ...
+        def run(self):
+            raise RuntimeError("the terminal could not be drawn")
+
+    import hardy.tui.shell as shell_module
+
+    monkeypatch.setattr(shell_module, "Shell", Switched)
+    plain_calls: list = []
+    monkeypatch.setattr(
+        "hardy.tui.plain.run",
+        lambda config, session, **kwargs: plain_calls.append((config, session)) or 0,
+    )
+    monkeypatch.setattr("sys.stdin", _Tty())
+    monkeypatch.setattr("sys.stdout", _Tty())
+
+    assert run_session(settings, lambda confirm: Recording("sylow"), reopen=reopen) == 0
+    assert reopened == ["burnside"]
+    assert plain_calls[0][0].project == "burnside"
+    assert plain_calls[0][1].name == "burnside"
+
+
+class _Tty(io.StringIO):
+    def isatty(self) -> bool:
+        return True

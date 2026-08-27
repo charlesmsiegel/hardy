@@ -24,6 +24,11 @@ from hardy import config as configuration
 from hardy.retrieval import build_retriever
 
 
+def _decline(proposal: dict) -> bool:
+    """The approval gate a reopened session is handed. Never called here."""
+    return False
+
+
 class FakeKernel:
     def __init__(self) -> None:
         self.closed = False
@@ -91,21 +96,21 @@ def opener(monkeypatch, args, live):
 
 
 def test_opening_another_problem_returns_its_configuration(opener, live, root):
-    config, session = opener("burnside", None, live)
+    config, session = opener("burnside", _decline, live)
     assert config.project == "burnside"
     assert config.layout.problem == root / "burnside"
     assert session is not None
 
 
 def test_the_new_problem_gets_its_trees_before_anything_writes(opener, live, root):
-    opener("burnside", None, live)
+    opener("burnside", _decline, live)
     assert (root / "burnside" / "lean").is_dir()
     assert (root / "burnside" / ".build").is_dir()
 
 
 def test_the_old_kernel_is_closed_and_the_new_one_runs_in_the_new_problem(opener, live):
     previous = opener.cas
-    config, _ = opener("burnside", None, live)
+    config, _ = opener("burnside", _decline, live)
     assert previous.session.closed
     assert opener.cas is not previous
     assert opener.cas.session.closed is False
@@ -117,7 +122,7 @@ def test_the_pinned_environment_is_carried_across_rather_than_rebuilt(opener, li
     monkeypatch.setattr(
         cli.search_tools, "build_runtime", lambda config: pytest.fail("search was rebuilt")
     )
-    opener("burnside", None, live)
+    opener("burnside", _decline, live)
 
 
 def test_each_problem_gets_its_own_retrieval_budget(opener, live, monkeypatch):
@@ -135,7 +140,7 @@ def test_each_problem_gets_its_own_retrieval_budget(opener, live, monkeypatch):
     before.retriever._spent = float(live.limits.retrieval_seconds)
     assert before.retriever.seconds_remaining == 0.0
 
-    opener("burnside", None, live)
+    opener("burnside", _decline, live)
 
     assert handed["search"] is not before
     assert handed["search"].retriever is not before.retriever
@@ -147,7 +152,7 @@ def test_each_problem_gets_its_own_retrieval_budget(opener, live, monkeypatch):
 
 
 def test_the_switch_is_remembered_so_the_next_launch_opens_it(opener, live, root):
-    opener("burnside", None, live)
+    opener("burnside", _decline, live)
     written = configuration.read_file(root / layout.HARDY_DIR / "config.toml")
     assert written["project"] == "burnside"
 
@@ -162,14 +167,14 @@ def test_a_failed_open_closes_the_kernel_it_started_and_keeps_the_old_one(
 
     monkeypatch.setattr(cli, "MathematicsSession", explode)
     with pytest.raises(layout.LayoutError):
-        opener("burnside", None, live)
+        opener("burnside", _decline, live)
     assert previous.session.closed is False
     assert opener.cas is previous
 
 
 def test_a_slug_the_layout_refuses_never_reaches_the_filesystem(opener, live):
     with pytest.raises(layout.LayoutError):
-        opener("../elsewhere", None, live)
+        opener("../elsewhere", _decline, live)
 
 
 # -- the model the session is actually running ----------------------------
@@ -184,7 +189,7 @@ def test_the_model_comes_from_the_configuration_handed_in_at_the_switch(opener, 
     stale, which is why it is an argument rather than a field.
     """
     moved = dataclasses.replace(live, model="claude-haiku-4-5-20251001")
-    config, _ = opener("burnside", None, moved)
+    config, _ = opener("burnside", _decline, moved)
     assert config.model == "claude-haiku-4-5-20251001"
 
 
@@ -193,7 +198,7 @@ def test_the_live_model_wins_over_the_file_even_after_a_save(opener, live, args)
     point is that it must pass by carrying the live value, not by luck."""
     configuration.write_setting(args.config, "model", "claude-haiku-4-5-20251001")
     moved = dataclasses.replace(live, model="claude-haiku-4-5-20251001")
-    config, _ = opener("burnside", None, moved)
+    config, _ = opener("burnside", _decline, moved)
     assert config.model == "claude-haiku-4-5-20251001"
 
 
@@ -216,7 +221,7 @@ def test_a_symlinked_temporary_never_reaches_the_file_it_points_at(opener, live,
     hardy.mkdir(parents=True, exist_ok=True)
     (hardy / "config.toml.tmp").symlink_to(victim)
 
-    opener("burnside", None, live)
+    opener("burnside", _decline, live)
 
     assert victim.read_text(encoding="utf-8") == "do not touch\n"
     assert configuration.read_file(hardy / "config.toml")["project"] == "burnside"
@@ -231,7 +236,7 @@ def test_a_symlinked_project_config_is_refused_rather_than_written_through(
     hardy.mkdir(parents=True, exist_ok=True)
     (hardy / "config.toml").symlink_to(victim)
 
-    opener("burnside", None, live)
+    opener("burnside", _decline, live)
 
     assert victim.read_text(encoding="utf-8") == 'project = "theirs"\n'
 
@@ -242,7 +247,7 @@ def test_a_refused_record_of_the_switch_does_not_undo_the_switch(opener, live, r
     hardy.mkdir(parents=True, exist_ok=True)
     (hardy / "config.toml").symlink_to(root / "elsewhere.toml")
 
-    config, session = opener("burnside", None, live)
+    config, session = opener("burnside", _decline, live)
 
     assert config.project == "burnside"
     assert session is not None
@@ -262,7 +267,7 @@ def test_a_multiline_value_is_replaced_whole_and_not_by_its_first_line(opener, l
     (hardy / "config.toml").write_text('project = """\nsylow"""\n', encoding="utf-8")
     assert configuration.read_file(hardy / "config.toml") == {"project": "sylow"}
 
-    opener("burnside", None, live)
+    opener("burnside", _decline, live)
 
     assert configuration.read_file(hardy / "config.toml") == {"project": "burnside"}
 
@@ -275,7 +280,7 @@ def test_a_key_this_layer_may_not_set_is_kept_rather_than_deleted(opener, live, 
         'project = "sylow"\nmodel = "someone-elses-choice"\n', encoding="utf-8"
     )
 
-    opener("burnside", None, live)
+    opener("burnside", _decline, live)
 
     written = configuration.read_file(hardy / "config.toml")
     assert written["project"] == "burnside"

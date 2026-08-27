@@ -27,13 +27,14 @@ class State:
     done: bool = False
     turn_running: bool = False
     #: How to open another problem in this root:
-    #: `(slug, ui, config) -> (config, session)`. Supplied by whoever built the
-    #: session, because reopening one needs the runtime factory, the CAS kernel
-    #: and the approval callback -- none of which a handler has, and none of
-    #: which the terminal should learn. The `config` passed in is the live
-    #: `State.config`, so a switch continues from what the session is actually
-    #: running rather than from what it launched with -- `/model` moves the
-    #: former and not the latter.
+    #: `(slug, confirm, config) -> (config, session)`. Supplied by whoever
+    #: built the session, because reopening one needs the runtime factory and
+    #: the CAS kernel -- neither of which a handler has, and neither of which
+    #: the terminal should learn. `confirm` is the axiom gate the new session
+    #: will ask through, so the caller decides which `Ui` that reaches. The
+    #: `config` passed in is the live `State.config`, so a switch continues
+    #: from what the session is actually running rather than from what it
+    #: launched with -- `/model` moves the former and not the latter.
     #: None wherever nothing supplied one (every direct `State` in the tests,
     #: and any embedding that never means to switch), and `/project switch`
     #: says so rather than failing on an attribute.

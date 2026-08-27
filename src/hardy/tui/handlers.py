@@ -383,7 +383,17 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
         # is the only current one: `/model` replaces it here and nowhere else,
         # so anything the opener kept from launch would reopen on the model
         # the user has already moved off.
-        config, session = await asyncio.to_thread(state.reopen, slug, ui, state.config)
+        #
+        # An approval callback rather than the `Ui` itself: what the new
+        # session needs is a way to ask, and handing over the terminal would
+        # make every caller of `reopen` produce one. `run_session`'s fallback
+        # is the caller that proves the point -- it has a different `Ui`
+        # entirely.
+        from .. import cli
+
+        config, session = await asyncio.to_thread(
+            state.reopen, slug, cli.confirm_assumption(ui), state.config
+        )
     except Exception as error:  # noqa: BLE001 - a bad problem is not a lost session
         # Every refusal the layout, the record and the filesystem can raise
         # arrives here, and none of them is a reason to end the session the
@@ -455,8 +465,13 @@ async def handle_project(ui: Ui, argument: str, state: State) -> State:
         return state
     # A directory that is not a problem is somebody else's -- `src/`, `docs/`,
     # a Lean library. Creating a problem over it would scatter `lean/`, `tex/`
-    # and a record through a tree Hardy did not make.
-    if (state.config.root / slug).exists():
+    # and a record through a tree Hardy did not make. Hardy's own unfinished
+    # scaffold is the exception and has to be: `ensure` runs before the record
+    # is written, so an attempt that failed in between leaves a directory that
+    # `/project switch` cannot find and that a bare existence test would
+    # refuse forever.
+    intended = layout.Layout(root=state.config.root, slug=slug)
+    if (state.config.root / slug).exists() and not intended.is_bare_scaffold():
         ui.write(f"{slug} already exists here and is not a Hardy project.", style="error")
         return state
     return await _switch(ui, slug, state, creating=True)

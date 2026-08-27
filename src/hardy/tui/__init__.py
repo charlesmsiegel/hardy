@@ -45,6 +45,7 @@ def run_session(
     from .handlers import build_registry
     from .shell import Shell
 
+    shell = None
     try:
         shell = Shell(config, None, build_registry(), reopen=reopen)
         session = session_factory(cli.confirm_assumption(shell))
@@ -63,6 +64,21 @@ def run_session(
         raise
     except Exception as error:  # noqa: BLE001 - never end a session over rendering
         print(f"Falling back to the plain session: {error}", file=sys.stderr)
+        # `session_factory` reopens the problem this function was CALLED with,
+        # and closes over the computer algebra kernel built for it. After a
+        # `/project switch` both are wrong: the user is in another problem now,
+        # and that kernel was closed when they left. Falling back on them
+        # returns silently to the abandoned problem with a dead kernel, so the
+        # active one is reopened instead -- bound, this time, to the approval
+        # gate of the `Ui` that is about to exist rather than the one that has
+        # just failed.
+        live = shell.state.config if shell is not None else config
+        if reopen is not None and live.layout.problem != config.layout.problem:
+            return _run_plain(
+                live,
+                lambda confirm: reopen(live.project, confirm, live)[1],
+                reopen=reopen,
+            )
         return _run_plain(config, session_factory, reopen=reopen)
 
 
