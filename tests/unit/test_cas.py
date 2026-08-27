@@ -138,7 +138,7 @@ def test_a_rebuild_that_reconstructs_different_values_poisons_the_session(tmp_pa
         session.execute("hang")
         assert session.state == "dead"
 
-        with pytest.raises(CasError, match="different output on replay"):
+        with pytest.raises(CasError, match="did not reproduce on replay"):
             session.execute("later")
         assert session.state == "poisoned"
 
