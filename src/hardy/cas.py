@@ -295,14 +295,19 @@ class SympyBackend:
     # `__import__ = None` breaks the workaround for that. Every fix that
     # resolves a global at the end is one more name to shadow.
     #
-    # So the end marker resolves nothing at the end. Both `__import__` calls
-    # below run before cell one, `register` captures the bound `print` and its
-    # argument there and then, and the interpreter itself emits the marker at
-    # shutdown -- after the module body, after everything the file printed,
-    # and out of reach of any global a cell can touch. The begin marker needs
-    # no such care: it has already run before a cell can rebind anything.
+    # So the end marker resolves nothing at the end. Every `__import__` below
+    # runs before cell one, and the `partial` binds the destination as well as
+    # the function: `print` with no `file` looks `sys.stdout` up when it runs,
+    # so a cell that reassigns it would redirect the closing marker even
+    # though the function itself was captured. Both are settled at
+    # registration, and the interpreter emits the marker at shutdown -- after
+    # the module body, after everything the file printed, out of reach of any
+    # global a cell can touch. The begin marker needs no such care: it has
+    # already run before a cell can rebind anything.
     transcript_prologue = (
-        '__import__("atexit").register(__import__("builtins").print, "{end}")',
+        '__import__("atexit").register(__import__("functools").partial('
+        '__import__("builtins").print, "{end}", '
+        'file=__import__("sys").stdout))',
         '__import__("builtins").print("{begin}")',
     )
     transcript_epilogue: tuple[str, ...] = ()
@@ -2079,6 +2084,13 @@ def run_exported_script(
                 process.wait(timeout=5)
         for worker in workers:
             worker.join(timeout=5)
+        # A reader still going is a reader with more to read. A descendant that
+        # holds the pipe open and writes after the script itself has exited
+        # keeps its worker alive past the join, and snapshotting the buffer
+        # there and calling the capture complete let an export compare against
+        # a transcript that was still arriving -- and report `verified` for it.
+        if stdout_worker.is_alive() or stderr_worker.is_alive():
+            overflowed[0] = True
         # And each stream is closed only once its own worker has actually let
         # go of it. A drain thread blocked in `pipe.read1` -- because, say, a
         # grandchild the child spawned inherited the handle and is still

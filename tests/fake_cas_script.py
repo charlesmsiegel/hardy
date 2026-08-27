@@ -34,9 +34,11 @@ def main() -> None:
         # the foot of the file, so that it cannot resolve a name the cells
         # have had a chance to rebind. Held to the end here for the same
         # reason a real interpreter holds it: that is when it runs.
-        registered = re.fullmatch(
-            r'__import__\("atexit"\)\.register\('
-            r'__import__\("builtins"\)\.print, "(.*)"\)',
+        # Anchored on the marker's own guillemets. The statement carries other
+        # quoted strings -- the module names it imports -- and a looser match
+        # registered `functools` as the closing marker.
+        registered = re.match(
+            r'__import__\("atexit"\)\.register\(.*"(\u00ab[^"]*\u00bb)"',
             source,
         )
         if registered is not None:

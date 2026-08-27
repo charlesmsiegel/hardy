@@ -345,6 +345,14 @@ class _Stream:
         at = self.pending.find(self.marker)
         if at != -1:
             self._retain(self.pending[:at])
+            # One `os.read` can carry the marker *and* what a helper wrote
+            # straight after it. Clearing the buffer dropped that tail with
+            # nothing recorded, so whether the next cell was told anything had
+            # been discarded came down to how the pipe happened to chunk.
+            # It is the same discard as the between-cells one and is admitted
+            # to the same way.
+            if len(self.pending) > at + len(self.marker):
+                self.stray = True
             self.pending.clear()
             self.done = True
             return
@@ -361,14 +369,28 @@ class _Stream:
         if len(data) > room:
             self.truncated = True
 
-    def text(self) -> str:
-        # `backslashreplace`, not `replace`. A helper or a native library is
-        # free to emit bytes that are not UTF-8, and `replace` collapses every
-        # one of them to the same U+FFFD -- so a cell writing `b"\xff"` and a
-        # replay writing `b"\xfe"` compared equal and the export reported
-        # verification of output that had in fact changed. The escape is
-        # lossless for the byte values, so distinct bytes stay distinct.
-        return bytes(self.kept).decode("utf-8", errors="backslashreplace")
+    def text(self) -> tuple[str, bool]:
+        """The captured text, and whether it is exactly what was written.
+
+        `backslashreplace`, not `replace`. A helper or a native library is
+        free to emit bytes that are not UTF-8, and `replace` collapses every
+        one of them to the same U+FFFD -- so a cell writing `b"\xff"` and a
+        replay writing `b"\xfe"` compared equal and the export reported
+        verification of output that had in fact changed.
+
+        The escape keeps those two apart, and it still is not a faithful
+        encoding: `b"\xff"` and the four ASCII bytes `b"\\xff"` both render
+        as `\xff`, so it is one-way rather than reversible. A record is a JSON
+        string and cannot hold arbitrary bytes at all, so the honest report is
+        not a cleverer escape but the admission that this capture is not
+        exactly comparable -- which is what the second element says, and what
+        `capture_truncated` carries to the parent.
+        """
+        raw = bytes(self.kept)
+        try:
+            return raw.decode("utf-8"), True
+        except UnicodeDecodeError:
+            return raw.decode("utf-8", errors="backslashreplace"), False
 
 
 # Win32 keeps the handles a new process inherits in its own table, and
@@ -397,9 +419,19 @@ def _redirect_win32_handle(fd: int) -> None:
     with contextlib.suppress(Exception):
         import ctypes
         import msvcrt
+        from ctypes import wintypes
 
-        handle = msvcrt.get_osfhandle(fd)
-        ctypes.windll.kernel32.SetStdHandle(_WIN32_STD[fd], handle)
+        # Declared rather than inferred. An undeclared `ctypes` call marshals
+        # a Python int as a C `int`, and a HANDLE on 64-bit Windows is
+        # pointer-sized -- so the redirect could be handed a truncated handle,
+        # fail, and leave a cell's helpers writing onto the protocol
+        # descriptor with nothing having noticed.
+        set_std_handle = ctypes.windll.kernel32.SetStdHandle
+        set_std_handle.argtypes = (wintypes.DWORD, wintypes.HANDLE)
+        set_std_handle.restype = wintypes.BOOL
+        handle = wintypes.HANDLE(msvcrt.get_osfhandle(fd))
+        if not set_std_handle(wintypes.DWORD(_WIN32_STD[fd]), handle):
+            raise OSError(ctypes.get_last_error(), "SetStdHandle refused the redirect")
 
 
 class _Capture:
@@ -483,7 +515,13 @@ class _Capture:
                     break
                 self._changed.wait(remaining)
             out, err = self.streams[1], self.streams[2]
-            captured = (out.text(), err.text(), out.truncated or err.truncated)
+            out_text, out_exact = out.text()
+            err_text, err_exact = err.text()
+            captured = (
+                out_text,
+                err_text,
+                out.truncated or err.truncated or not (out_exact and err_exact),
+            )
             for stream in self.streams.values():
                 stream.marker = b""
             return captured

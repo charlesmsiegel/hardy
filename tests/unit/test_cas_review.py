@@ -568,3 +568,69 @@ def test_a_script_that_prints_after_its_marker_is_not_verified(
     report = export_session(sympy_session, tmp_path / "cas")
     assert report.script_verdict == "diverged", report.model_dump_json(indent=2)
     assert report.reproduces is False
+
+
+# ----------------------------------------------------- and the third review's
+
+
+def test_bytes_behind_the_marker_in_one_read_are_admitted_to(sympy_session) -> None:
+    """One `os.read` can carry the marker and a helper's next write together.
+
+    Clearing the buffer dropped that tail with nothing recorded, so whether
+    anything admitted to the discard came down to how the pipe happened to
+    chunk. It is the same discard as the between-cells one.
+    """
+    sympy_session.execute(
+        "import subprocess, sys\n"
+        "subprocess.Popen([sys.executable, '-c', "
+        "\"import time; time.sleep(0.2); print('late')\"])\n"
+    )
+    time.sleep(1.0)
+    noticed = sympy_session.execute("2 + 2")
+    assert noticed.value_repr == "4"
+    assert noticed.stdout == ""
+    assert noticed.capture_truncated is True
+
+
+def test_a_capture_that_cannot_be_written_down_exactly_says_so(sympy_session) -> None:
+    """`backslashreplace` keeps `b"\\xff"` and `b"\\xfe"` apart, and still is not
+    a faithful encoding: `b"\\xff"` and the ASCII bytes `b"\\\\xff"` render the
+    same. A record is a JSON string and cannot hold arbitrary bytes at all, so
+    the honest report is the admission rather than a cleverer escape."""
+    raw = sympy_session.execute(r"import os; os.write(1, b'\xff')")
+    assert raw.capture_truncated is True, raw.model_dump_json(indent=2)
+
+    # And an ordinary capture is still reported as exact.
+    clean = sympy_session.execute("print('plain')")
+    assert clean.stdout == "plain\n"
+    assert clean.capture_truncated is False
+
+
+def test_a_cell_that_replaces_stdout_does_not_redirect_the_closing_marker(
+    sympy_session, tmp_path
+) -> None:
+    """`print` with no `file` looks `sys.stdout` up when it runs, so capturing
+    the function was not enough — a cell reassigning the stream still carried
+    the closing marker off with it. The destination is bound at registration
+    too, before any cell."""
+    sympy_session.execute("2 + 2")
+    sympy_session.execute("import io, sys; sys.stdout = io.StringIO()")
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+
+
+def test_a_script_whose_output_is_still_arriving_is_not_verified(
+    sympy_session, tmp_path
+) -> None:
+    """A descendant holding the pipe past the drain join leaves the reader
+    alive. Snapshotting the buffer there and calling the capture complete let
+    an export compare against a transcript that had not finished arriving."""
+    sympy_session.execute(
+        'if __name__ == "__main__":\n'
+        "    import subprocess, sys\n"
+        "    subprocess.Popen([sys.executable, '-c', "
+        "\"import time; time.sleep(30); print('much later')\"])\n"
+    )
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict in {"unverified", "diverged"}, report.model_dump_json(indent=2)
+    assert report.reproduces is False

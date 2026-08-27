@@ -440,7 +440,11 @@ Priority labels are sequencing hints:
   log has none, and the default kernel refuses to fingerprint a namespace it
   could only see a prefix of -- or one holding a value whose repr is CPython's
   default `<Box object at 0x...>`, which says the type and the address and
-  nothing about what the object holds. A replay Hardy signalled is
+  nothing about what the object holds. What the digest compares is a repr, so
+  what it cannot see is an object whose repr is stable, concise, and silent
+  about its contents -- a module a cell has attached an attribute to, an open
+  file, a class with a `__repr__` of its own. A strong check with a named
+  limit, not a proof. A replay Hardy signalled is
   refused whatever it answered -- an `ok` most of all, since a cell that caught
   the stop can skip a mutation and still print what it printed before -- and
   the session is left retryable rather than poisoned, because a press says
