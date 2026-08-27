@@ -609,14 +609,21 @@ class _Capture:
 # binds a plain instance or a `def`-defined function cannot have its state
 # checked across a restart, and now says so instead of claiming otherwise.
 _OPAQUE = re.compile(r" at 0x[0-9a-fA-F]+>")
-# The object the driver last bound to `_`, so the digest can tell its own
-# last-value binding -- already compared as `value_repr` -- from a cell that
-# assigned `_` itself. Skipping the name unconditionally hid the second:
-# `_ = random.random()` has no `value_repr` at all, so namespaces holding
-# `_ = 1` and `_ = 2` fingerprinted alike and a rebuild could report itself
-# faithful over a different `_`. Identity rather than a flag, because the
-# binding outlives the cell that made it.
-LAST_DISPLAYED: object = object()
+# Set to the trailing value while the cell that produced it is being
+# described, and to `_UNSET` at the start of every cell. `_` is skipped by the
+# digest only while it holds that value, which is exactly the cell whose
+# `value_repr` already carries it.
+#
+# Two ways of getting this wrong were found before it settled here. Skipping
+# the name unconditionally hid a cell that assigned `_` itself --
+# `_ = random.random()` has no `value_repr` at all, so `_ = 1` and `_ = 2`
+# fingerprinted alike. Remembering the object across cells then hid mutations
+# to it: `[]` displayed, and a later `_.append(random.random())` leaves the
+# same object at the same identity holding something new. Clearing the memory
+# every cell answers both -- the skip lasts exactly as long as the claim that
+# justifies it.
+_UNSET: object = object()
+LAST_DISPLAYED: object = _UNSET
 
 
 def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
@@ -686,15 +693,16 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     if parsed.body and isinstance(parsed.body[-1], ast.Expr):
         trailing = ast.Expression(parsed.body.pop().value)
 
+    global LAST_DISPLAYED
+    LAST_DISPLAYED = _UNSET
     marker = capture.begin()
-    status, value_repr, oversized = "ok", "", False
+    status, value_repr, oversized, failure = "ok", "", False, ""
     try:
         if parsed.body:
             exec(compile(parsed, CELL_FILENAME, "exec"), namespace)
         if trailing is not None:
             value = eval(compile(trailing, CELL_FILENAME, "eval"), namespace)
             if value is not None:
-                global LAST_DISPLAYED
                 namespace["_"] = LAST_DISPLAYED = value
                 value_repr, oversized = bounded_repr(value, limit)
     # Hardy asked for this one, so it is reported under its own name rather
@@ -705,14 +713,24 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     # rather than waiting out a deadline on a child that will never speak.
     except KeyboardInterrupt:
         status = "interrupted"
-        traceback.print_exc()
+        failure = _describe_failure()
     # A cell is untrusted input, and `exit()` raises SystemExit: the kernel
     # has to outlive whatever a cell does, or one stray call ends a session
     # and every value in it.
     except BaseException:
         status = "error"
-        traceback.print_exc()
+        failure = _describe_failure()
     captured_out, captured_err, overran = capture.settle(marker)
+    # Appended rather than printed. `traceback.print_exc()` writes to
+    # `sys.stderr`, which is backed by descriptor 2 -- and a cell is free to
+    # close it: `import os; os.close(2); 1 / 0` made the print raise a second
+    # exception from inside the handler, which escaped `run_cell` and killed
+    # the driver with no reply frame at all. An ordinary failing cell became a
+    # lost kernel and a forced rebuild. Formatting it and putting it behind
+    # whatever the cell wrote keeps the same order in the record and depends
+    # on no descriptor.
+    if failure:
+        captured_err += failure
     fields, truncated = clip_jointly(
         {"stdout": captured_out, "stderr": captured_err, "value_repr": value_repr},
         limit,
@@ -722,6 +740,16 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
         **fields,
         "capture_truncated": truncated or overran or oversized,
     }
+
+
+def _describe_failure() -> str:
+    """The traceback for the exception being handled, or a note that it is
+    unavailable. Never raises: this runs inside an exception handler, and an
+    exception escaping it costs the whole kernel."""
+    try:
+        return traceback.format_exc()
+    except BaseException:
+        return "a traceback for this cell could not be formatted\n"
 
 
 def _refuse_to_quit(*_args, **_kwargs):
