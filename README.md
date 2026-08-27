@@ -93,15 +93,32 @@ exchange that wrote the formalization, and not its own account of what it chose,
 because a model handed the reasoning behind a translation reads the translation
 through it. Denying it tools is the part that makes that real: the computer
 algebra kernel is shared and unsandboxed, so a reader holding those tools could
-simply read the run's own files. Set `faithfulness_model` to have a different model do the reading.
-It is asked whether each statement entails the other rather than how confident
-it is, since a wrong formalization is usually fluent and confident. A
-disagreement stops the run and shows you the mismatch, and so does a reader that
-cannot be reached: a halt costs one question and a proof of the wrong theorem
-costs the whole run. The verdict is written to `faithfulness.json`, recorded in
-the trajectory beside the frozen claim, and carried in the manifest, so a later
-reader can see the translation was checked and by what. `hardy
-accept` runs the checked-in acceptance problems and cross-checks the artifacts
+simply read the run's own files. It is asked whether each statement entails the
+other rather than how confident it is, since a wrong formalization is usually
+fluent and confident.
+
+That no-tools guarantee holds on the default Claude backend, where the runtime
+refuses `Read`, `Bash`, `Glob` and `Grep` outright and refuses anything else by
+default. It does not hold under `--backend codex`: that SDK's read-only sandbox
+permits file reads anywhere and offers no way to narrow them, so its reader
+could reach the run's own artifacts by absolute path. Hardy does not claim
+otherwise — each runtime reports what its isolation is worth and every verdict
+records it, so a run whose independence was never established says so rather
+than reading like one where it was. Closing that needs the process confinement
+the design defers.
+
+A disagreement stops the run and shows you the mismatch, and so does a reader
+that cannot be reached: a halt costs one question and a proof of the wrong
+theorem costs the whole run. The verdict is written to `faithfulness.json`,
+recorded in the trajectory beside the frozen claim, and carried in the manifest,
+so a later reader can see the translation was checked and by what.
+
+Set `faithfulness_model`, or pass `--faithfulness-model` for one run, to have a
+different model do the reading. The flag is what a mixed setup needs: the
+setting is global and the backends do not share model names, so a configured
+Claude reviewer cannot serve a `--backend codex` run.
+
+`hardy accept` runs the checked-in acceptance problems and cross-checks the artifacts
 they produce; with `--force-budget-exhaustion-test` it exercises the whole
 pipeline with no model, no network, and no toolchain. The earlier one-shot proof
 experiment remains available as `hardy batch`, but is secondary.

@@ -64,3 +64,20 @@ def test_features_claims_the_faithfulness_gate_as_implemented() -> None:
     assert 'Now (implemented)' in bullet
     for property_ in ('independent', 'fail-closed', 'trajectory'):
         assert property_ in bullet, f'the gate is claimed without saying it is {property_}'
+
+
+def test_the_readme_does_not_promise_isolation_codex_cannot_give() -> None:
+    """AGENTS.md requires README.md, DESIGN.md, FEATURES.md and
+    ARCHITECTURE.html to stay consistent, and the README is what a user reads
+    first. FEATURES.md and DESIGN.md both record that the Codex reader cannot
+    be confined; a README promising every reader "no tools at all" would hand
+    users a stronger trust guarantee than the implementation provides.
+    """
+    readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+    start = readme.index('That faithfulness check is the one gate')
+    section = readme[start:readme.index('## ', start)]
+
+    assert 'codex' in section.lower()
+    # Named, not merely alluded to: the claim it qualifies is the no-tools one.
+    assert 'no-tools' in section or 'no tools' in section
+    assert 'reads anywhere' in section or 'read' in section

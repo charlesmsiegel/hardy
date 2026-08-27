@@ -1116,6 +1116,10 @@ def run_prove(
     from .workflow import ProveRequest
 
     config, config_path = _load_config_argument(getattr(args, "config", None))
+    # Flags outrank the config file, the way every other setting resolves.
+    reviewer = getattr(args, "faithfulness_model", None)
+    if reviewer:
+        config = dataclasses.replace(config, faithfulness_model=str(reviewer))
     claim = args.claim or input_fn("State the theorem in ordinary language: ").strip()
     if not claim:
         print("A nonempty theorem statement is required.")
@@ -1414,6 +1418,17 @@ def build_parser() -> argparse.ArgumentParser:
     # SUPPRESS so that omitting it here leaves the global --model alone rather
     # than overwriting it with this subparser's default.
     prove.add_argument("--model", default=argparse.SUPPRESS)
+    # Per invocation, because `faithfulness_model` is one global setting and
+    # the backends do not share model names. A config naming a Claude reviewer
+    # would otherwise be handed to a `--backend codex` run, whose reader would
+    # fail on an identity that backend cannot serve -- halting every approved
+    # claim with no way to repair the invocation, since `--model` sets the
+    # run's model and not the reviewer's.
+    prove.add_argument(
+        "--faithfulness-model",
+        default=None,
+        help="who reads the translation back; defaults to the run's own model",
+    )
     accept = subparsers.add_parser("accept", help="run the checked-in acceptance problems")
     accept.add_argument("--backend", choices=("claude", "codex"), default="claude")
     accept.add_argument("--model", default=argparse.SUPPRESS)
