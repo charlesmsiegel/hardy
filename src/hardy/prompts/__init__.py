@@ -25,7 +25,7 @@ from ..domain import FrozenClaim
 
 # Bumped whenever a staged template changes. The hash below identifies the text
 # exactly; this names the revision a human can talk about.
-PROMPT_SET_VERSION = "2026-08-02.1"
+PROMPT_SET_VERSION = "2026-08-27.1"
 
 SUFFIX = ".md.j2"
 
@@ -118,12 +118,28 @@ def _prompt_set_payload() -> dict[str, str]:
 
     Deliberately the template source rather than any rendered output, so the
     hash describes the instructions themselves and not one claim's rendering.
+
+    Every template under `staged/` belongs here, `structure` included: it is
+    appended to each staged turn, so an edit to the response contract changed
+    what a run was told while its manifest kept the same hash. A test
+    enumerates the directory rather than trusting this list.
+
+    The other templates stay out, and that is a decision rather than an
+    oversight. `chat`, `chat_cas` and `cas_spill` serve an interactive session,
+    which is not a comparable experimental unit and writes no manifest.
+    `batch/system` and `batch/task` do govern graded runs, but the batch runner
+    records no prompt-set hash at all (`runner.py` writes `provenance()`, which
+    is model and endpoint), so there is no field for their absence to falsify;
+    folding them in here would instead churn the staged hash for edits no
+    staged run ever saw. If a batch record ever carries a prompt-set hash, it
+    must cover `batch/*` -- as its own hash, not by widening this one.
     """
     return {
         "base": source("staged/base"),
         "developer": source("staged/developer"),
         "formalization": source("staged/formalization"),
         "proof": source("staged/proof"),
+        "structure": source("staged/structure"),
         "version": PROMPT_SET_VERSION,
         "writeup": source("staged/writeup"),
     }
