@@ -13,7 +13,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from test_chat import FakeChatRuntime, call, session
+from test_chat import FakeChatRuntime, call
+from test_chat import session as _session
 from workspace_helpers import events, results
 
 THEOREM = "import Mathlib\ntheorem hardyOne : True := by exact True.intro\n"
@@ -51,6 +52,23 @@ RECORD = call(
     {"formal_name": "hardyOne", "latex_name": "thm:one", "description": "One."},
 )
 REPORT = call("report_result", {"theorems": ["hardyOne"], "summary": "True holds."})
+
+
+def session(tmp_path: Path, runtime: FakeChatRuntime, **kwargs):
+    """A session that already knows `hardyOne` is a result.
+
+    `theorem` is reserved to names `record_name` has mapped, and none of these
+    tests is about that rule -- they are about what a *report* owes. The entry
+    is exactly the one `RECORD` records, so a script that also calls it is
+    recording the mapping it already has rather than conflicting with it.
+    """
+    kwargs.setdefault("registered", ())
+    chat = _session(tmp_path, runtime, **kwargs)
+    chat.state["names"].append(
+        {"formal_name": "hardyOne", "latex_name": "thm:one", "description": "One."}
+    )
+    chat._save_state()
+    return chat
 
 
 def state(tmp_path: Path) -> dict:
@@ -336,9 +354,9 @@ def test_two_modules_sharing_a_theorem_name_owe_a_namespace(tmp_path: Path):
     first = "import Mathlib\ntheorem result : True := by exact True.intro\n"
     second = "import Mathlib\ntheorem result : True ∧ True := by exact True.intro\n"
     runtime = FakeChatRuntime([
+        call("record_name", {"formal_name": "result", "latex_name": "thm:result", "description": "One."}),
         call("save_lean", {"path": "A.lean", "source": first}),
-        call("record_name", {"formal_name": "result", "latex_name": "thm:one", "description": "One."}),
-        call("save_latex", {"source": paper("One.\\label{thm:one}\n" + quoted("theorem result : True"))}),
+        call("save_latex", {"source": paper("One.\\label{thm:result}\n" + quoted("theorem result : True"))}),
         call("save_lean", {"path": "B.lean", "source": second}),
         call("report_result", {"theorems": ["result"], "summary": "True holds."}),
         {"role": "assistant", "content": "Refused."},
@@ -400,6 +418,7 @@ def test_a_notice_does_not_contradict_a_report_it_accepted(tmp_path: Path):
     the notice is about what is outstanding, not about the workspace."""
     second = "import Mathlib\ntheorem hardyTwo : True := by exact True.intro\n"
     runtime = FakeChatRuntime([
+        call("record_name", {"formal_name": "hardyTwo", "latex_name": "thm:two", "description": "Two."}),
         call("save_lean", {"source": THEOREM}),
         RECORD,
         call("save_latex", {"source": CARRIED}),

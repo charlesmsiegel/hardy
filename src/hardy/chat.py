@@ -1336,7 +1336,7 @@ class MathematicsSession:
             relative = safe_relative(path)
         except WorkspacePathError as error:
             return ToolResult(False, str(error), source)
-        gate = self._documentation_gate(source)
+        gate = self._result_gate(source) or self._documentation_gate(source)
         if gate is not None:
             return ToolResult(False, gate, source)
         refusal = self._final_gates(source)
@@ -1363,6 +1363,9 @@ class MathematicsSession:
         # text, and the save would be committed under a signature that was
         # already false when it was computed.
         self.build_shared()
+        # Before staging: what the tree holds now is what a registered name may
+        # be judged to have vanished *from*.
+        committed = self.lean_workspace.sources()
         shadow, commit = self.lean_workspace.stage(relative, text, capturing)
         try:
             module = module_name(relative)
@@ -1377,7 +1380,7 @@ class MathematicsSession:
             # check when the workspace was one file; a registered name now has
             # to survive somewhere in the tree, not in whichever file is being
             # saved -- but it must not be allowed to vanish from all of them.
-            lost = self._missing_registered_names(shadow.sources())
+            lost = self._missing_registered_names(shadow.sources(), committed)
             if lost:
                 return ToolResult(False, f"this save would drop registered names from the workspace: {lost}", source)
             # Last, because it is the only gate that costs another Lean run,
@@ -1654,8 +1657,10 @@ class MathematicsSession:
                     covering[module] = [by_name[name] for name in declared[module]]
         return reports, covering
 
-    def _missing_registered_names(self, sources: dict[str, str]) -> list[str]:
-        """Registered formal names that survive nowhere in a tree.
+    def _missing_registered_names(
+        self, sources: dict[str, str], before: dict[str, str]
+    ) -> list[str]:
+        """Registered formal names that this save would remove from the tree.
 
         An approved assumption is exempt. This guard exists so a *workspace
         declaration* cannot vanish while the registry still points at it, and an
@@ -1664,12 +1669,22 @@ class MathematicsSession:
         it into a file, and demanding one refused every later save with no tool
         to undo it. The exemption is deliberately narrow: a registered theorem
         that disappears is still caught.
+
+        Judged against `before` as well as against the staged tree, because a
+        name is now also registered *ahead* of the declaration it maps: a
+        `theorem` may only be stated once `record_name` has mapped it, so the
+        order is register and then save, and in between the registry names
+        something the tree does not have yet. Asked only of the staged tree,
+        that refused every save in between -- including the save that would
+        have introduced the theorem in another file. A name that never existed
+        has not vanished.
         """
         approved = self._approved_assumptions()
         return [
             item["formal_name"]
             for item in self.state["names"]
             if item["formal_name"] not in approved
+            and self._resolves(item["formal_name"], before)
             and not self._resolves(item["formal_name"], sources)
         ]
 
@@ -1907,6 +1922,42 @@ class MathematicsSession:
                     if item.subject and item.kind in {"record", "label", "statement"}
                 }
             )
+        )
+
+    def _result_gate(self, source: str) -> str | None:
+        """`theorem` is reserved to results a human will be shown.
+
+        The writeup ratchet turns on the keyword: a `theorem` owes a paragraph
+        and a `lemma` owes nothing, so that splitting a proof into helpers is
+        the cheap way to work. In practice the model states every intermediate
+        step as a `theorem`, the exemption never fires, and the ratchet stops a
+        development that has done nothing wrong. Asking for `lemma` in the
+        prompt did not change that, and a rule a model can talk its way past is
+        not a rule.
+
+        So the keyword is not left to taste. A result is something `record_name`
+        has already mapped to a place in the document -- which costs a
+        `latex_name` and a description, and is a promise the ratchet then
+        collects on -- and everything else is a `lemma`, which is free.
+
+        Only what this save *introduces*, like the ratchet beside it, so a
+        workspace written before this rule can still be repaired, restated, or
+        deleted.
+        """
+        registered = {item["formal_name"] for item in self.state["names"]}
+        existing = self._saved_theorems()
+        unregistered = [
+            name
+            for name in declarations(source)["theorem"]
+            if name not in existing and name not in registered
+        ]
+        if not unregistered:
+            return None
+        return (
+            f"`{unregistered[0]}` is not a registered result, so it may not be stated as a "
+            "`theorem`. State it as a `lemma` if it is scaffolding or an intermediate step -- "
+            "a lemma owes no writeup and is free to save. If it is a result you will write up, "
+            "call record_name for it first."
         )
 
     def _documentation_gate(self, source: str) -> str | None:
@@ -2236,7 +2287,8 @@ class MathematicsSession:
             return self._delete_tex(target, path)
         relative = safe_relative(str(path).replace("\\", "/"))
         module = module_name(relative)
-        importers = dependents(self.lean_workspace.sources(), module)
+        committed = self.lean_workspace.sources()
+        importers = dependents(committed, module)
         if importers:
             return ToolResult(False, f"{module} is imported by {sorted(importers)}; change those first")
         shadow, commit = self.lean_workspace.stage(relative, None)
@@ -2247,7 +2299,7 @@ class MathematicsSession:
             # abandoned, since no tool removes a mapping, and every later save
             # was then refused for dropping a name already gone. The contract
             # is that an undocumented theorem can always be walked away from.
-            lost = self._missing_registered_names(shadow.sources())
+            lost = self._missing_registered_names(shadow.sources(), committed)
             commit()
             # The audit record goes with the module. Left behind it would
             # describe declarations the workspace no longer has.

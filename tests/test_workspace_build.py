@@ -248,7 +248,7 @@ def test_mathlib_alone_does_not_churn_the_cache(tmp_path: Path):
 # advertises fails at the first save.
 
 SHARED_LEAN = "import Mathlib\n\ntheorem shared_fact : True := by exact True.intro\n"
-IMPORTS_SHARED = "import CommAlg\n\ntheorem HardyMain : True := by exact True.intro\n"
+IMPORTS_SHARED = "import CommAlg\n\nlemma hardyMain : True := by exact True.intro\n"
 
 
 def session(problem: Path, runtime, root: Path | None = None) -> MathematicsSession:
@@ -406,7 +406,7 @@ def test_no_shared_tree_at_all_is_the_ordinary_case(tmp_path: Path):
     root = tmp_path / "root"
     problem = root / "sylow"
     problem.mkdir(parents=True)
-    chat = session(problem, saving("import Mathlib\n\ntheorem HardyMain : True := by exact True.intro\n"), root=root)
+    chat = session(problem, saving("import Mathlib\n\nlemma hardyMain : True := by exact True.intro\n"), root=root)
     assert chat.shared_roots == ()
     assert chat._lean_path() == str(chat.lean_workspace.build)
     chat.send("prove it")
