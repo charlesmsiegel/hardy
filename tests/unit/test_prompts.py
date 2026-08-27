@@ -8,6 +8,20 @@ import pytest
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "hardy"
 
 
+def _staged_template_names(suffix: str) -> list[str]:
+    """Every staged template, named the way the loader and the payload name it.
+
+    Recursive, and relative rather than a basename: Jinja template names carry
+    a path (`batch/system` already does), so a template added at
+    `staged/proof/repair.md.j2` is `proof/repair` here and must be that key in
+    the payload. A non-recursive glob would not see it, and the guard below
+    would pass while the new template went unhashed -- the exact failure this
+    file exists to catch.
+    """
+    root = SOURCE / "prompts" / "staged"
+    return sorted(path.relative_to(root).as_posix()[: -len(suffix)] for path in root.rglob(f"*{suffix}"))
+
+
 def _claim(domain):
     proposal = domain.FormalizationProposal(
         restatement='Two equals two.',
@@ -119,8 +133,8 @@ def test_the_recorded_prompt_set_is_the_one_that_was_reviewed():
     this pin in the same commit — a deliberate act, not a side effect.
     """
     prompts = importlib.import_module("hardy.prompts")
-    assert prompts.PROMPT_SET_VERSION == "2026-08-02.1"
-    assert prompts.PROMPT_SET_SHA256 == "7ec02ba21dbf43030c0584482a03481fd8731d9efe3efa825fa21c2737d00616"
+    assert prompts.PROMPT_SET_VERSION == "2026-08-27.1"
+    assert prompts.PROMPT_SET_SHA256 == "1539ab66b8b01f4bad35f8d54fb782b1fdcf005a13a987edec7f206abb8f10b3"
 
 
 def test_each_entry_point_sends_the_template_rather_than_its_own_copy():
@@ -157,6 +171,35 @@ def test_the_prompt_set_hash_covers_the_template_files():
     payload = prompts._prompt_set_payload()
     assert payload["proof"] == prompts.source("staged/proof")
     assert payload["version"] == prompts.PROMPT_SET_VERSION
+
+
+def test_the_prompt_set_hash_covers_every_staged_template():
+    """Enumerated rather than listed, because the list was once wrong.
+
+    `staged/structure` was sent to the model on every staged turn and left out
+    of the payload, so editing the JSON contract a response must satisfy
+    changed what a run was told while its recorded `prompt_set_sha256` stayed
+    byte-identical. Reading the directory means the next template added cannot
+    repeat that quietly.
+    """
+    prompts = importlib.import_module("hardy.prompts")
+    payload = prompts._prompt_set_payload()
+    templates = _staged_template_names(prompts.SUFFIX)
+    assert templates, "no staged templates found; the glob is looking in the wrong place"
+    missing = [name for name in templates if payload.get(name) != prompts.source(f"staged/{name}")]
+    assert not missing, f"staged templates the recorded hash does not cover: {missing}"
+
+
+def test_the_prompt_set_hash_is_the_staged_set_and_says_so():
+    """The other half of the decision, pinned so it stays a decision.
+
+    `chat` and `chat_cas` serve an interactive session, which is not a
+    comparable experimental unit, and `batch/*` runs record no prompt-set hash
+    at all — so there is no manifest for them to be absent from. Adding either
+    to the payload is defensible; doing it by accident is not.
+    """
+    prompts = importlib.import_module("hardy.prompts")
+    assert set(prompts._prompt_set_payload()) == set(_staged_template_names(prompts.SUFFIX)) | {"version"}
 
 
 def test_the_chat_prompt_describes_the_file_tree():

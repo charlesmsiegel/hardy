@@ -312,6 +312,44 @@ class Usage:
     def _row(label: str, value: str) -> str:
         return f"{label + ':':<{_LABEL}}{value}"
 
+    # -- the run record ---------------------------------------------------
+
+    def summary(self) -> dict[str, Any]:
+        """The spend, as `result.json` and `trajectory.json` state it.
+
+        Not `as_dict`: that is the ledger's own persistence form and carries
+        `baselines` and `provider_session`, which exist to difference the next
+        report against and say nothing to somebody comparing two runs. This
+        says only what was measured.
+
+        A figure nobody reported is `None`, never 0. `/status` can spell
+        "not reported by this backend" out in words beside a blank; a file
+        cannot, so the absence has to live in the value itself. `reported`
+        carries the coverage `_stated` renders -- how many exchanges each
+        figure covers -- against `exchanges` for how many there were.
+        """
+        # `reports` is the authority on whether a figure means anything, here
+        # exactly as in `_stated`: the two describe one ledger, and a number
+        # this method printed while `/status` called it unreported would leave
+        # a reader to decide which of them was lying.
+        stated = {
+            field: getattr(self, field) if self.reports.get(field) else None
+            for field in ("cost_usd", *self.COUNTERS)
+        }
+        return {
+            # Exchanges Hardy sent, and deliberately not named `turns`:
+            # `RunResult.turns` is the provider's own `num_turns`, sitting in
+            # the same file, and one word over two measurements would make the
+            # record unreadable.
+            "exchanges": self.turns,
+            **stated,
+            # Summed over the counters that were reported, so it inherits their
+            # coverage; None rather than 0 when there is nothing to sum, because
+            # a zero total beside four nulls reads as a measurement.
+            "total_tokens": self.total_tokens if self.counted else None,
+            "reported": {field: self.reports.get(field, 0) for field in ("cost_usd", *self.COUNTERS)},
+        }
+
     # -- persistence ------------------------------------------------------
 
     def as_dict(self) -> dict[str, Any]:
