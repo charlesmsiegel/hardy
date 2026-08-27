@@ -146,19 +146,38 @@ def _content_lines(text: str) -> list[str]:
     return [line.rstrip() for line in text.splitlines() if line.strip()]
 
 
-def _appears_in_order(actual: list[str], expected: list[str]) -> bool:
-    """Whether `expected` occurs inside `actual` as one uninterrupted run.
+TRANSCRIPT_BEGIN = "«hardy-transcript-begin»"
+TRANSCRIPT_END = "«hardy-transcript-end»"
 
-    Not equality. An interpreter fed a whole file writes its own chrome around
-    the transcript — a startup banner in front of it, a final prompt behind it —
-    which says nothing about whether the session reproduced. Nothing is
-    tolerated *between* the expected lines, so a missing, extra, or reordered
-    line anywhere inside the session's own output still fails.
+
+def _between_markers(text: str) -> str | None:
+    """The script's own transcript, cut out of whatever surrounded it.
+
+    An interpreter fed a whole file writes its own chrome around what the file
+    printed -- a startup banner in front of it, a prompt behind it -- and this
+    comparison used to answer that by looking for the record *inside* the
+    transcript rather than requiring the two to be equal. That accepted far
+    too much. Extra output before or after the recorded lines still verified,
+    and a session that recorded nothing at all accepted any output whatever:
+    a cell guarded by `if __name__ == "__main__":` is silent under the driver,
+    whose module name is not `__main__`, and prints from the published script,
+    and the export called that reproduction.
+
+    So the script says where its own transcript begins and ends, rather than
+    Hardy guessing which lines an interpreter added. What falls outside the
+    markers is by construction the interpreter's, and what falls between them
+    has to be equal to the record, line for line.
+
+    The first begin and the *last* end are taken. A cell is free to print
+    either marker itself, and taking the outermost pair means doing so can
+    only widen the region a cell's output has to match in -- never hide
+    anything outside it.
     """
-    if not expected:
-        return True
-    width = len(expected)
-    return any(actual[at : at + width] == expected for at in range(len(actual) - width + 1))
+    start = text.find(TRANSCRIPT_BEGIN)
+    end = text.rfind(TRANSCRIPT_END)
+    if start == -1 or end == -1 or end < start:
+        return None
+    return text[start + len(TRANSCRIPT_BEGIN) : end]
 
 
 def _expected_transcript(cells: tuple[CellRecord, ...]) -> tuple[str, str]:
@@ -178,6 +197,30 @@ def _expected_transcript(cells: tuple[CellRecord, ...]) -> tuple[str, str]:
             out.append(record.value_repr + "\n")
         err.append(record.stderr)
     return "".join(out), "".join(err)
+
+
+def _without_chrome(backend: Any, text: str) -> str:
+    """Drop the lines an interpreter is *known* to write on its own account.
+
+    stdout is bracketed by markers the script prints itself, which is the
+    strongest form of this rule: what falls outside them is the interpreter's
+    by construction. Hardy has no statement it can be sure of in all three
+    backends' languages for writing to stderr, so that stream gets the weaker
+    form -- chrome is removed only where it has been named, and everything
+    left has to equal the record. No backend declares any yet, which makes
+    stderr an exact comparison for all three. A line an interpreter turns out
+    to write unbidden shows up as a `diverged` verdict quoting it, which is
+    where it gets added -- rather than as an export quietly accepting whatever
+    appeared.
+    """
+    patterns = getattr(backend, "script_stderr_chrome", ())
+    if not patterns:
+        return text
+    return "\n".join(
+        line
+        for line in text.splitlines()
+        if not any(pattern.match(line) for pattern in patterns)
+    )
 
 
 EXCERPT_LINES = 6
@@ -320,12 +363,22 @@ def _verify_script(
         )
 
     expected_out, expected_err = _expected_transcript(cells)
+    transcript = _between_markers(stdout)
+    if transcript is None:
+        # The script exited 0 and its capture was complete, so the two
+        # statements bracketing its own transcript are statements it ran. A
+        # file that did not print them printed something other than what
+        # Hardy wrote out.
+        return "diverged", (
+            "the script did not print the markers Hardy wrote around its own "
+            f"transcript; it printed {_excerpt(run.stdout.strip())}"
+        )
     for stream, actual, expected in (
-        ("output", stdout, expected_out),
-        ("stderr", run.stderr, expected_err),
+        ("output", transcript, expected_out),
+        ("stderr", _without_chrome(session.backend, run.stderr), expected_err),
     ):
         got, want = _content_lines(actual), _content_lines(expected)
-        if not _appears_in_order(got, want):
+        if got != want:
             # The excerpts are here so a reader — or a CI log — can see *what*
             # differed without re-running anything. A verdict of "diverged" with
             # no evidence attached is another thing taken on trust. They are cut
@@ -372,6 +425,19 @@ def render_script(
     ]
     if backend.preamble:
         lines += [backend.preamble, ""]
+    # The script says where its own transcript starts and stops, so the check
+    # that compares it against the record does not have to guess which lines
+    # the interpreter added around it. After the preamble, because a preamble
+    # that printed anything printed it in the session's kernel too and the
+    # session never recorded it.
+    lines += [
+        f"{mark} The line below, and its partner at the end of this file, bracket",
+        f"{mark} what this file prints -- so Hardy can compare that against the",
+        f"{mark} session without mistaking an interpreter's startup banner for",
+        f"{mark} something a cell printed. See `script_verdict` in export.json.",
+        backend.echo.format(marker=TRANSCRIPT_BEGIN),
+        "",
+    ]
     for record, verdict in zip(cells, verdicts, strict=True):
         note = (
             ""
@@ -381,6 +447,7 @@ def render_script(
         lines.append(f"{mark} --- cell {record.seq} ({record.author}){note}")
         lines.append(backend.render_cell(record.source).rstrip())
         lines.append("")
+    lines += [backend.echo.format(marker=TRANSCRIPT_END), ""]
     return "\n".join(lines) + "\n"
 
 

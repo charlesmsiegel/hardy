@@ -8,6 +8,7 @@ path at all. It answers each cell with `fake_cas.answer` and prints what a
 script prints: captured stdout, then the value on its own line.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -22,6 +23,15 @@ def main() -> None:
     for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
         source = line.strip()
         if not source or source.startswith("#"):
+            continue
+        # The transcript brackets Hardy writes around a script's own output.
+        # A real interpreter runs them as ordinary statements that print a
+        # string; this one has to do the same, and must not hand them to
+        # `answer`, whose reply counter would then be one ahead of the
+        # session's for every cell after them.
+        literal = re.fullmatch(r'print\("(.*)"\)', source)
+        if literal is not None:
+            sys.stdout.write(literal.group(1) + "\n")
             continue
         reply = answer(source)
         sys.stdout.write(reply["stdout"])
