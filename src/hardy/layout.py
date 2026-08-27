@@ -216,7 +216,14 @@ class Layout:
         try:
             if not ignore.read_text(encoding="utf-8").startswith(PROBLEM_HEADER):
                 return False
-        except OSError:
+        except (OSError, UnicodeDecodeError):
+            # A file Hardy cannot read is a file Hardy did not write, which is
+            # the answer this predicate exists to give -- not an exception to
+            # raise through a slash command. `UnicodeDecodeError` is a
+            # `ValueError` and was sailing straight past `OSError`: a
+            # `.gitignore` holding non-UTF-8 bytes reached the shell as a raw
+            # decoding traceback and ended the plain session outright, which
+            # has no catch around a command.
             return False
         made = {directory.name for directory in (self.lean, self.tex, self.cas, self.local, self.build)}
         for child in self.problem.iterdir():

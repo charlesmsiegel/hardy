@@ -409,3 +409,21 @@ async def test_a_file_wearing_a_scaffold_name_is_refused(ui, root):
 
     assert after is state
     assert state.reopen.opened == []
+
+
+async def test_an_unreadable_marker_is_answered_rather_than_raised(ui, root):
+    """A file Hardy cannot decode is a file Hardy did not write.
+
+    `UnicodeDecodeError` is a `ValueError`, so it sailed past the `OSError`
+    guard and reached the shell as a raw traceback -- and ended the plain
+    session outright, which has no catch around a command at all.
+    """
+    (root / "theirs").mkdir()
+    (root / "theirs" / ".gitignore").write_bytes(b"\xff\xfe not utf-8\n")
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
+
+    after = await handlers.handle_project(ui, "new theirs", state)
+
+    assert after is state
+    assert state.reopen.opened == []
+    assert "not a Hardy project" in ui.text

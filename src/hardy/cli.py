@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 import os
@@ -248,45 +249,50 @@ class ProjectOpener:
 
     def __init__(
         self,
-        args: argparse.Namespace | None,
+        launched: str,
         cas: Any,
         *,
         search: Any,
         search_detail: str,
     ):
-        self._args = args
         self._search = search
         self._search_detail = search_detail
         self.cas = cas
+        # One retrieval meter per problem, for as long as this process lives.
+        # `renew` on every open gave a problem a full allowance every time it
+        # was reopened, so `A -> B -> A` refilled A -- and repeating the cycle
+        # made a budget that is cumulative by construction effectively
+        # unlimited, with the next ranking reporting `prior_seconds_spent=0`
+        # over a trajectory that had already spent it. Returning to a problem
+        # resumes its record and its provider thread; its meter belongs with
+        # them. Seeded with the launch problem's own runtime, which is the one
+        # `_chat` has already given the first session.
+        self._search_for: dict[str, Any] = {launched: search}
 
     def _configure(self, slug: str, current: configuration.Config) -> configuration.Config:
-        """The same resolution `_config` does, for a slug already chosen.
+        """The configuration the session is running, pointed at another problem.
 
-        No `choose`: the user has just named the problem, so there is no
-        ambiguity left to ask about. `current` is the configuration the
-        session is actually running, and the model comes from it rather than
-        from the file: `/model` may have moved the session since launch, and
-        an explicit override here wins over the file even when the user also
-        saved it, so re-reading would quietly reopen on the wrong model.
+        Derived from `current`, not re-resolved from the layers. Re-reading was
+        wrong three separate ways and each was found separately: `/model` moves
+        the live session and no file, so a re-read reopened on the model the
+        user had left; `--no-project-context` is a flag and lives in no file at
+        all, so a re-read turned the project's `AGENTS.md` back on; and a
+        global config edited while Hardy runs would have had the new session
+        check Lean in one toolchain while the search tools carried over still
+        described and queried the other.
 
-        `project_context` comes from `current` for the same reason and a
-        different route: `--no-project-context` is a flag, so it lives in the
-        resolved configuration and in no file this would re-read. Left out, a
-        switch turned the project's own `AGENTS.md` back on for a user who had
-        just asked for it to be left alone -- a deliberate choice reversed by
-        an unrelated command.
+        All three are the same mistake -- treating the file as the authority
+        for what the session is running under -- and patching them field by
+        field was leaving the next one to be found by somebody else. The
+        session's own configuration IS the authority; the only thing a switch
+        changes is which problem it points at.
+
+        The slug is validated here rather than trusted from the caller. The
+        handler already refuses a bad one, but this is a seam, and
+        `dataclasses.replace` reaches `Config.layout` with whatever it is
+        given.
         """
-        args = self._args
-        return configuration.load(
-            getattr(args, "config", None),
-            root=getattr(args, "root", None) or current.root,
-            project=slug,
-            model=current.model,
-            project_context=current.project_context,
-            lean_command=getattr(args, "lean_command", None),
-            lean_project=getattr(args, "lean_project", None),
-            latex_command=getattr(args, "latex_command", None),
-        )
+        return dataclasses.replace(current, project=layout.validate_slug(slug))
 
     def __call__(
         self, slug: str, confirm: Callable[[dict[str, str]], bool], current: configuration.Config
@@ -295,14 +301,14 @@ class ProjectOpener:
         prepare_layout(config)
         # The pinned environment and the module index carry over -- they are
         # the root's and they are what a launch pays for. The retrieval budget
-        # does not: it accumulates for a retriever's whole life, so the second
-        # problem would open with whatever the first had left, and rank against
-        # a spend that appears nowhere in its own record.
-        search = (
-            search_tools.renew(self._search, config.limits)
-            if self._search is not None
-            else None
-        )
+        # does not: it accumulates for a retriever's whole life, so a problem
+        # sharing one would rank against a spend that appears nowhere in its
+        # own record. One meter per problem, kept, so returning to a problem
+        # resumes its spend rather than refilling it.
+        search = self._search_for.get(slug)
+        if search is None and self._search is not None:
+            search = search_tools.renew(self._search, config.limits)
+            self._search_for[slug] = search
         # A kernel per problem, logging into that problem's `cas/`. Sharing one
         # would put two problems' cells in one `cells.jsonl` and one export.
         cas, cas_detail = cas_tools.build_runtime(
@@ -439,7 +445,7 @@ def _chat(
     # How `/project switch` opens another problem without ending the process.
     # It owns the live CAS runtime from here on, because a switch replaces it
     # and the `finally` below has to close whichever one is current.
-    opener = ProjectOpener(args, cas, search=search, search_detail=search_detail)
+    opener = ProjectOpener(config.project, cas, search=search, search_detail=search_detail)
 
     def build(confirm: Callable[[dict[str, str]], bool]) -> MathematicsSession:
         return MathematicsSession(
