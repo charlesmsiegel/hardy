@@ -444,7 +444,11 @@ Priority labels are sequencing hints:
   what it cannot see is an object whose repr is stable, concise, and silent
   about its contents -- a module a cell has attached an attribute to, an open
   file, a class with a `__repr__` of its own. A strong check with a named
-  limit, not a proof. A replay Hardy signalled is
+  limit, not a proof. Where the default backend records no digest, an export
+  marks that cell `unverified` for the same reason a rebuild does -- its replay
+  reproduced everything Hardy can see and nothing more. A sentinel backend is
+  untouched by that rule: every record there is digestless, so the absence says
+  nothing about the cell. A replay Hardy signalled is
   refused whatever it answered -- an `ok` most of all, since a cell that caught
   the stop can skip a mutation and still print what it printed before -- and
   the session is left retryable rather than poisoned, because a press says

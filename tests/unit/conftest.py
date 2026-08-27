@@ -30,6 +30,11 @@ class FakeBackend(SympyBackend):
     """
 
     preamble = ""
+    # The stand-in kernel speaks the framing and the reply shape, not the
+    # state digest: it interprets a made-up language and has no namespace to
+    # fingerprint. Saying so keeps a missing digest from meaning anything
+    # here, exactly as it means nothing on a sentinel backend.
+    records_state = False
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         return (sys.executable, "-u", str(FAKE_CAS), str(max_output_bytes))
