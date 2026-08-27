@@ -226,7 +226,10 @@ Priority labels are sequencing hints:
   question and a proof of the wrong theorem costs the whole run. The two end
   under different terminal reasons and different advice, because a translation
   that was read and refused is not one nobody read. The verdict is
-  written to `faithfulness.json` beside the rendered question as
+  bounded by what is left of the run's active budget, so a provider that
+  accepts the connection and never answers becomes an unavailable verdict
+  rather than a run that never ends. The verdict is written to
+  `faithfulness.json` beside the rendered question as
   `faithfulness-prompt.md` — so the recorded prompt hash is recomputable from
   the run directory rather than self-asserted — recorded in the trajectory
   beside the frozen claim, and carried in the manifest, where `user_approved`
@@ -242,12 +245,22 @@ Priority labels are sequencing hints:
   model shares survives the check, and closing that needs
   `faithfulness_model` pointed somewhere genuinely different. The verdict is
   also a single read: no second reader, no disagreement between readers to
-  escalate. And the reader's isolation is as strong as the tools it is denied,
-  which is complete on the Claude backend and, on Codex, rests on that SDK's
-  own sandbox around an empty working directory — Hardy does not confine the
-  process itself, so a reader that defeated that sandbox could still reach the
-  run directory by absolute path. That is the deferred process isolation, not
-  a gap peculiar to this gate.
+  escalate.
+- **Known limit — the Codex reader cannot be confined, and the record says
+  so.** On the Claude backend the isolation is real: the runtime refuses
+  `Read`, `Bash`, `Glob` and `Grep` by name and refuses by default rather than
+  by enumeration, so a thread offered no tool specs cannot reach the
+  filesystem. The Codex SDK offers nothing equivalent — its `read_only`
+  sandbox is documented as allowing file reads (anywhere, not under `cwd`),
+  its read-only policy carries no readable-root field, and denying escalations
+  does not deny sandboxed reads — so a Codex reader that goes looking can
+  still read `formalization.json` or the trajectory by absolute path. The
+  empty working directory removes the obvious route and nothing more. Rather
+  than claim an independence it cannot establish, the runtime reports what its
+  isolation is worth and the verdict records it: `reviewer_isolation` names
+  the guarantee, or is null where there is none. Closing this needs the
+  deferred process confinement, or a readable-root control that SDK does not
+  have.
 - **Next — Critique workflow:** inspect user, literature, or generated proofs and
   produce a structured ledger of gaps.
 - **Next — Repair workflow:** patch one gap locally, without changing the claim,

@@ -45,6 +45,8 @@ def _claim(domain, original='Every prime above two is odd.'):
 class _Runtime:
     """A runtime that records how the reader was started and what it was asked."""
 
+    isolation_guarantee = 'tools-refused'
+
     def __init__(self, answer):
         self.answer = answer
         self.starts = []
@@ -52,9 +54,15 @@ class _Runtime:
 
     backend = 'fixture-backend'
 
-    def start(self, *, model, run_dir, claim, isolated=False, phase=None):
+    def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None):
         self.starts.append(
-            {'model': model, 'claim': claim, 'isolated': isolated, 'cwd': run_dir}
+            {
+                'model': model,
+                'claim': claim,
+                'isolated': isolated,
+                'cwd': run_dir,
+                'wall_seconds': wall_seconds,
+            }
         )
         return object()
 
@@ -425,3 +433,74 @@ def test_the_fence_is_the_same_question_every_time(tmp_path) -> None:
     claim = _claim(domain)
 
     assert prompts.faithfulness_prompt(claim) == prompts.faithfulness_prompt(claim)
+
+
+def test_the_read_is_bounded_by_the_budget_it_is_given(tmp_path) -> None:
+    """One call with no loop around it needs its own deadline.
+
+    A provider that accepts the connection and then never answers would
+    otherwise block here forever — and the fail-closed verdict below, which is
+    the entire point of the gate, would never be written at all. The proving
+    loop re-checks its budget every attempt; this stage has no next attempt.
+    """
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+    runtime = _Runtime(_review(domain))
+
+    faithfulness.review_translation(
+        _claim(domain),
+        runtime=runtime,
+        model='reviewer-model',
+        store=_store(tmp_path),
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+        wall_seconds=42.0,
+    )
+
+    assert runtime.starts[0]['wall_seconds'] == 42.0
+
+
+def test_a_stalled_reader_becomes_an_unavailable_verdict(tmp_path) -> None:
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+    store = _store(tmp_path)
+
+    verdict = faithfulness.review_translation(
+        _claim(domain),
+        runtime=_Runtime(TimeoutError('the run exceeded its 42s wall-clock budget')),
+        model='reviewer-model',
+        store=store,
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+        wall_seconds=42.0,
+    )
+
+    assert verdict.outcome is domain.FaithfulnessOutcome.UNAVAILABLE
+    assert 'wall-clock budget' in verdict.detail
+    assert (store.path / 'faithfulness.json').exists()
+
+
+def test_the_verdict_says_what_the_readers_isolation_was_worth(tmp_path) -> None:
+    """A backend that cannot confine its reader reports nothing, and the record
+    says so — which is a different verdict from the same words."""
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+
+    class _Unconfined(_Runtime):
+        isolation_guarantee = None
+
+    confined = faithfulness.review_translation(
+        _claim(domain),
+        runtime=_Runtime(_review(domain)),
+        model='reviewer-model',
+        store=_store(tmp_path / 'a'),
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+    unconfined = faithfulness.review_translation(
+        _claim(domain),
+        runtime=_Unconfined(_review(domain)),
+        model='reviewer-model',
+        store=_store(tmp_path / 'b'),
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+
+    assert confined.reviewer_isolation == 'tools-refused'
+    assert unconfined.reviewer_isolation is None

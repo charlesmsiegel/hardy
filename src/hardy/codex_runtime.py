@@ -69,6 +69,11 @@ class AgentThread:
 class CodexRuntime:
     model = "codex"
     backend = "codex"
+    # None, because Hardy cannot establish one here. The SDK's `read_only`
+    # sandbox permits reads anywhere and offers no readable-root control, so an
+    # isolated thread's empty `cwd` removes the obvious route to the run
+    # directory and not the others. Recorded rather than assumed: see `start`.
+    isolation_guarantee = None
 
     def __init__(self, *, client: Any, store: RunStore, config_path: Path) -> None:
         self._client = client
@@ -99,11 +104,21 @@ class CodexRuntime:
         is built to prevent, so it is given an empty directory of its own and
         the narrowest sandbox this SDK offers.
 
-        What that leaves unclosed is stated rather than papered over: the
-        sandbox is the SDK's, and Hardy does not confine the process itself
-        (see DESIGN.md's trust boundary). The empty `cwd` is the part Hardy
-        can guarantee; a reader that defeats the SDK's own sandbox could still
-        reach the run directory by absolute path.
+        What this does NOT achieve is stated plainly, because the gate's whole
+        value is that its claim is true. `Sandbox.read_only` is documented by
+        the SDK as allowing "file reads without writes" -- reads anywhere, not
+        reads under `cwd` -- and its `ReadOnlySandboxPolicy` carries no
+        readable-root field to narrow (only `workspace_write` has
+        `writableRoots`, which is about writes). `deny_all` denies escalations,
+        not sandboxed reads. So a Codex reader that goes looking can still
+        `cat` an absolute path into the run directory and find
+        `formalization.json` or the trajectory. The empty `cwd` removes the
+        obvious route and nothing more.
+
+        Hardy therefore cannot establish this reader's independence, and says
+        so rather than claiming it: see `isolation_guarantee` below, which the
+        gate reads and records. Closing this needs the process confinement
+        DESIGN.md defers, or a readable-root control this SDK does not offer.
         """
         sdk = load_sdk()
         configuration: dict[str, Any] = {}
@@ -117,8 +132,10 @@ class CodexRuntime:
                 cwd=str(directory),
                 # Read-only where the SDK has it; a reader writes nothing
                 # either way, and the empty directory is the real guarantee.
-                sandbox=getattr(sdk.Sandbox, "read_only", sdk.Sandbox.workspace_write),
-                approval_mode=sdk.ApprovalMode.auto_review,
+                sandbox=sdk.Sandbox.read_only,
+                # Escalations denied rather than auto-approved. This narrows
+                # the reader; it does not confine it -- see the docstring.
+                approval_mode=sdk.ApprovalMode.deny_all,
                 base_instructions=BASE_INSTRUCTIONS,
                 developer_instructions=DEVELOPER_INSTRUCTIONS,
                 config={},

@@ -32,13 +32,20 @@ class _RecordingRuntime:
 
     instances: list[dict] = []
 
-    def __init__(self, model, *, system_prompt, specs, dispatch, cwd, observe):
+    def __init__(
+        self, model, *, system_prompt, specs, dispatch, cwd, observe, wall_seconds=None
+    ):
         self.model = model
         self.specs = specs
         self.dispatch = dispatch
         self.observe = observe
         _RecordingRuntime.instances.append(
-            {'model': model, 'specs': specs, 'observe': observe}
+            {
+                'model': model,
+                'specs': specs,
+                'observe': observe,
+                'wall_seconds': wall_seconds,
+            }
         )
 
 
@@ -215,3 +222,17 @@ def test_a_cancelled_proving_thread_still_seals_under_proving(tmp_path) -> None:
     ]
     sealed = [event for event in events if event['kind'] == 'claude.unsettled']
     assert [event['phase'] for event in sealed] == ['proving']
+
+
+def test_a_stage_deadline_reaches_the_runtime_that_enforces_it(tmp_path) -> None:
+    """`ClaudeAgentRuntime` only applies its `asyncio.wait_for` when it is given
+    `wall_seconds`, and `start` never supplied one — so nothing bounded a
+    provider that accepted the connection and then stalled."""
+    staged, store, runtime = _staged(tmp_path)
+
+    runtime.start(model='m', run_dir=store.path, claim=None, isolated=True, wall_seconds=30.0)
+    runtime.start(model='m', run_dir=store.path, claim=None)
+
+    bounded, unbounded = _RecordingRuntime.instances
+    assert bounded['wall_seconds'] == 30.0
+    assert unbounded['wall_seconds'] is None

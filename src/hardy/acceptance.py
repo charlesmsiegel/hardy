@@ -101,7 +101,7 @@ class _DeterministicRuntime:
 
     backend = "deterministic-no-model"
 
-    def start(self, *, model, run_dir, claim, isolated=False, phase=None):
+    def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None):
         return SimpleNamespace(claim=claim, isolated=isolated)
 
     def run_structured(self, thread, stage, prompt, output_type):

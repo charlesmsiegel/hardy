@@ -121,6 +121,11 @@ class ClaudeStagedRuntime:
     """Runs the workflow's stages on the Claude agent SDK."""
 
     backend = "claude"
+    # What an `isolated` thread here is actually worth. `ClaudeAgentRuntime`
+    # refuses `Read`, `Bash`, `Glob`, `Grep` and the rest by name, and its
+    # `_permit` callback refuses by default rather than by enumeration, so a
+    # thread offered no tool specs has no way to reach the filesystem at all.
+    isolation_guarantee = "tools-refused"
 
     def __init__(
         self,
@@ -162,6 +167,7 @@ class ClaudeStagedRuntime:
         claim: FrozenClaim | None,
         isolated: bool = False,
         phase: RunPhase = RunPhase.PROVING,
+        wall_seconds: float | None = None,
     ) -> StagedThread:
         """Open one stage's thread, with the tools that stage is entitled to.
 
@@ -193,6 +199,13 @@ class ClaudeStagedRuntime:
             # -- provider events for the faithfulness read appearing under
             # `proving` before the transition into proving was even recorded.
             observe=partial(self._observe, phase=phase),
+            # Nothing else bounds a provider that accepts the connection and
+            # then never answers. The proving loop re-checks its budget every
+            # attempt, so a stall there is caught on the next pass; a stage
+            # that is one call -- the faithfulness read -- has no next pass,
+            # and a reader stalled forever means the fail-closed verdict is
+            # never written and neither is the manifest.
+            wall_seconds=wall_seconds,
         )
         thread = StagedThread(runtime=runtime, claim=claim, phase=phase)
         self._threads.append(thread)

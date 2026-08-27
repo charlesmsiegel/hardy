@@ -50,6 +50,7 @@ def review_translation(
     model: str,
     store: RunStore,
     phase: RunPhase,
+    wall_seconds: float | None = None,
     on_thread: Callable[[Any], None] | None = None,
 ) -> FaithfulnessVerdict:
     """Ask an independent reader whether the frozen Lean says what the user said.
@@ -75,6 +76,9 @@ def review_translation(
         "claim_sha256": claim.content_hash,
         "reviewer_model": model,
         "reviewer_backend": str(getattr(runtime, "backend", "unknown")),
+        # Asked of the runtime rather than assumed of the gate. A backend that
+        # cannot confine its reader reports nothing, and the verdict says so.
+        "reviewer_isolation": getattr(runtime, "isolation_guarantee", None),
         "prompt_sha256": asked.sha256,
     }
     # A thread of its own, isolated: no tools, and for the backends whose
@@ -88,6 +92,12 @@ def review_translation(
             claim=None,
             isolated=True,
             phase=phase,
+            # This read is one call with no loop around it, so a provider that
+            # accepts the connection and then stalls would block here forever
+            # -- and the verdict below, which exists to make the gate
+            # fail-closed, would never be written at all. A deadline is what
+            # turns "the reader never answered" into an answer.
+            wall_seconds=wall_seconds,
         )
         if on_thread is not None:
             on_thread(thread)

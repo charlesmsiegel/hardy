@@ -306,7 +306,11 @@ makes that true rather than aspirational — the reader is offered none, because
 the computer algebra tools run on one shared kernel and reach the filesystem,
 so a reader holding them could read the run's own artifacts. On a backend whose
 agent has its own file access it also gets an empty working directory outside
-the run tree. A model asked to confirm its
+the run tree — which on Codex is all Hardy can do, because that SDK's
+read-only sandbox permits reads anywhere and offers no readable-root control.
+So the runtime reports what its isolation is actually worth and the verdict
+records it, rather than the gate claiming an independence it cannot establish
+on every backend. A model asked to confirm its
 own translation is predisposed to find it defensible, which is what makes most
 self-checks theatrical rather than load-bearing. It is asked for entailment in
 both directions rather than for confidence, because a wrong translation is
