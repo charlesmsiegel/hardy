@@ -181,7 +181,10 @@ that order. `HARDY_CONFIG` selects a different config file, as does `--config`
 `hardy prove` froze says what you said. Left unset it is `model`, which is
 already independent of the exchange that wrote the formalization — the reader
 gets a conversation of its own, your words, and the Lean signature, and nothing
-else. Naming a different model here buys independent weights as well.
+else. Naming a different model here buys independent weights as well. It is one global setting and the backends do not share model names, so `hardy prove
+--faithfulness-model ...` overrides it for a single run — which is what a
+config naming a Claude reviewer needs when the invocation is `--backend
+codex`.
 
 `lean_project` is what lets `hardy` run from any directory: Lean resolves
 imports through that Lake project rather than the directory you happen to be

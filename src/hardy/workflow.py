@@ -299,6 +299,39 @@ class ProveWorkflow:
                 # asked whether the frozen Lean says what the user said. Run on
                 # the claim as persisted, so what was read is byte-identical to
                 # what will be proved.
+                # Asked before the reader is launched, not clamped afterwards.
+                # The budget check at the top of this loop happens before the
+                # formalization turn and the elaboration, either of which can
+                # begin inside the budget and finish outside it -- so by here
+                # the run may already have spent everything it declared. A
+                # `max(1.0, ...)` floor would have bought a second of provider
+                # time the run does not have, and reported the result as a
+                # translation nobody read rather than as the budget running
+                # out, which is what actually happened.
+                remaining = self._config.limits.active_seconds - (
+                    self._monotonic() - active_started - user_wait
+                )
+                if remaining <= 0:
+                    grades = Grades(
+                        known_gaps=(
+                            "The active budget expired before the translation could be "
+                            "independently read.",
+                        ),
+                    )
+                    state.transition(RunPhase.CANCELLED)
+                    return self._finalize(
+                        request,
+                        terminal,
+                        store,
+                        state,
+                        created_at,
+                        active_started,
+                        user_wait,
+                        grades,
+                        TerminalReason.TIMEOUT_BUDGET_EXHAUSTED,
+                        approved_claim,
+                    )
+
                 def track_reader(thread: Any) -> None:
                     # Same reason `active_thread` follows the formalizing
                     # thread above: a Ctrl+C during the read has a live
@@ -313,14 +346,10 @@ class ProveWorkflow:
                     model=self._config.faithfulness_model or request.model,
                     store=store,
                     phase=state.phase,
-                    # What is left of the run's active budget. The gate is the
-                    # one stage with no loop to re-check it, so the bound has
-                    # to travel with the call.
-                    wall_seconds=max(
-                        1.0,
-                        self._config.limits.active_seconds
-                        - (self._monotonic() - active_started - user_wait),
-                    ),
+                    # What is left of the run's active budget, established
+                    # above to be positive. The gate is the one stage with no
+                    # loop to re-check it, so the bound travels with the call.
+                    wall_seconds=remaining,
                     on_thread=track_reader,
                 )
                 # Graded before it is shown, not after. `review_translation`

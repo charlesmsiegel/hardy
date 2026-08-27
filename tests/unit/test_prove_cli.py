@@ -292,3 +292,58 @@ def test_an_unavailable_review_does_not_tell_the_user_to_restate_the_claim() -> 
     assert 'The run stops here.' in rendered
     assert 'No reader assessed the translation' in rendered
     assert 'Restate the claim' not in rendered
+
+
+def test_the_reviewer_model_can_be_overridden_for_one_invocation(tmp_path) -> None:
+    """`faithfulness_model` is one global setting and the backends do not share
+    model names, so a config naming a Claude reviewer would otherwise be handed
+    to a `--backend codex` run — whose reader fails on an identity that backend
+    cannot serve, halting every approved claim with no way to repair it, since
+    `--model` sets the run's model and not the reviewer's.
+    """
+    cli = importlib.import_module('hardy.cli')
+    config_module = importlib.import_module('hardy.config')
+    domain = importlib.import_module('hardy.domain')
+    config_path = tmp_path / 'config.toml'
+    config_module.write_setting(config_path, 'runs_root', str(tmp_path / 'runs'))
+    config_module.write_setting(config_path, 'faithfulness_model', 'claude-reviewer')
+    seen = []
+
+    def workflow_factory(config, path, *, backend):
+        seen.append(config.faithfulness_model)
+
+        class Workflow:
+            def run(self, request, terminal):
+                return domain.RunManifest(
+                    run_id=UUID('12345678-1234-5678-1234-567812345678'),
+                    created_at=datetime(2026, 8, 27, tzinfo=UTC),
+                    phase=domain.RunPhase.COMPLETED,
+                    model=request.model,
+                    prompt_set_sha256='p' * 64,
+                )
+
+        return Workflow()
+
+    for override in (None, 'gpt-reviewer'):
+        cli.run_prove(
+            SimpleNamespace(
+                config=str(config_path),
+                model='gpt-test',
+                claim='Two equals two.',
+                backend='codex',
+                faithfulness_model=override,
+            ),
+            workflow_factory=workflow_factory,
+        )
+
+    assert seen == ['claude-reviewer', 'gpt-reviewer']
+
+
+def test_prove_accepts_the_reviewer_model_flag() -> None:
+    cli = importlib.import_module('hardy.cli')
+
+    args = cli.build_parser().parse_args(
+        ['prove', '--faithfulness-model', 'gpt-reviewer', 'Two equals two.']
+    )
+
+    assert args.faithfulness_model == 'gpt-reviewer'

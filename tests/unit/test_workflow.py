@@ -159,7 +159,8 @@ def _scripted_controller(
     # be an exception to raise, which is how an unreachable reader is scripted.
     reviews = list(reviews or [])
     state = SimpleNamespace(
-        starts=[], isolation=[], handles=[], prompts=[], verifier_calls=0, cancelled=None
+        starts=[], isolation=[], deadlines=[], handles=[], prompts=[],
+        verifier_calls=0, cancelled=None
     )
 
     class Runtime:
@@ -170,6 +171,7 @@ def _scripted_controller(
                 raise RuntimeError('runtime fixture failure')
             state.starts.append(claim)
             state.isolation.append(isolated)
+            state.deadlines.append(wall_seconds)
             # Kept so a test can say *which* thread a cancellation reached, not
             # merely that one did: each stage has its own.
             state.handles.append(SimpleNamespace(claim=claim))
@@ -868,3 +870,76 @@ def test_a_reader_that_never_answered_is_not_a_refused_translation(tmp_path) -> 
     assert importlib.import_module('hardy.acceptance').validate_run_consistency(
         run_dir, manifest
     ) == ()
+
+
+def test_an_exhausted_budget_does_not_buy_one_more_provider_call(tmp_path) -> None:
+    """The budget check at the top of the loop runs before the formalization
+    turn and the elaboration, either of which can begin inside the budget and
+    finish outside it. Clamping the remainder to a one-second floor spent
+    provider time the run did not have, and reported the result as a
+    translation nobody read rather than as the budget running out.
+    """
+    domain = importlib.import_module('hardy.domain')
+
+    class Clock:
+        value = 0.0
+
+        def now(self):
+            return self.value
+
+    clock = Clock()
+
+    class SpendingLean:
+        """Elaboration that begins inside the budget and finishes outside it."""
+
+        def check_proof(self, claim, proof):
+            clock.value += 2_000.0
+            return _lean_result(domain, importlib.import_module('hardy.lean'),
+                                importlib.import_module('hardy.process'), True)
+
+    workflow, _, controller, state = _scripted_controller(
+        tmp_path, limits=domain.RunLimits(active_seconds=1_800), monotonic=clock.now
+    )
+    controller._lean = SpendingLean()
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
+    assert not [stage for stage, _ in state.prompts if stage == 'faithfulness']
+    assert manifest.grades.faithfulness_review is None
+    assert 'budget expired' in manifest.grades.known_gaps[0]
+    run_dir = next(tmp_path.iterdir())
+    assert not (run_dir / 'faithfulness.json').exists()
+
+
+def test_the_reader_is_given_the_budget_that_is_actually_left(tmp_path) -> None:
+    domain = importlib.import_module('hardy.domain')
+
+    class Clock:
+        value = 0.0
+
+        def now(self):
+            return self.value
+
+    clock = Clock()
+
+    class SlowLean:
+        def check_proof(self, claim, proof):
+            clock.value += 1_000.0
+            return _lean_result(domain, importlib.import_module('hardy.lean'),
+                                importlib.import_module('hardy.process'), True)
+
+    workflow, _, controller, state = _scripted_controller(
+        tmp_path, limits=domain.RunLimits(active_seconds=1_800), monotonic=clock.now
+    )
+    controller._lean = SlowLean()
+
+    controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    # Threads in order: formalizing, the reader, proving. Only the reader is
+    # bounded — 1800 declared, 1000 already spent by the elaboration above.
+    assert state.deadlines == [None, 800.0, None]
