@@ -201,7 +201,10 @@ class Layout:
         An EMPTY directory is not a leftover either: `ensure` writes the
         marker before it can fail on anything else, so a directory with
         nothing in it was made by somebody else -- and "every entry is one of
-        ours" is vacuously true of nothing at all.
+        ours" is vacuously true of nothing at all. The one exception is a
+        failure in the marker write itself, which leaves the directory empty
+        and therefore refused; that is a single small write immediately after
+        the `mkdir`, and the refusal says what to remove.
 
         Emptiness of the trees is deliberately NOT required. Once the marker
         says Hardy made this directory, whatever is inside belongs to this
@@ -279,6 +282,15 @@ class Layout:
         _ensure_dir(self.problem, self.root.resolve())
         problem = self.resolved_problem()
         root = self.root.resolve()
+        # The marker, before anything that can fail on a full disk. It is what
+        # `is_bare_scaffold` reads to tell Hardy's own abandoned scaffold from
+        # somebody else's directory, and written after the child trees it was
+        # absent from exactly the failures that need it: an `OSError` creating
+        # `tex/` left `<problem>/lean/` with no marker, which `/project new`
+        # then refused forever and `/project switch` could not see. Written
+        # here it covers every fallible step below it.
+        _refuse_if_symlink(self.problem / ".gitignore")
+        _ensure_rules(self.problem / ".gitignore", PROBLEM_HEADER, PROBLEM_RULES)
         # `resolved_problem` proves the problem DIRECTORY is a direct child of
         # the root; it says nothing about what gets created beneath it, and
         # "somewhere under the root" is not tight enough for that either:
@@ -295,8 +307,7 @@ class Layout:
         # reasonably have linked in from elsewhere, a file Hardy writes itself
         # is refused outright rather than resolved and checked, the moment it
         # is anything but a plain file already inside its owning directory.
-        _refuse_if_symlink(self.problem / ".gitignore")
-        _ensure_rules(self.problem / ".gitignore", PROBLEM_HEADER, PROBLEM_RULES)
+        # (The problem's own is written above, before the fallible work.)
         _refuse_if_symlink(self.hardy_dir / ".gitignore")
         _ensure_rules(self.hardy_dir / ".gitignore", TOOLING_HEADER, TOOLING_RULES)
 

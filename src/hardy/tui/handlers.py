@@ -530,7 +530,11 @@ async def _project(ui: Ui, argument: str, state: State) -> State:
     # refuse forever.
     intended = layout.Layout(root=state.config.root, slug=slug)
     if (state.config.root / slug).exists() and not intended.is_bare_scaffold():
-        ui.write(f"{slug} already exists here and is not a Hardy project.", style="error")
+        ui.write(
+            f"{slug} already exists here and is not a Hardy project. "
+            f"Remove {state.config.root / slug} or choose another name.",
+            style="error",
+        )
         return state
     return await _switch(ui, slug, state, creating=True)
 
