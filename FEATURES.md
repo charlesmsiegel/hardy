@@ -148,8 +148,10 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   the modules the save rebuilt — the edited one and everything importing it, since
   a dependent inherits whatever the edit brought in. An axiom reached through an
   import counts even though nothing in the saved file declares it, which is exactly
-  what the older text-only gate could not see. `sorryAx` is refused outright and is
-  never offered for approval; an unapproved assumption refuses the save and names
+  what the older text-only gate could not see. `sorryAx` is never offered for
+  approval -- no human may sanction a hole -- but it no longer refuses an
+  interactive save either: it is recorded, and the declarations resting on it are
+  reported as open. An unapproved assumption still refuses the save and names
   both the axiom and the declarations that need it. The verdict is recorded per
   module and reported by `read_workspace`. A `private lemma` is scaffolding and is
   not asked about — Lean mangles the name beyond the reach of the file the audit
@@ -297,14 +299,17 @@ Priority labels are sequencing hints:
   below.
 - **Now (implemented):** audit `#print axioms` on all three surfaces, through one
   shared parser and one shared allowlist, and let the grade follow the audited
-  axiom set rather than a process exit code. Standard axioms, forbidden
-  `sorryAx`, and human-approved assumptions are distinguished. A report that is
+  axiom set rather than a process exit code. Standard axioms, holes
+  (`sorryAx`), and human-approved assumptions are distinguished. A report that is
   missing, duplicated, or cut off mid-list fails the run rather than reading as
   an absence of axioms, and so does a claim stated as an anonymous `example`,
   which has no name to print axioms for. `hardy prove` and `hardy batch` fail
   closed — nobody is present to widen the trust base — and `hardy chat` refuses
   the save and names the axiom, so the model can go through `request_assumption`
-  for it. One consequence is worth stating rather than rediscovering from a
+  for it. That last part is about an *unapproved axiom* and not about a hole:
+  no human may approve `sorryAx`, so `hardy chat` neither refuses the save for
+  one nor offers it for approval. It records the hole and reports the
+  declarations resting on it as open, which is the entry below. One consequence is worth stating rather than rediscovering from a
   failed run: a proof closed by `native_decide` depends on `Lean.ofReduceBool`
   and `Lean.trustCompiler`, neither of which is one of Lean's three, so it is
   refused unattended and needs an approved assumption interactively.

@@ -654,3 +654,74 @@ def test_an_open_theorem_is_not_counted_as_machine_checked(tmp_path: Path):
     chat.send("Save it.")
     assert "0 theorems machine-checked" in chat._stamp()
     assert "1 theorem here is still open" in chat._stamp()
+    # Named, not merely counted. The PDF is the artifact a reader holds, and a
+    # banner saying only how many claims are unproved leaves them unable to
+    # tell which of the ones in front of them it means.
+    assert "HardyTarget" in chat._stamp()
+
+
+def test_an_open_theorems_name_is_escaped_for_the_banner(tmp_path: Path):
+    """Lean names carry `_`, which is TeX's subscript and breaks a document."""
+    holed = (
+        "import Mathlib\n\ntheorem Hardy_under : True := by exact True.intro"
+        " -- axioms: sorryAx\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([call("save_lean", {"source": holed}, "lean")]),
+        registered=("Hardy_under",),
+    )
+    chat.send("Save it.")
+    assert "Hardy\\_under" in chat._stamp()
+
+
+CARRIED_TEX = (
+    "\\documentclass{article}\n\\begin{document}\n"
+    "The target.\\label{thm:HardyTarget}\n"
+    "\\begin{verbatim}\ntheorem HardyTarget : True\n\\end{verbatim}\n"
+    "\\end{document}\n"
+)
+
+
+def test_open_theorems_still_accumulate_once_a_writeup_has_been_compiled(tmp_path: Path):
+    """The guarantee above, in the workspace where it was quietly false.
+
+    Saving the first open theorem moves the banner's open set, which moves the
+    tex signature, which makes `_stale_writeup` report the compiled document as
+    out of date. That obligation is not an `open` one, so the ratchet counted
+    it and refused the next skeleton -- forcing a LaTeX recompile between two
+    saves that owe the document nothing.
+    """
+    second = (
+        "import Mathlib\n\ntheorem HardySecond : True := by exact True.intro"
+        " -- axioms: sorryAx\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_latex", {"source": CARRIED_TEX}, "tex"),
+            call("save_lean", {"source": HOLED}, "lean"),
+            call("save_lean", {"path": "Second.lean", "source": second}, "lean"),
+        ]),
+    )
+    chat.send("Write up, then save two skeletons.")
+    saves = results(tmp_path, "save_lean")
+    assert saves[-1]["ok"], saves[-1]["output"]
+
+
+def test_a_compiled_writeup_still_goes_stale_when_a_theorem_reopens(tmp_path: Path):
+    """And the staleness itself must survive: the banner counts an open theorem
+    out of `machine-checked`, so a PDF compiled before the hole appeared says
+    something about this workspace that is no longer true."""
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": CLEAN}, "lean"),
+            call("save_latex", {"source": CARRIED_TEX}, "tex"),
+            call("save_lean", {"source": HOLED}, "lean"),
+        ]),
+    )
+    chat.send("Prove it, write it up, then break it open again.")
+    kinds = {(item.kind, item.subject) for item in chat.obligations()}
+    assert ("open", "HardyTarget") in kinds
+    assert ("label", "") in kinds, "the compiled banner now overstates and must say so"
