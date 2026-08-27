@@ -438,9 +438,10 @@ Priority labels are sequencing hints:
   reporting a rebuild as if it had been checked. Digests go missing readily and
   on purpose: Singular and Macaulay2 have no protocol to carry one, an older
   log has none, and the default kernel refuses to fingerprint a namespace
-  holding a value it could only see a prefix of, or one whose repr is CPython's
-  default `<Box object at 0x...>`, which says the type and the address and
-  nothing about what the object holds. The fingerprint is of the object
+  holding a value it could only see a prefix of, one whose repr is CPython's
+  default `<Box object at 0x...>`, or a graph too large to walk within the
+  bounds the walk is given -- objects to number and bytes to describe them in,
+  both finite because a namespace can hold a graph no traversal would finish. The fingerprint is of the object
   *graph*: every object is numbered on first sight and emitted as a
   back-reference on every later one, so `a = []; b = a` does not fingerprint
   like `a = []; b = []` and `[x, x]` does not fingerprint like `[[], []]` --
@@ -475,13 +476,21 @@ Priority labels are sequencing hints:
   breaks the file is caught here rather than by the reader. `script_verdict`
   travels in `export.json` and the notebook, and an export reproduces only when
   the cells and the script both do.
-- **Now (implemented):** the script check runs a copy and reads the published
-  file back. The check *executes* those bytes, and a cell is free to rewrite or
-  delete the path it was run from -- the interpreter has already loaded the
+- **Now (implemented):** the script check runs the published file *at its
+  published path*, reads it back afterwards, and puts the bytes back if the run
+  changed them. The check executes those bytes, and a cell is free to rewrite
+  or delete the path it was run from -- the interpreter has already loaded the
   module, so such a run still finishes and still matches the transcript, and
-  the verdict would be `verified` for an artifact that no longer existed. The
-  copy keeps an accidental self-overwrite away from the file a reader keeps;
-  the read-back catches a deliberate one and refuses the verdict.
+  the verdict would be `verified` for an artifact that no longer existed.
+  Running a copy elsewhere answered that and introduced its own overclaim,
+  because moving a file changes `__file__`: a cell branching on where the
+  script sits took one path under the check and the other under a reader, so
+  the verdict described a run nobody would perform. Only the working directory
+  is moved aside, so what the run writes by a relative path lands in a scratch
+  tree -- a run that writes relative to `__file__` writes beside the artifact,
+  which is what running the artifact does. The read-back and restore keep the
+  script equal to the hash the manifest records for it, and a restore the write
+  guard refuses is reported rather than swallowed.
 - **Now (implemented):** the published script names the environment it was
   checked under, and `export.json` records it. A verdict is a claim about
   running those exact bytes *that way*: `PYTHONHASHSEED` is pinned for the
@@ -495,7 +504,14 @@ Priority labels are sequencing hints:
   nothing has to be guessed -- and extra output the session never saw is no
   longer tolerated in front of or behind the record. A cell guarded by
   `if __name__ == "__main__":` is silent under the driver and prints from the
-  published file; that used to export as `verified`.
+  published file; that used to export as `verified`. Which closing marker goes
+  out says whether the file *finished*: the marker is an `atexit` callback, so
+  it is out of reach of anything a cell can rebind and it also fires on
+  `SystemExit(0)` -- a first cell raising one is silent under the driver and
+  ends the script, and both markers used to go out around an empty transcript
+  that matched a record of silent cells. The last statement in the file is what
+  distinguishes the two, and a run that never reached it is reported as cut
+  short rather than as reproduction.
 - **Now (implemented):** the default kernel captures at the *file descriptor*
   rather than by rebinding `sys.stdout`, so output from `os.system`, a
   subprocess, or a native library is the cell's output instead of bytes in

@@ -325,13 +325,24 @@ class SympyBackend:
     # the module body, after everything the file printed, out of reach of any
     # global a cell can touch. The begin marker needs no such care: it has
     # already run before a cell can rebind anything.
+    #
+    # Which marker goes out is decided by a list, not by a name resolved at
+    # shutdown. `atexit` fires on `SystemExit(0)` as readily as on reaching
+    # the end of the file, so an early exit used to print the closing marker
+    # around an empty transcript and an export called that reproduction. The
+    # last statement in the file fills the list; the callback holds the list
+    # object itself, bound by `partial` at registration, so a cell rebinding
+    # the name cannot make an unfinished run look finished -- and every way of
+    # getting it wrong reports the run cut short, which is the safe direction.
     transcript_prologue = (
+        "_hardy_reached_the_end = []",
         '__import__("atexit").register(__import__("functools").partial('
-        '__import__("builtins").print, "{end}", '
-        'file=__import__("sys").stdout))',
+        '(lambda write, finished, end, early: write(end if finished else early)), '
+        '__import__("functools").partial(__import__("builtins").print, '
+        'file=__import__("sys").stdout), _hardy_reached_the_end, "{end}", "{early}"))',
         '__import__("builtins").print("{begin}")',
     )
-    transcript_epilogue: tuple[str, ...] = ()
+    transcript_epilogue: tuple[str, ...] = ("_hardy_reached_the_end.append(True)",)
     # The exported script is run as an ordinary Python program, not through the
     # driver: the artifact under test is the file a reader would run.
     script_stdin = False

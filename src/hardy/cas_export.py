@@ -183,6 +183,16 @@ def _content_lines(text: str) -> list[str]:
 
 TRANSCRIPT_BEGIN = "«hardy-transcript-begin»"
 TRANSCRIPT_END = "«hardy-transcript-end»"
+# Printed in place of the end marker when the interpreter shut down without
+# the file's last statement having run. The closing marker is an `atexit`
+# callback, which is what puts it out of reach of anything a cell can rebind
+# -- and also what makes it fire on `SystemExit(0)`. A first cell guarded by
+# `if __name__ == "__main__": raise SystemExit(0)` is silent under the driver
+# and ends the script under `python session.py`, so both markers went out
+# around an empty transcript, the file exited 0, and an export reported
+# reproduction for a run in which none of the later cells existed. Shutting
+# down cleanly is not the same as having finished.
+TRANSCRIPT_CUT_SHORT = "«hardy-transcript-cut-short»"
 
 
 def _after_end_marker(text: str) -> str:
@@ -253,7 +263,9 @@ def _expected_transcript(cells: tuple[CellRecord, ...]) -> tuple[str, str]:
 def _markers(statements: tuple[str, ...]) -> list[str]:
     """Fill a backend's transcript-bracket templates with the actual markers."""
     return [
-        statement.format(begin=TRANSCRIPT_BEGIN, end=TRANSCRIPT_END)
+        statement.format(
+            begin=TRANSCRIPT_BEGIN, end=TRANSCRIPT_END, early=TRANSCRIPT_CUT_SHORT
+        )
         for statement in statements
     ]
 
@@ -345,14 +357,28 @@ def _scratch(directory: Path, name: str) -> Path:
     nothing when it declines to remove a link. `WriteGuard` refuses it instead,
     with the path and where it led.
     """
-    return _scratch_guard(directory, name).directory
-
-
-def _scratch_guard(directory: Path, name: str) -> WriteGuard:
-    """`_scratch`, but handing back the guard so a caller can write through it."""
     target = directory / name
     shutil.rmtree(target, ignore_errors=True)
-    return WriteGuard(target, create=True)
+    return WriteGuard(target, create=True).directory
+
+
+def _restore_published(script: Path, published: bytes) -> bool:
+    """Put the published bytes back after a run that changed them.
+
+    Through a guard, like every other write an export makes: `script` is a
+    path an export built and a run has just demonstrated it is willing to
+    interfere with, and a rebuilt path is exactly what the guard exists to
+    refuse. A run that left a symlink there is one of the things it refuses,
+    so this can fail -- and a failed restore has to be reported rather than
+    swallowed, because it leaves an artifact the manifest's hash does not
+    describe.
+    """
+    try:
+        guard = WriteGuard(script.parent, create=False)
+        guard.write_bytes(script.name, published)
+    except Exception:
+        return False
+    return True
 
 
 def _verify_script(
@@ -371,22 +397,25 @@ def _verify_script(
 
     # Fresh every time: a script that writes a file must be seen to create it,
     # not to find it left behind by the previous export.
-    guard = _scratch_guard(directory, SCRIPT_RUN)
-    run_directory = guard.directory
-    # A copy, not the published file. The check *executes* these bytes, and a
-    # cell is free to rewrite or delete the path it was run from -- Python has
-    # already loaded the module, so such a run still finishes and still
-    # matches the recorded transcript. The verdict would then be `verified`
-    # for an artifact that no longer existed, with the manifest carrying the
-    # hash of bytes nothing on disk had any more. The copy is byte-identical,
-    # so the verdict is about the same bytes either way; it is only the file a
-    # reader keeps that is out of reach.
+    run_directory = _scratch(directory, SCRIPT_RUN)
+    # The published file itself, at the path it was published to -- not a copy
+    # somewhere else. Byte identity is not enough to make a copy stand in for
+    # it, because moving a file changes `__file__`: a cell reading
+    # `pathlib.Path(__file__).parent.name` branches one way under the check
+    # and the other way when a reader runs the artifact, and the verdict would
+    # then describe a run nobody will ever perform. Only the working directory
+    # is moved aside, so what the run writes by a relative path lands in the
+    # scratch tree; a run that writes relative to `__file__` writes beside the
+    # artifact, which is what running the artifact does and what the check is
+    # here to be honest about.
+    #
+    # What running it in place costs is the artifact: a cell is free to rewrite
+    # or delete the path it was run from, and Python has already loaded the
+    # module, so such a run still finishes and still matches the record. That
+    # is answered below by putting the bytes back and refusing the verdict,
+    # rather than by checking a file no reader will run.
     published = script.read_bytes()
-    # Through the guard, like every other write an export makes: the scratch
-    # tree is a directory a shipped repository could have made a symlink, and
-    # a copy written by a rebuilt path would land wherever it pointed.
-    guard.write_bytes(script.name, published)
-    running = run_directory / script.name
+    running = script
     started = time.monotonic()
     try:
         run = run_exported_script(
@@ -402,16 +431,23 @@ def _verify_script(
         return "failed", str(error)
     session.charge(time.monotonic() - started)
 
-    # Running a copy keeps an *accidental* self-overwrite away from the
-    # artifact; nothing but isolation stops a cell reaching the published path
-    # deliberately, since it is a few directories up from where the copy runs.
-    # So the file is read back and compared. A verdict is a claim about the
-    # bytes a reader will keep, and if those changed while the check ran there
-    # is no such claim to make.
+    # The file is read back, and put back if it moved. A verdict is a claim
+    # about the bytes a reader will keep, so a run that rewrote them leaves no
+    # such claim to make -- and leaves an artifact whose contents no longer
+    # match the hash the manifest records for it, which is the export's own
+    # promise about itself. Restoring costs nothing a reader wanted: the
+    # published bytes are what this export set out to publish, and what the
+    # run did to them is what the verdict now says.
     if not script.exists() or script.read_bytes() != published:
+        put_back = (
+            "the published bytes have been put back"
+            if _restore_published(script, published)
+            else "and the published bytes could not be put back, so what is on disk "
+            "is not what this export's manifest describes"
+        )
         return "failed", (
-            "the published script changed on disk while it was being checked, so "
-            "the verdict would not describe the file this export publishes"
+            "the published script rewrote itself while it was being run, so the "
+            f"verdict would not describe the file this export publishes; {put_back}"
         )
     if run.timed_out:
         return "failed", f"the script did not finish within {remaining:g}s"
@@ -453,6 +489,17 @@ def _verify_script(
         )
 
     expected_out, expected_err = _expected_transcript(cells)
+    if TRANSCRIPT_CUT_SHORT in stdout:
+        # Said by the file about itself, at shutdown, and only when its last
+        # statement never ran. Checked before the transcript is compared,
+        # because the comparison would otherwise pass: a run that stopped
+        # after cell one prints exactly what cell one printed, and a run that
+        # stopped before cell one prints nothing at all, which is what a
+        # session of silent cells recorded.
+        return "failed", (
+            "the script stopped before it reached its last cell, so what it printed "
+            "is not what running this file does"
+        )
     transcript = _between_markers(stdout)
     if transcript is None:
         # The script exited 0 and its capture was complete, so the two
