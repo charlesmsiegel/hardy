@@ -75,9 +75,17 @@ def test_real_lean_names_a_standard_axiom_the_proof_actually_used() -> None:
 
 
 @pytest.mark.real_toolchain
-def test_real_lean_reports_sorry_ax_and_the_audit_refuses_it() -> None:
+def test_real_lean_reports_sorry_ax_and_the_audit_names_it_a_hole() -> None:
     """`sorry` reaches the kernel as an axiom. This is the case the whole gate
-    exists for, and the only place it can be confirmed is against real Lean."""
+    exists for, and the only place it can be confirmed is against real Lean.
+
+    The grade is `open` rather than `rejected`: an unfinished proof is a
+    different fact from an unacceptable one, and an interactive session keeps
+    the former so that a long proof has somewhere to be built. What that does
+    not change is anything here -- `1 = 2` closed by `sorryAx` is still named
+    as a hole, still not `clean`, and so still refused by every caller that
+    requires a clean grade, which is every unattended one.
+    """
     tools = _tools('theorem HardyTarget : 1 = 2')
     # Past the textual hole check on purpose: `sorryAx` is not `sorry`, and the
     # audit rather than the regex is what has to stop this.
@@ -88,7 +96,8 @@ def test_real_lean_reports_sorry_ax_and_the_audit_refuses_it() -> None:
     assert reports is not None, result.report
     assert reports[0].axioms == ('sorryAx',)
     verdict = classify(reports, ())
-    assert verdict.status == 'rejected'
+    assert verdict.status == 'open'
+    assert verdict.status != 'clean', 'nothing unattended may accept this'
     assert verdict.forbidden == ('sorryAx',)
 
 
