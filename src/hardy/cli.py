@@ -466,8 +466,21 @@ class ProjectOpener:
         current: configuration.Config,
         opening: _Reopen,
     ) -> tuple[configuration.Config, Any]:
+        # Before the filesystem is touched at all. `arm` publishes the guard
+        # on the event loop, so a cancel can already be marked by the time this
+        # thread runs its first line -- and `prepare_layout` creates the target
+        # tree and its `.gitignore`. Checking after it meant `/project new`
+        # reported the switch cancelled and left a new scaffold in the checkout
+        # anyway. `_configure` is pure, so this is the first statement that
+        # could leave anything behind.
+        opening.refuse_if_cancelled(None)
         config = self._configure(slug, current)
         prepare_layout(config)
+        # Again, because `prepare_layout` is not atomic: a cancel arriving
+        # while it runs leaves whatever it had made by then. That is bounded
+        # rather than closed, and cheaply survivable -- `Layout.is_bare_scaffold`
+        # recognises Hardy's own leftovers, so the name can be created again
+        # rather than being burned by the attempt.
         opening.refuse_if_cancelled(None)
         # The pinned environment and the module index carry over -- they are
         # the root's and they are what a launch pays for. The retrieval budget

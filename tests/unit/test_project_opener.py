@@ -708,3 +708,34 @@ def test_a_cancelled_reopen_cannot_then_be_committed(opener):
     assert opening.cancel() is True
     with pytest.raises(cli.ReopenCancelled):
         opening.commit(None)
+
+
+def test_a_cancel_before_the_worker_starts_leaves_no_scaffold(opener, live, root):
+    """`arm` marks it on the loop, so the worker can be cancelled before line one.
+
+    Checking after `prepare_layout` meant `/project new` reported the switch
+    cancelled and left the target tree and its `.gitignore` in the checkout
+    regardless.
+    """
+    opener.arm()
+    opener.cancel()
+
+    with pytest.raises(cli.ReopenCancelled):
+        opener("burnside", _decline, live)
+
+    assert not (root / "burnside").exists()
+
+
+def test_a_scaffold_left_by_a_cancel_during_preparation_is_still_retryable(opener, live, root):
+    """`prepare_layout` is not atomic, so that window is bounded, not closed.
+
+    What makes it survivable is that Hardy recognises its own leftovers: the
+    name is not burned by the attempt.
+    """
+    layout.Layout(root=root, slug="burnside").ensure()
+    assert layout.Layout(root=root, slug="burnside").is_bare_scaffold()
+
+    config, session = opener("burnside", _decline, live)
+
+    assert config.project == "burnside"
+    assert session is not None
