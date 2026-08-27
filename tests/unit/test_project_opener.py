@@ -290,3 +290,33 @@ def test_a_key_this_layer_may_not_set_is_kept_rather_than_deleted(opener, live, 
 def test_only_a_setting_this_layer_may_hold_can_be_written(root):
     with pytest.raises(ValueError, match="may only set"):
         configuration.write_project_setting(root, "model", "claude-opus-5")
+
+
+def test_a_value_that_cannot_be_rewritten_unchanged_stops_the_write(opener, live, root, capsys):
+    """Preserving keys was the point of parsing; a mangled key is not preserved.
+
+    `_render_toml_line` renders scalars, and a list or table reached it as
+    `str(value)` -- so a switch silently turned `model = ["a", "b"]` into a
+    quoted Python repr and a `[tectonic]` table into a string, in a tracked
+    file, as a side effect of doing something else entirely.
+    """
+    hardy = root / layout.HARDY_DIR
+    hardy.mkdir(parents=True, exist_ok=True)
+    original = 'project = "sylow"\nmodel = ["a", "b"]\n\n[tectonic]\nbundle = "x"\n'
+    (hardy / "config.toml").write_text(original, encoding="utf-8")
+
+    config, session = opener("burnside", _decline, live)
+
+    assert (hardy / "config.toml").read_text(encoding="utf-8") == original
+    # The switch stands: only the note saying so for next time is lost.
+    assert config.project == "burnside"
+    assert session is not None
+    assert "cannot rewrite" in capsys.readouterr().out
+
+
+def test_the_refusal_names_the_settings_and_their_types(root):
+    hardy = root / layout.HARDY_DIR
+    hardy.mkdir(parents=True, exist_ok=True)
+    (hardy / "config.toml").write_text('model = ["a"]\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=r"model \(list\)"):
+        configuration.write_project_setting(root, "project", "burnside")

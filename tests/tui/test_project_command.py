@@ -366,3 +366,46 @@ async def test_the_approval_gate_reaches_the_new_session_not_the_terminal(ui, ro
     state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
     await handlers.handle_project(ui, "switch burnside", state)
     assert callable(state.reopen.confirmed[0])
+
+
+async def test_a_directory_wearing_the_scaffold_names_is_still_somebody_else_s(ui, root):
+    """`lean/` is an ordinary thing to find in a stranger's directory.
+
+    Names alone let `X/lean/MyWork.lean` read as Hardy's leftovers, which
+    would have had `ensure` scatter trees and a record through it. Hardy's own
+    `.gitignore` header is the part nobody writes by accident.
+    """
+    (root / "theirs" / "lean").mkdir(parents=True)
+    (root / "theirs" / "lean" / "MyWork.lean").write_text("theorem mine : True := trivial\n", encoding="utf-8")
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
+
+    after = await handlers.handle_project(ui, "new theirs", state)
+
+    assert after is state
+    assert state.reopen.opened == []
+    assert "not a Hardy project" in ui.text
+
+
+async def test_a_hand_written_gitignore_is_not_hardys_marker(ui, root):
+    (root / "docs").mkdir()
+    (root / "docs" / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
+
+    after = await handlers.handle_project(ui, "new docs", state)
+
+    assert after is state
+    assert state.reopen.opened == []
+
+
+async def test_a_file_wearing_a_scaffold_name_is_refused(ui, root):
+    """`lean` as a regular file is not the directory `ensure` would have made."""
+    half = layout.Layout(root=root, slug="odd")
+    half.ensure()
+    (root / "odd" / "lean").rmdir()
+    (root / "odd" / "lean").write_text("not a directory\n", encoding="utf-8")
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
+
+    after = await handlers.handle_project(ui, "new odd", state)
+
+    assert after is state
+    assert state.reopen.opened == []

@@ -185,21 +185,46 @@ class Layout:
 
         Answered by naming what Hardy itself creates rather than by deleting
         anything: a directory holding one unexpected entry is somebody's work
-        and stays refused, and one holding only Hardy's own empty scaffold is
-        a second attempt at the same problem.
+        and stays refused, and one holding only Hardy's own scaffold is a
+        second attempt at the same problem.
 
-        An EMPTY directory is not a leftover and is refused with the rest.
-        `ensure` creates `lean/` immediately after the problem directory
-        itself, so Hardy never leaves an empty one; a `mkdir` a user made for
-        their own reasons is theirs, and "every entry is one of ours" is
-        vacuously true of nothing at all.
+        The names alone are not enough, and a first version that trusted them
+        was wrong: `lean/` is an ordinary thing to find in somebody's
+        directory, and a hand-written `.gitignore` is ordinary anywhere, so
+        `X/lean/MyWork.lean` and a lone user `.gitignore` both read as Hardy's
+        leftovers and would have had `ensure` scatter trees and a record
+        through a stranger's tree. The `.gitignore` HEADER is the part nobody
+        writes by accident -- Hardy puts it there itself -- so it is the
+        marker, and every other entry must additionally be a real directory
+        rather than a file wearing the name.
+
+        An EMPTY directory is not a leftover either: `ensure` writes the
+        marker before it can fail on anything else, so a directory with
+        nothing in it was made by somebody else -- and "every entry is one of
+        ours" is vacuously true of nothing at all.
+
+        Emptiness of the trees is deliberately NOT required. Once the marker
+        says Hardy made this directory, whatever is inside belongs to this
+        problem; `ensure` is idempotent and reopening is exactly what the user
+        asked for.
         """
         if not self.problem.is_dir() or self.problem.is_symlink():
             return False
+        ignore = self.problem / ".gitignore"
+        if ignore.is_symlink() or not ignore.is_file():
+            return False
+        try:
+            if not ignore.read_text(encoding="utf-8").startswith(PROBLEM_HEADER):
+                return False
+        except OSError:
+            return False
         made = {directory.name for directory in (self.lean, self.tex, self.cas, self.local, self.build)}
-        made.add(".gitignore")
-        present = list(self.problem.iterdir())
-        return bool(present) and all(child.name in made for child in present)
+        for child in self.problem.iterdir():
+            if child.name == ".gitignore":
+                continue
+            if child.name not in made or child.is_symlink() or not child.is_dir():
+                return False
+        return True
 
     def resolved_problem(self) -> Path:
         """The problem directory, proven to be a direct child of the root.

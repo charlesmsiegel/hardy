@@ -350,7 +350,13 @@ class ProjectOpener:
         destination = config.root / layout.HARDY_DIR / "config.toml"
         try:
             configuration.write_project_setting(config.root, "project", config.project)
-        except (OSError, layout.LayoutError) as error:
+        except (OSError, ValueError) as error:
+            # `ValueError` covers all three refusals this can raise and is not
+            # a widening: `LayoutError` is one (a guarded path), so is
+            # `TOMLDecodeError` (a file edited into something unparseable),
+            # and so is the refusal to rewrite a value that would not survive
+            # the trip. None of them is a reason to close a problem that is
+            # already open.
             print(f"Could not record the active project in {destination}: {error}")
 
 
