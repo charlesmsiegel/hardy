@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+from typing import Any
 
 from .. import catalog, doctor, layout, process
 from .. import config as configuration
@@ -354,7 +355,7 @@ async def _list(ui: Ui, state: State) -> State:
     return state
 
 
-async def _offer_registration(ui: Ui, config) -> None:
+async def _offer_registration(ui: Ui, config, state_reopen: Any = None) -> None:
     """The offer `hardy --project <new>` makes at startup, made for `/project new`.
 
     Imported here rather than at module scope because `cli` reaches into this
@@ -369,9 +370,18 @@ async def _offer_registration(ui: Ui, config) -> None:
     host = config.root / "lakefile.toml"
     if not host.is_file():
         return
-    question = f"Register {config.project}/lean with {host.name} so `lake build` sees it?"
-    if not await ui.confirm(question):
+    # What the launch already decided. `--no-register-lakefile` is documented
+    # as never touching the host file, and asking anyway let it be talked past
+    # -- in a piped session it also ate the next scripted line to do it.
+    # `--register-lakefile` is the same decision the other way: already
+    # answered, so asking again is noise.
+    policy = getattr(state_reopen, "register_lakefile", None)
+    if policy is False:
         return
+    if policy is None:
+        question = f"Register {config.project}/lean with {host.name} so `lake build` sees it?"
+        if not await ui.confirm(question):
+            return
     notice = cli.offer_registration(config, interactive=False, choice=True)
     if notice:
         ui.write(f"  {notice}")
@@ -436,7 +446,7 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
         # command. Registration is an offer about a file Hardy does not own;
         # failing it is a notice.
         try:
-            await _offer_registration(ui, config)
+            await _offer_registration(ui, config, state.reopen)
         except Exception as error:  # noqa: BLE001 - an offer is not the switch
             ui.write(f"Could not register {config.project}: {error}", style="error")
     return switched
@@ -453,7 +463,22 @@ async def handle_project(ui: Ui, argument: str, state: State) -> State:
 
     `safe_in_flight` stays False, the default, and deliberately: a running turn
     is appending to the record and the transcript of the problem it started in.
+
+    Nothing here raises. Every question this command asks of the filesystem --
+    what the root holds, whether a directory is Hardy's own -- can be refused
+    by it, and a refusal is a line rather than an exception: the plain session
+    has no catch around a command, so a root that cannot be enumerated ended
+    it outright. That has now been reported three times in three places, so
+    the guard is on the command rather than on whichever call was named.
     """
+    try:
+        return await _project(ui, argument, state)
+    except (OSError, UnicodeDecodeError) as error:
+        ui.write(f"Could not read the projects here: {error}", style="error")
+        return state
+
+
+async def _project(ui: Ui, argument: str, state: State) -> State:
     verb, _, name = argument.strip().partition(" ")
     verb, name = verb.lower(), name.strip()
     if not verb or verb == "list":

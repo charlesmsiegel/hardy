@@ -871,7 +871,22 @@ class Shell:
         command is not a turn, and writing one into the transcript would claim
         the model had been stopped. All this does is reach the child, which for
         `/cas` is the cell in the kernel the human and the model share.
+
+        A reopen in flight is asked first, and it is the only thing that can
+        answer for one: `/project switch` runs on a worker precisely so this
+        key stays live, and the kernel it may be stuck probing belongs to
+        neither session -- not the one being replaced, which is what
+        `state.session` is, and not yet the one being built. Reaching only the
+        session reported that nothing was running while the switch went on
+        waiting out the probe, which makes the worker pointless.
+
+        No two-press escalation for it, unlike a cell: a reopen has no state
+        worth preserving between the presses, so the first one ends it.
         """
+        reopening = getattr(self._state.reopen, "cancel", None)
+        if reopening is not None and reopening():
+            self.write("stopped opening the project; the one you are in is unchanged")
+            return
         session = self._state.session
         if self._command_stopping:
             escalate = getattr(session, "escalate", None)

@@ -492,3 +492,59 @@ async def test_a_reopener_with_nothing_to_cancel_is_left_alone(ui, root):
     state = State(config=_settings(root, "sylow"), session=None, reopen=reopen)
     with pytest.raises(asyncio.CancelledError):
         await handlers.handle_project(ui, "switch burnside", state)
+
+
+class Policy(Reopener):
+    """A reopener carrying a launch decision about the host lakefile."""
+
+    def __init__(self, root: Path, register_lakefile):
+        super().__init__(root)
+        self.register_lakefile = register_lakefile
+
+
+async def test_no_register_lakefile_is_not_asked_past(ui, root):
+    """The flag is documented as never touching the host file.
+
+    Asking anyway let it be talked past, and in a piped session ate the next
+    scripted line to do it.
+    """
+    (root / "lakefile.toml").write_text('name = "host"\n', encoding="utf-8")
+    ui.confirmations = [True]
+    state = State(config=_settings(root, "sylow"), session=None,
+                  reopen=Policy(root, register_lakefile=False))
+
+    await handlers.handle_project(ui, "new burnside", state)
+
+    assert not any("lakefile" in question for question in ui.asked)
+    assert "burnside" not in (root / "lakefile.toml").read_text(encoding="utf-8")
+    assert ui.confirmations == [True]          # the scripted answer was not eaten
+
+
+async def test_register_lakefile_registers_without_asking_again(ui, root):
+    (root / "lakefile.toml").write_text('name = "host"\n', encoding="utf-8")
+    state = State(config=_settings(root, "sylow"), session=None,
+                  reopen=Policy(root, register_lakefile=True))
+
+    await handlers.handle_project(ui, "new burnside", state)
+
+    assert not any("lakefile" in question for question in ui.asked)
+    assert "burnside" in (root / "lakefile.toml").read_text(encoding="utf-8")
+
+
+async def test_a_root_that_cannot_be_listed_is_a_line_not_an_exception(ui, root, monkeypatch):
+    """The plain session has no catch around a command; this must not need one."""
+    real = Path.iterdir
+
+    def denied(self):
+        if self == root:
+            raise PermissionError(13, "Permission denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "iterdir", denied)
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
+
+    for line in ("list", "switch burnside", "new burnside"):
+        ui.written.clear()
+        after = await handlers.handle_project(ui, line, state)
+        assert after is state
+        assert "Could not read the projects here" in ui.text

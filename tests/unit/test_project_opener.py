@@ -542,3 +542,51 @@ def test_an_uncancelled_reopen_still_commits(opener, live, root):
     assert config.project == "burnside"
     assert session is not None
     assert configuration.read_file(root / layout.HARDY_DIR / "config.toml")["project"] == "burnside"
+
+
+def test_the_cancellation_guard_is_published_before_any_work(opener, live, monkeypatch):
+    """A cancel can only mark a reopen it can see.
+
+    The first version created the guard after `prepare_layout` and the search
+    renewal, so a cancel arriving while directories were being made had
+    nothing to mark and the switch completed -- a window the docstring
+    described as far smaller than it was.
+    """
+    seen = []
+    real = cli.prepare_layout
+    monkeypatch.setattr(
+        cli, "prepare_layout", lambda config: seen.append(opener._opening) or real(config)
+    )
+
+    opener("burnside", _decline, live)
+
+    assert seen and seen[0] is not None
+
+
+def test_a_cancel_during_directory_creation_commits_nothing(opener, live, root, monkeypatch):
+    previous = opener.cas
+    real = cli.prepare_layout
+    monkeypatch.setattr(
+        cli, "prepare_layout", lambda config: opener.cancel() or real(config)
+    )
+
+    with pytest.raises(cli.ReopenCancelled):
+        opener("burnside", _decline, live)
+
+    assert previous.session.closed is False
+    assert opener.cas is previous
+    assert not (root / layout.HARDY_DIR / "config.toml").exists()
+
+
+def test_cancel_says_whether_there_was_anything_to_stop(opener):
+    """The terminal reports what it did, so it must not claim a stop it made up."""
+    assert opener.cancel() is False
+
+
+def test_the_launch_registration_policy_is_carried(args, live):
+    """`--no-register-lakefile` is about this process, not about one problem."""
+    made = cli.ProjectOpener(
+        live.project, None, search=None, search_detail="", register_lakefile=False
+    )
+    assert made.register_lakefile is False
+    assert cli.ProjectOpener(live.project, None, search=None, search_detail="").register_lakefile is None

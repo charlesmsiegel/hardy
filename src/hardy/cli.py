@@ -299,7 +299,15 @@ class ProjectOpener:
         *,
         search: Any,
         search_detail: str,
+        register_lakefile: bool | None = None,
     ):
+        # What the launch decided about the host `lakefile.toml`: False for
+        # `--no-register-lakefile`, True for `--register-lakefile`, None for
+        # neither. Carried because it is a decision about this process, not
+        # about the problem that happened to be open when it was made -- and
+        # `/project new` was asking anyway, so a flag documented as never
+        # touching the host file could still be talked past.
+        self.register_lakefile = register_lakefile
         self._search = search
         self._search_detail = search_detail
         self.cas = cas
@@ -317,7 +325,7 @@ class ProjectOpener:
         # `_chat` has already given the first session.
         self._search_for: dict[str, Any] = {launched: search}
 
-    def cancel(self) -> None:
+    def cancel(self) -> bool:
         """Stop a reopen that is already running on a worker thread.
 
         Cancelling the await does not stop the thread, and there is no reaching
@@ -335,15 +343,21 @@ class ProjectOpener:
         `__call__` refuses to commit anything once this is set.
 
         Marked on the reopen in flight rather than on the opener, so a cancel
-        cannot be erased by the next call resetting a shared flag. One window
-        is left open and is not worth closing here: a cancel delivered between
-        `to_thread` scheduling the call and the worker's first statement finds
-        no reopen to mark, and that switch completes. Ctrl+C landing inside
-        that gap gets what it would have got before any of this existed.
+        cannot be erased by the next call resetting a shared flag. The reopen
+        is published as `__call__`'s first statement, so the window in which
+        there is nothing to mark is the scheduling gap alone -- between
+        `to_thread` accepting the call and the worker's first line. A cancel
+        landing there lets the switch complete, which is what Ctrl+C did before
+        any of this existed.
+
+        Reports whether there was a reopen to stop, so a terminal can say what
+        it did rather than claim to have stopped something that was not there.
         """
         opening = self._opening
-        if opening is not None:
-            opening.cancel()
+        if opening is None:
+            return False
+        opening.cancel()
+        return True
 
     def _configure(self, slug: str, current: configuration.Config) -> configuration.Config:
         """The configuration the session is running, pointed at another problem.
@@ -373,8 +387,17 @@ class ProjectOpener:
     def __call__(
         self, slug: str, confirm: Callable[[dict[str, str]], bool], current: configuration.Config
     ) -> tuple[configuration.Config, Any]:
+        # Published first, before anything: a cancel can only mark a reopen it
+        # can see, and everything below it is work a cancelled switch must not
+        # be left holding. The first version created this after
+        # `prepare_layout` and the search renewal, which left a cancel arriving
+        # during directory creation with nothing to mark -- a window I had
+        # described in the docstring as far smaller than it was.
+        opening = _Reopen()
+        self._opening = opening
         config = self._configure(slug, current)
         prepare_layout(config)
+        opening.refuse_if_cancelled(None)
         # The pinned environment and the module index carry over -- they are
         # the root's and they are what a launch pays for. The retrieval budget
         # does not: it accumulates for a retriever's whole life, so a problem
@@ -387,8 +410,6 @@ class ProjectOpener:
             self._search_for[slug] = search
         # A kernel per problem, logging into that problem's `cas/`. Sharing one
         # would put two problems' cells in one `cells.jsonl` and one export.
-        opening = _Reopen()
-        self._opening = opening
         cas, cas_detail = cas_tools.build_runtime(
             backend_name=config.cas_backend,
             command=config.cas_command,
@@ -533,7 +554,13 @@ def _chat(
     # How `/project switch` opens another problem without ending the process.
     # It owns the live CAS runtime from here on, because a switch replaces it
     # and the `finally` below has to close whichever one is current.
-    opener = ProjectOpener(config.project, cas, search=search, search_detail=search_detail)
+    opener = ProjectOpener(
+        config.project,
+        cas,
+        search=search,
+        search_detail=search_detail,
+        register_lakefile=getattr(args, "register_lakefile", None),
+    )
 
     def build(confirm: Callable[[dict[str, str]], bool]) -> MathematicsSession:
         return MathematicsSession(
