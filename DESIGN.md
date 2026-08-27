@@ -41,8 +41,14 @@ which is the same principle as grading on the axioms Lean reports rather than on
 an exit code, applied to the human-readable half.
 
 Both formalization grades follow an audit of the axioms Lean reports for each
-graded declaration, not a process exit code. `sorryAx` is fatal and no approval
-can make it an assumption. “Verified modulo listed paper assumptions” is
+graded declaration, not a process exit code. `sorryAx` is a hole and no approval
+can make it an assumption. It is fatal to a *grade*, which is not the same as
+fatal to a save: an interactive workspace may hold a declaration resting on one,
+because a proof of any size is built by saving a skeleton and filling its holes,
+and refusing the skeleton left that work nowhere to live but a context window.
+What a hole costs is charged where a claim is made — the audit records it, the
+obligations name it on every surface that answers, and a report naming an open
+theorem is graded partial. “Verified modulo listed paper assumptions” is
 reachable only in the interactive path, where a human is present to approve one;
 `prove` and `batch` run unattended and fail closed instead. A report that is
 missing, duplicated, or unreadable is a refusal rather than a pass.
@@ -148,6 +154,8 @@ The initial path invokes Lean directly in a temporary directory. Persistent sess
 incremental state, and proof-state snapshots are optimizations to add when measured
 latency warrants them. Each run begins from a known environment, preserves the
 original statement, rejects `sorry` in completed proofs, and audits dependencies.
+`prove` and `batch` reject a hole outright, having nobody to hold a partial
+result for; an interactive session keeps it and says so.
 
 That condition is now measurable rather than rhetorical. `hardy latency` times the
 **prelude** — process start plus `import Mathlib`, elaborated with no proof body, so

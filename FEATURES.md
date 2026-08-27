@@ -196,6 +196,13 @@ Priority labels are sequencing hints:
 - **Now (implemented) — Prove workflow:** accept an informal claim paired with an exact Lean theorem, obtain a candidate
   proof from a model, feed Lean errors back, and stop with a checked proof or an
   explicit partial/failure result.
+- **Now (implemented) — Partial results interactively:** a workspace may hold an
+  unfinished proof, and say so. A file with a `sorry` in it saves and can be
+  imported; every theorem resting on a hole is named as open wherever the
+  workspace reports what it owes; and `report_result` grades such a claim
+  *partial* rather than refusing it, so work that closed nine lemmas and left a
+  hole in the tenth has somewhere to be recorded that is neither a proof it does
+  not have nor silence.
 - **Now (implemented) — Linked artifacts:** save the exact Lean statement and proof plus a
   human-readable writeup about the same claim.
 - **Now (implemented) — Honest grades:** independently report formalization status and informal
@@ -285,7 +292,9 @@ Priority labels are sequencing hints:
 - **Now (implemented):** tools to check a complete proof, inspect a goal after a tactic prefix, and
   search available declarations.
 - **Now (implemented):** preserve the original statement and reject completed artifacts that use
-  `sorry` or `admit`.
+  `sorry` or `admit`. "Completed" is the operative word: `prove` and `batch` reject
+  a hole outright, and an interactive workspace keeps one — see the sketch entry
+  below.
 - **Now (implemented):** audit `#print axioms` on all three surfaces, through one
   shared parser and one shared allowlist, and let the grade follow the audited
   axiom set rather than a process exit code. Standard axioms, forbidden
@@ -305,8 +314,22 @@ Priority labels are sequencing hints:
   that an artifact is not *accidentally* unsound; it is not a defence against a
   source written to subvert elaboration, and cannot be one while Lean runs
   unconfined. Closing it belongs with the deferred process isolation, not here.
-- **Next:** incremental proving with `sorry`-backed sketches while ensuring only
-  the final grade requires a hole-free proof.
+- **Now (implemented) — `sorry`-backed sketches:** an interactive save may carry a
+  hole. The file must still elaborate; only the hole is forgiven, and the audit
+  records which declarations rest on `sorryAx` rather than refusing the save for
+  it. A theorem resting on a hole — its own, or one reached through an import —
+  is named as open after every save, in `/status`, at the end of every turn, and
+  in the document banner, and owes no writeup until it closes. Only the final
+  grade requires a hole-free proof: `report_result` grades such a report
+  *partial* and names what is still open, and the document must carry an open
+  theorem's statement on exactly the same terms as a closed one.
+- **Now (implemented) — `theorem` is reserved:** a save may not introduce a
+  `theorem` whose name `record_name` has not already mapped. The writeup ratchet
+  turns on that keyword, and in practice the model stated every intermediate step
+  as a `theorem`, so the `lemma` exemption never fired and the ratchet stopped
+  developments that had done nothing wrong. Registering costs a `latex_name` and
+  a description and is a promise the ratchet collects on, which makes `lemma` the
+  cheap path by construction rather than by request.
 - **Now (implemented):** `hardy latency` measures the fixed import cost one Lean
   call pays — the imports elaborated with no proof body — and, given the call
   count and wall time of an observed run, reports the share a warm pool would
@@ -532,7 +555,10 @@ Priority labels are sequencing hints:
 - **Next:** a pluggable strategy seam with shared token, wall-clock, and Lean-CPU
   budgets.
 - **Later — Sketch and discharge:** create an informal plan and Lean skeleton,
-  then solve holes independently.
+  then solve holes independently. Its first prerequisite is in place: a skeleton
+  with holes in it can now be saved, imported, and built on, so the holes have
+  somewhere to live between turns. What is still missing is the part that makes
+  it a *strategy* — choosing which hole to attack, and doing so independently.
 - **Later — Best-first search:** rank a frontier of proof states and request
   multiple tactic proposals per state.
 - **Later — Diverse parallel attempts:** run independent approaches and accept
