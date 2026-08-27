@@ -1038,3 +1038,34 @@ def test_a_theorem_importing_a_holed_module_is_still_open(tmp_path: Path):
     assert "HardyTarget" in [
         item.subject for item in chat.obligations() if item.kind == "open"
     ]
+
+
+def test_two_declarations_sharing_a_leaf_are_attributed_apart(tmp_path: Path):
+    """`A.t` holed and `B.t` finished are two declarations, and real
+    `#print axioms B.t` answers about the finished one. Comparing by last
+    component alone marked both open, so a test closing one of them would have
+    been reading an audit state production never produces."""
+    source = (
+        "import Mathlib\n"
+        "namespace A\ntheorem t : True := by sorry\nend A\n"
+        "namespace B\ntheorem t : True := by exact True.intro\nend B\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("record_name", {"formal_name": "A.t", "latex_name": "thm:at",
+                                 "description": "A's."}, "name"),
+            call("record_name", {"formal_name": "B.t", "latex_name": "thm:bt",
+                                 "description": "B's."}, "name"),
+            call("save_lean", {"source": source}, "lean"),
+        ]),
+        registered=(),
+    )
+    chat.send("Two namespaces, one hole.")
+    assert results(tmp_path, "save_lean")[-1]["ok"], results(tmp_path, "save_lean")[-1]["output"]
+    rested = {
+        entry["name"]: entry["axioms"]
+        for entry in state(tmp_path)["audit"]["Main"]["declarations"]
+    }
+    assert "sorryAx" in rested["A.t"]
+    assert "sorryAx" not in rested["B.t"]
