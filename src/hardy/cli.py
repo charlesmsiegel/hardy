@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 from collections.abc import Callable
 from importlib import metadata
 from importlib.resources import files
@@ -232,7 +233,16 @@ class _Reopen:
     """
 
     def __init__(self) -> None:
+        # Cancelled from the event loop, committed on the worker, so the two
+        # cannot merely be read one after the other: a cancel arriving between
+        # the last check and the end of the commit escalated the kernel of the
+        # session about to be returned, while the commit went on to close the
+        # old kernel and record the new active project -- with the terminal
+        # already saying the project was unchanged. `commit` makes the check
+        # and the point of no return one step, so exactly one of the two wins.
+        self._lock = threading.Lock()
         self.cancelled = False
+        self.committed = False
         self.session: Any = None
 
     def probing(self, session: Any) -> None:
@@ -242,18 +252,49 @@ class _Reopen:
         starting and the kernel existing there is nothing to reach, and a
         cancel landing in that gap would otherwise wait out the whole probe.
         """
-        self.session = session
-        if self.cancelled:
+        with self._lock:
+            self.session = session
+            cancelled = self.cancelled
+        if cancelled:
             session.escalate()
 
-    def cancel(self) -> None:
-        self.cancelled = True
-        if self.session is not None:
-            self.session.escalate()
+    def cancel(self) -> bool:
+        """Stop this reopen, unless it has already committed.
+
+        Answers whether there was anything to stop, so a terminal saying "the
+        one you are in is unchanged" is only ever saying something true.
+        """
+        with self._lock:
+            if self.committed:
+                return False
+            self.cancelled = True
+            session = self.session
+        if session is not None:
+            session.escalate()
+        return True
 
     def refuse_if_cancelled(self, cas: Any) -> None:
-        if not self.cancelled:
-            return
+        with self._lock:
+            if not self.cancelled:
+                return
+        self._refuse(cas)
+
+    def commit(self, cas: Any) -> None:
+        """The last check and the point of no return, in one step.
+
+        After this returns, `cancel` reports there was nothing to stop and
+        touches nothing -- which is what makes the irreversible work below it
+        safe to do: closing the old kernel and rewriting the active project
+        cannot be raced by a cancel that will then be reported as having
+        stopped them.
+        """
+        with self._lock:
+            if not self.cancelled:
+                self.committed = True
+                return
+        self._refuse(cas)
+
+    def _refuse(self, cas: Any) -> None:
         if cas is not None:
             cas.session.close()
         raise ReopenCancelled("the switch was cancelled")
@@ -356,8 +397,7 @@ class ProjectOpener:
         opening = self._opening
         if opening is None:
             return False
-        opening.cancel()
-        return True
+        return opening.cancel()
 
     def _configure(self, slug: str, current: configuration.Config) -> configuration.Config:
         """The configuration the session is running, pointed at another problem.
@@ -477,7 +517,11 @@ class ProjectOpener:
         # below commits. A probe that finished just as the user pressed Ctrl+C
         # would otherwise close the kernel they are still using and record a
         # switch they cancelled.
-        opening.refuse_if_cancelled(cas)
+        # Committed rather than merely checked: everything below is
+        # irreversible, and a cancel arriving in the middle of it would
+        # otherwise kill the kernel of the session about to be returned while
+        # the switch was recorded anyway.
+        opening.commit(cas)
         if self.cas is not None:
             self.cas.session.close()
         self.cas = cas

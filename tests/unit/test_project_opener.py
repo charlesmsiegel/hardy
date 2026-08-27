@@ -649,3 +649,62 @@ def test_a_successful_open_does_not_leave_a_guard_behind(opener, live):
     opener("burnside", _decline, live)
     assert opener._opening is None
     assert opener.cancel() is False
+
+
+# -- the commit and the cancel cannot both win ---------------------------
+
+
+def test_a_cancel_after_the_commit_stops_nothing_and_says_so(opener, live, root, monkeypatch):
+    """Everything after the commit is irreversible.
+
+    A cancel arriving while the old kernel is closing or `_remember` is
+    blocked on I/O used to escalate the kernel of the session about to be
+    returned -- while the switch was recorded anyway, and Escape had already
+    told the user the project was unchanged.
+    """
+    answers = []
+    previous = opener.cas
+    real = opener._remember
+    monkeypatch.setattr(
+        opener, "_remember", lambda config: answers.append(opener.cancel()) or real(config)
+    )
+
+    config, session = opener("burnside", _decline, live)
+
+    assert answers == [False]                      # nothing to stop; the commit had won
+    assert config.project == "burnside"
+    assert session is not None
+    assert opener.cas.session.closed is False      # the returned session's kernel lives
+    assert previous.session.closed is True
+    assert configuration.read_file(root / layout.HARDY_DIR / "config.toml")["project"] == "burnside"
+
+
+def test_a_cancel_before_the_commit_still_wins(opener, live, root, monkeypatch):
+    """The other side of the same step: the commit refuses once cancelled."""
+    previous = opener.cas
+    real = cli.MathematicsSession
+    monkeypatch.setattr(
+        cli, "MathematicsSession", lambda *a, **k: opener.cancel() or real(*a, **k)
+    )
+
+    with pytest.raises(cli.ReopenCancelled):
+        opener("burnside", _decline, live)
+
+    assert previous.session.closed is False
+    assert opener.cas is previous
+    assert not (root / layout.HARDY_DIR / "config.toml").exists()
+
+
+def test_committing_is_what_makes_a_later_cancel_harmless(opener):
+    """The unit of the thing, without a session in the way."""
+    opening = cli._Reopen()
+    opening.commit(None)
+    assert opening.cancel() is False
+    assert opening.cancelled is False
+
+
+def test_a_cancelled_reopen_cannot_then_be_committed(opener):
+    opening = cli._Reopen()
+    assert opening.cancel() is True
+    with pytest.raises(cli.ReopenCancelled):
+        opening.commit(None)
