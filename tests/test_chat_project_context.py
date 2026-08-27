@@ -363,3 +363,97 @@ def test_the_flag_switches_the_context_off_without_a_subcommand(tmp_path: Path, 
     assert cli._config(parser.parse_args([]), parser).project_context is True
     assert cli._config(parser.parse_args(["--no-project-context"]), parser).project_context is False
     assert cli._config(parser.parse_args(["--no-project-context", "chat"]), parser).project_context is False
+
+
+def test_withholding_leaves_no_trace_of_the_file_in_the_manifest(tmp_path: Path):
+    """A clean condition has to be the same condition every time it is asked
+    for.
+
+    The record's own entry is bookkeeping for change detection, and it reaches
+    the prompt through the manifest. Reopening a workspace that has one with
+    the context switched off would otherwise put the file's name, digest and
+    size in front of the model -- context-derived input, in the run whose whole
+    point is that there is none -- and make the withheld condition differ from
+    a workspace that never had a file at all.
+    """
+    root, workspace = project(tmp_path)
+    (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    first = session(workspace)
+    digest = first.project_context.sha256
+
+    withheld = prompt(session(workspace, project_context=False))
+
+    assert digest not in withheld
+    assert "AGENTS.md" not in withheld
+
+
+def test_the_manifest_does_not_repeat_the_block_beside_it(tmp_path: Path):
+    """The model gets the file itself. A second, weaker statement of the same
+    thing -- a name and a digest -- is Hardy's bookkeeping, not the model's."""
+    root, workspace = project(tmp_path)
+    (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    session(workspace)
+
+    # The second open is the one that has an entry to repeat: `_build` runs
+    # before `_sync_project_context`, so a first open has nothing stored yet.
+    chat = session(workspace)
+
+    manifest = prompt(chat).split("Existing manifest:\n")[1].split("\n")[0]
+    assert "project_context" not in manifest
+    assert chat.project_context.sha256 not in manifest
+    # Still in the record, which is what notices the next edit.
+    assert json.loads((workspace / "session.json").read_text())["project_context"]["sha256"]
+
+
+def test_the_digest_is_never_committed_before_the_text_is_recorded(tmp_path: Path):
+    """A crash between the two must not leave the record claiming a file whose
+    contents the transcript never received.
+
+    Committed first, that claim is permanent: every later session finds the
+    stored digest agreeing with the file, returns early, and never repairs the
+    missing event. Recorded first, the worst case is one duplicate event --
+    both of them true, in an append-only file.
+    """
+    root, workspace = project(tmp_path)
+    (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+
+    import hardy.chat as chat_module
+
+    original = chat_module.MathematicsSession._record
+
+    def refuse(self, event):
+        if event.get("type") == "project_context":
+            raise OSError("the transcript could not be appended to")
+        return original(self, event)
+
+    chat_module.MathematicsSession._record = refuse
+    try:
+        with pytest.raises(OSError):
+            session(workspace)
+    finally:
+        chat_module.MathematicsSession._record = original
+
+    assert "project_context" not in json.loads((workspace / "session.json").read_text())
+
+
+@pytest.mark.skipif(not hasattr(Path, "symlink_to") or sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_a_symlinked_project_root_still_finds_the_instructions(tmp_path: Path):
+    """`current -> releases/2026-08` is an ordinary way to name a checkout, and
+    every other part of the workspace already works through one.
+
+    The leaf guard asks whether a path resolves to its own parent's child of
+    that name, which a symlinked root cannot satisfy -- so guarding the root as
+    the user spelled it refused the read and the session silently lost every
+    project instruction. The root is canonicalized before the guard; the file
+    itself is still refused if it is a link.
+    """
+    real, workspace = project(tmp_path)
+    (real / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    alias = tmp_path / "current"
+    alias.symlink_to(real, target_is_directory=True)
+
+    chat = session(alias / "main")
+
+    assert chat.project_context is not None
+    assert chat.project_context.name == "AGENTS.md"
+    assert "in the user's own words" in prompt(chat)

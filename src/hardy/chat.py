@@ -82,7 +82,20 @@ NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")
 # the stored one as well would put two answers for the same module in one
 # response. The ledger and the provider thread are no longer withheld here
 # because they are no longer in the record: they live in `.local/state.json`.
-WITHHELD = ("audit",)
+# `project_context` joins it for a different reason than `audit`'s, and the
+# reason is what makes the withheld condition reproducible. The model is given
+# the instructions file itself, in its own block, or it is given nothing; the
+# manifest entry is Hardy's bookkeeping for noticing the next edit, and a
+# second, weaker statement of the same thing -- a name and a digest -- adds
+# nothing beside the block. It subtracts, in the one case that matters:
+# reopening a workspace with the context switched off would otherwise put the
+# file's name, digest and size in front of the model in the run whose whole
+# point is that no project-derived input reaches it, and make
+# `--no-project-context` mean something different on a workspace that had once
+# read a file than on one that never had. Filtered from the system prompt as
+# well as from the listing, which is why `_context` names it: unlike `audit`,
+# it has no business in either.
+WITHHELD = ("audit", PROJECT_CONTEXT_KEY)
 USAGE_KEY = "usage"
 #: How far into `transcript.jsonl` the stored ledger has been brought up to
 #: date. Hardy's own bookkeeping, and no more the model's business than the
@@ -590,6 +603,14 @@ class MathematicsSession:
         full text does: a digest of a file the reader does not have proves
         nothing about what was asked for.
 
+        In that order, and the order is the point. `session.json` committed
+        first, a process that dies before the append leaves the record naming a
+        file whose contents the transcript never received -- and leaves it
+        permanently, because every later session then finds the stored digest
+        agreeing with the file, returns early, and never repairs the missing
+        event. Appended first, the worst a crash costs is one duplicate event,
+        both of them true, in a file that is append-only anyway.
+
         So the transcript takes the text and `session.json` keeps the digest,
         which is what makes this quiet on the ordinary path. `AGENTS.md` and
         the record are both versioned, so a fresh clone opening the project
@@ -608,15 +629,15 @@ class MathematicsSession:
             # otherwise claim instructions this run never saw.
             if stored is None:
                 return
+            self._record({"type": PROJECT_CONTEXT_EVENT, "reason": "withheld", "previous": stored})
             del self.state[PROJECT_CONTEXT_KEY]
             self._save_state()
-            self._record({"type": PROJECT_CONTEXT_EVENT, "reason": "withheld", "previous": stored})
             return
         if stored == current.stored():
             return
+        self._record({"type": PROJECT_CONTEXT_EVENT, "reason": "changed" if stored else "read", **current.event()})
         self.state[PROJECT_CONTEXT_KEY] = current.stored()
         self._save_state()
-        self._record({"type": PROJECT_CONTEXT_EVENT, "reason": "changed" if stored else "read", **current.event()})
 
     def _project_context_prompt(self) -> str:
         """The user's instructions as the system prompt carries them, or nothing.
@@ -647,7 +668,13 @@ class MathematicsSession:
         # `self.local` and was never in `self.state` to begin with, so
         # filtering `self.state` for it would be a no-op that reads as if it
         # still needed filtering.
-        manifest = json.dumps(self._without(), ensure_ascii=False)
+        #
+        # `project_context` is named rather than taken from `WITHHELD`, which
+        # would drop the audit too: the two are withheld from different readers
+        # for different reasons, and only this one is withheld from both. See
+        # the note on `WITHHELD` for why the block, or nothing, is the whole of
+        # what the model is owed about the file.
+        manifest = json.dumps(self._without(PROJECT_CONTEXT_KEY), ensure_ascii=False)
         return f"\n\nWorkspace: {self.workspace}\nExisting manifest:\n{manifest}" + self._project_context_prompt()
 
     def _record(self, event: dict[str, Any]) -> int:
