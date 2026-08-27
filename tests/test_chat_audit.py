@@ -35,24 +35,30 @@ def state(tmp_path: Path) -> dict:
     return json.loads((tmp_path / "session.json").read_text())
 
 
-def test_a_proof_resting_on_sorry_ax_is_refused(tmp_path: Path):
-    """`sorryAx` clears the word-boundary hole regex; the audit catches it."""
+def test_a_proof_resting_on_sorry_ax_is_saved_and_recorded_open(tmp_path: Path):
+    """The hole is kept, and named. Refusing it left nowhere to build a proof."""
     chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": HOLED}, "lean")]))
     chat.send("Save it.")
-    refusal = results(tmp_path, "save_lean")[-1]
-    assert not refusal["ok"]
-    assert "sorryAx" in refusal["output"]
-    assert not saved(tmp_path).exists()
+    outcome = results(tmp_path, "save_lean")[-1]
+    assert outcome["ok"]
+    assert saved(tmp_path).exists()
+    record = state(tmp_path)["audit"]["Main"]
+    assert record["status"] == "open"
+    assert "HardyTarget" in str(record["declarations"])
 
 
 def test_a_hole_is_never_offered_for_approval(tmp_path: Path):
-    """A human cannot approve a hole, so nothing may ask them to."""
+    """A human cannot approve a hole, so nothing may ask them to.
+
+    Still true, and now the interesting case: the save succeeds, so a design
+    that reached for approval on the way past would have had one to reach for.
+    """
     asked = []
     chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": HOLED}, "lean")]))
     chat.confirm = lambda proposal: asked.append(proposal) or True
     chat.send("Save it.")
     assert asked == []
-    assert not saved(tmp_path).exists()
+    assert saved(tmp_path).exists()
 
 
 def test_an_axiom_reached_through_an_import_is_refused(tmp_path: Path):

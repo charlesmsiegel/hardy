@@ -134,13 +134,13 @@ def test_a_save_elaborates_the_file_exactly_once(tmp_path: Path):
 def test_an_unelaborable_save_never_reaches_lean(tmp_path: Path):
     """The textual gates cost nothing, so they run before the minute-long one."""
     runtime = FakeChatRuntime([
-        call("save_lean", {"path": "Basic.lean", "source": "import Mathlib\ntheorem t : True := by sorry\n"}),
+        call("save_lean", {"path": "Basic.lean", "source": "import Mathlib\naxiom Sneaky : False\n"}),
         {"role": "assistant", "content": "Refused."},
     ])
     chat = session(tmp_path, runtime)
     reached = []
     chat.lean.compile_module = lambda *a, **k: reached.append(1)
-    chat.send("Save a hole.")
+    chat.send("Save an unapproved axiom.")
     assert results(tmp_path)[-1]["ok"] is False
     assert reached == []
 

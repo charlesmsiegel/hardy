@@ -137,14 +137,19 @@ def test_declined_assumption_is_not_recorded(tmp_path: Path):
     assert json.loads((tmp_path / "session.json").read_text())["assumptions"] == []
 
 
-def test_saved_lean_must_be_hole_free(tmp_path: Path):
+def test_saved_lean_may_carry_a_hole(tmp_path: Path):
+    """A proof that takes many turns has to survive between them.
+
+    The refusal this replaces meant an in-progress development existed only in
+    the model's context and was re-sent in full on every check.
+    """
     runtime = FakeChatRuntime([
-        call("save_lean", {"source": "example : True := by sorry"}),
-        {"role": "assistant", "content": "The artifact was rejected as partial."},
+        call("save_lean", {"source": "import Mathlib\nlemma hardyStep : True := by sorry\n"}),
+        {"role": "assistant", "content": "Saved with one hole left."},
     ])
     chat = session(tmp_path, runtime)
-    chat.send("Save a placeholder.")
-    assert not (tmp_path / "lean" / "Main.lean").exists()
+    chat.send("Save the skeleton.")
+    assert (tmp_path / "lean" / "Main.lean").exists()
 
 
 def test_unapproved_axiom_cannot_bypass_confirmation(tmp_path: Path):
