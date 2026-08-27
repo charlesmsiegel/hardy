@@ -471,6 +471,13 @@ Priority labels are sequencing hints:
   breaks the file is caught here rather than by the reader. `script_verdict`
   travels in `export.json` and the notebook, and an export reproduces only when
   the cells and the script both do.
+- **Now (implemented):** the script check runs a copy and reads the published
+  file back. The check *executes* those bytes, and a cell is free to rewrite or
+  delete the path it was run from -- the interpreter has already loaded the
+  module, so such a run still finishes and still matches the transcript, and
+  the verdict would be `verified` for an artifact that no longer existed. The
+  copy keeps an accidental self-overwrite away from the file a reader keeps;
+  the read-back catches a deliberate one and refuses the verdict.
 - **Now (implemented):** the published script names the environment it was
   checked under, and `export.json` records it. A verdict is a claim about
   running those exact bytes *that way*: `PYTHONHASHSEED` is pinned for the

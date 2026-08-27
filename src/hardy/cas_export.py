@@ -345,9 +345,14 @@ def _scratch(directory: Path, name: str) -> Path:
     nothing when it declines to remove a link. `WriteGuard` refuses it instead,
     with the path and where it led.
     """
+    return _scratch_guard(directory, name).directory
+
+
+def _scratch_guard(directory: Path, name: str) -> WriteGuard:
+    """`_scratch`, but handing back the guard so a caller can write through it."""
     target = directory / name
     shutil.rmtree(target, ignore_errors=True)
-    return WriteGuard(target, create=True).directory
+    return WriteGuard(target, create=True)
 
 
 def _verify_script(
@@ -366,13 +371,28 @@ def _verify_script(
 
     # Fresh every time: a script that writes a file must be seen to create it,
     # not to find it left behind by the previous export.
-    run_directory = _scratch(directory, SCRIPT_RUN)
+    guard = _scratch_guard(directory, SCRIPT_RUN)
+    run_directory = guard.directory
+    # A copy, not the published file. The check *executes* these bytes, and a
+    # cell is free to rewrite or delete the path it was run from -- Python has
+    # already loaded the module, so such a run still finishes and still
+    # matches the recorded transcript. The verdict would then be `verified`
+    # for an artifact that no longer existed, with the manifest carrying the
+    # hash of bytes nothing on disk had any more. The copy is byte-identical,
+    # so the verdict is about the same bytes either way; it is only the file a
+    # reader keeps that is out of reach.
+    published = script.read_bytes()
+    # Through the guard, like every other write an export makes: the scratch
+    # tree is a directory a shipped repository could have made a symlink, and
+    # a copy written by a rebuilt path would land wherever it pointed.
+    guard.write_bytes(script.name, published)
+    running = run_directory / script.name
     started = time.monotonic()
     try:
         run = run_exported_script(
             backend=session.backend,
             command=session.command,
-            script=script,
+            script=running,
             cwd=run_directory,
             timeout=remaining,
             max_output_bytes=session.limits.cas_output_bytes,
@@ -382,6 +402,17 @@ def _verify_script(
         return "failed", str(error)
     session.charge(time.monotonic() - started)
 
+    # Running a copy keeps an *accidental* self-overwrite away from the
+    # artifact; nothing but isolation stops a cell reaching the published path
+    # deliberately, since it is a few directories up from where the copy runs.
+    # So the file is read back and compared. A verdict is a claim about the
+    # bytes a reader will keep, and if those changed while the check ran there
+    # is no such claim to make.
+    if not script.exists() or script.read_bytes() != published:
+        return "failed", (
+            "the published script changed on disk while it was being checked, so "
+            "the verdict would not describe the file this export publishes"
+        )
     if run.timed_out:
         return "failed", f"the script did not finish within {remaining:g}s"
     if run.returncode:
@@ -392,7 +423,7 @@ def _verify_script(
     # per-cell notes, which the session never printed and which sit between one
     # cell's output and the next.
     fed = (
-        script.read_text(encoding="utf-8", errors="replace")
+        published.decode("utf-8", errors="replace")
         if getattr(session.backend, "script_stdin", False)
         else ""
     )
