@@ -609,3 +609,48 @@ def test_an_open_theorem_does_not_block_the_next_one(tmp_path: Path):
     )
     chat.send("Save two skeletons.")
     assert results(tmp_path, "save_lean")[-1]["ok"]
+
+
+def test_a_report_naming_an_open_theorem_is_graded_partial(tmp_path: Path):
+    """It is a real result to have got this far, and it is not a proof."""
+    carried = (
+        "\\documentclass{article}\n\\begin{document}\n"
+        "The target.\\label{thm:HardyTarget}\n"
+        "\\begin{verbatim}\ntheorem HardyTarget : True\n\\end{verbatim}\n"
+        "\\end{document}\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": HOLED}, "lean"),
+            call("save_latex", {"source": carried}, "tex"),
+        ]),
+    )
+    chat.send("Save the skeleton and write it up.")
+    reported = chat._tool(
+        "report_result", {"theorems": ["HardyTarget"], "summary": "As far as I got."}
+    )
+    assert reported.ok, reported.output
+    assert "partial" in reported.output
+    assert "HardyTarget" in reported.output
+    assert state(tmp_path)["reports"][-1]["status"] == "partial"
+
+
+def test_a_report_of_an_open_theorem_the_writeup_never_quotes_is_refused(tmp_path: Path):
+    """Partial is not a discount on the document. A reader who cannot see the
+    statement cannot tell which half of the work was done."""
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": HOLED}, "lean")]))
+    chat.send("Save the skeleton.")
+    reported = chat._tool(
+        "report_result", {"theorems": ["HardyTarget"], "summary": "As far as I got."}
+    )
+    assert not reported.ok
+    assert "HardyTarget" in reported.output
+
+
+def test_an_open_theorem_is_not_counted_as_machine_checked(tmp_path: Path):
+    """A banner that calls a holed proof checked is worse than no banner."""
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": HOLED}, "lean")]))
+    chat.send("Save it.")
+    assert "0 theorems machine-checked" in chat._stamp()
+    assert "1 theorem here is still open" in chat._stamp()
