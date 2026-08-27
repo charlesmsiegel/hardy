@@ -398,9 +398,20 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
         # entirely.
         from .. import cli
 
-        config, session = await asyncio.to_thread(
-            state.reopen, slug, cli.confirm_assumption(ui), state.config
-        )
+        try:
+            config, session = await asyncio.to_thread(
+                state.reopen, slug, cli.confirm_assumption(ui), state.config
+            )
+        except asyncio.CancelledError:
+            # `/doctor`'s reason, for `/doctor`'s shape of problem. Cancelling
+            # the await does not stop the worker, and `Shell.run`'s
+            # `asyncio.run` joins the executor on the way out -- so a Ctrl+C
+            # during a switch waited on a computer algebra probe that could
+            # still be starting, for as long as its own limit allows. The
+            # session being replaced cannot be told to stop this: the kernel
+            # is not its own, it is the one being built.
+            process.interrupt_children()
+            raise
     except Exception as error:  # noqa: BLE001 - a bad problem is not a lost session
         # Every refusal the layout, the record and the filesystem can raise
         # arrives here, and none of them is a reason to end the session the
