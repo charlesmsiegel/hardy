@@ -713,3 +713,52 @@ def test_the_fence_does_not_cost_an_ordinary_cell_its_output(sympy_session) -> N
     assert record.value_repr == "2"
     assert record.capture_truncated is False
     assert "hardy-cell-begin" not in record.stdout
+
+
+# ----------------------------------------------------- and the fifth review's
+
+
+def test_a_mutation_of_the_displayed_value_is_state(sympy_session) -> None:
+    """Remembering the displayed object across cells hid mutations to it.
+
+    `[]` as a trailing expression binds `_`; a later `_.append(...)` leaves the
+    same object at the same identity holding something new, so an
+    identity-keyed skip kept excluding it. The skip now lasts exactly as long
+    as the claim that justifies it — the cell whose `value_repr` carries the
+    value.
+    """
+    sympy_session.execute("import random")
+    sympy_session.execute("[]")
+    mutated = sympy_session.execute("_.append(random.random())")
+    assert mutated.value_repr == ""
+    assert mutated.state_digest, "a mutated `_` has to reach the digest"
+
+    sympy_session._drop_kernel()
+    with pytest.raises(CasError, match="did not reproduce"):
+        sympy_session.execute("1 + 1")
+
+
+def test_a_cell_that_closes_stderr_does_not_take_the_kernel_with_it(
+    sympy_session,
+) -> None:
+    """`traceback.print_exc()` writes to `sys.stderr`, which is backed by
+    descriptor 2 — and a cell is free to close it. The print then raised a
+    second exception from inside the handler, which escaped `run_cell` and
+    killed the driver with no reply frame: an ordinary failing cell became a
+    lost kernel and a forced rebuild."""
+    record = sympy_session.execute("import os; os.close(2); 1 / 0")
+    assert record.status == "error", record.model_dump_json(indent=2)
+    assert "ZeroDivisionError" in record.stderr
+    # And the kernel is still there to answer for it.
+    assert sympy_session.execute("2 + 2").value_repr == "4"
+
+
+def test_an_ordinary_traceback_still_follows_what_the_cell_printed(
+    sympy_session,
+) -> None:
+    """Formatting the traceback rather than printing it must not reorder it."""
+    record = sympy_session.execute(
+        "import sys\nprint('first', file=sys.stderr)\nraise ValueError('second')\n"
+    )
+    assert record.status == "error"
+    assert record.stderr.index("first") < record.stderr.index("ValueError")
