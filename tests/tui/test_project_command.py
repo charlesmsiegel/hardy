@@ -45,10 +45,12 @@ class Reopener:
         self.fail = fail
         self.opened: list[str] = []
         self.carried: list[object] = []
+        self.confirmed: list[object] = []
 
-    def __call__(self, slug: str, ui, current) -> tuple[configuration.Config, object]:
+    def __call__(self, slug: str, confirm, current) -> tuple[configuration.Config, object]:
         self.opened.append(slug)
         self.carried.append(current)
+        self.confirmed.append(confirm)
         if self.fail is not None:
             raise self.fail
         (self.root / slug).mkdir(parents=True, exist_ok=True)
@@ -218,7 +220,13 @@ async def test_new_refuses_a_name_that_is_already_a_problem(ui, root):
 
 
 async def test_new_refuses_a_directory_that_is_not_a_problem(ui, root):
-    """`/project new src` must not scatter a Lean tree through someone's sources."""
+    """`/project new src` must not scatter a Lean tree through someone's sources.
+
+    Empty as well as full: Hardy never leaves an empty problem directory --
+    `ensure` creates `lean/` immediately -- so an empty one is a `mkdir`
+    somebody made for their own reasons, and "everything here is ours" must
+    not pass vacuously over it.
+    """
     (root / "src").mkdir()
     state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
     after = await handlers.handle_project(ui, "new src", state)
@@ -317,3 +325,44 @@ async def test_a_failed_registration_still_hands_back_the_problem_it_opened(ui, 
     assert after.config.project == "burnside"
     assert after.session is not state.session
     assert "No space" in ui.text
+
+
+async def test_a_scaffold_hardy_left_behind_can_be_created_again(ui, root):
+    """`ensure` runs before the record, so a failed attempt leaves trees only.
+
+    `existing_projects` cannot see it (no record) and a bare existence test
+    reads it as somebody else's directory -- between them the name became one
+    the user could never use again, with nothing on screen saying why.
+    """
+    half = layout.Layout(root=root, slug="halfmade")
+    half.ensure()
+    assert configuration.existing_projects(root) == []
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
+
+    after = await handlers.handle_project(ui, "new halfmade", state)
+
+    assert state.reopen.opened == ["halfmade"]
+    assert after.config.project == "halfmade"
+
+
+async def test_a_directory_holding_anything_else_is_still_refused(ui, root):
+    """One unexpected entry makes it somebody's work, not Hardy's leftovers."""
+    half = layout.Layout(root=root, slug="notmine")
+    half.ensure()
+    (root / "notmine" / "notes.md").write_text("mine\n", encoding="utf-8")
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
+
+    after = await handlers.handle_project(ui, "new notmine", state)
+
+    assert after is state
+    assert state.reopen.opened == []
+    assert "not a Hardy project" in ui.text
+
+
+async def test_the_approval_gate_reaches_the_new_session_not_the_terminal(ui, root):
+    """`reopen` is handed a callback, so a caller with another `Ui` can pass its own."""
+    _record(root, "sylow")
+    _record(root, "burnside")
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
+    await handlers.handle_project(ui, "switch burnside", state)
+    assert callable(state.reopen.confirmed[0])

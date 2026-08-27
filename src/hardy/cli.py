@@ -281,7 +281,7 @@ class ProjectOpener:
         )
 
     def __call__(
-        self, slug: str, ui: Any, current: configuration.Config
+        self, slug: str, confirm: Callable[[dict[str, str]], bool], current: configuration.Config
     ) -> tuple[configuration.Config, Any]:
         config = self._configure(slug, current)
         prepare_layout(config)
@@ -310,7 +310,7 @@ class ProjectOpener:
                 runtime_factory(str(config.model)),
                 config.lean_command,
                 config.latex_command,
-                confirm_assumption(ui),
+                confirm,
                 lean_project=config.lean_project,
                 lean_timeout=config.lean_timeout,
                 cas=cas,

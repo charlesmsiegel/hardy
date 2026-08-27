@@ -129,6 +129,11 @@ def run(
 
         for line in transcript.user_lines(outcome.argument, WIDTH):
             out(line)
+        # The session the state is holding, not the one this function was
+        # handed: `/project switch` replaces it, and the one passed in belongs
+        # to the problem the user has left -- its provider thread, its
+        # transcript, and a computer algebra kernel the switch has closed.
+        turn = state.session
         painter = stream.TurnPainter(WIDTH)
         # Bound to a name on purpose. Left as the `for` statement's own
         # temporary, a Ctrl+C escaping the loop would drop the last reference
@@ -145,7 +150,7 @@ def run(
         # for the same reason. Its own `try` keeps the ordering above intact:
         # nothing needs closing when there is nothing to close.
         try:
-            events = session.stream(outcome.argument)
+            events = turn.stream(outcome.argument)
         except Exception as error:                  # noqa: BLE001 - never lose the session
             ui.write(f"{type(error).__name__}: {error}", style="error")
             continue
@@ -178,10 +183,10 @@ def run(
             # Cancelled as well as recorded, now that the runtime can be told
             # to stop -- otherwise the model would go on answering a question
             # this loop has already stopped reading.
-            if hasattr(session, "cancel"):
-                session.cancel("keyboard_interrupt")
-            elif hasattr(session, "record_abandonment"):
-                session.record_abandonment("keyboard_interrupt")
+            if hasattr(turn, "cancel"):
+                turn.cancel("keyboard_interrupt")
+            elif hasattr(turn, "record_abandonment"):
+                turn.record_abandonment("keyboard_interrupt")
             # Only now: the tool gate is shut, so nothing new can start while
             # the runtime is interrupted and its worker joined.
             events.close()
