@@ -303,3 +303,31 @@ def test_a_missing_faithfulness_prompt_is_reported(tmp_path) -> None:
     issues = validate_run_consistency(result.run_dir, result.manifest)
 
     assert any('prompt the run did not keep' in issue for issue in issues)
+
+
+def test_a_no_model_run_does_not_credit_a_configured_reviewer(tmp_path) -> None:
+    """The fixture supplies the agreement itself.
+
+    Recording a real provider's name as having independently reviewed the
+    translation would put a claim in the manifest — and in the paper — that
+    nothing performed. `hardy accept --force-budget-exhaustion-test` exists to
+    exercise the pipeline with no model at all, so a configured
+    `faithfulness_model` must not reach it.
+    """
+    import dataclasses
+
+    config = dataclasses.replace(
+        _config(tmp_path), faithfulness_model='claude-a-real-provider'
+    )
+
+    result = run_deterministic_experiment(config, outcome='verified')
+    verdict = result.manifest.grades.faithfulness_review
+
+    assert verdict is not None and verdict.agreed
+    assert verdict.reviewer_model == 'deterministic-no-model'
+    # Nor does the fixture claim an isolation it never established.
+    assert verdict.reviewer_isolation is None
+    tex = (result.run_dir / 'writeup' / 'paper.tex').read_text(encoding='utf-8')
+    assert 'claude-a-real-provider' not in tex
+    assert 'isolation not established' in tex
+    assert validate_run_consistency(result.run_dir, result.manifest) == ()

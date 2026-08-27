@@ -1147,6 +1147,9 @@ def run_accept(args: argparse.Namespace) -> int:
     from .workflow import ProveRequest
 
     config, config_path = _load_config_argument(getattr(args, "config", None))
+    reviewer = getattr(args, "faithfulness_model", None)
+    if reviewer:
+        config = dataclasses.replace(config, faithfulness_model=str(reviewer))
     if getattr(args, "force_budget_exhaustion_test", False):
         # The deterministic path exists so the pipeline can be checked whole
         # without a model, a network, or a built toolchain.
@@ -1432,6 +1435,14 @@ def build_parser() -> argparse.ArgumentParser:
     accept = subparsers.add_parser("accept", help="run the checked-in acceptance problems")
     accept.add_argument("--backend", choices=("claude", "codex"), default="claude")
     accept.add_argument("--model", default=argparse.SUPPRESS)
+    # The same trap as `prove`: this builds the selected backend from the
+    # global config, so a configured Claude reviewer would be handed to a
+    # `--backend codex` acceptance run and halt both problems as unavailable.
+    accept.add_argument(
+        "--faithfulness-model",
+        default=None,
+        help="who reads the translation back; defaults to the run's own model",
+    )
     subparsers.add_parser("setup", help="discover, install, and record the pinned toolchain")
     accept.add_argument(
         "--force-budget-exhaustion-test",

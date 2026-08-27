@@ -241,6 +241,11 @@ class FaithfulnessVerdict(FrozenModel):
     # `faithfulness-prompt.md`, so this hash is recomputable from the run
     # directory rather than taken on trust.
     prompt_sha256: str
+    # The schema the answer had to satisfy, hashed. Generated from
+    # `FaithfulnessReview` rather than written in a template, so the prompt-set
+    # hash does not cover it: without this, changing the questions the reader
+    # is made to answer would leave no trace in the record.
+    response_schema_sha256: str = ""
     outcome: FaithfulnessOutcome
     review: FaithfulnessReview | None = None
     detail: str = ""

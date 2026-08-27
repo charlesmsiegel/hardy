@@ -263,18 +263,31 @@ def _label(value: str) -> str:
 
 
 def _faithfulness_label(grades: Grades) -> str:
-    """The faithfulness grade, and who else read the translation.
+    """The faithfulness grade, who else read the translation, and how far apart.
 
     The grade alone reads as a human's say-so, which is the weaker of the two
     things it now stands on. Naming the independent reader and its verdict is
     what lets someone holding only the document tell "proved, and the
     statement was checked against the claim" from "proved".
+
+    And where the reader's isolation was never established, the document says
+    so. This is the durable human-readable surface: a reader holding only the
+    paper cannot go and look at `faithfulness.json`, so a label reading
+    "independently reviewed" for a reader that could have read the run's own
+    artifacts would be exactly the overclaim the gate exists to prevent, made
+    on the one surface least able to be corrected later.
     """
     label = _label(grades.faithfulness.value)
     review = grades.faithfulness_review
     if review is None:
         return label + "; no independent review recorded"
-    return f"{label}; independently reviewed by {review.reviewer_model} ({review.outcome.value})"
+    reviewed = (
+        f"{label}; independently reviewed by {review.reviewer_model} "
+        f"on {review.reviewer_backend} ({review.outcome.value})"
+    )
+    if review.reviewer_isolation:
+        return reviewed
+    return reviewed + " -- reader isolation not established; see faithfulness.json"
 
 
 def _document_label(status: DocumentStatus) -> str:

@@ -556,3 +556,126 @@ def test_every_backend_accepts_the_keywords_the_gate_calls_start_with() -> None:
         accepted = set(inspect.signature(runtime_class.start).parameters)
         missing = required - accepted
         assert not missing, f'{runtime_class.__name__}.start cannot be called with {missing}'
+
+
+def test_the_verdict_covers_the_schema_the_answer_had_to_satisfy(tmp_path) -> None:
+    """`prompt_set_sha256` covers the templates; nothing covered this.
+
+    Every backend makes the reader answer `FaithfulnessReview` — Claude by
+    appending the schema to the prompt, Codex by handing it to the SDK — and
+    it is generated from the model rather than written in a template. Editing
+    the questions the reader is made to answer would otherwise change the
+    request, and could change the answer, with every recorded hash unmoved.
+    """
+    import hashlib
+    import json
+
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+
+    verdict = faithfulness.review_translation(
+        _claim(domain),
+        runtime=_Runtime(_review(domain)),
+        model='reviewer-model',
+        store=_store(tmp_path),
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+
+    expected = hashlib.sha256(
+        json.dumps(
+            domain.FaithfulnessReview.model_json_schema(),
+            ensure_ascii=False,
+            separators=(',', ':'),
+            sort_keys=True,
+        ).encode('utf-8')
+    ).hexdigest()
+    assert verdict.response_schema_sha256 == expected
+    # And it is not the prompt's hash wearing another name.
+    assert verdict.response_schema_sha256 != verdict.prompt_sha256
+
+
+def test_a_failed_reader_is_stopped_before_its_verdict_is_returned(tmp_path) -> None:
+    """Only the cancellation path settles a provider worker that outlived its
+    turn and seals the trajectory against it.
+
+    An unavailable verdict always halts the run, and `_finalize` hashes every
+    file in the run directory as soon as it does — so a lingering daemon could
+    append after `trajectory.jsonl` was hashed, leaving a manifest that does
+    not describe the directory it names.
+    """
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+
+    class _Cancellable(_Runtime):
+        def __init__(self, answer):
+            super().__init__(answer)
+            self.cancelled = []
+
+        def cancel(self, thread):
+            self.cancelled.append(thread)
+
+    runtime = _Cancellable(ConnectionError('the provider closed the connection'))
+
+    verdict = faithfulness.review_translation(
+        _claim(domain),
+        runtime=runtime,
+        model='reviewer-model',
+        store=_store(tmp_path),
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+
+    assert verdict.outcome is domain.FaithfulnessOutcome.UNAVAILABLE
+    assert len(runtime.cancelled) == 1
+
+
+def test_a_reader_that_never_started_has_no_thread_to_stop(tmp_path) -> None:
+    """`start` itself can fail, and the handler must not invent a thread."""
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+
+    class _Unstartable(_Runtime):
+        def __init__(self):
+            super().__init__(None)
+            self.cancelled = []
+
+        def start(self, **kwargs):
+            raise RuntimeError('the provider refused the session')
+
+        def cancel(self, thread):
+            self.cancelled.append(thread)
+
+    runtime = _Unstartable()
+
+    verdict = faithfulness.review_translation(
+        _claim(domain),
+        runtime=runtime,
+        model='reviewer-model',
+        store=_store(tmp_path),
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+
+    assert verdict.outcome is domain.FaithfulnessOutcome.UNAVAILABLE
+    assert runtime.cancelled == []
+
+
+def test_a_runtime_that_will_not_cancel_still_yields_its_verdict(tmp_path) -> None:
+    """Best-effort: the verdict is decided before this runs, and a runtime that
+    cannot be cancelled must not turn a recorded unavailable review into an
+    unrecorded crash."""
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+
+    class _Stubborn(_Runtime):
+        def cancel(self, thread):
+            raise RuntimeError('cancellation is not supported here')
+
+    verdict = faithfulness.review_translation(
+        _claim(domain),
+        runtime=_Stubborn(OSError('broken pipe')),
+        model='reviewer-model',
+        store=_store(tmp_path),
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+
+    assert verdict.outcome is domain.FaithfulnessOutcome.UNAVAILABLE
+    assert 'broken pipe' in verdict.detail

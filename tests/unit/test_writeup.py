@@ -18,6 +18,8 @@ def _agreed_review(domain, claim_hash='a' * 64, model='reviewer-model'):
         claim_sha256=claim_hash,
         reviewer_model=model,
         prompt_sha256='d' * 64,
+        reviewer_backend='fixture-backend',
+        reviewer_isolation='tools-refused',
         outcome=domain.FaithfulnessOutcome.AGREED,
         review=domain.FaithfulnessReview(
             formalization_entails_claim=True,
@@ -164,9 +166,12 @@ def test_verified_writeup_owns_statuses_signature_axioms_and_identities(tmp_path
     # own, and "User approved" alone reads as one person's say-so rather than
     # a translation something with no stake in it also read.
     assert (
-        'Faithfulness: User approved; independently reviewed by reviewer-model (agreed)'
+        'Faithfulness: User approved; independently reviewed by reviewer-model '
+        'on fixture-backend (agreed)'
         in tex
     )
+    # This reader's isolation was established, so the paper says nothing more.
+    assert 'isolation not established' not in tex
     assert 'Informal completeness: Not independently assessed' in tex
     assert 'Document status: TeX compiled' in tex
     assert 'theorem demo (n : Nat) : n + 0 = n' in tex
@@ -228,3 +233,30 @@ def test_tex_failure_preserves_mathematical_grades_and_marks_saved_source(tmp_pa
     assert 'Formal status: Partial' in tex
     assert 'Document status: TeX failed' in tex
     assert 'induction step remains' in tex
+
+
+def test_the_paper_discloses_a_reader_whose_isolation_was_not_established(
+    tmp_path,
+) -> None:
+    """The paper is the durable surface a reader may hold on its own.
+
+    Someone with only the document cannot go and look at `faithfulness.json`,
+    so a label reading "independently reviewed" for a reader that could have
+    read the run's own artifacts would be exactly the overclaim this gate
+    exists to prevent, made where it is least correctable.
+    """
+    domain = importlib.import_module('hardy.domain')
+    writeup = importlib.import_module('hardy.writeup')
+    unconfined = _agreed_review(domain).model_copy(
+        update={'reviewer_backend': 'codex', 'reviewer_isolation': None}
+    )
+
+    label = writeup._faithfulness_label(
+        domain.Grades(
+            faithfulness=domain.FaithfulnessStatus.USER_APPROVED,
+            faithfulness_review=unconfined,
+        )
+    )
+
+    assert 'on codex' in label
+    assert 'isolation not established' in label

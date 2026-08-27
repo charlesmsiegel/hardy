@@ -232,7 +232,12 @@ Priority labels are sequencing hints:
   `faithfulness.json` beside the rendered question as
   `faithfulness-prompt.md` — so the recorded prompt hash is recomputable from
   the run directory rather than self-asserted — recorded in the trajectory
-  beside the frozen claim, and carried in the manifest, where `user_approved`
+  beside the frozen claim, and carried in the manifest along with the hash of
+  the schema the answer had to satisfy — generated from the model rather than
+  written in a template, so nothing else covers it. The compiled document names
+  the reader, its backend and its verdict, and says outright when the reader's
+  isolation was never established, because someone holding only the paper
+  cannot go and check. There `user_approved`
   now means the human approved *and* an independent reader agreed: the grade cannot be reached by
   approval alone, and a `kernel_verified` result cannot be recorded without it.
 - **Known limit — an agreement is a second reading, not a proof.** The gate
