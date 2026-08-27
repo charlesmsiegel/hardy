@@ -725,3 +725,47 @@ def test_a_compiled_writeup_still_goes_stale_when_a_theorem_reopens(tmp_path: Pa
     kinds = {(item.kind, item.subject) for item in chat.obligations()}
     assert ("open", "HardyTarget") in kinds
     assert ("label", "") in kinds, "the compiled banner now overstates and must say so"
+
+
+def test_a_hole_no_audited_declaration_could_account_for_is_refused(tmp_path: Path):
+    """The audit asks `#print axioms` about theorems and lemmas, and about
+    nothing else. A file declaring neither has no way to report a hole as open,
+    so a hole in one would sit in the workspace unnamed by `/status`, by the
+    end-of-turn notice, and by the banner -- which is the one thing saving
+    holes was not allowed to cost."""
+    source = "import Mathlib\n\ndef hardyUnfinished : Nat := by sorry\n"
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": source}, "lean")]))
+    chat.send("Save a definition with a hole.")
+    refusal = results(tmp_path, "save_lean")[-1]
+    assert not refusal["ok"]
+    assert "lemma" in refusal["output"]
+    assert not saved(tmp_path).exists()
+
+
+def test_an_all_open_workspace_is_not_told_it_may_report_nothing(tmp_path: Path):
+    """`report_result` accepts an open theorem as a partial result, so a notice
+    saying none of it is reportable contradicts a report Hardy would take."""
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": HOLED}, "lean")]))
+    events = [item for item in chat.stream("Save it.") if item.kind == "notice"]
+    assert events, "an open workspace still owes a notice"
+    text = events[-1].text
+    assert "partial" in text
+    assert "None of this is reportable" not in text
+    note = results(tmp_path, "save_lean")[-1]["output"]
+    assert "Not reportable yet" not in note
+    assert "partial" in note
+
+
+def test_the_word_sorry_in_a_comment_is_not_a_hole(tmp_path: Path):
+    """Real Lean does not read a `sorry` inside a comment, so neither may the
+    stand-in: reading one there audits a finished proof as open, and lets a
+    candidate that cannot elaborate look like one that elaborates with a hole."""
+    source = (
+        "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro"
+        "\n-- no sorry is needed here\n"
+    )
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": source}, "lean")]))
+    chat.send("Save it with a remark.")
+    assert results(tmp_path, "save_lean")[-1]["ok"]
+    assert state(tmp_path)["audit"]["Main"]["status"] == "clean"
+    assert not [item for item in chat.obligations() if item.kind == "open"]

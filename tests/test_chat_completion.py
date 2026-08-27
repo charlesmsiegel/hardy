@@ -256,7 +256,7 @@ def test_a_turn_ends_with_hardys_own_verdict(tmp_path: Path):
     chat = session(tmp_path, runtime)
     notices = [event for event in chat.stream("Prove it.") if event.kind == "notice"]
     assert len(notices) == 1
-    assert "None of this is reportable until it is settled" in notices[0].text
+    assert "None of this may be reported as proved until it is settled" in notices[0].text
     assert "hardyOne" in notices[0].text
     assert [event for event in events(tmp_path) if event.get("type") == "obligations"]
 
@@ -283,7 +283,7 @@ def test_a_save_says_what_the_work_still_owes(tmp_path: Path):
     chat.send("Prove it.")
     saved = results(tmp_path, "save_lean")[-1]
     assert saved["ok"] is True
-    assert "Not reportable yet" in saved["output"]
+    assert "may be reported as proved" in saved["output"]
     assert "hardyOne" in saved["output"]
 
 

@@ -150,6 +150,27 @@ CHAT_TOOLS: list[dict[str, Any]] = [
 # rather than hidden.
 CHAT_TOOLS += SEARCH_TOOLS
 
+
+def _reportability(owed: Sequence[completion.Obligation]) -> str:
+    """How an outstanding set bears on a report, in one sentence.
+
+    Said in two places -- the note appended to every save and the notice drawn
+    at the end of a turn -- and they must not disagree, because between them
+    they are the only thing contradicting a model that says the work is done.
+
+    An open theorem is the case that needed separating. Both used to say
+    nothing here was reportable, which stopped being true when `report_result`
+    began grading a claim resting on a hole as partial: Hardy would have
+    contradicted a report it had just accepted. What holds of every obligation
+    here, open or not, is that none of them may be reported as *proved*.
+    """
+    if all(item.kind == "open" for item in owed):
+        return (
+            "Reportable only as a partial result, never as proved, until the holes "
+            "are closed:"
+        )
+    return "None of this may be reported as proved until it is settled:"
+
 # The text lives in prompts/chat.md.j2. Kept under the old name because it is
 # what a reader of _build expects to see, and what the tests reach for.
 SYSTEM_PROMPT = CHAT_SYSTEM_PROMPT
@@ -708,6 +729,22 @@ class MathematicsSession:
         and `report_result` grades it partial.
         """
         found = declarations(source)
+        # The audit asks `#print axioms` about theorems and lemmas, and about
+        # nothing else -- so those are the only declarations a hole can be
+        # *reported* through. A file that declares neither and carries one
+        # would put a hole in the workspace that `/status`, the end-of-turn
+        # notice and the banner all stay silent about, which is the one thing
+        # keeping holes was not allowed to cost.
+        if self.lean.has_holes(source) and not (found["theorem"] or found["lemma"]):
+            return ToolResult(
+                False,
+                "this file has a hole in it and declares no theorem or lemma, so nothing "
+                "here can report the hole as open: Hardy tracks one by asking Lean what "
+                "each saved theorem and lemma rests on. State the work as a `lemma` -- a "
+                "lemma may carry a hole and is free to save -- and the hole is then "
+                "reported until you close it.",
+                source,
+            )
         # A `theorem` is what this workspace reports as a result, and a private
         # one can be neither audited nor cited: Lean mangles the name out of
         # reach of any other module, including the file the audit elaborates.
@@ -1428,10 +1465,7 @@ class MathematicsSession:
         owed = self._obligations()
         if not owed:
             return ""
-        return (
-            "\n\nNot reportable yet. This workspace still owes:\n"
-            f"{completion.describe(owed)}"
-        )
+        return f"\n\n{_reportability(owed)}\n{completion.describe(owed)}"
 
     def _approved_assumptions(self) -> set[str]:
         return {item["formal_name"] for item in self.state["assumptions"]}
@@ -3122,8 +3156,8 @@ class MathematicsSession:
                     # whole: a theorem already reported was reportable, and a
                     # blanket "nothing here may be reported" contradicted a
                     # report Hardy itself had just accepted.
-                    f"Hardy: {completion.summary(owed)}. None of this is reportable until "
-                    f"it is settled:\n{completion.describe(owed)}"
+                    f"Hardy: {completion.summary(owed)}. {_reportability(owed)}\n"
+                    f"{completion.describe(owed)}"
                 ),
             )
         ]

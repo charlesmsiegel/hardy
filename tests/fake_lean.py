@@ -70,6 +70,60 @@ if slow:
 search = [part for part in os.environ.get("LEAN_PATH", "").split(os.pathsep) if part]
 
 
+def code_only(text: str) -> str:
+    """`text` with comments and string bodies blanked, for the hole check.
+
+    Real Lean does not read a `sorry` inside `-- rewrite this without sorry` or
+    inside a string literal, so this stand-in must not either. Reading one
+    there had two costs, in both directions: a finished proof mentioning the
+    word was audited as resting on a hole, and a candidate that cannot
+    elaborate at all was accepted as one that elaborates *with* a hole, because
+    the branch below treats a hole as a successful elaboration.
+
+    Newlines are kept so nothing shifts line for line. Block comments nest, as
+    they do in Lean. Applied only to the hole check -- the `-- axioms:` marker a
+    test drives this with is itself a comment, and blanking it before `marked`
+    reads it would leave every fixture reporting no axioms at all.
+    """
+    out: list[str] = []
+    depth = 0
+    index = 0
+    in_string = False
+    while index < len(text):
+        rest = text[index:]
+        character = text[index]
+        if not in_string and rest.startswith("/-"):
+            depth += 1
+            out.append("  ")
+            index += 2
+        elif depth and rest.startswith("-/"):
+            depth -= 1
+            out.append("  ")
+            index += 2
+        elif depth:
+            out.append("\n" if character == "\n" else " ")
+            index += 1
+        elif not in_string and rest.startswith("--"):
+            end = text.find("\n", index)
+            end = len(text) if end == -1 else end
+            out.append(" " * (end - index))
+            index = end
+        elif character == '"':
+            in_string = not in_string
+            out.append('"')
+            index += 1
+        elif in_string:
+            # An escaped quote does not close the literal, and the escape has
+            # to be consumed with it or the next character reopens one.
+            step = 2 if character == "\\" and index + 1 < len(text) else 1
+            out.append(" " * step)
+            index += step
+        else:
+            out.append(character)
+            index += 1
+    return "".join(out)
+
+
 def marked(text: str) -> list[str]:
     found = MARKER.search(text)
     return [item.strip() for item in found.group(1).split(",") if item.strip()] if found else []
@@ -86,7 +140,8 @@ axioms = marked(source)
 # A literal `sorry` is what real Lean reports as `sorryAx`, so this stand-in
 # has to as well. Without it a test could only fake a hole through the marker,
 # which models a hole reached through an *import* and not one written here.
-if HOLE.search(source) and "sorryAx" not in axioms:
+code = code_only(source)
+if HOLE.search(code) and "sorryAx" not in axioms:
     axioms.append("sorryAx")
 # What an importer of this file would be able to name. Private declarations are
 # left out on purpose: Lean mangles them so no other module can refer to them.
@@ -181,7 +236,7 @@ if not body:
     report_axioms()
     raise SystemExit(0)
 
-if "exact True.intro" in source and not HOLE.search(source):
+if "exact True.intro" in source and not HOLE.search(code):
     report_axioms()
     write_olean()
     raise SystemExit(0)
@@ -195,7 +250,7 @@ if "trace_state" in source:
 #
 # After `trace_state`, because the goal probe is built as `by trace_state
 # sorry` and its caller wants the goal printed rather than an olean written.
-if HOLE.search(source):
+if HOLE.search(code):
     print(f"{path.name}:1:0: warning: declaration uses 'sorry'")
     report_axioms()
     write_olean()
