@@ -408,6 +408,15 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
         # entirely.
         from .. import cli
 
+        # Armed here, on the event loop, before the work leaves for a thread.
+        # An Escape typed behind the Enter that submitted this command is
+        # resolved in the same input batch, before the worker runs a line -- so
+        # a guard the worker publishes for itself is already too late, and the
+        # cancelled switch completes. Same reason `Shell._submit_key` counts a
+        # command where it does rather than inside the task it creates.
+        arm = getattr(state.reopen, "arm", None)
+        if arm is not None:
+            arm()
         try:
             config, session = await asyncio.to_thread(
                 state.reopen, slug, cli.confirm_assumption(ui), state.config

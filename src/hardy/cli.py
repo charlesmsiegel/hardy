@@ -387,14 +387,45 @@ class ProjectOpener:
     def __call__(
         self, slug: str, confirm: Callable[[dict[str, str]], bool], current: configuration.Config
     ) -> tuple[configuration.Config, Any]:
-        # Published first, before anything: a cancel can only mark a reopen it
-        # can see, and everything below it is work a cancelled switch must not
-        # be left holding. The first version created this after
-        # `prepare_layout` and the search renewal, which left a cancel arriving
-        # during directory creation with nothing to mark -- a window I had
-        # described in the docstring as far smaller than it was.
+        # Whatever `arm` published, or a fresh one for a caller that did not
+        # arm. The worker's first statement is still too late for a terminal:
+        # `_submit_key` resolves an Escape typed behind the Enter in the very
+        # same input batch, before this thread runs a line -- so a guard
+        # created here would be a second, unmarked one and the switch would
+        # complete. `arm` exists to be called on the event loop, before
+        # `to_thread`, for exactly the reason `_submit_key` counts a command
+        # synchronously.
+        opening = self._opening or self.arm()
+        try:
+            return self._open(slug, confirm, current, opening)
+        finally:
+            # Every exit, not just the successful one. Left set, a failed or
+            # cancelled attempt makes `cancel` answer True for the rest of the
+            # session -- and `_stop_command` asks the opener first, so every
+            # later Escape would be swallowed by a reopen that is long over
+            # instead of interrupting the cell actually running. Guarded by
+            # identity so a later arm's guard is not cleared by this one.
+            if self._opening is opening:
+                self._opening = None
+
+    def arm(self) -> _Reopen:
+        """Publish the guard for a reopen about to be dispatched.
+
+        Called from the event loop, synchronously, before the work is handed to
+        a thread -- the same reason `Shell._submit_key` counts a command where
+        it does rather than inside the task it creates.
+        """
         opening = _Reopen()
         self._opening = opening
+        return opening
+
+    def _open(
+        self,
+        slug: str,
+        confirm: Callable[[dict[str, str]], bool],
+        current: configuration.Config,
+        opening: _Reopen,
+    ) -> tuple[configuration.Config, Any]:
         config = self._configure(slug, current)
         prepare_layout(config)
         opening.refuse_if_cancelled(None)
@@ -447,7 +478,6 @@ class ProjectOpener:
         # would otherwise close the kernel they are still using and record a
         # switch they cancelled.
         opening.refuse_if_cancelled(cas)
-        self._opening = None
         if self.cas is not None:
             self.cas.session.close()
         self.cas = cas

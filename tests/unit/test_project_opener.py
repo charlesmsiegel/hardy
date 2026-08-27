@@ -590,3 +590,62 @@ def test_the_launch_registration_policy_is_carried(args, live):
     )
     assert made.register_lakefile is False
     assert cli.ProjectOpener(live.project, None, search=None, search_detail="").register_lakefile is None
+
+
+def test_arming_publishes_the_guard_before_the_worker_runs(opener):
+    """The worker's first statement is still too late for a terminal.
+
+    `_submit_key` resolves an Escape typed behind the Enter in the very same
+    input batch, before the thread runs a line -- so a guard the worker creates
+    for itself is a second, unmarked one and the switch completes.
+    """
+    assert opener._opening is None
+    armed = opener.arm()
+    assert opener._opening is armed
+    assert opener.cancel() is True
+
+
+def test_a_cancel_between_arming_and_the_worker_commits_nothing(opener, live, root):
+    """The window this exists to close: cancelled before `__call__` runs at all."""
+    previous = opener.cas
+    opener.arm()
+    opener.cancel()
+
+    with pytest.raises(cli.ReopenCancelled):
+        opener("burnside", _decline, live)
+
+    assert previous.session.closed is False
+    assert opener.cas is previous
+    assert not (root / layout.HARDY_DIR / "config.toml").exists()
+
+
+def test_a_failed_open_does_not_leave_a_guard_behind(opener, live, monkeypatch):
+    """Left set, `cancel` answers True forever -- and `_stop_command` asks the
+    opener first, so every later Escape would be swallowed by a reopen that is
+    long over instead of interrupting the cell actually running."""
+
+    def explode(*a, **k):
+        raise layout.LayoutError("tex/ is a symlink out of the project")
+
+    monkeypatch.setattr(cli, "MathematicsSession", explode)
+    with pytest.raises(layout.LayoutError):
+        opener("burnside", _decline, live)
+
+    assert opener._opening is None
+    assert opener.cancel() is False
+
+
+def test_a_cancelled_open_does_not_leave_a_guard_behind(opener, live):
+    opener.arm()
+    opener.cancel()
+    with pytest.raises(cli.ReopenCancelled):
+        opener("burnside", _decline, live)
+
+    assert opener._opening is None
+    assert opener.cancel() is False
+
+
+def test_a_successful_open_does_not_leave_a_guard_behind(opener, live):
+    opener("burnside", _decline, live)
+    assert opener._opening is None
+    assert opener.cancel() is False

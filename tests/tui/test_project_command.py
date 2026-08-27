@@ -548,3 +548,34 @@ async def test_a_root_that_cannot_be_listed_is_a_line_not_an_exception(ui, root,
         after = await handlers.handle_project(ui, line, state)
         assert after is state
         assert "Could not read the projects here" in ui.text
+
+
+async def test_the_switch_arms_the_guard_before_leaving_the_event_loop(ui, root):
+    """Armed on the loop, so an Escape in the same input batch has a mark."""
+    _record(root, "sylow")
+    _record(root, "burnside")
+    order = []
+
+    class Armed(Reopener):
+        def arm(self):
+            order.append("arm")
+
+        def __call__(self, slug, confirm, current):
+            order.append("open")
+            return super().__call__(slug, confirm, current)
+
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Armed(root))
+    await handlers.handle_project(ui, "switch burnside", state)
+
+    assert order == ["arm", "open"]
+
+
+async def test_a_reopener_that_cannot_be_armed_still_switches(ui, root):
+    """Every plain-callable `reopen` in the tests, and any embedding's own."""
+    _record(root, "sylow")
+    _record(root, "burnside")
+    state = State(config=_settings(root, "sylow"), session=None, reopen=Reopener(root))
+
+    after = await handlers.handle_project(ui, "switch burnside", state)
+
+    assert after.config.project == "burnside"
