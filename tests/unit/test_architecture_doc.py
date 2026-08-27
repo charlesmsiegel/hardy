@@ -40,3 +40,27 @@ def test_features_claims_the_audit_on_every_surface_that_has_it() -> None:
 
     for surface in ('hardy prove', 'hardy batch', 'hardy chat'):
         assert surface in bullet, f'{surface} is not named where the audit is claimed'
+
+
+def test_the_faithfulness_gate_is_not_still_listed_as_future_work() -> None:
+    """The same drift the axiom audit had, one feature later. FEATURES.md
+    claims the gate as implemented, so the card that used to list it under
+    Next must not go on saying it is coming."""
+    html = (ROOT / 'ARCHITECTURE.html').read_text(encoding='utf-8')
+    start = html.index('Honest experiments')
+    card = html[start:html.index('</article>', start)].lower()
+
+    assert 'faithfulness' not in card or 'is done' in card
+
+
+def test_features_claims_the_faithfulness_gate_as_implemented() -> None:
+    """DESIGN.md describes an independent read that halts the run. FEATURES.md
+    is where the same feature is either promised or claimed, and it must not be
+    left promising what the workflow already does."""
+    features = (ROOT / 'FEATURES.md').read_text(encoding='utf-8')
+    start = features.index('Statement faithfulness gate')
+    bullet = features[features.rindex('\n- ', 0, start):features.index('\n- ', start)]
+
+    assert 'Now (implemented)' in bullet
+    for property_ in ('independent', 'fail-closed', 'trajectory'):
+        assert property_ in bullet, f'the gate is claimed without saying it is {property_}'

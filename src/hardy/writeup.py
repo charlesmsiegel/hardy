@@ -218,7 +218,7 @@ def _render(
     replacements = {
         "@@TITLE@@": escape_tex_text(content.title),
         "@@FORMAL_STATUS@@": _label(grades.formal.value),
-        "@@FAITHFULNESS_STATUS@@": _label(grades.faithfulness.value),
+        "@@FAITHFULNESS_STATUS@@": escape_tex_text(_faithfulness_label(grades)),
         "@@INFORMAL_STATUS@@": _label(grades.informal.value),
         "@@DOCUMENT_STATUS@@": _document_label(document_status),
         "@@THEOREM_TEXT@@": escape_tex_text(content.theorem_text),
@@ -260,6 +260,21 @@ def _verbatim(value: str) -> str:
 
 def _label(value: str) -> str:
     return value.replace("_", " ").capitalize()
+
+
+def _faithfulness_label(grades: Grades) -> str:
+    """The faithfulness grade, and who else read the translation.
+
+    The grade alone reads as a human's say-so, which is the weaker of the two
+    things it now stands on. Naming the independent reader and its verdict is
+    what lets someone holding only the document tell "proved, and the
+    statement was checked against the claim" from "proved".
+    """
+    label = _label(grades.faithfulness.value)
+    review = grades.faithfulness_review
+    if review is None:
+        return label + "; no independent review recorded"
+    return f"{label}; independently reviewed by {review.reviewer_model} ({review.outcome.value})"
 
 
 def _document_label(status: DocumentStatus) -> str:

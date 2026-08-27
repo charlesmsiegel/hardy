@@ -5,6 +5,12 @@ the interesting failures are the ones where a run quietly skips a step: a
 proof accepted without verification, a document written for a claim nobody
 approved. An illegal transition raises rather than proceeds.
 
+Between approval and proving sits the faithfulness gate: the frozen claim is
+read by an independent model that never saw the conversation which wrote it,
+and a run whose translation that reader will not accept stops here rather than
+spending its proving budget on a statement nobody established the user asked
+for. See `hardy.faithfulness` for why the read is fail-closed.
+
 Time spent waiting for the user is measured and excluded from the run's active
 budget. Thinking about whether a formalization is right should not cost the
 model its proving time.
@@ -26,6 +32,7 @@ from .domain import (
     DocumentStatus,
     EnvironmentIdentity,
     FaithfulnessStatus,
+    FaithfulnessVerdict,
     FormalizationProposal,
     FormalStatus,
     FrozenClaim,
@@ -37,6 +44,7 @@ from .domain import (
     TerminalReason,
     freeze_claim,
 )
+from .faithfulness import dispute_gaps, review_translation
 from .lean import LeanCheckResult
 from .prompts import (
     FORMALIZATION_PROMPT,
@@ -74,6 +82,8 @@ class Terminal(Protocol):
     def choose_approval(self) -> Literal["approve", "revise", "cancel"]: ...
 
     def revision_text(self) -> str: ...
+
+    def show_faithfulness(self, verdict: FaithfulnessVerdict) -> None: ...
 
     def acknowledge_unsafe_execution(self) -> bool: ...
 
@@ -149,6 +159,7 @@ class ProveWorkflow:
             phase=state.phase,
         )
         approved_claim: FrozenClaim | None = None
+        approved_verdict: FaithfulnessVerdict | None = None
         runtime: Any | None = None
         active_thread: Any | None = None
         verification: VerificationResult | None = None
@@ -282,6 +293,60 @@ class ProveWorkflow:
                 )
                 if expected.content_hash != approved_claim.content_hash:
                     raise RuntimeError("persisted Frozen Claim hash mismatch")
+                # The gate, before any proof search: an independent reader that
+                # never saw the conversation which wrote this formalization is
+                # asked whether the frozen Lean says what the user said. Run on
+                # the claim as persisted, so what was read is byte-identical to
+                # what will be proved.
+                def track_reader(thread: Any) -> None:
+                    # Same reason `active_thread` follows the formalizing
+                    # thread above: a Ctrl+C during the read has a live
+                    # provider thread behind it, and cancelling the wrong one
+                    # leaves it appending after the manifest is hashed.
+                    nonlocal active_thread
+                    active_thread = thread
+
+                verdict = review_translation(
+                    approved_claim,
+                    runtime=runtime,
+                    model=self._config.faithfulness_model or request.model,
+                    store=store,
+                    phase=state.phase,
+                    on_thread=track_reader,
+                )
+                terminal.show_faithfulness(verdict)
+                if not verdict.agreed:
+                    # Fail-closed, and terminal. Proceeding past a disputed
+                    # translation is the one outcome this gate exists to
+                    # prevent: it would spend the whole proving budget, and
+                    # every downstream signal would read green, on a statement
+                    # nobody established the user asked for.
+                    grades = Grades(
+                        known_gaps=dispute_gaps(verdict),
+                        faithfulness_review=verdict,
+                    )
+                    state.transition(RunPhase.CANCELLED)
+                    return self._finalize(
+                        request,
+                        terminal,
+                        store,
+                        state,
+                        created_at,
+                        active_started,
+                        user_wait,
+                        grades,
+                        TerminalReason.FAITHFULNESS_DISPUTED,
+                        approved_claim,
+                    )
+                # Recorded on the running grades rather than only at the end,
+                # so a run cancelled mid-proof still reports that its
+                # translation was read and by what. Nothing about the proof is
+                # claimed here; `formal` stays where it was.
+                approved_verdict = verdict
+                grades = Grades(
+                    faithfulness=FaithfulnessStatus.USER_APPROVED,
+                    faithfulness_review=verdict,
+                )
                 state.transition(RunPhase.PROVING)
                 break
             if approved_claim is None:
@@ -349,6 +414,7 @@ class ProveWorkflow:
             grades = Grades(
                 formal=(FormalStatus.KERNEL_VERIFIED if verified else FormalStatus.PARTIAL),
                 faithfulness=FaithfulnessStatus.USER_APPROVED,
+                faithfulness_review=approved_verdict,
                 informal=(
                     InformalStatus.NOT_INDEPENDENTLY_ASSESSED
                     if verified

@@ -215,3 +215,60 @@ def test_audit_rejects_a_manifest_toolchain_the_frozen_claim_does_not_name(
     assert any(
         'manifest environment differs from the Frozen Claim' in issue for issue in issues
     )
+
+
+def test_the_release_audit_checks_the_faithfulness_verdict_against_the_claim(
+    tmp_path,
+) -> None:
+    """A verdict about a different statement is a verdict about something else.
+
+    The manifest's copy and `faithfulness.json` were written by the same run,
+    so their agreeing establishes little on its own. What is checkable is the
+    claim the verdict says it read, against the frozen claim on disk.
+    """
+    from hardy.domain import FaithfulnessVerdict, Grades
+
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    verdict = result.manifest.grades.faithfulness_review
+
+    assert verdict is not None and verdict.agreed
+    assert verdict.claim_sha256 == result.manifest.claim_sha256
+    assert validate_run_consistency(result.run_dir, result.manifest) == ()
+
+    elsewhere = FaithfulnessVerdict(
+        **{**verdict.model_dump(), 'claim_sha256': 'a' * 64}
+    )
+    forged = result.manifest.model_copy(
+        update={
+            'grades': Grades(
+                **{**result.manifest.grades.model_dump(), 'faithfulness_review': elsewhere}
+            )
+        }
+    )
+    issues = validate_run_consistency(result.run_dir, forged)
+
+    assert any('names a different Frozen Claim' in issue for issue in issues)
+    assert any('differs from faithfulness.json' in issue for issue in issues)
+
+
+def test_a_deterministic_run_writes_the_verdict_it_was_gated_on(tmp_path) -> None:
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+
+    saved = json.loads(
+        (result.run_dir / 'faithfulness.json').read_text(encoding='utf-8')
+    )
+    assert saved['outcome'] == 'agreed'
+    events = [
+        json.loads(line)
+        for line in (result.run_dir / 'trajectory.jsonl')
+        .read_text(encoding='utf-8')
+        .splitlines()
+    ]
+    kinds = [event['kind'] for event in events]
+    # Before proving, which is the whole ordering claim the gate makes.
+    proving = next(
+        index
+        for index, event in enumerate(events)
+        if event['kind'] == 'workflow.transition' and event['payload']['to'] == 'proving'
+    )
+    assert kinds.index('faithfulness.verdict') < proving

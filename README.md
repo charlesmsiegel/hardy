@@ -81,8 +81,24 @@ verifies anything, and the verifier never reads a CAS result.
 
 Alongside it, `hardy prove` stages a single claim explicitly: Hardy proposes a
 formalization, you approve or revise it, the approved statement is frozen under a
-hash, a proof is sought against that frozen statement, and an independent
-verifier rebuilds and rechecks the result before anything is graded. `hardy
+hash, an independent reader checks that the frozen Lean says what you said before
+any proof search starts, a proof is sought against that frozen statement, and an
+independent verifier rebuilds and rechecks the result before anything is graded.
+
+That faithfulness check is the one gate a green kernel cannot stand in for:
+Lean's acceptance says a statement was proved and nothing about whether it is
+the claim you made. The reader is asked from a conversation of its own, with no
+Lean tools, and is given your words and the Lean signature alone — not the
+exchange that wrote the formalization, and not its own account of what it chose,
+because a model handed the reasoning behind a translation reads the translation
+through it. Set `faithfulness_model` to have a different model do the reading.
+It is asked whether each statement entails the other rather than how confident
+it is, since a wrong formalization is usually fluent and confident. A
+disagreement stops the run and shows you the mismatch, and so does a reader that
+cannot be reached: a halt costs one question and a proof of the wrong theorem
+costs the whole run. The verdict is written to `faithfulness.json`, recorded in
+the trajectory beside the frozen claim, and carried in the manifest, so a later
+reader can see the translation was checked and by what. `hardy
 accept` runs the checked-in acceptance problems and cross-checks the artifacts
 they produce; with `--force-budget-exhaustion-test` it exercises the whole
 pipeline with no model, no network, and no toolchain. The earlier one-shot proof

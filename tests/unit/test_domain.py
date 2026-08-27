@@ -72,12 +72,31 @@ def test_formalization_proposal_keeps_interpretation_explicit() -> None:
     assert proposal.theorem_name == 'odd_sum'
 
 
+def _agreed_review(domain, claim_hash='a' * 64, model='reviewer-model'):
+    """An agreeing independent faithfulness verdict.
+
+    `Grades` refuses a `user_approved` faithfulness grade without one, which
+    is the point of the gate: approval names two readers, not one.
+    """
+    return domain.FaithfulnessVerdict(
+        claim_sha256=claim_hash,
+        reviewer_model=model,
+        prompt_sha256='d' * 64,
+        outcome=domain.FaithfulnessOutcome.AGREED,
+        review=domain.FaithfulnessReview(
+            formalization_entails_claim=True,
+            claim_entails_formalization=True,
+        ),
+    )
+
+
 def test_document_failure_does_not_change_mathematical_grades() -> None:
     domain = importlib.import_module('hardy.domain')
 
     grades = domain.Grades(
         formal=domain.FormalStatus.PARTIAL,
         faithfulness=domain.FaithfulnessStatus.USER_APPROVED,
+        faithfulness_review=_agreed_review(domain),
         informal=domain.InformalStatus.NOT_INDEPENDENTLY_ASSESSED,
         document=domain.DocumentStatus.TEX_FAILED,
         known_gaps=('proof search exhausted its budget',),
@@ -138,7 +157,7 @@ def test_a_manifest_version_identifies_one_shape_including_its_nested_ones() -> 
     ).model_dump(mode='json')
 
     assert 'retrieval_seconds' in written['limits']
-    assert written['schema_version'] == 3
+    assert written['schema_version'] == 4
     with pytest.raises(ValidationError):
         domain.RunLimits(**{**written['limits'], 'a_limit_from_the_future': 1})
 
@@ -155,7 +174,7 @@ def test_run_manifest_has_stable_phase_and_terminal_reason_values() -> None:
         terminal_reason=None,
     )
 
-    assert manifest.schema_version == 3
+    assert manifest.schema_version == 4
     assert manifest.phase.value == 'setup'
     assert domain.TerminalReason.STATEMENT_MISMATCH.value == 'statement_mismatch'
 
@@ -225,6 +244,8 @@ def test_verified_grade_accepts_a_digest_derived_from_its_evidence() -> None:
 
     grades = domain.Grades(
         formal=domain.FormalStatus.KERNEL_VERIFIED,
+        faithfulness=domain.FaithfulnessStatus.USER_APPROVED,
+        faithfulness_review=_agreed_review(domain),
         verification_sha256=evidence.digest,
         verification_evidence=evidence,
     )
@@ -266,6 +287,8 @@ def test_manifest_read_back_rejects_a_verified_grade_with_fabricated_evidence() 
         prompt_set_sha256='c' * 64,
         grades=domain.Grades(
             formal=domain.FormalStatus.KERNEL_VERIFIED,
+            faithfulness=domain.FaithfulnessStatus.USER_APPROVED,
+            faithfulness_review=_agreed_review(domain),
             verification_sha256=evidence.digest,
             verification_evidence=evidence,
         ),

@@ -1,0 +1,117 @@
+"""The statement faithfulness gate: an independent read of one translation.
+
+Kernel acceptance says a Lean statement was proved. It says nothing about
+whether that statement is the claim the user made, and a proof of the wrong
+theorem is the most expensive failure this harness can produce -- expensive
+precisely because every other signal reads green. The only defence is a second
+reader of the translation, so this runs one before any proof search begins.
+
+Independence here means independence of *context*, not merely of weights. The
+reader is started on its own thread, with no Lean tools, and is handed the
+user's words and the frozen Lean signature and nothing else: not the
+formalization conversation, not the proposal's own restatement or
+interpretation choices. A reader given the account that produced a translation
+is reading the translation through that account, which is the shared-fate bias
+that makes most self-checks theatrical. `Config.faithfulness_model` can point
+the read at a different model as well, when independent weights are wanted too.
+
+The gate is fail-closed and asymmetric on purpose. A pass can be wrong -- the
+reader may have missed the divergence -- but a halt is never wasted, because
+surfacing a real mismatch for a human costs one question and proving the wrong
+theorem costs the whole run. So a disputed translation stops the run, and so
+does a reader that could not be reached or answered with something that is not
+a review: neither is a pass, and there is no third option that proceeds.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Callable
+from pathlib import PurePosixPath
+from typing import Any
+
+from .domain import (
+    FaithfulnessOutcome,
+    FaithfulnessReview,
+    FaithfulnessVerdict,
+    FrozenClaim,
+    RunPhase,
+)
+from .prompts import faithfulness_prompt
+from .storage import RunStore
+
+ARTIFACT = PurePosixPath("faithfulness.json")
+
+
+def review_translation(
+    claim: FrozenClaim,
+    *,
+    runtime: Any,
+    model: str,
+    store: RunStore,
+    phase: RunPhase,
+    on_thread: Callable[[Any], None] | None = None,
+) -> FaithfulnessVerdict:
+    """Ask an independent reader whether the frozen Lean says what the user said.
+
+    Reads the frozen claim rather than the proposal it came from, so what is
+    checked is byte-identical to what will be proved, and the verdict can name
+    the claim hash a later reader can match it against.
+
+    `on_thread` is handed the reader's thread the moment it exists, so the
+    caller's cancellation path has a handle to it. Without that, a Ctrl+C
+    during the read would reach the formalizing thread while the reader's
+    provider thread stayed live -- still able to append to the trajectory
+    after the manifest that hashes it has been written.
+    """
+    prompt = faithfulness_prompt(claim)
+    identity = {
+        "claim_sha256": claim.content_hash,
+        "reviewer_model": model,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+    }
+    # A thread of its own, with `claim=None` so it is offered no Lean tools:
+    # this is a reading of two texts, and a reader that can elaborate the
+    # statement is a reader that can be persuaded the statement is fine
+    # because Lean accepted it.
+    try:
+        thread = runtime.start(model=model, run_dir=store.path, claim=None)
+        if on_thread is not None:
+            on_thread(thread)
+        review = runtime.run_structured(thread, "faithfulness", prompt, FaithfulnessReview)
+    except (ValueError, RuntimeError) as error:
+        verdict = FaithfulnessVerdict(
+            **identity,
+            outcome=FaithfulnessOutcome.UNAVAILABLE,
+            detail=f"{type(error).__name__}: {error}",
+        )
+    else:
+        verdict = FaithfulnessVerdict(
+            **identity,
+            outcome=(
+                FaithfulnessOutcome.AGREED if review.agrees else FaithfulnessOutcome.DISPUTED
+            ),
+            review=review,
+        )
+    # Written before it is acted on, and written whichever way it went: a
+    # verdict that only survives when it agrees is a record of nothing.
+    store.write_json(ARTIFACT, verdict)
+    store.append("faithfulness.verdict", verdict.model_dump(mode="json"), phase=phase)
+    return verdict
+
+
+def dispute_gaps(verdict: FaithfulnessVerdict) -> tuple[str, ...]:
+    """What a halted run's known gaps say, in the words the reader used."""
+    if verdict.outcome is FaithfulnessOutcome.UNAVAILABLE:
+        return (
+            "The independent faithfulness review could not be obtained: " + verdict.detail,
+        )
+    divergences = verdict.review.divergences if verdict.review else ()
+    if not divergences:
+        # A reader that answered "no" to an entailment without naming a
+        # difference still refused the translation, and the run still halts.
+        return ("The independent faithfulness review did not accept the translation.",)
+    return tuple(
+        "The independent faithfulness review disputed the translation: " + text
+        for text in divergences
+    )

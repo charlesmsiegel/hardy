@@ -298,6 +298,29 @@ The Lean kernel is the authority for formal proof, subject to an audited axiom
 set. Independent faithfulness checks protect the translation from an informal
 claim to Lean. Assumed-paper axioms widen the trust base and must be visible.
 
+The faithfulness check is independent of *context*, not merely of weights: the
+reader is started on its own thread and given the user's words and the frozen
+Lean signature alone, without the conversation that produced the formalization
+or that conversation's own account of what it did. A model asked to confirm its
+own translation is predisposed to find it defensible, which is what makes most
+self-checks theatrical rather than load-bearing. It is asked for entailment in
+both directions rather than for confidence, because a wrong translation is
+typically rendered at high confidence — fluent Lean stating a slightly
+different claim — so a confidence threshold would miss exactly the mismatches
+worth halting on.
+
+The gate is deliberately asymmetric. A pass can be wrong; a halt never is
+expensive, because surfacing a mismatch costs one question and proving the
+wrong theorem costs the entire run. So a disputed translation stops the run,
+and so does a reader that could not be reached: neither is an agreement, and
+there is no third outcome that proceeds quietly. The verdict is recorded beside
+the frozen claim, which is what turns the gate into provenance — a later reader
+can follow claim → formalization → faithfulness verdict → proof without
+re-running any of it, and a kernel-verified grade with no verdict behind it is
+refused on read-back rather than believed. What the check cannot establish is
+that the reader was right; it establishes that the translation was read by
+something that had no stake in it.
+
 The audit runs inside the environment it audits: `#print axioms` is elaborated
 by a Lean environment the submitted source has already had the chance to extend,
 and a source that registers its own elaborator for that syntax can answer the

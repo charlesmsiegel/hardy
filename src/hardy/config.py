@@ -32,6 +32,7 @@ DEFAULT_TECTONIC_BUNDLE_SHA256 = (
 # Every setting, and the environment variable that overrides the config file.
 SETTINGS = {
     "model": "HARDY_MODEL",
+    "faithfulness_model": "HARDY_FAITHFULNESS_MODEL",
     "lean_command": "HARDY_LEAN_COMMAND",
     "lean_project": "HARDY_LEAN_PROJECT",
     "lean_timeout": "HARDY_LEAN_TIMEOUT",
@@ -199,6 +200,12 @@ class Config:
     # Where staged `prove` runs are kept, and the pinned toolchain that builds
     # their documents. The budgets a run is frozen under travel with them.
     runs_root: Path = Path(DEFAULT_RUNS_ROOT)
+    # Who reads the translation back before proof search. Unset means the run's
+    # own model, on a thread of its own -- already independent of the
+    # conversation that wrote the formalization, which is the shared context
+    # the gate has to defeat. Naming a different model here buys independent
+    # weights as well.
+    faithfulness_model: str | None = None
     lake: Path = Path(DEFAULT_LAKE)
     elan: Path = Path(DEFAULT_ELAN)
     tectonic: Path = Path(DEFAULT_TECTONIC)
@@ -441,6 +448,9 @@ def load(
         # three layers the caller does not otherwise take apart.
         project=active_project(resolved_root, project, values, choose),
         runs_root=location("runs_root") or Path(DEFAULT_RUNS_ROOT),
+        faithfulness_model=(
+            str(values["faithfulness_model"]) if values.get("faithfulness_model") else None
+        ),
         lake=location("lake") or Path(DEFAULT_LAKE),
         elan=location("elan") or Path(DEFAULT_ELAN),
         tectonic=location("tectonic") or Path(DEFAULT_TECTONIC),

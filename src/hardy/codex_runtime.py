@@ -195,6 +195,10 @@ def _agent_message_text(event: dict[str, Any]) -> str | None:
 def _phase_for_stage(stage: str) -> RunPhase:
     return {
         "formalization": RunPhase.FORMALIZING,
+        # The faithfulness read happens after approval and before proving, so
+        # filing its events under `proving` would put them in a phase the run
+        # had not entered when they happened.
+        "faithfulness": RunPhase.AWAITING_APPROVAL,
         "proof": RunPhase.PROVING,
         "writeup": RunPhase.WRITEUP,
     }.get(stage, RunPhase.PROVING)
