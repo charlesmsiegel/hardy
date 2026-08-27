@@ -189,3 +189,74 @@ def test_proof_result_validation_malformed_output_and_cancellation(tmp_path) -> 
     )
     with pytest.raises(ValueError, match='structured'):
         malformed_runtime.run_proof(malformed_thread, 'Prove it.')
+
+
+def test_the_faithfulness_reader_starts_isolated_and_bounded(tmp_path) -> None:
+    """The gate calls `start` with these keywords on every backend.
+
+    Missing `wall_seconds` here was not a missing feature: the `TypeError` was
+    caught as an unreachable reader, so every approved claim on `--backend
+    codex` halted with `faithfulness_unavailable` before proof search.
+    """
+    runtime_module, runtime, client, store = _runtime(
+        tmp_path, _events('formalization-events.json')
+    )
+    domain = importlib.import_module('hardy.domain')
+
+    thread = runtime.start(
+        model='gpt-test',
+        run_dir=store.path,
+        claim=None,
+        isolated=True,
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+        wall_seconds=30.0,
+    )
+
+    assert thread.wall_seconds == 30.0
+    call = client.start_calls[0]
+    # Not the run directory: that is where `formalization.json` and the
+    # trajectory of the conversation being audited live.
+    assert call['cwd'] != str(store.path)
+    assert list(Path(call['cwd']).iterdir()) == []
+    assert call['sandbox'] is Sandbox.read_only
+    assert call['approval_mode'] is ApprovalMode.deny_all
+    # No MCP servers: an isolated reader is offered no Hardy tools either.
+    assert call['config'] == {}
+    runtime.close()
+    # `close` removes the directory it made; nothing was ever written there.
+    assert not Path(call['cwd']).exists()
+
+
+def test_a_bounded_turn_that_never_answers_is_interrupted_and_reported(
+    tmp_path,
+) -> None:
+    """This SDK's `turn` takes no timeout and `stream()` blocks, so the
+    deadline is built from the interrupt the SDK does offer."""
+    runtime_module, runtime, client, store = _runtime(tmp_path, [])
+    domain = importlib.import_module('hardy.domain')
+
+    class StallingHandle:
+        def __init__(self):
+            self.interrupted = False
+            self._released = __import__('threading').Event()
+
+        def stream(self):
+            # Returns only once the deadline's interrupt releases it, which is
+            # exactly what the real handle does when a turn is interrupted.
+            self._released.wait(5)
+            return iter(())
+
+        def interrupt(self):
+            self.interrupted = True
+            self._released.set()
+
+    handle = StallingHandle()
+    client.thread.turn = lambda prompt, **kwargs: handle
+    thread = runtime.start(
+        model='gpt-test', run_dir=store.path, claim=None, wall_seconds=0.1
+    )
+
+    with pytest.raises(TimeoutError, match='exceeded its 0.1s budget'):
+        runtime.run_structured(thread, 'faithfulness', 'Grade this.', domain.FaithfulnessReview)
+
+    assert handle.interrupted

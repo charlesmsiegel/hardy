@@ -15,6 +15,7 @@ from __future__ import annotations
 import shutil
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -64,6 +65,10 @@ class ProofSubmission(FrozenModel):
 class AgentThread:
     sdk_thread: Any
     active_turn: Any | None = None
+    # The bound this thread's turns run under, or None for unbounded. This
+    # SDK's `turn` takes no timeout, so the deadline is kept here and enforced
+    # by `run_structured` against the interrupt the SDK does offer.
+    wall_seconds: float | None = None
 
 
 class CodexRuntime:
@@ -92,6 +97,7 @@ class CodexRuntime:
         claim: FrozenClaim | None,
         isolated: bool = False,
         phase: RunPhase = RunPhase.PROVING,
+        wall_seconds: float | None = None,
     ) -> AgentThread:
         """Open one stage's thread, in the working directory that stage may see.
 
@@ -140,7 +146,7 @@ class CodexRuntime:
                 developer_instructions=DEVELOPER_INSTRUCTIONS,
                 config={},
             )
-            return AgentThread(sdk_thread=sdk_thread)
+            return AgentThread(sdk_thread=sdk_thread, wall_seconds=wall_seconds)
         if claim is not None:
             # Hardy's Lean tools are served to the agent over stdio MCP, pinned
             # to this run and this claim, so a tool call cannot address another.
@@ -169,7 +175,7 @@ class CodexRuntime:
             developer_instructions=DEVELOPER_INSTRUCTIONS,
             config=configuration,
         )
-        return AgentThread(sdk_thread=sdk_thread)
+        return AgentThread(sdk_thread=sdk_thread, wall_seconds=wall_seconds)
 
     def run_structured(
         self,
@@ -185,6 +191,23 @@ class CodexRuntime:
         thread.active_turn = handle
         final_response: str | None = None
         phase = _phase_for_stage(stage)
+        # This SDK's turn takes no timeout, and `stream()` blocks, so a
+        # provider that accepts the turn and then never answers would hang
+        # here forever. The interrupt the SDK does offer is what a deadline
+        # can be built from: it stops the turn, `stream()` returns, and the
+        # expiry below is raised as the error the caller expects.
+        expired = threading.Event()
+        timer: threading.Timer | None = None
+        if thread.wall_seconds:
+            def _expire() -> None:
+                expired.set()
+                interrupt = getattr(handle, "interrupt", None)
+                if interrupt is not None:
+                    interrupt()
+
+            timer = threading.Timer(thread.wall_seconds, _expire)
+            timer.daemon = True
+            timer.start()
         try:
             for event in handle.stream():
                 normalized = normalize_event(event)
@@ -194,7 +217,16 @@ class CodexRuntime:
                 if candidate is not None:
                     final_response = candidate
         finally:
+            if timer is not None:
+                timer.cancel()
             thread.active_turn = None
+        # Asked before the missing-response check below, because a turn cut
+        # short by its deadline also has no final response, and "it ran out of
+        # time" is the more useful of the two things to say.
+        if expired.is_set():
+            raise TimeoutError(
+                f"the {stage} turn exceeded its {thread.wall_seconds:g}s budget"
+            )
         if final_response is None:
             raise ValueError(f"{stage} turn returned no structured final response")
         try:
