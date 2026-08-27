@@ -139,6 +139,12 @@ class TerminalReason(str, Enum):
     FORBIDDEN_HOLE = "forbidden_hole"
     STATEMENT_MISMATCH = "statement_mismatch"
     FAITHFULNESS_DISPUTED = "faithfulness_disputed"
+    # Kept apart from the above, because they are different facts and a
+    # reader consuming `terminal_reason` acts on them differently: one
+    # says the translation was read and refused, the other that nobody
+    # read it. Collapsing them would report a rejected translation for a
+    # run where none was ever assessed.
+    FAITHFULNESS_UNAVAILABLE = "faithfulness_unavailable"
     UNEXPECTED_AXIOM = "unexpected_axiom"
     AGENT_RUNTIME_FAILURE = "agent_runtime_failure"
     TIMEOUT_BUDGET_EXHAUSTED = "timeout_budget_exhausted"

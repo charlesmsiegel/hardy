@@ -859,7 +859,15 @@ class ConsoleTerminal:
         # An unreachable reader halts the run exactly as a refusal does, so it
         # gets the same sentence: the user is owed the reason the run ended,
         # not only the reason the reader gave when there was one.
-        if not verdict.agreed:
+        if verdict.review is None:
+            # Nothing was read, so there is nothing to restate. Telling the
+            # user to reword a claim no reader ever saw sends them to fix
+            # something that was never the problem.
+            self._output(
+                "The run stops here. No reader assessed the translation; "
+                "try again, or set faithfulness_model to a reachable model."
+            )
+        elif not verdict.agreed:
             self._output(
                 "The run stops here. Restate the claim, or ask for a "
                 "formalization that says what you meant."

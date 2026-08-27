@@ -709,7 +709,7 @@ def test_a_reader_that_cannot_be_reached_stops_the_run_too(tmp_path) -> None:
     )
 
     assert state.verifier_calls == 0
-    assert manifest.terminal_reason is domain.TerminalReason.FAITHFULNESS_DISPUTED
+    assert manifest.terminal_reason is domain.TerminalReason.FAITHFULNESS_UNAVAILABLE
     assert manifest.grades.faithfulness_review.outcome is (
         domain.FaithfulnessOutcome.UNAVAILABLE
     )
@@ -820,3 +820,51 @@ def test_a_terminal_that_fails_cannot_deny_the_verdict_on_disk(tmp_path) -> None
     acceptance = importlib.import_module('hardy.acceptance')
     issues = acceptance.validate_run_consistency(run_dir, manifest)
     assert not [issue for issue in issues if 'faithfulness' in issue], issues
+
+
+def test_an_honest_gate_halt_passes_the_repositorys_own_consistency_audit(
+    tmp_path,
+) -> None:
+    """The audit must not contradict the workflow it audits.
+
+    A faithfulness halt finalizes before any writeup, deliberately. The audit
+    demanded `writeup/paper.tex` unconditionally, so every honest halt — this
+    one, a user cancellation, a failed setup — was reported as inconsistent,
+    and the one case where a missing writeup really is a finding could not be
+    told apart from the many where its absence is correct.
+    """
+    acceptance = importlib.import_module('hardy.acceptance')
+    domain = importlib.import_module('hardy.domain')
+    workflow, _, controller, _ = _scripted_controller(
+        tmp_path,
+        reviews=[_review(domain, agrees=False, divergences=('the quantifier moved',))],
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    run_dir = next(tmp_path.iterdir())
+    assert manifest.terminal_reason is domain.TerminalReason.FAITHFULNESS_DISPUTED
+    assert not (run_dir / 'writeup').exists()
+    assert acceptance.validate_run_consistency(run_dir, manifest) == ()
+
+
+def test_a_reader_that_never_answered_is_not_a_refused_translation(tmp_path) -> None:
+    """Two different facts, and automation reading `terminal_reason` acts on
+    them differently: one says the translation was read and refused, the other
+    that nobody read it."""
+    domain = importlib.import_module('hardy.domain')
+    workflow, _, controller, _ = _scripted_controller(
+        tmp_path, reviews=[ConnectionError('the provider closed the connection')]
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.FAITHFULNESS_UNAVAILABLE
+    run_dir = next(tmp_path.iterdir())
+    assert importlib.import_module('hardy.acceptance').validate_run_consistency(
+        run_dir, manifest
+    ) == ()

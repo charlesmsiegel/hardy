@@ -499,9 +499,24 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
         issues.append("non-verified run unexpectedly has lean/Main.lean")
     tex = run_dir / "writeup" / "paper.tex"
     pdf = run_dir / "writeup" / "paper.pdf"
-    if not tex.exists():
+    # Demanded of a run that reached the writeup, and refused of one that did
+    # not. Unconditionally requiring it reported "writeup/paper.tex is
+    # missing" for every honest early exit -- a cancelled run, a failed setup,
+    # a faithfulness halt -- so the audit contradicted the workflow's own
+    # documented behaviour, and the one artifact whose absence is a finding
+    # was indistinguishable from the many whose absence is correct. The
+    # document grade is what says an attempt was made, and it is the same
+    # grade the PDF check below already reads.
+    attempted = manifest.grades.document is not DocumentStatus.NOT_ATTEMPTED
+    if attempted and not tex.exists():
         issues.append("writeup/paper.tex is missing")
-    elif claim is not None and claim.content_hash not in tex.read_text(encoding="utf-8"):
+    elif not attempted and tex.exists():
+        issues.append("run that attempted no document unexpectedly has writeup/paper.tex")
+    elif (
+        tex.exists()
+        and claim is not None
+        and claim.content_hash not in tex.read_text(encoding="utf-8")
+    ):
         issues.append("paper.tex does not identify the Frozen Claim")
     if manifest.grades.document is DocumentStatus.TEX_COMPILED:
         if not pdf.exists() or not pdf.read_bytes().startswith(b"%PDF-"):

@@ -111,6 +111,10 @@ TOOLS = [
 class StagedThread:
     runtime: Any
     claim: FrozenClaim | None
+    # The phase this thread's turns belong to. Carried on the thread rather
+    # than read from the workflow because `cancel` runs after the workflow has
+    # stopped advancing, and the seal it may write still has to say when.
+    phase: RunPhase = RunPhase.PROVING
 
 
 class ClaudeStagedRuntime:
@@ -190,7 +194,7 @@ class ClaudeStagedRuntime:
             # `proving` before the transition into proving was even recorded.
             observe=partial(self._observe, phase=phase),
         )
-        thread = StagedThread(runtime=runtime, claim=claim)
+        thread = StagedThread(runtime=runtime, claim=claim, phase=phase)
         self._threads.append(thread)
         return thread
 
@@ -202,7 +206,7 @@ class ClaudeStagedRuntime:
                 return
             self._store.append("claude." + str(event.get("type", "event")), event, phase=phase)
 
-    def _seal(self) -> None:
+    def _seal(self, phase: RunPhase = RunPhase.PROVING) -> None:
         """Stop recording this run, and record that as the last thing said.
 
         Only for a provider thread that outlived the wait for it. `settle` is
@@ -228,7 +232,7 @@ class ClaudeStagedRuntime:
                         "cancelled; events after this point were not recorded"
                     )
                 },
-                phase=RunPhase.PROVING,
+                phase=phase,
             )
             self._sealed = True
 
@@ -363,8 +367,11 @@ class ClaudeStagedRuntime:
         settle = getattr(thread.runtime, "settle", None)
         if settle is not None and settle() is False:
             # It would not stop, and the manifest is about to be written. Sealing
-            # is what keeps that manifest true; `_seal` states the cost.
-            self._seal()
+            # is what keeps that manifest true; `_seal` states the cost. In the
+            # thread's own phase: a Ctrl+C during the faithfulness read leaves
+            # its last event where that read happened, not in a phase the run
+            # had not entered.
+            self._seal(thread.phase)
 
     def close(self) -> None:
         # The workflow calls this in a `finally`; without it every staged run

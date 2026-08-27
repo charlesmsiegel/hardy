@@ -163,3 +163,55 @@ def test_a_proving_thread_still_files_its_events_under_proving(tmp_path) -> None
         for line in store.trajectory_path.read_text(encoding='utf-8').splitlines()
     ]
     assert [event['phase'] for event in events] == ['proving']
+
+
+def test_a_cancelled_reader_seals_its_record_in_its_own_phase(tmp_path) -> None:
+    """The seal is the last thing a cancelled run says, so it has to say when.
+
+    `cancel` runs after the workflow has stopped advancing, so the phase comes
+    from the thread rather than from the workflow. Hard-coded to `proving`, a
+    Ctrl+C during the faithfulness read left a proving-phase event in the
+    record before the run had transitioned out of `awaiting_approval`.
+    """
+    import json
+
+    domain = importlib.import_module('hardy.domain')
+    staged, store, runtime = _staged(tmp_path)
+
+    thread = runtime.start(
+        model='m',
+        run_dir=store.path,
+        claim=None,
+        isolated=True,
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+    # A provider thread that will not settle is the only path that seals.
+    thread.runtime.settle = lambda: False
+    thread.runtime.cancel = lambda: None
+    runtime.cancel(thread)
+
+    events = [
+        json.loads(line)
+        for line in store.trajectory_path.read_text(encoding='utf-8').splitlines()
+    ]
+    sealed = [event for event in events if event['kind'] == 'claude.unsettled']
+    assert len(sealed) == 1
+    assert sealed[0]['phase'] == 'awaiting_approval'
+
+
+def test_a_cancelled_proving_thread_still_seals_under_proving(tmp_path) -> None:
+    import json
+
+    staged, store, runtime = _staged(tmp_path)
+
+    thread = runtime.start(model='m', run_dir=store.path, claim=None)
+    thread.runtime.settle = lambda: False
+    thread.runtime.cancel = lambda: None
+    runtime.cancel(thread)
+
+    events = [
+        json.loads(line)
+        for line in store.trajectory_path.read_text(encoding='utf-8').splitlines()
+    ]
+    sealed = [event for event in events if event['kind'] == 'claude.unsettled']
+    assert [event['phase'] for event in sealed] == ['proving']
