@@ -506,6 +506,7 @@ def outstanding(
     assumptions: Sequence[Mapping[str, str]],
     used: Collection[str],
     tex: Mapping[str, str],
+    saved: Mapping[str, str] | None = None,
 ) -> tuple[Obligation, ...]:
     r"""Everything the workspace owes, one obligation at a time.
 
@@ -513,6 +514,16 @@ def outstanding(
     is what `record_name` recorded, `labels` are the labels LaTeX itself
     reports having created, `assumptions` are the axioms a human approved and
     `used` those the tree actually rests on, and `tex` is the writeup tree.
+
+    `saved` is every saved theorem, defaulting to `theorems`. The two differ
+    once a theorem may be saved without owing anything -- an open one -- and
+    two of the checks below are about the workspace rather than about what
+    owes: whether a leaf name is unambiguous, and whether a theorem environment
+    in the document is backed. An open theorem settles both exactly as a closed
+    one does. Asked with the owing subset instead, a claimed `A.t` made the leaf
+    `t` look unique while `B.t` also answered to it, and a document asserting an
+    open theorem inside a `\begin{theorem}` was reported as backed by nothing --
+    which refused a partial report written the way the prompt asks for.
 
     An empty result means every saved theorem is named in the writeup, carries
     a label the compiler really made, has its Lean statement quoted where a
@@ -524,13 +535,14 @@ def outstanding(
     quoted = quoted_lean(document)
     written = prose(document)
     statements = {name: normalise_lean(text) for name, text in theorems.items()}
+    known = dict(theorems) if saved is None else dict(saved)
     owed: list[Obligation] = []
     # A leaf name is only allowed to stand for a qualified declaration while
     # exactly one declaration carries it. `A.result` and `B.result` both answer
     # to `result`, and one label covering both would report a theorem as
     # written up when the document never mentions it.
     by_leaf: dict[str, list[str]] = {}
-    for name in theorems:
+    for name in known:
         by_leaf.setdefault(name.rsplit(".", 1)[-1], []).append(name)
     for name in sorted(theorems):
         leaf = name.rsplit(".", 1)[-1]
@@ -564,7 +576,7 @@ def outstanding(
                     _statement_detail(statement, written),
                 )
             )
-    owed.extend(_theorem_obligations(document, theorems, registry, labels, assumptions))
+    owed.extend(_theorem_obligations(document, known, registry, labels, assumptions))
     owed.extend(_assumption_obligations(assumptions, used, labels, document))
     return tuple(sorted(owed, key=lambda item: (KINDS.index(item.kind), item.subject)))
 

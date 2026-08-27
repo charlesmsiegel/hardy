@@ -1871,6 +1871,11 @@ class MathematicsSession:
             assumptions=self.state["assumptions"],
             used=self._used_assumptions(),
             tex=self._tex_sources(),
+            # Open theorems owe nothing, but they are still saved theorems: they
+            # back a `\begin{theorem}` the document asserts, and they decide
+            # whether a leaf name is unambiguous. Left out, a document asserting
+            # one read as backed by nothing.
+            saved=self._theorem_statements(),
         )
         # Ahead of the rest: while two modules answer to one name, every
         # obligation below is about whichever of them was read last.
@@ -2613,6 +2618,11 @@ class MathematicsSession:
                     assumptions=self.state["assumptions"],
                     used=self._used_assumptions(),
                     tex=self._tex_sources(),
+                    # The whole tree, not the claimed subset: with `A.t` claimed
+                    # and `B.t` saved beside it, a subset made the leaf `t` look
+                    # unique and accepted one label as documenting a theorem the
+                    # document never named.
+                    saved=saved,
                 )
             )
         if blocking:
@@ -2635,7 +2645,12 @@ class MathematicsSession:
             "assumptions": [str(item["formal_name"]) for item in rested],
             # Computed from the audit records rather than taken from the model,
             # for the same reason every other grade here is.
-            "status": "partial" if opened else "clean",
+            # `partial` outranks `modulo`: a proof with a hole in it is not
+            # established at all, which is worse news than one established on
+            # an axiom a human approved. Saying `clean` here contradicted the
+            # sentence beside it, which listed the assumptions in the same
+            # breath -- and this is the durable grade, not the sentence.
+            "status": "partial" if opened else ("modulo" if rested else "clean"),
             "open": opened,
         }
         self.state.setdefault("reports", []).append(entry)
