@@ -79,10 +79,13 @@ PROOF = ":="
 #: The kinds an obligation comes in, worst first. Order is what `describe`
 #: reports in and what a caller showing only the first should show.
 #:
-#: `theorem` sits second: a document asserting a claim nothing backs is worse
+#: `open` sits first: a theorem whose proof still has a hole is not a theorem
+#: yet, and every other obligation here is about how one is described.
+#:
+#: `theorem` sits third: a document asserting a claim nothing backs is worse
 #: than one that backs its claims imprecisely, and not as bad as having no Lean
 #: at all.
-KINDS = ("lean", "theorem", "statement", "record", "label", "appendix", "assumption")
+KINDS = ("open", "lean", "theorem", "statement", "record", "label", "appendix", "assumption")
 # `\newtheorem{theorem}{Theorem}` declares an environment; the last group is the
 # word printed in front of the number. Matched on that word rather than on the
 # environment name, because the name is the author's private choice while the

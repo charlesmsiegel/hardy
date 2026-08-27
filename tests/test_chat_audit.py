@@ -523,3 +523,50 @@ def test_check_lean_is_not_gated_by_the_audit(tmp_path: Path):
     chat.send("Check it.")
     assert results(tmp_path, "check_lean")[-1]["ok"]
     assert not saved(tmp_path).exists()
+
+
+def test_an_open_theorem_is_named_in_what_the_workspace_owes(tmp_path: Path):
+    """A hole nobody is told about is worse than one that is refused."""
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": HOLED}, "lean")]))
+    chat.send("Save it.")
+    owed = chat.obligations()
+    assert owed[0].kind == "open"
+    assert any(item.subject == "HardyTarget" and "hole" in item.detail for item in owed)
+
+
+def test_an_open_theorem_owes_no_writeup_yet(tmp_path: Path):
+    """Otherwise a skeleton owes a paragraph about a theorem nobody has proved."""
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": HOLED}, "lean")]))
+    chat.send("Save it.")
+    assert {item.kind for item in chat.obligations()} == {"open"}
+
+
+def test_closing_the_hole_moves_the_obligation_to_the_writeup(tmp_path: Path):
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": HOLED}, "lean"),
+            call("save_lean", {"source": CLEAN}, "lean"),
+        ]),
+    )
+    chat.send("Save it, then close it.")
+    kinds = {item.kind for item in chat.obligations()}
+    assert "open" not in kinds
+    assert "record" in kinds
+
+
+def test_an_open_theorem_does_not_block_the_next_one(tmp_path: Path):
+    """The catch-up ratchet is about writeups, and an open theorem owes none."""
+    second = (
+        "import Mathlib\n\ntheorem HardySecond : True := by exact True.intro"
+        " -- axioms: sorryAx\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": HOLED}, "lean"),
+            call("save_lean", {"path": "Second.lean", "source": second}, "lean"),
+        ]),
+    )
+    chat.send("Save two skeletons.")
+    assert results(tmp_path, "save_lean")[-1]["ok"]

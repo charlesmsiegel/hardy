@@ -1709,16 +1709,24 @@ class MathematicsSession:
         return found
 
     def _saved_statements(self) -> dict[str, str]:
-        """Every saved theorem, with the exact statement Lean was given.
+        """Every *closed* saved theorem, with the exact statement Lean was given.
 
         Theorems only. A `lemma` is scaffolding and owes nothing, which is the
         same line `_saved_theorems` draws and has to stay the same line: a
         writeup gate that demanded a paragraph for every helper would make
         splitting a proof into helpers the expensive way to work.
+
+        Open theorems are left out for the same reason in the other direction.
+        A theorem whose proof still has a hole is not a result yet; demanding
+        that the document carry it would ask for a paragraph asserting
+        something nobody has proved, and would block the next save behind it.
+        Its obligation is that it is open, and the writeup obligations attach
+        the moment the hole closes.
         """
+        opened = self._open_theorems()
         found: dict[str, str] = {}
         for source in self.lean_workspace.sources().values():
-            theorems = set(declarations(source)["theorem"])
+            theorems = set(declarations(source)["theorem"]) - opened
             found.update(
                 {name: text for name, text in statements(source).items() if name in theorems}
             )
@@ -1823,7 +1831,22 @@ class MathematicsSession:
             )
             for name, modules in sorted(self._shared_names().items())
         ]
-        return (*shared, *self._audit_gaps(self._saved_theorems()), *self._stale_writeup(), *owed)
+        # `_audit_gaps` is asked only about closed theorems. An open one has a
+        # current audit record -- being current is how Hardy knows it is open --
+        # so it has no gap to report, and reporting it would say the same thing
+        # the `open` obligation beside it already says.
+        opened = self._open_theorems()
+        holes = tuple(
+            completion.Obligation("open", name, "still open -- rests on a hole")
+            for name in sorted(opened)
+        )
+        return (
+            *holes,
+            *shared,
+            *self._audit_gaps(self._saved_theorems() - opened),
+            *self._stale_writeup(),
+            *owed,
+        )
 
     def goal(self) -> str:
         """What the user said this session is for, or "".
@@ -1894,8 +1917,14 @@ class MathematicsSession:
         would trap the session: a model could no longer repair, restate, or
         delete the very theorem blocking it. The second alone would let one
         file absorb any number of undocumented claims.
+
+        `open` obligations are not counted. They are not a writeup this save is
+        running ahead of -- an open theorem owes no writeup at all yet -- and
+        counting them would stop a development the moment it held one
+        unfinished result, which is the state a long proof is in for most of
+        its life.
         """
-        owed = self._obligations()
+        owed = tuple(item for item in self._obligations() if item.kind != "open")
         if not owed:
             return None
         existing = self._saved_theorems()
@@ -2611,6 +2640,38 @@ class MathematicsSession:
                 "listings are not established. Run save_latex again.",
             )
         ]
+
+    def _open_declarations(self) -> set[str]:
+        """Every saved declaration Lean reported resting on a hole.
+
+        Read from the stored audit records, which are stamped with the build
+        signature they were established under, and skipping the ones that no
+        longer hold: a stale record is not evidence that a theorem is open, and
+        it is not evidence that it is closed either. `_audit_gaps` already
+        reports a stale record as its own obligation, so nothing is lost here.
+        """
+        try:
+            signatures = self.lean_workspace.current_signatures()
+        except ImportCycle:
+            # `_audit_gaps` reports the cycle. Answering "nothing is open" for a
+            # tree that does not order would be a claim, and this has none.
+            return set()
+        found: set[str] = set()
+        for module, record in self.state.get("audit", {}).items():
+            current = self._still_current(module, record, signatures)
+            if not current.get("stale"):
+                found.update(audit.open_declarations(current))
+        return found
+
+    def _open_theorems(self) -> set[str]:
+        """The open declarations that are theorems, which is what is reportable.
+
+        An open `lemma` is reported to the model by the save's own audit note,
+        which names every declaration in the rebuilt modules that rests on a
+        hole. The obligations answer a narrower question -- what stands between
+        this workspace and a report -- and a lemma was never reportable.
+        """
+        return self._open_declarations() & self._saved_theorems()
 
     def _audit_gaps(self, names: Iterable[str]) -> list[completion.Obligation]:
         """Claimed theorems with no current audit behind them.
