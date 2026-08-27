@@ -346,16 +346,21 @@ must always be abandonable — and the naming registry drops the mappings it
 stranded, recording that in `transcript.jsonl`, since losing a formal-to-writeup
 link is a change to the record of what was claimed.
 
-**Every `theorem` owes a writeup, and the writeup owes its reader the Lean.** A
-saved theorem is carried by the document only when three things hold at once:
+**Every *closed* `theorem` owes a writeup, and the writeup owes its reader the
+Lean.** A theorem still resting on a hole owes none of it yet: nothing asks for a
+paragraph about a result nobody has proved, and skeletons accumulate one after
+another with no LaTeX between them. What follows attaches the moment the hole
+closes — or at a `report_result` naming the open theorem, which carries it on
+exactly these terms so a reader can see which half of the work was done. A saved
+theorem is carried by the document only when three things hold at once:
 `record_name` maps it to a LaTeX name, the compiler really created that `\label`,
 and the document quotes the theorem's **exact Lean statement** — the declaration
 head from `theorem` through to the `:=` — verbatim, where TeX cannot mangle it.
 Whitespace and Lean comments may differ; the proposition may not, and a quotation
 that runs on into a *longer* statement does not count. Only the document the root
 actually `\input`s counts, since a fragment nothing pulls in is in front of
-nobody. Until every saved theorem is carried, saving a file that introduces a new
-one is refused. `lemma`, `def`, and `instance` are exempt, so scaffolding stays
+nobody. Until every closed saved theorem is carried, saving a file that introduces a new
+one is refused; open ones are not counted. `lemma`, `def`, and `instance` are exempt, so scaffolding stays
 free — the rule is that anything reported as a result is stated as a `theorem`.
 Repairing, restating, or deleting an undocumented theorem is always allowed; only
 *adding* a new one is gated.
