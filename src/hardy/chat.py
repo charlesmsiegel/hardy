@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
@@ -1427,6 +1427,9 @@ class MathematicsSession:
             if isinstance(audited, ToolResult):
                 return audited
             records, note = audited
+            stale = self._closes_and_adds(source, affected, records)
+            if stale is not None:
+                return ToolResult(False, stale, source)
             commit()
         finally:
             LeanWorkspace.discard(shadow)
@@ -1973,6 +1976,51 @@ class MathematicsSession:
                     if item.subject and item.kind in {"record", "label", "statement"}
                 }
             )
+        )
+
+    def _closes_and_adds(
+        self, source: str, affected: Sequence[str], records: Mapping[str, dict[str, Any]]
+    ) -> str | None:
+        """The catch-up ratchet again, once the audit knows what this save closed.
+
+        `_documentation_gate` runs before Lean, which is what makes it cheap and
+        what makes it blind here: an open theorem owes no writeup, so a tree
+        holding one owes nothing and the gate admits a new theorem -- and then
+        the very same save closes the hole, so *both* land undocumented, which
+        is the one thing the ratchet exists to prevent.
+
+        Only elaboration can say which holes a source closes, so the question is
+        asked again with the audit's answer in hand and before anything is
+        committed. Conservative on purpose: a closure and an addition in one
+        save are refused together rather than checked for whether the closed one
+        happens to be written up already. Splitting them into two saves is one
+        extra call and leaves the ratchet asking its ordinary question about
+        each; guessing at the document from here would be a third place that
+        has to agree with `completion` about what a writeup is.
+        """
+        introduced = [
+            name
+            for name in declarations(source)["theorem"]
+            if name not in self._saved_theorems()
+        ]
+        if not introduced:
+            return None
+        stored = self.state.get("audit", {})
+        before = {
+            name
+            for module in affected
+            for name in audit.open_declarations(stored.get(module, {}))
+        }
+        after = {name for record in records.values() for name in audit.open_declarations(record)}
+        closed = (before & self._open_theorems()) - after
+        if not closed:
+            return None
+        return (
+            f"this save closes {sorted(closed)} and introduces {introduced[0]} at once. A "
+            "theorem that has just been closed owes its writeup before another is added, "
+            "and until this save ran there was no hole-free theorem here to owe one. Save "
+            "the closed proof on its own, settle what it owes with record_name and "
+            "save_latex, and add the new theorem after."
         )
 
     def _result_gate(self, source: str) -> str | None:
