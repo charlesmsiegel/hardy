@@ -184,10 +184,16 @@ def summarise(record: dict[str, Any]) -> str:
     if status == "not established":
         return f"not established -- {record['reason']}"
     if status == "open":
-        return (
+        # The assumptions travel with it. A proof that is both unfinished and
+        # resting on an approved axiom has two limitations, and a line naming
+        # only the hole leaves the reader believing the rest is Lean's own.
+        opened = (
             f"open -- {list(open_declarations(record))} rest on a hole "
             f"{list(record['forbidden'])}"
         )
+        if record["assumed"]:
+            return f"{opened}; approved assumptions {list(record['assumed'])}"
+        return opened
     parts = []
     if record["forbidden"]:
         parts.append(f"forbidden {list(record['forbidden'])}")

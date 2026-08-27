@@ -253,3 +253,19 @@ def test_open_declarations_names_what_rests_on_a_hole():
 def test_a_record_that_never_graded_has_no_open_declarations():
     """`unestablished` and `not audited` carry no declarations to read."""
     assert open_declarations(unestablished("nothing to grade")) == ()
+
+
+def test_an_open_verdict_still_names_what_was_assumed():
+    """A partial result is valid only when its holes *and* its assumptions are
+    explicit. Reporting the hole and stopping there dropped an approved axiom
+    the unfinished proof rests on out of the one line a reader is shown."""
+    verdict = classify([report("sorryAx", "Papers.Smith.main")], {"Papers.Smith.main"})
+    assert verdict.status == "open"
+    assert "hole" in describe(verdict)
+    assert "Papers.Smith.main" in describe(verdict)
+
+
+def test_an_open_verdict_says_nothing_of_assumptions_when_there_are_none():
+    assert describe(classify([report("sorryAx")], ())) == (
+        "open -- ['T'] rest on a hole ['sorryAx']"
+    )

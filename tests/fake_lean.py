@@ -45,7 +45,7 @@ DECLARED = re.compile(
 # Where any declaration begins, used to cut the source into one chunk each.
 OPENS = re.compile(
     r"(?m)^[ \t]*(?:(?:private|protected|noncomputable|nonrec)\s+)*"
-    r"(?:theorem|lemma|def|abbrev|instance|example)\b"
+    r"(?:theorem|lemma|def|abbrev|instance|structure|example)\b"
 )
 # A proof body this stand-in is willing to call elaborated. Everything else is
 # a type error, which is what keeps "only the hole is forgiven" honest: a file
@@ -155,20 +155,80 @@ axioms = marked(source)
 code = code_only(source)
 
 
+def qualifiers(text: str) -> list[tuple[int, str]]:
+    """The namespace prefix in force at each offset, as (offset, prefix).
+
+    `A.t` and `B.t` are two declarations, and real `#print axioms B.t` answers
+    about the finished one. Matching by last component alone marked both open
+    the moment either carried a hole, so the prefix has to be tracked -- which
+    means tracking `end` too, since a bare one closes whichever scope is
+    innermost.
+    """
+    scope: list[str] = []
+    marks: list[tuple[int, str]] = []
+    for match in re.finditer(r"(?m)^[ \t]*(namespace|section|end)\b[ \t]*(\S*)", text):
+        keyword, name = match.group(1), match.group(2)
+        if keyword == "namespace" and name:
+            scope.append(name)
+        elif keyword == "section":
+            scope.append("")
+        elif keyword == "end" and scope:
+            scope.pop()
+        marks.append((match.end(), ".".join(part for part in scope if part)))
+    return marks
+
+
+def prefix_at(marks: list[tuple[int, str]], offset: int) -> str:
+    found = ""
+    for at, prefix in marks:
+        if at <= offset:
+            found = prefix
+        else:
+            break
+    return found
+
+
+def carries(wanted: str, names: set[str] | list[str], among: list[str]) -> bool:
+    """Whether `wanted` is one of `names`, by full name or by its sole leaf.
+
+    The leaf fallback is only sound while exactly one declaration in `among`
+    carries that last component -- putting leaves into the set outright brought
+    a finished `B.t` within reach of `A.t`'s hole, which is the conflation this
+    exists to prevent.
+    """
+    if wanted in names:
+        return True
+    if "." in wanted:
+        return False
+    leaf = wanted.rsplit(".", 1)[-1]
+    sharing = [item for item in among if item.rsplit(".", 1)[-1] == leaf]
+    return len(sharing) == 1 and sharing[0] in names
+
+
 def spans(text: str) -> list[tuple[str | None, str]]:
-    """Each declaration in `text`, as the name it declares and its body.
+    """Each declaration in `text`, as the name Lean would print and its body.
 
     A declaration runs to the start of the next one, which is as much structure
     as this stand-in needs: it is deciding what a body *looks* like, not
-    elaborating it.
+    elaborating it. The name carries its namespace, because two declarations
+    may share a last component and only one of them may have the hole.
     """
+    marks = qualifiers(text)
     starts = [match.start() for match in OPENS.finditer(text)]
     found: list[tuple[str | None, str]] = []
     for index, start in enumerate(starts):
         end = starts[index + 1] if index + 1 < len(starts) else len(text)
         chunk = text[start:end]
         named = DECLARED.search(chunk) or DEFINED.search(chunk)
-        found.append((named.group(2) if named else None, chunk))
+        if named is None:
+            found.append((None, chunk))
+            continue
+        # Guillemets are kept: `theorem «first result»` is printed by Lean, and
+        # asked about, with them. Stripping them exported a name no probe could
+        # resolve.
+        bare = named.group(2)
+        prefix = prefix_at(marks, start)
+        found.append((f"{prefix}.{bare}" if prefix else bare, chunk))
     return found
 
 
@@ -177,11 +237,10 @@ def spans(text: str) -> list[tuple[str | None, str]]:
 # `sorryAx` to the whole module marked a finished theorem open whenever an
 # unfinished one sat beside it -- and every test about closing one hole while
 # another stays open would have been exercising the opposite of production.
-holed = {
-    name.strip("«»").rsplit(".", 1)[-1]
-    for name, body in spans(code)
-    if name and HOLE.search(body)
-}
+holed = {name for name, body in spans(code) if name and HOLE.search(body)}
+# Every declaration this file states, for the leaf fallback below: a bare name
+# may stand for a qualified declaration only while exactly one carries it.
+stated = [name for name, _ in spans(code) if name]
 # The olean stays module-wide: an importer of a file with any hole in it is
 # reaching into a module that rests on one, and this stand-in's import model
 # has no finer grain than the module to offer.
@@ -203,15 +262,20 @@ if HOLE.search(code) and "sorryAx" not in axioms:
 # this file declares reports it. That is the direction that over-reports.
 imported_holes: set[str] = set()
 imports_holed = False
-# What an importer of this file would be able to name. Private declarations are
-# left out on purpose: Lean mangles them so no other module can refer to them.
-# Read from `code`, so a `theorem` written inside a comment or a string exports
-# nothing -- it is not a declaration, and offering it as one would let a probe
-# ask Lean about a name that does not exist.
+# What an importer of this file would be able to name, under the name Lean
+# would print. Private declarations are left out on purpose: Lean mangles them
+# so no other module can refer to them. Read from `code`, so a `theorem`
+# written inside a comment or a string exports nothing -- it is not a
+# declaration, and offering it as one would let a probe ask Lean about a name
+# that does not exist.
+#
+# Qualified, like `holed` beside it: `A.t` and `B.t` are two exports, and a
+# bare list reported them as one name declared twice, which this stand-in
+# refuses as an ambiguous import.
 exports = [
     name
-    for modifier, name in DECLARED.findall(code) + DEFINED.findall(code)
-    if modifier != "private"
+    for name, chunk in spans(code)
+    if name and not re.match(r"\s*private\b", chunk)
 ]
 visible: list[str] = []
 # Names two different imported modules both export. Lean's environment maps a
@@ -240,7 +304,7 @@ for line in source.splitlines():
     carried_holes = listed(HOLED_MARK, carried)
     if carried_holes:
         imports_holed = True
-        imported_holes.update(item.rsplit(".", 1)[-1] for item in carried_holes)
+        imported_holes.update(carried_holes)
     elif "sorryAx" in marked(carried):
         plain = True
     axioms.extend(item for item in marked(carried) if item not in axioms)
@@ -266,13 +330,17 @@ def report_axioms() -> None:
         # Per declaration, like the real thing. `sorryAx` is added for the one
         # that actually carries the hole, not for everything the module exports.
         reported = list(axioms)
-        leaf = name.strip("«»").rsplit(".", 1)[-1]
+        wanted = name
+        leaf = wanted.rsplit(".", 1)[-1]
+        # By full name. A bare query falls back to the last component only while
+        # exactly one declaration here carries it, which is the rule the product
+        # reads its own registry by.
         rests = (
-            leaf in holed
-            or leaf in imported_holes
+            carries(wanted, holed, stated)
+            or carries(wanted, imported_holes, sorted(imported_holes))
             # Declared here, beside an import that carries a hole: this
             # stand-in cannot tell whether it uses one, so it says it does.
-            or (imports_holed and leaf in {item.strip("«»").rsplit(".", 1)[-1] for item in exports})
+            or (imports_holed and leaf in {item.rsplit(".", 1)[-1] for item in exports})
         )
         if "sorryAx" in reported and not plain and not rests:
             reported.remove("sorryAx")
