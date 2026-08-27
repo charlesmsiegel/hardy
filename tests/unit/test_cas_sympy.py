@@ -14,7 +14,7 @@ import sys
 import pytest
 
 from hardy.cas import CasSession, backend_for
-from hardy.cas_export import export_session
+from hardy.cas_export import TRANSCRIPT_BEGIN, TRANSCRIPT_END, export_session
 from hardy.domain import RunLimits
 
 
@@ -190,8 +190,16 @@ def test_running_the_exported_script_prints_what_the_session_recorded(
         check=False,
     )
     assert finished.returncode == 0, finished.stderr
-    # Not "it ran": every recorded output, in order, is what it printed.
-    assert finished.stdout.splitlines() == ["computing", "(x - 1)*(x + 1)", "4"]
+    # Not "it ran": every recorded output, in order, is what it printed --
+    # inside the brackets the script prints around its own transcript, which
+    # is how the export check tells the file's output from the interpreter's.
+    assert finished.stdout.splitlines() == [
+        TRANSCRIPT_BEGIN,
+        "computing",
+        "(x - 1)*(x + 1)",
+        "4",
+        TRANSCRIPT_END,
+    ]
     assert [record.value_repr for record in sympy_session.accepted()] == [
         "",
         "(x - 1)*(x + 1)",
@@ -289,7 +297,7 @@ def test_a_tuple_valued_cell_still_exports_a_runnable_script(
         check=False,
     )
     assert finished.returncode == 0, finished.stderr
-    assert finished.stdout.splitlines() == [printed]
+    assert finished.stdout.splitlines() == [TRANSCRIPT_BEGIN, printed, TRANSCRIPT_END]
     assert report.script_verdict == "verified", report.script_detail
     assert report.reproduces
 
