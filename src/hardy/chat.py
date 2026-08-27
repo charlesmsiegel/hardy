@@ -2049,7 +2049,14 @@ class MathematicsSession:
         workspace written before this rule can still be repaired, restated, or
         deleted.
         """
-        registered = {item["formal_name"] for item in self.state["names"]}
+        # `request_assumption` records its own naming entry, so an approved
+        # axiom's name is in this registry too -- and it is not a result
+        # mapping. Left in, an axiom approved as `t` authorised a `theorem A.t`
+        # through the leaf rule below, and `completion` reading the registry by
+        # the same rule then let the *axiom's* label answer for the theorem's.
+        registered = {
+            item["formal_name"] for item in self.state["names"]
+        } - self._approved_assumptions()
         existing = self._saved_theorems()
         # A bare entry covers the qualified declaration carrying that leaf, which
         # is the rule `_resolves` and `completion.outstanding` already read this
