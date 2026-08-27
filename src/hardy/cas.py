@@ -99,6 +99,11 @@ class CellOutcome(FrozenModel):
     # the kernel survived is the session's live state, reported by
     # `cas_state` and by the restart note on the next cell.
     kernel_lost: bool = False
+    # The kernel's fingerprint of its own namespace once this cell was done.
+    # Empty when the backend cannot produce one -- a sentinel interpreter has
+    # no protocol to carry it -- and `_restore` says so rather than claiming a
+    # rebuild it could not check.
+    state_digest: str = ""
     # Whether Hardy actually signalled this cell. A cell that reports `ok`
     # after being signalled is not acceptable even though it says it worked: a
     # cell -- or a library under it -- may catch the interrupt and return
@@ -146,6 +151,15 @@ class CellRecord(FrozenModel):
     # for the same reason.
     backend: str = ""
     backend_version: str = ""
+    # The kernel's fingerprint of its own namespace once this cell had run.
+    # Recorded for every cell, failed ones included: a cell that raised partway
+    # through has still changed the namespace, and a rebuild that replays only
+    # the accepted cells has to be able to notice that what it rebuilt is not
+    # what was there. Empty on a backend that cannot produce one, and on every
+    # record written before this field existed -- `reproduces` compares it only
+    # when the record carries one, so an older log still loads and still
+    # replays.
+    state_digest: str = ""
     # Hardy's own commentary on the cell -- currently only that the kernel was
     # rebuilt before it ran. Deliberately its own field rather than a line
     # prepended to `stdout`: `stdout` is what the kernel produced, and it is
@@ -167,6 +181,14 @@ class RebuildReport(FrozenModel):
     diverged: tuple[int, ...] = ()
     failed: int | None = None
     ok: bool = True
+    # Cells whose replay reproduced everything Hardy can see and nothing more.
+    # A cell that prints nothing and changes the namespace -- `import random;
+    # x = random.random()` -- reproduces three empty fields however different
+    # the value it rebuilt, so on a backend that carries no state digest a
+    # clean replay of it is not evidence of a faithful rebuild. Named here so
+    # the session can say which cells it could not check rather than reporting
+    # a rebuild as if it had.
+    unverified: tuple[int, ...] = ()
 
 
 def normalise(text: str) -> str:
@@ -189,11 +211,41 @@ def reproduces(record: CellRecord, outcome: CellOutcome) -> bool:
 
     stderr counts. The notebook preserves it, so a cell whose warnings did not
     reproduce has not reproduced, whatever its stdout says.
+
+    So does the namespace, where the backend can describe it. Output is what a
+    cell *showed*, not what it *did*: `import random; x = random.random()`
+    shows nothing at all, and comparing only what it showed called a replay
+    that rebuilt a different `x` faithful -- with every later cell then
+    standing on a value nobody had compared. The digest closes that, and it
+    closes the other half of the same hole for free: a cell whose recorded
+    digest includes an effect left behind by a *failed* cell (`x = 41; 1 / 0`,
+    then an accepted `pass`) cannot match a replay that never ran the failure.
+
+    Compared only when the record carries one. A log written before the field
+    existed, or by a backend with no protocol to carry it, has nothing to
+    compare -- `unobservable` is what says so, rather than this quietly
+    passing.
     """
-    return (
+    if not (
         normalise(outcome.stdout) == normalise(record.stdout)
         and normalise(outcome.stderr) == normalise(record.stderr)
         and normalise(outcome.value_repr) == normalise(record.value_repr)
+    ):
+        return False
+    if record.state_digest:
+        return outcome.state_digest == record.state_digest
+    return True
+
+
+def unobservable(record: CellRecord) -> bool:
+    """Whether replaying this cell could prove anything about what it did.
+
+    True when the record carries no state digest and the cell showed nothing:
+    a replay of it agrees with the record by construction, whatever namespace
+    it left behind.
+    """
+    return not record.state_digest and not (
+        record.stdout.strip() or record.stderr.strip() or record.value_repr.strip()
     )
 
 
@@ -226,9 +278,22 @@ class SympyBackend:
     # star import so nothing sympy exports can shadow the module.
     preamble = "from sympy import *\nimport sys"
     version_source = '__import__("sympy").__version__'
+    # Not used for framing -- the driver protocol is length-prefixed and needs
+    # no marker in the language. It is how `cas_export` asks a backend to print
+    # the brackets around a script's own transcript, which every backend must
+    # be able to do.
+    echo = 'print("{marker}")'
     # The exported script is run as an ordinary Python program, not through the
     # driver: the artifact under test is the file a reader would run.
     script_stdin = False
+    # Python randomises string hashing per process, so `repr` of a set or of a
+    # dict keyed by strings orders itself differently in every kernel. Nothing
+    # in a session causes that, and everything Hardy compares across processes
+    # -- a rebuild's output, an export's transcript, and now a cell's state
+    # digest -- would read it as the session having failed to reproduce. Pinned
+    # for the kernel and for the exported script alike, so the file a reader
+    # runs is run the way its record was made.
+    environment: dict[str, str] = {"PYTHONHASHSEED": "0"}
 
     def argv(self, command: Path | None, max_output_bytes: int = 256 * 1024) -> tuple[str, ...]:
         return (
@@ -318,6 +383,7 @@ class _SentinelBackend:
     framing = "sentinel"
     error_pattern: re.Pattern[str]
     echo: str
+    environment: dict[str, str] = {}
     # The exported script is fed to the interpreter on stdin, which is how the
     # session itself runs cells: same argv, same input mode, so the transcript
     # the check compares against the record is produced the same way the record
@@ -588,7 +654,13 @@ def backend_for(name: str) -> Any:
 class _Kernel:
     """One live child, drained by threads so a deadline can always be enforced."""
 
-    def __init__(self, argv: Sequence[str], cwd: Path, max_output_bytes: int) -> None:
+    def __init__(
+        self,
+        argv: Sequence[str],
+        cwd: Path,
+        max_output_bytes: int,
+        environment: dict[str, str] | None = None,
+    ) -> None:
         self.argv = tuple(argv)
         self.max_output_bytes = max_output_bytes
         self.out = bytearray()
@@ -606,7 +678,7 @@ class _Kernel:
         self.process = subprocess.Popen(
             self.argv,
             cwd=str(cwd),
-            env=child_environment({}),
+            env=child_environment(dict(environment or {})),
             shell=False,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -1118,7 +1190,9 @@ class CasSession:
         # timeout, and a kernel dropped with all its state.
         retain = cap if self.backend.framing == "sentinel" else cap * 6 + 65_536
         try:
-            self._kernel = _Kernel(argv, self.cwd, retain)
+            self._kernel = _Kernel(
+                argv, self.cwd, retain, getattr(self.backend, "environment", {})
+            )
         except (OSError, ValueError) as error:
             self.state = "dead"
             raise CasError(
@@ -1183,6 +1257,7 @@ class CasSession:
                     stderr=payload.get("stderr", ""),
                     value_repr=payload.get("value_repr", ""),
                     capture_truncated=bool(payload.get("capture_truncated")),
+                    state_digest=str(payload.get("state_digest", "")),
                 )
                 return outcome, HEADER_BYTES + length
 
@@ -1402,16 +1477,34 @@ class CasSession:
             return CellOutcome(status="kernel_died", stderr=kernel.stderr_text())
         outcome, consumed = reply
         if self.backend.framing == "sentinel":
-            kernel.consume(consumed)
+            # Stderr first, and the truncation flag read after it. Both come
+            # before `consume`, which clears the flag for the next cell.
+            #
+            # `extract_sentinel` snapshots `kernel.truncated` at the moment the
+            # stdout end marker was found, and stderr is a second pipe drained
+            # by a second thread: a cell that overran `cas_output_bytes` on
+            # stderr alone had its overflow recorded *after* that snapshot and
+            # then cleared by `consume`, so the record said nothing had been
+            # discarded. That is the one thing the flag exists to say. A
+            # Macaulay2 error banner sitting in the discarded stderr tail was
+            # then classified from a prefix, called clean, and accepted --
+            # which is exactly the "verification that accepts too much" the
+            # truncated-capture rule in `execute` refuses.
             stderr_text = kernel.stderr_settled()
-            # `extract_sentinel` classified on stdout alone, before stderr for
-            # this cell was necessarily complete. Reclassify now that both
-            # streams are in: confirmed of Macaulay2 (CI run 30167266358),
-            # whose errors ("stdio:...: error: ...") land on stderr with
-            # nothing error-shaped left on stdout at all, so a stdout-only
-            # classification always read a broken M2 cell as "ok".
+            truncated = outcome.capture_truncated or kernel.truncated
+            kernel.consume(consumed)
+            # Reclassify now that both streams are in: confirmed of Macaulay2
+            # (CI run 30167266358), whose errors ("stdio:...: error: ...") land
+            # on stderr with nothing error-shaped left on stdout at all, so a
+            # stdout-only classification always read a broken M2 cell as "ok".
             status = self.backend.classify(outcome.stdout, stderr_text)
-            outcome = outcome.model_copy(update={"stderr": stderr_text, "status": status})
+            outcome = outcome.model_copy(
+                update={
+                    "stderr": stderr_text,
+                    "status": status,
+                    "capture_truncated": truncated,
+                }
+            )
         if signalled:
             outcome = outcome.model_copy(update={"signalled": True})
         if not signalled and outcome.status == "interrupted":
@@ -1601,6 +1694,14 @@ class CasSession:
                         f"[saved session reopened; replayed {report.replayed} cell(s) "
                         "to rebuild its state]"
                     )
+                if report.unverified:
+                    notes = (notes + " " if notes else "") + (
+                        f"[cell(s) {list(report.unverified)} produced no output and "
+                        "this backend records no state digest, so their replay "
+                        "agrees with the record whatever namespace it rebuilt. The "
+                        "state above them is reconstructed, not verified: rerun "
+                        "anything you mean to build on.]"
+                    )
                 # The rebuild is billed, so it can be what exhausts the budget.
                 self._guard()
 
@@ -1676,6 +1777,7 @@ class CasSession:
                 capture_truncated=truncated,
                 backend=self.backend.name,
                 backend_version=self.version or "",
+                state_digest=outcome.state_digest,
                 restart_note=notes,
             )
             return self._append(record)
@@ -1749,10 +1851,17 @@ class CasSession:
             self.state = "poisoned"
             raise CasError(
                 "could not rebuild CAS state faithfully: cell(s) "
-                f"{diverged} produced different output on replay. "
+                f"{diverged} did not reproduce on replay. "
                 "Reset the session to start clean."
             )
-        return RebuildReport(replayed=len(pending))
+        # A clean replay is not the same as a checked one. On a backend that
+        # carries no state digest, a cell that printed nothing agrees with its
+        # record whatever it rebuilt, so the rebuild is reported with those
+        # cells named rather than as a rebuild that was verified.
+        return RebuildReport(
+            replayed=len(pending),
+            unverified=tuple(record.seq for record in pending if unobservable(record)),
+        )
 
     def reset(self, *, author: str = "model") -> None:
         """Close the current segment. Nothing is deleted.
@@ -1880,7 +1989,7 @@ def run_exported_script(
         process = subprocess.Popen(
             argv,
             cwd=str(cwd),
-            env=child_environment({}),
+            env=child_environment(dict(getattr(backend, "environment", {}))),
             shell=False,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

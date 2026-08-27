@@ -164,6 +164,12 @@ def answer(source: str) -> dict:
             "stderr": "",
             "value_repr": "",
         }
+    if word == "quiet":
+        # Accepted, and shows nothing whatever. A replay of it agrees with its
+        # record however different the state it rebuilt, which is exactly what
+        # a backend carrying no state digest cannot check -- and must not
+        # report a rebuild as though it had.
+        return {"status": "ok", "stdout": "", "stderr": "", "value_repr": ""}
     if word == "noisy":
         return {"status": "ok", "stdout": "out", "stderr": "warning: noisy", "value_repr": "1"}
     HISTORY.append(word)

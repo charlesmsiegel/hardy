@@ -9,6 +9,7 @@ this reproduces them without needing either binary.
 """
 
 import sys
+import threading
 import time
 
 PROMPT = "fake> "
@@ -61,7 +62,30 @@ def main() -> None:
             sys.stdout.write("\n" + PROMPT)
             sys.stdout.flush()
             continue
-        if line.startswith("errorflood"):
+        if line.startswith("latestderr"):
+            # An overflow that lands on *stderr*, and lands there while Hardy
+            # is already reading the end marker off stdout. Two pipes, two
+            # drain threads, and nothing tying their delivery together: the
+            # cell's reply is extracted from stdout with only the first chunk
+            # of stderr in, so the retention cap has not been tripped yet, and
+            # everything that trips it arrives during the wait for stderr to
+            # settle. The banner at the end is inside the discarded tail,
+            # which is the whole reason a cut capture cannot be accepted.
+            #
+            # Dribbled rather than written at once so the arrival is spread
+            # across the settle wait instead of racing it: each chunk is well
+            # inside `stderr_settled`'s quiet period, so the wait keeps
+            # extending until the last one is in.
+            def dribble(size: int = max(1, limit // 4)) -> None:
+                for _ in range(12):
+                    time.sleep(0.004)
+                    sys.stderr.write("z" * size)
+                    sys.stderr.flush()
+                sys.stderr.write("   ? this is an error\n")
+                sys.stderr.flush()
+
+            threading.Thread(target=dribble, daemon=True).start()
+        elif line.startswith("errorflood"):
             # An error banner *behind* more output than Hardy retains. A real
             # interpreter does this every time a long computation fails at the
             # end, and the banner is the only evidence the cell failed at all:
