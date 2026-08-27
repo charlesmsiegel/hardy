@@ -81,7 +81,7 @@ def opener(monkeypatch, args, live):
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
     monkeypatch.setattr(cli, "MathematicsSession", lambda *a, **k: object())
     made = cli.ProjectOpener(
-        args,
+        live.project,
         FakeCas(live.layout.cas),
         search=search_tools.SearchToolRuntime(
             object(), build_retriever(object(), live.limits), object()
@@ -347,3 +347,89 @@ def test_reading_project_context_is_carried_across_too(opener, live, monkeypatch
 
     assert config.project_context is True
     assert handed["project_context"] is True
+
+
+# -- one retrieval meter per problem, kept -------------------------------
+
+
+def _search_handed(monkeypatch):
+    handed = {}
+    monkeypatch.setattr(cli, "MathematicsSession", lambda *a, **k: handed.update(k) or object())
+    return handed
+
+
+def test_returning_to_a_problem_resumes_its_meter_rather_than_refilling_it(
+    opener, live, monkeypatch
+):
+    """`A -> B -> A` gave A a full allowance again, and the cycle repeats.
+
+    A budget that is cumulative by construction became effectively unlimited,
+    and the next ranking reported `prior_seconds_spent=0` over a trajectory
+    that had already spent it. Returning to a problem resumes its record and
+    its provider thread; its meter belongs with them.
+    """
+    handed = _search_handed(monkeypatch)
+
+    opener("burnside", _decline, live)
+    handed["search"].retriever._spent = 500.0
+    opener("sylow", _decline, live)
+    opener("burnside", _decline, live)
+
+    assert handed["search"].retriever._spent == 500.0
+    assert handed["search"].retriever.seconds_remaining == live.limits.retrieval_seconds - 500.0
+
+
+def test_a_problem_opened_for_the_first_time_still_starts_full(opener, live, monkeypatch):
+    handed = _search_handed(monkeypatch)
+
+    opener("burnside", _decline, live)
+    handed["search"].retriever._spent = 500.0
+    opener("galois", _decline, live)
+
+    assert handed["search"].retriever.seconds_remaining == live.limits.retrieval_seconds
+
+
+def test_the_launch_problem_keeps_the_meter_its_first_session_was_given(
+    opener, live, monkeypatch
+):
+    """Seeded, so returning to where the session started is not a refill."""
+    handed = _search_handed(monkeypatch)
+    opener._search.retriever._spent = 120.0
+
+    opener(live.project, _decline, live)
+
+    assert handed["search"] is opener._search
+    assert handed["search"].retriever._spent == 120.0
+
+
+# -- the configuration a switch runs under -------------------------------
+
+
+def test_a_config_edited_while_hardy_runs_does_not_split_lean_from_search(
+    opener, live, args, monkeypatch
+):
+    """Search carries over, so re-reading the toolchain would split the two.
+
+    The new session would elaborate in the edited Lake project while the
+    search tools kept describing and querying the launch-time one -- premises
+    from a toolchain the session's own Lean cannot use.
+    """
+    handed = _search_handed(monkeypatch)
+    args.config.write_text('lean_project = "/edited/project"\n', encoding="utf-8")
+
+    config, _ = opener("burnside", _decline, live)
+
+    assert config.lean_project == live.lean_project
+    assert handed["search"] is not None
+
+
+def test_every_setting_but_the_problem_comes_from_the_live_session(opener, live):
+    """One rule instead of a list of fields patched one finding at a time."""
+    moved = dataclasses.replace(
+        live, model="claude-haiku-4-5-20251001", project_context=False, lean_timeout=42.0
+    )
+
+    config, _ = opener("burnside", _decline, moved)
+
+    assert config.project == "burnside"
+    assert dataclasses.replace(config, project=moved.project) == moved
