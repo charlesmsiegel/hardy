@@ -504,3 +504,55 @@ def test_the_verdict_says_what_the_readers_isolation_was_worth(tmp_path) -> None
 
     assert confined.reviewer_isolation == 'tools-refused'
     assert unconfined.reviewer_isolation is None
+
+
+def test_the_kept_prompt_is_byte_for_byte_what_was_sent(tmp_path) -> None:
+    """Reproducible is not the same as accurate.
+
+    Saving the prompt with a tidy trailing newline while sending it without
+    one left `prompt_sha256` recomputable from the file and yet not the
+    identity of the question the reader actually received — the one thing the
+    field exists to be.
+    """
+    import hashlib
+
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+    runtime = _Runtime(_review(domain))
+    store = _store(tmp_path)
+
+    verdict = faithfulness.review_translation(
+        _claim(domain),
+        runtime=runtime,
+        model='reviewer-model',
+        store=store,
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+
+    _, sent, _ = runtime.asked[0]
+    kept = (store.path / 'faithfulness-prompt.md').read_text(encoding='utf-8')
+    assert kept == sent
+    assert hashlib.sha256(sent.encode('utf-8')).hexdigest() == verdict.prompt_sha256
+
+
+def test_every_backend_accepts_the_keywords_the_gate_calls_start_with() -> None:
+    """A guard that runs everywhere, because the backends' own tests do not.
+
+    `tests/unit/test_codex_runtime.py` skips without the optional Codex SDK,
+    so CI never exercises `CodexRuntime.start` — and when the gate grew a
+    `wall_seconds` argument that only the Claude runtime had, the resulting
+    `TypeError` was caught as an unreachable reader, silently halting every
+    approved claim on that backend before proof search. Signatures are
+    inspectable without either SDK installed, so this notices the next one.
+    """
+    import inspect
+
+    codex_runtime = importlib.import_module('hardy.codex_runtime')
+    staged = importlib.import_module('hardy.staged')
+
+    # Exactly what `review_translation` passes, kept in one place.
+    required = {'model', 'run_dir', 'claim', 'isolated', 'phase', 'wall_seconds'}
+    for runtime_class in (codex_runtime.CodexRuntime, staged.ClaudeStagedRuntime):
+        accepted = set(inspect.signature(runtime_class.start).parameters)
+        missing = required - accepted
+        assert not missing, f'{runtime_class.__name__}.start cannot be called with {missing}'

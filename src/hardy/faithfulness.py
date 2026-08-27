@@ -71,7 +71,14 @@ def review_translation(
     # directory, which the release audit could not recompute and a reader
     # could not check. Written first, so the record of what was asked survives
     # a reader that never answers.
-    asked = store.write_text(PROMPT_ARTIFACT, prompt + "\n")
+    #
+    # Byte-for-byte what is sent below, with no trailing newline added. A file
+    # tidied with one hashes differently from the string the reader received,
+    # which would leave `prompt_sha256` reproducible and yet not the identity
+    # of the question -- the one thing it exists to be. What the runtime
+    # appends to every staged turn (the response contract and the schema) is
+    # covered by `prompt_set_sha256` instead; this names Hardy's half.
+    asked = store.write_text(PROMPT_ARTIFACT, prompt)
     identity = {
         "claim_sha256": claim.content_hash,
         "reviewer_model": model,
