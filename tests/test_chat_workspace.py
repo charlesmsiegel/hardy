@@ -269,3 +269,24 @@ def test_a_registered_theorem_that_disappears_is_still_refused(tmp_path: Path):
     refusal = results(tmp_path, "save_lean")[-1]
     assert not refusal["ok"]
     assert "hardyStep" in refusal["output"]
+
+
+def test_a_bare_registered_name_covers_its_sole_qualified_declaration(tmp_path: Path):
+    """`record_name` may map `one` and the file declare `Hardy.one`.
+
+    That is the registry's established rule -- `_resolves` and
+    `completion.outstanding` both let a bare entry stand for the only
+    declaration carrying that leaf -- and a gate that demanded an exact match
+    would have made the reservation of `theorem` mean something narrower than
+    every other reader of the same registry.
+    """
+    source = "import Mathlib\nnamespace Hardy\ntheorem one : True := by exact True.intro\nend Hardy\n"
+    runtime = FakeChatRuntime([
+        call("record_name", {"formal_name": "one", "latex_name": "thm:one", "description": "One."}),
+        call("save_lean", {"source": source}),
+        {"role": "assistant", "content": "Saved."},
+    ])
+    chat = session(tmp_path, runtime)
+    chat.send("Register a bare name and declare it in a namespace.")
+    saved = results(tmp_path, "save_lean")[-1]
+    assert saved["ok"], saved["output"]

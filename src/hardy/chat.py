@@ -1958,10 +1958,22 @@ class MathematicsSession:
         """
         registered = {item["formal_name"] for item in self.state["names"]}
         existing = self._saved_theorems()
+        # A bare entry covers the qualified declaration carrying that leaf, which
+        # is the rule `_resolves` and `completion.outstanding` already read this
+        # registry by: `record_name` maps `one` and the file declares
+        # `Hardy.one`. An exact match here would have made the reservation of
+        # `theorem` mean something narrower than every other reader of the same
+        # mapping, and demanded a second entry for a name already recorded.
+        # Whether that leaf is unambiguous is not this gate's question --
+        # `outstanding` asks it, and answers by refusing to count an ambiguous
+        # one as documented. What is asked here is only whether the declaration
+        # is a result somebody registered or scaffolding that should be a lemma.
         unregistered = [
             name
             for name in declarations(source)["theorem"]
-            if name not in existing and name not in registered
+            if name not in existing
+            and name not in registered
+            and name.rsplit(".", 1)[-1] not in registered
         ]
         if not unregistered:
             return None
@@ -1987,7 +1999,16 @@ class MathematicsSession:
         unfinished result, which is the state a long proof is in for most of
         its life.
         """
-        owed = tuple(item for item in self._obligations() if item.kind != "open")
+        owed = [item for item in self._obligations() if item.kind != "open"]
+        if owed and self._stale_only_from_holes():
+            # A banner out of date only because a theorem opened is not a
+            # writeup this save is running ahead of. It is still reported --
+            # the compiled PDF counts an open theorem out of "machine-checked",
+            # so one compiled before the hole appeared overstates -- but
+            # counting it here made every second skeleton wait on a LaTeX
+            # recompile that no obligation about a closed theorem asked for.
+            stale = self._stale_writeup()
+            owed = [item for item in owed if item not in stale]
         if not owed:
             return None
         existing = self._saved_theorems()
@@ -2071,8 +2092,7 @@ class MathematicsSession:
         # would mark the tree established on the strength of a document nobody
         # will read.
         if compiles_document(self._tex_root_source(), relative):
-            self.state["tex_signature"] = self._tex_signature()
-            self._save_state()
+            self._stamp_writeup()
         # Advisory rather than a refusal. With the save_lean ratchet in place a
         # hard gate here would deadlock: Lean blocked for want of a writeup,
         # and the writeup blocked for not yet covering everything registered.
@@ -2371,8 +2391,7 @@ class MathematicsSession:
             # the tree on disk -- so it is stamped like one. Without this a
             # deletion left a freshly compiled writeup reading as stale, and
             # the only way out was a save that changed nothing.
-            self.state["tex_signature"] = self._tex_signature()
-            self._save_state()
+            self._stamp_writeup()
         return ToolResult(True, f"deleted {path}")
 
     def _resolve(self, path: str) -> tuple[Path, str, str] | ToolResult:
@@ -2680,9 +2699,17 @@ class MathematicsSession:
             )
         if opened:
             count = len(opened)
+            # Named, not counted. Every other clause here is about the document
+            # as a whole, and a reader can act on those knowing nothing else;
+            # this one is about particular claims printed on the pages in front
+            # of them, and "one theorem is still open" leaves them unable to
+            # tell which. Escaped like the goal is: a Lean name carries `_`,
+            # which is TeX's subscript, and an unescaped one breaks the
+            # document it was added to be honest in.
+            listed = ", ".join(escape_tex_text(name) for name in sorted(opened))
             parts.append(
                 f"{count} theorem{'' if count == 1 else 's'} here "
-                f"{'is' if count == 1 else 'are'} still open"
+                f"{'is' if count == 1 else 'are'} still open ({listed})"
             )
         text = ". ".join(parts) + "."
         goal = self.goal()
@@ -2690,8 +2717,13 @@ class MathematicsSession:
             text += f"\\\\ Goal, as stated by the user: {escape_tex_text(goal)}"
         return text
 
-    def _tex_signature(self) -> str:
-        """What the writeup tree hashes to, as a whole."""
+    def _tex_signature(self, open_names: Sequence[str] | None = None) -> str:
+        """What the writeup tree hashes to, as a whole.
+
+        `open_names` substitutes an open set for the one the workspace has now,
+        which is how `_documentation_gate` asks what this signature *would* be
+        if only that had not moved. Everything else is read live.
+        """
         digest = hashlib.sha256()
         for path, source in sorted(self._tex_sources().items()):
             digest.update(path.encode("utf-8"))
@@ -2708,11 +2740,11 @@ class MathematicsSession:
         # `_stamp` asks for the obligations, `_stale_writeup` is one of them,
         # and it asks for this signature. Everything the banner is computed from
         # is either hashed above (the tex sources) or listed here.
-        digest.update(json.dumps(self._stamp_inputs(), sort_keys=True).encode("utf-8"))
+        digest.update(json.dumps(self._stamp_inputs(open_names), sort_keys=True).encode("utf-8"))
         digest.update(b"\0")
         return digest.hexdigest()
 
-    def _stamp_inputs(self) -> dict[str, Any]:
+    def _stamp_inputs(self, open_names: Sequence[str] | None = None) -> dict[str, Any]:
         """The banner inputs a stale PDF would *overstate*, and only those.
 
         Not everything `_stamp` reads. The distinction is which direction a
@@ -2738,8 +2770,35 @@ class MathematicsSession:
             # costs nothing, because a theorem that has just closed owes the
             # document a label and its statement anyway, so it was going to be
             # recompiled regardless.
-            "open": sorted(self._open_theorems()),
+            "open": sorted(self._open_theorems()) if open_names is None else sorted(open_names),
         }
+
+    def _stamp_writeup(self) -> None:
+        """Record what this compile was made against.
+
+        The open set is stored beside the signature rather than only folded
+        into it, because two different questions are asked of the same stamp:
+        whether the compiled document still describes this workspace, and --
+        by `_documentation_gate` -- whether the open set is the only reason it
+        does not.
+        """
+        self.state["tex_signature"] = self._tex_signature()
+        self.state["tex_open"] = sorted(self._open_theorems())
+        self._save_state()
+
+    def _stale_only_from_holes(self) -> bool:
+        """Whether the compiled writeup is out of date *only* because a theorem
+        opened or closed since it was compiled.
+
+        A workspace stamped before this key existed has no `tex_open` to
+        substitute, so the recomputed signature will not match and this answers
+        no -- the gate then behaves exactly as it did before, which is the safe
+        direction for a question whose yes releases a refusal.
+        """
+        stamped = self.state.get("tex_signature")
+        if not stamped:
+            return False
+        return bool(stamped == self._tex_signature(self.state.get("tex_open", [])))
 
     def _stale_writeup(self) -> list[completion.Obligation]:
         """Whether the labels on hand describe the documents on hand.
