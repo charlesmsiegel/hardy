@@ -119,6 +119,20 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   because `import Mathlib` costs seconds warm and minutes cold; when it genuinely cannot
   run, the caveat travels to the approval prompt rather than being resolved silently in
   either direction.
+- **Now (implemented):** a root holds several problems side by side, and the session
+  moves between them without ending. `/project list` names every problem the root
+  holds and marks the active one; `/project switch <name>` opens another;
+  `/project new <name>` starts one, and offers to register its `lean/` with a host
+  `lakefile.toml` exactly as launching with `--project` does. Nothing is shared that
+  would blur the record: each problem has its own manifest, transcript, approved
+  assumptions, Lean namespace, document tree, computer algebra session and provider
+  thread, and a switch rebuilds all of them. What a switch keeps is what belongs to
+  the root rather than to any problem — the pinned Lake project and the Mathlib
+  environment behind the search tools — which is what makes it a reopen rather than
+  an exit in disguise, and what the directory-per-problem workaround could not do.
+  A switch is refused while a turn is running, since that turn is appending to the
+  record and the transcript of the problem it started in, and it is recorded in
+  `<root>/.hardy/config.toml` so the next launch opens the problem you left off in.
 - **Now (implemented):** `/goal` records what the session is for, in the user's words.
   It is printed above every assumption request and on the writeup itself. Hardy makes no
   judgment about the relationship between the two — the claim is only that a human is

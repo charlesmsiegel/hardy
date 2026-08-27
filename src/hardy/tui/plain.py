@@ -89,6 +89,7 @@ def run(
     out: Callable[[str], None] = print,
     read: Callable[[str], str] = input,
     ui_holder: dict[str, Any] | None = None,
+    reopen: Any = None,
 ) -> int:
     ui = PlainUi(out, read)
     if ui_holder is not None:
@@ -108,7 +109,7 @@ def run(
     out("")
 
     registry = build_registry()
-    state = State(config=config, session=session)
+    state = State(config=config, session=session, reopen=reopen)
     while not state.done:
         try:
             text = read("> ")

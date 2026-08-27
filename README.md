@@ -256,6 +256,19 @@ time it opens a problem. `--root` names the directory and `--project` names the
 slug; with only one problem already there Hardy opens it without being asked, and
 a root with none starts one called `main`.
 
+Inside a session, `/project list` shows what the root holds and marks the active
+one, `/project switch <name>` opens another, and `/project new <name>` starts
+one. Two problems in one folder share no record, no transcript, no approved
+assumption and no Lean namespace, and moving between them is not an exit in
+disguise: a switch rebuilds what belongs to a problem — its record, its
+transcript, its provider thread, its computer algebra kernel — and keeps what
+belongs to the root, the pinned Lake project and the Mathlib environment behind
+the search tools, so that import cost is paid once per process rather than once
+per problem. Where the root is a Lake project, `/project new` offers to register
+the new problem's `lean/` in `lakefile.toml`, exactly as launching with
+`--project` does. The problem you switch to is recorded in
+`<root>/.hardy/config.toml`, so the next launch opens it.
+
 `<root>/.hardy/` sits beside the problems, not inside any of them: it is Hardy's
 own tooling for that root, committed like the rest. A small config file there may
 set which project is active — nothing else, since it travels with a clone and
@@ -386,7 +399,11 @@ model (arrow keys or a row number, Enter to choose, Esc to cancel), `/cas`
 reaches the same persistent kernel described above (`/cas <source>`, a bare
 `/cas` for a multi-line block ended by `/end`, `/cas state`, `/cas reset`, `/cas
 export`) but is refused while a turn is running, since it is the same locked
-kernel a model tool call may already be using, `/status` shows the
+kernel a model tool call may already be using, `/project` lists the problems in
+this root and moves between them (`/project list`, `/project switch <name>`,
+`/project new <name>`) and is refused in flight for the same shape of reason — a
+running turn is appending to the record and the transcript of the problem it
+started in — `/status` shows the
 workspace/model/paths and the full spend breakdown — turns, cost, and input,
 output, cache-write and cache-read tokens — `/doctor` checks Lean, LaTeX,
 computer algebra, and the model, `/clear` clears the screen (nothing on disk is

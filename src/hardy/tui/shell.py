@@ -29,6 +29,7 @@ import datetime
 import os
 import threading
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from prompt_toolkit.application import Application, in_terminal
@@ -193,9 +194,16 @@ class Shell:
     """The interactive session: prompt area at the bottom, scrollback above."""
 
     def __init__(
-        self, config: Any, session: Any, registry: Sequence[Command], *, input=None, output=None
+        self,
+        config: Any,
+        session: Any,
+        registry: Sequence[Command],
+        *,
+        input=None,
+        output=None,
+        reopen: Any = None,
     ):
-        self._state = State(config=config, session=session)
+        self._state = State(config=config, session=session, reopen=reopen)
         self._registry = registry
         self._input, self._output = input, output
         # Whether the turn currently running (if any) has been walked away
@@ -251,19 +259,11 @@ class Shell:
         # nobody will ever drain again.
         self._closed = False
 
-        history: Any
-        try:
-            # Under `.local/`, not the problem directory: every line typed
-            # here, sent or not, is machine-local the same way the provider
-            # thread and the spend ledger are, and the problem directory's
-            # own `.gitignore` does not cover it.
-            history = GuardedFileHistory(WriteGuard(config.layout.local, create=True), INPUT_HISTORY)
-        except (OSError, LayoutError):
-            # A refusal is not a reason to lose the terminal. Nothing typed
-            # here is worth a session for, so an unwritable -- or a
-            # symlinked-away -- history file falls back to one that lives in
-            # memory, exactly as an unwritable directory already did.
-            history = InMemoryHistory()
+        # Where the history actually landed, or None when it fell back to
+        # memory. Read by `retarget` and by the tests that care which problem
+        # the typed lines belong to.
+        self.history_path: Path | None = None
+        history = self._history_for(config)
 
         # Grows from one line to a cap, then scrolls internally. Without a
         # cap, pasting a long Lean snippet pushes the transcript off screen.
@@ -307,6 +307,47 @@ class Shell:
             output=output,
         )
         self._guard_resize()
+
+    def _history_for(self, config: Any) -> Any:
+        """The input history of one problem, or an in-memory one if it is refused."""
+        try:
+            # Under `.local/`, not the problem directory: every line typed
+            # here, sent or not, is machine-local the same way the provider
+            # thread and the spend ledger are, and the problem directory's
+            # own `.gitignore` does not cover it.
+            guard = WriteGuard(config.layout.local, create=True)
+            history = GuardedFileHistory(guard, INPUT_HISTORY)
+        except (OSError, LayoutError):
+            # A refusal is not a reason to lose the terminal. Nothing typed
+            # here is worth a session for, so an unwritable -- or a
+            # symlinked-away -- history file falls back to one that lives in
+            # memory, exactly as an unwritable directory already did.
+            self.history_path = None
+            return InMemoryHistory()
+        self.history_path = config.layout.local / INPUT_HISTORY
+        return history
+
+    def retarget(self, config: Any) -> None:
+        """Point the terminal's own per-problem state at the problem now open.
+
+        Only the input history: everything else the shell draws it reads out of
+        `self._state` at render time, so swapping the `State` is enough. The
+        history is not, because prompt_toolkit's buffer holds the object and
+        has already loaded its lines -- left alone, a switch would write what
+        is typed about the new problem into the old problem's `.local/`.
+
+        `Buffer.reset()` is what makes the swap take: it cancels the load in
+        flight and drops the lines already read, so the next arrow-up reads the
+        new file rather than the old file's entries.
+        """
+        self._box.buffer.history = self._history_for(config)
+        self._box.buffer.reset()
+
+    @property
+    def state(self) -> State:
+        """What the shell is currently running against. Read-only, for callers
+        that need to see the swap a `/project switch` made."""
+        return self._state
 
     def attach(self, session: Any) -> None:
         """Give the shell its session, once the session exists.
@@ -806,7 +847,14 @@ class Shell:
         # The stop was lifted by `_submit_key`, before any Escape in the same
         # input batch could be resolved. Doing it here would undo that press.
         try:
+            before = self._state.config.layout.local
             self._state = await outcome.command.handler(self, outcome.argument, self._state)
+            # Keyed on the directory the history lives in, not on the config
+            # object: `/model` also returns a replaced config, and retargeting
+            # for it would drop the history already loaded and clear the box
+            # for a change that moved no files at all.
+            if self._state.config.layout.local != before:
+                self.retarget(self._state.config)
         except Exception as error:  # noqa: BLE001 - a bad command must not end the session
             self.write(f"{type(error).__name__}: {error}", style="error")
         finally:
