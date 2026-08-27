@@ -46,6 +46,7 @@ SETTINGS = {
     "tectonic_bundle_sha256": "HARDY_TECTONIC_BUNDLE_SHA256",
     "cas_backend": "HARDY_CAS_BACKEND",
     "cas_command": "HARDY_CAS_COMMAND",
+    "project_context": "HARDY_PROJECT_CONTEXT",
 }
 
 # What a project's own committed config may say. Deliberately tiny: the file
@@ -207,6 +208,10 @@ class Config:
     # on Hardy's own interpreter; the other backends need an executable.
     cas_backend: str = DEFAULT_CAS_BACKEND
     cas_command: Path | None = None
+    # Whether an interactive session reads the project's own `AGENTS.md` (or
+    # `HARDY.md`). Only interactive: `prove` and `batch` never read it at all,
+    # so this setting cannot make a graded run depend on a project-local file.
+    project_context: bool = True
     limits: RunLimits = field(default_factory=RunLimits)
     path: Path | None = None
     requested_path: Path | None = None
@@ -399,6 +404,25 @@ def load(
     except (TypeError, ValueError):
         raise ValueError(f"lean_timeout must be a number of seconds, not {values['lean_timeout']!r}") from None
 
+    def flag(key: str, default: bool) -> bool:
+        """A boolean setting, spelled the way each layer can spell it.
+
+        TOML has real booleans; an environment variable and a flag do not, so
+        `HARDY_PROJECT_CONTEXT=0` has to mean what `project_context = false`
+        means. A value that is neither is refused here rather than quietly
+        read as true -- a user who wrote `off` and meant it should not have to
+        discover from a transcript that their setting did nothing.
+        """
+        value = values.get(key, default)
+        if isinstance(value, bool):
+            return value
+        spelling = str(value).strip().lower()
+        if spelling in {"1", "true", "yes", "on"}:
+            return True
+        if spelling in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"{key} must be true or false, not {value!r}")
+
     cas_backend = text("cas_backend", DEFAULT_CAS_BACKEND)
     # Rejected here rather than at first use: an unknown backend is a typo in a
     # config file, and the place to say so is where the file is read.
@@ -424,6 +448,7 @@ def load(
         tectonic_bundle_sha256=text("tectonic_bundle_sha256", DEFAULT_TECTONIC_BUNDLE_SHA256),
         cas_backend=cas_backend,
         cas_command=location("cas_command"),
+        project_context=flag("project_context", True),
         path=path if path.exists() else None,
         requested_path=path,
     )

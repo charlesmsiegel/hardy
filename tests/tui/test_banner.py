@@ -109,3 +109,15 @@ def test_the_cas_line_sits_between_the_lean_project_and_the_warning(tmp_path: Pa
     assert styles == ["normal", "hint", "hint", "hint", "warning", "hint"]
     assert rows[2][1].startswith("Lean project:")
     assert rows[3] == ("hint", "Computer algebra: sympy 1.12")
+
+
+def test_the_project_instructions_line_appears_only_when_there_are_some(tmp_path: Path):
+    """A project with no `AGENTS.md` is the ordinary case and owes the user no
+    line about it. A session that IS carrying the project's instructions must
+    say so: they went into the system prompt, and an unannounced instruction
+    is the thing `setting_sources=[]` refuses."""
+    config = settings(tmp_path)
+    assert banner.lines(config) == banner.lines(config, project_context="")
+
+    rows = banner.lines(config, project_context="AGENTS.md (412 bytes)")
+    assert ("hint", "Project instructions: AGENTS.md (412 bytes)") in rows

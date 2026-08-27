@@ -106,6 +106,23 @@ check and every file write, and the CLI's own Bash/Read/Write/Edit tools are
 refused. Anything that is not a Hardy tool is denied by default rather than by an
 enumerated list, because a list has to anticipate every tool the CLI grows.
 
+Refusing the user's ambient configuration left nothing in its place, and a Lean
+tree says almost nothing on its own: three lemmas about `Finset` do not record
+which conjecture is being chased, that elementary arguments are wanted over
+Mathlib one-liners, or that the writeup is aimed at a paper. So an interactive
+session reads exactly one file — `AGENTS.md` at the project root, or `HARDY.md`
+in its place — never an ancestor of it, and records the whole text in the
+transcript rather than a digest of it. That is the reconciliation, and the
+distinction it rests on: the objection to a `CLAUDE.md` was never that Hardy
+read the user's context, only that nothing recorded it, and recorded context
+satisfies "a run is the run its record claims" completely. It is rendered as
+context and not as authority, because an `AGENTS.md` in a Lean repository
+plausibly says "get it compiling" and the honesty of the report is the product;
+a model handed two contradictory instructions with no stated precedence guesses.
+Graded runs — `prove` and `batch` — read no such file, since a run whose
+instructions came partly from a project-local file cannot be compared with one
+that did not.
+
 Losing the loop costs real things, and they are recorded rather than glossed:
 turn limits become the SDK's to enforce, cheap Lean closers cannot run before a
 model turn is spent, and token budgets have no decision point. The wall clock is

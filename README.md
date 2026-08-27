@@ -154,6 +154,25 @@ a list that would have to anticipate every tool the CLI grows. Your own Claude
 Code settings and `CLAUDE.md` files are not inherited either, so a run is the run
 its record claims.
 
+What replaces them is **one file, read and written down**. An interactive session
+reads `AGENTS.md` from the project root — or `HARDY.md`, which replaces it
+outright where a repository's `AGENTS.md` is aimed at a coding agent rather than
+at mathematics. No ancestor of the root is consulted, so instructions cannot
+arrive from three directories away. The full text goes into `transcript.jsonl`
+the first time it is used and again whenever it changes, with its SHA-256 in
+`session.json`; a digest of a file the reader does not have would prove nothing,
+and the objection to inherited context was always that it was unrecorded rather
+than that it was read. It reaches the model in a delimited block labelled as the
+user's own project instructions, under a statement that Hardy's constraints
+outrank it: no file can license a `sorry`, an unapproved axiom, a statement
+quietly weakened to make it pass, or a claim of verification the kernel did not
+make. What is read is bounded — 2,000 lines or 50 KB, whichever comes first,
+whole lines only — and the model is told when it is looking at a fragment.
+`hardy prove` and `hardy batch` never read it at all: a graded run whose
+instructions came partly from a project-local file is not comparable to another
+run. `--no-project-context`, `project_context = false`, or
+`HARDY_PROJECT_CONTEXT=0` gives an interactive session the same clean condition.
+
 ### What it does get to do, and why that matters
 
 **The SDK owns the turn loop.** Hardy no longer decides when a model call

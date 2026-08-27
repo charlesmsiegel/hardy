@@ -36,7 +36,13 @@ from .layout import (
 from .lean import LeanTools
 from .models import Request, ToolResult, TurnEvent
 from .modules import ModuleIndex
-from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt
+from .project_context import (
+    PROJECT_CONTEXT_EVENT,
+    PROJECT_CONTEXT_KEY,
+    ProjectContext,
+    read_project_context,
+)
+from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt, chat_project_context_prompt
 from .search_tools import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
 from .truncation import truncate
 from .usage import Usage
@@ -240,7 +246,7 @@ def _probe_suggestion(result: Any, line: int) -> str:
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -374,6 +380,15 @@ class MathematicsSession:
         # remembers.
         self.state = self._read_state()
         self.local = self._read_local()
+        # What the project itself says it is for, read before the runtime is
+        # built because the system prompt embeds it. One file at the root and
+        # no ancestor of it; absent, unreadable or switched off, and nothing
+        # is added. `project_context=False` is a deliberately clean condition,
+        # not an error, and is recorded as one.
+        self.project_context: ProjectContext | None
+        self.project_context, self.project_context_detail = (
+            read_project_context(self.root) if project_context else (None, "not read (project_context is off)")
+        )
         # What the workspace has already spent, so reopening it continues the
         # total rather than restarting it. Read before the first turn can add
         # to it.
@@ -382,6 +397,7 @@ class MathematicsSession:
         # workspace, so it is built here rather than handed in ready-made.
         self.runtime = self._build(session_id=self._carried_thread())
         self._sync_provenance()
+        self._sync_project_context()
 
     def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
         """The runtime, with the system prompt this project's record implies.
@@ -561,6 +577,65 @@ class MathematicsSession:
         if started:
             self._record({"type": "model", "reason": "session_resumed", "previous": previous, **current})
 
+    def _sync_project_context(self) -> None:
+        """Make the record say which project instructions this run was given.
+
+        The same treatment `_sync_provenance` gives a model switch, and for the
+        same reason: what the model was told is part of the experiment's
+        identity, and a change to it is a change of experimental condition.
+        This is the whole reconciliation with `setting_sources=[]`. The
+        objection to inheriting a user's `CLAUDE.md` was never that Hardy read
+        the user's context; it was that nothing recorded it. Recorded context
+        satisfies "a run is the run its record claims" completely, and only the
+        full text does: a digest of a file the reader does not have proves
+        nothing about what was asked for.
+
+        So the transcript takes the text and `session.json` keeps the digest,
+        which is what makes this quiet on the ordinary path. `AGENTS.md` and
+        the record are both versioned, so a fresh clone opening the project
+        finds the stored digest already agreeing with the file beside it and
+        appends nothing -- the bug `_build` and `_recover_spend` both had, where
+        the NORMAL state of a clone was mistaken for evidence of an old
+        workspace and left every checkout dirty before any mathematics had
+        happened.
+        """
+        stored = self.state.get(PROJECT_CONTEXT_KEY)
+        current = self.project_context
+        if current is None:
+            # Nothing to show, and the record already agrees. Note that a run
+            # started with the context switched off records the withdrawal
+            # rather than leaving the old digest standing: the record would
+            # otherwise claim instructions this run never saw.
+            if stored is None:
+                return
+            del self.state[PROJECT_CONTEXT_KEY]
+            self._save_state()
+            self._record({"type": PROJECT_CONTEXT_EVENT, "reason": "withheld", "previous": stored})
+            return
+        if stored == current.stored():
+            return
+        self.state[PROJECT_CONTEXT_KEY] = current.stored()
+        self._save_state()
+        self._record({"type": PROJECT_CONTEXT_EVENT, "reason": "changed" if stored else "read", **current.event()})
+
+    def _project_context_prompt(self) -> str:
+        """The user's instructions as the system prompt carries them, or nothing.
+
+        Appended last, after Hardy's own constraints and after the manifest, so
+        that the text stating what outranks what has already been read by the
+        time the block itself is.
+        """
+        current = self.project_context
+        if current is None:
+            return ""
+        return "\n\n" + chat_project_context_prompt(
+            name=current.name,
+            text=current.text,
+            truncated=current.truncated,
+            shown=len(current.text.encode("utf-8")),
+            total=current.bytes,
+        )
+
     def _without(self, *keys: str) -> dict[str, Any]:
         """The manifest, minus the entries this reader has no business seeing."""
         return {key: value for key, value in self.state.items() if key not in keys}
@@ -573,7 +648,7 @@ class MathematicsSession:
         # filtering `self.state` for it would be a no-op that reads as if it
         # still needed filtering.
         manifest = json.dumps(self._without(), ensure_ascii=False)
-        return f"\n\nWorkspace: {self.workspace}\nExisting manifest:\n{manifest}"
+        return f"\n\nWorkspace: {self.workspace}\nExisting manifest:\n{manifest}" + self._project_context_prompt()
 
     def _record(self, event: dict[str, Any]) -> int:
         """Append one event, and say where the transcript now ends.
