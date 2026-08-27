@@ -12,7 +12,6 @@ the model reached it through.
 
 from __future__ import annotations
 
-import json
 import threading
 from dataclasses import dataclass
 from functools import partial
@@ -26,7 +25,7 @@ from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .claude_runtime import ClaudeAgentRuntime
 from .codex_runtime import ProofSubmission
-from .domain import FrozenClaim, RunPhase
+from .domain import FrozenClaim, RunPhase, schema_text
 from .models import ToolResult
 from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS, STRUCTURE_INSTRUCTION
 from .storage import RunStore
@@ -334,8 +333,11 @@ class ClaudeStagedRuntime:
     def run_structured(
         self, thread: StagedThread, stage: str, prompt: str, output_type: type[T]
     ) -> T:
-        schema = json.dumps(output_type.model_json_schema(), sort_keys=True)
-        spoken = thread.runtime.ask(prompt + STRUCTURE_INSTRUCTION + schema)
+        # One rendering, shared with the faithfulness gate, which persists this
+        # exact text as the contract the reader answered.
+        spoken = thread.runtime.ask(
+            prompt + STRUCTURE_INSTRUCTION + schema_text(output_type)
+        )
         payload = _json_object(spoken)
         if payload is None:
             raise ValueError(f"{stage} turn returned no structured final response")

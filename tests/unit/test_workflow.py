@@ -39,13 +39,18 @@ def _proposal(domain, proposition='2 = 2'):
 
 
 
-def _review(domain, agrees=True, divergences=()):
-    """What the independent faithfulness reader answers."""
+def _review(domain, agrees=True, divergences=(), notes=''):
+    """What the independent faithfulness reader answers.
+
+    `notes` defaults to empty because an agreement is silent: a reservation
+    written there rather than listed as a divergence is read as a refusal, so
+    a fixture that chatted while agreeing would never agree.
+    """
     return domain.FaithfulnessReview(
         formalization_entails_claim=agrees,
         claim_entails_formalization=True,
         divergences=tuple(divergences),
-        notes='Fixture reader.',
+        notes=notes,
     )
 
 def _environment(domain):

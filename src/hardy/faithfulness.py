@@ -26,7 +26,6 @@ a review: neither is a pass, and there is no third option that proceeds.
 from __future__ import annotations
 
 import contextlib
-import json
 from collections.abc import Callable
 from pathlib import PurePosixPath
 from typing import Any
@@ -37,6 +36,7 @@ from .domain import (
     FaithfulnessVerdict,
     FrozenClaim,
     RunPhase,
+    schema_text,
 )
 from .prompts import faithfulness_prompt
 from .storage import RunStore
@@ -164,13 +164,14 @@ def review_translation(
 
 
 def _schema_source() -> str:
-    """The response schema the reader has to satisfy, canonically rendered."""
-    return json.dumps(
-        FaithfulnessReview.model_json_schema(),
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    """The response schema the reader has to satisfy, as the runtime sends it.
+
+    `schema_text` is the one rendering, so this artifact is the bytes the
+    Claude backend appends to the prompt rather than an equivalent
+    serialization of the same object. Two renderings would make the recorded
+    hash describe a request nobody was sent.
+    """
+    return schema_text(FaithfulnessReview)
 
 
 def _stop(runtime: Any, thread: Any) -> None:

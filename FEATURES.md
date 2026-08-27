@@ -220,7 +220,10 @@ Priority labels are sequencing hints:
   quoted block and be read as instructions. `faithfulness_model` points the read at
   a different model when independent weights are wanted as well as independent
   context. It is asked for two entailments rather than a confidence, because a
-  wrong translation is usually produced at high confidence. The gate is
+  wrong translation is usually produced at high confidence. An agreement is
+  silent: a reservation written into the free-form notes rather than listed as
+  a divergence is read as a refusal, because a hole reported where nothing acts
+  on it is a hole nobody would have caught. The gate is
   fail-closed and terminal: a disputed translation — or a reader that could not
   be reached — stops the run and surfaces the mismatch, since a halt costs one
   question and a proof of the wrong theorem costs the whole run. The two end

@@ -154,7 +154,7 @@ def test_an_agreement_is_recorded_as_an_artifact_and_in_the_trajectory(tmp_path)
 
     verdict = faithfulness.review_translation(
         claim,
-        runtime=_Runtime(_review(domain, notes='Same statement.')),
+        runtime=_Runtime(_review(domain)),
         model='reviewer-model',
         store=store,
         phase=domain.RunPhase.AWAITING_APPROVAL,
@@ -568,7 +568,6 @@ def test_the_verdict_covers_the_schema_the_answer_had_to_satisfy(tmp_path) -> No
     request, and could change the answer, with every recorded hash unmoved.
     """
     import hashlib
-    import json
 
     domain = importlib.import_module('hardy.domain')
     faithfulness = importlib.import_module('hardy.faithfulness')
@@ -582,13 +581,11 @@ def test_the_verdict_covers_the_schema_the_answer_had_to_satisfy(tmp_path) -> No
         phase=domain.RunPhase.AWAITING_APPROVAL,
     )
 
+    # `schema_text` is the one rendering, shared with the staged runtime that
+    # appends it to the prompt. Two renderings of the same object are two
+    # different requests, and the recorded hash must name the one that was sent.
     expected = hashlib.sha256(
-        json.dumps(
-            domain.FaithfulnessReview.model_json_schema(),
-            ensure_ascii=False,
-            separators=(',', ':'),
-            sort_keys=True,
-        ).encode('utf-8')
+        domain.schema_text(domain.FaithfulnessReview).encode('utf-8')
     ).hexdigest()
     assert verdict.response_schema_sha256 == expected
     # And it is not the prompt's hash wearing another name.
@@ -685,3 +682,70 @@ def test_a_runtime_that_will_not_cancel_still_yields_its_verdict(tmp_path) -> No
 
     assert verdict.outcome is domain.FaithfulnessOutcome.UNAVAILABLE
     assert 'broken pipe' in verdict.detail
+
+
+def test_a_reservation_written_in_the_notes_is_not_an_agreement(tmp_path) -> None:
+    """`notes` is free-form and shown to the user, so it is a channel a reader
+    can put a real finding into.
+
+    Answering yes to both entailments, leaving `divergences` empty, and
+    explaining a mismatch in the notes would have passed — the gate stepping
+    over a hole the reader actually reported, on its way to proving. An
+    agreement is silent; anything worth writing is a divergence.
+    """
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+
+    verdict = faithfulness.review_translation(
+        _claim(domain),
+        runtime=_Runtime(
+            _review(domain, notes='I could not confirm the domain is the naturals.')
+        ),
+        model='reviewer-model',
+        store=_store(tmp_path),
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+
+    assert verdict.outcome is domain.FaithfulnessOutcome.DISPUTED
+    assert not verdict.agreed
+
+
+def test_whitespace_in_the_notes_is_still_an_agreement(tmp_path) -> None:
+    """The rule is about substance, not formatting: a reader that answers with
+    an empty line has said nothing, and halting on that would be a false halt
+    with no finding behind it."""
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+
+    verdict = faithfulness.review_translation(
+        _claim(domain),
+        runtime=_Runtime(_review(domain, notes='  \n ')),
+        model='reviewer-model',
+        store=_store(tmp_path),
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+
+    assert verdict.agreed
+
+
+def test_the_gate_and_the_staged_runtime_render_one_schema(tmp_path) -> None:
+    """Generated once and both persisted and sent.
+
+    Rendered apart — one compact and one spaced, one escaping non-ASCII and
+    one not — the recorded identity would describe a serialization nobody was
+    sent, which is exactly what hashing it was for.
+    """
+    domain = importlib.import_module('hardy.domain')
+    faithfulness = importlib.import_module('hardy.faithfulness')
+    store = _store(tmp_path)
+
+    faithfulness.review_translation(
+        _claim(domain),
+        runtime=_Runtime(_review(domain)),
+        model='reviewer-model',
+        store=store,
+        phase=domain.RunPhase.AWAITING_APPROVAL,
+    )
+
+    kept = (store.path / 'faithfulness-schema.json').read_text(encoding='utf-8')
+    assert kept == domain.schema_text(domain.FaithfulnessReview)

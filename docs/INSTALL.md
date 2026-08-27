@@ -178,10 +178,15 @@ that order. `HARDY_CONFIG` selects a different config file, as does `--config`
 — always this global one; it does not follow `--root`.
 
 `faithfulness_model` is who checks, before any proof search, that the Lean
-`hardy prove` froze says what you said. Left unset it is `model`, which is
-already independent of the exchange that wrote the formalization — the reader
-gets a conversation of its own, your words, and the Lean signature, and nothing
-else. Naming a different model here buys independent weights as well. It is one global setting and the backends do not share model names, so `hardy prove
+`hardy prove` froze says what you said. Left unset it is `model`, on a
+conversation of its own, given your words and the Lean signature. On the
+default Claude backend that separation is enforced — the reader is offered no
+tools, and the runtime refuses filesystem access by default — so it genuinely
+sees nothing else. Under `--backend codex` it is not enforced: that SDK's
+read-only sandbox permits reads anywhere and offers no readable-root control,
+so the reader could reach the run's own artifacts by absolute path. Hardy
+records what each reader's isolation was worth rather than claiming it
+uniformly; see the known limits in FEATURES.md. Naming a different model here buys independent weights as well. It is one global setting and the backends do not share model names, so `hardy prove
 --faithfulness-model ...` overrides it for a single run — which is what a
 config naming a Claude reviewer needs when the invocation is `--backend
 codex`.
