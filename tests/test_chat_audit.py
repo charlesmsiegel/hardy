@@ -877,3 +877,49 @@ def test_the_word_sorry_in_a_string_is_not_an_untrackable_hole(tmp_path: Path):
     # Whatever else this file does or does not do in Lean, the word in a string
     # must not be what stops it: that refusal names a hole nobody wrote.
     assert "declares no theorem or lemma" not in outcome["output"]
+
+
+def test_closing_a_hole_and_adding_a_theorem_in_one_save_is_refused(tmp_path: Path):
+    """The ratchet asks its question before Lean, so it cannot see a closure
+    the same save performs.
+
+    Opening `HardyTarget` costs nothing, so the gate lets the next save in --
+    and that save closes it *and* introduces `HardySecond`, leaving two
+    undocumented closed theorems where the ratchet permits one. Only the audit
+    knows which holes this source closes, so the question is asked again once
+    it has run, before anything is committed.
+    """
+    both = (
+        "import Mathlib\n\ntheorem HardyTarget : True := by exact True.intro\n"
+        "theorem HardySecond : True := by exact True.intro\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": HOLED}, "lean"),
+            call("save_lean", {"source": both}, "lean"),
+        ]),
+    )
+    chat.send("Open one, then close it and add another at once.")
+    saves = results(tmp_path, "save_lean")
+    assert saves[0]["ok"]
+    assert not saves[1]["ok"], saves[1]["output"]
+    assert "HardySecond" in saves[1]["output"]
+    # And nothing was written: the tree still holds only the open theorem.
+    assert "HardySecond" not in saved(tmp_path).read_text()
+    assert [item.kind for item in chat.obligations()] == ["open"]
+
+
+def test_closing_a_hole_on_its_own_is_always_allowed(tmp_path: Path):
+    """The refusal above is about *adding* alongside a closure, not about
+    closing. A model must never be unable to finish the proof it is holding."""
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": HOLED}, "lean"),
+            call("save_lean", {"source": CLEAN}, "lean"),
+        ]),
+    )
+    chat.send("Open it, then close it.")
+    saves = results(tmp_path, "save_lean")
+    assert all(item["ok"] for item in saves), saves
