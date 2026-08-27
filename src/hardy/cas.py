@@ -289,16 +289,23 @@ class SympyBackend:
     # the brackets around a script's own transcript, which every backend must
     # be able to do.
     echo = 'print("{marker}")'
-    # And the one actually emitted into a script, which is not the same
-    # statement. An accepted cell is free to bind the global name `print` --
-    # `print = lambda *_: None` is a real thing to do -- and the closing marker
-    # runs *after* every cell, so it would resolve the rebound name and be
-    # swallowed or raise. The export then reads `diverged` or `failed` for a
-    # session whose cells reproduced exactly. Reaching the builtin through the
-    # module leaves nothing a cell's own global can shadow, and it still goes
-    # out through `sys.stdout` like every other line the file prints, so the
-    # ordering the comparison depends on is unchanged.
-    transcript_echo = '__import__("builtins").print("{marker}")'
+    # The transcript brackets, which are not the same statements. The closing
+    # one runs *after* every cell, so any name it resolves is a name the cells
+    # have had their turn with: `print = lambda *_: None` swallows it, and
+    # `__import__ = None` breaks the workaround for that. Every fix that
+    # resolves a global at the end is one more name to shadow.
+    #
+    # So the end marker resolves nothing at the end. Both `__import__` calls
+    # below run before cell one, `register` captures the bound `print` and its
+    # argument there and then, and the interpreter itself emits the marker at
+    # shutdown -- after the module body, after everything the file printed,
+    # and out of reach of any global a cell can touch. The begin marker needs
+    # no such care: it has already run before a cell can rebind anything.
+    transcript_prologue = (
+        '__import__("atexit").register(__import__("builtins").print, "{end}")',
+        '__import__("builtins").print("{begin}")',
+    )
+    transcript_epilogue: tuple[str, ...] = ()
     # The exported script is run as an ordinary Python program, not through the
     # driver: the artifact under test is the file a reader would run.
     script_stdin = False
@@ -402,12 +409,16 @@ class _SentinelBackend:
     environment: dict[str, str] = {}
 
     @property
-    def transcript_echo(self) -> str:
+    def transcript_prologue(self) -> tuple[str, ...]:
         """The `echo` statement itself. Singular and Macaulay2 have no
-        shadow-proof equivalent to reach for, so the marker is the same
+        shutdown hook to hand the closing marker to, so both markers are the
         statement the live protocol already relies on these interpreters
-        executing."""
-        return self.echo
+        executing, one at each end of the file."""
+        return (self.echo.format(marker="{begin}"),)
+
+    @property
+    def transcript_epilogue(self) -> tuple[str, ...]:
+        return (self.echo.format(marker="{end}"),)
     # The exported script is fed to the interpreter on stdin, which is how the
     # session itself runs cells: same argv, same input mode, so the transcript
     # the check compares against the record is produced the same way the record

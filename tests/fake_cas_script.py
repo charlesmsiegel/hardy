@@ -20,15 +20,28 @@ def main() -> None:
     sys.path.insert(0, str(Path(__file__).parent))
     from fake_cas import answer
 
+    at_exit: list[str] = []
     for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
         source = line.strip()
         if not source or source.startswith("#"):
             continue
         # The transcript brackets Hardy writes around a script's own output.
-        # A real interpreter runs them as ordinary statements that print a
-        # string; this one has to do the same, and must not hand them to
-        # `answer`, whose reply counter would then be one ahead of the
-        # session's for every cell after them.
+        # A real interpreter runs them as ordinary statements; this one has to
+        # do the same, and must not hand them to `answer`, whose reply counter
+        # would then be one ahead of the session's for every cell after them.
+        #
+        # The closing one is registered with `atexit` rather than written at
+        # the foot of the file, so that it cannot resolve a name the cells
+        # have had a chance to rebind. Held to the end here for the same
+        # reason a real interpreter holds it: that is when it runs.
+        registered = re.fullmatch(
+            r'__import__\("atexit"\)\.register\('
+            r'__import__\("builtins"\)\.print, "(.*)"\)',
+            source,
+        )
+        if registered is not None:
+            at_exit.append(registered.group(1))
+            continue
         literal = re.fullmatch(r'(?:__import__\("builtins"\)\.)?print\("(.*)"\)', source)
         if literal is not None:
             sys.stdout.write(literal.group(1) + "\n")
@@ -38,6 +51,10 @@ def main() -> None:
         if reply["value_repr"]:
             sys.stdout.write(reply["value_repr"] + "\n")
         sys.stderr.write(reply["stderr"])
+    # LIFO, as `atexit` runs them: Hardy registers its closing marker before
+    # any cell, so it is the last thing the process prints.
+    for marker in reversed(at_exit):
+        sys.stdout.write(marker + "\n")
     sys.stdout.flush()
     sys.stderr.flush()
 

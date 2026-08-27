@@ -177,10 +177,13 @@ def clip_jointly(fields: dict[str, str], limit: int) -> tuple[dict[str, str], bo
 # rendering them, which is what lets an over-large one be diverted before its
 # repr is built.
 _SIZED = (list, tuple, set, frozenset, dict)
-# How deep the size estimate walks before giving up and calling a value small.
-# A bound, not a guess about shape: the estimate must not itself be the
-# unbounded traversal it exists to prevent.
-_ESTIMATE_DEPTH = 6
+# How deep the size estimate walks before it stops. A bound is needed at all
+# because a container can hold itself, and the estimate must not become the
+# unbounded traversal it exists to prevent. Past it the answer is "too large",
+# never "small": a cutoff that returned zero read seven nested singleton lists
+# around a multi-gigabyte string as nothing to worry about and handed them to
+# plain `repr`, which is the allocation this whole path exists to avoid.
+_ESTIMATE_DEPTH = 20
 _BRACKETS = {
     list: ("[", "]"),
     tuple: ("(", ")"),
@@ -206,7 +209,13 @@ def _lower_bound(value: object, limit: int, depth: int = 0) -> int:
     """
     if isinstance(value, (str, bytes, bytearray)):
         return min(len(value), limit + 1)
-    if depth >= _ESTIMATE_DEPTH or type(value) not in _SIZED:  # noqa: E721 -- exact type
+    if depth >= _ESTIMATE_DEPTH:
+        # Deeper than this is not measured, and unmeasured is not small.
+        return limit + 1
+    if type(value) not in _SIZED:  # noqa: E721 -- exact type only
+        # Genuinely unknown: an object's repr cannot be sized without running
+        # it. Zero, so a value with a perfectly ordinary repr still takes the
+        # exact path -- this is the residual the docstring names, not a cutoff.
         return 0
     # The separators alone, which is why a container of more than `limit`
     # elements is over budget before a single one of them is looked at.
@@ -353,7 +362,44 @@ class _Stream:
             self.truncated = True
 
     def text(self) -> str:
-        return bytes(self.kept).decode("utf-8", errors="replace")
+        # `backslashreplace`, not `replace`. A helper or a native library is
+        # free to emit bytes that are not UTF-8, and `replace` collapses every
+        # one of them to the same U+FFFD -- so a cell writing `b"\xff"` and a
+        # replay writing `b"\xfe"` compared equal and the export reported
+        # verification of output that had in fact changed. The escape is
+        # lossless for the byte values, so distinct bytes stay distinct.
+        return bytes(self.kept).decode("utf-8", errors="backslashreplace")
+
+
+# Win32 keeps the handles a new process inherits in its own table, and
+# `os.dup2` moves only the C-runtime descriptor. A cell that spawns a child
+# without naming its streams -- `os.system`, or `subprocess` with no `stdout`
+# -- would therefore hand that child the *original* handle on native Windows,
+# and its output would land on the protocol descriptor after all: the exact
+# failure descriptor capture exists to prevent, still reachable on one
+# platform. `SetStdHandle` is the other half of the redirect there.
+_WIN32_STD = {1: -11, 2: -12}
+
+
+def _redirect_win32_handle(fd: int) -> None:
+    """Point Win32's own standard handle at whatever `fd` now refers to.
+
+    A no-op everywhere but native Windows, and best effort even there: a
+    failure leaves the capture exactly as good as it was before, which is the
+    POSIX behaviour and no worse.
+
+    Unverified on a real Windows machine -- Hardy has no Windows CI, and
+    Macaulay2 has no Windows build to run one against. It is the documented
+    call for this, guarded so that being wrong costs nothing.
+    """
+    if sys.platform != "win32":
+        return
+    with contextlib.suppress(Exception):
+        import ctypes
+        import msvcrt
+
+        handle = msvcrt.get_osfhandle(fd)
+        ctypes.windll.kernel32.SetStdHandle(_WIN32_STD[fd], handle)
 
 
 class _Capture:
@@ -377,6 +423,7 @@ class _Capture:
             read_fd, write_fd = os.pipe()
             os.dup2(write_fd, fd)
             os.close(write_fd)
+            _redirect_win32_handle(fd)
             self.streams[fd] = _Stream(read_fd, limit)
             threading.Thread(target=self._drain, args=(fd,), daemon=True).start()
 
@@ -449,20 +496,26 @@ class _Capture:
             data = data[written:]
 
 
-# A repr carries the address of anything that does not define one of its own,
-# and an address is not state: a rebuilt namespace holding an equal object at a
-# different address has reproduced, and calling that a divergence would poison
-# every session that ever bound a lambda or a plain instance.
+# CPython's default repr -- ` at 0xADDR>` -- says the type and the address and
+# nothing else. The address is not state, but neither is anything else in that
+# string: `Box()` with `payload = 1` and `Box()` with `payload = 2` render
+# identically, so a namespace holding one cannot be told from a namespace
+# holding the other. Normalising the address away made those two agree and
+# called the rebuild faithful, which is the failure the digest exists to catch.
 #
-# Anchored to the shape CPython's default reprs actually use -- ` at 0xADDR`
-# immediately before the closing `>` -- and not to bare `0x` digits anywhere.
-# The loose form rewrote hexadecimal that was *content*, so `"0x1234"` and
-# `"0xabcd"` fingerprinted identically and a rebuild holding the wrong one was
-# called faithful. Normalising an address must not normalise a value.
-_ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+(?=>)")
-# Names that are not the session's state: the interpreter's own, and the
-# last-value binding, which the parent already compares as `value_repr`.
-_NOT_STATE = frozenset({"_", "exit", "quit"})
+# So an opaque repr is not normalised, it is *refused*: the namespace has no
+# fingerprint, the parent reads that as "not compared", and the rebuild is
+# reported unverified. The cost is real and is the honest one -- a session that
+# binds a plain instance or a `def`-defined function cannot have its state
+# checked across a restart, and now says so instead of claiming otherwise.
+_OPAQUE = re.compile(r" at 0x[0-9a-fA-F]+>")
+# The last-value binding, which the parent already compares as `value_repr`.
+# Nothing else is filtered by name: `__`-prefixed names are the interpreter's
+# own *and* a perfectly ordinary thing for a cell to bind, and skipping them
+# all meant a silent `__cache = random.random()` was invisible to every digest.
+# The baseline identity check below is what excludes the interpreter's, and it
+# excludes exactly those -- a rebound one is state again, as it should be.
+_NOT_STATE = frozenset({"_"})
 
 
 def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
@@ -488,23 +541,24 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
     # `sorted` over mixed types raises -- which used to lose the whole digest
     # for the namespace rather than describe it.
     for name in sorted(namespace, key=repr):
-        if isinstance(name, str) and (name.startswith("__") or name in _NOT_STATE):
+        if name in _NOT_STATE:
             continue
         value = namespace[name]
         if name in baseline and baseline[name] is value:
             continue
         rendered, truncated = bounded_repr(value, limit)
-        if truncated:
-            # A prefix is not a fingerprint. Two values agreeing for the first
-            # `limit` bytes would hash alike, and a rebuild holding the wrong
-            # one would be called faithful -- which is the exact failure the
-            # digest exists to prevent, reintroduced by the bound that keeps
-            # the digest affordable. No digest at all is the honest answer:
-            # the parent reads an empty one as "not compared" and says so.
+        if truncated or _OPAQUE.search(rendered):
+            # Neither a prefix nor a default repr is a fingerprint. Two values
+            # agreeing for the first `limit` bytes hash alike, and two
+            # instances of the same class render identically whatever they
+            # hold -- so either would let a rebuild holding the wrong one be
+            # called faithful, which is the exact failure the digest exists to
+            # prevent. No digest at all is the honest answer: the parent reads
+            # an empty one as "not compared" and says so.
             return ""
-        digest.update(repr(name).encode("utf-8", errors="replace"))
+        digest.update(repr(name).encode("utf-8", errors="backslashreplace"))
         digest.update(b"\0")
-        digest.update(_ADDRESS.sub(" at 0x?", rendered).encode("utf-8", errors="replace"))
+        digest.update(rendered.encode("utf-8", errors="backslashreplace"))
         digest.update(b"\0")
     return digest.hexdigest()
 
