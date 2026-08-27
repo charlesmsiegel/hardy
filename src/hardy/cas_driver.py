@@ -627,23 +627,6 @@ class _Capture:
 # binds a plain instance or a `def`-defined function cannot have its state
 # checked across a restart, and now says so instead of claiming otherwise.
 _OPAQUE = re.compile(r" at 0x[0-9a-fA-F]+>")
-# Set to the trailing value while the cell that produced it is being
-# described, and to `_UNSET` at the start of every cell. `_` is skipped by the
-# digest only while it holds that value, which is exactly the cell whose
-# `value_repr` already carries it.
-#
-# Two ways of getting this wrong were found before it settled here. Skipping
-# the name unconditionally hid a cell that assigned `_` itself --
-# `_ = random.random()` has no `value_repr` at all, so `_ = 1` and `_ = 2`
-# fingerprinted alike. Remembering the object across cells then hid mutations
-# to it: `[]` displayed, and a later `_.append(random.random())` leaves the
-# same object at the same identity holding something new. Clearing the memory
-# every cell answers both -- the skip lasts exactly as long as the claim that
-# justifies it.
-_UNSET: object = object()
-LAST_DISPLAYED: object = _UNSET
-
-
 def _record(digest, name: object, kind: bytes, payload: bytes) -> None:
     """Add one entry, tagged by what it is.
 
@@ -653,13 +636,48 @@ def _record(digest, name: object, kind: bytes, payload: bytes) -> None:
     hashed exactly like one holding that symbol under it. Every entry carries
     its kind, and no kind's bytes can be produced by another.
     """
+    _open(digest, name, kind)
+    digest.update(payload)
+    digest.update(b"\0")
+
+
+def _open(digest, name: object, kind: bytes) -> None:
+    """Begin an entry whose payload is fed in piece by piece.
+
+    `_walk` streams rather than returning what it built. The node budget
+    bounds how many objects it visits and not how much they render to, so a
+    single container of a few thousand distinct near-cap strings accumulated
+    the whole fingerprint in memory before hashing any of it -- 1.5 GiB under
+    a 256 KiB cap, in a kernel a session's whole state depends on staying
+    alive. Fed to the hash as it is produced, nothing but one leaf's repr is
+    held at a time."""
     digest.update(b"\0")
     digest.update(kind)
     digest.update(b"\0")
     digest.update(repr(name).encode("utf-8", errors="backslashreplace"))
     digest.update(b"\0")
-    digest.update(payload)
-    digest.update(b"\0")
+
+
+def _emit(emit, budget: list[int], text: str) -> bool:
+    """Feed one token to the hash, or refuse because the payload is too large.
+
+    A node budget bounds how many objects the walk visits; it does not bound
+    what they render to, and every leaf may render to `limit` bytes. So the
+    total is bounded here as well, and exceeding it refuses the digest for the
+    same reason exceeding any other bound does: the alternative is a
+    fingerprint of part of a namespace presented as one of the whole.
+
+    `emit is None` is the numbering-only walk, which produces no payload and
+    so cannot exhaust this.
+    """
+    if emit is None:
+        return True
+    payload = text.encode("utf-8", errors="backslashreplace")
+    budget[1] -= len(payload)
+    if budget[1] < 0:
+        return False
+    emit(payload)
+    return True
 
 
 def _walk(
@@ -667,9 +685,9 @@ def _walk(
     seen: dict[int, int],
     limit: int,
     budget: list[int],
-    describe: bool = True,
+    emit=None,
     depth: int = 0,
-) -> list[str] | None:
+) -> bool:
     """Fingerprint the object *graph* rooted at `value`, or refuse.
 
     Hashing a rendering was never going to be enough, and each round of it
@@ -686,41 +704,40 @@ def _walk(
     prefix and a default repr are not fingerprints, and either gives up the
     whole digest.
 
-    Bounded by a node budget and a depth cap, because a container can hold
-    itself and this must not become the unbounded traversal `_lower_bound`
-    exists to prevent. Exceeding either refuses rather than truncating: a
-    partial walk would be a fingerprint of part of the graph presented as one
-    of the whole.
+    Bounded in nodes and in payload bytes, because a container can hold itself
+    and this must not become the unbounded traversal `_lower_bound` exists to
+    prevent. Exceeding either refuses rather than truncating: a partial walk
+    would be a fingerprint of part of the graph presented as one of the whole.
 
-    `describe=False` numbers the graph without rendering it, for a name whose
-    value is not itself hashed -- the preamble's, or the displayed `_` -- but
-    whose position other names may refer to.
+    `emit=None` numbers the graph without describing it, for a name whose
+    value is not itself hashed -- the preamble's -- but whose position other
+    names may refer to. Numbering it is what lets a name bound to a preamble
+    object hash as a reference to it rather than by a repr that is usually
+    `<function symbols at 0x...>` and would refuse the digest outright.
     """
     marker = seen.get(id(value))
     if marker is not None:
-        return [f"@{marker}"]
+        return _emit(emit, budget, f"@{marker}")
     if budget[0] <= 0 or depth >= _ESTIMATE_DEPTH:
-        return None
+        return False
     seen[id(value)] = len(seen)
     budget[0] -= 1
     if type(value) in _SIZED:  # noqa: E721 -- exact type only
-        tokens = [type(value).__name__, "("]
+        if not _emit(emit, budget, type(value).__name__ + "("):
+            return False
         for key, entry in _members(value):
             for part in ((key,) if entry is None else (key, entry)):
-                inner = _walk(part, seen, limit, budget, describe, depth + 1)
-                if inner is None and describe:
-                    return None
-                if describe and inner is not None:
-                    tokens.extend(inner)
-                    tokens.append(",")
-        tokens.append(")")
-        return tokens if describe else []
-    if not describe:
-        return []
+                if not _walk(part, seen, limit, budget, emit, depth + 1) and emit is not None:
+                    return False
+                if not _emit(emit, budget, ","):
+                    return False
+        return _emit(emit, budget, ")")
+    if emit is None:
+        return True
     rendered, truncated = bounded_repr(value, limit)
     if truncated or _OPAQUE.search(rendered):
-        return None
-    return [type(value).__name__, ":", rendered]
+        return False
+    return _emit(emit, budget, type(value).__name__ + ":" + rendered)
 
 
 def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
@@ -751,31 +768,38 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
     # fingerprint. The walk holds every value, so the ids cannot be reused
     # under it, and the order is the deterministic one below.
     seen: dict[int, int] = {}
-    # How many objects the walk may number before it gives up and refuses the
-    # digest. Generous against anything whose repr would have fitted the cap
-    # -- a container needs bytes per element too -- and finite, because a
-    # namespace can hold a graph no traversal would finish.
-    budget = [max(limit, 1024)]
+    # What the walk may spend: objects to number, then bytes to describe them
+    # in. Both are generous against anything a session would plausibly hold
+    # and both are finite, because a namespace can hold a graph no traversal
+    # would finish and a handful of objects that render to more than a machine
+    # has. Neither is a cap on what is *reported* -- only the hex digest
+    # leaves here -- so exceeding one costs the digest rather than truncating
+    # it, and the cell is reported unverified.
+    budget = [max(limit, 1024), max(limit, 1024) * 256]
     # `repr`, not the name itself: `globals()` accepts a non-string key, and
     # `sorted` over mixed types raises -- which used to lose the whole digest
     # for the namespace rather than describe it.
     for name in sorted(namespace, key=repr):
         value = namespace[name]
-        # Walked before any skip, and numbered even when it is not described.
-        # A name whose value is not hashed is still a *position* in the object
-        # graph, and leaving it out of `seen` let the graph be rebuilt
-        # differently for free: with `a = []; b = []` and a trailing
-        # `a if flag else b`, `_` was skipped without being numbered, so `a`
-        # and `b` took the same two ordinals either way and the two namespaces
-        # fingerprinted alike -- while a later `_.append(1); a` sees different
-        # state.
-        skipped = (name == "_" and value is LAST_DISPLAYED) or (
-            name in baseline and baseline[name] is value
-        )
-        tokens = _walk(value, seen, limit, budget, describe=not skipped)
-        if skipped:
+        # Numbered even when it is not described. A name whose value is not
+        # hashed is still a *position* in the object graph, and leaving it out
+        # of `seen` let the graph be rebuilt differently for free.
+        #
+        # `_` is not one of them. It was skipped while it held the value
+        # `value_repr` had already recorded, and that justification cost three
+        # findings before it was abandoned: skipping it unconditionally hid a
+        # cell that assigned `_` itself, remembering the object across cells
+        # hid mutations to it, and clearing it every cell still left the
+        # sharing *inside* the displayed value unrecorded -- `[x, x]` and
+        # `[[], []]` have the same `value_repr` and different futures. A repr
+        # was never a fingerprint, which is the whole argument for walking the
+        # graph; a skip resting on one could not survive it. `_` is a name in
+        # the namespace and is hashed like any other.
+        if name in baseline and baseline[name] is value:
+            _walk(value, seen, limit, budget)
             continue
-        if tokens is None:
+        _open(digest, name, b"value")
+        if not _walk(value, seen, limit, budget, digest.update):
             # A prefix, a default repr, and a graph too large or too deep to
             # walk are all the same answer: Hardy could not see what is there.
             # Two values agreeing for the first `limit` bytes hash alike, and
@@ -785,7 +809,7 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
             # prevent. No digest at all is the honest answer: the parent reads
             # an empty one as "not compared" and says so.
             return ""
-        _record(digest, name, b"value", "".join(tokens).encode("utf-8", errors="backslashreplace"))
+        digest.update(b"\0")
     # A name the preamble bound and a cell removed contributes nothing to the
     # loop above, so a namespace missing it fingerprinted exactly like one
     # still holding it: `del symbols; 1 / 0` followed by an accepted `pass`
@@ -818,8 +842,6 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     if parsed.body and isinstance(parsed.body[-1], ast.Expr):
         trailing = ast.Expression(parsed.body.pop().value)
 
-    global LAST_DISPLAYED
-    LAST_DISPLAYED = _UNSET
     marker = capture.begin()
     status, value_repr, oversized, failure = "ok", "", False, ""
     try:
@@ -830,18 +852,6 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
             if value is not None:
                 namespace["_"] = value
                 value_repr, oversized = bounded_repr(value, limit)
-                # The skip below is justified by `value_repr` carrying this
-                # value, so it lasts only while `value_repr` is the whole of
-                # it. A trailing `[0] * 5000 + [random.random()]` is reported
-                # from its prefix, and skipping `_` as well would leave the
-                # differing tail in neither the repr nor the digest -- a
-                # replay could rebuild a different last element and match
-                # both. Left unset, `_` goes through the digest instead --
-                # where it is walked rather than rendered, so the tail the
-                # repr lost is fingerprinted, and only a leaf too large to
-                # look at withholds the digest.
-                if not oversized:
-                    LAST_DISPLAYED = value
     # Hardy asked for this one, so it is reported under its own name rather
     # than as the cell having gone wrong -- and, far more importantly, it is
     # *answered*. Catching it here is what makes an interrupt cost one cell

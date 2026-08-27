@@ -232,8 +232,13 @@ did. An interrupted cell is never accepted — it did not finish, and like an
 errored one it may already have changed the namespace.
 
 Replaying the cells is not the same claim as the script working, so export also
-runs the file it just published, as a subprocess, and compares that transcript
-against the record too. A kernel evaluates a trailing expression and reports its
+runs the file it just published, as a subprocess and at the path it published
+it to, and compares that transcript against the record too. The path is part of
+what is checked: moving the file changes `__file__`, so a check run from
+somewhere else describes a run nobody will perform. What that costs is the
+artifact — a cell may rewrite the path it was run from — and the answer is to
+put the published bytes back and refuse the verdict, rather than to check a
+file no reader will run. A kernel evaluates a trailing expression and reports its
 value where a plain script discards it, and a construct that is legal at the
 head of a cell can be illegal partway down a file. Both verdicts are published;
 an export reproduces only when both hold.

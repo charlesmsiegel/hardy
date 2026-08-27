@@ -8,7 +8,9 @@ what they have in common is the failure mode and not the file.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -911,24 +913,23 @@ def test_a_state_only_divergence_says_so(sympy_session, tmp_path) -> None:
     assert not any("different output" in v.detail for v in diverged)
 
 
-def test_an_alias_to_the_displayed_value_is_fingerprinted() -> None:
-    """A name whose repr is not hashed is still a position in the object graph.
+def test_a_name_the_digest_skips_is_still_a_position_in_the_graph() -> None:
+    """A name whose value is not hashed is still a position in the object graph.
 
-    With `a = []; b = []` and a trailing `a if flag else b`, `_` was skipped
-    without being recorded, so `a` and `b` took the same two ordinals either
-    way and the two namespaces fingerprinted alike — while a later
-    `_.append(1); a` sees different state.
+    A name still bound to the very object the preamble bound is skipped, to
+    keep the digest to what the session did. Leaving it out of the *numbering*
+    as well let the graph be rebuilt differently for free: two equal preamble
+    objects took the same ordinals either way, so a session name aliasing one
+    or the other fingerprinted alike — while a later `z.append(1)` is visible
+    through one of them and not the other.
     """
-    import hardy.cas_driver as driver
-
-    a: list = []
-    b: list = []
-    driver.LAST_DISPLAYED = a
-    showing_a = state_digest({"a": a, "b": b, "_": a}, {}, 4096)
-    driver.LAST_DISPLAYED = b
-    showing_b = state_digest({"a": a, "b": b, "_": b}, {}, 4096)
-    driver.LAST_DISPLAYED = driver._UNSET
-    assert showing_a != showing_b
+    first: list = []
+    second: list = []
+    baseline = {"b1": first, "b2": second}
+    live = {"b1": first, "b2": second}
+    aliasing_first = state_digest({**live, "z": first}, baseline, 4096)
+    aliasing_second = state_digest({**live, "z": second}, baseline, 4096)
+    assert aliasing_first != aliasing_second
 
 
 def test_a_rebuild_over_a_truncated_capture_is_unverified(sympy_session) -> None:
@@ -1001,7 +1002,11 @@ def test_the_script_check_cannot_change_the_file_it_publishes(
     """The check executes the published bytes, and a cell is free to rewrite
     the path it was run from — Python has already loaded the module, so the
     run finishes and matches the transcript. The verdict would then be
-    `verified` for an artifact that no longer existed."""
+    `verified` for an artifact that no longer existed.
+
+    The file runs where it was published, so the write lands on it; what must
+    not survive is the *artifact* being left as whatever the run made of it.
+    """
     sympy_session.execute(
         'if __name__ == "__main__":\n'
         "    import sys, pathlib\n"
@@ -1016,31 +1021,32 @@ def test_the_script_check_cannot_change_the_file_it_publishes(
     assert published.strip() != "# gone"
     assert "from sympy import *" in published
     assert TRANSCRIPT_BEGIN in published
-    # And the verdict is honest either way: the copy took the write, the
-    # published bytes are the ones that were checked, and the transcript
-    # matched. Nothing here needs to be reported as a failure.
-    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+    # The bytes on disk are the ones the manifest describes, and the verdict
+    # says what happened rather than passing over it.
+    assert report.script_verdict == "failed", report.model_dump_json(indent=2)
+    assert "rewrote itself" in report.script_detail
+    assert "put back" in report.script_detail
 
 
-def test_a_script_that_rewrites_the_published_file_is_not_verified(
+def test_a_restore_the_guard_refuses_is_reported_rather_than_swallowed(
     sympy_session, tmp_path
 ) -> None:
-    """Running a copy keeps an accidental self-overwrite away from the
-    artifact; nothing but isolation stops a cell reaching the published path
-    deliberately. So the file is read back and compared — a verdict is a claim
-    about the bytes a reader will keep."""
+    """Putting the bytes back goes through the guard, and the guard refuses a
+    symlink — which is one of the things a run is free to leave behind. A
+    restore that could not happen leaves an artifact the manifest's hash does
+    not describe, and saying so is the whole of what is left to do about it."""
     sympy_session.execute(
         'if __name__ == "__main__":\n'
-        "    import pathlib\n"
-        "    for parent in pathlib.Path.cwd().parents:\n"
-        "        target = parent / 'session.py'\n"
-        "        if target.exists():\n"
-        "            target.write_text('# replaced\\n', encoding='utf-8')\n"
-        "            break\n"
+        "    import os, pathlib, sys\n"
+        "    here = pathlib.Path(sys.argv[0])\n"
+        "    elsewhere = here.parent / 'elsewhere.py'\n"
+        "    elsewhere.write_text('# elsewhere\\n', encoding='utf-8')\n"
+        "    here.unlink()\n"
+        "    os.symlink(elsewhere, here)\n"
     )
     report = export_session(sympy_session, tmp_path / "cas")
     assert report.script_verdict == "failed", report.model_dump_json(indent=2)
-    assert "changed on disk" in report.script_detail
+    assert "could not be put back" in report.script_detail
     assert report.reproduces is False
 
 
@@ -1093,3 +1099,121 @@ def test_a_graph_too_large_to_walk_is_refused() -> None:
 
     wide = {"a": [[] for _ in range(4096)]}
     assert state_digest(wide, {}, 16) == "", "no digest at all is the honest answer"
+
+
+# -------------------------------------------------- and the eleventh review's
+
+
+def test_the_script_is_checked_where_it_is_published(sympy_session, tmp_path) -> None:
+    """Byte identity does not make a copy stand in for the artifact.
+
+    Moving a file changes `__file__`, so a cell that branches on where the
+    script sits takes one path under a check run from a scratch directory and
+    the other when a reader runs the published file. The verdict would then
+    describe a run nobody will ever perform.
+    """
+    sympy_session.execute(
+        'if __name__ == "__main__":\n'
+        "    import pathlib\n"
+        '    if pathlib.Path(__file__).parent.name == "cas":\n'
+        '        print("published only")\n'
+    )
+    directory = tmp_path / "cas"
+    report = export_session(sympy_session, directory)
+    assert report.script_verdict == "diverged", report.model_dump_json(indent=2)
+    assert report.reproduces is False
+
+    # And the artifact really does print it, which is what makes the verdict
+    # above the honest one rather than a false alarm.
+    run = subprocess.run(
+        [sys.executable, str(directory / "session.py")],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONHASHSEED": "0"},
+    )
+    assert "published only" in run.stdout
+
+
+def test_a_script_that_exits_early_has_not_reproduced_anything(
+    sympy_session, tmp_path
+) -> None:
+    """The closing marker is an `atexit` callback, and `atexit` fires on
+    `SystemExit(0)` as readily as on reaching the end of the file. A first cell
+    guarded by `if __name__ == "__main__": raise SystemExit(0)` is silent under
+    the driver and ends the script under `python session.py`, so both markers
+    went out around an empty transcript that matched a record of silent cells,
+    and the export called that reproduction."""
+    sympy_session.execute('if __name__ == "__main__":\n    raise SystemExit(0)\n')
+    sympy_session.execute("import random")
+    sympy_session.execute("x = random.random()")
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "failed", report.model_dump_json(indent=2)
+    assert "stopped before it reached its last cell" in report.script_detail
+
+
+def test_a_script_that_runs_to_the_end_still_verifies(sympy_session, tmp_path) -> None:
+    """The refusal above must not have cost every export."""
+    sympy_session.execute("x = symbols('x')")
+    sympy_session.execute("factor(x**2 - 1)")
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+
+
+def test_the_displayed_value_is_fingerprinted_like_any_other_name() -> None:
+    """`_` was skipped while it held the value `value_repr` had recorded.
+
+    That justification cost three findings before it was abandoned. The last
+    of them is this one: `(lambda x: [x, x])([])` and `[[], []]` have the same
+    `value_repr` and different futures, so a trailing expression that was the
+    only binding for an alias-sensitive container went into neither the repr
+    nor the digest — and with `_` the only name in the namespace, the digest
+    was SHA-256 of nothing at all.
+    """
+    shared: list = []
+    together = {"_": [shared, shared]}
+    apart = {"_": [[], []]}
+    assert repr(together["_"]) == repr(apart["_"]), "the repr cannot tell them apart"
+    assert state_digest(together, {}, 4096) != state_digest(apart, {}, 4096)
+    assert state_digest(together, {}, 4096), "and it is a fingerprint, not an empty hash"
+
+    # A cell that assigns `_` itself has no `value_repr` at all, which is the
+    # first of the three findings and stays fixed.
+    assert state_digest({"_": 1}, {}, 4096) != state_digest({"_": 2}, {}, 4096)
+
+
+def test_the_fingerprint_payload_is_bounded_as_well_as_the_node_count(
+    monkeypatch,
+) -> None:
+    """A node budget bounds how many objects the walk visits, not what they
+    render to. One container of a few thousand distinct near-cap strings built
+    the whole fingerprint in memory before hashing any of it — 1.5 GiB under a
+    256 KiB cap, in a kernel a session's whole state depends on staying alive.
+    """
+    limit = 4096
+    fed: list[int] = []
+    real = hashlib.sha256
+
+    class Counting:
+        def __init__(self) -> None:
+            self._inner = real()
+
+        def update(self, payload: bytes) -> None:
+            fed.append(len(payload))
+            self._inner.update(payload)
+
+        def hexdigest(self) -> str:
+            return self._inner.hexdigest()
+
+    monkeypatch.setattr(hashlib, "sha256", Counting)
+    held = [("x" * (limit - 64)) + str(index) for index in range(512)]
+    digest = state_digest({"a": held}, {}, limit)
+
+    assert digest == "", "past the payload bound there is no fingerprint to give"
+    # Streamed rather than accumulated: no single write is anywhere near the
+    # total, which is what keeps the peak to one leaf's repr.
+    assert fed and max(fed) <= limit + 64, max(fed)
+
+
+def test_an_ordinary_namespace_is_still_within_the_payload_bound() -> None:
+    """The bound above must not have cost every digest."""
+    assert state_digest({"a": list(range(1000)), "b": "x" * 100}, {}, 4096)
