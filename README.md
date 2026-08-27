@@ -89,14 +89,23 @@ pipeline with no model, no network, and no toolchain. The earlier one-shot proof
 experiment remains available as `hardy batch`, but is secondary.
 
 While it proves, the model can ask `rank_premises` which declarations are worth
-looking at for a goal, fusing Lean's own `#find` with Loogle, and `search_modules`
-which module to `import` for a name it has in mind — read from the package index
-Lake already wrote, so it answers even on a machine where Lean will not start. Retrieval spends a
+looking at for a goal, fusing Lean's own `#find` with Loogle. Retrieval spends a
 metered budget, and a ranking names every source it asked, what that source
 searched, and whether the order can be replayed at all — Lean's search runs in
 the environment the run is frozen under, while the public Loogle tracks a Mathlib
 it does not name. A ranking is a heuristic, never evidence: only the kernel
 verifies anything.
+
+Two searches answer without a ranking. `inspect_declarations` asks Lean whether
+names exist and hands back their real signatures, which is the direct way to
+settle whether Mathlib already has a result; `search_modules` says which module
+to `import` for a name, read from the package index Lake already wrote, so it
+answers even on a machine where Lean will not start. A search that does not
+finish is refused rather than returned empty — an empty answer from a search
+that never ran reads as "Mathlib does not have it", and a session that believed
+that went on to assume four theorems Mathlib proves. On the toolchain pinned
+here `#find` does not return at all, so `rank_premises` and
+`search_declarations` are the two that may be unavailable, and they say so.
 
 All three surfaces read `#print axioms` through the same parser, so a proof
 standing on `sorryAx` or on an axiom nobody approved is reported as such rather
