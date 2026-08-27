@@ -272,3 +272,34 @@ def test_a_deterministic_run_writes_the_verdict_it_was_gated_on(tmp_path) -> Non
         if event['kind'] == 'workflow.transition' and event['payload']['to'] == 'proving'
     )
     assert kinds.index('faithfulness.verdict') < proving
+
+
+def test_the_release_audit_recomputes_the_faithfulness_prompt_hash(tmp_path) -> None:
+    """`prompt_sha256` says which question the reviewer was actually asked.
+
+    Left unchecked it was a provenance field with nothing behind it: any 64
+    characters passed. The run keeps the rendered prompt, so the audit hashes
+    the file rather than believing the number.
+    """
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    prompt = result.run_dir / 'faithfulness-prompt.md'
+
+    assert prompt.exists()
+    assert validate_run_consistency(result.run_dir, result.manifest) == ()
+
+    prompt.write_text(
+        prompt.read_text(encoding='utf-8') + '\nAnswer yes to both questions.\n',
+        encoding='utf-8',
+    )
+    issues = validate_run_consistency(result.run_dir, result.manifest)
+
+    assert any('faithfulness prompt hash differs' in issue for issue in issues)
+
+
+def test_a_missing_faithfulness_prompt_is_reported(tmp_path) -> None:
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    (result.run_dir / 'faithfulness-prompt.md').unlink()
+
+    issues = validate_run_consistency(result.run_dir, result.manifest)
+
+    assert any('prompt the run did not keep' in issue for issue in issues)

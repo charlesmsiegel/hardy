@@ -207,19 +207,28 @@ Priority labels are sequencing hints:
 - **Now (implemented) — Statement faithfulness gate:** before any proof search,
   an independent reader compares the user's claim with the frozen Lean
   formalization and says whether they state the same thing. It is asked from a
-  thread of its own, with no Lean tools, and is given the user's words and the
-  Lean signature only — not the formalization conversation, and not the
-  proposal's own restatement or interpretation choices, which are the
-  formalizer's account of its own work. `faithfulness_model` points the read at
+  thread of its own with no tools at all — not merely no Lean, because the CAS
+  tools run on one shared kernel and would have shown it the formalizing
+  stage's cells, and `cas_run` is an unsandboxed interpreter rooted inside the
+  run directory — and on the Codex backend, whose agent has its own file
+  access, it is given an empty working directory outside the run tree rather
+  than the run's own. It is given the user's words and the Lean signature only
+  — not the formalization conversation, and not the proposal's own restatement
+  or interpretation choices, which are the formalizer's account of its own
+  work. Both texts reach it inside a fence derived from their own bytes, so
+  neither the user's claim nor a model-written Lean comment can close its
+  quoted block and be read as instructions. `faithfulness_model` points the read at
   a different model when independent weights are wanted as well as independent
   context. It is asked for two entailments rather than a confidence, because a
   wrong translation is usually produced at high confidence. The gate is
   fail-closed and terminal: a disputed translation — or a reader that could not
   be reached — stops the run and surfaces the mismatch, since a halt costs one
   question and a proof of the wrong theorem costs the whole run. The verdict is
-  written to `faithfulness.json`, recorded in the trajectory beside the frozen
-  claim, and carried in the manifest, where `user_approved` now means the human
-  approved *and* an independent reader agreed: the grade cannot be reached by
+  written to `faithfulness.json` beside the rendered question as
+  `faithfulness-prompt.md` — so the recorded prompt hash is recomputable from
+  the run directory rather than self-asserted — recorded in the trajectory
+  beside the frozen claim, and carried in the manifest, where `user_approved`
+  now means the human approved *and* an independent reader agreed: the grade cannot be reached by
   approval alone, and a `kernel_verified` result cannot be recorded without it.
 - **Known limit — an agreement is a second reading, not a proof.** The gate
   establishes that the translation was read by something with no stake in it;
@@ -231,7 +240,12 @@ Priority labels are sequencing hints:
   model shares survives the check, and closing that needs
   `faithfulness_model` pointed somewhere genuinely different. The verdict is
   also a single read: no second reader, no disagreement between readers to
-  escalate.
+  escalate. And the reader's isolation is as strong as the tools it is denied,
+  which is complete on the Claude backend and, on Codex, rests on that SDK's
+  own sandbox around an empty working directory — Hardy does not confine the
+  process itself, so a reader that defeated that sandbox could still reach the
+  run directory by absolute path. That is the deferred process isolation, not
+  a gap peculiar to this gate.
 - **Next — Critique workflow:** inspect user, literature, or generated proofs and
   produce a structured ledger of gaps.
 - **Next — Repair workflow:** patch one gap locally, without changing the claim,

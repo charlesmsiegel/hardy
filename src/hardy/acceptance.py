@@ -99,8 +99,10 @@ class _DeterministicRuntime:
     def __init__(self, outcome: Literal["verified", "exhausted"]) -> None:
         self.outcome = outcome
 
-    def start(self, *, model, run_dir, claim):
-        return SimpleNamespace(claim=claim)
+    backend = "deterministic-no-model"
+
+    def start(self, *, model, run_dir, claim, isolated=False, phase=None):
+        return SimpleNamespace(claim=claim, isolated=isolated)
 
     def run_structured(self, thread, stage, prompt, output_type):
         if stage == "faithfulness":
@@ -386,15 +388,20 @@ def _faithfulness_issues(
     manifest: RunManifest,
     claim: FrozenClaim | None,
     verdict_path: Path,
+    prompt_path: Path,
 ) -> list[str]:
     """Check the recorded faithfulness verdict against the run it grades.
 
     The manifest's copy and `faithfulness.json` were written by the same run,
-    so agreeing with each other establishes little on its own -- but the
-    verdict names the claim it read, and that is checkable against the frozen
-    claim on disk. A verdict about a different statement is a verdict about
-    something else, and an approved grade with no verdict beside it is the
-    self-asserted translation this gate exists to refuse.
+    so agreeing with each other establishes little on its own. Two components
+    are checkable rather than believed: the claim the verdict says it read,
+    against the frozen claim on disk, and the question it says it asked,
+    against the prompt the run actually kept. A verdict about a different
+    statement is a verdict about something else; a `prompt_sha256` that hashes
+    nothing in the run directory is a provenance field with nothing behind it.
+
+    An approved grade with no verdict beside it is the self-asserted
+    translation this gate exists to refuse.
     """
     issues: list[str] = []
     graded = manifest.grades.faithfulness_review
@@ -419,6 +426,10 @@ def _faithfulness_issues(
         else:
             if saved != graded:
                 issues.append("graded faithfulness review differs from faithfulness.json")
+    if not prompt_path.exists():
+        issues.append("faithfulness review names a prompt the run did not keep")
+    elif hashlib.sha256(prompt_path.read_bytes()).hexdigest() != graded.prompt_sha256:
+        issues.append("faithfulness prompt hash differs from faithfulness-prompt.md")
     if claim is None:
         issues.append("faithfulness review names no Frozen Claim in this run")
     elif graded.claim_sha256 != claim.content_hash:
@@ -472,7 +483,14 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
                 issues.append("terminal reason differs from manifest")
             if terminal.get("grades") != manifest.grades.model_dump(mode="json"):
                 issues.append("terminal grades differ from manifest")
-    issues.extend(_faithfulness_issues(manifest, claim, run_dir / "faithfulness.json"))
+    issues.extend(
+        _faithfulness_issues(
+            manifest,
+            claim,
+            run_dir / "faithfulness.json",
+            run_dir / "faithfulness-prompt.md",
+        )
+    )
     main = run_dir / "lean" / "Main.lean"
     verification_path = run_dir / "lean" / "verification.json"
     if manifest.grades.formal is FormalStatus.KERNEL_VERIFIED:

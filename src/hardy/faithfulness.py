@@ -25,7 +25,6 @@ a review: neither is a pass, and there is no third option that proceeds.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable
 from pathlib import PurePosixPath
 from typing import Any
@@ -41,6 +40,7 @@ from .prompts import faithfulness_prompt
 from .storage import RunStore
 
 ARTIFACT = PurePosixPath("faithfulness.json")
+PROMPT_ARTIFACT = PurePosixPath("faithfulness-prompt.md")
 
 
 def review_translation(
@@ -65,21 +65,42 @@ def review_translation(
     after the manifest that hashes it has been written.
     """
     prompt = faithfulness_prompt(claim)
+    # The question as asked, kept beside the answer. `prompt_sha256` would
+    # otherwise be self-asserted -- a hash of something no longer in the run
+    # directory, which the release audit could not recompute and a reader
+    # could not check. Written first, so the record of what was asked survives
+    # a reader that never answers.
+    asked = store.write_text(PROMPT_ARTIFACT, prompt + "\n")
     identity = {
         "claim_sha256": claim.content_hash,
         "reviewer_model": model,
-        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "reviewer_backend": str(getattr(runtime, "backend", "unknown")),
+        "prompt_sha256": asked.sha256,
     }
-    # A thread of its own, with `claim=None` so it is offered no Lean tools:
-    # this is a reading of two texts, and a reader that can elaborate the
-    # statement is a reader that can be persuaded the statement is fine
-    # because Lean accepted it.
+    # A thread of its own, isolated: no tools, and for the backends whose
+    # agent has its own file access, no sight of the run directory either.
+    # This is a reading of two texts, and a reader that can reach the
+    # conversation it is auditing is not an independent one.
     try:
-        thread = runtime.start(model=model, run_dir=store.path, claim=None)
+        thread = runtime.start(
+            model=model,
+            run_dir=store.path,
+            claim=None,
+            isolated=True,
+            phase=phase,
+        )
         if on_thread is not None:
             on_thread(thread)
         review = runtime.run_structured(thread, "faithfulness", prompt, FaithfulnessReview)
-    except (ValueError, RuntimeError) as error:
+    # Every way a provider can fail, not the two the structured-output path
+    # raises. A transport error -- `ConnectionError`, `TimeoutError`, an
+    # `OSError` from a dead pipe -- used to reach the workflow's generic
+    # handler, which graded the run `agent_runtime_failure` with no
+    # `faithfulness.json` and no faithfulness gap: fail-closed, since nothing
+    # proceeded to proving, but a record that did not say an approved claim
+    # had been left unread. `KeyboardInterrupt` is not an `Exception` and
+    # still propagates, which is what keeps cancellation cancelling.
+    except Exception as error:
         verdict = FaithfulnessVerdict(
             **identity,
             outcome=FaithfulnessOutcome.UNAVAILABLE,

@@ -12,7 +12,9 @@ requested structure is a failed stage rather than something to parse loosely.
 
 from __future__ import annotations
 
+import shutil
 import sys
+import tempfile
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -66,15 +68,62 @@ class AgentThread:
 
 class CodexRuntime:
     model = "codex"
+    backend = "codex"
 
     def __init__(self, *, client: Any, store: RunStore, config_path: Path) -> None:
         self._client = client
         self._store = store
         self._config_path = config_path
+        # Empty working directories handed to isolated threads, removed by
+        # `close`. Outside the run tree on purpose: a directory inside it is
+        # one `..` from the artifacts the reader must not see.
+        self._isolated: list[Path] = []
 
-    def start(self, *, model: str, run_dir: Path, claim: FrozenClaim | None) -> AgentThread:
+    def start(
+        self,
+        *,
+        model: str,
+        run_dir: Path,
+        claim: FrozenClaim | None,
+        isolated: bool = False,
+        phase: RunPhase = RunPhase.PROVING,
+    ) -> AgentThread:
+        """Open one stage's thread, in the working directory that stage may see.
+
+        `isolated` is the faithfulness reader's, and here it is the *directory*
+        that matters rather than the tools. This SDK gives the agent its own
+        file access over `cwd`, and `cwd` was the run directory -- which by
+        then holds `formalization.json` and the trajectory of the conversation
+        that wrote it. A reader able to open those is reading the translation
+        through the reasoning that produced it, which is exactly what the gate
+        is built to prevent, so it is given an empty directory of its own and
+        the narrowest sandbox this SDK offers.
+
+        What that leaves unclosed is stated rather than papered over: the
+        sandbox is the SDK's, and Hardy does not confine the process itself
+        (see DESIGN.md's trust boundary). The empty `cwd` is the part Hardy
+        can guarantee; a reader that defeats the SDK's own sandbox could still
+        reach the run directory by absolute path.
+        """
         sdk = load_sdk()
         configuration: dict[str, Any] = {}
+        if isolated:
+            # Kept for the life of the runtime and removed by `close`: it must
+            # outlive the turn, and nothing is ever written into it.
+            directory = Path(tempfile.mkdtemp(prefix="hardy-faithfulness-"))
+            self._isolated.append(directory)
+            sdk_thread = self._client.thread_start(
+                model=model,
+                cwd=str(directory),
+                # Read-only where the SDK has it; a reader writes nothing
+                # either way, and the empty directory is the real guarantee.
+                sandbox=getattr(sdk.Sandbox, "read_only", sdk.Sandbox.workspace_write),
+                approval_mode=sdk.ApprovalMode.auto_review,
+                base_instructions=BASE_INSTRUCTIONS,
+                developer_instructions=DEVELOPER_INSTRUCTIONS,
+                config={},
+            )
+            return AgentThread(sdk_thread=sdk_thread)
         if claim is not None:
             # Hardy's Lean tools are served to the agent over stdio MCP, pinned
             # to this run and this claim, so a tool call cannot address another.
@@ -144,6 +193,11 @@ class CodexRuntime:
             thread.active_turn.interrupt()
 
     def close(self) -> None:
+        for directory in self._isolated:
+            # Nothing was written into it, and a reader that somehow did write
+            # produced no evidence: the run's record is the run directory.
+            shutil.rmtree(directory, ignore_errors=True)
+        self._isolated.clear()
         close = getattr(self._client, "close", None)
         if close is not None:
             close()

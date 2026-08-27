@@ -217,9 +217,16 @@ class FaithfulnessVerdict(FrozenModel):
 
     claim_sha256: str
     reviewer_model: str
+    # A model name does not say what ran it. Hardy already treats the backend
+    # as a result-affecting identity in `RunIdentities`, but that record is
+    # written with the document -- which a disputed or unavailable run never
+    # reaches, so a halted run would name no runtime at all.
+    reviewer_backend: str = "unknown"
     # The rendered question, hashed. `prompt_set_sha256` covers the template;
     # this covers the text this claim actually produced from it, which is what
-    # the reader was asked.
+    # the reader was asked. The text itself is kept as
+    # `faithfulness-prompt.md`, so this hash is recomputable from the run
+    # directory rather than taken on trust.
     prompt_sha256: str
     outcome: FaithfulnessOutcome
     review: FaithfulnessReview | None = None

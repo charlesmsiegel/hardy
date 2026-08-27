@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -25,7 +26,7 @@ from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .claude_runtime import ClaudeAgentRuntime
 from .codex_runtime import ProofSubmission
-from .domain import FrozenClaim
+from .domain import FrozenClaim, RunPhase
 from .models import ToolResult
 from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS, STRUCTURE_INSTRUCTION
 from .storage import RunStore
@@ -149,12 +150,32 @@ class ClaudeStagedRuntime:
         self._records = threading.Lock()
         self._sealed = False
 
-    def start(self, *, model: str, run_dir: Path, claim: FrozenClaim | None) -> StagedThread:
+    def start(
+        self,
+        *,
+        model: str,
+        run_dir: Path,
+        claim: FrozenClaim | None,
+        isolated: bool = False,
+        phase: RunPhase = RunPhase.PROVING,
+    ) -> StagedThread:
+        """Open one stage's thread, with the tools that stage is entitled to.
+
+        `isolated` is the faithfulness reader's, and it means no tools at all
+        rather than merely no Lean. Withholding the Lean tools was never enough
+        on its own: the CAS tools are offered in every other stage and run on
+        one shared kernel, so `cas_state` would have shown the reader the cells
+        the formalizing stage ran, and `cas_run` -- an unsandboxed interpreter
+        whose working directory is inside the run -- would have let it read
+        `formalization.json` and the trajectory outright. A reader that can
+        reach the conversation it is auditing is not an independent one, and
+        the gate's whole claim rests on it not being able to.
+        """
         # Before a claim is approved there is nothing to check a proof against,
         # so the formalizing stage is given no Lean tools at all.
-        lean_runtime = self._lean_runtime_factory(claim) if claim is not None else None
-        specs = list(TOOLS) if lean_runtime is not None else []
-        if self._cas is not None:
+        lean_runtime = None if isolated else self._lean_runtime_factory(claim) if claim else None
+        specs: list[Any] = [] if isolated else list(TOOLS) if lean_runtime is not None else []
+        if self._cas is not None and not isolated:
             specs = specs + CAS_TOOLS
         runtime = self._runtime_class(
             model,
@@ -162,21 +183,24 @@ class ClaudeStagedRuntime:
             specs=specs,
             dispatch=self._dispatcher(lean_runtime),
             cwd=run_dir,
-            observe=self._observe,
+            # Per thread, not one phase for the whole run: a turn taken while
+            # the workflow was awaiting approval is not proof activity, and
+            # filing it as such would make the trajectory's own ordering false
+            # -- provider events for the faithfulness read appearing under
+            # `proving` before the transition into proving was even recorded.
+            observe=partial(self._observe, phase=phase),
         )
         thread = StagedThread(runtime=runtime, claim=claim)
         self._threads.append(thread)
         return thread
 
-    def _observe(self, event: dict[str, Any]) -> None:
-        from .domain import RunPhase
-
+    def _observe(self, event: dict[str, Any], phase: RunPhase = RunPhase.PROVING) -> None:
         # Held across the append, not merely checked: `_seal` must be able to
         # promise that nothing is mid-write when it returns.
         with self._records:
             if self._sealed:
                 return
-            self._store.append("claude." + str(event.get("type", "event")), event, phase=RunPhase.PROVING)
+            self._store.append("claude." + str(event.get("type", "event")), event, phase=phase)
 
     def _seal(self) -> None:
         """Stop recording this run, and record that as the last thing said.
@@ -193,8 +217,6 @@ class ClaudeStagedRuntime:
         than a complete trajectory and much better than a silent truncation a
         reader would mistake for the end of the run.
         """
-        from .domain import RunPhase
-
         with self._records:
             if self._sealed:
                 return
