@@ -277,10 +277,16 @@ Priority labels are sequencing hints:
   report, so a counter the backend omitted reads as unreported and a total
   covering part of a session says which part. A terminal too narrow for the
   meter drops it whole.
-- **Known gap:** those totals reach `.local/state.json` and the session's own chrome,
-  but not `result.json` or the `trajectory.json` summary. Tracked in issue #30.
+- **Now (implemented):** a batch run states the same figures in `result.json`
+  and the `trajectory.json` summary, folded by the same ledger, so what a run
+  cost is in the two files someone compares runs by rather than only in the raw
+  event stream. Cost, the four token counters, and their total, each `null`
+  where the provider stated nothing — a run the wall clock cut short receives no
+  report and is recorded as one exchange nobody billed, not as a free one.
 - **Next:** token and cost budgets with reserve/settle accounting, and the
-  budget and what remains of it alongside the spend in `/status`.
+  budget and what remains of it alongside the spend in `/status`. Recording is
+  done; enforcement still needs a decision point before each call, which the SDK
+  owns (issue #23).
 - **Next:** reclaim enough of the loop to enforce Hardy's own bounds and run
   cheap Lean closers before spending a model turn (issue #23).
 - **Later:** adapters for other agent SDKs, and an API-key path for users who
