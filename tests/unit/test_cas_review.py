@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -107,15 +108,20 @@ def test_a_backend_with_no_digest_says_what_it_could_not_check(cas_session) -> N
     checked.
     """
     session = cas_session()
-    silent = session.execute("quiet")
-    assert silent.accepted is True
-    assert silent.state_digest == ""
+    # `noisy` prints on both streams and reports a value. Reproducing all of
+    # that says nothing about the namespace it left: output is what a cell
+    # showed, and a cell is free to print a stable banner over a value that
+    # differs. A missing digest is the whole answer, whatever was printed.
+    loud = session.execute("noisy")
+    assert loud.accepted is True
+    assert loud.stdout and loud.stderr and loud.value_repr
+    assert loud.state_digest == ""
 
     session._drop_kernel()
     rebuilt = session.execute("after")
     assert rebuilt.status == "ok"
     assert "reconstructed, not verified" in rebuilt.restart_note
-    assert str(silent.seq) in rebuilt.restart_note
+    assert "no cell's state could be compared" in rebuilt.restart_note
 
 
 # ------------------------------------------------------ bounds that do not bind
@@ -329,3 +335,137 @@ def test_the_digest_ignores_an_address_but_not_a_value() -> None:
     # A name still bound to what the preamble bound is not the session's state.
     shared = object()
     assert state_digest({"a": shared}, {"a": shared}, 4096) == state_digest({}, {}, 4096)
+
+
+# ---------------------------------- the review of the fixes above, in its turn
+
+
+def test_a_digest_normalises_an_address_without_normalising_a_value() -> None:
+    """The first pass rewrote every `0x...` it found, content included.
+
+    `"0x1234"` and `"0xabcd"` are different values that fingerprinted alike, so
+    a rebuild holding the wrong one was called faithful — the exact failure the
+    digest exists to prevent, reintroduced by the rule that makes it tolerant
+    of addresses. The pattern is anchored to the shape a default repr uses.
+    """
+    assert state_digest({"a": "0x1234"}, {}, 4096) != state_digest({"a": "0xabcd"}, {}, 4096)
+    assert state_digest({"a": ["0xfeed"]}, {}, 4096) != state_digest({"a": ["0xbeef"]}, {}, 4096)
+
+
+def test_a_namespace_seen_only_in_prefix_is_not_fingerprinted() -> None:
+    """A prefix is not a fingerprint.
+
+    `bounded_repr` truncates, so two values agreeing for the first `limit`
+    bytes would hash alike. No digest at all is the honest answer; the parent
+    reads an empty one as "not compared" and says so.
+    """
+    first = {"a": ["z"] * 5_000 + ["end"]}
+    second = {"a": ["z"] * 5_000 + ["different"]}
+    assert state_digest(first, {}, 4096) == ""
+    assert state_digest(second, {}, 4096) == ""
+
+
+def test_a_namespace_that_cannot_be_sorted_still_describes_itself() -> None:
+    """`globals()` accepts a non-string key, and `sorted` over mixed types raises.
+
+    That used to lose the whole digest — and a lost digest was reported as an
+    ordinary successful rebuild.
+    """
+    namespace = {"a": 1}
+    namespace[7] = "seven"
+    assert state_digest(namespace, {}, 4096) != ""
+    assert state_digest(namespace, {}, 4096) != state_digest({"a": 1}, {}, 4096)
+
+
+def test_a_container_of_few_but_enormous_members_is_not_built_in_full() -> None:
+    """An item count is not a size.
+
+    A one-element list holding a multi-gigabyte string has one item, so
+    deciding by `len(value)` sent it down the plain `repr` path and built the
+    whole thing — with `MemoryError` caught only after the allocation had been
+    attempted, by which point the OS may have taken the kernel instead.
+    """
+    for value in (["x" * 10**7], {"k": "y" * 10**7}, ("z" * 10**7,)):
+        rendered, truncated = bounded_repr(value, 4096)
+        assert truncated is True, value[:1]
+        assert len(rendered) < 4096 * 2
+
+
+def test_a_rebuild_is_unverified_whenever_a_cell_printed_but_carries_no_digest(
+    cas_session,
+) -> None:
+    """Reproduced output is not a second opinion on a missing digest.
+
+    The first rule also required the cell to have printed nothing, so a cell
+    printing a stable banner over an unobservably different value was left off
+    the list and the rebuild was reported as an ordinary success.
+    """
+    session = cas_session()
+    loud = session.execute("noisy")
+    assert (loud.stdout, loud.state_digest) == ("out", "")
+
+    session._drop_kernel()
+    assert "not verified" in session.execute("after").restart_note
+
+
+def test_a_cell_that_rebinds_print_does_not_break_the_transcript_markers(
+    sympy_session, tmp_path
+) -> None:
+    """The closing marker runs after every cell, so it sees their globals.
+
+    `print = lambda *_: None` is a real thing for a cell to do, and it used to
+    swallow the marker — reporting `diverged` for a session whose cells
+    reproduced exactly. The builtin is reached through its module, which a
+    cell's own global cannot shadow.
+    """
+    sympy_session.execute("print('before')")
+    sympy_session.execute("print = lambda *_: None")
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+
+
+def test_the_script_records_the_environment_it_was_checked_under(
+    sympy_session, tmp_path
+) -> None:
+    """A verdict describes running these bytes *this way*.
+
+    Hardy pins `PYTHONHASHSEED` for the kernel and for the check, so a printed
+    set does not reorder itself between them. A reader who runs the file
+    without it can see a different order from the one Hardy compared, so the
+    file and the manifest both say what it was checked under.
+    """
+    sympy_session.execute("2 + 2")
+    export_session(sympy_session, tmp_path / "cas")
+    script = (tmp_path / "cas" / "session.py").read_text(encoding="utf-8")
+    manifest = json.loads((tmp_path / "cas" / "export.json").read_text(encoding="utf-8"))
+    assert "PYTHONHASHSEED=0" in script
+    assert manifest["environment"] == {"PYTHONHASHSEED": "0"}
+
+
+def test_output_a_helper_writes_after_its_cell_is_not_silently_dropped(
+    sympy_session,
+) -> None:
+    """A pipe orders writes already made, not writes still to come.
+
+    A subprocess that prints after its cell returned writes behind the marker
+    that closed the cell. Those bytes belong to a record already written, so
+    they are discarded rather than pinned on whoever runs next — and a discard
+    is what `capture_truncated` exists to admit to, so the next cell says so.
+    """
+    spawned = sympy_session.execute(
+        "import subprocess, sys\n"
+        "subprocess.Popen([sys.executable, '-c', "
+        "\"import time; time.sleep(0.2); print('late')\"])\n"
+    )
+    assert spawned.status == "ok"
+    # Outside any cell, which is the window this is about: the helper writes
+    # while nothing is listening, so its bytes belong to a record already on
+    # disk and there is nowhere honest to put them.
+    time.sleep(1.0)
+
+    noticed = sympy_session.execute("2 + 2")
+    assert noticed.value_repr == "4"
+    assert noticed.stdout == "", "the helper's output must not become another cell's"
+    assert noticed.capture_truncated is True, (
+        "the helper's late output was discarded and nothing admitted it"
+    )

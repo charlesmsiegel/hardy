@@ -173,10 +173,14 @@ def clip_jointly(fields: dict[str, str], limit: int) -> tuple[dict[str, str], bo
 
 
 # Containers whose length is known without walking them, and whose repr is at
-# least one byte per element -- so a container of more than `limit` elements
-# cannot have a repr that would have survived the cap, and rendering only its
-# head is not a change to any answer that would have been reported in full.
+# least one byte per element -- so their size can be bounded from below without
+# rendering them, which is what lets an over-large one be diverted before its
+# repr is built.
 _SIZED = (list, tuple, set, frozenset, dict)
+# How deep the size estimate walks before giving up and calling a value small.
+# A bound, not a guess about shape: the estimate must not itself be the
+# unbounded traversal it exists to prevent.
+_ESTIMATE_DEPTH = 6
 _BRACKETS = {
     list: ("[", "]"),
     tuple: ("(", ")"),
@@ -186,26 +190,71 @@ _BRACKETS = {
 }
 
 
+def _lower_bound(value: object, limit: int, depth: int = 0) -> int:
+    """A cheap lower bound on `len(repr(value))`, capped at `limit + 1`.
+
+    Cheap because it never renders anything and stops the moment the budget is
+    already exceeded. A lower bound because anything it cannot measure counts
+    as zero: the point is to *prove* a value too large before building its
+    repr, never to guess that one is small enough to matter.
+
+    An item count alone was not enough. A one-element list holding a
+    multi-gigabyte string has one item and a multi-gigabyte repr, so deciding
+    by `len(value)` sent it down the plain `repr` path and built the whole
+    thing -- with `MemoryError` caught only after the allocation had already
+    been attempted, by which point the OS may have taken the kernel instead.
+    """
+    if isinstance(value, (str, bytes, bytearray)):
+        return min(len(value), limit + 1)
+    if depth >= _ESTIMATE_DEPTH or type(value) not in _SIZED:  # noqa: E721 -- exact type
+        return 0
+    # The separators alone, which is why a container of more than `limit`
+    # elements is over budget before a single one of them is looked at.
+    total = len(value)
+    if total > limit:
+        return limit + 1
+    for key, entry in _members(value):
+        total += _lower_bound(key, limit, depth + 1)
+        if entry is not None:
+            total += _lower_bound(entry, limit, depth + 1)
+        if total > limit:
+            return limit + 1
+    return total
+
+
+def _members(value):
+    """A container's contents as (item, None) pairs, or a dict's as (key, value)."""
+    if isinstance(value, dict):
+        return value.items()
+    return ((item, None) for item in value)
+
+
 def bounded_repr(value: object, limit: int) -> tuple[str, bool]:
     """`repr(value)`, without building a gigantic one to then throw away.
 
     Exact whenever the answer would have fitted: the fast path is plain
     `repr`, so an ordinary value's repr is byte-identical to what an
-    interpreter would print. Only a value that is *provably* too large by its
-    own length -- a string, or a container with more elements than the budget
-    has bytes -- is rendered head-first instead, and it says so in the text.
+    interpreter would print. Only a value `_lower_bound` can *prove* too large
+    is rendered head-first instead, and it says so in the text.
 
     What this does not bound is a `__repr__` a cell wrote itself. There is no
     way to ask an object how long its repr will be without running it, and the
     honest answer is that the process, not this function, is the bound there;
     `MemoryError` is caught and reported as the cell failing rather than
     allowed to take the kernel down.
+
+    The second element of the pair is whether the text is a truncation. It is
+    not only for the reader: `state_digest` refuses to fingerprint a namespace
+    any part of which it could only see a prefix of, because two values sharing
+    a prefix would otherwise fingerprint alike.
     """
     try:
-        if isinstance(value, (str, bytes, bytearray)) and len(value) > limit:
+        if _lower_bound(value, limit) <= limit:
+            return repr(value), False
+        if isinstance(value, (str, bytes, bytearray)):
             head, _ = clip(repr(value[:limit]), limit)
             return f"{head} … <{type(value).__name__} of length {len(value)}>", True
-        if type(value) in _SIZED and len(value) > limit:  # noqa: E721 -- exact type only
+        if type(value) in _SIZED:  # noqa: E721 -- exact type only
             return _head_of_container(value, limit), True
         return repr(value), False
     except MemoryError:
@@ -226,6 +275,7 @@ def _head_of_container(value, limit: int) -> str:
             piece = f"{bounded_repr(key, limit)[0]}: {bounded_repr(entry, limit)[0]}"
         else:
             piece = bounded_repr(item, limit)[0]
+        piece, _ = clip(piece, limit)
         pieces.append(piece)
         size += len(piece) + 2
         if size >= limit:
@@ -251,23 +301,36 @@ class _Stream:
         self.truncated = False
         self.marker = b""
         self.done = False
+        # Whether anything arrived while no cell was listening. Carried across
+        # `arm` on purpose: it is read by the cell that follows, which is the
+        # first one in a position to report it.
+        self.stray = False
         # The descriptor is gone: a cell closed it, or the pipe broke. Nothing
         # more will ever arrive, so a wait for this cell's marker would be a
         # wait for something that cannot come.
         self.closed = False
 
-    def arm(self, marker: bytes) -> None:
+    def arm(self, marker: bytes) -> bool:
+        """Start a cell's capture, reporting whether stray bytes preceded it."""
+        stray = self.stray
         self.kept.clear()
         self.pending.clear()
         self.truncated = False
         self.marker = marker
         self.done = False
+        self.stray = False
+        return stray
 
     def feed(self, chunk: bytes) -> None:
         if self.done or not self.marker:
-            # Between cells, or after this cell's marker was found. Nothing is
-            # listening, and holding on to it would attribute one cell's late
-            # output to the next one.
+            # Between cells, or after this cell's marker was found. A pipe
+            # orders the writes already made; it says nothing about a child
+            # the cell spawned that prints after the cell has returned. Those
+            # bytes belong to a cell whose record is already written, so they
+            # are dropped rather than pinned on whoever runs next -- and the
+            # dropping is *recorded*, because output Hardy discarded is
+            # exactly what `capture_truncated` exists to admit to.
+            self.stray = True
             return
         self.pending.extend(chunk)
         at = self.pending.find(self.marker)
@@ -333,13 +396,21 @@ class _Capture:
                 stream.feed(chunk)
                 self._changed.notify_all()
 
-    def begin(self) -> bytes:
-        """Arm both streams for one cell and return the marker that ends it."""
+    def begin(self) -> tuple[bytes, bool]:
+        """Arm both streams for one cell.
+
+        Returns the marker that ends the cell, and whether anything was
+        written while no cell was listening -- a helper the *previous* cell
+        left running, whose bytes were discarded because the record they
+        belonged to was already written.
+        """
         marker = f"\0«hardy-capture:{uuid.uuid4().hex}»\0".encode()
         with self._changed:
-            for stream in self.streams.values():
-                stream.arm(marker)
-        return marker
+            # Every stream armed, then the answers combined. `any` over a
+            # generator would stop at the first True and leave the other
+            # descriptor unarmed for the whole cell.
+            stray = any([stream.arm(marker) for stream in self.streams.values()])
+        return marker, stray
 
     def settle(self, marker: bytes) -> tuple[str, str, bool]:
         """Close the cell's capture and return what both descriptors carried.
@@ -382,7 +453,13 @@ class _Capture:
 # and an address is not state: a rebuilt namespace holding an equal object at a
 # different address has reproduced, and calling that a divergence would poison
 # every session that ever bound a lambda or a plain instance.
-_ADDRESS = re.compile(r"0x[0-9a-fA-F]+")
+#
+# Anchored to the shape CPython's default reprs actually use -- ` at 0xADDR`
+# immediately before the closing `>` -- and not to bare `0x` digits anywhere.
+# The loose form rewrote hexadecimal that was *content*, so `"0x1234"` and
+# `"0xabcd"` fingerprinted identically and a rebuild holding the wrong one was
+# called faithful. Normalising an address must not normalise a value.
+_ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+(?=>)")
 # Names that are not the session's state: the interpreter's own, and the
 # last-value binding, which the parent already compares as `value_repr`.
 _NOT_STATE = frozenset({"_", "exit", "quit"})
@@ -407,16 +484,27 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
     in place does not, and that is the hole this leaves.
     """
     digest = hashlib.sha256()
-    for name in sorted(namespace):
-        if name.startswith("__") or name in _NOT_STATE:
+    # `repr`, not the name itself: `globals()` accepts a non-string key, and
+    # `sorted` over mixed types raises -- which used to lose the whole digest
+    # for the namespace rather than describe it.
+    for name in sorted(namespace, key=repr):
+        if isinstance(name, str) and (name.startswith("__") or name in _NOT_STATE):
             continue
         value = namespace[name]
         if name in baseline and baseline[name] is value:
             continue
-        rendered, _ = bounded_repr(value, limit)
-        digest.update(name.encode("utf-8", errors="replace"))
+        rendered, truncated = bounded_repr(value, limit)
+        if truncated:
+            # A prefix is not a fingerprint. Two values agreeing for the first
+            # `limit` bytes would hash alike, and a rebuild holding the wrong
+            # one would be called faithful -- which is the exact failure the
+            # digest exists to prevent, reintroduced by the bound that keeps
+            # the digest affordable. No digest at all is the honest answer:
+            # the parent reads an empty one as "not compared" and says so.
+            return ""
+        digest.update(repr(name).encode("utf-8", errors="replace"))
         digest.update(b"\0")
-        digest.update(_ADDRESS.sub("0x?", rendered).encode("utf-8", errors="replace"))
+        digest.update(_ADDRESS.sub(" at 0x?", rendered).encode("utf-8", errors="replace"))
         digest.update(b"\0")
     return digest.hexdigest()
 
@@ -443,7 +531,7 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     if parsed.body and isinstance(parsed.body[-1], ast.Expr):
         trailing = ast.Expression(parsed.body.pop().value)
 
-    marker = capture.begin()
+    marker, stray = capture.begin()
     status, value_repr, oversized = "ok", "", False
     try:
         if parsed.body:
@@ -476,7 +564,7 @@ def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dic
     return {
         "status": status,
         **fields,
-        "capture_truncated": truncated or overran or oversized,
+        "capture_truncated": truncated or overran or oversized or stray,
     }
 
 

@@ -29,7 +29,7 @@ def main() -> None:
         # string; this one has to do the same, and must not hand them to
         # `answer`, whose reply counter would then be one ahead of the
         # session's for every cell after them.
-        literal = re.fullmatch(r'print\("(.*)"\)', source)
+        literal = re.fullmatch(r'(?:__import__\("builtins"\)\.)?print\("(.*)"\)', source)
         if literal is not None:
             sys.stdout.write(literal.group(1) + "\n")
             continue
