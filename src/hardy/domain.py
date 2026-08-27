@@ -228,6 +228,13 @@ class FaithfulnessVerdict(FrozenModel):
     # written with the document -- which a disputed or unavailable run never
     # reaches, so a halted run would name no runtime at all.
     reviewer_backend: str = "unknown"
+    # What the reader's isolation was actually worth, from the runtime that
+    # ran it. A name -- "tools-refused" -- means Hardy established that the
+    # reader could not reach the run directory; `None` means it could not
+    # establish that, which is a different verdict from the same words. The
+    # gate's claim is that the reader never saw the conversation it audits,
+    # and a record that cannot say which case it was cannot support the claim.
+    reviewer_isolation: str | None = None
     # The rendered question, hashed. `prompt_set_sha256` covers the template;
     # this covers the text this claim actually produced from it, which is what
     # the reader was asked. The text itself is kept as

@@ -165,7 +165,7 @@ def _scripted_controller(
     class Runtime:
         backend = 'fixture-backend'
 
-        def start(self, *, model, run_dir, claim, isolated=False, phase=None):
+        def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None):
             if runtime_error:
                 raise RuntimeError('runtime fixture failure')
             state.starts.append(claim)
@@ -295,7 +295,7 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
     class Runtime:
         backend = 'fixture-backend'
 
-        def start(self, *, model, run_dir, claim, isolated=False, phase=None):
+        def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None):
             starts.append((claim, isolated))
             return object()
 

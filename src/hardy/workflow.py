@@ -313,6 +313,14 @@ class ProveWorkflow:
                     model=self._config.faithfulness_model or request.model,
                     store=store,
                     phase=state.phase,
+                    # What is left of the run's active budget. The gate is the
+                    # one stage with no loop to re-check it, so the bound has
+                    # to travel with the call.
+                    wall_seconds=max(
+                        1.0,
+                        self._config.limits.active_seconds
+                        - (self._monotonic() - active_started - user_wait),
+                    ),
                     on_thread=track_reader,
                 )
                 # Graded before it is shown, not after. `review_translation`
