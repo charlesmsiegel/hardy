@@ -454,26 +454,76 @@ def load(
     )
 
 
-def write_setting(path: Path, key: str, value: str) -> None:
-    """Upsert one setting in a config file, leaving every other line alone.
-
-    Line-based rather than a parse-and-rewrite so the installer's comments and
-    any hand-written ordering survive; the file is often edited by a human.
-    """
-    if key not in SETTINGS:
-        raise ValueError(f"unknown setting {key!r}; known settings are {sorted(SETTINGS)}")
-    header = ["# Written by Hardy. Every value can be overridden by a", "# HARDY_* environment variable or a command-line flag."]
-    lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else list(header)
+def _upsert(lines: list[str], key: str, value: str) -> list[str]:
+    """`lines` with `key` set to `value`, replacing its line or appending one."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     rendered = f'{key} = "{escaped}"'
     pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
     for index, line in enumerate(lines):
         if pattern.match(line):
             lines[index] = rendered
-            break
-    else:
-        lines.append(rendered)
-    _rewrite(path, lines)
+            return lines
+    lines.append(rendered)
+    return lines
+
+
+def write_setting(path: Path, key: str, value: str) -> None:
+    """Upsert one setting in the user's own config file.
+
+    Line-based rather than a parse-and-rewrite so the installer's comments and
+    any hand-written ordering survive; the file is often edited by a human.
+
+    For the USER's file only -- `~/.hardy/config.toml`, or wherever `--config`
+    points. The project layer inside a checkout goes through
+    `write_project_setting`, which has a different threat model and a
+    different door.
+    """
+    if key not in SETTINGS:
+        raise ValueError(f"unknown setting {key!r}; known settings are {sorted(SETTINGS)}")
+    header = ["# Written by Hardy. Every value can be overridden by a", "# HARDY_* environment variable or a command-line flag."]
+    lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else list(header)
+    _rewrite(path, _upsert(lines, key, value))
+
+
+PROJECT_HEADER = (
+    "# Written by Hardy, and committed with this checkout. It says which",
+    "# problem is active here; nothing else may be set from this layer.",
+)
+
+
+def write_project_setting(root: Path, key: str, value: str) -> None:
+    """Upsert one setting in `<root>/.hardy/config.toml`, through the guard.
+
+    The same upsert as `write_setting` and a deliberately different door,
+    because the file is in a different place in the threat model: it arrives
+    with a clone, so every path around it -- the directory, the file, and the
+    temporary the write goes through -- is attacker-chosen.
+
+    `_rewrite`'s fixed `<name>.tmp` is exactly the hole `WriteGuard.write_bytes`
+    was written to close, and it is worse here than it was for the record: a
+    repository shipping `.hardy/config.toml.tmp` as a link to a file the user
+    can write gets Hardy's new bytes written straight THROUGH it, `chmod 0600`
+    applied to the victim, and then the `os.replace` renames the link over the
+    config -- so the target is destroyed and nothing is left to show it
+    happened. Reproduced before this was written, on a `victim` outside the
+    root: it came back holding this function's own output at mode 0600.
+
+    Reads go through the guard too. A symlinked `config.toml` read here and
+    rewritten would carry another file's lines into the checkout's config.
+    """
+    if key not in PROJECT_SETTINGS:
+        raise ValueError(
+            f"{key!r} may not be set from a project config; this layer may only set: "
+            f"{', '.join(sorted(PROJECT_SETTINGS))}"
+        )
+    guard = layout.WriteGuard(root / layout.HARDY_DIR, create=True)
+    name = "config.toml"
+    try:
+        with guard.open(name, encoding="utf-8-sig") as handle:
+            lines = handle.read().splitlines()
+    except FileNotFoundError:
+        lines = list(PROJECT_HEADER)
+    guard.write_bytes(name, ("\n".join(_upsert(lines, key, value)) + "\n").encode("utf-8"))
 
 
 def remove_setting(path: Path, key: str) -> None:

@@ -237,13 +237,18 @@ class ProjectOpener:
     exactly the workaround the layout work set out to replace.
 
     Holds the live CAS runtime because someone has to: `_chat` closes it when
-    the session ends, and after a switch the one to close is the new one.
+    the session ends, and after a switch the one to close is the new one. It
+    holds no configuration, deliberately: `/model` moves the live session by
+    replacing the terminal's `State.config` and touching nothing here, so a
+    copy kept from launch would be stale from the first `/model` onwards and
+    would silently reopen on the old model. The configuration to continue from
+    is an argument to every call instead -- there is no second copy to go out
+    of step.
     """
 
     def __init__(
         self,
         args: argparse.Namespace | None,
-        config: configuration.Config,
         cas: Any,
         *,
         search: Any,
@@ -252,30 +257,33 @@ class ProjectOpener:
         self._args = args
         self._search = search
         self._search_detail = search_detail
-        self.config = config
         self.cas = cas
 
-    def _configure(self, slug: str) -> configuration.Config:
+    def _configure(self, slug: str, current: configuration.Config) -> configuration.Config:
         """The same resolution `_config` does, for a slug already chosen.
 
         No `choose`: the user has just named the problem, so there is no
-        ambiguity left to ask about. The model is carried from the live
-        configuration rather than re-read, because `/model` may have moved the
-        session since launch and a reopen must not quietly move it back.
+        ambiguity left to ask about. `current` is the configuration the
+        session is actually running, and the model comes from it rather than
+        from the file: `/model` may have moved the session since launch, and
+        an explicit override here wins over the file even when the user also
+        saved it, so re-reading would quietly reopen on the wrong model.
         """
         args = self._args
         return configuration.load(
             getattr(args, "config", None),
-            root=getattr(args, "root", None) or self.config.root,
+            root=getattr(args, "root", None) or current.root,
             project=slug,
-            model=self.config.model,
+            model=current.model,
             lean_command=getattr(args, "lean_command", None),
             lean_project=getattr(args, "lean_project", None),
             latex_command=getattr(args, "latex_command", None),
         )
 
-    def __call__(self, slug: str, ui: Any) -> tuple[configuration.Config, Any]:
-        config = self._configure(slug)
+    def __call__(
+        self, slug: str, ui: Any, current: configuration.Config
+    ) -> tuple[configuration.Config, Any]:
+        config = self._configure(slug, current)
         prepare_layout(config)
         # A kernel per problem, logging into that problem's `cas/`. Sharing one
         # would put two problems' cells in one `cells.jsonl` and one export.
@@ -310,7 +318,7 @@ class ProjectOpener:
             raise
         if self.cas is not None:
             self.cas.session.close()
-        self.cas, self.config = cas, config
+        self.cas = cas
         self._remember(config)
         return config, session
 
@@ -322,13 +330,21 @@ class ProjectOpener:
         answer changes. Without it a switch is forgotten at exit and the next
         launch reopens the old problem, or asks again.
 
-        A failure here is reported and swallowed: an unwritable config file is
-        not a reason to undo a switch that has already happened.
+        Through `write_project_setting`, which writes it under a `WriteGuard`.
+        This file is inside the checkout and arrives with a clone, so the
+        directory, the file and the temporary the write goes through are all
+        attacker-chosen -- see that function for the hole a fixed `<name>.tmp`
+        leaves open.
+
+        A failure here is reported and swallowed: neither an unwritable config
+        file nor a refused one is a reason to undo a switch that has already
+        happened. The problem IS open; only the note saying so for next time
+        was lost.
         """
         destination = config.root / layout.HARDY_DIR / "config.toml"
         try:
-            configuration.write_setting(destination, "project", config.project)
-        except OSError as error:
+            configuration.write_project_setting(config.root, "project", config.project)
+        except (OSError, layout.LayoutError) as error:
             print(f"Could not record the active project in {destination}: {error}")
 
 
@@ -398,7 +414,7 @@ def _chat(
     # How `/project switch` opens another problem without ending the process.
     # It owns the live CAS runtime from here on, because a switch replaces it
     # and the `finally` below has to close whichever one is current.
-    opener = ProjectOpener(args, config, cas, search=search, search_detail=search_detail)
+    opener = ProjectOpener(args, cas, search=search, search_detail=search_detail)
 
     def build(confirm: Callable[[dict[str, str]], bool]) -> MathematicsSession:
         return MathematicsSession(

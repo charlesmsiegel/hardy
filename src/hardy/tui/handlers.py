@@ -385,7 +385,12 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
         # On a thread for `/doctor`'s reason: reopening starts a computer
         # algebra kernel and reads the record, and the input box must not
         # freeze while it does.
-        config, session = await asyncio.to_thread(state.reopen, slug, ui)
+        #
+        # `state.config` goes with it because the session's own configuration
+        # is the only current one: `/model` replaces it here and nowhere else,
+        # so anything the opener kept from launch would reopen on the model
+        # the user has already moved off.
+        config, session = await asyncio.to_thread(state.reopen, slug, ui, state.config)
     except Exception as error:  # noqa: BLE001 - a bad problem is not a lost session
         # Every refusal the layout, the record and the filesystem can raise
         # arrives here, and none of them is a reason to end the session the
