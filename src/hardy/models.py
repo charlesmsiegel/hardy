@@ -87,6 +87,13 @@ class RunResult:
     # is what a run cancelled by the wall clock looks like. Not an int with a
     # zero default: 0 claims a run that took no turns.
     turns: int | None
+    # What the run cost and how many tokens it moved, shaped by
+    # `usage.Usage.summary()`: a figure the provider never stated is `None`
+    # rather than 0, and `reported` says how many exchanges each figure covers.
+    # Required rather than defaulted, because a spend field a caller can quietly
+    # omit is a spend field that reads as free -- the one thing the ledger
+    # exists to stop a record saying.
+    usage: dict[str, Any]
     warnings: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:

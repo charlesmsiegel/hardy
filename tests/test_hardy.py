@@ -631,3 +631,99 @@ def test_the_project_prompt_takes_a_number_a_name_or_neither(capsys):
     assert cli.choose_project(present, ask=lambda _: "burnside") is None
     # Both problems were named, so a user who declines still learned they exist.
     assert "galois" in capsys.readouterr().out
+
+
+class ReportingRuntime(FakeRuntime):
+    """A runtime that ends its exchange the way the SDK does: with a bill.
+
+    `ClaudeAgentRuntime._note` observes exactly this event when a
+    `ResultMessage` arrives, so what the runner does with it here is what it
+    does against a real subscription.
+    """
+
+    REPORT = {
+        "type": "result",
+        "session_id": "session-1",
+        "turns": 3,
+        "cost_usd": 0.4231,
+        "usage": {
+            "input_tokens": 120,
+            "output_tokens": 340,
+            "cache_creation_input_tokens": 10,
+            "cache_read_input_tokens": 9_000,
+        },
+        "is_error": False,
+    }
+
+    turns = 3
+
+    def ask(self, text: str) -> str:
+        spoken = super().ask(text)
+        self.context["observe"](dict(self.REPORT))
+        return spoken
+
+
+def test_the_run_record_states_what_the_run_cost(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    """The bill reaches the two files a run is compared by, not just the events.
+
+    It was recorded only inside `trajectory.json`'s event stream, which meant
+    that comparing two strategies "at equal budgets" -- the standard DESIGN.md
+    sets for evaluation -- needed a grep over the raw SDK reports.
+    """
+    result = run(proof_request, lambda model=None, **c: ReportingRuntime([
+        call("submit_proof", {"proof": "by exact True.intro"}),
+    ], **c), lean, tmp_path)
+    assert result.terminal_reason == "verified"
+
+    for spent in (json.loads((tmp_path / "result.json").read_text())["usage"],
+                  json.loads((tmp_path / "trajectory.json").read_text())["usage"]):
+        assert spent["cost_usd"] == pytest.approx(0.4231)
+        assert spent["input_tokens"] == 120
+        assert spent["output_tokens"] == 340
+        assert spent["cache_write_tokens"] == 10
+        assert spent["cache_read_tokens"] == 9_000
+        # Cache reads were billed and did occupy the window, so the headline
+        # a reader compares runs by has to include them.
+        assert spent["total_tokens"] == 9_470
+        assert spent["exchanges"] == 1
+
+
+def test_the_recorded_spend_is_the_providers_and_not_hardys_turn_count(
+    tmp_path: Path, proof_request: Request, lean: LeanTools
+):
+    """`turns` and `exchanges` count different things and must keep saying so.
+
+    `RunResult.turns` is the provider's `num_turns` -- its internal loop. The
+    ledger's `exchanges` is what Hardy sent. Collapsing them would let one
+    number label two measurements.
+    """
+    result = run(proof_request, lambda model=None, **c: ReportingRuntime([], **c), lean, tmp_path)
+    assert result.turns == 3
+    assert result.usage["exchanges"] == 1
+
+
+def test_a_run_nobody_billed_reads_as_unreported_rather_than_free(
+    tmp_path: Path, proof_request: Request, lean: LeanTools
+):
+    """A backend that says nothing about cost is not a backend that cost nothing.
+
+    A run the wall clock cuts short never receives the SDK's final result, so
+    no report ever arrives -- and a record saying `"cost_usd": 0` would tell a
+    reader the one thing that is certainly false about it.
+    """
+
+    class Stalling(FakeRuntime):
+        turns = None
+
+        def ask(self, text: str) -> str:
+            raise TimeoutError("the run exceeded its 1s wall-clock budget")
+
+    result = run(proof_request, lambda model=None, **c: Stalling([], **c), lean, tmp_path, wall_seconds=1)
+    assert result.terminal_reason == "wall_clock_limit"
+    spent = json.loads((tmp_path / "result.json").read_text())["usage"]
+    assert spent["cost_usd"] is None
+    assert spent["total_tokens"] is None
+    # The exchange was sent, and may well have been billed before it was cut
+    # off; only the report is missing.
+    assert spent["exchanges"] == 1
+    assert not any(spent["reported"].values())

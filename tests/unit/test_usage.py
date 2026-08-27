@@ -316,3 +316,43 @@ def test_a_corrupted_ledger_is_refused_rather_than_crashing_the_session():
     # together.
     assert Usage.from_dict({"turns": 2, "cost_usd": "free"}) is None
     assert Usage.from_dict({"turns": 2, "cost_usd": -1.0}) is None
+
+
+# -- the run record -------------------------------------------------------
+
+
+def test_a_summary_states_every_figure_the_provider_reported():
+    stated = Usage().record(REPORT).summary()
+    assert stated["exchanges"] == 1
+    assert stated["cost_usd"] == 0.5
+    assert stated["input_tokens"] == 10
+    assert stated["output_tokens"] == 20
+    assert stated["cache_write_tokens"] == 5
+    assert stated["cache_read_tokens"] == 100
+    assert stated["total_tokens"] == 135
+    assert stated["reported"] == dict.fromkeys(("cost_usd", *Usage.COUNTERS), 1)
+
+
+def test_a_summary_leaves_an_unreported_figure_null_rather_than_zero():
+    """The same rule the chrome keeps, kept in the file someone compares runs by.
+
+    A `0` here is worse than one on screen: `/status` can spell out
+    "not reported by this backend" beside it, and a JSON reader will only ever
+    see the number.
+    """
+    partial = Usage().record({"type": "result", "usage": {"input_tokens": 10}})
+    stated = partial.summary()
+    assert stated["input_tokens"] == 10
+    assert stated["output_tokens"] is None
+    assert stated["cost_usd"] is None
+    assert stated["reported"] == {"cost_usd": 0, "input_tokens": 1, "output_tokens": 0,
+                                  "cache_write_tokens": 0, "cache_read_tokens": 0}
+
+
+def test_a_summary_of_an_exchange_nobody_reported_on_is_not_a_summary_of_zero():
+    """A run the wall clock cut short gets no report, and was still billed."""
+    stated = Usage().record({}).summary()
+    assert stated["exchanges"] == 1
+    assert stated["cost_usd"] is None
+    assert stated["total_tokens"] is None
+    assert not any(stated["reported"].values())

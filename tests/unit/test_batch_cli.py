@@ -48,7 +48,8 @@ def test_batch_still_runs_a_named_theorem(tmp_path, monkeypatch, capsys) -> None
     def fake_run(request, *_args, **_kwargs):
         reached.append(request.declaration)
         return models.RunResult(
-            'verified', 'kernel verified', 'not assessed', 'by trivial', '', {'status': 'clean'}, 1
+            'verified', 'kernel verified', 'not assessed', 'by trivial', '', {'status': 'clean'}, 1,
+            importlib.import_module('hardy.usage').Usage().summary(),
         )
 
     monkeypatch.setattr(cli, 'run', fake_run)

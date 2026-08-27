@@ -14,6 +14,7 @@ from .claude_runtime import TurnLimitReached
 from .lean import LeanToolResult, LeanTools
 from .models import Request, RunResult, ToolResult
 from .prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
+from .usage import Usage
 
 WARNING = "Generated Lean is not sandboxed. Run Hardy only with trusted output in a disposable development environment."
 
@@ -78,6 +79,19 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     # what counts, not a flag set after the fact.
     closed = threading.Event()
     deadline: dict[str, float] = {}
+    # What the provider says the exchange cost, folded by the same ledger the
+    # interactive session uses -- so a batch record and a `/status` line cannot
+    # come to disagree about what "unreported" means, or about whether a cache
+    # read is a token that was spent. Held in a dict because `observe` is called
+    # from the SDK's own thread: `Usage` is frozen, so rebinding the entry
+    # publishes a whole new total rather than mutating a shared counter.
+    spend: dict[str, Usage] = {"total": Usage()}
+
+    def observe(event: dict[str, Any]) -> None:
+        """Keep the event, and bill the run for it if it carries a report."""
+        events.append(event)
+        if event.get("type") == "result":
+            spend["total"] = spend["total"].record(event)
 
     def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
         """Hardy runs every proof check, whoever decided to ask for one."""
@@ -128,7 +142,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     start = time.monotonic()
     deadline["at"] = start + wall_seconds
     reason = "completed"
-    runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=events.append,
+    runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=observe,
                            max_turns=max_turns, wall_seconds=wall_seconds)
     try:
         runtime.ask(task)
@@ -165,6 +179,13 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     # had already made.
     turns = getattr(runtime, "turns", None)
 
+    # Hardy sent one exchange. A provider that never reported on it -- which is
+    # what a run the wall clock cut short looks like, since the report rides on
+    # the SDK's final result -- did not thereby make it free. So the exchange is
+    # counted with nothing stated about it, rather than left out of the ledger
+    # and rendered as a run that spent nothing.
+    spent = spend["total"] if spend["total"].turns else Usage().record({})
+
     # What the audit decided: the verdict that verified the run, or failing that
     # the record of what refused it -- which distinguishes an audit that ran and
     # found something from one that could not be established. "not audited" is
@@ -173,7 +194,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     formal = "kernel verified" if final else "not formalized"
     informal = "not assessed"
     axioms = verdict.as_dict() if final and verdict is not None else refused["record"] or {"status": "not audited"}
-    result = RunResult(reason, formal, informal, proof if final else None, final.output if final else "No hole-free proof was accepted.", axioms, turns, [WARNING])
+    result = RunResult(reason, formal, informal, proof if final else None, final.output if final else "No hole-free proof was accepted.", axioms, turns, spent.summary(), [WARNING])
     if final and proof:
         (output_dir / "proof.lean").write_text(lean.source(proof, audit=True), encoding="utf-8")
     # The grade and what it rests on, together. "kernel verified" beside a
@@ -187,6 +208,6 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     if not final:
         writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
-    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds, "turns_enforced_by": "provider sdk", "wall_clock_enforced_by": "hardy", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "events": events, "terminal_reason": reason})
+    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds, "turns_enforced_by": "provider sdk", "wall_clock_enforced_by": "hardy", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "usage": spent.summary(), "events": events, "terminal_reason": reason})
     _write_json(output_dir / "result.json", result.as_dict())
     return result
