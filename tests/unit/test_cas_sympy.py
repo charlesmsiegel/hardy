@@ -32,7 +32,17 @@ def sympy_session(tmp_path):
 
 
 def test_the_version_probe_doubles_as_a_smoke_test(sympy_session) -> None:
-    assert sympy_session.probe_version()[0].isdigit()
+    """And names the interpreter as well as the library.
+
+    The state digest is derived from `repr` output and the exported script is
+    executed by a Python, so a different one can change a representation, an
+    ordering or a semantic. A record carrying only the SymPy version could not
+    say which runtime produced the verdict.
+    """
+    version = sympy_session.probe_version()
+    assert version.startswith("sympy ")
+    assert " on " in version, version
+    assert any(character.isdigit() for character in version.split(" on ")[1]), version
 
 
 def test_probing_leaves_no_state_a_fresh_kernel_would_not_have(sympy_session) -> None:

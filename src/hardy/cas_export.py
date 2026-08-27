@@ -43,6 +43,7 @@ from .cas import (
     replay_in_fresh_kernel,
     reproduces,
     run_exported_script,
+    same_output,
     unobservable,
 )
 from .domain import FrozenModel
@@ -112,11 +113,21 @@ def _verdicts(
                 )
             )
         elif not reproduces(record, outcome):
+            # Which comparison failed, not just that one did. A silent
+            # `x = random.random()` reproduces every printed field and fails
+            # only on the digest, and reporting that as "different output"
+            # told `export.json` and the notebook the opposite of what
+            # happened -- hiding exactly the state discrepancy the digest was
+            # added to expose.
             verdicts.append(
                 CellVerdict(
                     seq=record.seq,
                     verdict="diverged",
-                    detail="replay produced different output",
+                    detail=(
+                        "replay produced different output"
+                        if not same_output(record, outcome)
+                        else "replay reproduced the output and rebuilt a different namespace"
+                    ),
                 )
             )
         elif record.capture_truncated or outcome.capture_truncated:

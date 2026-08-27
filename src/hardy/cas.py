@@ -226,15 +226,26 @@ def reproduces(record: CellRecord, outcome: CellOutcome) -> bool:
     compare -- `unobservable` is what says so, rather than this quietly
     passing.
     """
-    if not (
-        normalise(outcome.stdout) == normalise(record.stdout)
-        and normalise(outcome.stderr) == normalise(record.stderr)
-        and normalise(outcome.value_repr) == normalise(record.value_repr)
-    ):
+    if not same_output(record, outcome):
         return False
     if record.state_digest:
         return outcome.state_digest == record.state_digest
     return True
+
+
+def same_output(record: CellRecord, outcome: CellOutcome) -> bool:
+    """The half of `reproduces` a reader can see for themselves.
+
+    Separate so a divergence can say *which* comparison failed. A silent
+    `x = random.random()` reproduces every printed field and fails only on the
+    digest, and calling that "different output" told the manifest and the
+    notebook the opposite of what happened.
+    """
+    return (
+        normalise(outcome.stdout) == normalise(record.stdout)
+        and normalise(outcome.stderr) == normalise(record.stderr)
+        and normalise(outcome.value_repr) == normalise(record.value_repr)
+    )
 
 
 def unobservable(record: CellRecord) -> bool:
@@ -283,7 +294,17 @@ class SympyBackend:
     # to make a trailing expression visible in the script. It goes after the
     # star import so nothing sympy exports can shadow the module.
     preamble = "from sympy import *\nimport sys"
-    version_source = '__import__("sympy").__version__'
+    # Both halves, because both bear on a result. The digest is derived from
+    # `repr` output and the exported script is executed by an interpreter, so
+    # a different Python can change a representation, an ordering, or a
+    # semantic without anything in the record saying which one produced the
+    # verdict. `AGENTS.md` asks for the toolchain to be recorded when it can
+    # affect results, and the interpreter is as much of it as the library.
+    version_source = (
+        '"sympy " + __import__("sympy").__version__ + " on " '
+        '+ __import__("platform").python_implementation() + " " '
+        '+ __import__("platform").python_version()'
+    )
     # Not used for framing -- the driver protocol is length-prefixed and needs
     # no marker in the language. It is how `cas_export` asks a backend to print
     # the brackets around a script's own transcript, which every backend must
@@ -1919,7 +1940,17 @@ class CasSession:
         # cells named rather than as a rebuild that was verified.
         return RebuildReport(
             replayed=len(pending),
-            unverified=tuple(record.seq for record in pending if unobservable(record)),
+            # A truncated capture belongs here for the same reason a missing
+            # digest does: the retained prefixes matched and the discarded
+            # tails were never compared, so a cell printing a deterministic
+            # prefix over a random tail replays "cleanly" without anything
+            # having checked the part that differs. Export already refuses to
+            # call such a cell verified; a rebuild says the same now.
+            unverified=tuple(
+                record.seq
+                for record in pending
+                if unobservable(record) or record.capture_truncated
+            ),
         )
 
     def reset(self, *, author: str = "model") -> None:
