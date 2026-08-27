@@ -19,8 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from hardy import cli, layout
+from hardy import cli, layout, search_tools
 from hardy import config as configuration
+from hardy.retrieval import build_retriever
 
 
 class FakeKernel:
@@ -75,7 +76,12 @@ def opener(monkeypatch, args, live):
     monkeypatch.setattr(cli.cas_tools, "build_runtime", fake_build_runtime)
     monkeypatch.setattr(cli, "MathematicsSession", lambda *a, **k: object())
     made = cli.ProjectOpener(
-        args, FakeCas(live.layout.cas), search=object(), search_detail="Mathlib abc"
+        args,
+        FakeCas(live.layout.cas),
+        search=search_tools.SearchToolRuntime(
+            object(), build_retriever(object(), live.limits), object()
+        ),
+        search_detail="Mathlib abc",
     )
     made.built = built
     return made
@@ -106,12 +112,38 @@ def test_the_old_kernel_is_closed_and_the_new_one_runs_in_the_new_problem(opener
     assert opener.built == [config.layout.cas]
 
 
-def test_the_search_runtime_is_carried_across_rather_than_rebuilt(opener, live, monkeypatch):
+def test_the_pinned_environment_is_carried_across_rather_than_rebuilt(opener, live, monkeypatch):
     """The expensive half of a launch. Rebuilding it would make a switch an exit."""
     monkeypatch.setattr(
         cli.search_tools, "build_runtime", lambda config: pytest.fail("search was rebuilt")
     )
     opener("burnside", None, live)
+
+
+def test_each_problem_gets_its_own_retrieval_budget(opener, live, monkeypatch):
+    """`PremiseRetriever._spent` accumulates for the retriever's whole life.
+
+    Carried over, a problem opened after one that had spent its allowance
+    ranked against a budget consumed by calls that appear nowhere in its own
+    record -- which is the reproducible provenance `rank_premises` claims.
+    """
+    handed = {}
+    monkeypatch.setattr(
+        cli, "MathematicsSession", lambda *a, **k: handed.update(k) or object()
+    )
+    before = opener._search
+    before.retriever._spent = float(live.limits.retrieval_seconds)
+    assert before.retriever.seconds_remaining == 0.0
+
+    opener("burnside", None, live)
+
+    assert handed["search"] is not before
+    assert handed["search"].retriever is not before.retriever
+    assert handed["search"].retriever.seconds_remaining == live.limits.retrieval_seconds
+    # The costly parts are the same objects, which is the point of renewing
+    # rather than rebuilding.
+    assert handed["search"].service is before.service
+    assert handed["search"].modules is before.modules
 
 
 def test_the_switch_is_remembered_so_the_next_launch_opens_it(opener, live, root):
@@ -215,3 +247,41 @@ def test_a_refused_record_of_the_switch_does_not_undo_the_switch(opener, live, r
     assert config.project == "burnside"
     assert session is not None
     assert "config.toml" in capsys.readouterr().out
+
+
+def test_a_multiline_value_is_replaced_whole_and_not_by_its_first_line(opener, live, root):
+    """TOML is not line-oriented, and this file arrives hand-editable.
+
+    `project = \"\"\"` with the slug on the next line is one valid assignment
+    that `read_file` resolves to an ordinary slug. Editing the line it starts
+    on leaves the continuation behind, which `tomllib` refuses -- so the first
+    switch would brick every launch after it.
+    """
+    hardy = root / layout.HARDY_DIR
+    hardy.mkdir(parents=True, exist_ok=True)
+    (hardy / "config.toml").write_text('project = """\nsylow"""\n', encoding="utf-8")
+    assert configuration.read_file(hardy / "config.toml") == {"project": "sylow"}
+
+    opener("burnside", None, live)
+
+    assert configuration.read_file(hardy / "config.toml") == {"project": "burnside"}
+
+
+def test_a_key_this_layer_may_not_set_is_kept_rather_than_deleted(opener, live, root):
+    """`load` reports it and ignores it; passing by is not a licence to drop it."""
+    hardy = root / layout.HARDY_DIR
+    hardy.mkdir(parents=True, exist_ok=True)
+    (hardy / "config.toml").write_text(
+        'project = "sylow"\nmodel = "someone-elses-choice"\n', encoding="utf-8"
+    )
+
+    opener("burnside", None, live)
+
+    written = configuration.read_file(hardy / "config.toml")
+    assert written["project"] == "burnside"
+    assert written["model"] == "someone-elses-choice"
+
+
+def test_only_a_setting_this_layer_may_hold_can_be_written(root):
+    with pytest.raises(ValueError, match="may only set"):
+        configuration.write_project_setting(root, "model", "claude-opus-5")

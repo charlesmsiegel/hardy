@@ -285,6 +285,16 @@ class ProjectOpener:
     ) -> tuple[configuration.Config, Any]:
         config = self._configure(slug, current)
         prepare_layout(config)
+        # The pinned environment and the module index carry over -- they are
+        # the root's and they are what a launch pays for. The retrieval budget
+        # does not: it accumulates for a retriever's whole life, so the second
+        # problem would open with whatever the first had left, and rank against
+        # a spend that appears nowhere in its own record.
+        search = (
+            search_tools.renew(self._search, config.limits)
+            if self._search is not None
+            else None
+        )
         # A kernel per problem, logging into that problem's `cas/`. Sharing one
         # would put two problems' cells in one `cells.jsonl` and one export.
         cas, cas_detail = cas_tools.build_runtime(
@@ -305,7 +315,7 @@ class ProjectOpener:
                 lean_timeout=config.lean_timeout,
                 cas=cas,
                 cas_detail=cas_detail,
-                search=self._search,
+                search=search,
                 search_detail=self._search_detail,
             )
         except BaseException:

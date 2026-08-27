@@ -292,3 +292,28 @@ async def test_the_switch_carries_the_configuration_the_session_is_running(ui, r
     after = await handlers.handle_project(ui, "switch burnside", state)
     assert state.reopen.carried == [running]
     assert after.config.model == "claude-haiku-4-5-20251001"
+
+
+async def test_a_failed_registration_still_hands_back_the_problem_it_opened(ui, root, monkeypatch):
+    """By then the problem is open and the old kernel is closed.
+
+    An exception escaping the offer left the terminal running against a
+    session whose computer algebra kernel is shut, and ended the plain session
+    outright -- it has no catch around a command at all.
+    """
+    from hardy import lakefile
+
+    (root / "lakefile.toml").write_text('name = "host"\n', encoding="utf-8")
+    monkeypatch.setattr(
+        lakefile, "append_stanza", lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space"))
+    )
+    ui.confirmations = [True]
+    _record(root, "sylow")
+    state = State(config=_settings(root, "sylow"), session=object(), reopen=Reopener(root))
+
+    after = await handlers.handle_project(ui, "new burnside", state)
+
+    assert after is not state
+    assert after.config.project == "burnside"
+    assert after.session is not state.session
+    assert "No space" in ui.text

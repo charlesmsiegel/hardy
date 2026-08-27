@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Config
+from .domain import RunLimits
 from .lean import LeanService, environment_identity
 from .models import ToolResult
 from .modules import ModuleIndex
@@ -301,4 +302,28 @@ def build_runtime(config: Config) -> tuple[SearchToolRuntime | None, str]:
             ModuleIndex(config.lean_project),
         ),
         f"Mathlib {environment.mathlib_revision[:12]} in {config.lean_project}",
+    )
+
+
+def renew(runtime: SearchToolRuntime, limits: RunLimits) -> SearchToolRuntime:
+    """The same pinned environment, with a retrieval budget that starts again.
+
+    For opening a second problem in one process. `build_runtime` is the
+    expensive half of a launch -- it reads and hashes the Lake manifest and
+    builds the module index -- and none of that describes a problem, so it is
+    carried over. `PremiseRetriever._spent` is the opposite: it accumulates
+    for the retriever's whole life, deliberately, because a budget reset per
+    call would be no budget at all.
+
+    Carrying the retriever too gave the second problem whatever the first had
+    left, or nothing. A budget is frozen per run and every ranking records
+    what it spent against it, so a problem whose allowance had already been
+    spent elsewhere produced rankings shaped by calls that appear nowhere in
+    its own record -- the reproducible-provenance claim `rank_premises` makes
+    is exactly what that breaks. `LeanService` and `ModuleIndex` hold no such
+    counter (config and a runner, and a read-only index), so they are shared
+    without the same hazard.
+    """
+    return SearchToolRuntime(
+        runtime.service, build_retriever(runtime.service, limits), runtime.modules
     )

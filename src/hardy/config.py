@@ -510,6 +510,24 @@ def write_project_setting(root: Path, key: str, value: str) -> None:
 
     Reads go through the guard too. A symlinked `config.toml` read here and
     rewritten would carry another file's lines into the checkout's config.
+
+    Parsed and re-serialized rather than line-edited, for `migrate_global`'s
+    reason and in the same place it applies: TOML's grammar is not
+    line-oriented, so a triple-quoted `project` with the value and the closing
+    delimiter on following lines is one valid assignment that `read_file`
+    resolves to an ordinary slug. Replacing the line it starts on leaves the
+    continuation behind -- `project = "burnside"` followed by an orphaned
+    `sylow` and a stray delimiter -- which is a file `tomllib` refuses, so the
+    first switch in such a checkout would brick every launch after it.
+    Reproduced before this was written; only a real parse can tell where a
+    value ends.
+
+    Every key the file held is written back, not only the ones this layer may
+    set: `load` reports an unpermitted key and ignores it, and quietly
+    deleting it on the way past would be a different thing entirely. Comments
+    and ordering are what a parse costs, and this file is Hardy's own two-line
+    header plus one setting -- unlike the user's config, which `write_setting`
+    keeps line-based precisely because a human arranges it.
     """
     if key not in PROJECT_SETTINGS:
         raise ValueError(
@@ -520,10 +538,12 @@ def write_project_setting(root: Path, key: str, value: str) -> None:
     name = "config.toml"
     try:
         with guard.open(name, encoding="utf-8-sig") as handle:
-            lines = handle.read().splitlines()
+            values = tomllib.loads(handle.read())
     except FileNotFoundError:
-        lines = list(PROJECT_HEADER)
-    guard.write_bytes(name, ("\n".join(_upsert(lines, key, value)) + "\n").encode("utf-8"))
+        values = {}
+    values[key] = value
+    lines = [*PROJECT_HEADER, *(_render_toml_line(k, v) for k, v in values.items())]
+    guard.write_bytes(name, ("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def remove_setting(path: Path, key: str) -> None:
