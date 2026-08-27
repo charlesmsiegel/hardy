@@ -2588,7 +2588,13 @@ class MathematicsSession:
         self.state.setdefault("reports", []).append(entry)
         self._save_state()
         self._record({"type": "report", **entry})
-        elsewhere = [item for item in owed if item not in blocking]
+        # The claimed theorems' own holes are the report's grade, not something
+        # outstanding somewhere else, and the message names them already.
+        elsewhere = [
+            item
+            for item in owed
+            if item not in blocking and not (item.kind == "open" and item.subject in resolved)
+        ]
         return ToolResult(
             True,
             f"Reported {entry['theorems']} as {entry['status']}. Each is saved Lean whose "
@@ -2727,9 +2733,11 @@ class MathematicsSession:
             "assumptions": sorted(str(item["formal_name"]) for item in self.state["assumptions"]),
             # A theorem that was closed when the PDF was compiled and has since
             # been reopened is the overstating direction: the banner goes on
-            # calling it machine-checked. The other way round -- a hole closed
-            # after the compile -- understates, and the ratchet already forces
-            # the writeup to carry it before anything is reportable.
+            # calling it machine-checked. The signature cannot tell the two
+            # directions apart, so closing a hole stales the writeup too -- and
+            # costs nothing, because a theorem that has just closed owes the
+            # document a label and its statement anyway, so it was going to be
+            # recompiled regardless.
             "open": sorted(self._open_theorems()),
         }
 
