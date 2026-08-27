@@ -469,3 +469,102 @@ def test_output_a_helper_writes_after_its_cell_is_not_silently_dropped(
     assert noticed.capture_truncated is True, (
         "the helper's late output was discarded and nothing admitted it"
     )
+
+
+# ------------------------------------------ the second review, in its turn too
+
+
+def test_a_default_repr_is_refused_rather_than_normalised(sympy_session) -> None:
+    """`<Box object at 0x…>` says the type and the address and nothing else.
+
+    Normalising the address away made two instances holding different values
+    agree, so a rebuild that reconstructed the wrong one was reported faithful
+    — the failure the digest exists to catch, reintroduced by the tolerance
+    that keeps it from firing on every lambda.
+    """
+
+    class Box:
+        pass
+
+    first, second = Box(), Box()
+    first.payload, second.payload = 1, 2
+    assert state_digest({"box": first}, {}, 4096) == ""
+    assert state_digest({"box": second}, {}, 4096) == ""
+
+    # And end to end: the cell is silent, so nothing but the digest could have
+    # caught it, and the session must not claim it did.
+    sympy_session.execute("import random")
+    sympy_session.execute("class Box: pass")
+    quiet = sympy_session.execute("box = Box(); box.payload = random.random()")
+    assert (quiet.stdout, quiet.value_repr, quiet.state_digest) == ("", "", "")
+    sympy_session._drop_kernel()
+    assert "not verified" in sympy_session.execute("1 + 1").restart_note
+
+
+def test_a_user_bound_dunder_is_state_like_any_other(sympy_session) -> None:
+    """Skipping every `__`-prefixed name skipped the user's as well as the
+    interpreter's, so a silent `__cache = random.random()` was invisible to
+    every digest and its rebuild reported an ordinary success."""
+    sympy_session.execute("import random")
+    quiet = sympy_session.execute("__cache = random.random()")
+    assert (quiet.stdout, quiet.value_repr) == ("", "")
+    assert quiet.state_digest, "a user's dunder is state"
+
+    sympy_session._drop_kernel()
+    with pytest.raises(CasError, match="did not reproduce"):
+        sympy_session.execute("1 + 1")
+
+
+def test_a_deeply_nested_large_member_is_still_bounded() -> None:
+    """A depth cutoff that returned zero read "too deep to measure" as "small",
+    so seven nested singleton lists around a huge string took the plain `repr`
+    path and allocated the whole thing. Past the cutoff the answer is now "too
+    large", which is the only safe direction for a bound."""
+    value: object = "x" * 10**7
+    for _ in range(30):
+        value = [value]
+    rendered, truncated = bounded_repr(value, 4096)
+    assert truncated is True
+    assert len(rendered) < 4096 * 2
+
+
+def test_undecodable_bytes_stay_distinct(sympy_session) -> None:
+    """`errors="replace"` collapses every invalid byte to the same U+FFFD, so
+    a cell writing `b"\\xff"` and a replay writing `b"\\xfe"` compared equal and
+    the export reported verification of output that had changed."""
+    first = sympy_session.execute(r"import os; os.write(1, b'\xff')")
+    second = sympy_session.execute(r"import os; os.write(1, b'\xfe')")
+    assert first.stdout != second.stdout
+    assert first.stdout and second.stdout
+
+
+def test_a_cell_that_breaks_import_does_not_break_the_closing_marker(
+    sympy_session, tmp_path
+) -> None:
+    """Every marker that resolves a global *after* the cells is one more name
+    to shadow: `print`, then `__import__`, then whatever came next. The closing
+    marker resolves nothing at the end — `atexit` captures the bound `print`
+    before cell one and the interpreter emits it at shutdown."""
+    sympy_session.execute("2 + 2")
+    sympy_session.execute("__import__ = None")
+    sympy_session.execute("print = lambda *_: None")
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+
+
+def test_a_script_that_prints_after_its_marker_is_not_verified(
+    sympy_session, tmp_path
+) -> None:
+    """A child the last cell spawned keeps the inherited descriptor open, so it
+    can write after the file has finished. Slicing to the markers put those
+    bytes outside the comparison, where the export still called itself
+    verified — and with no later live cell, nothing else would have noticed."""
+    sympy_session.execute(
+        'if __name__ == "__main__":\n'
+        "    import subprocess, sys\n"
+        "    subprocess.Popen([sys.executable, '-c', "
+        "\"import time; time.sleep(0.5); print('after the marker')\"])\n"
+    )
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "diverged", report.model_dump_json(indent=2)
+    assert report.reproduces is False

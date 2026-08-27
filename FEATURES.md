@@ -433,11 +433,14 @@ Priority labels are sequencing hints:
   divergence. Running without error is not the same as recovering, and neither
   is printing the same thing: a cell that binds a fresh random value, or an
   accepted cell whose recorded state includes what a failed cell left behind,
-  reproduces empty output either way. A missing digest -- Singular and
-  Macaulay2 have no protocol to carry one, an older log has none, and the
-  default kernel refuses to fingerprint a namespace it could only see a prefix
-  of -- makes the rebuild unverified whatever the cell printed, and the session
-  says so rather than reporting a rebuild as if it had been checked. A replay Hardy signalled is
+  reproduces empty output either way. A missing digest makes the rebuild
+  unverified whatever the cell printed, and the session says so rather than
+  reporting a rebuild as if it had been checked. Digests go missing readily and
+  on purpose: Singular and Macaulay2 have no protocol to carry one, an older
+  log has none, and the default kernel refuses to fingerprint a namespace it
+  could only see a prefix of -- or one holding a value whose repr is CPython's
+  default `<Box object at 0x...>`, which says the type and the address and
+  nothing about what the object holds. A replay Hardy signalled is
   refused whatever it answered -- an `ok` most of all, since a cell that caught
   the stop can skip a mutation and still print what it printed before -- and
   the session is left retryable rather than poisoned, because a press says
@@ -480,7 +483,9 @@ Priority labels are sequencing hints:
   anything that would have fitted is `repr`'d exactly as before. Output a
   helper writes after its own cell has ended belongs to a record already on
   disk, so it is discarded rather than pinned on the next cell -- and the next
-  cell's `capture_truncated` says that it was.
+  cell's `capture_truncated` says that it was. On an export, where there is no
+  later cell to say it, output behind the script's own closing marker makes the
+  verdict `diverged` rather than falling outside the comparison.
 - **Now (implemented):** a capture that hit `cas_output_bytes` is never called
   verified — a sentinel backend's cell is not accepted at all, since its error
   banner may be in the discarded tail. The overflow is counted once *both*

@@ -150,6 +150,22 @@ TRANSCRIPT_BEGIN = "«hardy-transcript-begin»"
 TRANSCRIPT_END = "«hardy-transcript-end»"
 
 
+def _after_end_marker(text: str) -> str:
+    """Whatever the script printed behind its own closing marker.
+
+    Not nothing, necessarily, and not safely ignorable. A child the last cell
+    spawned keeps the inherited descriptor open, so it can write after the
+    file has finished and after the marker has gone out -- and slicing to the
+    markers put those bytes outside the comparison, where an export could
+    still call itself verified over output the session never saw. There is no
+    later live cell to pin it on either, so nothing else would have noticed.
+    """
+    end = text.rfind(TRANSCRIPT_END)
+    if end == -1:
+        return ""
+    return text[end + len(TRANSCRIPT_END) :]
+
+
 def _between_markers(text: str) -> str | None:
     """The script's own transcript, cut out of whatever surrounded it.
 
@@ -197,6 +213,14 @@ def _expected_transcript(cells: tuple[CellRecord, ...]) -> tuple[str, str]:
             out.append(record.value_repr + "\n")
         err.append(record.stderr)
     return "".join(out), "".join(err)
+
+
+def _markers(statements: tuple[str, ...]) -> list[str]:
+    """Fill a backend's transcript-bracket templates with the actual markers."""
+    return [
+        statement.format(begin=TRANSCRIPT_BEGIN, end=TRANSCRIPT_END)
+        for statement in statements
+    ]
 
 
 def _without_chrome(backend: Any, text: str) -> str:
@@ -373,6 +397,12 @@ def _verify_script(
             "the script did not print the markers Hardy wrote around its own "
             f"transcript; it printed {_excerpt(run.stdout.strip())}"
         )
+    trailing = _content_lines(_without_chrome(session.backend, _after_end_marker(stdout)))
+    if trailing:
+        return "diverged", (
+            "the script printed after its own closing marker, which the session "
+            f"never recorded: {_excerpt(trailing)}"
+        )
     for stream, actual, expected in (
         ("output", transcript, expected_out),
         ("stderr", _without_chrome(session.backend, run.stderr), expected_err),
@@ -446,11 +476,11 @@ def render_script(
     # that printed anything printed it in the session's kernel too and the
     # session never recorded it.
     lines += [
-        f"{mark} The line below, and its partner at the end of this file, bracket",
-        f"{mark} what this file prints -- so Hardy can compare that against the",
-        f"{mark} session without mistaking an interpreter's startup banner for",
+        f"{mark} The statement(s) below, and any partner at the end of this file,",
+        f"{mark} bracket what this file prints -- so Hardy can compare that against",
+        f"{mark} the session without mistaking an interpreter's startup banner for",
         f"{mark} something a cell printed. See `script_verdict` in export.json.",
-        backend.transcript_echo.format(marker=TRANSCRIPT_BEGIN),
+        *_markers(backend.transcript_prologue),
         "",
     ]
     for record, verdict in zip(cells, verdicts, strict=True):
@@ -462,7 +492,9 @@ def render_script(
         lines.append(f"{mark} --- cell {record.seq} ({record.author}){note}")
         lines.append(backend.render_cell(record.source).rstrip())
         lines.append("")
-    lines += [backend.transcript_echo.format(marker=TRANSCRIPT_END), ""]
+    epilogue = _markers(backend.transcript_epilogue)
+    if epilogue:
+        lines += [*epilogue, ""]
     return "\n".join(lines) + "\n"
 
 
