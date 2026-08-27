@@ -697,11 +697,16 @@ class MathematicsSession:
         """What disqualifies a source from being saved, before Lean is asked.
 
         All of it is textual, so it costs nothing and runs first: there is no
-        point spending a minute elaborating a file that a `sorry` or an
-        unapproved axiom already rules out.
+        point spending a minute elaborating a file that an unapproved axiom
+        already rules out.
+
+        A hole is not here. `sorry` is how a proof of any size gets built, and
+        refusing it meant the unfinished part of a development could never
+        reach disk -- so a thousand-line proof lived in the model's context and
+        was re-sent in full on every check. What a hole costs is charged where
+        a claim is made instead: the audit records it, the obligations name it,
+        and `report_result` grades it partial.
         """
-        if self.lean.has_holes(source):
-            return ToolResult(False, "saved Lean artifacts may not contain sorry or admit", source)
         found = declarations(source)
         # A `theorem` is what this workspace reports as a result, and a private
         # one can be neither audited nor cited: Lean mangles the name out of
@@ -1502,23 +1507,31 @@ class MathematicsSession:
             return ToolResult(False, "the axiom audit had nothing to run")
         approved = self._approved_assumptions()
         verdict = audit.classify(reports, approved)
-        if verdict.forbidden:
-            # Before anything else, and never offered for approval: a hole is
-            # not an assumption and no human can make it one.
+        # On the status, not on the presence of a finding. A hole grades `open`
+        # and is kept: it is an unfinished proof, not an unacceptable one, and
+        # the refusal for it happens where a claim is made. An unapproved axiom
+        # still rejects, and a save carrying both is refused for the axiom --
+        # the half the model can do something about.
+        if verdict.status == "rejected":
+            if verdict.unapproved:
+                needed = {
+                    axiom: list(audit.dependents(reports, axiom)) for axiom in verdict.unapproved
+                }
+                return ToolResult(
+                    False,
+                    f"the axiom audit refused this save: {audit.describe(verdict)}. "
+                    f"These assumptions reached through imports have not been approved: {needed}. "
+                    "Call request_assumption for each before saving work that rests on it.",
+                )
+            # Reached only for a forbidden axiom that is not a hole. `FORBIDDEN`
+            # holds exactly `sorryAx` today, so `classify` never produces one --
+            # but deleting the branch would lose the message the moment it grows,
+            # and leave `verdict.forbidden[0]` read off a branch nobody wrote.
             return ToolResult(
                 False,
                 f"the axiom audit refused this save: {audit.describe(verdict)}. "
-                f"{list(audit.dependents(reports, verdict.forbidden[0]))} depend on a hole, which cannot be approved.",
-            )
-        if verdict.unapproved:
-            needed = {
-                axiom: list(audit.dependents(reports, axiom)) for axiom in verdict.unapproved
-            }
-            return ToolResult(
-                False,
-                f"the axiom audit refused this save: {audit.describe(verdict)}. "
-                f"These assumptions reached through imports have not been approved: {needed}. "
-                "Call request_assumption for each before saving work that rests on it.",
+                f"{list(audit.dependents(reports, verdict.forbidden[0]))} depend on "
+                "something no human may approve.",
             )
         # A record per module rather than one for the save, so a later save
         # elsewhere in the tree cannot overwrite what this one established.

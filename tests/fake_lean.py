@@ -83,6 +83,11 @@ def listed(pattern: re.Pattern[str], text: str) -> list[str]:
 # What this elaboration would report: what the source itself declares, plus what
 # every workspace module it imports already carried into its olean.
 axioms = marked(source)
+# A literal `sorry` is what real Lean reports as `sorryAx`, so this stand-in
+# has to as well. Without it a test could only fake a hole through the marker,
+# which models a hole reached through an *import* and not one written here.
+if HOLE.search(source) and "sorryAx" not in axioms:
+    axioms.append("sorryAx")
 # What an importer of this file would be able to name. Private declarations are
 # left out on purpose: Lean mangles them so no other module can refer to them.
 exports = [
@@ -182,6 +187,18 @@ if "exact True.intro" in source and not HOLE.search(source):
     raise SystemExit(0)
 if "trace_state" in source:
     print("⊢ True")
+    raise SystemExit(0)
+# A hole elaborates. Real Lean accepts `:= by sorry`, warns that the
+# declaration uses it, and answers `sorryAx` when asked what it rests on --
+# which is exactly how an interactive session holds an unfinished proof. A
+# stand-in that refused the file could not exercise that at all.
+#
+# After `trace_state`, because the goal probe is built as `by trace_state
+# sorry` and its caller wants the goal printed rather than an olean written.
+if HOLE.search(source):
+    print(f"{path.name}:1:0: warning: declaration uses 'sorry'")
+    report_axioms()
+    write_olean()
     raise SystemExit(0)
 if "#check True.intro" in source:
     print("True.intro : True")
