@@ -834,3 +834,46 @@ def test_a_displayed_value_seen_only_in_prefix_is_not_skipped(sympy_session) -> 
         )
     finally:
         session.close()
+
+
+# --------------------------------------------------- and the seventh review's
+
+
+def test_the_digest_tells_a_shared_object_from_an_equal_one() -> None:
+    """A repr describes a value and says nothing about the object graph.
+
+    `a = []; b = a` and `a = []; b = []` render identically, so a replay that
+    rebuilt the wrong one fingerprinted the same — and a later `a.append(1); b`
+    then sees different state. Sharing is part of the fingerprint now.
+    """
+    shared: list = []
+    aliased = {"a": shared, "b": shared}
+    apart = {"a": [], "b": []}
+    assert state_digest(aliased, {}, 4096) != state_digest(apart, {}, 4096)
+
+    # Two namespaces with the same shape still agree, or every rebuild would
+    # diverge on its own aliasing.
+    other: list = []
+    assert state_digest({"a": other, "b": other}, {}, 4096) == state_digest(aliased, {}, 4096)
+    # And values are still compared, not replaced by their identity.
+    assert state_digest({"a": [1]}, {}, 4096) != state_digest({"a": [2]}, {}, 4096)
+
+
+def test_a_rebuild_that_loses_the_sharing_is_refused(sympy_session, tmp_path) -> None:
+    """End to end, with the aliasing decided by something outside the cell.
+
+    The flag exists on the first run and not on the replay, so the accepted
+    cell binds `b` to `a` live and to a fresh list on rebuild. Nothing it
+    prints differs.
+    """
+    flag = tmp_path / "aliased"
+    flag.write_text("yes", encoding="utf-8")
+    sympy_session.execute(f"import os\npath = {str(flag)!r}")
+    quiet = sympy_session.execute("a = []\nb = a if os.path.exists(path) else []")
+    assert (quiet.stdout, quiet.value_repr) == ("", "")
+    assert quiet.state_digest
+
+    flag.unlink()
+    sympy_session._drop_kernel()
+    with pytest.raises(CasError, match="did not reproduce"):
+        sympy_session.execute("1 + 1")

@@ -645,6 +645,15 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
     in place does not, and that is the hole this leaves.
     """
     digest = hashlib.sha256()
+    # Which object each name is bound to, numbered by first appearance. A repr
+    # describes a value and says nothing about the object graph: `a = []; b = a`
+    # and `a = []; b = []` render identically, so a replay that rebuilt the
+    # wrong one of those fingerprinted the same -- and a later `a.append(1); b`
+    # then sees different state. A second name for an object already seen
+    # hashes that reference instead of its repr, so sharing is part of the
+    # fingerprint. The walk holds every value, so the ids cannot be reused
+    # under it, and the order is the deterministic one below.
+    seen: dict[int, int] = {}
     # `repr`, not the name itself: `globals()` accepts a non-string key, and
     # `sorted` over mixed types raises -- which used to lose the whole digest
     # for the namespace rather than describe it.
@@ -654,6 +663,12 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
             continue
         if name in baseline and baseline[name] is value:
             continue
+        alias = seen.get(id(value))
+        if alias is not None:
+            digest.update(repr(name).encode("utf-8", errors="backslashreplace"))
+            digest.update(f"\0alias:{alias}\0".encode())
+            continue
+        seen[id(value)] = len(seen)
         rendered, truncated = bounded_repr(value, limit)
         if truncated or _OPAQUE.search(rendered):
             # Neither a prefix nor a default repr is a fingerprint. Two values
