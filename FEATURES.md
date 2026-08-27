@@ -433,9 +433,11 @@ Priority labels are sequencing hints:
   divergence. Running without error is not the same as recovering, and neither
   is printing the same thing: a cell that binds a fresh random value, or an
   accepted cell whose recorded state includes what a failed cell left behind,
-  reproduces empty output either way. Singular and Macaulay2 have no protocol
-  to carry a digest, so a rebuild there names the cells whose replay proved
-  nothing instead of reporting a rebuild as if it had been checked. A replay Hardy signalled is
+  reproduces empty output either way. A missing digest -- Singular and
+  Macaulay2 have no protocol to carry one, an older log has none, and the
+  default kernel refuses to fingerprint a namespace it could only see a prefix
+  of -- makes the rebuild unverified whatever the cell printed, and the session
+  says so rather than reporting a rebuild as if it had been checked. A replay Hardy signalled is
   refused whatever it answered -- an `ok` most of all, since a cell that caught
   the stop can skip a mutation and still print what it printed before -- and
   the session is left retryable rather than poisoned, because a press says
@@ -451,6 +453,12 @@ Priority labels are sequencing hints:
   breaks the file is caught here rather than by the reader. `script_verdict`
   travels in `export.json` and the notebook, and an export reproduces only when
   the cells and the script both do.
+- **Now (implemented):** the published script names the environment it was
+  checked under, and `export.json` records it. A verdict is a claim about
+  running those exact bytes *that way*: `PYTHONHASHSEED` is pinned for the
+  kernel and the check so a printed set does not reorder itself between them,
+  and a reader running the file without it can see an order Hardy never
+  compared.
 - **Now (implemented):** the published script prints two markers around its own
   transcript, and the comparison against the record is equality between them
   rather than a search for the record somewhere inside the output. What falls
@@ -467,8 +475,12 @@ Priority labels are sequencing hints:
   helper's chatter. The capture is drained and bounded as it arrives, so
   `cas_output_bytes` bounds what is *held* and not only what is reported: a
   cell printing in a loop used to grow an unbounded buffer inside the kernel.
-  A value whose own length already exceeds the budget is rendered head-first
-  and says so, rather than being built in full to be thrown away.
+  A value a cheap recursive size estimate can *prove* too large is rendered
+  head-first and says so, rather than being built in full to be thrown away;
+  anything that would have fitted is `repr`'d exactly as before. Output a
+  helper writes after its own cell has ended belongs to a record already on
+  disk, so it is discarded rather than pinned on the next cell -- and the next
+  cell's `capture_truncated` says that it was.
 - **Now (implemented):** a capture that hit `cas_output_bytes` is never called
   verified — a sentinel backend's cell is not accepted at all, since its error
   banner may be in the discarded tail. The overflow is counted once *both*

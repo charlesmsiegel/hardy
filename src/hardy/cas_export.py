@@ -423,6 +423,21 @@ def render_script(
         " export.json.",
         "",
     ]
+    # The environment the session and the check both ran under. A verdict
+    # describes running these bytes *this way*; run them another way and the
+    # verdict is not about what you ran. `PYTHONHASHSEED` is the one that bites
+    # in practice -- a cell printing a set or a string-keyed dict orders it by
+    # the interpreter's per-process hash seed, so an unpinned reader can see a
+    # different order from the one recorded and checked.
+    environment = getattr(backend, "environment", {})
+    if environment:
+        setting = " ".join(f"{key}={value}" for key, value in sorted(environment.items()))
+        lines += [
+            f"{mark} Checked under {setting}. Run it the same way to get the",
+            f"{mark} output Hardy compared against the session; a different hash",
+            f"{mark} seed can reorder a printed set or dict. Also in export.json.",
+            "",
+        ]
     if backend.preamble:
         lines += [backend.preamble, ""]
     # The script says where its own transcript starts and stops, so the check
@@ -435,7 +450,7 @@ def render_script(
         f"{mark} what this file prints -- so Hardy can compare that against the",
         f"{mark} session without mistaking an interpreter's startup banner for",
         f"{mark} something a cell printed. See `script_verdict` in export.json.",
-        backend.echo.format(marker=TRANSCRIPT_BEGIN),
+        backend.transcript_echo.format(marker=TRANSCRIPT_BEGIN),
         "",
     ]
     for record, verdict in zip(cells, verdicts, strict=True):
@@ -447,7 +462,7 @@ def render_script(
         lines.append(f"{mark} --- cell {record.seq} ({record.author}){note}")
         lines.append(backend.render_cell(record.source).rstrip())
         lines.append("")
-    lines += [backend.echo.format(marker=TRANSCRIPT_END), ""]
+    lines += [backend.transcript_echo.format(marker=TRANSCRIPT_END), ""]
     return "\n".join(lines) + "\n"
 
 
@@ -603,6 +618,13 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
         "exported_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "backend": session.backend.name,
         "version": session.version,
+        # The environment the script was *checked* under, not a suggestion. A
+        # verdict is a claim about running these bytes, and it only describes
+        # what a reader gets if the reader runs them the same way -- which for
+        # the default backend means `PYTHONHASHSEED=0`, since a set or a
+        # string-keyed dict prints in a different order under a different seed.
+        # Recorded here and named in the script's own header.
+        "environment": dict(getattr(session.backend, "environment", {})),
         "counts": counts,
         "script_verdict": script_verdict[0],
         "script_detail": script_verdict[1],

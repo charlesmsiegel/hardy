@@ -238,15 +238,21 @@ def reproduces(record: CellRecord, outcome: CellOutcome) -> bool:
 
 
 def unobservable(record: CellRecord) -> bool:
-    """Whether replaying this cell could prove anything about what it did.
+    """Whether replaying this cell could prove anything about the state it left.
 
-    True when the record carries no state digest and the cell showed nothing:
-    a replay of it agrees with the record by construction, whatever namespace
-    it left behind.
+    A missing digest is the whole answer, and reproduced output is not a
+    second opinion on it. This used to also require the cell to have printed
+    nothing, on the theory that a cell which printed something had been
+    checked -- but output is what a cell *showed*, and a cell that prints a
+    stable banner is free to leave a different value behind it. The narrower
+    rule reported an ordinary successful rebuild for exactly the cells it
+    could not check.
+
+    Empty digests are not rare, either: every sentinel backend, every record
+    written before the field existed, and any namespace the default kernel
+    could only fingerprint a prefix of.
     """
-    return not record.state_digest and not (
-        record.stdout.strip() or record.stderr.strip() or record.value_repr.strip()
-    )
+    return not record.state_digest
 
 
 def _source_offset(source: str, lineno: int, col_offset: int) -> int:
@@ -283,6 +289,16 @@ class SympyBackend:
     # the brackets around a script's own transcript, which every backend must
     # be able to do.
     echo = 'print("{marker}")'
+    # And the one actually emitted into a script, which is not the same
+    # statement. An accepted cell is free to bind the global name `print` --
+    # `print = lambda *_: None` is a real thing to do -- and the closing marker
+    # runs *after* every cell, so it would resolve the rebound name and be
+    # swallowed or raise. The export then reads `diverged` or `failed` for a
+    # session whose cells reproduced exactly. Reaching the builtin through the
+    # module leaves nothing a cell's own global can shadow, and it still goes
+    # out through `sys.stdout` like every other line the file prints, so the
+    # ordering the comparison depends on is unchanged.
+    transcript_echo = '__import__("builtins").print("{marker}")'
     # The exported script is run as an ordinary Python program, not through the
     # driver: the artifact under test is the file a reader would run.
     script_stdin = False
@@ -384,6 +400,14 @@ class _SentinelBackend:
     error_pattern: re.Pattern[str]
     echo: str
     environment: dict[str, str] = {}
+
+    @property
+    def transcript_echo(self) -> str:
+        """The `echo` statement itself. Singular and Macaulay2 have no
+        shadow-proof equivalent to reach for, so the marker is the same
+        statement the live protocol already relies on these interpreters
+        executing."""
+        return self.echo
     # The exported script is fed to the interpreter on stdin, which is how the
     # session itself runs cells: same argv, same input mode, so the transcript
     # the check compares against the record is produced the same way the record
@@ -1695,12 +1719,20 @@ class CasSession:
                         "to rebuild its state]"
                     )
                 if report.unverified:
+                    # Named individually only when some cells *were* checked.
+                    # On a backend that records no digest at all, every cell is
+                    # on the list and printing all of them buries the point.
+                    which = (
+                        "no cell's"
+                        if len(report.unverified) == report.replayed
+                        else f"cell(s) {list(report.unverified)}'"
+                    )
                     notes = (notes + " " if notes else "") + (
-                        f"[cell(s) {list(report.unverified)} produced no output and "
-                        "this backend records no state digest, so their replay "
-                        "agrees with the record whatever namespace it rebuilt. The "
-                        "state above them is reconstructed, not verified: rerun "
-                        "anything you mean to build on.]"
+                        f"[{which} state could be compared against the record: "
+                        "there is no state digest for them, so their replay "
+                        "agrees whatever namespace it rebuilt. What they printed "
+                        "did reproduce. The state is reconstructed, not verified: "
+                        "rerun anything you mean to build on.]"
                     )
                 # The rebuild is billed, so it can be what exhausts the budget.
                 self._guard()
