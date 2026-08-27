@@ -347,3 +347,16 @@ def test_prove_accepts_the_reviewer_model_flag() -> None:
     )
 
     assert args.faithfulness_model == 'gpt-reviewer'
+
+
+def test_accept_takes_the_same_reviewer_override_as_prove() -> None:
+    """`run_accept` builds the selected backend from the global config too, so
+    a configured Claude reviewer would meet a `--backend codex` acceptance run
+    and halt both problems as unavailable."""
+    cli = importlib.import_module('hardy.cli')
+
+    args = cli.build_parser().parse_args(
+        ['accept', '--backend', 'codex', '--faithfulness-model', 'gpt-reviewer']
+    )
+
+    assert args.faithfulness_model == 'gpt-reviewer'

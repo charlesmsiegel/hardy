@@ -234,6 +234,12 @@ def run_deterministic_experiment(
         config = replace(
             config, limits=config.limits.model_copy(update={"official_checks": 1})
         )
+    # No configured reviewer reaches a run with no model in it. The fixture
+    # below supplies the agreement itself, so recording a real provider's name
+    # as having independently reviewed the translation would put a claim in
+    # the manifest -- and in the paper -- that nothing performed. The
+    # deterministic identity is the honest one, and it is the run's own.
+    config = replace(config, faithfulness_model=None)
     environment = _environment()
 
     def fake_tectonic(spec):

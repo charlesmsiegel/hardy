@@ -25,6 +25,9 @@ a review: neither is a pass, and there is no third option that proceeds.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import json
 from collections.abc import Callable
 from pathlib import PurePosixPath
 from typing import Any
@@ -75,9 +78,7 @@ def review_translation(
     # Byte-for-byte what is sent below, with no trailing newline added. A file
     # tidied with one hashes differently from the string the reader received,
     # which would leave `prompt_sha256` reproducible and yet not the identity
-    # of the question -- the one thing it exists to be. What the runtime
-    # appends to every staged turn (the response contract and the schema) is
-    # covered by `prompt_set_sha256` instead; this names Hardy's half.
+    # of the question -- the one thing it exists to be.
     asked = store.write_text(PROMPT_ARTIFACT, prompt)
     identity = {
         "claim_sha256": claim.content_hash,
@@ -87,11 +88,20 @@ def review_translation(
         # cannot confine its reader reports nothing, and the verdict says so.
         "reviewer_isolation": getattr(runtime, "isolation_guarantee", None),
         "prompt_sha256": asked.sha256,
+        # The other half of what was asked. Every backend makes the reader
+        # answer this schema -- Claude by appending it to the prompt, Codex by
+        # handing it to the SDK -- and it is generated from
+        # `FaithfulnessReview` rather than written in a template, so
+        # `prompt_set_sha256` does not cover it. Without this, editing that
+        # model would change the request and could change the answer while
+        # every recorded hash stayed the same.
+        "response_schema_sha256": _schema_digest(),
     }
     # A thread of its own, isolated: no tools, and for the backends whose
     # agent has its own file access, no sight of the run directory either.
     # This is a reading of two texts, and a reader that can reach the
     # conversation it is auditing is not an independent one.
+    thread: Any = None
     try:
         thread = runtime.start(
             model=model,
@@ -118,6 +128,15 @@ def review_translation(
     # had been left unread. `KeyboardInterrupt` is not an `Exception` and
     # still propagates, which is what keeps cancellation cancelling.
     except Exception as error:
+        # Stop the thread before the verdict is returned. An unavailable
+        # verdict always halts the run, and `ProveWorkflow._finalize` hashes
+        # every file in the run directory as soon as it does -- but only the
+        # cancellation path settles a provider worker that outlived its turn
+        # and seals the trajectory against it. Without this, a lingering
+        # daemon could append after `trajectory.jsonl` was hashed, leaving a
+        # manifest that does not describe the directory it names.
+        if thread is not None:
+            _stop(runtime, thread)
         verdict = FaithfulnessVerdict(
             **identity,
             outcome=FaithfulnessOutcome.UNAVAILABLE,
@@ -136,6 +155,31 @@ def review_translation(
     store.write_json(ARTIFACT, verdict)
     store.append("faithfulness.verdict", verdict.model_dump(mode="json"), phase=phase)
     return verdict
+
+
+def _schema_digest() -> str:
+    """The response schema the reader has to satisfy, hashed canonically."""
+    canonical = json.dumps(
+        FaithfulnessReview.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _stop(runtime: Any, thread: Any) -> None:
+    """Cancel a reader whose turn failed, without letting that failure spread.
+
+    Best-effort on purpose: the verdict is already decided by the time this
+    runs, and a runtime that cannot be cancelled must not turn a recorded
+    unavailable review into an unrecorded crash.
+    """
+    cancel = getattr(runtime, "cancel", None)
+    if cancel is None:
+        return
+    with contextlib.suppress(Exception):
+        cancel(thread)
 
 
 def dispute_gaps(verdict: FaithfulnessVerdict) -> tuple[str, ...]:
