@@ -769,3 +769,111 @@ def test_the_word_sorry_in_a_comment_is_not_a_hole(tmp_path: Path):
     assert results(tmp_path, "save_lean")[-1]["ok"]
     assert state(tmp_path)["audit"]["Main"]["status"] == "clean"
     assert not [item for item in chat.obligations() if item.kind == "open"]
+
+
+def test_a_report_resting_on_an_assumption_is_not_recorded_as_clean(tmp_path: Path):
+    """The durable grade said `clean` while the sentence beside it said the
+    work was modulo an approved axiom. A record that has to be read against
+    its own message is not a record."""
+    carried = (
+        "\\documentclass{article}\n\\begin{document}\n"
+        "The target.\\label{thm:HardyTarget}\n"
+        "\\begin{verbatim}\ntheorem HardyTarget : True\n\\end{verbatim}\n"
+        "\\appendix\nSmith's main theorem.\\label{asm:smith}\n"
+        "\\begin{verbatim}\naxiom Papers.Smith.main : True\n\\end{verbatim}\n"
+        "\\end{document}\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("request_assumption", dict(APPROVAL), "ask"),
+            call("save_lean", {"source": ASSUMED}, "lean"),
+            call("save_latex", {"source": carried}, "tex"),
+        ]),
+        approvals=[True],
+    )
+    chat.send("Assume it, prove it, write it up.")
+    reported = chat._tool(
+        "report_result", {"theorems": ["HardyTarget"], "summary": "True holds."}
+    )
+    assert reported.ok, reported.output
+    assert state(tmp_path)["reports"][-1]["status"] == "modulo"
+    assert "as modulo" in reported.output
+
+
+def test_an_open_theorem_in_a_theorem_environment_still_backs_it(tmp_path: Path):
+    """The prompt asks the model to put a result in a theorem environment, so
+    the partial report has to survive one. It did not: an open theorem was
+    left out of the set that backs a document assertion, so the environment
+    read as backed by nothing and the report was refused."""
+    carried = (
+        "\\documentclass{article}\n"
+        "\\newtheorem{theorem}{Theorem}\n\\begin{document}\n"
+        "\\begin{theorem}\\label{thm:HardyTarget}\nThe target holds.\n\\end{theorem}\n"
+        "\\begin{verbatim}\ntheorem HardyTarget : True\n\\end{verbatim}\n"
+        "\\end{document}\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("save_lean", {"source": HOLED}, "lean"),
+            call("save_latex", {"source": carried}, "tex"),
+        ]),
+    )
+    chat.send("Save the skeleton and write it up properly.")
+    assert not [item for item in chat.obligations() if item.kind == "theorem"]
+    reported = chat._tool(
+        "report_result", {"theorems": ["HardyTarget"], "summary": "As far as I got."}
+    )
+    assert reported.ok, reported.output
+    assert "partial" in reported.output
+
+
+def test_a_bare_name_two_open_theorems_share_documents_neither(tmp_path: Path):
+    """`A.t` and `B.t` both answer to `t`. Passing only the claimed theorem to
+    the completion check hid the other, so the leaf looked unique and one label
+    was accepted as documentation for a theorem the document never named."""
+    first = (
+        "import Mathlib\nnamespace A\ntheorem t : True := by exact True.intro"
+        " -- axioms: sorryAx\nend A\n"
+    )
+    second = (
+        "import Mathlib\nnamespace B\ntheorem t : True := by exact True.intro"
+        " -- axioms: sorryAx\nend B\n"
+    )
+    carried = (
+        "\\documentclass{article}\n\\begin{document}\n"
+        "One.\\label{thm:t}\n"
+        "\\begin{verbatim}\ntheorem t : True\n\\end{verbatim}\n"
+        "\\end{document}\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([
+            call("record_name", {"formal_name": "t", "latex_name": "thm:t",
+                                 "description": "A result."}, "name"),
+            call("save_lean", {"path": "A.lean", "source": first}, "lean"),
+            call("save_lean", {"path": "B.lean", "source": second}, "lean"),
+            call("save_latex", {"source": carried}, "tex"),
+        ]),
+        registered=(),
+    )
+    chat.send("Share a leaf name across two skeletons.")
+    reported = chat._tool("report_result", {"theorems": ["A.t"], "summary": "One of them."})
+    assert not reported.ok, reported.output
+    assert "A.t" in reported.output
+
+
+def test_the_word_sorry_in_a_string_is_not_an_untrackable_hole(tmp_path: Path):
+    """`LeanRunner.has_holes` read raw source, so the guard for a hole nothing
+    can report refused valid Lean over a word in a string literal."""
+    source = 'import Mathlib\n\ndef hardyNote : String := "sorry"\n'
+    chat = session(tmp_path, FakeChatRuntime([call("save_lean", {"source": source}, "lean")]))
+    assert not chat.lean.has_holes(source)
+    assert not chat.lean.has_holes("theorem t : True := trivial -- without sorry\n")
+    assert chat.lean.has_holes("theorem t : True := by sorry\n")
+    chat.send("Save a definition mentioning the word.")
+    outcome = results(tmp_path, "save_lean")[-1]
+    # Whatever else this file does or does not do in Lean, the word in a string
+    # must not be what stops it: that refusal names a hole nobody wrote.
+    assert "declares no theorem or lemma" not in outcome["output"]

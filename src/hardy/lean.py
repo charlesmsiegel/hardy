@@ -26,7 +26,7 @@ from .layout import WriteGuard
 from .models import Request, ToolResult
 from .process import ProcessResult, ProcessSpec, run_process
 from .truncation import truncate
-from .workspace import QUALIFIED_NAME, declared_name
+from .workspace import QUALIFIED_NAME, declared_name, strip_comments
 
 if TYPE_CHECKING:
     from .modules import ModuleIndex
@@ -523,7 +523,15 @@ class LeanTools:
 
     @staticmethod
     def has_holes(source: str) -> bool:
-        return HOLE.search(source) is not None
+        """Whether `source` really leaves a proof open.
+
+        Read over comment- and string-blanked text, because Lean does not read
+        a `sorry` in either. A raw scan refused valid work over the word in a
+        remark -- `-- rewrite this without sorry` -- and over `def note :=
+        "sorry"`, in both cases telling the model to fix something that was
+        never there.
+        """
+        return HOLE.search(strip_comments(source)) is not None
 
     def run_source(
         self,
