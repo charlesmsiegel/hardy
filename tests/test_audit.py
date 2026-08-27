@@ -4,7 +4,16 @@ import json
 
 import pytest
 
-from hardy.audit import AxiomReport, Verdict, classify, dependents, describe, parse, unestablished
+from hardy.audit import (
+    AxiomReport,
+    Verdict,
+    classify,
+    dependents,
+    describe,
+    open_declarations,
+    parse,
+    unestablished,
+)
 
 
 def test_parses_a_dependency_line():
@@ -150,10 +159,16 @@ def test_a_native_decide_proof_is_refused_unattended():
     assert verdict.unapproved == ("Lean.ofReduceBool", "Lean.trustCompiler")
 
 
-def test_sorry_ax_is_rejected_even_when_someone_approved_it():
-    """A hole is not an assumption, and no approval can make it one."""
+def test_sorry_ax_is_never_laundered_by_an_approval():
+    """A hole is not an assumption, and no approval can make it one.
+
+    It grades `open` rather than `rejected` now -- an unfinished proof is a
+    different fact from an unacceptable one -- but the approval buys nothing
+    either way: it is still reported as a hole and never as an assumption, and
+    every caller that requires `clean` still refuses it.
+    """
     verdict = classify([report("sorryAx")], {"sorryAx"})
-    assert verdict.status == "rejected"
+    assert verdict.status == "open"
     assert verdict.forbidden == ("sorryAx",)
     assert verdict.assumed == ()
 
@@ -199,3 +214,42 @@ def test_a_verdict_is_frozen():
     verdict = Verdict("clean", (), (), (), ())
     with pytest.raises(AttributeError):
         verdict.status = "modulo"
+
+
+def test_a_hole_is_open_rather_than_rejected():
+    """An unfinished proof is not an unacceptable one, and the two need names."""
+    verdict = classify([AxiomReport("thm", ("propext", "sorryAx"))], ())
+    assert verdict.status == "open"
+    assert verdict.forbidden == ("sorryAx",)
+
+
+def test_a_hole_beside_an_unapproved_axiom_is_still_rejected():
+    """The unapproved axiom is the actionable half, and it does not become one."""
+    verdict = classify([AxiomReport("thm", ("sorryAx", "Smith.main"))], ())
+    assert verdict.status == "rejected"
+    assert verdict.unapproved == ("Smith.main",)
+
+
+def test_a_hole_beside_an_approved_assumption_is_open():
+    """Open outranks modulo: the proof is unfinished whatever it also assumes."""
+    verdict = classify([AxiomReport("thm", ("sorryAx", "Smith.main"))], ("Smith.main",))
+    assert verdict.status == "open"
+    assert verdict.assumed == ("Smith.main",)
+
+
+def test_an_open_verdict_reads_as_a_hole():
+    verdict = classify([AxiomReport("thm", ("sorryAx",))], ())
+    assert "hole" in describe(verdict)
+    assert "['thm']" in describe(verdict)
+
+
+def test_open_declarations_names_what_rests_on_a_hole():
+    record = classify(
+        [AxiomReport("open_one", ("sorryAx",)), AxiomReport("done", ("propext",))], ()
+    ).as_dict()
+    assert open_declarations(record) == ("open_one",)
+
+
+def test_a_record_that_never_graded_has_no_open_declarations():
+    """`unestablished` and `not audited` carry no declarations to read."""
+    assert open_declarations(unestablished("nothing to grade")) == ()
