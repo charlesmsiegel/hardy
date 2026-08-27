@@ -280,6 +280,20 @@ Priority labels are sequencing hints:
 - **Now (implemented):** model, backend, and endpoint recorded together in the
   session state, the switch event, and the `prove` trajectory; a workspace from
   before the SDK backend carries a bounded tail of its conversation forward.
+- **Now (implemented):** an interactive session reads the project's own
+  `AGENTS.md` — or `HARDY.md`, which replaces rather than merges with it — from
+  the project root and from no ancestor of it, appends the full text to
+  `transcript.jsonl` on first use and on every change, and keeps its SHA-256 in
+  `session.json` to notice one. It is rendered as the user's project
+  instructions under a stated precedence: Hardy's constraints outrank it, and no
+  file may license a hole, an unapproved axiom, a silently altered statement, or
+  a claim of verification. What is read is bounded by lines and bytes together,
+  whole lines only, and a truncated file says so in the prompt. `hardy prove`
+  and `hardy batch` never read it, so a graded run's instructions stay fixed;
+  `--no-project-context`, `project_context = false`, or `HARDY_PROJECT_CONTEXT=0`
+  stop an interactive session reading it at all — which governs this run's
+  system prompt, not what a resumed provider thread already remembers, with the
+  transcript marking the turn the file stopped being sent.
 - **Known gap:** the SDK owns the turn loop, so turn limits are enforced by the
   provider and only the wall clock is Hardy's. Tracked in issue #23.
 - **Now (implemented):** a Codex backend for ChatGPT subscriptions, on the same

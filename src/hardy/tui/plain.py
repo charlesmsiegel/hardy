@@ -103,6 +103,7 @@ def run(
         config,
         cas=getattr(session, "cas", None),
         cas_detail=getattr(session, "cas_detail", ""),
+        project_context=getattr(session, "project_context_detail", ""),
     ):
         ui.write(text, style=style)
     out("")

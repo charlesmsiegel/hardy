@@ -27,7 +27,7 @@ def status_line(config: Any) -> str:
     return f"Project: {config.project}  ({config.layout.problem})"
 
 
-def lines(config: Any, *, cas: Any = None, cas_detail: str = "") -> list[tuple[str, str]]:
+def lines(config: Any, *, cas: Any = None, cas_detail: str = "", project_context: str = "") -> list[tuple[str, str]]:
     """`cas` is the runtime (or `None` if no backend was discovered) and
     `cas_detail` is `cas_tools.build_runtime`'s second return value: a
     version string when `cas` is not `None`, the reason it is `None`
@@ -51,6 +51,13 @@ def lines(config: Any, *, cas: Any = None, cas_detail: str = "") -> list[tuple[s
     if cas_detail:
         status = cas_detail if cas is not None else f"unavailable — {cas_detail}"
         rows.append(("hint", f"Computer algebra: {status}"))
+    # Only when something was actually read or refused. A project with no
+    # AGENTS.md is the ordinary case and owes the user no line about it, but a
+    # session that IS carrying the project's instructions must say so: they
+    # went into the system prompt, and an unannounced instruction is the thing
+    # `setting_sources=[]` refuses.
+    if project_context:
+        rows.append(("hint", f"Project instructions: {project_context}"))
     rows.append(("warning", warning))
     rows.append(
         (

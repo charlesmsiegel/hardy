@@ -582,3 +582,39 @@ def test_a_chosen_slug_is_still_validated(tmp_path: Path):
     _recorded(tmp_path, "galois", "sylow")
     with pytest.raises(layout.LayoutError):
         config.load(tmp_path / "absent.toml", root=tmp_path, choose=lambda present: "../elsewhere")
+
+
+def test_project_context_is_on_by_default(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert config.load(tmp_path / "missing.toml").project_context is True
+
+
+def test_project_context_can_be_switched_off_in_every_layer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Running without the project's instructions has to be available without
+    editing the project's own `AGENTS.md` out of the way."""
+    path = write(tmp_path / "config.toml", "project_context = false\n")
+    assert config.load(path).project_context is False
+
+    on = write(tmp_path / "on.toml", "project_context = true\n")
+    monkeypatch.setenv("HARDY_PROJECT_CONTEXT", "0")
+    assert config.load(on).project_context is False
+    monkeypatch.delenv("HARDY_PROJECT_CONTEXT")
+    assert config.load(on, project_context=False).project_context is False
+
+
+def test_a_project_context_value_that_is_neither_true_nor_false_is_refused(tmp_path: Path):
+    """Read as true, a misspelled `off` would do nothing and say nothing, and
+    the user would find out from a transcript."""
+    path = write(tmp_path / "config.toml", 'project_context = "sometimes"\n')
+    with pytest.raises(ValueError, match="project_context must be true or false"):
+        config.load(path)
+
+
+def test_a_committed_project_config_may_not_switch_the_context_off(tmp_path: Path, monkeypatch):
+    """The project layer travels with a clone and is deliberately tiny. A
+    repository gets to say which problem is active, not what the model is
+    told about it."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / layout.HARDY_DIR).mkdir()
+    write(tmp_path / layout.HARDY_DIR / "config.toml", "project_context = false\n")
+    assert config.load(tmp_path / "missing.toml").project_context is True

@@ -48,6 +48,13 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
     ui.write(f"  Lean project: {config.lean_project or 'current directory'}")
     ui.write(f"  Config file:  {config.config_path}")
     ui.write(f"  Transcript:   {config.layout.transcript}")
+    # Which project instructions this session is carrying, if any. The banner
+    # says it once at startup; a user who wonders mid-conversation whether the
+    # model is seeing their `AGENTS.md` has nowhere else to ask, and "ask the
+    # model" is exactly the answer `/status` exists to replace.
+    instructions = getattr(state.session, "project_context_detail", "")
+    if instructions:
+        ui.write(f"  Instructions: {instructions}")
     # `getattr` because `/status` is safe in flight and the shell builds before
     # its session does -- there is a window where there is nothing to ask.
     spent = getattr(state.session, "usage", None)
