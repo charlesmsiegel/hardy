@@ -418,6 +418,13 @@ class _Stream:
         if len(data) > room:
             self.truncated = True
 
+    def take_what_arrived(self) -> None:
+        """Keep the unterminated remainder, and say the capture is not whole."""
+        if self.pending:
+            self._retain(bytes(self.pending))
+            self.pending.clear()
+        self.stray = True
+
     def text(self) -> tuple[str, bool]:
         """The captured text, and whether it is exactly what was written.
 
@@ -569,6 +576,17 @@ class _Capture:
                     break
                 self._changed.wait(remaining)
             out, err = self.streams[1], self.streams[2]
+            for stream in (out, err):
+                # A descriptor a cell closed or replaced ends the wait without
+                # the end marker ever arriving, and whatever was already in
+                # the scan window would have gone unretained and unreported:
+                # `os.write(1, b"VISIBLE"); os.close(1)` recorded empty stdout
+                # and called the capture exact. What is there is kept, and the
+                # capture says it is not a whole one. `closed` is never reset,
+                # so every later cell says the same -- the stream does not
+                # come back.
+                if not stream.done:
+                    stream.take_what_arrived()
             out_text, out_exact = out.text()
             err_text, err_exact = err.text()
             captured = (
@@ -626,6 +644,51 @@ _UNSET: object = object()
 LAST_DISPLAYED: object = _UNSET
 
 
+def _record(digest, name: object, kind: bytes, payload: bytes) -> None:
+    """Add one entry, tagged by what it is.
+
+    The tag is what keeps the kinds apart. Writing a deletion as the bare
+    bytes `deleted` was indistinguishable from a name whose value *rendered*
+    as `deleted` -- `Symbol("deleted")` does -- so a namespace missing a name
+    hashed exactly like one holding that symbol under it. Every entry carries
+    its kind, and no kind's bytes can be produced by another.
+    """
+    digest.update(b"\0")
+    digest.update(kind)
+    digest.update(b"\0")
+    digest.update(repr(name).encode("utf-8", errors="backslashreplace"))
+    digest.update(b"\0")
+    digest.update(payload)
+    digest.update(b"\0")
+
+
+def _register(value: object, seen: dict[int, int], limit: int, depth: int = 0) -> None:
+    """Number `value` and everything reachable from it through containers.
+
+    Registering only the names themselves saw sharing at the top level and
+    nowhere else: `a = [[]]` with `b` bound either to `a[0]` or to a fresh
+    `[]` renders `[[]]` and `[]` both ways, so the two fingerprinted alike --
+    and after a rebuild `b.append(1)` either does or does not change `a`.
+
+    Bounded exactly as `_lower_bound` is, and for the same reason: a container
+    can hold itself, and this must not become an unbounded traversal. Past the
+    bound the graph is simply not numbered any further, which costs
+    resolution rather than correctness -- an unregistered object is rendered
+    by its repr, as it was before.
+    """
+    if id(value) in seen:
+        return
+    seen[id(value)] = len(seen)
+    if depth >= _ESTIMATE_DEPTH or type(value) not in _SIZED:  # noqa: E721 -- exact type
+        return
+    for key, entry in _members(value):
+        if len(seen) > limit:
+            return
+        _register(key, seen, limit, depth + 1)
+        if entry is not None:
+            _register(entry, seen, limit, depth + 1)
+
+
 def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
     """A fingerprint of everything a cell has put in the namespace.
 
@@ -667,14 +730,13 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
         # the two namespaces fingerprinted alike -- while a later
         # `_.append(1); a` sees different state.
         alias = seen.get(id(value))
-        seen.setdefault(id(value), len(seen))
+        _register(value, seen, limit)
         if name == "_" and value is LAST_DISPLAYED:
             continue
         if name in baseline and baseline[name] is value:
             continue
         if alias is not None:
-            digest.update(repr(name).encode("utf-8", errors="backslashreplace"))
-            digest.update(f"\0alias:{alias}\0".encode())
+            _record(digest, name, b"alias", str(alias).encode("ascii"))
             continue
         rendered, truncated = bounded_repr(value, limit)
         if truncated or _OPAQUE.search(rendered):
@@ -686,18 +748,14 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
             # prevent. No digest at all is the honest answer: the parent reads
             # an empty one as "not compared" and says so.
             return ""
-        digest.update(repr(name).encode("utf-8", errors="backslashreplace"))
-        digest.update(b"\0")
-        digest.update(rendered.encode("utf-8", errors="backslashreplace"))
-        digest.update(b"\0")
+        _record(digest, name, b"value", rendered.encode("utf-8", errors="backslashreplace"))
     # A name the preamble bound and a cell removed contributes nothing to the
     # loop above, so a namespace missing it fingerprinted exactly like one
     # still holding it: `del symbols; 1 / 0` followed by an accepted `pass`
     # rebuilt with `symbols` quietly back and was called faithful. Absence is
     # as much a change as a new value, and is hashed as one.
     for name in sorted((key for key in baseline if key not in namespace), key=repr):
-        digest.update(repr(name).encode("utf-8", errors="backslashreplace"))
-        digest.update(b"\0deleted\0")
+        _record(digest, name, b"deleted", b"")
     return digest.hexdigest()
 
 

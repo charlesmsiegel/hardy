@@ -1883,6 +1883,11 @@ class CasSession:
         if not pending:
             return RebuildReport()
         diverged: list[int] = []
+        # A replay that overran the cap compared on a prefix just as a
+        # truncated record does, and the truncation can be on either side: an
+        # exact original against a replay that printed more still matches on
+        # what was retained, with the rest never looked at.
+        clipped: list[int] = []
         for record in pending:
             # A rebuild is the session's own time. Left unbilled, a session
             # holding expensive accepted cells could time out and replay many
@@ -1925,6 +1930,8 @@ class CasSession:
             # on randomness, time, or the filesystem can succeed here and
             # reconstruct a different value, and every later cell would be
             # built on it.
+            if outcome.capture_truncated:
+                clipped.append(record.seq)
             if not reproduces(record, outcome):
                 diverged.append(record.seq)
         if diverged:
@@ -1949,7 +1956,9 @@ class CasSession:
             unverified=tuple(
                 record.seq
                 for record in pending
-                if unobservable(record) or record.capture_truncated
+                if unobservable(record)
+                or record.capture_truncated
+                or record.seq in set(clipped)
             ),
         )
 

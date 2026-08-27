@@ -940,3 +940,91 @@ def test_a_rebuild_over_a_truncated_capture_is_unverified(sympy_session) -> None
         assert "not verified" in rebuilt.restart_note, rebuilt.restart_note
     finally:
         session.close()
+
+
+# ---------------------------------------------------- and the ninth review's
+
+
+def test_the_digest_sees_sharing_below_the_top_level() -> None:
+    """Registering only the names saw sharing at the top level and nowhere else.
+
+    `a = [[]]` with `b` bound either to `a[0]` or to a fresh `[]` renders
+    `[[]]` and `[]` both ways — and after a rebuild `b.append(1)` either does
+    or does not change `a`.
+    """
+    nested: list = []
+    assert state_digest({"a": [nested], "b": nested}, {}, 4096) != state_digest(
+        {"a": [[]], "b": []}, {}, 4096
+    )
+
+
+def test_a_deletion_cannot_be_forged_by_a_value(sympy_session) -> None:
+    """The marker shared its encoding with an ordinary rendered value.
+
+    `Symbol("deleted")` renders as `deleted`, so a namespace missing a name
+    hashed exactly like one holding that symbol under it. Every entry carries
+    its kind now, and no kind's bytes can be produced by another.
+    """
+    absent = state_digest({}, {"symbols": 1}, 4096)
+    forged = state_digest({"symbols": __import__("sympy").Symbol("deleted")}, {"symbols": 1}, 4096)
+    assert absent != forged
+
+
+def test_output_written_before_a_cell_closes_its_descriptor_is_not_lost(
+    sympy_session,
+) -> None:
+    """A closed descriptor ends the wait without the end marker arriving, and
+    whatever was already in the scan window went unretained and unreported:
+    the cell recorded empty stdout and called the capture exact."""
+    record = sympy_session.execute("import os; os.write(1, b'VISIBLE'); os.close(1)")
+    assert "VISIBLE" in record.stdout, record.model_dump_json(indent=2)
+    assert record.capture_truncated is True, record.model_dump_json(indent=2)
+
+
+def test_the_script_check_cannot_change_the_file_it_publishes(
+    sympy_session, tmp_path
+) -> None:
+    """The check executes the published bytes, and a cell is free to rewrite
+    the path it was run from — Python has already loaded the module, so the
+    run finishes and matches the transcript. The verdict would then be
+    `verified` for an artifact that no longer existed."""
+    sympy_session.execute(
+        'if __name__ == "__main__":\n'
+        "    import sys, pathlib\n"
+        "    pathlib.Path(sys.argv[0]).write_text('# gone\\n', encoding='utf-8')\n"
+    )
+    directory = tmp_path / "cas"
+    report = export_session(sympy_session, directory)
+
+    published = (directory / "session.py").read_text(encoding="utf-8")
+    # `# gone` is in the file legitimately -- it is the cell's own source. What
+    # must not have happened is the file being *replaced* by it.
+    assert published.strip() != "# gone"
+    assert "from sympy import *" in published
+    assert TRANSCRIPT_BEGIN in published
+    # And the verdict is honest either way: the copy took the write, the
+    # published bytes are the ones that were checked, and the transcript
+    # matched. Nothing here needs to be reported as a failure.
+    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+
+
+def test_a_script_that_rewrites_the_published_file_is_not_verified(
+    sympy_session, tmp_path
+) -> None:
+    """Running a copy keeps an accidental self-overwrite away from the
+    artifact; nothing but isolation stops a cell reaching the published path
+    deliberately. So the file is read back and compared — a verdict is a claim
+    about the bytes a reader will keep."""
+    sympy_session.execute(
+        'if __name__ == "__main__":\n'
+        "    import pathlib\n"
+        "    for parent in pathlib.Path.cwd().parents:\n"
+        "        target = parent / 'session.py'\n"
+        "        if target.exists():\n"
+        "            target.write_text('# replaced\\n', encoding='utf-8')\n"
+        "            break\n"
+    )
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "failed", report.model_dump_json(indent=2)
+    assert "changed on disk" in report.script_detail
+    assert report.reproduces is False
