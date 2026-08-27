@@ -320,3 +320,30 @@ def test_the_refusal_names_the_settings_and_their_types(root):
     (hardy / "config.toml").write_text('model = ["a"]\n', encoding="utf-8")
     with pytest.raises(ValueError, match=r"model \(list\)"):
         configuration.write_project_setting(root, "project", "burnside")
+
+
+def test_a_session_told_not_to_read_project_context_stays_told(opener, live, monkeypatch):
+    """`--no-project-context` is a flag, so it lives only in the live config.
+
+    Re-reading the layers cannot recover it, and leaving it out turned the
+    project's own `AGENTS.md` back on for a user who had just asked for it to
+    be left alone -- a deliberate choice reversed by an unrelated command.
+    """
+    handed = {}
+    monkeypatch.setattr(cli, "MathematicsSession", lambda *a, **k: handed.update(k) or object())
+    off = dataclasses.replace(live, project_context=False)
+
+    config, _ = opener("burnside", _decline, off)
+
+    assert config.project_context is False
+    assert handed["project_context"] is False
+
+
+def test_reading_project_context_is_carried_across_too(opener, live, monkeypatch):
+    handed = {}
+    monkeypatch.setattr(cli, "MathematicsSession", lambda *a, **k: handed.update(k) or object())
+
+    config, _ = opener("burnside", _decline, dataclasses.replace(live, project_context=True))
+
+    assert config.project_context is True
+    assert handed["project_context"] is True
