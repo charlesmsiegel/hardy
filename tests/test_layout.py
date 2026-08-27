@@ -1059,3 +1059,62 @@ def test_the_cas_scratch_trees_are_ignored(tmp_path: Path):
     rules = (tmp_path / "sylow" / ".gitignore").read_text(encoding="utf-8")
     assert "/cas/replay/" in rules
     assert "/cas/script-run/" in rules
+
+
+def test_a_failure_creating_the_trees_still_leaves_a_recognisable_scaffold(tmp_path, monkeypatch):
+    """The marker is what tells Hardy's leftovers from somebody's directory.
+
+    Written after the child trees, it was absent from exactly the failures that
+    need it: an `OSError` creating `tex/` left `<problem>/lean/` with no marker,
+    which `/project new` then refused forever and `/project switch` could not
+    see.
+    """
+    real = layout._ensure_dir
+
+    def fails_on_tex(directory, parent):
+        if directory.name == "tex":
+            raise OSError(28, "No space left on device")
+        return real(directory, parent)
+
+    monkeypatch.setattr(layout, "_ensure_dir", fails_on_tex)
+    with pytest.raises(layout.LayoutError):
+        layout.Layout(root=tmp_path, slug="burnside").ensure()
+
+    monkeypatch.setattr(layout, "_ensure_dir", real)
+    assert layout.Layout(root=tmp_path, slug="burnside").is_bare_scaffold()
+
+
+def test_the_retry_after_such_a_failure_completes_the_tree(tmp_path, monkeypatch):
+    real = layout._ensure_dir
+    calls = {"n": 0}
+
+    def fails_once(directory, parent):
+        if directory.name == "tex" and calls["n"] == 0:
+            calls["n"] += 1
+            raise OSError(28, "No space left on device")
+        return real(directory, parent)
+
+    monkeypatch.setattr(layout, "_ensure_dir", fails_once)
+    with pytest.raises(layout.LayoutError):
+        layout.Layout(root=tmp_path, slug="burnside").ensure()
+
+    layout.Layout(root=tmp_path, slug="burnside").ensure()
+    for name in ("lean", "tex", "cas", ".local", ".build"):
+        assert (tmp_path / "burnside" / name).is_dir()
+
+
+def test_the_marker_is_written_before_any_child_tree(tmp_path, monkeypatch):
+    """Not just present at the end -- present before anything that can fail."""
+    real = layout._ensure_dir
+    seen = []
+
+    def watch(directory, parent):
+        seen.append((tmp_path / "burnside" / ".gitignore").is_file())
+        return real(directory, parent)
+
+    monkeypatch.setattr(layout, "_ensure_dir", watch)
+    layout.Layout(root=tmp_path, slug="burnside").ensure()
+
+    # The first call makes the problem directory itself; every one after it
+    # makes a child, and the marker must already be there by then.
+    assert seen[1:] and all(seen[1:])
