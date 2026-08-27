@@ -25,6 +25,7 @@ from .domain import EnvironmentIdentity, FrozenClaim, FrozenModel, RunLimits
 from .layout import WriteGuard
 from .models import Request, ToolResult
 from .process import ProcessResult, ProcessSpec, run_process
+from .truncation import truncate
 from .workspace import QUALIFIED_NAME, declared_name
 
 if TYPE_CHECKING:
@@ -122,6 +123,13 @@ DECLARATION_HEAD = re.compile(
 
 # Lean's own output is bounded generously; what a model is shown is bounded
 # tightly. The two limits answer different questions.
+#
+# Both are byte counts. `DEFAULT_OBSERVATION_LIMIT` counted characters until
+# the cut moved into `truncation`, which counts bytes because every other
+# budget in Hardy does -- `model_observation_bytes`, `cas_output_bytes`, the
+# process cap above. Lean's output is dense in multibyte symbols, so this is a
+# real tightening for goal states full of them, and the honest direction to
+# tighten in: what a byte budget promises is what the context actually costs.
 DEFAULT_PROCESS_OUTPUT_BYTES = 4 * 1024 * 1024
 DEFAULT_OBSERVATION_LIMIT = 12_000
 
@@ -490,10 +498,16 @@ class LeanTools:
             header = f"exit={process.returncode} elapsed={process.duration_ms / 1000:.3f}s"
         body = render_diagnostics(elaboration.diagnostics)
         # The model sees the end of a long Lean complaint, which is where the
-        # unsolved goal usually is.
-        truncated = len(body) > self.output_limit
-        if truncated:
-            body = body[-self.output_limit :]
+        # unsolved goal usually is. Through `truncation` rather than a slice
+        # here, so the one place that decides which end to keep and what a cut
+        # observation reports is the same place `read_file` asks. No line
+        # limit: Lean's window has always been a size, and a line count over
+        # `output_limit` bytes of goal state would never be the binding one.
+        observation = truncate(
+            body, keep="tail", line_limit=None, byte_limit=self.output_limit
+        )
+        body = observation.text
+        truncated = observation.truncated
         return LeanToolResult(
             elaboration.success,
             translate_missing_modules(f"{header}\n{body}" if body else header, self.modules),

@@ -18,7 +18,9 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   that imports the one edited and is refused whole if any of them breaks, so the
   workspace is never left uncompilable. LaTeX fragments are `\input` from
   `writeup.tex` and compiled through it. `read_workspace` lists the tree,
-  `read_file` fetches one file, and `delete_file` removes one that nothing imports.
+  `read_file` fetches one file — bounded from the top, like every other result a
+  model is handed, and naming the `start_line` that reads on — and `delete_file`
+  removes one that nothing imports.
 - **Now (implemented):** a `theorem` cannot be accumulated without a writeup, and the
   writeup must quote the Lean. A saved theorem is carried only when `record_name` maps
   it to a LaTeX name, the compiler really created that `\label`, and the document the

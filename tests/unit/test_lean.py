@@ -264,3 +264,90 @@ def test_search_reports_lean_timeout_instead_of_claiming_no_results(tmp_path) ->
     assert not search.success
     assert search.timed_out
     assert search.results == ()
+
+
+def _elaboration(lean, process, messages: tuple[str, ...]):
+    return lean.Elaboration(
+        process=process,
+        diagnostics=tuple(
+            lean.LeanDiagnostic(severity='error', message=message) for message in messages
+        ),
+        open_goals=(),
+        source_sha256='c' * 64,
+    )
+
+
+def _finished(process_module):
+    return process_module.ProcessResult(
+        argv=('lake', 'env', 'lean'),
+        cwd=Path('.'),
+        returncode=1,
+        stdout='',
+        stderr='',
+        timed_out=False,
+        output_overflow=False,
+        duration_ms=12,
+    )
+
+
+def test_a_long_lean_observation_still_keeps_its_tail() -> None:
+    """The deliberate difference, pinned across the shared truncation helper.
+
+    Lean's end is where the unsolved goal is, so `_observe` keeps the end
+    while a file read keeps the top. Routing both through one helper is only
+    safe if the helper does not quietly make them agree.
+    """
+    lean = importlib.import_module('hardy.lean')
+    process_module = importlib.import_module('hardy.process')
+    tools = lean.LeanTools(
+        lean.Request.from_dict(
+            {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+        ),
+        ('true',),
+        output_limit=400,
+    )
+
+    messages = tuple(f'complaint {index} about the goal' for index in range(200))
+    result = tools._observe(_elaboration(lean, _finished(process_module), messages), 'source')
+
+    assert result.observation_truncated is True
+    assert 'complaint 199 about the goal' in result.output
+    assert 'complaint 0 about the goal' not in result.output
+    assert len(result.output.encode('utf-8')) <= 400 + len('exit=1 elapsed=0.012s\n')
+
+
+def test_a_lean_observation_that_fits_is_not_marked_truncated() -> None:
+    lean = importlib.import_module('hardy.lean')
+    process_module = importlib.import_module('hardy.process')
+    tools = lean.LeanTools(
+        lean.Request.from_dict(
+            {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+        ),
+        ('true',),
+    )
+
+    result = tools._observe(_elaboration(lean, _finished(process_module), ('one complaint',)), 'x')
+
+    assert result.observation_truncated is False
+    assert 'one complaint' in result.output
+
+
+def test_a_truncated_lean_observation_does_not_start_mid_line() -> None:
+    """A goal state cut in half at the front reads as a goal Lean did not
+    state. The character slice this replaced could land anywhere.
+    """
+    lean = importlib.import_module('hardy.lean')
+    process_module = importlib.import_module('hardy.process')
+    tools = lean.LeanTools(
+        lean.Request.from_dict(
+            {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+        ),
+        ('true',),
+        output_limit=300,
+    )
+
+    messages = tuple(f'complaint {index} about the goal' for index in range(200))
+    result = tools._observe(_elaboration(lean, _finished(process_module), messages), 'source')
+
+    body = result.output.split('\n', 1)[1]
+    assert all(line.startswith('error: complaint ') for line in body.splitlines())
