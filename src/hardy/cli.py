@@ -224,6 +224,51 @@ def offer_registration(
     return f"Registered {slug} with {host.name} as a lean_lib; `lake build` now sees its modules."
 
 
+class _Reopen:
+    """One reopen in flight, and the two things a canceller needs of it.
+
+    Per call rather than per opener, so a cancel arriving for one switch
+    cannot be erased by the next one resetting a shared flag.
+    """
+
+    def __init__(self) -> None:
+        self.cancelled = False
+        self.session: Any = None
+
+    def probing(self, session: Any) -> None:
+        """The kernel `build_runtime` is about to block on, handed over.
+
+        Escalated immediately if the cancel got here first: between this call
+        starting and the kernel existing there is nothing to reach, and a
+        cancel landing in that gap would otherwise wait out the whole probe.
+        """
+        self.session = session
+        if self.cancelled:
+            session.escalate()
+
+    def cancel(self) -> None:
+        self.cancelled = True
+        if self.session is not None:
+            self.session.escalate()
+
+    def refuse_if_cancelled(self, cas: Any) -> None:
+        if not self.cancelled:
+            return
+        if cas is not None:
+            cas.session.close()
+        raise ReopenCancelled("the switch was cancelled")
+
+
+class ReopenCancelled(Exception):
+    """A reopen abandoned by its caller before it could commit anything.
+
+    Raised on the worker, where nobody is left to catch it -- which is the
+    point: it unwinds `ProjectOpener.__call__` before the old kernel is closed
+    and before the active project is rewritten, so a cancelled switch leaves
+    the session exactly where it was.
+    """
+
+
 class ProjectOpener:
     """Open another problem in this root, in the process already running.
 
@@ -258,6 +303,9 @@ class ProjectOpener:
         self._search = search
         self._search_detail = search_detail
         self.cas = cas
+        # The reopen currently in flight, or None. Written by the worker and
+        # read by `cancel` from the event loop -- see both.
+        self._opening: _Reopen | None = None
         # One retrieval meter per problem, for as long as this process lives.
         # `renew` on every open gave a problem a full allowance every time it
         # was reopened, so `A -> B -> A` refilled A -- and repeating the cycle
@@ -268,6 +316,34 @@ class ProjectOpener:
         # them. Seeded with the launch problem's own runtime, which is the one
         # `_chat` has already given the first session.
         self._search_for: dict[str, Any] = {launched: search}
+
+    def cancel(self) -> None:
+        """Stop a reopen that is already running on a worker thread.
+
+        Cancelling the await does not stop the thread, and there is no reaching
+        the kernel through `process.interrupt_children`: that register
+        deliberately excludes a persistent computer algebra kernel, which is
+        owned by its session -- and this session is one nothing else holds yet,
+        because it is being built. So the opener holds it, and `escalate` is
+        the reach that works: it takes the session's `_signal_lock` and never
+        `_lock`, which `probe_version` holds for its whole duration.
+
+        The flag matters more than the kill. A probe that has already returned
+        leaves a worker nobody is waiting on which would otherwise run to
+        completion -- closing the kernel the user is still using and rewriting
+        the active project in a committed file, for a switch they cancelled.
+        `__call__` refuses to commit anything once this is set.
+
+        Marked on the reopen in flight rather than on the opener, so a cancel
+        cannot be erased by the next call resetting a shared flag. One window
+        is left open and is not worth closing here: a cancel delivered between
+        `to_thread` scheduling the call and the worker's first statement finds
+        no reopen to mark, and that switch completes. Ctrl+C landing inside
+        that gap gets what it would have got before any of this existed.
+        """
+        opening = self._opening
+        if opening is not None:
+            opening.cancel()
 
     def _configure(self, slug: str, current: configuration.Config) -> configuration.Config:
         """The configuration the session is running, pointed at another problem.
@@ -311,13 +387,17 @@ class ProjectOpener:
             self._search_for[slug] = search
         # A kernel per problem, logging into that problem's `cas/`. Sharing one
         # would put two problems' cells in one `cells.jsonl` and one export.
+        opening = _Reopen()
+        self._opening = opening
         cas, cas_detail = cas_tools.build_runtime(
             backend_name=config.cas_backend,
             command=config.cas_command,
             limits=config.limits,
             log_path=config.layout.cas / "cells.jsonl",
             cwd=config.layout.cas,
+            on_session=opening.probing,
         )
+        opening.refuse_if_cancelled(cas)
         try:
             session = MathematicsSession(
                 config.layout.problem,
@@ -341,11 +421,19 @@ class ProjectOpener:
             if cas is not None:
                 cas.session.close()
             raise
+        # Checked again here, and this is the check that matters: everything
+        # below commits. A probe that finished just as the user pressed Ctrl+C
+        # would otherwise close the kernel they are still using and record a
+        # switch they cancelled.
+        opening.refuse_if_cancelled(cas)
+        self._opening = None
         if self.cas is not None:
             self.cas.session.close()
         self.cas = cas
         self._remember(config)
         return config, session
+
+
 
     def _remember(self, config: configuration.Config) -> None:
         """Record which problem is active, where the project layer reads it.

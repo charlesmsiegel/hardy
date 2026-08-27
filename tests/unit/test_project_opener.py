@@ -433,3 +433,112 @@ def test_every_setting_but_the_problem_comes_from_the_live_session(opener, live)
 
     assert config.project == "burnside"
     assert dataclasses.replace(config, project=moved.project) == moved
+
+
+# -- a switch nobody is waiting for -------------------------------------
+
+
+class SlowKernel(FakeKernel):
+    """A session whose probe is still running, reachable only by `escalate`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.escalated = False
+
+    def escalate(self) -> bool:
+        self.escalated = True
+        return True
+
+
+def test_a_cancelled_reopen_commits_nothing(opener, live, root, monkeypatch):
+    """The worker runs on after the await is gone; it must not finish the job.
+
+    Otherwise a Ctrl+C during a switch still closed the kernel the user is
+    using and rewrote the active project in a committed file, for a switch
+    they cancelled.
+    """
+    previous = opener.cas
+
+    def build(**kwargs):
+        opener.cancel()                       # the user presses Ctrl+C mid-probe
+        return FakeCas(kwargs["cwd"]), "fake 1.0"
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", build)
+
+    with pytest.raises(cli.ReopenCancelled):
+        opener("burnside", _decline, live)
+
+    assert previous.session.closed is False   # the live kernel is untouched
+    assert opener.cas is previous
+    assert not (root / layout.HARDY_DIR / "config.toml").exists()
+
+
+def test_a_cancelled_reopen_reaches_the_kernel_it_was_probing(opener, live, monkeypatch):
+    """`escalate` takes `_signal_lock` and never `_lock`, which the probe holds.
+
+    `process.interrupt_children` cannot do this -- its register deliberately
+    excludes a persistent CAS kernel -- so the opener has to hold the session
+    itself.
+    """
+    probing = SlowKernel()
+
+    def build(*, on_session=None, **kwargs):
+        on_session(probing)
+        opener.cancel()
+        raise AssertionError("unreachable: cancel is expected to stop this")
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", build)
+
+    with pytest.raises(AssertionError):
+        opener("burnside", _decline, live)
+
+    assert probing.escalated
+
+
+def test_a_cancel_arriving_before_the_kernel_exists_still_stops_it(opener, live, monkeypatch):
+    """The gap between the call starting and the probe having a kernel.
+
+    A cancel landing there has nothing to reach yet, so the handover escalates
+    on arrival rather than leaving the probe to run its full limit out.
+    """
+    probing = SlowKernel()
+
+    def build(*, on_session=None, **kwargs):
+        opener.cancel()               # cancelled before there is a kernel
+        on_session(probing)           # ... which arrives a moment later
+        return None, "cancelled"
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", build)
+
+    with pytest.raises(cli.ReopenCancelled):
+        opener("burnside", _decline, live)
+
+    assert probing.escalated
+
+
+def test_a_cancel_for_one_switch_cannot_refuse_the_next(opener, live, root):
+    """Per call, not per opener: a stale flag would refuse a later switch."""
+    def build(**kwargs):
+        opener.cancel()
+        return FakeCas(kwargs["cwd"]), "fake 1.0"
+
+    import hardy.cli as module
+    original = module.cas_tools.build_runtime
+    module.cas_tools.build_runtime = build
+    try:
+        with pytest.raises(cli.ReopenCancelled):
+            opener("burnside", _decline, live)
+    finally:
+        module.cas_tools.build_runtime = original
+
+    config, session = opener("galois", _decline, live)
+    assert config.project == "galois"
+    assert session is not None
+
+
+def test_an_uncancelled_reopen_still_commits(opener, live, root):
+    """The guard must not be able to refuse a switch nobody cancelled."""
+    config, session = opener("burnside", _decline, live)
+    assert config.project == "burnside"
+    assert session is not None
+    assert configuration.read_file(root / layout.HARDY_DIR / "config.toml")["project"] == "burnside"

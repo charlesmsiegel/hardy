@@ -403,14 +403,20 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
                 state.reopen, slug, cli.confirm_assumption(ui), state.config
             )
         except asyncio.CancelledError:
-            # `/doctor`'s reason, for `/doctor`'s shape of problem. Cancelling
-            # the await does not stop the worker, and `Shell.run`'s
+            # Cancelling the await does not stop the worker, and `Shell.run`'s
             # `asyncio.run` joins the executor on the way out -- so a Ctrl+C
-            # during a switch waited on a computer algebra probe that could
-            # still be starting, for as long as its own limit allows. The
-            # session being replaced cannot be told to stop this: the kernel
-            # is not its own, it is the one being built.
-            process.interrupt_children()
+            # during a switch waits on a computer algebra probe that may still
+            # be starting, for as long as its own limit allows.
+            #
+            # `process.interrupt_children()` was the first answer here and does
+            # not reach it: that register deliberately excludes a persistent
+            # CAS kernel, and this one is not even the replaced session's -- it
+            # is the one being built, which only the opener holds. So the
+            # opener is asked, and it both reaches the kernel and stops the
+            # worker committing a switch nobody is waiting for.
+            stop = getattr(state.reopen, "cancel", None)
+            if stop is not None:
+                stop()
             raise
     except Exception as error:  # noqa: BLE001 - a bad problem is not a lost session
         # Every refusal the layout, the record and the filesystem can raise
