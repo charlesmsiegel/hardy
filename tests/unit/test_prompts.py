@@ -8,6 +8,20 @@ import pytest
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "hardy"
 
 
+def _staged_template_names(suffix: str) -> list[str]:
+    """Every staged template, named the way the loader and the payload name it.
+
+    Recursive, and relative rather than a basename: Jinja template names carry
+    a path (`batch/system` already does), so a template added at
+    `staged/proof/repair.md.j2` is `proof/repair` here and must be that key in
+    the payload. A non-recursive glob would not see it, and the guard below
+    would pass while the new template went unhashed -- the exact failure this
+    file exists to catch.
+    """
+    root = SOURCE / "prompts" / "staged"
+    return sorted(path.relative_to(root).as_posix()[: -len(suffix)] for path in root.rglob(f"*{suffix}"))
+
+
 def _claim(domain):
     proposal = domain.FormalizationProposal(
         restatement='Two equals two.',
@@ -170,7 +184,7 @@ def test_the_prompt_set_hash_covers_every_staged_template():
     """
     prompts = importlib.import_module("hardy.prompts")
     payload = prompts._prompt_set_payload()
-    templates = sorted(path.name[: -len(prompts.SUFFIX)] for path in (SOURCE / "prompts" / "staged").glob(f"*{prompts.SUFFIX}"))
+    templates = _staged_template_names(prompts.SUFFIX)
     assert templates, "no staged templates found; the glob is looking in the wrong place"
     missing = [name for name in templates if payload.get(name) != prompts.source(f"staged/{name}")]
     assert not missing, f"staged templates the recorded hash does not cover: {missing}"
@@ -185,8 +199,7 @@ def test_the_prompt_set_hash_is_the_staged_set_and_says_so():
     to the payload is defensible; doing it by accident is not.
     """
     prompts = importlib.import_module("hardy.prompts")
-    templates = {path.name[: -len(prompts.SUFFIX)] for path in (SOURCE / "prompts" / "staged").glob(f"*{prompts.SUFFIX}")}
-    assert set(prompts._prompt_set_payload()) == templates | {"version"}
+    assert set(prompts._prompt_set_payload()) == set(_staged_template_names(prompts.SUFFIX)) | {"version"}
 
 
 def test_the_chat_prompt_describes_the_file_tree():
