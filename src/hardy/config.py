@@ -528,6 +528,16 @@ def write_project_setting(root: Path, key: str, value: str) -> None:
     and ordering are what a parse costs, and this file is Hardy's own two-line
     header plus one setting -- unlike the user's config, which `write_setting`
     keeps line-based precisely because a human arranges it.
+
+    And a value this function cannot write back UNCHANGED stops the write
+    rather than being mangled by it. `_render_toml_line` renders scalars; a
+    list or a table reached it as `str(value)` and came back a quoted Python
+    repr, so `model = ["a", "b"]` became `model = "[\'a\', \'b\']"` and a
+    `[tectonic]` table became a string -- silently, in a tracked file, as the
+    side effect of switching projects. Preserving keys was the whole point of
+    parsing rather than line-editing, and that is not preservation. Refusing
+    is: `_remember` reports it and the switch stands, so the cost is a
+    recorded preference rather than anybody's data.
     """
     if key not in PROJECT_SETTINGS:
         raise ValueError(
@@ -535,15 +545,25 @@ def write_project_setting(root: Path, key: str, value: str) -> None:
             f"{', '.join(sorted(PROJECT_SETTINGS))}"
         )
     guard = layout.WriteGuard(root / layout.HARDY_DIR, create=True)
-    name = "config.toml"
+    filename = "config.toml"
     try:
-        with guard.open(name, encoding="utf-8-sig") as handle:
+        with guard.open(filename, encoding="utf-8-sig") as handle:
             values = tomllib.loads(handle.read())
     except FileNotFoundError:
         values = {}
     values[key] = value
-    lines = [*PROJECT_HEADER, *(_render_toml_line(k, v) for k, v in values.items())]
-    guard.write_bytes(name, ("\n".join(lines) + "\n").encode("utf-8"))
+    unwritable = sorted(
+        setting for setting, held in values.items()
+        if not isinstance(held, (str, int, float, bool))
+    )
+    if unwritable:
+        described = ", ".join(f"{setting} ({type(values[setting]).__name__})" for setting in unwritable)
+        raise ValueError(
+            f"{guard.path(filename)} holds values this layer cannot rewrite without changing "
+            f"them: {described}. Remove them to let the active project be recorded here."
+        )
+    lines = [*PROJECT_HEADER, *(_render_toml_line(setting, held) for setting, held in values.items())]
+    guard.write_bytes(filename, ("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def remove_setting(path: Path, key: str) -> None:
