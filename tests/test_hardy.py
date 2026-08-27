@@ -231,9 +231,13 @@ def test_a_kernel_accepted_proof_with_sorry_ax_is_not_verified(tmp_path: Path, p
     assert result.formalization == "not formalized"
     assert result.proof is None
     assert not (tmp_path / "proof.lean").exists()
-    # The audit ran and refused. Recording "not audited" would say it never ran.
+    # The audit ran and graded it. Recording "not audited" would say it never
+    # ran. It grades `open` -- an unfinished proof, which is a different fact
+    # from an unacceptable one -- and this path refuses anything short of
+    # `clean` regardless, because there is no human here to hold a partial
+    # result for.
     recorded = json.loads((tmp_path / "result.json").read_text())["axioms"]
-    assert recorded["status"] == "rejected"
+    assert recorded["status"] == "open"
     assert recorded["forbidden"] == ["sorryAx"]
 
 
@@ -276,7 +280,10 @@ def test_the_writeup_says_why_a_refused_run_was_not_graded(tmp_path: Path, proof
     run(proof_request, factory([
         call("submit_proof", {"proof": "by exact True.intro -- axioms: sorryAx"}),
     ]), lean, tmp_path, max_turns=2)
-    assert "Audited axioms: forbidden ['sorryAx']" in (tmp_path / "writeup.md").read_text()
+    assert (
+        "Audited axioms: open -- ['HardyTarget'] rest on a hole ['sorryAx']"
+        in (tmp_path / "writeup.md").read_text()
+    )
 
 
 def test_the_writeup_of_a_clean_proof_with_no_axioms_says_none(tmp_path: Path, proof_request: Request, lean: LeanTools):

@@ -14,7 +14,7 @@ silence must never read as "depends on nothing".
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,7 +32,7 @@ class AxiomReport:
 
 @dataclass(frozen=True)
 class Verdict:
-    status: str  # "clean" | "modulo" | "rejected"
+    status: str  # "clean" | "modulo" | "open" | "rejected"
     reports: tuple[AxiomReport, ...]
     forbidden: tuple[str, ...]
     unapproved: tuple[str, ...]
@@ -117,13 +117,40 @@ def classify(reports: Sequence[AxiomReport], approved: Iterable[str]) -> Verdict
     # shape of the bug this module exists to end.
     if not reports:
         status = "rejected"
+    elif unapproved:
+        # Ahead of the hole: an unapproved axiom is the half a caller can act
+        # on, and a save carrying both must be told about that one.
+        status = "rejected"
+    elif forbidden:
+        # A hole is not an assumption and no human may approve one -- but it is
+        # a proof that is not finished yet, which is a different fact from a
+        # proof that may not be accepted. Callers with nobody to ask refuse
+        # anything that is not "clean", and so still refuse this.
+        status = "open"
     else:
-        status = "rejected" if forbidden or unapproved else "modulo" if assumed else "clean"
+        status = "modulo" if assumed else "clean"
     return Verdict(status, tuple(reports), forbidden, unapproved, assumed)
 
 
 def dependents(reports: Sequence[AxiomReport], axiom: str) -> tuple[str, ...]:
     return tuple(item.declaration for item in reports if axiom in item.axioms)
+
+
+def open_declarations(record: Mapping[str, Any]) -> tuple[str, ...]:
+    """The declarations a stored record says rest on a hole.
+
+    Read from the record rather than from a `Verdict`, because every caller that
+    needs this holds one read back from `session.json` -- and a record that never
+    graded anything carries no declarations, so it answers nothing rather than
+    answering "none rest on a hole".
+    """
+    return tuple(
+        sorted(
+            str(entry["name"])
+            for entry in record.get("declarations", ())
+            if any(axiom in FORBIDDEN for axiom in entry.get("axioms", ()))
+        )
+    )
 
 
 def unestablished(reason: str) -> dict[str, Any]:
@@ -156,6 +183,11 @@ def summarise(record: dict[str, Any]) -> str:
         return "not audited -- nothing reached the audit"
     if status == "not established":
         return f"not established -- {record['reason']}"
+    if status == "open":
+        return (
+            f"open -- {list(open_declarations(record))} rest on a hole "
+            f"{list(record['forbidden'])}"
+        )
     parts = []
     if record["forbidden"]:
         parts.append(f"forbidden {list(record['forbidden'])}")
