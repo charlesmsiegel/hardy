@@ -877,3 +877,66 @@ def test_a_rebuild_that_loses_the_sharing_is_refused(sympy_session, tmp_path) ->
     sympy_session._drop_kernel()
     with pytest.raises(CasError, match="did not reproduce"):
         sympy_session.execute("1 + 1")
+
+
+# --------------------------------------------------- and the eighth review's
+
+
+def test_a_state_only_divergence_says_so(sympy_session, tmp_path) -> None:
+    """A silent `x = random.random()` reproduces every printed field and fails
+    only on the digest. Reporting that as "different output" told `export.json`
+    and the notebook the opposite of what happened, hiding exactly the state
+    discrepancy the digest was added to expose."""
+    sympy_session.execute("import random")
+    sympy_session.execute("x = random.random()")
+    report = export_session(sympy_session, tmp_path / "cas")
+
+    diverged = [v for v in report.verdicts if v.verdict == "diverged"]
+    assert diverged, report.model_dump_json(indent=2)
+    assert any("rebuilt a different namespace" in v.detail for v in diverged)
+    assert not any("different output" in v.detail for v in diverged)
+
+
+def test_an_alias_to_the_displayed_value_is_fingerprinted() -> None:
+    """A name whose repr is not hashed is still a position in the object graph.
+
+    With `a = []; b = []` and a trailing `a if flag else b`, `_` was skipped
+    without being recorded, so `a` and `b` took the same two ordinals either
+    way and the two namespaces fingerprinted alike — while a later
+    `_.append(1); a` sees different state.
+    """
+    import hardy.cas_driver as driver
+
+    a: list = []
+    b: list = []
+    driver.LAST_DISPLAYED = a
+    showing_a = state_digest({"a": a, "b": b, "_": a}, {}, 4096)
+    driver.LAST_DISPLAYED = b
+    showing_b = state_digest({"a": a, "b": b, "_": b}, {}, 4096)
+    driver.LAST_DISPLAYED = driver._UNSET
+    assert showing_a != showing_b
+
+
+def test_a_rebuild_over_a_truncated_capture_is_unverified(sympy_session) -> None:
+    """The retained prefixes matched and the discarded tails were never
+    compared, so a cell printing a deterministic prefix over a random tail
+    replays cleanly with nothing having checked the part that differs."""
+    session = CasSession(
+        backend=backend_for("sympy"),
+        command=None,
+        log_path=sympy_session.log_path.parent / "clipped-rebuild.jsonl",
+        limits=RunLimits(cas_cell_seconds=120, cas_output_bytes=4_096),
+        cwd=sympy_session.cwd,
+    )
+    try:
+        session.execute("import random")
+        clipped = session.execute("print('x' * 5000 + str(random.random()))")
+        assert clipped.capture_truncated is True
+        assert clipped.accepted is True, "the driver protocol still accepts it"
+
+        session._drop_kernel()
+        rebuilt = session.execute("1 + 1")
+        assert rebuilt.status == "ok"
+        assert "not verified" in rebuilt.restart_note, rebuilt.restart_note
+    finally:
+        session.close()

@@ -659,16 +659,23 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
     # for the namespace rather than describe it.
     for name in sorted(namespace, key=repr):
         value = namespace[name]
+        # Registered before any skip. A name whose repr is not hashed is still
+        # a *position* in the object graph, and leaving it out of `seen` let
+        # the graph be rebuilt differently for free: with `a = []; b = []` and
+        # a trailing `a if flag else b`, `_` was skipped without being
+        # recorded, so `a` and `b` took the same two ordinals either way and
+        # the two namespaces fingerprinted alike -- while a later
+        # `_.append(1); a` sees different state.
+        alias = seen.get(id(value))
+        seen.setdefault(id(value), len(seen))
         if name == "_" and value is LAST_DISPLAYED:
             continue
         if name in baseline and baseline[name] is value:
             continue
-        alias = seen.get(id(value))
         if alias is not None:
             digest.update(repr(name).encode("utf-8", errors="backslashreplace"))
             digest.update(f"\0alias:{alias}\0".encode())
             continue
-        seen[id(value)] = len(seen)
         rendered, truncated = bounded_repr(value, limit)
         if truncated or _OPAQUE.search(rendered):
             # Neither a prefix nor a default repr is a fingerprint. Two values
