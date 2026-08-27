@@ -2092,7 +2092,18 @@ class MathematicsSession:
         unfinished result, which is the state a long proof is in for most of
         its life.
         """
-        owed = [item for item in self._obligations() if item.kind != "open"]
+        # An approved axiom that only an *unfinished* proof leans on is not a
+        # claim owed to a reader yet, so its appendix obligation is not what
+        # stops the next skeleton either. It is still owed -- it stays in the
+        # obligations, on the screen, and in what `report_result` refuses over
+        # the moment the open theorem is named.
+        disclosed = self._rests_on(self._settled_declarations())
+        owed = [
+            item
+            for item in self._obligations()
+            if item.kind != "open"
+            and not (item.kind in {"appendix", "assumption"} and item.subject not in disclosed)
+        ]
         if owed and self._stale_only_from_holes():
             # A banner out of date only because a theorem opened is not a
             # writeup this save is running ahead of. It is still reported --
@@ -2949,6 +2960,31 @@ class MathematicsSession:
             current = self._still_current(module, record, signatures)
             if not current.get("stale"):
                 found.update(audit.open_declarations(current))
+        return found
+
+    def _settled_declarations(self) -> set[str]:
+        """Every audited declaration that does *not* rest on a hole.
+
+        The counterpart of `_open_declarations`, and read the same way: from
+        the stored records, skipping the ones no longer established. What it is
+        for is attributing an approved assumption to finished work or to
+        unfinished work, which are owed at different moments.
+        """
+        try:
+            signatures = self.lean_workspace.current_signatures()
+        except ImportCycle:
+            return set()
+        found: set[str] = set()
+        for module, record in self.state.get("audit", {}).items():
+            current = self._still_current(module, record, signatures)
+            if current.get("stale"):
+                continue
+            opened = set(audit.open_declarations(current))
+            found.update(
+                str(entry.get("name"))
+                for entry in current.get("declarations", ())
+                if str(entry.get("name")) not in opened
+            )
         return found
 
     def _open_theorems(self) -> set[str]:
