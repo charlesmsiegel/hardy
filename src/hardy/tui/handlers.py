@@ -391,10 +391,21 @@ async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
         # problem that was open stays open.
         ui.write(f"Could not open {slug}: {error}", style="error")
         return state
+    switched = dataclasses.replace(state, config=config, session=session)
     ui.write(f"  {status_line(config)}")
     if creating:
-        await _offer_registration(ui, config)
-    return dataclasses.replace(state, config=config, session=session)
+        # Never between the caller and the state it must be given. By this
+        # point the problem is open, the record is written and the old
+        # computer algebra kernel is closed, so an exception escaping here
+        # left the terminal running against a session whose kernel is shut --
+        # and ended the plain session outright, which has no catch around a
+        # command. Registration is an offer about a file Hardy does not own;
+        # failing it is a notice.
+        try:
+            await _offer_registration(ui, config)
+        except Exception as error:  # noqa: BLE001 - an offer is not the switch
+            ui.write(f"Could not register {config.project}: {error}", style="error")
+    return switched
 
 
 async def handle_project(ui: Ui, argument: str, state: State) -> State:
