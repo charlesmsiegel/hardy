@@ -81,3 +81,20 @@ def test_the_readme_does_not_promise_isolation_codex_cannot_give() -> None:
     # Named, not merely alluded to: the claim it qualifies is the no-tools one.
     assert 'no-tools' in section or 'no tools' in section
     assert 'reads anywhere' in section or 'read' in section
+
+
+def test_the_trust_panel_qualifies_the_codex_reader() -> None:
+    """The fourth document AGENTS.md asks to agree.
+
+    README, DESIGN and FEATURES all record that the Codex reader cannot be
+    confined. The architecture overview is the visual map a reader may take
+    the design from, and an unconditional claim there is the same overclaim
+    made in the one place easiest to quote out of context.
+    """
+    html = (ROOT / 'ARCHITECTURE.html').read_text(encoding='utf-8')
+    start = html.index('<h2>Trust boundary</h2>')
+    panel = html[start:html.index('</div>', start)].lower()
+
+    assert 'faithfulness' in panel or 'read back' in panel
+    assert 'codex' in panel
+    assert 'not established' in panel

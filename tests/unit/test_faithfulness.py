@@ -573,11 +573,12 @@ def test_the_verdict_covers_the_schema_the_answer_had_to_satisfy(tmp_path) -> No
     domain = importlib.import_module('hardy.domain')
     faithfulness = importlib.import_module('hardy.faithfulness')
 
+    store = _store(tmp_path)
     verdict = faithfulness.review_translation(
         _claim(domain),
         runtime=_Runtime(_review(domain)),
         model='reviewer-model',
-        store=_store(tmp_path),
+        store=store,
         phase=domain.RunPhase.AWAITING_APPROVAL,
     )
 
@@ -592,6 +593,11 @@ def test_the_verdict_covers_the_schema_the_answer_had_to_satisfy(tmp_path) -> No
     assert verdict.response_schema_sha256 == expected
     # And it is not the prompt's hash wearing another name.
     assert verdict.response_schema_sha256 != verdict.prompt_sha256
+    # Kept as a file, so the release audit checks the schema this run used
+    # rather than recomputing from whatever the code says today — which would
+    # flag every run made under an earlier schema.
+    kept = (store.path / 'faithfulness-schema.json').read_bytes()
+    assert hashlib.sha256(kept).hexdigest() == verdict.response_schema_sha256
 
 
 def test_a_failed_reader_is_stopped_before_its_verdict_is_returned(tmp_path) -> None:

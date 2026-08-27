@@ -331,3 +331,30 @@ def test_a_no_model_run_does_not_credit_a_configured_reviewer(tmp_path) -> None:
     assert 'claude-a-real-provider' not in tex
     assert 'isolation not established' in tex
     assert validate_run_consistency(result.run_dir, result.manifest) == ()
+
+
+def test_the_release_audit_recomputes_the_response_schema_hash(tmp_path) -> None:
+    """The schema says what the reader was made to answer.
+
+    Recorded and never rechecked it would be one more number taken on trust,
+    exactly as `prompt_sha256` was before the run began keeping the prompt.
+    """
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    schema = result.run_dir / 'faithfulness-schema.json'
+
+    assert schema.exists()
+    assert validate_run_consistency(result.run_dir, result.manifest) == ()
+
+    schema.write_text(schema.read_text(encoding='utf-8') + ' ', encoding='utf-8')
+    issues = validate_run_consistency(result.run_dir, result.manifest)
+
+    assert any('faithfulness schema hash differs' in issue for issue in issues)
+
+
+def test_a_missing_response_schema_is_reported(tmp_path) -> None:
+    result = run_deterministic_experiment(_config(tmp_path), outcome='verified')
+    (result.run_dir / 'faithfulness-schema.json').unlink()
+
+    issues = validate_run_consistency(result.run_dir, result.manifest)
+
+    assert any('schema the run did not keep' in issue for issue in issues)
