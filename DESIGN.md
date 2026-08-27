@@ -244,7 +244,19 @@ anything.
 Settings resolve from a TOML config file, then `HARDY_*` environment variables,
 then command-line flags. `lean_project` is what makes `hardy` runnable from any
 directory: Lean elaborates in that Lake project, so imports resolve the same way
-wherever the conversation starts. `hardy doctor` reports each prerequisite
+wherever the conversation starts.
+
+A root holds several problems, one directory each, and the unit of isolation is
+the problem: its manifest, transcript, approved assumptions, Lean namespace,
+document tree, computer algebra session and provider thread are its own, so an
+axiom approved for one is not approved for the other and two trajectories are
+never interleaved. The unit of *cost*, though, is the root — the pinned Lake
+project and the Mathlib environment behind the search tools are established once
+and belong to no problem. `/project switch` is drawn along exactly that line: it
+rebuilds everything in the first list and carries everything in the second
+across, in the process already running. That is the whole difference between a
+switch and an exit, and it is what makes keeping two problems in separate
+directories no longer the only way to keep them apart. `hardy doctor` reports each prerequisite
 separately, distinguishing a missing tool from a broken one, and checks that the
 Claude Code CLI is not merely installed but actually signed in.
 

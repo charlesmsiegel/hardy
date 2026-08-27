@@ -26,6 +26,14 @@ class State:
     session: Any
     done: bool = False
     turn_running: bool = False
+    #: How to open another problem in this root: `(slug, ui) -> (config, session)`.
+    #: Supplied by whoever built the session, because reopening one needs the
+    #: runtime factory, the CAS kernel and the approval callback -- none of
+    #: which a handler has, and none of which the terminal should learn.
+    #: None wherever nothing supplied one (every direct `State` in the tests,
+    #: and any embedding that never means to switch), and `/project switch`
+    #: says so rather than failing on an attribute.
+    reopen: Any = None
 
 
 class BlockingUi(Protocol):

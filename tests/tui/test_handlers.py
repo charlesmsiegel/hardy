@@ -12,7 +12,9 @@ from hardy.usage import Usage
 
 def test_the_registry_holds_the_specified_commands():
     names = [c.name for c in handlers.build_registry()]
-    assert names == ["help", "model", "cas", "goal", "status", "doctor", "clear", "exit", "quit"]
+    assert names == [
+        "help", "model", "cas", "goal", "project", "status", "doctor", "clear", "exit", "quit",
+    ]
 
 
 def test_only_read_only_commands_are_safe_while_a_turn_runs():

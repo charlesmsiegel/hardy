@@ -219,6 +219,115 @@ def offer_registration(
     return f"Registered {slug} with {host.name} as a lean_lib; `lake build` now sees its modules."
 
 
+class ProjectOpener:
+    """Open another problem in this root, in the process already running.
+
+    What is rebuilt and what is kept is the whole design. A problem's record,
+    transcript, approved assumptions, Lean namespace and computer algebra
+    kernel are its own, and reopening builds all of them fresh -- that is what
+    keeps two problems in one folder from sharing an axiom approval or a
+    trajectory. The pinned Lake project and the Mathlib environment behind the
+    search tools belong to the ROOT, not to any problem, and cost tens of
+    seconds to establish, so they are carried across untouched. Without that
+    distinction `/project switch` would be `exit` with extra steps, which is
+    exactly the workaround the layout work set out to replace.
+
+    Holds the live CAS runtime because someone has to: `_chat` closes it when
+    the session ends, and after a switch the one to close is the new one.
+    """
+
+    def __init__(
+        self,
+        args: argparse.Namespace | None,
+        config: configuration.Config,
+        cas: Any,
+        *,
+        search: Any,
+        search_detail: str,
+    ):
+        self._args = args
+        self._search = search
+        self._search_detail = search_detail
+        self.config = config
+        self.cas = cas
+
+    def _configure(self, slug: str) -> configuration.Config:
+        """The same resolution `_config` does, for a slug already chosen.
+
+        No `choose`: the user has just named the problem, so there is no
+        ambiguity left to ask about. The model is carried from the live
+        configuration rather than re-read, because `/model` may have moved the
+        session since launch and a reopen must not quietly move it back.
+        """
+        args = self._args
+        return configuration.load(
+            getattr(args, "config", None),
+            root=getattr(args, "root", None) or self.config.root,
+            project=slug,
+            model=self.config.model,
+            lean_command=getattr(args, "lean_command", None),
+            lean_project=getattr(args, "lean_project", None),
+            latex_command=getattr(args, "latex_command", None),
+        )
+
+    def __call__(self, slug: str, ui: Any) -> tuple[configuration.Config, Any]:
+        config = self._configure(slug)
+        prepare_layout(config)
+        # A kernel per problem, logging into that problem's `cas/`. Sharing one
+        # would put two problems' cells in one `cells.jsonl` and one export.
+        cas, cas_detail = cas_tools.build_runtime(
+            backend_name=config.cas_backend,
+            command=config.cas_command,
+            limits=config.limits,
+            log_path=config.layout.cas / "cells.jsonl",
+            cwd=config.layout.cas,
+        )
+        try:
+            session = MathematicsSession(
+                config.layout.problem,
+                runtime_factory(str(config.model)),
+                config.lean_command,
+                config.latex_command,
+                confirm_assumption(ui),
+                lean_project=config.lean_project,
+                lean_timeout=config.lean_timeout,
+                cas=cas,
+                cas_detail=cas_detail,
+                search=self._search,
+                search_detail=self._search_detail,
+            )
+        except BaseException:
+            # The kernel this call started, and only that one. The session the
+            # user is already in keeps its own -- a refused record or a
+            # symlinked transcript must not take the working problem down with
+            # the one that could not be opened.
+            if cas is not None:
+                cas.session.close()
+            raise
+        if self.cas is not None:
+            self.cas.session.close()
+        self.cas, self.config = cas, config
+        self._remember(config)
+        return config, session
+
+    def _remember(self, config: configuration.Config) -> None:
+        """Record which problem is active, where the project layer reads it.
+
+        `<root>/.hardy/config.toml` exists to say which problem a checkout is
+        working on (`config.PROJECT_SETTINGS`), and this is the moment that
+        answer changes. Without it a switch is forgotten at exit and the next
+        launch reopens the old problem, or asks again.
+
+        A failure here is reported and swallowed: an unwritable config file is
+        not a reason to undo a switch that has already happened.
+        """
+        destination = config.root / layout.HARDY_DIR / "config.toml"
+        try:
+            configuration.write_setting(destination, "project", config.project)
+        except OSError as error:
+            print(f"Could not record the active project in {destination}: {error}")
+
+
 def _chat(
     config: configuration.Config,
     *,
@@ -282,6 +391,11 @@ def _chat(
     # refuses and says why.
     search, search_detail = search_tools.build_runtime(config)
 
+    # How `/project switch` opens another problem without ending the process.
+    # It owns the live CAS runtime from here on, because a switch replaces it
+    # and the `finally` below has to close whichever one is current.
+    opener = ProjectOpener(args, config, cas, search=search, search_detail=search_detail)
+
     def build(confirm: Callable[[dict[str, str]], bool]) -> MathematicsSession:
         return MathematicsSession(
             config.layout.problem,
@@ -298,7 +412,7 @@ def _chat(
         )
 
     try:
-        return run_session(config, build, plain=plain)
+        return run_session(config, build, plain=plain, reopen=opener)
     except (SchemaError, layout.LayoutError) as error:
         # Reaches here whichever path `run_session` took: the plain path
         # raises it straight out of `build`, and the interactive path (see
@@ -322,8 +436,12 @@ def _chat(
         # not just this one. Accepted for the same reason a forced exit
         # already leaves Lean/LaTeX subprocesses orphaned: the user was
         # warned before pressing Ctrl+C a second time.
-        if cas is not None:
-            cas.session.close()
+        #
+        # `opener.cas`, not `cas`: a `/project switch` replaced the kernel, and
+        # closing the one this function built would leave the live one running
+        # and the session's own process behind.
+        if opener.cas is not None:
+            opener.cas.session.close()
 
 
 def _read_block(ask: Callable[[str], str] = input) -> str:

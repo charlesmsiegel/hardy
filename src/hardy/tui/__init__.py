@@ -16,7 +16,13 @@ def _is_interactive() -> bool:
     return bool(sys.stdin.isatty() and sys.stdout.isatty())
 
 
-def run_session(config, session_factory: Callable[[Any], Any], *, plain: bool = False) -> int:
+def run_session(
+    config,
+    session_factory: Callable[[Any], Any],
+    *,
+    plain: bool = False,
+    reopen: Any = None,
+) -> int:
     """Run the session, real terminal or plain lines.
 
     `session_factory` receives the approval callback and returns the session
@@ -24,9 +30,14 @@ def run_session(config, session_factory: Callable[[Any], Any], *, plain: bool = 
     exist *before* the session does: the session needs a way to ask for
     axiom approval, and that way (`cli.confirm_assumption`) runs through
     whichever `Ui` ends up live, real `Shell` or `PlainUi`.
+
+    `reopen` is how `/project switch` opens another problem in this root
+    without ending the process: `(slug, ui) -> (config, session)`, supplied by
+    the caller that knows how to build a session. None means this session
+    cannot switch, and `/project` says so rather than pretending it can.
     """
     if plain or not _is_interactive():
-        return _run_plain(config, session_factory)
+        return _run_plain(config, session_factory, reopen=reopen)
 
     from .. import cli
     from ..chat import SchemaError
@@ -35,7 +46,7 @@ def run_session(config, session_factory: Callable[[Any], Any], *, plain: bool = 
     from .shell import Shell
 
     try:
-        shell = Shell(config, None, build_registry())
+        shell = Shell(config, None, build_registry(), reopen=reopen)
         session = session_factory(cli.confirm_assumption(shell))
         shell.attach(session)
         return shell.run()
@@ -52,10 +63,10 @@ def run_session(config, session_factory: Callable[[Any], Any], *, plain: bool = 
         raise
     except Exception as error:  # noqa: BLE001 - never end a session over rendering
         print(f"Falling back to the plain session: {error}", file=sys.stderr)
-        return _run_plain(config, session_factory)
+        return _run_plain(config, session_factory, reopen=reopen)
 
 
-def _run_plain(config, session_factory: Callable[[Any], Any]) -> int:
+def _run_plain(config, session_factory: Callable[[Any], Any], *, reopen: Any = None) -> int:
     from .. import cli
     from . import plain as plain_mode
 
@@ -65,4 +76,4 @@ def _run_plain(config, session_factory: Callable[[Any], Any]) -> int:
         return cli.confirm_assumption(ui_holder["ui"])(proposal)
 
     session = session_factory(confirm)
-    return plain_mode.run(config, session, ui_holder=ui_holder)
+    return plain_mode.run(config, session, ui_holder=ui_holder, reopen=reopen)

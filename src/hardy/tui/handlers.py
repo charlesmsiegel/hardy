@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
-from .. import catalog, doctor, process
+from .. import catalog, doctor, layout, process
 from .. import config as configuration
 from ..cas import CasError
 from ..cas_export import export_session
@@ -322,6 +322,130 @@ async def handle_goal(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
+PROJECT_USAGE = "/project list · /project switch <name> · /project new <name>"
+
+
+def _known(config) -> list[str]:
+    """Every problem this root holds, the active one included.
+
+    `existing_projects` counts a directory only once Hardy has written its
+    record there, which is right for discovery and wrong for this list: a
+    session that has opened `burnside` and not yet saved anything to it would
+    otherwise be told every problem in the folder except the one it is in.
+    """
+    return sorted(set(configuration.existing_projects(config.root)) | {config.project})
+
+
+async def _list(ui: Ui, state: State) -> State:
+    config = state.config
+    ui.write("Projects", style="normal")
+    for slug in _known(config):
+        mark = "*" if slug == config.project else " "
+        note = "   (active)" if slug == config.project else ""
+        ui.write(f"  {mark} {slug}{note}")
+    ui.write("  /project switch <name> opens one; /project new <name> starts one.")
+    return state
+
+
+async def _offer_registration(ui: Ui, config) -> None:
+    """The offer `hardy --project <new>` makes at startup, made for `/project new`.
+
+    Imported here rather than at module scope because `cli` reaches into this
+    package to run the session at all. Asked through the `Ui` rather than
+    through `offer_registration`'s own `ask`, which is `input()`: reading the
+    terminal out from under the running application is how a shell loses its
+    keyboard, and the `Ui` port exists so a handler never has to know which
+    application that is.
+    """
+    from .. import cli
+
+    host = config.root / "lakefile.toml"
+    if not host.is_file():
+        return
+    question = f"Register {config.project}/lean with {host.name} so `lake build` sees it?"
+    if not await ui.confirm(question):
+        return
+    notice = cli.offer_registration(config, interactive=False, choice=True)
+    if notice:
+        ui.write(f"  {notice}")
+
+
+async def _switch(ui: Ui, slug: str, state: State, *, creating: bool) -> State:
+    if state.reopen is None:
+        ui.write("This session cannot switch projects.", style="error")
+        return state
+    try:
+        # On a thread for `/doctor`'s reason: reopening starts a computer
+        # algebra kernel and reads the record, and the input box must not
+        # freeze while it does.
+        config, session = await asyncio.to_thread(state.reopen, slug, ui)
+    except Exception as error:  # noqa: BLE001 - a bad problem is not a lost session
+        # Every refusal the layout, the record and the filesystem can raise
+        # arrives here, and none of them is a reason to end the session the
+        # user is already in: the old `State` is returned untouched, so the
+        # problem that was open stays open.
+        ui.write(f"Could not open {slug}: {error}", style="error")
+        return state
+    ui.write(f"  {status_line(config)}")
+    if creating:
+        await _offer_registration(ui, config)
+    return dataclasses.replace(state, config=config, session=session)
+
+
+async def handle_project(ui: Ui, argument: str, state: State) -> State:
+    """See the problems in this folder, and open another one without leaving.
+
+    A folder holds several problems now, each with its own record, transcript,
+    approved assumptions, Lean namespace and provider thread. Switching is a
+    reopen and not an exit: the process, the pinned Lake project and the
+    Mathlib environment behind the search tools all survive it, which is the
+    cost that made the directory-per-problem workaround unaffordable.
+
+    `safe_in_flight` stays False, the default, and deliberately: a running turn
+    is appending to the record and the transcript of the problem it started in.
+    """
+    verb, _, name = argument.strip().partition(" ")
+    verb, name = verb.lower(), name.strip()
+    if not verb or verb == "list":
+        return await _list(ui, state)
+    if verb not in {"new", "switch"}:
+        ui.write(f"Unknown: /project {verb}. {PROJECT_USAGE}", style="error")
+        return state
+    if not name:
+        ui.write(f"Which one? {PROJECT_USAGE}", style="error")
+        return state
+    try:
+        slug = layout.validate_slug(name)
+    except layout.LayoutError as error:
+        ui.write(str(error), style="error")
+        return state
+
+    present = configuration.existing_projects(state.config.root)
+    if verb == "switch":
+        if slug == state.config.project:
+            ui.write(f"{slug} is already the active project.")
+            return state
+        if slug not in present:
+            ui.write(
+                f"No project named {slug} here. /project list shows what is; "
+                f"/project new {slug} starts it.",
+                style="error",
+            )
+            return state
+        return await _switch(ui, slug, state, creating=False)
+
+    if slug in present:
+        ui.write(f"{slug} is already a project here. /project switch {slug} opens it.", style="error")
+        return state
+    # A directory that is not a problem is somebody else's -- `src/`, `docs/`,
+    # a Lean library. Creating a problem over it would scatter `lean/`, `tex/`
+    # and a record through a tree Hardy did not make.
+    if (state.config.root / slug).exists():
+        ui.write(f"{slug} already exists here and is not a Hardy project.", style="error")
+        return state
+    return await _switch(ui, slug, state, creating=True)
+
+
 def build_registry() -> list[Command]:
     exit_command = Command(
         "exit", "leave the session", handle_exit, safe_in_flight=True
@@ -334,6 +458,10 @@ def build_registry() -> list[Command]:
             argument_hint="[state|reset|export|expr]",
         ),
         Command("goal", "state what this session is for", handle_goal, argument_hint="[text]"),
+        Command(
+            "project", "see the problems here, or open another", handle_project,
+            argument_hint="[list|new|switch]",
+        ),
         Command("status", "show the project, model, and paths", handle_status, safe_in_flight=True),
         Command("doctor", "check that Lean and LaTeX are usable", handle_doctor),
         Command("clear", "clear the screen; deletes nothing", handle_clear, safe_in_flight=True),
