@@ -13,6 +13,23 @@ bound to `_`, as an interactive interpreter does, which is what lets Hardy
 answer an over-large result with a summary and still leave the model a way to
 reach the whole thing.
 
+Capture is taken at the *descriptor* level, not by rebinding `sys.stdout`.
+A cell is untrusted code that may call `os.system`, spawn a subprocess, or
+reach a native library, and none of those go through `sys.stdout`: they write
+to file descriptor 1, which is the descriptor carrying this protocol. Those
+bytes used to land in front of a length-prefixed reply, where the parent read
+a non-numeric header, called the kernel desynchronised, and discarded a
+session's whole state over a helper's chatter. So the protocol keeps a private
+duplicate of the original descriptor and fds 1 and 2 are replaced by pipes
+this process drains itself.
+
+Draining is what makes the cap real as well. Accumulating a cell's output in
+a `StringIO` and clipping afterwards bounds what is *reported* and not what is
+*held*: a cell printing in a loop grew the buffer without limit, so an
+advertised 256 KiB cap could still cost gigabytes of resident memory. The
+drain threads retain at most the cap and read past it, which is the same
+shape the parent's own pipe readers have always had.
+
 This module imports nothing from Hardy. It is executed as a child process and
 must keep working when the rest of the package is not importable.
 """
@@ -21,14 +38,27 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import io
+import hashlib
+import itertools
 import json
+import os
+import re
 import signal
 import sys
+import threading
+import time
 import traceback
+import uuid
 
 HEADER_BYTES = 10
 CELL_FILENAME = "<hardy-cell>"
+
+# How long `_Capture.settle` waits for its own end marker to come back around
+# the pipe. It is written by this process into a pipe this process drains, so
+# it arrives immediately in every ordinary case; the wait exists for the one
+# where a child the cell spawned still holds the write end and has queued
+# output ahead of it.
+SETTLE_SECONDS = 5.0
 
 
 # Set when an interrupt arrives with no cell to abandon: between cells, or
@@ -142,7 +172,256 @@ def clip_jointly(fields: dict[str, str], limit: int) -> tuple[dict[str, str], bo
     return clipped, truncated
 
 
-def run_cell(source: str, namespace: dict, limit: int) -> dict:
+# Containers whose length is known without walking them, and whose repr is at
+# least one byte per element -- so a container of more than `limit` elements
+# cannot have a repr that would have survived the cap, and rendering only its
+# head is not a change to any answer that would have been reported in full.
+_SIZED = (list, tuple, set, frozenset, dict)
+_BRACKETS = {
+    list: ("[", "]"),
+    tuple: ("(", ")"),
+    set: ("{", "}"),
+    frozenset: ("frozenset({", "})"),
+    dict: ("{", "}"),
+}
+
+
+def bounded_repr(value: object, limit: int) -> tuple[str, bool]:
+    """`repr(value)`, without building a gigantic one to then throw away.
+
+    Exact whenever the answer would have fitted: the fast path is plain
+    `repr`, so an ordinary value's repr is byte-identical to what an
+    interpreter would print. Only a value that is *provably* too large by its
+    own length -- a string, or a container with more elements than the budget
+    has bytes -- is rendered head-first instead, and it says so in the text.
+
+    What this does not bound is a `__repr__` a cell wrote itself. There is no
+    way to ask an object how long its repr will be without running it, and the
+    honest answer is that the process, not this function, is the bound there;
+    `MemoryError` is caught and reported as the cell failing rather than
+    allowed to take the kernel down.
+    """
+    try:
+        if isinstance(value, (str, bytes, bytearray)) and len(value) > limit:
+            head, _ = clip(repr(value[:limit]), limit)
+            return f"{head} … <{type(value).__name__} of length {len(value)}>", True
+        if type(value) in _SIZED and len(value) > limit:  # noqa: E721 -- exact type only
+            return _head_of_container(value, limit), True
+        return repr(value), False
+    except MemoryError:
+        return f"<{type(value).__name__}: its repr did not fit in memory>", True
+    except BaseException:  # a cell's own __repr__ is allowed to be broken
+        return f"<{type(value).__name__}: repr() raised {sys.exc_info()[0].__name__}>", True
+
+
+def _head_of_container(value, limit: int) -> str:
+    """Render the leading elements of an over-long container and say so."""
+    opening, closing = _BRACKETS[type(value)]
+    items = value.items() if isinstance(value, dict) else value
+    pieces: list[str] = []
+    size = 0
+    for item in itertools.islice(items, limit):
+        if isinstance(value, dict):
+            key, entry = item
+            piece = f"{bounded_repr(key, limit)[0]}: {bounded_repr(entry, limit)[0]}"
+        else:
+            piece = bounded_repr(item, limit)[0]
+        pieces.append(piece)
+        size += len(piece) + 2
+        if size >= limit:
+            break
+    body, _ = clip(", ".join(pieces), limit)
+    return f"{opening}{body}, … <{len(value)} items>{closing}"
+
+
+class _Stream:
+    """One captured descriptor: bounded retention, and an end marker to find.
+
+    Retention stops at the cap; reading does not. A cell whose helper never
+    stops writing must not be able to block on a full pipe, and a marker
+    written after the flood must still be found, so the scan runs over a
+    rolling window rather than over what was kept.
+    """
+
+    def __init__(self, read_fd: int, limit: int) -> None:
+        self.read_fd = read_fd
+        self.limit = limit
+        self.kept = bytearray()
+        self.pending = bytearray()
+        self.truncated = False
+        self.marker = b""
+        self.done = False
+        # The descriptor is gone: a cell closed it, or the pipe broke. Nothing
+        # more will ever arrive, so a wait for this cell's marker would be a
+        # wait for something that cannot come.
+        self.closed = False
+
+    def arm(self, marker: bytes) -> None:
+        self.kept.clear()
+        self.pending.clear()
+        self.truncated = False
+        self.marker = marker
+        self.done = False
+
+    def feed(self, chunk: bytes) -> None:
+        if self.done or not self.marker:
+            # Between cells, or after this cell's marker was found. Nothing is
+            # listening, and holding on to it would attribute one cell's late
+            # output to the next one.
+            return
+        self.pending.extend(chunk)
+        at = self.pending.find(self.marker)
+        if at != -1:
+            self._retain(self.pending[:at])
+            self.pending.clear()
+            self.done = True
+            return
+        # A marker can straddle two reads, so everything but a marker's width
+        # short of the end is safe to retire from the scan window now.
+        keep = len(self.marker) - 1
+        if len(self.pending) > keep:
+            self._retain(self.pending[: len(self.pending) - keep])
+            del self.pending[: len(self.pending) - keep]
+
+    def _retain(self, data: bytes) -> None:
+        room = max(0, self.limit - len(self.kept))
+        self.kept.extend(data[:room])
+        if len(data) > room:
+            self.truncated = True
+
+    def text(self) -> str:
+        return bytes(self.kept).decode("utf-8", errors="replace")
+
+
+class _Capture:
+    """fds 1 and 2, replaced by pipes this process drains for itself.
+
+    The original descriptor 1 is duplicated first and handed back for the
+    protocol, so a reply is written somewhere no cell can reach: `os.write(1,
+    ...)`, a subprocess, and a native library all land in the capture pipe
+    with everything else a cell printed.
+    """
+
+    def __init__(self, limit: int) -> None:
+        self.protocol_fd = os.dup(1)
+        with contextlib.suppress(OSError, AttributeError):
+            os.set_inheritable(self.protocol_fd, False)
+        self._changed = threading.Condition()
+        self.streams: dict[int, _Stream] = {}
+        for fd in (1, 2):
+            with contextlib.suppress(Exception):
+                (sys.stdout if fd == 1 else sys.stderr).flush()
+            read_fd, write_fd = os.pipe()
+            os.dup2(write_fd, fd)
+            os.close(write_fd)
+            self.streams[fd] = _Stream(read_fd, limit)
+            threading.Thread(target=self._drain, args=(fd,), daemon=True).start()
+
+    def _drain(self, fd: int) -> None:
+        stream = self.streams[fd]
+        while True:
+            try:
+                chunk = os.read(stream.read_fd, 65_536)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                with self._changed:
+                    stream.closed = True
+                    self._changed.notify_all()
+                return
+            with self._changed:
+                stream.feed(chunk)
+                self._changed.notify_all()
+
+    def begin(self) -> bytes:
+        """Arm both streams for one cell and return the marker that ends it."""
+        marker = f"\0«hardy-capture:{uuid.uuid4().hex}»\0".encode()
+        with self._changed:
+            for stream in self.streams.values():
+                stream.arm(marker)
+        return marker
+
+    def settle(self, marker: bytes) -> tuple[str, str, bool]:
+        """Close the cell's capture and return what both descriptors carried.
+
+        The marker goes out through the descriptors themselves rather than
+        being handed to the drain threads directly. A pipe preserves write
+        order, so anything the cell wrote -- through `sys.stdout`, through fd
+        1, or from a child that inherited it -- is necessarily in front of the
+        marker, and finding the marker is proof that all of it has arrived.
+        """
+        for fd in (1, 2):
+            with contextlib.suppress(Exception):
+                (sys.stdout if fd == 1 else sys.stderr).flush()
+            with contextlib.suppress(OSError):
+                os.write(fd, marker)
+        with self._changed:
+            deadline = time.monotonic() + SETTLE_SECONDS
+            while not all(
+                stream.done or stream.closed for stream in self.streams.values()
+            ):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._changed.wait(remaining)
+            out, err = self.streams[1], self.streams[2]
+            captured = (out.text(), err.text(), out.truncated or err.truncated)
+            for stream in self.streams.values():
+                stream.marker = b""
+            return captured
+
+    def write_reply(self, payload: bytes) -> None:
+        header = f"{len(payload):0{HEADER_BYTES}d}".encode("ascii")
+        data = header + payload
+        while data:
+            written = os.write(self.protocol_fd, data)
+            data = data[written:]
+
+
+# A repr carries the address of anything that does not define one of its own,
+# and an address is not state: a rebuilt namespace holding an equal object at a
+# different address has reproduced, and calling that a divergence would poison
+# every session that ever bound a lambda or a plain instance.
+_ADDRESS = re.compile(r"0x[0-9a-fA-F]+")
+# Names that are not the session's state: the interpreter's own, and the
+# last-value binding, which the parent already compares as `value_repr`.
+_NOT_STATE = frozenset({"_", "exit", "quit"})
+
+
+def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
+    """A fingerprint of everything a cell has put in the namespace.
+
+    Recovery replays the accepted cells and compares what they printed. That
+    is not the same as comparing what they *did*: `import random; x =
+    random.random()` prints nothing at all, so a replay that rebuilt a
+    different `x` reproduced three empty fields and was called faithful, and
+    every cell after it was standing on a value nobody had checked. The digest
+    is what makes that comparable -- it is recorded per cell and compared on
+    replay, so an unobservable change is observable after all.
+
+    `baseline` is the namespace as the preamble left it. A name still bound to
+    the very object the preamble bound is skipped, which keeps the digest to
+    what the session did rather than to a thousand SymPy exports, and which is
+    stable across processes for exactly the names that were never touched.
+    Rebinding a preamble name brings it back in; mutating one of those objects
+    in place does not, and that is the hole this leaves.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(namespace):
+        if name.startswith("__") or name in _NOT_STATE:
+            continue
+        value = namespace[name]
+        if name in baseline and baseline[name] is value:
+            continue
+        rendered, _ = bounded_repr(value, limit)
+        digest.update(name.encode("utf-8", errors="replace"))
+        digest.update(b"\0")
+        digest.update(_ADDRESS.sub("0x?", rendered).encode("utf-8", errors="replace"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dict:
     """Execute one cell against the persistent namespace and describe what happened."""
     try:
         parsed = ast.parse(source, filename=CELL_FILENAME)
@@ -164,41 +443,41 @@ def run_cell(source: str, namespace: dict, limit: int) -> dict:
     if parsed.body and isinstance(parsed.body[-1], ast.Expr):
         trailing = ast.Expression(parsed.body.pop().value)
 
-    captured_out, captured_err = io.StringIO(), io.StringIO()
-    status, value_repr = "ok", ""
-    with contextlib.redirect_stdout(captured_out), contextlib.redirect_stderr(captured_err):
-        try:
-            if parsed.body:
-                exec(compile(parsed, CELL_FILENAME, "exec"), namespace)
-            if trailing is not None:
-                value = eval(compile(trailing, CELL_FILENAME, "eval"), namespace)
-                if value is not None:
-                    namespace["_"] = value
-                    value_repr = repr(value)
-        # Hardy asked for this one, so it is reported under its own name rather
-        # than as the cell having gone wrong -- and, far more importantly, it is
-        # *answered*. Catching it here is what makes an interrupt cost one cell
-        # instead of the whole session: the kernel stays up, the namespace keeps
-        # everything the earlier cells put in it, and the parent gets a reply
-        # rather than waiting out a deadline on a child that will never speak.
-        except KeyboardInterrupt:
-            status = "interrupted"
-            traceback.print_exc()
-        # A cell is untrusted input, and `exit()` raises SystemExit: the kernel
-        # has to outlive whatever a cell does, or one stray call ends a session
-        # and every value in it.
-        except BaseException:
-            status = "error"
-            traceback.print_exc()
+    marker = capture.begin()
+    status, value_repr, oversized = "ok", "", False
+    try:
+        if parsed.body:
+            exec(compile(parsed, CELL_FILENAME, "exec"), namespace)
+        if trailing is not None:
+            value = eval(compile(trailing, CELL_FILENAME, "eval"), namespace)
+            if value is not None:
+                namespace["_"] = value
+                value_repr, oversized = bounded_repr(value, limit)
+    # Hardy asked for this one, so it is reported under its own name rather
+    # than as the cell having gone wrong -- and, far more importantly, it is
+    # *answered*. Catching it here is what makes an interrupt cost one cell
+    # instead of the whole session: the kernel stays up, the namespace keeps
+    # everything the earlier cells put in it, and the parent gets a reply
+    # rather than waiting out a deadline on a child that will never speak.
+    except KeyboardInterrupt:
+        status = "interrupted"
+        traceback.print_exc()
+    # A cell is untrusted input, and `exit()` raises SystemExit: the kernel
+    # has to outlive whatever a cell does, or one stray call ends a session
+    # and every value in it.
+    except BaseException:
+        status = "error"
+        traceback.print_exc()
+    captured_out, captured_err, overran = capture.settle(marker)
     fields, truncated = clip_jointly(
-        {
-            "stdout": captured_out.getvalue(),
-            "stderr": captured_err.getvalue(),
-            "value_repr": value_repr,
-        },
+        {"stdout": captured_out, "stderr": captured_err, "value_repr": value_repr},
         limit,
     )
-    return {"status": status, **fields, "capture_truncated": truncated}
+    return {
+        "status": status,
+        **fields,
+        "capture_truncated": truncated or overran or oversized,
+    }
 
 
 def _refuse_to_quit(*_args, **_kwargs):
@@ -220,9 +499,14 @@ def main() -> None:
     # script — which emits this same import — reproduces the session.
     with contextlib.suppress(BaseException):
         exec("from sympy import *", namespace)
+    # Snapshotted before any cell runs, so `state_digest` can tell what the
+    # session put in the namespace from what the preamble did.
+    baseline = dict(namespace)
+
+    capture = _Capture(limit)
 
     global PENDING_INTERRUPT
-    stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
+    stdin = sys.stdin.buffer
     while True:
         # Deferred across the read, raised across the cell. The cell is the one
         # place a stop *should* interrupt Python directly -- that is what makes
@@ -274,15 +558,24 @@ def main() -> None:
                 # Hardy -- which knows whether it still wants a stop -- says it
                 # does not. Rejecting this cell for it would stop something
                 # nobody asked to stop.
-                reply = run_cell(str(request.get("source", "")), namespace, limit)
+                reply = run_cell(str(request.get("source", "")), namespace, limit, capture)
         except KeyboardInterrupt:
             reply = _interrupted_reply()
         finally:
             _handle_stops_by(_remember)
-        encoded = json.dumps(reply, ensure_ascii=False).encode("utf-8")
-        stdout.write(f"{len(encoded):0{HEADER_BYTES}d}".encode("ascii"))
-        stdout.write(encoded)
-        stdout.flush()
+        # Taken after every cell, failed ones included: a cell that raised
+        # partway through has still changed the namespace, and the parent
+        # needs to know whether it did before it decides that replaying only
+        # the accepted cells can rebuild this state.
+        try:
+            reply["state_digest"] = state_digest(namespace, baseline, limit)
+        except BaseException:
+            # A namespace Hardy cannot fingerprint is one it must not claim to
+            # have fingerprinted, and it is emphatically not a reason to end a
+            # session: an empty digest is the value that means "not compared",
+            # which is what a backend with no digest at all reports.
+            reply["state_digest"] = ""
+        capture.write_reply(json.dumps(reply, ensure_ascii=False).encode("utf-8"))
 
 
 if __name__ == "__main__":
