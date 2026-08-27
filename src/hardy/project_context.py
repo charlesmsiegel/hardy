@@ -23,6 +23,12 @@ context, and this module exists to make the difference structural:
 * **Bounded.** A pathological file may not consume the context window, so what
   is read is capped by lines and by bytes together, head-first, and the model
   is told when it is looking at a fragment.
+* **Switchable, and honest about what the switch does.** Not reading the file
+  governs what a run's system prompt carries. It does not un-say what was said:
+  reopening a workspace resumes the provider thread, so turns produced while
+  the file was being sent remain in the conversation. That is sound only
+  because the record marks the boundary, which is the point of recording the
+  text in the first place.
 
 What this module does *not* do is decide anything about precedence. That is the
 prompt's job: the block is labelled as the user's project instructions and

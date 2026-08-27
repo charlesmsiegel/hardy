@@ -457,3 +457,32 @@ def test_a_symlinked_project_root_still_finds_the_instructions(tmp_path: Path):
     assert chat.project_context is not None
     assert chat.project_context.name == "AGENTS.md"
     assert "in the user's own words" in prompt(chat)
+
+
+def test_withholding_the_context_keeps_the_conversation_it_was_read_during(tmp_path: Path):
+    """Deliberate, and the record is what makes it defensible.
+
+    `_carried_thread` already drops a thread whose transcript was shortened or
+    replaced, because "answering from context the record cannot account for is
+    the thing this project exists to prevent". That test does not catch this
+    case, and the difference is the whole point: the transcript holds the file's
+    full text at the turn it was read and a `withheld` event at the turn it
+    stopped being sent, so the record accounts for every turn on both sides of
+    the boundary. Dropping the thread would instead destroy the user's
+    conversation to buy a purity the record already provides.
+
+    So the flag governs what this run's system prompt carries, not what the
+    conversation remembers -- and it is pinned here so that a later reader can
+    tell a decision from an oversight.
+    """
+    root, workspace = project(tmp_path)
+    (root / "AGENTS.md").write_text("Chase the conjecture in the user's own words.\n", encoding="utf-8")
+    first = session(workspace)
+    first.send("Remember this question.")
+
+    resumed = session(workspace, project_context=False)
+
+    assert resumed.runtime.context["session_id"] == "thread-1"
+    assert "in the user's own words" not in prompt(resumed)
+    # The boundary is in the record, in order: the text, then the withdrawal.
+    assert [event["reason"] for event in recorded(workspace)] == ["read", "withheld"]

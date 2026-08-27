@@ -277,7 +277,9 @@ Priority labels are sequencing hints:
   whole lines only, and a truncated file says so in the prompt. `hardy prove`
   and `hardy batch` never read it, so a graded run's instructions stay fixed;
   `--no-project-context`, `project_context = false`, or `HARDY_PROJECT_CONTEXT=0`
-  gives an interactive session the same clean condition.
+  stop an interactive session reading it at all — which governs this run's
+  system prompt, not what a resumed provider thread already remembers, with the
+  transcript marking the turn the file stopped being sent.
 - **Known gap:** the SDK owns the turn loop, so turn limits are enforced by the
   provider and only the wall clock is Hardy's. Tracked in issue #23.
 - **Now (implemented):** a Codex backend for ChatGPT subscriptions, on the same

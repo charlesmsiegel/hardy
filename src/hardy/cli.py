@@ -956,7 +956,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     # Top-level rather than under `chat`, like `--plain`: an invocation with no
     # subcommand is the primary interactive experience and has to be able to
-    # ask for a clean condition too.
+    # ask to stop reading the file too.
     parser.add_argument(
         "--no-project-context",
         action="store_true",
