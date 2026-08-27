@@ -142,7 +142,7 @@ CHAT_TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "delete_file", "description": "Delete one workspace file. Refused if another workspace file imports it.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "record_name", "description": "Record the durable correspondence between a Lean declaration and its LaTeX label/name.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "latex_name": {"type": "string"}, "description": {"type": "string"}}, "required": ["formal_name", "latex_name", "description"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "request_assumption", "description": "Ask the human for permission to introduce an axiom when a result is unavailable. Never assume approval.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "lean_statement": {"type": "string"}, "latex_name": {"type": "string"}, "informal_statement": {"type": "string"}, "source": {"type": "string"}, "reason": {"type": "string"}}, "required": ["formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason"], "additionalProperties": False}}},
-    {"type": "function", "function": {"name": "report_result", "description": "Report finished work. The only way to call anything proved, done, or complete: say it in prose and Hardy contradicts you in front of the user. Refused unless every theorem named is saved Lean the kernel audited, the writeup creates its label and quotes its exact Lean statement verbatim, and every assumption the work rests on is stated in an appendix in both Lean and prose.", "parameters": {"type": "object", "properties": {"theorems": {"type": "array", "items": {"type": "string"}}, "summary": {"type": "string"}}, "required": ["theorems", "summary"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "report_result", "description": "Report finished work. The only way to call anything proved, done, or complete: say it in prose and Hardy contradicts you in front of the user. Refused unless every theorem named is saved Lean the kernel audited, the writeup creates its label and quotes its exact Lean statement verbatim, and every assumption the work rests on is stated in an appendix in both Lean and prose. A theorem still resting on a hole is graded partial rather than refused: the report names which, and the writeup must carry it on exactly the same terms, so a reader can see what was and was not proved.", "parameters": {"type": "object", "properties": {"theorems": {"type": "array", "items": {"type": "string"}}, "summary": {"type": "string"}}, "required": ["theorems", "summary"], "additionalProperties": False}}},
 ]
 
 # Always offered, unlike the cas_* tools, and refusing with a reason when
@@ -1723,29 +1723,41 @@ class MathematicsSession:
             found.update(declarations(source)["theorem"])
         return found
 
-    def _saved_statements(self) -> dict[str, str]:
-        """Every *closed* saved theorem, with the exact statement Lean was given.
+    def _theorem_statements(self) -> dict[str, str]:
+        """Every saved theorem, with the exact statement Lean was given.
 
         Theorems only. A `lemma` is scaffolding and owes nothing, which is the
         same line `_saved_theorems` draws and has to stay the same line: a
         writeup gate that demanded a paragraph for every helper would make
         splitting a proof into helpers the expensive way to work.
 
-        Open theorems are left out for the same reason in the other direction.
-        A theorem whose proof still has a hole is not a result yet; demanding
-        that the document carry it would ask for a paragraph asserting
-        something nobody has proved, and would block the next save behind it.
-        Its obligation is that it is open, and the writeup obligations attach
-        the moment the hole closes.
+        Open ones included: a report may name one, and the document has to
+        carry it on the same terms as any other.
         """
-        opened = self._open_theorems()
         found: dict[str, str] = {}
         for source in self.lean_workspace.sources().values():
-            theorems = set(declarations(source)["theorem"]) - opened
+            theorems = set(declarations(source)["theorem"])
             found.update(
                 {name: text for name, text in statements(source).items() if name in theorems}
             )
         return found
+
+    def _saved_statements(self) -> dict[str, str]:
+        """The closed ones, which is what the writeup obligations are about.
+
+        A theorem whose proof still has a hole is not a result yet; demanding
+        that the document carry it would ask for a paragraph asserting
+        something nobody has proved, and would block the next save behind it.
+        Its obligation is that it is open, and the writeup obligations attach
+        the moment the hole closes -- or at a report that names it, which asks
+        for the carrying directly.
+        """
+        opened = self._open_theorems()
+        return {
+            name: text
+            for name, text in self._theorem_statements().items()
+            if name not in opened
+        }
 
     def _shared_names(self) -> dict[str, list[str]]:
         """Theorem names more than one saved module declares.
@@ -2480,7 +2492,7 @@ class MathematicsSession:
         """
         if not summary.strip():
             return ToolResult(False, "a report needs a summary of what was established")
-        saved = self._saved_statements()
+        saved = self._theorem_statements()
         if not saved:
             return ToolResult(
                 False,
@@ -2518,13 +2530,38 @@ class MathematicsSession:
         # rests on makes *this* report unbelievable, not somebody else's -- and
         # everything with no subject at all, which is what an obligation about
         # the document itself looks like.
+        #
+        # Except that a claimed theorem is still open, which is what this grades
+        # rather than what it refuses. A development that closed nine lemmas and
+        # left a hole in the tenth has established something real and had
+        # nowhere to say it: the alternatives were to claim a proof it does not
+        # have, or to say nothing.
         blocking = [
             item
             for item in owed
-            if not item.subject
-            or item.subject in resolved
-            or item.kind in {"appendix", "assumption"}
+            if item.kind != "open"
+            and (
+                not item.subject
+                or item.subject in resolved
+                or item.kind in {"appendix", "assumption"}
+            )
         ]
+        # What an open theorem owes the *document*, asked here rather than
+        # standing against the workspace. Partial is not a discount on the
+        # writeup: a reader who cannot see the statement of the theorem that is
+        # still open cannot tell which half of the work was done.
+        opened = sorted(self._open_theorems() & set(resolved))
+        if opened:
+            blocking += list(
+                completion.outstanding(
+                    theorems={name: saved[name] for name in opened},
+                    registry=self.state["names"],
+                    labels=self._labels(),
+                    assumptions=self.state["assumptions"],
+                    used=self._used_assumptions(),
+                    tex=self._tex_sources(),
+                )
+            )
         if blocking:
             return ToolResult(
                 False,
@@ -2543,6 +2580,10 @@ class MathematicsSession:
             "summary": summary.strip(),
             "statements": {name: saved[name] for name in sorted(resolved)},
             "assumptions": [str(item["formal_name"]) for item in rested],
+            # Computed from the audit records rather than taken from the model,
+            # for the same reason every other grade here is.
+            "status": "partial" if opened else "clean",
+            "open": opened,
         }
         self.state.setdefault("reports", []).append(entry)
         self._save_state()
@@ -2550,9 +2591,15 @@ class MathematicsSession:
         elsewhere = [item for item in owed if item not in blocking]
         return ToolResult(
             True,
-            f"Reported {entry['theorems']}. Each is saved Lean whose axioms were audited "
-            "when it was saved, carries a label the compiler created, and has its exact "
-            "statement quoted in the writeup where the reader can check it"
+            f"Reported {entry['theorems']} as {entry['status']}. Each is saved Lean whose "
+            "axioms were audited when it was saved, carries a label the compiler created, "
+            "and has its exact statement quoted in the writeup where the reader can check it"
+            + (
+                f".\nThis is a partial result: {opened} still rest on a hole and are not "
+                "proved. Say so wherever you describe this work"
+                if opened
+                else ""
+            )
             + (
                 f", modulo the assumptions the appendix states: {entry['assumptions']}."
                 if entry["assumptions"]
@@ -2596,6 +2643,12 @@ class MathematicsSession:
         simultaneously reporting it unestablished. A banner that overstates is
         worse than no banner.
 
+        An open theorem is not machine-checked either, and is the case that
+        needs saying twice: its audit record is *current* -- being current is
+        how Hardy knows it is open -- so `_audit_gaps` reports nothing about
+        it, and counting it would put a proof with a hole in it under the word
+        "machine-checked".
+
         It says nothing about whether a result was *reported*. That is the
         session's own bookkeeping rather than a property of the document, and
         counting it here made every accepted report stale the PDF -- so a second
@@ -2606,7 +2659,8 @@ class MathematicsSession:
         owed = self._obligations()
         unbacked = sum(1 for item in owed if item.kind == "theorem")
         gaps = {item.subject for item in owed if item.kind == "lean"}
-        checked = len(self._saved_theorems() - gaps)
+        opened = {item.subject for item in owed if item.kind == "open"}
+        checked = len(self._saved_theorems() - gaps - opened)
         assumed = len(self.state["assumptions"])
         parts = [
             f"\\textbf{{Hardy}} --- {checked} theorem{'' if checked == 1 else 's'} "
@@ -2617,6 +2671,12 @@ class MathematicsSession:
             parts.append(
                 f"{unbacked} theorem environment{'' if unbacked == 1 else 's'} here "
                 f"{'is' if unbacked == 1 else 'are'} backed by neither"
+            )
+        if opened:
+            count = len(opened)
+            parts.append(
+                f"{count} theorem{'' if count == 1 else 's'} here "
+                f"{'is' if count == 1 else 'are'} still open"
             )
         text = ". ".join(parts) + "."
         goal = self.goal()
@@ -2665,6 +2725,12 @@ class MathematicsSession:
         return {
             "goal": self.goal(),
             "assumptions": sorted(str(item["formal_name"]) for item in self.state["assumptions"]),
+            # A theorem that was closed when the PDF was compiled and has since
+            # been reopened is the overstating direction: the banner goes on
+            # calling it machine-checked. The other way round -- a hole closed
+            # after the compile -- understates, and the ratchet already forces
+            # the writeup to carry it before anything is reportable.
+            "open": sorted(self._open_theorems()),
         }
 
     def _stale_writeup(self) -> list[completion.Obligation]:
