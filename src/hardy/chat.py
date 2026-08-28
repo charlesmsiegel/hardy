@@ -3197,11 +3197,25 @@ class MathematicsSession:
             )
         found = ingest.discover(resolved)
         if not found.lean and not found.tex:
-            return ToolResult(False, f"no .lean or .tex files under {resolved}")
+            # The skips still get reported: a pile holding one symlinked
+            # `.lean` and nothing else is not the same fact as an empty one,
+            # and dropping the reasons here would break the promise that
+            # nothing is silently omitted.
+            reasons = "".join(f"\n  {note}" for note in found.skipped)
+            return ToolResult(False, f"no .lean or .tex files under {resolved}" + (f"; not read:{reasons}" if reasons else ""))
         # Once, before any per-file Lean: an `import CommAlg` in the pile
         # resolves against an olean, and nothing builds that olean but this.
         if found.lean:
             self.build_shared()
+            # The problem's own saved modules too. A pile file may `import`
+            # one, that import resolves against an olean, and on a fresh
+            # clone nothing has built it yet -- so without this pass a file
+            # that promotion would accept triaged as broken. A failure is
+            # tolerated rather than refused: the elaboration that needed the
+            # broken module reports it, about exactly the file it affects.
+            mine = self.lean_workspace.sources()
+            if mine:
+                self.lean_workspace.build_modules(tuple(mine))
         lean_rows = self._triage_lean(resolved, found.lean)
         if lean_rows is None:
             # Interrupted, so the verdicts gathered are not the pile's: every
@@ -3281,6 +3295,13 @@ class MathematicsSession:
                 if process.stopping():
                     return None
                 rows.append(self._triage_one(space, sources, approved, str(relative), content, text))
+            # Asked once more after the last elaboration, not only before
+            # each. Esc landing during the final file leaves an interrupted
+            # Lean run graded "does not compile", and with no next iteration
+            # to notice the stop, a completed triage would be recorded
+            # carrying a verdict the interruption manufactured.
+            if process.stopping():
+                return None
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
         return sorted(rows, key=lambda row: row.path)
@@ -3513,6 +3534,19 @@ class MathematicsSession:
             content = origin.read_bytes()
         except OSError as error:
             return ToolResult(False, f"{source_path} cannot be read: {error}")
+        # Not from this problem's own tree. "Imported" is a provenance claim
+        # -- this arrived from outside -- and recording the problem's own
+        # authored work under it would make the record's origin classification
+        # false; the reference variant would go further and reclassify
+        # authored work as assumed background. Another project's tree is
+        # still a legitimate origin: outside means outside this problem.
+        problem = self.workspace.resolve()
+        if origin == problem or problem in origin.parents:
+            return ToolResult(
+                False,
+                f"{source_path} is inside this problem's own tree; importing is for files "
+                "that arrived from outside. Authored work is edited with a save, not re-imported.",
+            )
         try:
             text = content.decode("utf-8")
         except UnicodeDecodeError:

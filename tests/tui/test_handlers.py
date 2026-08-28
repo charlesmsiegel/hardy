@@ -380,3 +380,17 @@ async def test_import_still_honours_quoted_paths_with_spaces(ui, settings):
     session = SimpleNamespace(import_lean=import_lean)
     await handlers.handle_import(ui, 'lean "my pile/old file.lean" Dest.lean', State(config=settings, session=session))
     assert calls == [(Path("my pile/old file.lean"), "Dest.lean")]
+
+
+async def test_import_unquotes_a_quoted_triage_directory(ui, settings):
+    """`/import "my old files"` parsed fine and then triaged a path wearing
+    its quote characters, which reported a good directory as unreadable."""
+    piles: list[Path] = []
+
+    def triage_pile(pile: Path) -> ToolResult:
+        piles.append(pile)
+        return ToolResult(True, "triaged")
+
+    session = SimpleNamespace(triage_pile=triage_pile)
+    await handlers.handle_import(ui, '"my old files"', State(config=settings, session=session))
+    assert piles == [Path("my old files")]
