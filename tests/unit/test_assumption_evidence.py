@@ -88,6 +88,69 @@ def test_a_request_with_no_search_behind_it_is_refused(session_factory, approval
     assert approvals == []
 
 
+class RaisingSearch(Search):
+    """Finding #2 (second brutal review): a call `_search_tool` refuses on
+    its arguments must never reach `inspect_declarations` at all -- Lean was
+    never asked, so nothing here should run. Raising, rather than merely
+    counting, is what makes these tests fail loudly if that stops being
+    true."""
+
+    def inspect_declarations(self, names):
+        raise AssertionError("inspect_declarations must not run for a call _search_tool refused")
+
+
+def test_an_empty_names_list_leaves_the_search_gate_untouched(session_factory, approvals) -> None:
+    """A schema-valid but empty `names` list is exactly the shape `lean.py`'s
+    `inspect_declarations` refuses with `ValueError` -- Lean is never
+    started. The old code counted this as an attempt anyway, opened the
+    search-first gate, and told the human "1 inspection(s) attempted...none
+    finished", which is false: nothing was ever tried."""
+    session = _searching_session(session_factory, approvals, RaisingSearch())
+
+    refusal = session._tool("inspect_declarations", {"names": []})
+
+    assert not refusal.ok
+    assert "declaration inspection requires between 1 and 20 names" in refusal.output
+
+    result = session._tool("request_assumption", _request())
+
+    assert not result.ok
+    assert "no `inspect_declarations` has been run" in result.output
+    assert approvals == []
+
+
+def test_a_missing_names_key_leaves_the_search_gate_untouched(session_factory, approvals) -> None:
+    session = _searching_session(session_factory, approvals, RaisingSearch())
+
+    refusal = session._tool("inspect_declarations", {})
+
+    assert not refusal.ok
+    assert "declaration inspection requires between 1 and 20 names" in refusal.output
+
+    result = session._tool("request_assumption", _request())
+
+    assert not result.ok
+    assert "no `inspect_declarations` has been run" in result.output
+    assert approvals == []
+
+
+def test_a_natural_language_query_leaves_the_search_gate_untouched(session_factory, approvals) -> None:
+    """`search_tools.py` adds `CONCEPT_HINT` precisely because models put
+    concepts where names belong -- this is not an adversarial input."""
+    session = _searching_session(session_factory, approvals, RaisingSearch())
+
+    refusal = session._tool("inspect_declarations", {"names": ["Sylow's theorem on normal subgroups"]})
+
+    assert not refusal.ok
+    assert "declaration names must be qualified Lean identifiers" in refusal.output
+
+    result = session._tool("request_assumption", _request())
+
+    assert not result.ok
+    assert "no `inspect_declarations` has been run" in result.output
+    assert approvals == []
+
+
 def test_a_completed_inspection_unlocks_one_request(session_factory, approvals) -> None:
     session = _searching_session(session_factory, approvals, Search(unavailable=("Sylwo",)))
     session._tool("inspect_declarations", {"names": ["Sylwo"]})

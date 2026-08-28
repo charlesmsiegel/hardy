@@ -33,7 +33,7 @@ from .layout import (
     read_bytes,
     read_text,
 )
-from .lean import LeanTools
+from .lean import DECLARATION_NAME, LeanTools
 from .models import Request, ToolResult, TurnEvent
 from .modules import ModuleIndex
 from .project_context import (
@@ -3739,13 +3739,27 @@ class MathematicsSession:
         names = arguments.get("names") or []
         if not isinstance(names, list):
             return ToolResult(False, "names must be a list of declaration names")
+        names = [str(item) for item in names]
+        # Validated here, before the attempt counter moves, the same way
+        # `LeanService.inspect_declarations` validates before it runs `lean`.
+        # That service raises on exactly this shape, but by the time it does
+        # Lean was never started -- counting the call anyway let a malformed
+        # request (an empty list, no `names` key, a natural-language query)
+        # satisfy `_request_assumption`'s search-first gate and then tell the
+        # human "none finished", which is false: nothing was ever asked.
+        # Finding #2 of the second brutal review. Refusing with the same
+        # words the service would means the model sees one error either way.
+        if not 1 <= len(names) <= 20:
+            return ToolResult(False, "declaration inspection requires between 1 and 20 names")
+        if any(not DECLARATION_NAME.fullmatch(item) for item in names):
+            return ToolResult(False, "declaration names must be qualified Lean identifiers")
         # Counted whether or not this finishes: a machine on which Lean keeps
         # timing out still attempted a search, and `_request_assumption`'s
         # gate needs to be able to tell that apart from never having tried.
         self._inspect_attempts_since_request += 1
-        result = self.search.inspect_declarations([str(item) for item in names])
+        result = self.search.inspect_declarations(names)
         if result.ok:
-            self._note_inspected([str(item) for item in names], result.output)
+            self._note_inspected(names, result.output)
         return result
 
     def _note_inspected(self, names: list[str], output: str) -> None:
