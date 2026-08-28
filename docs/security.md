@@ -30,8 +30,9 @@ What Hardy does control:
 - **No inherited configuration.** Your Claude Code settings and `CLAUDE.md`
   files are not read. An interactive session reads exactly one project file —
   `AGENTS.md` at the project root, or `HARDY.md` in its place, never an
-  ancestor — and records its full text in the transcript. Graded runs read
-  none.
+  ancestor — and records in the transcript the exact text shown to the model
+  (bounded at 2,000 lines or 50 KB, and flagged as a fragment when trimmed)
+  with the whole file's SHA-256. Graded runs read none.
 - **A faithfulness reader with no tools.** On the default Claude backend the
   independent reader is offered no tools at all and the runtime refuses
   filesystem access by default; under `--backend codex` that isolation cannot
@@ -87,9 +88,13 @@ What Hardy bounds is what a steered model can *claim* and what it can *widen*:
 verification comes from the kernel's axiom audit rather than from anything the
 model says, an assumption enters the trust base only through explicit human
 approval with the evidence on screen, and a result cannot be reported unless
-the artifacts carry it. What Hardy does not bound is what steered code can
-*do* once executed — that is the missing sandbox again, and the containment
-below is the answer to it.
+the artifacts carry it. That bound holds against ordinary steered output; it
+does not hold against Lean written to subvert elaboration, because the audit
+runs inside the environment the source can extend (the limit stated above),
+and it never bounds what steered code can *do* once executed. Both gaps are
+the missing sandbox again, and the containment below is the answer to them —
+along with not trusting a hostile run's claims until the independent re-check
+exists.
 
 ## How to actually contain it
 
@@ -108,17 +113,22 @@ Whatever the platform, the pattern is the same:
    mounting host credentials in. Never expose SSH keys, cloud configuration,
    or a password store to it. If the environment is compromised, log the
    session out and it held nothing else.
-3. **Restrict the network.** After installation, Hardy needs egress to the
-   model endpoint (at minimum `api.anthropic.com`; the Claude Code
-   documentation lists the full set) and, optionally, to a Loogle instance —
-   the search tools report themselves unavailable rather than failing the
-   session when it is unreachable. Lean, LaTeX, and computer algebra need no
-   network at all once installed. Install with network, then run with egress
-   narrowed to the model.
-4. **Review before anything crosses back.** A problem's tree is meant to be
-   committed, which makes the boundary crossing a `git diff` — read it on the
-   host before pushing or copying results out. `.build/` and `.local/` never
-   leave the environment.
+3. **Restrict the network.** After installation, Hardy needs egress to its
+   model backend — for the default Claude backend that is the endpoints the
+   Claude Code CLI uses (`api.anthropic.com` and the rest of the set its
+   documentation lists); `--backend codex` needs its own provider's endpoints
+   instead — and, optionally, to a Loogle instance: the search tools report
+   themselves unavailable rather than failing the session when it is
+   unreachable. Lean, LaTeX, and computer algebra need no network at all once
+   installed. Install with network, then run with egress narrowed to the
+   backend in use.
+4. **Review before anything crosses back.** Keep the authoritative repository
+   on the host and give the environment a disposable copy of the problem root.
+   Everything the copy holds after a session is untrusted output — its `.git`
+   included, so a diff taken *inside* it, or against metadata it could
+   rewrite, proves nothing. Bring results across by copying the files (never
+   `.git`) into a host-owned checkout and reading `git diff` there before
+   committing. `.build/` and `.local/` never leave the environment.
 5. **Treat the environment as disposable.** Rebuild it rather than trusting
    one that has run output you would not vouch for.
 
@@ -128,22 +138,29 @@ Run the whole session in a container. Hardy works as root in a container — its
 permission model deliberately avoids the CLI flag that refuses to run as root:
 
 ```sh
+cp -r math math-session               # a disposable copy; the real repo stays outside
 docker run -it --rm \
-  -v "$PWD/math:/work/math" \
+  -v "$PWD/math-session:/work/math" \
   ubuntu:24.04
 # inside:
 apt-get update && apt-get install -y curl git npm
 curl -fsSL https://raw.githubusercontent.com/charlesmsiegel/hardy/main/scripts/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # the installer wrote this to ~/.profile; this shell predates it
 claude login
 hardy chat --root /work/math
 ```
 
 `podman` works the same way. The Mathlib step downloads several gigabytes, so
-bake the installed state into an image (or keep `~/.local/share/hardy` in a
-named volume) rather than paying it per container. To narrow egress, put the
-container on an internal network with a proxy that admits only the model
-endpoint; Docker's `--network` and a filtering proxy are enough, and nothing in
-Hardy needs anything wider at runtime.
+bake the installed state into an image and start each session from that: image
+layers are shared read-only and a container's changes to them die with it. Do
+not carry a writable volume of `~/.local/share/hardy` from one session into the
+next — a session that ran hostile output could have modified the Hardy
+installation or the Mathlib tree in it, and reattaching the volume hands the
+next "fresh" environment a compromised toolchain. If a volume is how you cache
+the download, recreate it from a trusted seed per session. To narrow egress,
+put the container on an internal network with a proxy that admits only the
+model endpoint; Docker's `--network` and a filtering proxy are enough, and
+nothing in Hardy needs anything wider at runtime.
 
 ### macOS
 
@@ -157,10 +174,13 @@ the macOS or Linux installer is the heavier but simpler alternative.
 Hardy's installers never require WSL, and neither does its isolation story: the
 boundary on Windows is a **virtual machine** — Hyper-V, VirtualBox, or VMware —
 running either Windows (with `install-windows.ps1`, natively) or Linux (with
-the pattern above). A VM is the right tool here anyway: it is also what
-contains the process-tree kill gap noted above, which no in-VM measure would.
-Users who already run Docker Desktop or WSL2 can of course use the Linux
-container pattern inside it; Hardy just never makes WSL the price of admission.
+the pattern above). The process-tree kill gap noted above is one more reason
+the boundary matters on Windows: a cancelled child that outlives the cancel
+(closing that in-guest needs a job object Hardy does not yet set up) keeps
+whatever the guest holds, so it is bounded by the VM rather than stopped by it
+— treat a guest where that happened as compromised and discard it. Users who
+already run Docker Desktop or WSL2 can of course use the Linux container
+pattern inside it; Hardy just never makes WSL the price of admission.
 
 ## What this does not promise
 
