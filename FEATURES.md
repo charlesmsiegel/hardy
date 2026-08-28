@@ -21,6 +21,33 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   `read_file` fetches one file — bounded from the top, like every other result a
   model is handed, and naming the `start_line` that reads on — and `delete_file`
   removes one that nothing imports.
+- **Now (implemented):** an existing pile of `.lean` and `.tex` files is brought in
+  deliberately rather than pasted (#112). `/import <directory>` triages the pile
+  without modifying it or the project: every Lean file is elaborated — pile files
+  that import each other are built together, against the problem's saved modules
+  and its shared libraries — and sorted into compiles clean / compiles with holes /
+  does not compile / not mathematics, with the assumptions each declares that
+  nobody approved named per file; TeX files are reported as document or fragment,
+  since a stray fragment is not part of the one writeup until `writeup.tex`
+  `\input`s it and where it belongs is a decision about the document. The whole
+  list, each file under a sha256 of the bytes read, goes into the transcript.
+  Promotion is one file at a time and human-directed — there is deliberately no
+  model tool, because pulling arbitrary host files into the audited tree is the
+  user's judgment call. `/import lean` routes the file through the same save path
+  an authored file takes — assumption approval, the shadow build with dependents
+  rebuilt, registered names preserved, the axiom audit; no weaker a check than
+  work Hardy wrote — skipping only the authorship ratchet (`theorem` reserved to
+  registered results, the writeup catch-up), which steers how a model writes *new*
+  work: an imported theorem lands, and its writeup debt is charged through the
+  obligations rather than refused at the door. `/import reference` places assumed
+  background in the root's shared `.hardy/lean/`, compiles it immediately, and
+  names the axioms and holes it carries — the audit still charges those to any
+  theorem that imports it, exactly as before. `/import tex` saves through the
+  LaTeX save path and says plainly when nothing `\input`s the file yet. Every
+  promotion is recorded as having arrived from outside — kind, origin path, and
+  the digest of the arriving bytes, in the manifest and the transcript — rather
+  than under the authorship the record would otherwise imply, and importing never
+  overwrites an existing file.
 - **Now (implemented):** a `theorem` cannot be accumulated without a writeup, and the
   writeup must quote the Lean. A saved theorem is carried only when `record_name` maps
   it to a LaTeX name, the compiler really created that `\label`, and the document the

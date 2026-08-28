@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import shlex
+from pathlib import Path
 from typing import Any
 
 from .. import catalog, doctor, layout, process
@@ -337,6 +339,61 @@ async def handle_goal(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
+IMPORT_USAGE = (
+    "/import <directory> triages a pile · /import lean <file> [dest] · "
+    "/import reference <file> [dest] · /import tex <file> [dest]"
+)
+#: The three destinations a file can be promoted to, by session method name.
+IMPORT_KINDS = {"lean": "import_lean", "reference": "import_reference", "tex": "import_tex"}
+
+
+async def handle_import(ui: Ui, argument: str, state: State) -> State:
+    """Triage an existing pile of files, or promote one into the project.
+
+    Human-directed by design (#112): there is deliberately no model tool for
+    this, because pulling arbitrary host files into the audited tree is the
+    user's judgment call. Triage compiles every Lean file in the pile and
+    writes nothing; promotion routes a file through the same gates, audit and
+    record an authored save gets, and records it as having arrived from
+    outside, under its digest.
+
+    `safe_in_flight` stays False, the default: promotion writes into the same
+    trees and record a running turn is writing to.
+    """
+    session = state.session
+    if session is None:
+        ui.write("No session yet.", style="error")
+        return state
+    try:
+        words = shlex.split(argument)
+    except ValueError as error:
+        ui.write(f"Could not read that: {error}. {IMPORT_USAGE}", style="error")
+        return state
+    if not words:
+        ui.write(f"Import what? {IMPORT_USAGE}", style="error")
+        return state
+    verb = words[0].lower()
+    if verb in IMPORT_KINDS:
+        if len(words) < 2 or len(words) > 3:
+            ui.write(f"/import {verb} takes a file and an optional destination. {IMPORT_USAGE}", style="error")
+            return state
+        method = getattr(session, IMPORT_KINDS[verb])
+        arguments: tuple[Any, ...] = (Path(words[1]), words[2] if len(words) == 3 else None)
+    else:
+        # Anything else is a directory to triage. The unsplit argument, not
+        # `words[0]`: a path with spaces should not need quoting to triage.
+        method, arguments = session.triage_pile, (Path(argument.strip()),)
+    # Triage runs Lean once per pile file and promotion elaborates a save;
+    # both go to a thread so the input box stays responsive, like /doctor.
+    try:
+        result = await asyncio.to_thread(method, *arguments)
+    except asyncio.CancelledError:
+        process.interrupt_children()
+        raise
+    ui.write(result.output, style="system" if result.ok else "error")
+    return state
+
+
 PROJECT_USAGE = "/project list · /project switch <name> · /project new <name>"
 
 
@@ -558,6 +615,10 @@ def build_registry() -> list[Command]:
             argument_hint="[state|reset|export|expr]",
         ),
         Command("goal", "state what this session is for", handle_goal, argument_hint="[text]"),
+        Command(
+            "import", "triage an existing pile, or promote a file from it", handle_import,
+            argument_hint="[<dir>|lean|reference|tex]",
+        ),
         Command(
             "project", "see the problems here, or open another", handle_project,
             argument_hint="[list|new|switch]",

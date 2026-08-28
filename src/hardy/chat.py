@@ -7,18 +7,20 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
-from . import audit, completion, process
+from . import audit, completion, ingest, process
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .latex import ROOT_DOCUMENT, LatexTools, compiles_document, unreached_fragments
 from .layout import (
+    HARDY_DIR,
     LOCAL_DIR,
     LOCAL_STATE,
     RECORD,
@@ -1896,12 +1898,21 @@ class MathematicsSession:
             self._save_streak[key] = self._save_streak.get(key, 0) + 1
         return result
 
-    def _save_lean_unbraked(self, path: str, source: str) -> ToolResult:
+    def _save_lean_unbraked(self, path: str, source: str, *, ratchet: bool = True) -> ToolResult:
         try:
             relative = safe_relative(path)
         except WorkspacePathError as error:
             return ToolResult(False, str(error), source)
-        gate = self._result_gate(source) or self._documentation_gate(source)
+        # `ratchet=False` is how an imported file enters (#112). The two gates
+        # it skips are authorship steering -- `theorem` reserved to registered
+        # results, the writeup catch-up -- rules about how a model writes new
+        # work, which an imported file has already been written without. The
+        # verification gates all still run: assumption approval, the shadow
+        # build, registered-name preservation, and the axiom audit are what
+        # "no weaker a check than one Hardy wrote" means, and the writeup debt
+        # an imported theorem brings is not waived either -- it lands in the
+        # obligations like any other saved theorem's.
+        gate = (self._result_gate(source) or self._documentation_gate(source)) if ratchet else None
         if gate is not None:
             return ToolResult(False, gate, source)
         refusal = self._final_gates(source)
@@ -3141,6 +3152,366 @@ class MathematicsSession:
             # the only way out was a save that changed nothing.
             self._stamp_writeup()
         return ToolResult(True, f"deleted {path}")
+
+    # -- Ingestion (#112): an existing pile, triaged and promoted -----------
+    #
+    # Human-directed on purpose: there is no model tool here. A model that
+    # could pull arbitrary host files into the audited tree would make "what
+    # is in this workspace" a question about the whole machine, and weeding a
+    # pile is the user's judgment call anyway. The slash command is the door.
+
+    def triage_pile(self, pile: Path) -> ToolResult:
+        """Sort a directory of existing files without touching any of them.
+
+        The useful output of a first pass over a pile is a triage list --
+        compiles clean / compiles with holes / does not compile / is not
+        really mathematics -- not a refusal. Nothing is written into the
+        project or the pile; the one durable effect is a transcript event
+        recording each file's digest and verdict, which is the provenance a
+        later promotion refers back to.
+        """
+        with self._gate:
+            try:
+                return self._triage_pile(pile)
+            except (LayoutError, OSError) as error:
+                return ToolResult(False, f"could not triage {pile}: {error}")
+
+    def _triage_pile(self, pile: Path) -> ToolResult:
+        candidate = pile.expanduser()
+        if not candidate.is_dir():
+            return ToolResult(False, f"{pile} is not a directory Hardy can read")
+        resolved = candidate.resolve()
+        problem = self.workspace.resolve()
+        if resolved == problem or problem in resolved.parents or resolved in problem.parents:
+            return ToolResult(
+                False,
+                f"{pile} is this project's own tree (or contains it); "
+                "triage is for files that are not part of the project yet",
+            )
+        found = ingest.discover(resolved)
+        if not found.lean and not found.tex:
+            return ToolResult(False, f"no .lean or .tex files under {resolved}")
+        # Once, before any per-file Lean: an `import CommAlg` in the pile
+        # resolves against an olean, and nothing builds that olean but this.
+        if found.lean:
+            self.build_shared()
+        lean_rows = self._triage_lean(resolved, found.lean)
+        tex_rows = self._triage_tex(resolved, found.tex)
+        self._record({
+            "type": "import_triage",
+            "pile": str(resolved),
+            "lean": [row.as_dict() for row in lean_rows],
+            "tex": [row.as_dict() for row in tex_rows],
+            "skipped": list(found.skipped),
+        })
+        return ToolResult(True, ingest.render(resolved, lean_rows, tex_rows, found.skipped))
+
+    def _triage_lean(self, pile: Path, files: Sequence[PurePosixPath]) -> list[ingest.Triaged]:
+        """One verdict per Lean file, each earned by an actual elaboration.
+
+        The pile's readable files are copied into a scratch tree first, so
+        that files importing each other triage the way they will build after
+        promotion -- and so the compile never reads the pile itself through a
+        workspace walk that would refuse the first symlink it met.
+        """
+        rows: list[ingest.Triaged] = []
+        texts: dict[PurePosixPath, tuple[bytes, str]] = {}
+        for relative in files:
+            try:
+                content = Path(pile, *relative.parts).read_bytes()
+            except OSError as error:
+                rows.append(ingest.Triaged(str(relative), "", ingest.UNREADABLE, detail=str(error)))
+                continue
+            try:
+                texts[relative] = (content, content.decode("utf-8"))
+            except UnicodeDecodeError:
+                rows.append(ingest.Triaged(str(relative), ingest.digest(content), ingest.UNREADABLE, detail="not UTF-8 text"))
+        if not texts:
+            return sorted(rows, key=lambda row: row.path)
+        scratch = Path(tempfile.mkdtemp(prefix="hardy-ingest-"))
+        try:
+            source_root = scratch / "src"
+            build_root = scratch / "build"
+            for relative, (_, text) in texts.items():
+                # Through the guard even though the scratch tree is Hardy's
+                # own, seconds old: it is the idiom every project write uses,
+                # and the walk that found `relative` is not the code that
+                # writes it -- the guard re-proves each component at the
+                # moment of the write, exactly as `stage` does for its shadow.
+                guard, name = guard_for(source_root, relative, create=True)
+                with guard.open(name, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+            build_root.mkdir()
+
+            def compiling(module: str, src: Path, build: Path, source_file: Path) -> tuple[bool, str]:
+                # The scratch build first, then the problem's own build and
+                # the shared libraries: a pile file may import its neighbours,
+                # this project's saved modules, or a reference library, and
+                # triage must answer for the tree a promotion would create.
+                lean_path = os.pathsep.join([str(build), self._lean_path()])
+                result = self.lean.compile_module(src, build, source_file, lean_path=lean_path)
+                return result.ok, result.output
+
+            space = LeanWorkspace(
+                source_root, build_root, compiling,
+                environment=self._environment, external=self._external_stamp,
+            )
+            sources = space.sources()
+            approved = self._approved_assumptions()
+            for relative, (content, text) in texts.items():
+                rows.append(self._triage_one(space, sources, approved, str(relative), content, text))
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        return sorted(rows, key=lambda row: row.path)
+
+    def _triage_one(
+        self,
+        space: LeanWorkspace,
+        sources: dict[str, str],
+        approved: set[str],
+        posix: str,
+        content: bytes,
+        text: str,
+    ) -> ingest.Triaged:
+        sha = ingest.digest(content)
+        if not ingest.looks_like_lean(text):
+            return ingest.Triaged(posix, sha, ingest.NOTES)
+        declared = tuple(name for name, _ in assumptions(text))
+        unapproved = tuple(name for name in declared if name not in approved)
+        detail = ""
+        unreadable = unreadable_assumptions(text)
+        if unreadable:
+            detail = (
+                f"declares an axiom Hardy cannot read as `axiom NAME : STATEMENT` "
+                f"({unreadable[0]}); promotion into the authored tree will refuse it"
+            )
+        verdict, complaint = self._triage_compile(space, sources, text)
+        return ingest.Triaged(
+            posix, sha, verdict,
+            detail="\n".join(part for part in (complaint, detail) if part),
+            axioms=declared, unapproved=unapproved,
+        )
+
+    def _triage_compile(self, space: LeanWorkspace, sources: dict[str, str], text: str) -> tuple[str, str]:
+        try:
+            needed = internal_imports(text, sources)
+            failure = space.build_modules(needed) if needed else None
+        except ImportCycle as error:
+            return ingest.BROKEN, str(error)
+        if failure is not None:
+            return ingest.BROKEN, f"pile import {failure.module} does not build: {ingest.brief(failure.output)}"
+        result = self.lean.run_source(
+            text, env={"LEAN_PATH": os.pathsep.join([space.lean_path(), self._lean_path()])}
+        )
+        if not result.ok:
+            return ingest.BROKEN, ingest.brief(result.output)
+        return (ingest.HOLES if self.lean.has_holes(text) else ingest.CLEAN), ""
+
+    def _triage_tex(self, pile: Path, files: Sequence[PurePosixPath]) -> list[ingest.Triaged]:
+        """What kind of thing each TeX file is; deliberately no compile.
+
+        A stray fragment is not part of the one document until `writeup.tex`
+        \\inputs it, so where it belongs is a decision about the document a
+        human makes -- there is nothing to compile it against that would not
+        presuppose that decision.
+        """
+        rows: list[ingest.Triaged] = []
+        for relative in files:
+            posix = str(relative)
+            try:
+                content = Path(pile, *relative.parts).read_bytes()
+            except OSError as error:
+                rows.append(ingest.Triaged(posix, "", ingest.UNREADABLE, detail=str(error)))
+                continue
+            try:
+                text = content.decode("utf-8")
+            except UnicodeDecodeError:
+                rows.append(ingest.Triaged(posix, ingest.digest(content), ingest.UNREADABLE, detail="not UTF-8 text"))
+                continue
+            verdict = ingest.DOCUMENT if "\\documentclass" in text else ingest.FRAGMENT
+            rows.append(ingest.Triaged(posix, ingest.digest(content), verdict))
+        return sorted(rows, key=lambda row: row.path)
+
+    def import_lean(self, source_path: Path, dest: str | None = None) -> ToolResult:
+        """Promote one outside Lean file into the authored tree, gates and all.
+
+        Through the same save path every authored file takes -- assumption
+        approval, the shadow build, dependents rebuilt, registered names
+        preserved, the axiom audit -- because a file that arrived from outside
+        gets no weaker a check than one Hardy wrote. What it skips is the
+        authorship ratchet (`ratchet=False` at the save): those gates steer
+        how a model writes NEW work, and an imported theorem's writeup debt is
+        charged through the obligations instead of refused at the door.
+        """
+        with self._gate:
+            loaded = self._read_import(source_path)
+            if isinstance(loaded, ToolResult):
+                return loaded
+            origin, content, text = loaded
+            try:
+                relative = safe_relative(dest or origin.name)
+            except WorkspacePathError as error:
+                return ToolResult(
+                    False,
+                    f"{error}; pass a destination Lean accepts as a module path, "
+                    f"e.g. /import lean {source_path} Imported.lean",
+                )
+            if (self.lean_workspace.root / relative).exists():
+                return ToolResult(
+                    False,
+                    f"{LEAN_DIR}/{relative.as_posix()} already exists; importing never "
+                    "overwrites work. Choose another destination or delete the file first.",
+                )
+            result = self._save_lean_unbraked(relative.as_posix(), text, ratchet=False)
+            if not result.ok:
+                return result
+            entry = self._remember_import("lean", f"{LEAN_DIR}/{relative.as_posix()}", origin, content)
+            return ToolResult(
+                True,
+                f"imported {origin} as {entry['path']} (sha256 {entry['sha256']})\n\n{result.output}",
+            )
+
+    def import_reference(self, source_path: Path, dest: str | None = None) -> ToolResult:
+        """Bring one outside Lean file in as assumed background, not as work.
+
+        The destination is the project's shared library (`.hardy/lean/`), the
+        tree #109 reserved for exactly this: Lean the user brings but did not
+        author here. No save gate runs -- reference material is not a claim --
+        but nothing is weakened by that: the axiom audit elaborates whatever a
+        saved theorem imports, so an axiom or a hole in a reference file is
+        charged to every theorem resting on it exactly as before, and the
+        arrival itself is recorded under the file's digest.
+        """
+        with self._gate:
+            loaded = self._read_import(source_path)
+            if isinstance(loaded, ToolResult):
+                return loaded
+            origin, content, text = loaded
+            try:
+                relative = safe_relative(dest or origin.name)
+            except WorkspacePathError as error:
+                return ToolResult(
+                    False,
+                    f"{error}; a reference module needs a path Lean accepts, e.g. CommAlg.lean",
+                )
+            shared = Layout(root=self.root, slug=self.workspace.name).shared_lean
+            if (shared / Path(*relative.parts)).exists():
+                return ToolResult(
+                    False,
+                    f"{HARDY_DIR}/lean/{relative.as_posix()} already exists; importing never "
+                    "overwrites work. Choose another destination or remove the file first.",
+                )
+            try:
+                guard, name = guard_for(shared, relative, create=True)
+                with guard.open(name, "w", encoding="utf-8") as handle:
+                    handle.write(text.rstrip() + "\n")
+            except (LayoutError, OSError) as error:
+                return ToolResult(False, f"could not write into {shared}: {error}")
+            # Compiled now rather than on the next Lean call, so the user is
+            # told immediately when the library they just brought does not
+            # build -- and so the shared identity moves before any verdict
+            # could be stamped against the old tree.
+            self.build_shared()
+            notes = []
+            if self._shared_failures:
+                notes.append(
+                    "shared libraries that do not build:\n  " + "\n  ".join(self._shared_failures)
+                )
+            declared = tuple(name for name, _ in assumptions(text)) + unreadable_assumptions(text)
+            if declared:
+                notes.append(
+                    f"carries axiom declarations ({', '.join(declared)}): a theorem "
+                    "importing this module will not save until each is approved through "
+                    "request_assumption"
+                )
+            if self.lean.has_holes(text):
+                notes.append(
+                    "carries holes (sorry/admit): a theorem importing this module "
+                    "will be reported as still open"
+                )
+            entry = self._remember_import("reference", f"{HARDY_DIR}/lean/{relative.as_posix()}", origin, content)
+            message = (
+                f"imported {origin} as {entry['path']} (sha256 {entry['sha256']}); "
+                f"it is assumed background this project may import, not audited work"
+            )
+            if notes:
+                message += "\n" + "\n".join(f"- {note}" for note in notes)
+            return ToolResult(True, message)
+
+    def import_tex(self, source_path: Path, dest: str | None = None) -> ToolResult:
+        """Bring one outside TeX file into the writeup tree, via the save path.
+
+        The compile-and-save gate is `save_latex`'s own. What a save cannot
+        decide is where the file belongs in a document that already exists: a
+        fragment is not part of the writeup until `writeup.tex` \\inputs it,
+        and the answer says so rather than guessing at a place.
+        """
+        with self._gate:
+            loaded = self._read_import(source_path)
+            if isinstance(loaded, ToolResult):
+                return loaded
+            origin, content, text = loaded
+            resolved = self._tex_path(dest or origin.name)
+            if isinstance(resolved, ToolResult):
+                return resolved
+            relative, target = resolved
+            if target.exists():
+                return ToolResult(
+                    False,
+                    f"{TEX_DIR}/{relative} already exists; importing never overwrites "
+                    "work. Choose another destination or delete the file first.",
+                )
+            result = self._save_latex(relative, text)
+            if not result.ok:
+                return result
+            entry = self._remember_import("tex", f"{TEX_DIR}/{relative}", origin, content)
+            message = f"imported {origin} as {entry['path']} (sha256 {entry['sha256']})"
+            if not compiles_document(self._tex_root_source(), relative):
+                message += (
+                    f"\n- not yet part of the writeup: nothing \\inputs {relative}. "
+                    "Where it belongs in the document is yours to decide; the check "
+                    "compiled it through a probe document only."
+                )
+            return ToolResult(True, f"{message}\n\n{result.output}")
+
+    def _read_import(self, source_path: Path) -> tuple[Path, bytes, str] | ToolResult:
+        """One outside file's identity and text, or the refusal to ingest it."""
+        candidate = source_path.expanduser()
+        try:
+            origin = candidate.resolve(strict=True)
+            if origin.is_dir():
+                return ToolResult(
+                    False,
+                    f"{source_path} is a directory; /import brings in one file at a "
+                    "time (triage the directory first to see what is in it)",
+                )
+            content = origin.read_bytes()
+        except OSError as error:
+            return ToolResult(False, f"{source_path} cannot be read: {error}")
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return ToolResult(False, f"{source_path} is not UTF-8 text; Hardy cannot ingest it")
+        return origin, content, text
+
+    def _remember_import(self, kind: str, path: str, origin: Path, content: bytes) -> dict[str, Any]:
+        """The provenance an imported file gets instead of authorship.
+
+        The record's ordinary entries imply Hardy wrote what they describe.
+        For a file it did not, the honest statement is different in kind --
+        this arrived from outside, here is where from, here is the digest of
+        what arrived -- so it gets its own entry in the manifest (which the
+        model reads too) and its own event in the transcript. The digest is
+        over the arriving bytes, before the save normalised anything, which is
+        what lets a reader check the record against the user's original file.
+        """
+        entry = {"kind": kind, "path": path, "origin": str(origin), "sha256": ingest.digest(content)}
+        stored = self.state.setdefault("imported", [])
+        stored[:] = [item for item in stored if item.get("path") != path]
+        stored.append(entry)
+        self._save_state()
+        self._record({"type": "imported", **entry})
+        return entry
 
     def _resolve(self, path: str) -> tuple[Path, str, str] | ToolResult:
         """Where a tool path lives: the Lean tree or the writeup tree.
