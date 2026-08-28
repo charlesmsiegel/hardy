@@ -19,9 +19,12 @@ point of this section, because the first is easy to mistake for the second.
 
 What Hardy does control:
 
-- **In-process tools only.** Every Lean check, LaTeX compile, computer algebra
-  cell, and file write happens inside the harness. The SDK decides *when* a
-  tool runs; it never runs one itself.
+- **Hardy runs its own tools.** Every Lean check, LaTeX compile, computer
+  algebra cell, and file write is performed by Hardy's code. The SDK decides
+  *when* a tool runs; it never runs one itself. On the default Claude backend
+  the tools are in-process; a staged `--backend codex` run serves them from a
+  Hardy-owned MCP subprocess instead — still Hardy's code, but across a
+  process seam, on the same unconfined host.
 - **Claude Code's own tools are refused.** `Bash`, `Read`, `Write`, `Edit`,
   `Glob`, `Grep`, `WebFetch`, `WebSearch`, and the rest are disallowed
   outright, and the permission callback refuses **anything that is not a Hardy
@@ -32,7 +35,9 @@ What Hardy does control:
   `AGENTS.md` at the project root, or `HARDY.md` in its place, never an
   ancestor — and records in the transcript the exact text shown to the model
   (bounded at 2,000 lines or 50 KB, and flagged as a fragment when trimmed)
-  with the whole file's SHA-256. Graded runs read none.
+  with the whole file's SHA-256. That read is on by default and can be turned
+  off (`--no-project-context`, `project_context = false`, or
+  `HARDY_PROJECT_CONTEXT=0`); graded runs read none.
 - **A faithfulness reader with no tools.** On the default Claude backend the
   independent reader is offered no tools at all and the runtime refuses
   filesystem access by default; under `--backend codex` that isolation cannot
@@ -99,20 +104,25 @@ exists.
 ## How to actually contain it
 
 Real isolation is a boundary the operating system enforces, wrapped around the
-whole of Hardy. Hardy's tools are in-process by design, so there is no seam at
-which tool execution alone could be routed into a sandbox while the agent
-stays outside one — isolating Hardy means isolating all of it, model loop and
-executors together, until [#84] builds the confined-execution path.
+whole of Hardy. On the default backend Hardy's tools are in-process, so there
+is no seam at which tool execution alone could be routed into a sandbox while
+the agent stays outside one. The Codex backend's MCP subprocess is a process
+seam but not a usable boundary: it runs on the same unconfined host, and that
+SDK's agent reaches the filesystem on its own anyway. Either way, isolating
+Hardy means isolating all of it, model loop and executors together, until
+[#84] builds the confined-execution path.
 
 Whatever the platform, the pattern is the same:
 
 1. **Give the environment only the work.** Mount or copy in the problem root
    and nothing else — not your home directory, not other projects.
-2. **Give it only the credential it needs.** Hardy authenticates through the
-   Claude Code CLI, so run `claude login` *inside* the environment rather than
-   mounting host credentials in. Never expose SSH keys, cloud configuration,
-   or a password store to it. If the environment is compromised, log the
-   session out and it held nothing else.
+2. **Give it only the credential it needs.** Sign the model backend in
+   *inside* the environment rather than mounting host credentials in: on the
+   default backend that is `claude login`; `--backend codex` authenticates
+   through its own SDK's ChatGPT sign-in (which `hardy setup` walks through)
+   instead, and `claude login` does nothing for it. Never expose SSH keys,
+   cloud configuration, or a password store to the environment. If it is
+   compromised, log that one session out and it held nothing else.
 3. **Restrict the network.** After installation, Hardy needs egress to its
    model backend — for the default Claude backend that is the endpoints the
    Claude Code CLI uses (`api.anthropic.com` and the rest of the set its
@@ -138,7 +148,8 @@ Run the whole session in a container. Hardy works as root in a container — its
 permission model deliberately avoids the CLI flag that refuses to run as root:
 
 ```sh
-cp -r math math-session               # a disposable copy; the real repo stays outside
+rm -rf math-session                   # a stale copy is last session's untrusted output
+cp -r math math-session               # a fresh disposable copy; the real repo stays outside
 docker run -it --rm \
   -v "$PWD/math-session:/work/math" \
   ubuntu:24.04
