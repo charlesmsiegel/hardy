@@ -75,6 +75,21 @@ def test_the_binders_ride_along_into_the_example(session, fake_lean) -> None:
     )
 
 
+def test_a_name_flush_against_punctuation_is_parsed_exactly(session, fake_lean) -> None:
+    """`theorem t: True` and `theorem t(n : Nat) : n = n` are valid Lean with
+    no space after the name; a whitespace-delimited parse read `t:` and `t(n`
+    as the name and probed garbage. The name's own alphabet is what ends it."""
+    fake_lean.closes_with = "trivial"
+
+    probed = session._automation_probe(
+        {"t": "theorem t: True", "u": "theorem u(n : Nat) : n = n"}
+    )
+
+    assert "example : True := by trivial" in fake_lean.last_source.splitlines()
+    assert "example (n : Nat) : n = n := by trivial" in fake_lean.last_source.splitlines()
+    assert probed == {"t": "trivial", "u": "trivial"}
+
+
 def test_a_guillemet_name_with_whitespace_is_parsed_off_whole(session, fake_lean) -> None:
     """`theorem «obvious result» : True` is ordinary Lean. A whitespace split
     read `«obvious` as the name and probed `result» : True` -- garbage whose
