@@ -43,6 +43,7 @@ lead this index exists to prevent.
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 
 from .lean import (
@@ -78,6 +79,23 @@ _END = re.compile(rf"^\s*end(?:\s+({QUALIFIED}))?\s*$")
 # here so this module does not import the one that imports it.
 _MAX_SIGNATURE_CHARACTERS = 512
 
+# Where a declaration's head ends and its body begins: the definition marker,
+# a structure's field block, or a standalone deriving clause. `\b` keeps
+# `foo_where` whole. An approximation stated as one -- a binder default like
+# `(prio := 100)` cuts the head early -- and the cost of cutting early is a
+# shorter signature, never a wrong name.
+_BODY = re.compile(r":=|\bwhere\b|\bderiving\b")
+
+# The version of this index's *algorithm*: the scan grammar, the namespace
+# model, and the search ordering. It travels in the source identity the way
+# `retrieval.RANKER` travels in the provenance, because a ranking's order
+# depends on this code as much as on the corpus text -- two Hardy revisions
+# reading identical sources can order differently, and an identity that
+# stayed byte-for-byte equal across them would let `reproducible` promise a
+# replay neither can give the other. Any change to what `_file` reads, how
+# names are qualified, or how `search` orders its answers must bump this.
+INDEX_ALGORITHM = "hardy-declaration-index/1"
+
 # Root files that are not module sources; same reasoning as `modules.py`.
 _NOT_A_SOURCE = frozenset({"lakefile.lean"})
 
@@ -97,6 +115,12 @@ class DeclarationIndex:
         # Plain tuples rather than models: Mathlib ships hundreds of thousands
         # of declarations, and a `DeclarationRecord` is built per *result*.
         self._records: list[tuple[str, str, str, str, int]] | None = None
+        # One scan, even under concurrency. The index is shared between the
+        # plain search and the ranking's source, and the MCP server can field
+        # both at once; the retriever's admission lock serializes rankings
+        # only, so without this both calls could see an unbuilt index and
+        # each walk the whole source tree -- the one-time cost paid twice.
+        self._guard = threading.Lock()
 
     def count(self) -> int:
         """How many declaration names were read, for a refusal to cite."""
@@ -143,7 +167,9 @@ class DeclarationIndex:
 
     def _read(self) -> list[tuple[str, str, str, str, int]]:
         if self._records is None:
-            self._records = [] if self.project is None else self._scan()
+            with self._guard:
+                if self._records is None:
+                    self._records = [] if self.project is None else self._scan()
         return self._records
 
     def _scan(self) -> list[tuple[str, str, str, str, int]]:
@@ -212,9 +238,43 @@ class DeclarationIndex:
             else:
                 prefix = [component for component in scopes if component is not None]
                 name = ".".join((*prefix, written))
-            signature = raw[number - 1].strip()[:_MAX_SIGNATURE_CHARACTERS]
-            found.append((name, name.lower(), signature, module, number))
+            found.append((name, name.lower(), _signature(raw, number - 1), module, number))
         return found
+
+
+def _signature(raw: list[str], start: int) -> str:
+    """The declaration head, including the lines it was wrapped onto.
+
+    Mathlib routinely puts a head's binders and result type on indented
+    continuation lines under the keyword, and recording only the first
+    physical line handed a ranking `theorem foo` where a type should be --
+    with the index's rendering preferred over Loogle's complete one. So the
+    continuation is gathered the way `retrieval._conclusion_lines` gathers a
+    wrapped goal, and the body is cut off at `_BODY`: what follows `:=` or
+    `where` is the proof or the fields, not the head.
+
+    Read from the raw source rather than the comment-blanked copy, because
+    this is context for a reader and the blanked copy has holes where its
+    strings were. A comment inside a wrapped head therefore survives into the
+    signature -- cosmetic, where the blanked copy's holes were wrong.
+    """
+    taken = [raw[start].strip()]
+    length = len(taken[0])
+    for line in raw[start + 1 :]:
+        # An unindented or blank line is the next declaration, not this head;
+        # a body marker means the head is already complete; and past the cap
+        # there is nothing left to show anyway.
+        if not line.strip() or not line[:1].isspace():
+            break
+        if _BODY.search(taken[-1]) or length >= _MAX_SIGNATURE_CHARACTERS:
+            break
+        taken.append(line.strip())
+        length += len(line)
+    signature = " ".join(taken)
+    body = _BODY.search(signature)
+    if body:
+        signature = signature[: body.start()].rstrip()
+    return signature[:_MAX_SIGNATURE_CHARACTERS]
 
 
 def search_result(index: DeclarationIndex, query: str, limit: int = 10) -> DeclarationSearch:

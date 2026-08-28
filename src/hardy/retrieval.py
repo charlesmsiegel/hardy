@@ -59,7 +59,7 @@ from urllib.parse import urlencode
 
 from pydantic import model_validator
 
-from .declarations import DeclarationIndex
+from .declarations import INDEX_ALGORITHM, DeclarationIndex
 from .domain import EnvironmentIdentity, FrozenModel, RunLimits
 from .lean import DECLARATION_NAME, DeclarationRecord
 
@@ -463,9 +463,15 @@ class DeclarationIndexSource:
         return SourceIdentity(
             name="declaration-index",
             kind="declaration_index",
+            # The algorithm version sits beside the text's identity because
+            # the order depends on both: two Hardy revisions reading the same
+            # sources can rank differently, and an identity equal across them
+            # would let `reproducible` promise a replay neither can give the
+            # other. `declarations.INDEX_ALGORITHM` states its own bump rule.
             corpus=(
                 f"Mathlib {self._environment.mathlib_revision} sources / "
-                f"manifest {self._environment.lake_manifest_sha256}"
+                f"manifest {self._environment.lake_manifest_sha256} / "
+                f"{INDEX_ALGORITHM}"
                 f"{'' if frozen else ' (NOT the project searched)'}"
             ),
             pinned=frozen,
@@ -490,10 +496,20 @@ class DeclarationIndexSource:
         the provenance as this source not answering, with Loogle left to do
         what a name index cannot.
         """
+        # At least three characters, because the index matches by substring.
+        # A binder the goal's own conclusion introduces -- `⊢ ∀ n : Nat, n +
+        # 0 = n` -- is not on a hypothesis line, so `search_query` leaves it
+        # standing, and substring-matching `n` floods the 200-result depth
+        # with everything containing the letter. The rule is length rather
+        # than binder-parsing on purpose: reading `∀`/`fun` binders textually
+        # is the elaborator-in-a-retrieval-module trap `search_query` already
+        # declines, and a genuinely global two-character name (`Eq`, `LE`) is
+        # a substring of half of Mathlib -- useless to this source either
+        # way, and still answered by Loogle.
         tokens = [
             token
             for token in DECLARATION_NAME.findall(query)
-            if set(token) != {"_"} and token not in NOT_A_CONSTANT
+            if len(token) >= 3 and set(token) != {"_"} and token not in NOT_A_CONSTANT
         ]
         return " ".join(dict.fromkeys(tokens))
 

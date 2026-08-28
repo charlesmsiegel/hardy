@@ -104,6 +104,99 @@ def test_a_root_prefixed_declaration_escapes_the_namespace_it_sits_in(tmp_path) 
     assert names == {'IsPGroup.toSylow', 'Sylow.inside_sylow'}
 
 
+def test_an_end_naming_the_inner_component_closes_only_that_component(tmp_path) -> None:
+    """Lean's own semantics, pinned because a reviewer proposed the opposite.
+
+    `namespace Foo.Bar` opens two namespaces, and `end Bar` closes only the
+    inner one, leaving `Foo` active -- which is why the scanner pushes one
+    scope per component rather than one per command. A bare `end` cannot
+    close a namespace in Lean 4 at all; it closes a `section` or `mutual`,
+    and those push their own scope."""
+    root = _package(tmp_path)
+    _write(
+        root,
+        'Mathlib/Partial.lean',
+        'namespace Foo.Bar\n'
+        'theorem inner_one : True := trivial\n'
+        'end Bar\n'
+        'theorem still_in_foo : True := trivial\n'
+        'end Foo\n'
+        'theorem top_level_one : True := trivial\n',
+    )
+
+    index = _index(tmp_path)
+
+    assert [record.name for record in index.search('inner_one', 5)] == ['Foo.Bar.inner_one']
+    assert [record.name for record in index.search('still_in_foo', 5)] == ['Foo.still_in_foo']
+    assert [record.name for record in index.search('top_level_one', 5)] == ['top_level_one']
+
+
+def test_a_head_wrapped_onto_continuation_lines_is_recorded_whole(tmp_path) -> None:
+    """Mathlib routinely wraps a head -- binders and result type on indented
+    lines under the keyword. Recording only the first physical line handed
+    the ranking `theorem foo` as a signature, and the index's rendering wins
+    over Loogle's complete one, so the model read a name where a type should
+    be. The body is still cut: what follows `:=` or `where` is the proof or
+    the fields, not the head."""
+    root = _package(tmp_path)
+    _write(
+        root,
+        'Mathlib/Wrapped.lean',
+        'theorem wrapped_head {G : Type u}\n'
+        '    (h : True) :\n'
+        '    1 + 1 = 2 := by\n'
+        '  simp\n'
+        '\n'
+        'structure WrappedStructure (n : Nat)\n'
+        '    extends Inhabited Nat where\n'
+        '  field : Nat\n',
+    )
+
+    index = _index(tmp_path)
+
+    (head,) = index.search('wrapped_head', 5)
+    assert head.signature == 'theorem wrapped_head {G : Type u} (h : True) : 1 + 1 = 2'
+    (shape,) = index.search('WrappedStructure', 5)
+    assert shape.signature == 'structure WrappedStructure (n : Nat) extends Inhabited Nat'
+
+
+def test_two_threads_arriving_cold_pay_for_one_scan_between_them(tmp_path, monkeypatch) -> None:
+    """The MCP server can field `search_declarations` and `rank_premises`
+    concurrently, and the retriever's admission lock only serializes
+    rankings -- so both calls could see an unbuilt index and each walk the
+    whole source tree, doubling a cost budgeted at up to two minutes."""
+    import threading
+    import time
+
+    declarations = importlib.import_module('hardy.declarations')
+    root = _package(tmp_path)
+    _write(root, 'Mathlib/Once.lean', 'theorem only_one : True := trivial\n')
+    index = declarations.DeclarationIndex(tmp_path)
+    scans = []
+    original = declarations.DeclarationIndex._scan
+
+    def slow_scan(self):
+        scans.append(threading.get_ident())
+        time.sleep(0.05)
+        return original(self)
+
+    monkeypatch.setattr(declarations.DeclarationIndex, '_scan', slow_scan)
+    started = threading.Barrier(2, timeout=5)
+
+    def search():
+        started.wait()
+        index.search('only_one', 5)
+
+    threads = [threading.Thread(target=search) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert len(scans) == 1
+    assert index.count() == 1
+
+
 def test_a_section_does_not_disturb_the_namespace_its_end_sits_inside(tmp_path) -> None:
     """`section`/`end` pairs nest freely inside a namespace, and an `end` that
     closes a section must not pop the namespace around it."""
