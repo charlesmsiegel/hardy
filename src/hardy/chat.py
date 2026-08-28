@@ -98,7 +98,10 @@ NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")
 # read a file than on one that never had. Filtered from the system prompt as
 # well as from the listing, which is why `_context` names it: unlike `audit`,
 # it has no business in either.
-WITHHELD = ("audit", PROJECT_CONTEXT_KEY)
+# `automation` is withheld for `audit`'s reason exactly: the listing reports
+# which saved statements one tactic closes checked against the tree in front of
+# it, and the stored verdicts include entries whose statement has since moved.
+WITHHELD = ("audit", "automation", PROJECT_CONTEXT_KEY)
 USAGE_KEY = "usage"
 #: How far into `transcript.jsonl` the stored ledger has been brought up to
 #: date. Hardy's own bookkeeping, and no more the model's business than the
@@ -1396,6 +1399,170 @@ class MathematicsSession:
             )
         return ""
 
+    def _automation_probe(self, proposed: Mapping[str, str]) -> dict[str, str] | None:
+        """Which of these saved statements one `PROBES` tactic closes outright.
+
+        The same ladder `_assumption_probe` runs against a proposed axiom,
+        asked of theorems being saved -- because the handwave migrates: a live
+        run, refused an axiom for Sylow III, saved
+
+            theorem sylow_count_congruence ... :
+                ∃ (n_p : ℕ), n_p ∣ Nat.card G ∧ n_p ≡ 1 [MOD p] := by aesop
+
+        `n_p = 1` satisfies both conjuncts, the comment claimed Sylow, and the
+        banner counted it machine-checked without a word. The answer here is a
+        *disclosure*, never a refusal: plenty of legitimate scaffolding is
+        `simp`-closable, and a lemma that falls to one tactic is still a
+        lemma. What must not happen is the provenance banner counting it on
+        the same terms as a theorem with content, silently.
+
+        `proposed` maps each theorem's name to its statement as `statements`
+        reports it -- `theorem NAME binders : type`, whitespace-normalised to
+        one line, which is what keeps the line arithmetic below sound. Each
+        becomes one `example` per tactic, rewritten to carry no name so the
+        goal is real. `import Mathlib` alone, exactly as the assumption probe
+        imports: the workspace's own modules are deliberately absent, because
+        the theorem under question is already declared in one of them and
+        `exact?` would close every statement by citing it -- the same
+        self-citation `_assumption_probe` dodges by declaring the axiom last,
+        which no ordering can dodge once the declaration lives in an import.
+        The cost of that choice is stated rather than hidden: a statement
+        naming a workspace-local definition does not elaborate here, every one
+        of its lines errors, and it is recorded as closed by nothing. A filter,
+        not a decision procedure, in the same sense `PROBES` documents.
+
+        Returns each name mapped to the tactic that closed it ("" when none
+        did), or None when Lean could not be asked at all -- and None stores
+        nothing, so the next save of the file asks again. Every conclusion is
+        drawn from which line an error landed on, so the reading rules are
+        `_assumption_probe`'s: an unplaced error, or one outside the `example`
+        lines, means Lean never reached the probes, and the absence of an
+        error must not be read as a tactic succeeding.
+        """
+        ordered = sorted(proposed)
+        lines: list[str] = []
+        owners: list[str] = []
+        for name in ordered:
+            parts = proposed[name].split(None, 2)
+            if len(parts) < 3:
+                # `theorem t` mid-edit has no proposition to probe. It could
+                # not have built either, so nothing is lost by skipping it.
+                continue
+            for tactic in self.PROBES:
+                lines.append(f"example {parts[2]} := by {tactic}")
+                owners.append(name)
+        closed = {name: "" for name in ordered}
+        if not lines:
+            return closed
+        source = "import Mathlib\n\n" + "\n".join(lines) + "\n"
+        try:
+            result = self._run_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
+        except Exception:  # noqa: BLE001 - an unrunnable probe withholds a disclosure, never a save
+            return None
+        if getattr(result, "timed_out", False) or getattr(result, "interrupted", False):
+            return None
+        errors = [item for item in result.diagnostics if item.severity == "error"]
+        if not result.ok and not errors:
+            return None
+        first = 3
+        if any(
+            item.line is None or item.line < first or item.line >= first + len(lines)
+            for item in errors
+        ):
+            return None
+        placed = {item.line for item in errors}
+        for index, name in enumerate(owners):
+            if not closed[name] and first + index not in placed:
+                # The lines for one statement are in `PROBES` order, so the
+                # first clean line is the earliest tactic -- and the order is
+                # part of the message, exactly as it is for an axiom.
+                closed[name] = self.PROBES[index % len(self.PROBES)]
+        return closed
+
+    def _refresh_automation(self, source: str) -> str:
+        """Probe the saved file's theorems and record the verdicts. A note or "".
+
+        Called after a save commits and before its state is written, so the
+        verdicts land in the same `_save_state` the audit records do. Keyed by
+        theorem name with the exact statement the verdict was established
+        against, because that is what expires it: `_automation_closed` ignores
+        a record whose statement is no longer the saved one, and a changed
+        statement lands back in `needed` on the next save of its file. A
+        statement already recorded is not re-asked -- the answer depends on
+        nothing but the statement text, and `import Mathlib` costs the same
+        tens of seconds every time.
+
+        The note is appended to the save's own result: the model that just
+        saved a flagged theorem is the one that can still strengthen the
+        statement, and telling it only through the banner tells it a compile
+        too late.
+        """
+        theorems = set(declarations(source)["theorem"])
+        current = {
+            name: text for name, text in statements(source).items() if name in theorems
+        }
+        stored = self.state.setdefault("automation", {})
+        saved = self._saved_theorems()
+        for name in [found for found in stored if found not in saved]:
+            del stored[name]
+        needed = {
+            name: text
+            for name, text in current.items()
+            if stored.get(name, {}).get("statement") != text
+        }
+        if not needed:
+            return ""
+        probed = self._automation_probe(needed)
+        if probed is None:
+            return (
+                "\n\nautomation probe: Lean could not be asked whether a single tactic "
+                "closes these statements outright; nothing was recorded, and the next "
+                "save of this file will ask again."
+            )
+        for name, tactic in probed.items():
+            stored[name] = {"statement": needed[name], "tactic": tactic}
+        flagged = {name: tactic for name, tactic in probed.items() if tactic}
+        if not flagged:
+            return ""
+        listed = ", ".join(
+            f"`{name}` (by `{tactic}`)" for name, tactic in sorted(flagged.items())
+        )
+        return (
+            f"\n\nautomation probe: a single automation call closes {listed} outright. "
+            "Saved all the same -- this is a disclosure, not a refusal -- but the "
+            "writeup banner, /status and read_workspace will all say so, because a "
+            "statement one tactic closes may assert far less than its name or the "
+            "prose around it suggests. If that is not what you meant to prove, "
+            "strengthen the statement."
+        )
+
+    def _automation_closed(self) -> dict[str, str]:
+        """Saved theorems one automation call closes: name to the tactic.
+
+        Read from the recorded probe verdicts, and only while the statement a
+        verdict was established against is still the statement saved -- a
+        record that outlives its statement is the exact failure `_obligations`'
+        "never stored" rule exists to prevent, so the expiry is checked here on
+        every read rather than trusted to cleanup. A theorem no probe has
+        covered yet is simply absent, the same terms `state["audit"]` gives a
+        module no save has covered.
+        """
+        stored = self.state.get("automation", {})
+        if not stored:
+            return {}
+        current = self._theorem_statements()
+        return {
+            name: str(record.get("tactic"))
+            for name, record in stored.items()
+            if record.get("tactic") and current.get(name) == record.get("statement")
+        }
+
+    def automation_closed(self) -> dict[str, str]:
+        """The same answer, for `/status`: which saved theorems fall to one
+        tactic, so a user can see the caveat the document's banner carries
+        without opening the PDF."""
+        return dict(sorted(self._automation_closed().items()))
+
     def _lean_path(self, space: LeanWorkspace | None = None) -> str:
         """Where Lean looks for a module, nearest first.
 
@@ -1987,13 +2154,17 @@ class MathematicsSession:
                 for module, record in records.items()
             }
         )
+        # After the commit -- the answer is a disclosure about a saved theorem,
+        # never a gate on saving one -- and before `_save_state`, so the
+        # verdicts persist in the same write the audit records do.
+        automation = self._refresh_automation(text)
         self._save_state()
         # Absent from `seen` when the source was byte-identical to what was
         # already built, so the cache skipped it. Nothing was wrong with it.
         result = seen.get(module, ToolResult(True, "unchanged; already built", source))
         return ToolResult(
             result.ok,
-            f"{result.output}\n\naxiom audit: {note}{self._owed_note()}",
+            f"{result.output}\n\naxiom audit: {note}{automation}{self._owed_note()}",
             result.source,
         )
 
@@ -2484,6 +2655,19 @@ class MathematicsSession:
                 f"{calls['save_lean'][1]} accepted; {calls['check_lean'][0]} check_lean calls, "
                 f"{calls['check_lean'][1]} passed",
             ]
+            flagged = self._automation_closed()
+            if flagged:
+                # The same fact the banner prints, put where the model reads:
+                # a statement one tactic closes may assert far less than its
+                # name suggests, and the model is the one that can still
+                # strengthen it.
+                lines.insert(
+                    2,
+                    "statements closed by a single automation call: "
+                    + ", ".join(
+                        f"{name} (by {tactic})" for name, tactic in sorted(flagged.items())
+                    ),
+                )
             unreached = self._unreached_tex()
             if unreached:
                 # "Not yet reached", not "not reached": the model is told to
@@ -2979,6 +3163,12 @@ class MathematicsSession:
             # theorem out of the wrong file.
             "shared": self._shared_listing(shadowed),
             "undocumented_theorems": list(self._undocumented()),
+            # Saved theorems whose statement a single automation call closes
+            # outright, by the tactic that closed each. A disclosure the
+            # banner also prints, never an obligation: a lemma that falls to
+            # one tactic is still a lemma, but a statement this list names may
+            # assert far less than its name or the prose around it suggests.
+            "automation": self.automation_closed(),
             # Everything standing between this workspace and a report anyone
             # may believe, in the same words the refusal would use.
             "obligations": [item.as_dict() for item in self._obligations()],
@@ -4085,6 +4275,14 @@ class MathematicsSession:
         report was blocked behind a recompile that changed no source. What a
         reader needs is already here: how much Lean checked, how much was
         assumed, and how much the document asserts on neither footing.
+
+        The automation clause is the one thing here the obligations do not
+        compute, because it is not an obligation: a statement one tactic
+        closes is still a theorem, owing nothing. It is a recorded probe
+        verdict, read through `_automation_closed` so it expires with the
+        statement it was established against -- and it is in the banner
+        because "1 theorem machine-checked" was true of a vacuous restatement
+        of Sylow III while saying more than the theorem did.
         """
         owed = self._obligations()
         unbacked = sum(1 for item in owed if item.kind == "theorem")
@@ -4114,6 +4312,24 @@ class MathematicsSession:
             parts.append(
                 f"{count} theorem{'' if count == 1 else 's'} here "
                 f"{'is' if count == 1 else 'are'} still open ({listed})"
+            )
+        flagged = self._automation_closed()
+        if flagged:
+            # Named, for the open clause's reason: this is about particular
+            # claims printed on the pages in front of the reader, and a count
+            # alone leaves them unable to tell which. Disclosure, not judgment
+            # -- a lemma that falls to one tactic is still a lemma; what the
+            # banner must not do is count a vacuous statement under a grand
+            # name on the same terms as one with content, silently.
+            count = len(flagged)
+            listed = ", ".join(
+                f"{self._tex_ascii(name)} by {self._tex_ascii(tactic)}"
+                for name, tactic in sorted(flagged.items())
+            )
+            parts.append(
+                f"{count} theorem statement{'' if count == 1 else 's'} here "
+                f"{'is' if count == 1 else 'are'} closed outright by a single "
+                f"automation call ({listed})"
             )
         text = ". ".join(parts) + "."
         goal = self.goal()
@@ -4167,6 +4383,13 @@ class MathematicsSession:
         return {
             "goal": self.goal(),
             "assumptions": sorted(str(item["formal_name"]) for item in self.state["assumptions"]),
+            # A theorem flagged as automation-closed after the compile is the
+            # overstating direction too: the published banner goes on counting
+            # it on the same terms as every other theorem, with the disclosure
+            # missing. The flag clearing -- a strengthened statement, whose
+            # verdict expires with it -- changes what the banner says as well,
+            # and the signature cannot tell the two directions apart.
+            "automation": sorted(self._automation_closed().items()),
             # A theorem that was closed when the PDF was compiled and has since
             # been reopened is the overstating direction: the banner goes on
             # calling it machine-checked. The signature cannot tell the two

@@ -210,9 +210,28 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   page one, injected into the scratch copy the compiler is handed rather than into the
   saved source, so it cannot be edited out of the document a reader opens. It states how
   many theorems Lean checked, how many assumptions the user approved, how many theorem
-  environments are backed by neither, and the stated goal. A change to what it would
-  *overstate* — a newly approved assumption, a changed goal — makes the writeup stale
-  exactly as an edit to the source does.
+  environments are backed by neither, which saved statements a single automation call
+  closes outright (by name, with the tactic), and the stated goal. A change to what it
+  would *overstate* — a newly approved assumption, a changed goal, a theorem newly
+  flagged as automation-closed — makes the writeup stale exactly as an edit to the
+  source does.
+- **Now (implemented):** the tactic ladder `request_assumption` runs against a proposed
+  axiom is also run against every theorem a save introduces or restates, because the
+  handwave migrates: on a live run the axiom route was closed and the model saved a
+  vacuous restatement of Sylow III (`∃ n_p, n_p ∣ Nat.card G ∧ n_p ≡ 1 [MOD p]`, closed
+  by `aesop` in one line, true in every finite group) under a comment claiming the real
+  theorem — and the banner counted it machine-checked without a word. The answer is a
+  disclosure, never a refusal: plenty of legitimate scaffolding is `simp`-closable, and
+  a lemma that falls to one tactic is still a lemma. The verdict is recorded with the
+  exact statement it was established against and expires with it; while it stands, the
+  save's own result, the banner, `/status`, `read_workspace`, and the per-turn steering
+  block all name the theorem and the tactic, so the reader of any surface sees the same
+  caveat. The probe imports Mathlib alone — the workspace's modules would put the
+  theorem in scope and let `exact?` close every statement by citing it — so a statement
+  resting on workspace-local definitions is recorded as closed by nothing: a filter,
+  not a decision procedure, exactly as the assumption ladder documents. A probe that
+  cannot run stores nothing, says so on the save, and is asked again on the next save
+  of the file.
 - **Now (implemented):** saving Lean audits every *exported* theorem and lemma in
   the modules the save rebuilt — the edited one and everything importing it, since
   a dependent inherits whatever the edit brought in. An axiom reached through an

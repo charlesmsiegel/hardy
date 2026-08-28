@@ -95,6 +95,21 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
             ui.write("  Not finished. Nothing here may be reported as done until:")
             for item in outstanding:
                 ui.write(f"    - {item}")
+    # The same disclosure the document's banner prints, so a user can see it
+    # without opening the PDF. Deliberately not an obligation: a statement one
+    # tactic closes is still a theorem -- it may just assert far less than the
+    # prose around it suggests, and that is the reader's to weigh.
+    flagged = getattr(state.session, "automation_closed", None)
+    if flagged is not None:
+        try:
+            closed = flagged()
+        except Exception:  # noqa: BLE001 - a status line must not end the session
+            closed = {}
+        if closed:
+            ui.write("  Closed by a single automation call (each may assert less than")
+            ui.write("  its name or prose suggests):")
+            for name, tactic in sorted(closed.items()):
+                ui.write(f"    - {name} (by {tactic})")
     return state
 
 
