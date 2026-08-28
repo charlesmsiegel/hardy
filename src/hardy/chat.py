@@ -410,6 +410,10 @@ class MathematicsSession:
         # on the runtime's own thread -- and `WriteGuard.write_json` replaces a
         # temporary file at a fixed path. Two writers at once would interleave.
         self._writes = threading.Lock()
+        # This session's own tool use, in memory only: it describes behaviour,
+        # not the workspace, so it belongs in neither manifest.
+        self._save_streak: dict[str, int] = {}
+        self._tool_tally: dict[str, list[int]] = {"save_lean": [0, 0], "check_lean": [0, 0]}
         # State first: the runtime is built from the system prompt, which embeds
         # the manifest, and it resumes the provider thread the local state
         # remembers.
@@ -850,6 +854,10 @@ class MathematicsSession:
     # decision procedure. It did catch `exists P : Sylow p G, True` on a live
     # run, which is the same species of vacuity stated a little more carelessly.
     PROBES = ("trivial", "simp", "tauto", "aesop", "exact?")
+
+    # Consecutive refused `save_lean` calls on one path before the next is
+    # refused without running Lean. A failing run made 21 in a row.
+    SAVE_STREAK_LIMIT = 3
 
     def _assumption_probe(self, declaration: str) -> tuple[str | None, str]:
         r"""Ask Lean about a proposed axiom before any human is asked.
@@ -1369,7 +1377,34 @@ class MathematicsSession:
             return ToolResult(False, f"a workspace file this one imports does not build: {failure.module}\n{failure.output}", source)
         return self._run_lean_source(source)
 
+    def _tally(self, name: str, ok: bool) -> None:
+        if name in self._tool_tally:
+            self._tool_tally[name][0] += 1
+            self._tool_tally[name][1] += int(ok)
+
+    def _streak_refusal(self, path: str) -> ToolResult | None:
+        if self._save_streak.get(path, 0) < self.SAVE_STREAK_LIMIT:
+            return None
+        return ToolResult(
+            False,
+            f"{self.SAVE_STREAK_LIMIT} consecutive saves of `{path}` have been refused. "
+            "Hardy will not elaborate another until `check_lean` passes on this path. "
+            "Check a smaller piece — split the file, or reduce it to what already "
+            "compiles — then save.",
+        )
+
     def _save_lean(self, path: str, source: str) -> ToolResult:
+        refusal = self._streak_refusal(path)
+        if refusal is not None:
+            return refusal
+        result = self._save_lean_unbraked(path, source)
+        if result.ok:
+            self._save_streak.pop(path, None)
+        else:
+            self._save_streak[path] = self._save_streak.get(path, 0) + 1
+        return result
+
+    def _save_lean_unbraked(self, path: str, source: str) -> ToolResult:
         try:
             relative = safe_relative(path)
         except WorkspacePathError as error:
@@ -2530,7 +2565,11 @@ class MathematicsSession:
 
     def _tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if name == "check_lean":
-            return self._check_lean(str(arguments.get("path") or DEFAULT_LEAN_PATH), str(arguments["source"]))
+            path = str(arguments.get("path") or DEFAULT_LEAN_PATH)
+            result = self._check_lean(path, str(arguments["source"]))
+            if result.ok:
+                self._save_streak.pop(path, None)
+            return result
         if name == "save_lean":
             return self._save_lean(str(arguments.get("path") or DEFAULT_LEAN_PATH), str(arguments["source"]))
         if name == "check_latex":
@@ -3187,6 +3226,8 @@ class MathematicsSession:
         # Cleared here rather than in `cancel`: a turn cancelled during the
         # previous exchange must not silently disarm this one's tool gate.
         self._cancelled.clear()
+        # A new turn is a new chance; the tally is not reset, the streak is.
+        self._save_streak.clear()
         # Same reasoning, and the same thread: what the last exchange reported
         # says nothing about whether this one will.
         with self._spend:
@@ -3420,6 +3461,7 @@ class MathematicsSession:
                 result = self._tool(name, arguments)
             except (KeyError, TypeError, ValueError) as error:
                 result = ToolResult(False, f"invalid tool call: {error}")
+            self._tally(name, result.ok)
             self._record({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
             return result
 
