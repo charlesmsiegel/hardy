@@ -911,6 +911,13 @@ def test_the_index_source_searches_the_sources_the_run_is_frozen_under(tmp_path)
     assert [record.name for record in source.search(asked, 5)] == ['IsSimpleGroup']
     for identity in ('81a5d257', 'b' * 64):
         assert identity in source.identity.corpus
+    # The corpus names the algorithm as well as the text: the order a ranking
+    # replays under depends on the scan grammar and the search ordering, which
+    # are Hardy code that can move while the sources stand still. Without this
+    # the identity stayed byte-identical across two different algorithms and
+    # `reproducible` promised a replay neither could give the other.
+    declarations = importlib.import_module('hardy.declarations')
+    assert declarations.INDEX_ALGORITHM in source.identity.corpus
 
 
 def test_the_index_source_extracts_only_the_constants_a_name_index_can_use() -> None:
@@ -930,6 +937,13 @@ def test_the_index_source_extracts_only_the_constants_a_name_index_can_use() -> 
     assert source.query_for('⊢ Nat.succ _ = Nat.succ _') == 'Nat.succ'
     assert source.query_for('⊢ fun _ => Continuous _') == 'Continuous'
     assert source.query_for('⊢ _ + _ = _ + _') == ''
+    # A binder the goal's conclusion introduces is not a hypothesis line, so
+    # `search_query` leaves it standing -- and substring-matching a one- or
+    # two-character token floods the depth with everything that contains the
+    # letter. Too short to discriminate means dropped, binder or not: `Eq`
+    # as a substring is half of Mathlib.
+    assert source.query_for('⊢ ∀ n : Nat, n + 0 = n') == 'Nat'
+    assert source.query_for('⊢ Eq _ _') == ''
 
 
 def test_a_pure_shape_query_is_this_source_refusing_and_loogle_answering(tmp_path) -> None:
