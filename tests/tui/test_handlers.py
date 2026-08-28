@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from types import SimpleNamespace
 
 from hardy import completion, doctor
 from hardy.cas import CasError
+from hardy.models import ToolResult
 from hardy.tui import handlers
 from hardy.tui.ports import State
 from hardy.usage import Usage
@@ -13,7 +15,7 @@ from hardy.usage import Usage
 def test_the_registry_holds_the_specified_commands():
     names = [c.name for c in handlers.build_registry()]
     assert names == [
-        "help", "model", "cas", "goal", "project", "status", "doctor", "clear", "exit", "quit",
+        "help", "model", "cas", "goal", "import", "project", "status", "doctor", "clear", "exit", "quit",
     ]
 
 
@@ -309,3 +311,46 @@ async def test_status_says_nothing_about_the_thread_on_an_ordinary_session(ui, s
     session = SimpleNamespace(fresh_thread_detail="")
     await handlers.handle_status(ui, "", State(config=settings, session=session))
     assert "Conversation" not in ui.text
+
+
+async def test_import_without_arguments_prints_usage(ui, settings):
+    await handlers.handle_import(ui, "", State(config=settings, session=SimpleNamespace()))
+    assert "/import" in ui.text
+    assert ui.written[0][0] == "error"
+
+
+async def test_import_with_no_session_is_an_answer(ui, settings):
+    await handlers.handle_import(ui, "somewhere", State(config=settings, session=None))
+    assert "No session yet." in ui.text
+
+
+async def test_import_lean_hands_file_and_destination_to_the_session(ui, settings):
+    calls: list[tuple[Path, str | None]] = []
+
+    def import_lean(file: Path, dest: str | None) -> ToolResult:
+        calls.append((file, dest))
+        return ToolResult(True, "imported")
+
+    session = SimpleNamespace(import_lean=import_lean)
+    await handlers.handle_import(ui, "lean pile/clean.lean Imported.lean", State(config=settings, session=session))
+    assert calls == [(Path("pile/clean.lean"), "Imported.lean")]
+    assert "imported" in ui.text
+
+
+async def test_import_treats_anything_else_as_a_pile_to_triage(ui, settings):
+    """A path with spaces must not need quoting: the raw argument is the path."""
+    piles: list[Path] = []
+
+    def triage_pile(pile: Path) -> ToolResult:
+        piles.append(pile)
+        return ToolResult(True, "triaged")
+
+    session = SimpleNamespace(triage_pile=triage_pile)
+    await handlers.handle_import(ui, "my old files", State(config=settings, session=session))
+    assert piles == [Path("my old files")]
+
+
+async def test_import_refusals_are_styled_as_errors(ui, settings):
+    session = SimpleNamespace(triage_pile=lambda pile: ToolResult(False, "no .lean or .tex files"))
+    await handlers.handle_import(ui, "empty", State(config=settings, session=session))
+    assert ui.written == [("error", "no .lean or .tex files")]

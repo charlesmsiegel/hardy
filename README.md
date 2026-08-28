@@ -370,6 +370,27 @@ must always be abandonable — and the naming registry drops the mappings it
 stranded, recording that in `transcript.jsonl`, since losing a formal-to-writeup
 link is a change to the record of what was claimed.
 
+A user with months of existing `.lean` and `.tex` files does not start from
+nothing, and `/import` is how that pile is weeded into a project rather than
+pasted into it. `/import <directory>` triages the pile without modifying it or
+the project: every Lean file is elaborated — files that import each other are
+built together — and sorted into compiles clean, compiles with holes, does not
+compile, and not mathematics, each under a digest of the bytes read, with the
+assumptions it declares that nobody approved named per file; the whole list goes
+into the transcript. Promotion is one file at a time and human-directed — there
+is deliberately no model tool, since pulling arbitrary host files into the
+audited tree is the user's judgment call. `/import lean` routes a file through
+the same save path an authored file takes — assumption approval, the shadow
+build, the axiom audit — skipping only the authorship ratchet, so an imported
+`theorem` lands and its writeup debt is charged through the obligations instead
+of refused at the door. `/import reference` places assumed background in the
+root's shared `.hardy/lean/`, compiled immediately, with the axioms and holes it
+carries named out loud. `/import tex` saves through the LaTeX save path and says
+plainly when nothing `\input`s the file yet. Every promotion is recorded as
+having arrived from outside — kind, origin, and the sha256 of what arrived —
+rather than under the authorship the record would otherwise imply, and importing
+never overwrites an existing file.
+
 **Every *closed* `theorem` owes a writeup, and the writeup owes its reader the
 Lean.** A theorem still resting on a hole owes none of it yet: nothing asks for a
 paragraph about a result nobody has proved, and skeletons accumulate one after
