@@ -112,14 +112,155 @@ def _normalise_include(found: str) -> str:
     return str(PurePosixPath(*parts)) if parts else ""
 
 
+_IFFALSE = re.compile(r"\\iffalse(?![a-zA-Z])")
+# Any TeX conditional opener (`\iftrue`, `\iffalse`, `\ifx`, `\ifnum`, ...)
+# or `\fi`, with the lookahead making sure a longer command name -- `\finish`
+# is not `\fi` followed by `nish` -- is never mistaken for either.
+_CONDITIONAL = re.compile(r"\\(if[a-zA-Z]*|fi)(?![a-zA-Z])")
+_MACRO_DEF = re.compile(r"\\(?:newcommand|renewcommand|providecommand|def)\b")
+
+
+def _skip_balanced(text: str, index: int, opener: str, closer: str) -> int:
+    """`index` must point at `opener`. The index just after its matching `closer`."""
+    depth = 0
+    length = len(text)
+    while index < length:
+        if text[index] == opener:
+            depth += 1
+        elif text[index] == closer:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return length
+
+
+def _drop_iffalse(text: str) -> str:
+    r"""`text` with every `\iffalse ... \fi` region removed.
+
+    Depth-tracked rather than matched to the nearest `\fi`: a conditional
+    written inside the false branch -- `\ifx\a\b ... \fi` guarding something
+    else entirely -- carries its own `\fi`, which closes IT, not the
+    `\iffalse` wrapping it. Stopping at the first `\fi` seen would close the
+    outer conditional early and leave everything after the inner one,
+    `\input` included, looking executed when it is still inside dead code.
+    """
+    out = []
+    index = 0
+    length = len(text)
+    while index < length:
+        opened = _IFFALSE.search(text, index)
+        if opened is None:
+            out.append(text[index:])
+            break
+        out.append(text[index:opened.start()])
+        depth = 1
+        pos = opened.end()
+        while depth > 0:
+            found = _CONDITIONAL.search(text, pos)
+            if found is None:
+                pos = length
+                break
+            depth += -1 if found.group(1) == "fi" else 1
+            pos = found.end()
+        index = pos
+    return "".join(out)
+
+
+def _drop_macro_bodies(text: str) -> str:
+    r"""`text` with the body argument of every `\newcommand`, `\renewcommand`,
+    `\providecommand` and `\def` removed.
+
+    An `\input` written only inside a macro's own body runs when the macro
+    is *expanded*, and nothing here expands macros -- reading it as reached
+    the moment it is merely defined is the same mistake as reading one
+    inside `\iffalse ... \fi` as reached because the branch text is merely
+    present. The name argument (`{\foo}`, or a bare `\foo` for `\def`) and
+    any `[n]`/`[default]` argument-count brackets are kept, since none of
+    those can themselves contain an `\input`; only the balanced `{...}`
+    body that follows is dropped, whole.
+    """
+    out = []
+    index = 0
+    length = len(text)
+    while index < length:
+        keyword = _MACRO_DEF.search(text, index)
+        if keyword is None:
+            out.append(text[index:])
+            break
+        out.append(text[index:keyword.end()])
+        pos = keyword.end()
+        while pos < length and text[pos].isspace():
+            pos += 1
+        if pos < length and text[pos] == "{":
+            # `\newcommand{\foo}...`: the braced name, not the body.
+            end = _skip_balanced(text, pos, "{", "}")
+            out.append(text[pos:end])
+            pos = end
+        elif pos < length and text[pos] == "\\":
+            # `\newcommand\foo...` or `\def\foo...`: a bare control sequence,
+            # either a run of letters or one non-letter control symbol.
+            start = pos
+            pos += 1
+            while pos < length and text[pos].isalpha():
+                pos += 1
+            if pos == start + 1 and pos < length:
+                pos += 1
+            out.append(text[start:pos])
+        while pos < length and text[pos].isspace():
+            pos += 1
+        while pos < length and text[pos] == "[":
+            # `\newcommand`'s optional arg-count and default-value brackets.
+            end = _skip_balanced(text, pos, "[", "]")
+            out.append(text[pos:end])
+            pos = end
+            while pos < length and text[pos].isspace():
+                pos += 1
+        # `\def`'s parameter text (`#1#2`, delimiters) is neither a name nor
+        # a bracket; it never contains an `\input`, so it is kept verbatim
+        # rather than parsed, up to the body's opening brace.
+        start = pos
+        while pos < length and text[pos] != "{":
+            pos += 1
+        out.append(text[start:pos])
+        if pos < length and text[pos] == "{":
+            pos = _skip_balanced(text, pos, "{", "}")
+        index = pos
+    return "".join(out)
+
+
+def _executed(source: str) -> str:
+    r"""`source` with everything TeX would never actually run removed.
+
+    `uncommented` drops what a human comment hides from TeX; this drops
+    what TeX itself never reaches. An `\input` inside `\iffalse ... \fi`, or
+    inside a `\newcommand`/`\renewcommand`/`\providecommand`/`\def` body, is
+    text that sits in the file but is never executed unless a branch is
+    taken or a macro is expanded -- and nothing here does either. Reading it
+    as reached is the same mistake `uncommented` already exists to avoid,
+    one layer further in: not "did a human hide this with `%`" but "would
+    TeX itself ever get here".
+
+    Used by `unreached_fragments`, which asks that question. `_includes`
+    keeps `uncommented`: whether a save *compiles* is a different question,
+    answered by what the writeup's `\input` chain names, not by which of
+    those inputs would run.
+    """
+    return _drop_macro_bodies(_drop_iffalse(uncommented(source)))
+
+
 def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
     r"""Writeup files no `\input` chain from the root reaches.
 
     A fragment nothing includes is in no PDF, whatever it says. A session once
     wrote itself a status report that way and nobody could have read it.
-    Follows the same commands `_includes` does, through comments dropped the
-    same way, and accepts a path with or without `.tex`, with either
-    separator, and with a leading `./`, as TeX does.
+    Follows the same commands `_includes` does, through `_executed` rather
+    than plain `uncommented`: an `\input` written inside `\iffalse ... \fi`
+    or inside a macro definition's body is text TeX itself never runs, and
+    counting it as reached would clear a fragment that is not, in fact, in
+    the PDF -- the same failure this function exists to catch, from a
+    different kind of dead text. Accepts a path with or without `.tex`,
+    with either separator, and with a leading `./`, as TeX does.
 
     Returns `[]` when there is no root document yet, rather than every
     fragment: the prompt itself prescribes saving a fragment before
@@ -139,7 +280,7 @@ def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
     frontier = [ROOT_DOCUMENT]
     while frontier:
         current = frontier.pop()
-        for found in INCLUSION.findall(uncommented(sources[current])):
+        for found in INCLUSION.findall(_executed(sources[current])):
             key = _normalise_include(found)
             target = by_stem.get(key)
             if target is None and key.endswith(".tex"):
