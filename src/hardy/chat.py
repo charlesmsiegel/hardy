@@ -449,7 +449,15 @@ def _strip_hypotheses(statement: str) -> Any:
 
     What the vacuity probe elaborates, so a wrong answer here is not a
     missing warning but a false one shown to a human relying on it -- this
-    fails closed rather than guess. Returns `UNREADABLE` when a
+    fails closed rather than guess. Whitespace is collapsed with
+    `normalise_lean` rather than a bare `split`/`join`, because the latter
+    collapses whitespace inside string literals and `«…»` names too, turning
+    `"a  b"` into `"a b"` -- a different Lean string reported as if it were
+    the one the statement actually has. Returns `UNREADABLE` outright when a
+    `"` or `«` survives that collapse, because every split below (on `, `,
+    ` → `, ` ↔ `) has no notion of a literal and cannot tell a separator
+    sitting inside one from one that actually separates binders or premises.
+    Also returns `UNREADABLE` when a
     strict-implicit binder (`⦃…⦄`) appears anywhere, since `_BINDER` has no
     alternative for that bracket and would silently drop it and its name;
     when a top-level `↔` precedes the first top-level arrow in the body,
@@ -476,8 +484,17 @@ def _strip_hypotheses(statement: str) -> Any:
     leading `∀`/`forall`, or one with nothing after a top-level comma -- so
     the caller probes the statement whole, exactly as it was given.
     """
-    text = " ".join(statement.split())
+    text = normalise_lean(statement).strip()
     if "⦃" in text or "⦄" in text:
+        return UNREADABLE
+    if '"' in text or "«" in text:
+        # `normalise_lean` collapses whitespace literal-safely, but the
+        # splits below (`_split_top` on `, `, `_first_top_level` on ` → `
+        # and ` ↔ `) have no notion of a literal at all -- a separator
+        # sitting inside a string or a guillemet-quoted name looks exactly
+        # like one that actually separates binders or premises. Rather than
+        # split blind and risk reporting a hypothesis the statement never
+        # had (or hiding one it did), this fails closed.
         return UNREADABLE
     binders, body = "", text
     for keyword in ("∀ ", "forall "):
