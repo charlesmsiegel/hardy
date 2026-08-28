@@ -62,6 +62,19 @@ def test_a_new_turn_clears_the_streak(session) -> None:
     assert session._save_streak == {}
 
 
+def test_a_path_spelled_differently_shares_the_streak(session) -> None:
+    """`Main.lean` and `./Main.lean` name the same workspace file, and the
+    streak that brakes repeated refusals must count them together rather
+    than resetting every time the model's spelling changes."""
+    for _ in range(session.SAVE_STREAK_LIMIT):
+        assert not _save(session, path="Main.lean").ok
+
+    result = _save(session, path="./Main.lean")
+
+    assert not result.ok
+    assert "consecutive saves" in result.output
+
+
 def test_another_path_is_not_braked(session) -> None:
     for _ in range(session.SAVE_STREAK_LIMIT):
         _save(session)

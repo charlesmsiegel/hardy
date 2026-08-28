@@ -1555,8 +1555,22 @@ class MathematicsSession:
             self._tool_tally[name][0] += 1
             self._tool_tally[name][1] += int(ok)
 
+    def _streak_key(self, path: str) -> str:
+        """The `_save_streak` key `path` counts against.
+
+        Its safe-relative form, so `Main.lean` and `./Main.lean` share one
+        streak instead of two half-sized ones nothing ever brakes. Falls back
+        to `path` itself when `safe_relative` refuses it: the unbraked save
+        refuses the same path for the same reason, so a streak keyed on a
+        spelling Hardy will never accept costs nothing.
+        """
+        try:
+            return str(safe_relative(path))
+        except WorkspacePathError:
+            return path
+
     def _streak_refusal(self, path: str) -> ToolResult | None:
-        if self._save_streak.get(path, 0) < self.SAVE_STREAK_LIMIT:
+        if self._save_streak.get(self._streak_key(path), 0) < self.SAVE_STREAK_LIMIT:
             return None
         return ToolResult(
             False,
@@ -1571,10 +1585,11 @@ class MathematicsSession:
         if refusal is not None:
             return refusal
         result = self._save_lean_unbraked(path, source)
+        key = self._streak_key(path)
         if result.ok:
-            self._save_streak.pop(path, None)
+            self._save_streak.pop(key, None)
         else:
-            self._save_streak[path] = self._save_streak.get(path, 0) + 1
+            self._save_streak[key] = self._save_streak.get(key, 0) + 1
         return result
 
     def _save_lean_unbraked(self, path: str, source: str) -> ToolResult:
@@ -2827,7 +2842,7 @@ class MathematicsSession:
             path = str(arguments.get("path") or DEFAULT_LEAN_PATH)
             result = self._check_lean(path, str(arguments["source"]))
             if result.ok:
-                self._save_streak.pop(path, None)
+                self._save_streak.pop(self._streak_key(path), None)
             return result
         if name == "save_lean":
             return self._save_lean(str(arguments.get("path") or DEFAULT_LEAN_PATH), str(arguments["source"]))
