@@ -89,7 +89,10 @@ DECLARATION = re.compile(
 # anything. A `section` may carry a name and may be `noncomputable`; a
 # `mutual` block ends with a bare `end` that must not pop anything else.
 _NAMESPACE = re.compile(rf"^\s*namespace\s+({QUALIFIED_NAME})\s*$")
-_SECTION = re.compile(r"^\s*(?:noncomputable\s+)?section\b")
+# Anchored to the whole line, exactly like `workspace.SECTION`: a line that
+# merely begins with the word must not push a scope whose phantom `end` then
+# swallows a real namespace close.
+_SECTION = re.compile(rf"^\s*(?:noncomputable\s+)?section(?:\s+{QUALIFIED_NAME})?\s*$")
 _MUTUAL = re.compile(r"^\s*mutual\s*$")
 _END = re.compile(rf"^\s*end(?:\s+({QUALIFIED_NAME}))?\s*$")
 _COMPONENT = re.compile(ANY_NAME)

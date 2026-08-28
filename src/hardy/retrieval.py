@@ -506,9 +506,19 @@ class DeclarationIndexSource:
         # declines, and a genuinely global two-character name (`Eq`, `LE`) is
         # a substring of half of Mathlib -- useless to this source either
         # way, and still answered by Loogle.
+        # Literal contents first: `⊢ x = "Nat.succ"` names no constant, and
+        # `search_query` deliberately leaves string literals intact, so the
+        # extraction looks past them itself -- keeping interpolation holes,
+        # whose contents are expressions, the same reading
+        # `_substitute_outside_literals` gives them.
+        def blank(literal: re.Match) -> str:
+            if literal.group(1):
+                return " ".join(INTERPOLATION.findall(literal.group(0)))
+            return " "
+
         tokens = [
             token
-            for token in DECLARATION_NAME.findall(query)
+            for token in DECLARATION_NAME.findall(STRING_LITERAL.sub(blank, query))
             if len(token) >= 3 and set(token) != {"_"} and token not in NOT_A_CONSTANT
         ]
         return " ".join(dict.fromkeys(tokens))

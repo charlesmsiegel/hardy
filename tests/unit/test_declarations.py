@@ -223,6 +223,26 @@ def test_a_section_does_not_disturb_the_namespace_its_end_sits_inside(tmp_path) 
     assert names == {'Nat.in_section', 'Nat.in_named_section', 'Nat.after_sections'}
 
 
+def test_a_section_line_is_only_a_section_when_the_line_is_one(tmp_path) -> None:
+    """`workspace.SECTION` is anchored to the whole line, and this scanner's
+    section matcher now is too: a line that merely begins with the word --
+    however malformed the rest -- must not push a scope whose phantom `end`
+    then swallows a real namespace close."""
+    root = _package(tmp_path)
+    _write(
+        root,
+        'Mathlib/SectionLine.lean',
+        'namespace N\n'
+        'section Foo in theorem odd_line : True := trivial\n'
+        'end N\n'
+        'theorem back_at_root : True := trivial\n',
+    )
+
+    index = _index(tmp_path)
+
+    assert [record.name for record in index.search('back_at_root', 5)] == ['back_at_root']
+
+
 def test_a_qualified_section_closes_as_one_scope_not_two(tmp_path) -> None:
     """`section Foo.Bar` is one scope whatever its name looks like, and
     `end Foo.Bar` closes it alone -- counting the end's components popped the
