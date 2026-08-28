@@ -83,6 +83,21 @@ def test_the_readme_does_not_promise_isolation_codex_cannot_give() -> None:
     assert 'reads anywhere' in section or 'read' in section
 
 
+def test_the_case_for_reclaiming_the_loop_includes_compaction_integrity() -> None:
+    """Issue #23's four operational reasons were repeated in README.md and
+    DESIGN.md while the stronger one was recorded nowhere (issue #98): the SDK
+    compacts a long session invisibly and `transcript.jsonl` does not record
+    what was dropped, though Hardy's own summary would be largely mechanical —
+    registries and verdicts from `session.json`, declarations from
+    `read_workspace` — and therefore checkable. Both documents that make the
+    case must include it."""
+    for name in ('README.md', 'DESIGN.md'):
+        text = (ROOT / name).read_text(encoding='utf-8').lower()
+        assert 'compaction' in text, f'{name} does not record the compaction argument'
+        assert 'what was dropped' in text, f'{name} misses the record-integrity half'
+        assert 'checkable' in text, f'{name} misses the mechanical-summary half'
+
+
 def test_the_trust_panel_qualifies_the_codex_reader() -> None:
     """The fourth document AGENTS.md asks to agree.
 

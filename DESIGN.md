@@ -136,6 +136,23 @@ kept by Hardy, because nothing in the SDK bounds a stalled request, and the
 trajectory states which of the two enforced what. Issue #23 tracks reclaiming
 the loop without giving up subscription authentication.
 
+The quietest cost is the strongest argument for reclaiming it: compaction.
+Hardy has none of its own — grepping for it finds only `usage._compact`, a
+number formatter — so when a long session outgrows the context window, what
+survives is decided by the provider's rules, invisibly, and `transcript.jsonl`
+does not record what was dropped. For a long mathematical session that is a
+record-integrity problem, not a convenience problem: the compaction decides
+what endures about which lemmas were proved, which axioms are standing, and
+which attempts failed and why, and Hardy neither chooses it nor writes it
+down. The positive half matters more. A mathematical compaction summary is
+largely mechanical — the naming registry, the approved assumptions, and the
+audit verdicts are already in `session.json`, and the declaration list is
+already what `read_workspace` returns — so almost every heading is derivable
+from the workspace rather than narrated by a model, which makes it checkable
+in a way no coding agent's summary can be. Only "what was tried and why it
+failed" needs the model. None of that can be built while the SDK runs the
+loop.
+
 ### 3. Tool layer
 
 The model receives narrow theorem-proving verbs rather than unrestricted control:
