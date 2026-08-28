@@ -162,6 +162,71 @@ def test_a_completed_inspection_unlocks_one_request(session_factory, approvals) 
     assert not second.ok
 
 
+def test_a_shape_refused_request_still_consumes_the_search(session_factory, approvals) -> None:
+    """A request refused by `_assumption_shape` reaches that gate only after
+    the search-first gate already let it through -- a human's
+    `inspect_declarations` call was already looked at to decide the
+    refusal. Leaving `_searched_since_request` and friends untouched let the
+    NEXT request, even under a different `formal_name`, walk through the
+    search gate on evidence that was never about it."""
+    session = _searching_session(session_factory, approvals, Search(unavailable=("X",)))
+    session._tool("inspect_declarations", {"names": ["X"]})
+
+    refused = session._tool(
+        "request_assumption", _request(lean_statement="axiom f : True")
+    )
+    assert not refused.ok
+
+    second = session._tool(
+        "request_assumption", _request(formal_name="other", latex_name="o")
+    )
+
+    assert not second.ok
+    assert "no `inspect_declarations` has been run" in second.output
+
+
+class ClosesWithSimp:
+    """A `_run_lean_source` stand-in whose `example` lines close exactly on
+    `closes_with`, mirroring `conftest.fake_lean`'s `Fake` -- but installed
+    directly on a `_searching_session` session, whose own
+    `fake_run_lean_source` fails every `example` line unconditionally and so
+    can never drive `_assumption_probe` into a refusal."""
+
+    closes_with: str | None = None
+
+    def __call__(self, source: str, timeout: float | None = None):
+        diagnostics = []
+        for number, line in enumerate(source.splitlines(), start=1):
+            if line.startswith("example"):
+                tactic = line.split(" := by ", 1)[1]
+                if tactic == self.closes_with:
+                    continue
+                diagnostics.append(
+                    LeanDiagnostic(severity="error", message="unsolved goals", line=number, column=0)
+                )
+        return LeanToolResult(not diagnostics, "", source, diagnostics=tuple(diagnostics))
+
+
+def test_a_probe_refused_request_still_consumes_the_search(session_factory, approvals) -> None:
+    """Same as above, for the other gate `_request_assumption` can be
+    refused by after the search gate has already passed."""
+    session = _searching_session(session_factory, approvals, Search(unavailable=("X",)))
+    session._tool("inspect_declarations", {"names": ["X"]})
+    session._run_lean_source = ClosesWithSimp()
+    session._run_lean_source.closes_with = "simp"
+
+    refused = session._tool("request_assumption", _request())
+    assert not refused.ok
+    assert "by simp" in refused.output
+
+    second = session._tool(
+        "request_assumption", _request(formal_name="other", latex_name="o")
+    )
+
+    assert not second.ok
+    assert "no `inspect_declarations` has been run" in second.output
+
+
 def test_the_human_sees_what_was_searched(session_factory, approvals) -> None:
     session = _searching_session(
         session_factory, approvals, Search(resolved=("IsCyclic",), unavailable=("Sylwo",))
