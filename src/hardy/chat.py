@@ -1786,23 +1786,47 @@ class MathematicsSession:
         except WorkspacePathError:
             return path
 
+    @staticmethod
+    def _save_digest(source: str) -> str:
+        """The identity a green `check_lean` vouches for and a save spends.
+
+        Hashed over `source.rstrip() + "\\n"` -- exactly what
+        `_save_lean_unbraked` writes to disk -- rather than over `source`
+        verbatim, so `check_lean(X)` vouches for `save_lean(X)` *and* for
+        `save_lean(X + "\\n")`: the two calls write identical bytes to the
+        workspace, and finding #4 of the second brutal review was this
+        digest treating them as different sources and braking the second.
+        """
+        return hashlib.sha256((source.rstrip() + "\n").encode("utf-8")).hexdigest()
+
     def _streak_refusal(self, path: str, source: str) -> ToolResult | None:
         key = self._streak_key(path)
         if self._save_streak.get(key, 0) < self.SAVE_STREAK_LIMIT:
             return None
-        # The brake promises "until `check_lean` passes on this path" -- so it
-        # is lifted only by a green check of this exact source, not by any
-        # `check_lean` call that happens to land on the same path. A save of
-        # something else has not been shown to fix anything.
-        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-        if digest in self._checked_green.get(key, ()):
+        # The brake promises "until `check_lean` passes on the exact source
+        # you intend to save" -- so it is lifted only by a green check of
+        # this exact source, not by any `check_lean` call that happens to
+        # land on the same path. A save of something else has not been shown
+        # to fix anything.
+        digest = self._save_digest(source)
+        green = self._checked_green.get(key)
+        if green is not None and digest in green:
+            # Spend the vouch: one green check admits one save, not every
+            # save of that source for the rest of the turn. Finding #3 of
+            # the second brutal review left this exemption permanent, so a
+            # single `check_lean` on a byte string that then failed
+            # `save_lean`'s stricter gates (result/documentation/shadow
+            # build) bought an unbounded run of refused saves the brake
+            # never fired on again.
+            green.discard(digest)
             return None
         return ToolResult(
             False,
             f"{self.SAVE_STREAK_LIMIT} consecutive saves of `{path}` have been refused. "
-            "Hardy will not elaborate another until `check_lean` passes on this path. "
-            "Check a smaller piece — split the file, or reduce it to what already "
-            "compiles — then save.",
+            "Hardy will not elaborate another until `check_lean` passes on the exact "
+            "source you intend to save on this path. Check a smaller piece — split "
+            "the file, or reduce it to what already compiles — then save that "
+            "checked source.",
         )
 
     def _save_lean(self, path: str, source: str) -> ToolResult:
@@ -3090,7 +3114,7 @@ class MathematicsSession:
                 # see `_streak_refusal` for why a green check only ever lifts
                 # the brake for the exact source it checked.
                 key = self._streak_key(path)
-                digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+                digest = self._save_digest(source)
                 self._checked_green.setdefault(key, set()).add(digest)
             return result
         if name == "save_lean":
