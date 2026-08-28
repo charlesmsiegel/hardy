@@ -175,6 +175,33 @@ def test_an_error_lean_could_not_place_counts_against_the_declaration(
     assert "does not accept this statement" in refusal
 
 
+def test_an_error_before_the_probes_is_refused_not_credited_as_a_proof(
+    session, fake_lean, monkeypatch
+) -> None:
+    """`import Mathlib` failing on line 1 leaves every probe line without an
+    error of its own, which used to read as every probe having closed the
+    goal -- Lean never reached any of them."""
+    from hardy.lean import LeanDiagnostic, LeanToolResult
+
+    def stray(source: str, timeout: float | None = None):
+        return LeanToolResult(
+            False,
+            "error: unknown module Mathlib",
+            source,
+            diagnostics=(
+                LeanDiagnostic(severity="error", message="unknown module Mathlib", line=1),
+            ),
+        )
+
+    monkeypatch.setattr(session, "_run_lean_source", stray)
+
+    refusal, _ = session._assumption_probe("axiom f : True")
+
+    assert refusal is not None
+    assert "does not accept this statement" in refusal
+    assert "proves this outright" not in refusal
+
+
 def test_the_probe_source_puts_one_example_per_line(session, fake_lean) -> None:
     """The line arithmetic is this layout and nothing else."""
     session._assumption_probe("axiom f : True")
@@ -426,6 +453,31 @@ def test_a_vacuity_probe_that_cannot_run_says_so(session, fake_lean) -> None:
     warning = session._vacuity_probe(SYLOW)
 
     assert "could not be run" in warning
+
+
+def test_an_error_before_the_probes_is_not_read_as_the_probe_closing_the_goal(
+    session, fake_lean, monkeypatch
+) -> None:
+    """`import Mathlib` failing on line 1 leaves every `example` line without
+    an error of its own, which used to read as the probe having closed the
+    goal -- Lean never reached it."""
+    from hardy.lean import LeanDiagnostic, LeanToolResult
+
+    def stray(source: str, timeout: float | None = None):
+        return LeanToolResult(
+            False,
+            "error: unknown module Mathlib",
+            source,
+            diagnostics=(
+                LeanDiagnostic(severity="error", message="unknown module Mathlib", line=1),
+            ),
+        )
+
+    monkeypatch.setattr(session, "_run_lean_source", stray)
+
+    warning = session._vacuity_probe(SYLOW)
+
+    assert "before reaching" in warning
 
 
 def test_the_vacuity_warning_reaches_the_human(session, approvals, fake_lean) -> None:
