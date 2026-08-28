@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from hardy import layout
-from hardy.latex import LatexTools
+from hardy.latex import LatexTools, unreached_fragments
 
 COMMAND = (sys.executable, str(Path(__file__).with_name("fake_latex.py")))
 ROOT = "\\documentclass{article}\n\\begin{document}\\input{sections/one}\\end{document}\n"
@@ -353,9 +353,6 @@ def test_a_symlinked_writeup_pdf_is_refused_rather_than_written_through(tmp_path
         LatexTools(COMMAND).check(FINE, output_dir=output)
 
     assert victim.read_text(encoding="utf-8") == "export PATH=/usr/bin\n"
-
-
-from hardy.latex import unreached_fragments
 
 
 def test_a_fragment_the_root_inputs_is_reached() -> None:

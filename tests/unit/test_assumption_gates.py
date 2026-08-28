@@ -15,6 +15,8 @@ holds in every group.
 
 from __future__ import annotations
 
+import importlib
+
 TRIVIAL = "exists a b : G, a * b = b * a"
 
 
@@ -253,8 +255,6 @@ def test_a_lean_that_fails_without_readable_diagnostics_is_a_caveat(
 
 # --- Vacuity ---
 
-
-import importlib
 
 _chat = importlib.import_module("hardy.chat")
 

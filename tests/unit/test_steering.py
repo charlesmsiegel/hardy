@@ -6,6 +6,8 @@ Each refusal was local; nothing said "stop saving and check".
 
 from __future__ import annotations
 
+import json
+
 from hardy import chat as hardy_chat
 
 UNREGISTERED = "import Mathlib\n\ntheorem Nobody : True := by exact True.intro\n"
@@ -91,9 +93,6 @@ def test_the_tally_survives_a_turn(session) -> None:
     list(session.stream("again"))
 
     assert session._tool_tally["save_lean"] == [1, 0]
-
-
-import json
 
 
 def _events(session):
