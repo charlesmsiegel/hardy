@@ -664,26 +664,47 @@ def _chat(
         register_lakefile=getattr(args, "register_lakefile", None),
     )
 
+    # `--fresh-thread` is one act on this launch, consumed by the first session
+    # actually built -- off the args, not the config, because it is a per-run
+    # act with no setting behind it. `run_session` calls the factory a second
+    # time when the interactive shell falls back to plain, and that fallback
+    # can arrive AFTER turns were taken: by then the first build's discard has
+    # long happened and `_remember_thread` has stored the NEW conversation, so
+    # a second build still carrying the flag would discard the very
+    # conversation this launch created and append a second `fresh` event.
+    # Restored when a build raises, because an ask no session served is still
+    # pending and the fallback session is the one it was for; the detail is
+    # carried forward instead, so the fallback's banner still names the
+    # condition the launch established.
+    launch = {"fresh_thread": getattr(args, "fresh_thread", False), "detail": ""}
+
     def build(confirm: Callable[[dict[str, Any]], bool]) -> MathematicsSession:
-        return MathematicsSession(
-            config.layout.problem,
-            runtime_factory(str(config.model)),
-            config.lean_command,
-            config.latex_command,
-            confirm,
-            lean_project=config.lean_project,
-            lean_timeout=config.lean_timeout,
-            cas=cas,
-            cas_detail=cas_detail,
-            search=search,
-            search_detail=search_detail,
-            project_context=config.project_context,
-            # Off the args, not the config: a per-run act, with no setting
-            # behind it. Idempotent across `run_session` calling this factory
-            # twice (the interactive shell falling back to plain): the first
-            # build already discarded the thread, so the second finds nothing.
-            fresh_thread=getattr(args, "fresh_thread", False),
-        )
+        fresh = launch["fresh_thread"]
+        launch["fresh_thread"] = False
+        try:
+            session = MathematicsSession(
+                config.layout.problem,
+                runtime_factory(str(config.model)),
+                config.lean_command,
+                config.latex_command,
+                confirm,
+                lean_project=config.lean_project,
+                lean_timeout=config.lean_timeout,
+                cas=cas,
+                cas_detail=cas_detail,
+                search=search,
+                search_detail=search_detail,
+                project_context=config.project_context,
+                fresh_thread=fresh,
+            )
+        except BaseException:
+            launch["fresh_thread"] = fresh
+            raise
+        if fresh:
+            launch["detail"] = session.fresh_thread_detail
+        else:
+            session.fresh_thread_detail = launch["detail"]
+        return session
 
     try:
         return run_session(config, build, plain=plain, reopen=opener)

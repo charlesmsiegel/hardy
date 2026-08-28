@@ -55,6 +55,9 @@ class FakeMathematicsSession:
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
+        # The real session derives this from `fresh_thread`; the closure under
+        # test reads and rewrites it, so the fake has to carry it too.
+        self.fresh_thread_detail = "started fresh (test detail)" if kwargs.get("fresh_thread") else ""
         FakeMathematicsSession.instances.append(self)
 
     def send(self, text: str) -> str:
@@ -155,6 +158,73 @@ def test_chat_hands_the_fresh_thread_flag_to_the_session(tmp_path, monkeypatch):
     FakeMathematicsSession.instances = []
     cli._chat(settings(tmp_path), plain=True)
     assert FakeMathematicsSession.instances[0].kwargs["fresh_thread"] is False
+
+
+def test_the_fallback_rebuild_does_not_discard_the_fresh_conversation_again(tmp_path, monkeypatch):
+    """`run_session` calls the factory a second time when the interactive
+    shell falls back to plain -- possibly after turns have already been taken
+    on the NEW conversation. The flag is one act on the launch: a second
+    build still carrying it would discard the very conversation the first
+    build created and append a second `fresh` event. The fallback session
+    still shows the launch's fresh-start detail, because the condition it is
+    running under is the one the first build established."""
+    from types import SimpleNamespace
+
+    import hardy.tui
+
+    def fallback_run_session(config, factory, *, plain=False, reopen=None):
+        factory(lambda proposal: False)
+        factory(lambda proposal: False)
+        return 0
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (None, ""))
+    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr(hardy.tui, "run_session", fallback_run_session)
+
+    FakeMathematicsSession.instances = []
+    code = cli._chat(settings(tmp_path), plain=True, args=SimpleNamespace(fresh_thread=True))
+
+    assert code == 0
+    first, second = FakeMathematicsSession.instances
+    assert first.kwargs["fresh_thread"] is True
+    assert second.kwargs["fresh_thread"] is False
+    assert second.fresh_thread_detail == first.fresh_thread_detail
+
+
+def test_a_build_that_raised_leaves_the_fresh_ask_pending(tmp_path, monkeypatch):
+    """Consumed by the first session actually built, not by the first attempt:
+    an ask no session served must still reach the fallback session it was
+    for."""
+    from types import SimpleNamespace
+
+    import hardy.tui
+
+    class ExplodingOnce(FakeMathematicsSession):
+        exploded = False
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            if not ExplodingOnce.exploded:
+                ExplodingOnce.exploded = True
+                raise RuntimeError("the shell's first build fails")
+
+    def fallback_run_session(config, factory, *, plain=False, reopen=None):
+        with contextlib.suppress(RuntimeError):
+            factory(lambda proposal: False)
+        factory(lambda proposal: False)
+        return 0
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (None, ""))
+    monkeypatch.setattr(cli, "MathematicsSession", ExplodingOnce)
+    monkeypatch.setattr(hardy.tui, "run_session", fallback_run_session)
+
+    FakeMathematicsSession.instances = []
+    code = cli._chat(settings(tmp_path), plain=True, args=SimpleNamespace(fresh_thread=True))
+
+    assert code == 0
+    first, second = FakeMathematicsSession.instances
+    assert first.kwargs["fresh_thread"] is True
+    assert second.kwargs["fresh_thread"] is True
 
 
 def test_chat_wraps_a_schema_error_through_the_given_parser(tmp_path, monkeypatch, capsys):
