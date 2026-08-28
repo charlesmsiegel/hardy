@@ -372,13 +372,19 @@ def _strip_hypotheses(statement: str) -> str | None:
     return conclusion
 
 
-def _vacuity_source(stripped: str) -> tuple[str, list[str]]:
+def _vacuity_source(stripped: str, *, include_probes: bool = True) -> tuple[str, list[str]]:
     """Build the vacuity probe's Lean source and tactics for this stripped statement.
 
     The integration test elaborates the same file, so there is one place the layout lives.
+
+    `include_probes` is False when `stripped` strips nothing off the original
+    statement: `_assumption_probe` has just run `PROBES` against that exact
+    text and failed, so running them again here would ask Lean the same
+    question twice and, if it happened to close, describe an unstripped
+    statement as proved "with every hypothesis removed".
     """
     # Start with PROBES, add WITNESSES only if the conclusion starts with ∃.
-    tactics = list(MathematicsSession.PROBES)
+    tactics = list(MathematicsSession.PROBES) if include_probes else []
 
     # Extract the conclusion (after leading binders' top-level comma).
     if stripped.startswith("∀ "):
@@ -1096,12 +1102,24 @@ class MathematicsSession:
         Run only after `_assumption_probe` returned no refusal, as its own
         elaboration: nothing here needs the axiom in scope, and the first
         file's layout is pinned by its tests. A statement the stripper cannot
-        read is not probed, and says so.
+        read is not probed, and says so. When every binder turns out to be
+        data -- nothing was actually stripped -- `PROBES` is left out of the
+        file `_vacuity_source` builds: `_assumption_probe` already ran them
+        against this exact text and failed, so running them again would only
+        risk describing that same, unstripped statement as proved "with every
+        hypothesis removed".
         """
-        stripped = _strip_hypotheses(normalise_lean(statement).strip())
+        normalised = normalise_lean(statement).strip()
+        stripped = _strip_hypotheses(normalised)
         if stripped is None:
             return ""
-        source, tactics = _vacuity_source(stripped)
+        hypotheses_removed = stripped != normalised
+        source, tactics = _vacuity_source(stripped, include_probes=hypotheses_removed)
+        if not tactics:
+            # Nothing was stripped and the conclusion is not existential: there
+            # is nothing left worth asking Lean that `_assumption_probe` has
+            # not already asked.
+            return ""
         try:
             result = self._run_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
         except Exception as error:  # noqa: BLE001 - a warning that cannot be computed is itself reported
@@ -1119,10 +1137,16 @@ class MathematicsSession:
             if line in placed:
                 continue
             proof = _probe_suggestion(result, line) or f"by {tactic}"
+            if hypotheses_removed:
+                return (
+                    "Lean elaborated this statement and could not prove it as stated — but "
+                    f"proves it with every hypothesis removed (`{proof}`): the conclusion "
+                    f"`{stripped}` holds without the hypotheses. This assumption may be vacuous."
+                )
             return (
-                "Lean elaborated this statement and could not prove it as stated — but "
-                f"proves it with every hypothesis removed (`{proof}`): the conclusion "
-                f"`{stripped}` holds without the hypotheses. This assumption may be vacuous."
+                "Lean elaborated this statement and could not prove it with standard "
+                f"automation — but a direct witness closes it (`{proof}`). It is a "
+                "theorem, not an assumption."
             )
         return ""
 
