@@ -86,6 +86,12 @@ FORMALIZATION_PROMPT = render("staged/formalization")
 WRITEUP_PROMPT = render("staged/writeup")
 STRUCTURE_INSTRUCTION = "\n\n" + render("staged/structure") + "\n"
 CHAT_SYSTEM_PROMPT = render("chat")
+# What the search façade tells the model about an empty `inspect_declarations`
+# batch, and about a `search_modules` query that named a concept rather than a
+# module. Model-facing text, so it lives here rather than as a string constant
+# in `search_tools.py` -- the same reason every other prompt in this file does.
+SPELLINGS_HINT = render("spellings_hint") + "\n"
+CONCEPT_HINT = "\n" + render("concept_hint")
 # Appended only when a CAS backend was actually discovered, so a session with
 # no kernel never describes tools it does not have.
 def chat_cas_prompt(backend: str) -> str:
