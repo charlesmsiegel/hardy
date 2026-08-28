@@ -102,6 +102,52 @@ def test_a_guillemet_name_with_whitespace_is_parsed_off_whole(session, fake_lean
     assert probed == {"«obvious result»": "trivial"}
 
 
+def test_a_universe_binder_is_redeclared_rather_than_emitted(session, fake_lean) -> None:
+    """`theorem vacuous.{u} (α : Type u) : True` is ordinary Lean, and
+    `example` cannot carry the `.{u}` binder -- emitted verbatim it made
+    every probe line invalid, so a universe-polymorphic theorem was recorded
+    permanently unanswered. One `universe` command redeclares the names."""
+    fake_lean.closes_with = "trivial"
+
+    probed = session._automation_probe(
+        {"vacuous": "theorem vacuous.{u} (α : Type u) : True"}
+    )
+
+    lines = fake_lean.last_source.splitlines()
+    assert lines[2] == "universe u"
+    assert lines[3] == "example (α : Type u) : True := by trivial"
+    assert probed == {"vacuous": "trivial"}
+
+
+def test_universe_names_are_collected_across_statements(session, fake_lean) -> None:
+    fake_lean.closes_with = "trivial"
+
+    probed = session._automation_probe(
+        {
+            "a": "theorem a.{u} (α : Type u) : True",
+            "b": "theorem b.{v, u} (β : Type v) : True",
+        }
+    )
+
+    assert "universe u v" in fake_lean.last_source.splitlines()
+    assert probed == {"a": "trivial", "b": "trivial"}
+
+
+def test_an_unreadable_universe_binder_is_unanswered_and_spares_its_neighbours(
+    session, fake_lean
+) -> None:
+    """A binder the `universe` command cannot redeclare would put a parse
+    error on the probe file's own lines, taking every verdict with it."""
+    fake_lean.closes_with = "trivial"
+
+    probed = session._automation_probe(
+        {"odd": "theorem odd.{u+1} : True", "plain": "theorem plain : True"}
+    )
+
+    assert probed == {"odd": None, "plain": "trivial"}
+    assert "u+1" not in fake_lean.last_source
+
+
 def test_the_earliest_closing_tactic_is_the_one_reported(session, monkeypatch) -> None:
     """The order is part of the message, exactly as it is for an axiom:
     `trivial` closing a statement is damning, `exact?` says it was in Mathlib
