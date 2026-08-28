@@ -324,6 +324,21 @@ def resume_children() -> None:
         _STOP_LEVEL = 0
 
 
+def stopping() -> bool:
+    """Whether a stop is in force right now.
+
+    For a loop that runs many children one after another -- triaging a pile
+    elaborates one Lean file per entry. The stop already reaches the child in
+    flight, and `tracked` stops any that spawn after it; what neither can do
+    is tell the *loop* that scheduling the next child is pointless. This is
+    the loop's question to ask between children, so a cancelled operation
+    ends instead of grinding through every remaining file just to have each
+    one stopped on arrival.
+    """
+    with _RUNNING_LOCK:
+        return _STOP_LEVEL > 0
+
+
 class GuardedResult(FrozenModel):
     """What a `run_guarded` child did, and whether Hardy is what stopped it."""
 

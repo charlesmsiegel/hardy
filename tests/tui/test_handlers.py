@@ -354,3 +354,29 @@ async def test_import_refusals_are_styled_as_errors(ui, settings):
     session = SimpleNamespace(triage_pile=lambda pile: ToolResult(False, "no .lean or .tex files"))
     await handlers.handle_import(ui, "empty", State(config=settings, session=session))
     assert ui.written == [("error", "no .lean or .tex files")]
+
+
+async def test_import_keeps_windows_backslashes_in_paths(ui, settings):
+    """POSIX shlex rules ate every backslash, so `C:\\Users\\me\\Foo.lean`
+    arrived as `C:UsersmeFoo.lean` -- on a platform Hardy supports."""
+    calls: list[tuple[Path, str | None]] = []
+
+    def import_lean(file: Path, dest: str | None) -> ToolResult:
+        calls.append((file, dest))
+        return ToolResult(True, "imported")
+
+    session = SimpleNamespace(import_lean=import_lean)
+    await handlers.handle_import(ui, r"lean C:\Users\me\Foo.lean", State(config=settings, session=session))
+    assert calls == [(Path(r"C:\Users\me\Foo.lean"), None)]
+
+
+async def test_import_still_honours_quoted_paths_with_spaces(ui, settings):
+    calls: list[tuple[Path, str | None]] = []
+
+    def import_lean(file: Path, dest: str | None) -> ToolResult:
+        calls.append((file, dest))
+        return ToolResult(True, "imported")
+
+    session = SimpleNamespace(import_lean=import_lean)
+    await handlers.handle_import(ui, 'lean "my pile/old file.lean" Dest.lean', State(config=settings, session=session))
+    assert calls == [(Path("my pile/old file.lean"), "Dest.lean")]
