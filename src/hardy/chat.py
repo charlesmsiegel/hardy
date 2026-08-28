@@ -304,38 +304,69 @@ def _split_top(text: str, separator: str) -> list[str]:
     return parts
 
 
+def _mentions(name: str, text: str) -> bool:
+    """Whether `name` occurs as a whole word in `text`.
+
+    Lean's dot notation glues a name to what follows with `.` (`H.index`), so
+    a boundary of `.` or `'` must not disqualify a match the way an ordinary
+    word character would.
+    """
+    return re.search(rf"(?<![\w.']){re.escape(name)}(?![\w'])", text) is not None
+
+
 def _strip_hypotheses(statement: str) -> str | None:
     """`statement` with its hypotheses removed, or None if it has none.
 
-    What the vacuity probe elaborates. A binder is a hypothesis when its type
-    is neither a universe, a known data type, nor a name bound earlier in the
-    same statement; an arrow premise always is. Best effort: a statement this
-    cannot read is probed only as the whole it was given.
+    What the vacuity probe elaborates. A binder is a hypothesis unless it is
+    an instance, its type is a universe or a known data type, its type is
+    exactly a name bound earlier in the same statement, or it is depended on
+    -- named in the conclusion, or in the type of another binder that is
+    kept. An arrow premise always is a hypothesis. Returns None when there is
+    nothing to strip -- no leading `∀`/`forall`, or one with nothing after a
+    top-level comma -- so the caller probes the statement whole, exactly as
+    it was given.
     """
     text = " ".join(statement.split())
     binders, body = "", text
     for keyword in ("∀ ", "forall "):
         if text.startswith(keyword):
-            head, comma, rest = text[len(keyword):], "", ""
+            head = text[len(keyword):]
             parts = _split_top(head, ", ")
             if len(parts) < 2:
                 return None
             binders, body = parts[0], ", ".join(parts[1:])
             break
-    kept, bound = [], set()
-    for group in _BINDER.findall(binders):
-        inner = group[1:-1]
-        names, colon, typ = inner.partition(" : ")
-        typ = typ.strip()
-        if group[0] == "[" or not colon or _DATA_TYPE.match(typ) or typ in bound:
-            kept.append(group)
-            bound.update(names.split())
-            continue
-        # A hypothesis; dropped.
     premises = _split_top(body, " → ")
     conclusion = premises[-1].strip()
     if not binders and len(premises) == 1:
         return None
+
+    # Each binder as [its group text, its names, its type text, whether kept].
+    parsed: list[list] = []
+    bound = set()
+    for group in _BINDER.findall(binders):
+        inner = group[1:-1]
+        names, colon, typ = inner.partition(" : ")
+        typ = typ.strip()
+        keep = group[0] == "[" or not colon or bool(_DATA_TYPE.match(typ)) or typ in bound
+        parsed.append([group, names.split(), typ, keep])
+        if keep:
+            bound.update(names.split())
+
+    # A binder none of the rules above keep is still data if something kept
+    # depends on it -- the conclusion, or the type of another kept binder.
+    # Loop to a fixed point: keeping one binder is sometimes what makes an
+    # earlier one, referenced only from that one's type, worth keeping too.
+    changed = True
+    while changed:
+        changed = False
+        kept_text = conclusion + " " + " ".join(entry[2] for entry in parsed if entry[3])
+        for entry in parsed:
+            if not entry[3] and any(_mentions(name, kept_text) for name in entry[1]):
+                entry[3] = True
+                changed = True
+
+    kept = [entry[0] for entry in parsed if entry[3]]
     if kept:
         return f"∀ {' '.join(kept)}, {conclusion}"
     return conclusion
