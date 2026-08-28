@@ -391,7 +391,12 @@ the model said — including the case that has none to owe, where it says no
 theorem is saved and what was said rests on the conversation alone. `/status`
 answers the same question whenever the user asks. A model may decline to report;
 it cannot report what the artifacts do not carry, and it cannot quietly leave the
-human-readable half out.
+human-readable half out. The document's own prose is the mirror-image limit,
+recorded in `FEATURES.md`: the theorem gate reads what the writeup formally
+asserts, so a claim placed in body prose or in a `lemma` environment owes it
+nothing, by design — what covers those is the page-one banner, whose counts say
+how much of the document Lean checked and how much was assumed, never which
+claim is unbacked.
 
 The manifest links Lean declaration names to LaTeX labels and records every
 user-approved assumption, exact Lean statement, informal rendering, reason, and

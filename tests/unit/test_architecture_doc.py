@@ -95,11 +95,13 @@ def test_features_records_what_the_theorem_gate_does_not_cover() -> None:
 def test_the_theorem_gate_limit_reaches_the_other_required_surfaces() -> None:
     """AGENTS.md requires README.md, DESIGN.md, FEATURES.md and
     ARCHITECTURE.html to stay consistent. DESIGN.md says whether the work is
-    finished is computed from the artifacts, and the trust panel says calling
-    anything finished is a refused tool call -- both true of `report_result`,
-    and both read as a stronger guarantee than the theorem gate gives once
-    FEATURES.md records that a claim in prose or a `lemma` environment owes
-    nothing. The qualification must appear where the guarantee is stated.
+    finished is computed from the artifacts, the trust panel says calling
+    anything finished is a refused tool call, and the README says prose does
+    not get around it -- all true of `report_result` and the turn notice, and
+    all read as a stronger guarantee than the theorem gate gives once
+    FEATURES.md records that a claim the *document* makes in prose or a
+    `lemma` environment owes nothing. The qualification must appear where the
+    guarantee is stated, on every one of the three.
     """
     design = (ROOT / 'DESIGN.md').read_text(encoding='utf-8')
     start = design.index('computed from the artifacts')
@@ -113,6 +115,14 @@ def test_the_theorem_gate_limit_reaches_the_other_required_surfaces() -> None:
     panel = html[panel_start:html.index('</div>', panel_start)]
     assert 'theorem environment' in panel and 'lemma' in panel, (
         'the trust panel states the guarantee without the prose/lemma limit'
+    )
+
+    readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+    start = readme.index('Saying it in prose instead does')
+    paragraph = readme[start:readme.index('\n\n', start)]
+    assert '`lemma`' in paragraph and 'banner' in paragraph, (
+        'README.md says prose cannot bypass reporting without saying the '
+        "document's own prose owes the gate nothing"
     )
 
 
