@@ -470,3 +470,35 @@ def test_prose_beside_a_definition_still_counts() -> None:
         used={"Sylow.first"},
         labels={"thm:one", "asm:sylow"},
     ) == ()
+
+
+def test_an_assumptions_entry_never_answers_for_a_theorem_of_the_same_name() -> None:
+    """`request_assumption` records a naming entry of its own, and it describes
+    the assumption. Resolving a theorem onto it points the durable mapping --
+    and the label a reader follows -- at an appendix entry for an axiom rather
+    than at the theorem it is supposed to describe.
+
+    The exact lookup is the half that had to be closed too: excluding
+    assumptions from the leaf fallback alone left this open the moment the
+    *assumption* carried the qualified name and the result carried the bare one.
+    """
+    statement = "theorem A.t : True"
+    axiom = dict(SYLOW, formal_name="A.t", latex_name="asm:at")
+    registry = [
+        {"formal_name": "t", "latex_name": "thm:t", "description": "The result."},
+        {"formal_name": "A.t", "latex_name": "asm:at", "description": "The axiom."},
+    ]
+    obligations = owed(
+        document(
+            "Assumed.\\label{asm:at}\n"
+            f"\\begin{{verbatim}}\n{statement}\n\\end{{verbatim}}"
+        ),
+        theorems={"A.t": statement},
+        registry=registry,
+        labels={"asm:at"},
+        assumptions=[axiom],
+    )
+    # The assumption's label is created and its name matches exactly, so an
+    # unguarded resolution reports nothing owed at all.
+    assert "label" in kinds(obligations), obligations
+    assert any("thm:t" in item.detail for item in obligations), obligations
