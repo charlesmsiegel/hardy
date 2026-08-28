@@ -3193,6 +3193,24 @@ class MathematicsSession:
             )
         return ToolResult(False, f"unknown tool: {name}")
 
+    def _consume_search_evidence(self) -> None:
+        """Spend the search evidence gathered for the request just handled.
+
+        Shared by every exit out of `_request_assumption` once the
+        search-first gate has passed, because the evidence a request
+        consults belongs to *that* request, not to whichever one asks next.
+        A request the search gate itself refused never reaches here -- it
+        looked at nothing, so there is nothing to spend -- but a request the
+        gate let through and `_assumption_shape` or `_assumption_probe` then
+        refused has: a human's `inspect_declarations` call was already
+        looked at to decide the refusal, and letting it sit unconsumed let a
+        next request under a different `formal_name` walk through the
+        search gate on evidence that was never about it.
+        """
+        self._inspected_since_request = False
+        self._searched_since_request = []
+        self._inspect_attempts_since_request = 0
+
     def _request_assumption(self, proposal: dict[str, str]) -> ToolResult:
         if self.search is not None and self._inspect_attempts_since_request == 0:
             # Three axioms were approved on a failing run with the reason
@@ -3212,99 +3230,105 @@ class MathematicsSession:
                 "request. Look for the result before assuming it: pass several "
                 "candidate spellings and let Lean say which exist.",
             )
-        # Both gates run before `confirm`. Nobody should be asked to approve
-        # a statement Hardy has not read, and nobody should be asked at all
-        # about one that could never be declared or that Lean proves itself.
-        refusal = self._assumption_shape(proposal["formal_name"], proposal["lean_statement"])
-        if refusal is not None:
-            return ToolResult(False, refusal)
-        # Built once and reused: the text elaborated, the text approved, and
-        # the text the model is told to write are one string, which is the
-        # whole point.
-        declaration = f"axiom {proposal['formal_name']} : {proposal['lean_statement'].strip()}"
-        refusal, caveat = self._assumption_probe(declaration)
-        if refusal is not None:
-            return ToolResult(False, refusal)
-        # Carried to the prompt rather than swallowed: a human approving an
-        # unchecked statement is owed the word "unchecked", and one whose
-        # hypotheses turn out to be doing no work is owed that too. Only run
-        # when the first probe actually elaborated: a caveat already means
-        # Lean was unreachable or unreadable, and a second full Lean run
-        # would spend up to PROBE_SECONDS on an answer `or caveat` discards.
-        warning = self._vacuity_probe(proposal["lean_statement"]) if not caveat else ""
-        # The elaboration sentence always leads: it is the one fact that is
-        # true of every request that reaches this line, so a vacuity warning
-        # or a strip-refused note is appended to it rather than displacing
-        # it -- finding #5 of the second brutal review, where a stripper
-        # refusal used to replace the only sentence saying Lean had read the
-        # statement at all.
-        elaborated = "Lean elaborated this statement and could not prove it."
-        proposal["checked"] = caveat or (f"{elaborated} {warning}" if warning else elaborated)
-        proposal["goal"] = self.goal()
-        if self._inspect_attempts_since_request and not self._inspected_since_request:
-            # Every attempt since the last request was stopped before it
-            # could report anything -- `_searched_since_request` is empty for
-            # the honest reason that nothing to put in it ever finished, not
-            # because nothing was tried. Say which is true, in the human's
-            # own count, rather than leave the list looking untouched.
-            proposal["searched"] = [
-                f"{self._inspect_attempts_since_request} inspection(s) attempted "
-                "since the last request, none finished"
-            ]
-        else:
-            searched = list(self._searched_since_request)
-            if len(searched) > 20:
-                # A session that inspects in large batches across many
-                # requests can pile up a `searched` list a human is never
-                # going to read in full. Show the count and the most recent
-                # 20 -- what was just asked, not the whole session's
-                # history -- rather than let the field grow without bound.
-                searched = [f"{len(searched)} names inspected; last 20:"] + searched[-20:]
-            proposal["searched"] = searched
-        # A name refused or declined earlier this session gets its last
-        # statement shown beside the new one: `sylow_unique_normal` lost a
-        # conjunct between a refused request and an approved one, unseen,
-        # because nothing put the two statements side by side.
-        earlier = self._rejected.get(proposal["formal_name"])
-        if earlier:
-            proposal["previous"] = earlier[-1]
-        # The request is spent whether it is approved or refused: either
-        # way the human has now seen this search, and the next request
-        # owes them a fresh one.
-        self._inspected_since_request = False
-        self._searched_since_request = []
-        self._inspect_attempts_since_request = 0
-        # `checked`, `searched` and `previous` reach `confirm` but never
-        # `record` below, so without this nothing durable ever says what
-        # evidence the human was actually shown when they approved (or
-        # refused) an axiom -- a nit from the second brutal review.
-        self._record({
-            "type": "assumption_prompt",
-            "formal_name": proposal["formal_name"],
-            "checked": proposal["checked"],
-            "searched": proposal["searched"],
-            "previous": proposal.get("previous", ""),
-        })
-        if not self.confirm(proposal):
-            return ToolResult(False, "The user declined this assumption. Do not use it.")
-        # `checked`, `goal`, `searched` and `previous` describe this one
-        # request, not the assumption, and have no business in the durable
-        # record.
-        record = {key: value for key, value in proposal.items() if key not in {"checked", "goal", "searched", "previous"}}
-        record["status"] = "user-approved"
-        if not any(item["formal_name"] == record["formal_name"] for item in self.state["assumptions"]):
-            self.state["assumptions"].append(record)
-            mapping = {"formal_name": record["formal_name"], "latex_name": record["latex_name"], "description": record["informal_statement"]}
-            self.state["names"].append(mapping)
-            self._save_state()
-        return ToolResult(
-            True,
-            f"User approved. Declare exactly `{declaration}`, disclose source "
-            f"`{proposal['source']}`, and state it in the writeup's \\appendix -- both "
-            f"that Lean line, verbatim, and \\label{{{proposal['latex_name']}}} on the "
-            "prose statement of what was assumed. Nothing resting on it can be "
-            "reported until the appendix carries both.",
-        )
+        # Both gates below run before `confirm`. Nobody should be asked to
+        # approve a statement Hardy has not read, and nobody should be asked
+        # at all about one that could never be declared or that Lean proves
+        # itself. Everything from here on is wrapped in `try`/`finally`: a
+        # request that gets this far has passed the search gate, so evidence
+        # was spent looking at it -- whether `_assumption_shape` or
+        # `_assumption_probe` goes on to refuse it, or a human declines it,
+        # or it is approved, the search that justified even asking is gone
+        # either way, and the next request -- even under a different
+        # `formal_name` -- owes a fresh one. Only the search gate itself,
+        # above, returns without spending anything: it refused before any of
+        # this request's evidence was looked at.
+        try:
+            refusal = self._assumption_shape(proposal["formal_name"], proposal["lean_statement"])
+            if refusal is not None:
+                return ToolResult(False, refusal)
+            # Built once and reused: the text elaborated, the text approved, and
+            # the text the model is told to write are one string, which is the
+            # whole point.
+            declaration = f"axiom {proposal['formal_name']} : {proposal['lean_statement'].strip()}"
+            refusal, caveat = self._assumption_probe(declaration)
+            if refusal is not None:
+                return ToolResult(False, refusal)
+            # Carried to the prompt rather than swallowed: a human approving an
+            # unchecked statement is owed the word "unchecked", and one whose
+            # hypotheses turn out to be doing no work is owed that too. Only run
+            # when the first probe actually elaborated: a caveat already means
+            # Lean was unreachable or unreadable, and a second full Lean run
+            # would spend up to PROBE_SECONDS on an answer `or caveat` discards.
+            warning = self._vacuity_probe(proposal["lean_statement"]) if not caveat else ""
+            # The elaboration sentence always leads: it is the one fact that is
+            # true of every request that reaches this line, so a vacuity warning
+            # or a strip-refused note is appended to it rather than displacing
+            # it -- finding #5 of the second brutal review, where a stripper
+            # refusal used to replace the only sentence saying Lean had read the
+            # statement at all.
+            elaborated = "Lean elaborated this statement and could not prove it."
+            proposal["checked"] = caveat or (f"{elaborated} {warning}" if warning else elaborated)
+            proposal["goal"] = self.goal()
+            if self._inspect_attempts_since_request and not self._inspected_since_request:
+                # Every attempt since the last request was stopped before it
+                # could report anything -- `_searched_since_request` is empty for
+                # the honest reason that nothing to put in it ever finished, not
+                # because nothing was tried. Say which is true, in the human's
+                # own count, rather than leave the list looking untouched.
+                proposal["searched"] = [
+                    f"{self._inspect_attempts_since_request} inspection(s) attempted "
+                    "since the last request, none finished"
+                ]
+            else:
+                searched = list(self._searched_since_request)
+                if len(searched) > 20:
+                    # A session that inspects in large batches across many
+                    # requests can pile up a `searched` list a human is never
+                    # going to read in full. Show the count and the most recent
+                    # 20 -- what was just asked, not the whole session's
+                    # history -- rather than let the field grow without bound.
+                    searched = [f"{len(searched)} names inspected; last 20:"] + searched[-20:]
+                proposal["searched"] = searched
+            # A name refused or declined earlier this session gets its last
+            # statement shown beside the new one: `sylow_unique_normal` lost a
+            # conjunct between a refused request and an approved one, unseen,
+            # because nothing put the two statements side by side.
+            earlier = self._rejected.get(proposal["formal_name"])
+            if earlier:
+                proposal["previous"] = earlier[-1]
+            # `checked`, `searched` and `previous` reach `confirm` but never
+            # `record` below, so without this nothing durable ever says what
+            # evidence the human was actually shown when they approved (or
+            # refused) an axiom -- a nit from the second brutal review.
+            self._record({
+                "type": "assumption_prompt",
+                "formal_name": proposal["formal_name"],
+                "checked": proposal["checked"],
+                "searched": proposal["searched"],
+                "previous": proposal.get("previous", ""),
+            })
+            if not self.confirm(proposal):
+                return ToolResult(False, "The user declined this assumption. Do not use it.")
+            # `checked`, `goal`, `searched` and `previous` describe this one
+            # request, not the assumption, and have no business in the durable
+            # record.
+            record = {key: value for key, value in proposal.items() if key not in {"checked", "goal", "searched", "previous"}}
+            record["status"] = "user-approved"
+            if not any(item["formal_name"] == record["formal_name"] for item in self.state["assumptions"]):
+                self.state["assumptions"].append(record)
+                mapping = {"formal_name": record["formal_name"], "latex_name": record["latex_name"], "description": record["informal_statement"]}
+                self.state["names"].append(mapping)
+                self._save_state()
+            return ToolResult(
+                True,
+                f"User approved. Declare exactly `{declaration}`, disclose source "
+                f"`{proposal['source']}`, and state it in the writeup's \\appendix -- both "
+                f"that Lean line, verbatim, and \\label{{{proposal['latex_name']}}} on the "
+                "prose statement of what was assumed. Nothing resting on it can be "
+                "reported until the appendix carries both.",
+            )
+        finally:
+            self._consume_search_evidence()
 
     def _report_result(self, claimed: list[str], summary: str) -> ToolResult:
         """Say the work is done, and be refused until the artifacts say it too.
