@@ -277,6 +277,44 @@ def test_an_anonymous_instance_contributes_no_name(tmp_path) -> None:
     assert [record.name for record in _index(tmp_path).search('named_one', 10)] == ['named_one']
 
 
+def test_a_declaration_behind_a_same_line_command_wrapper_is_still_seen(tmp_path) -> None:
+    """`set_option x y in theorem foo` is Lean's way of scoping one command,
+    and the workspace scanner already reads through it (`workspace.WRAPPER`)
+    for the same reason it matters here: an unseen declaration is an index
+    miss for a name the sources really ship."""
+    root = _package(tmp_path)
+    _write(
+        root,
+        'Mathlib/Wrapper.lean',
+        'set_option pp.universes true in theorem wrapped_by_option : True := trivial\n'
+        'open Nat in theorem wrapped_by_open : True := trivial\n',
+    )
+
+    index = _index(tmp_path)
+
+    assert [record.name for record in index.search('wrapped_by_option', 5)] == [
+        'wrapped_by_option'
+    ]
+    assert [record.name for record in index.search('wrapped_by_open', 5)] == ['wrapped_by_open']
+
+
+def test_the_miss_diagnostic_names_the_inspection_tool_this_surface_offers(tmp_path) -> None:
+    """The staged and MCP surfaces register `lean_inspect_declarations`, not
+    `inspect_declarations` -- a model following the recovery instruction there
+    would make an unknown-tool call precisely when it needs help. Each surface
+    hands in its own tool name."""
+    declarations = importlib.import_module('hardy.declarations')
+
+    missed = declarations.search_result(
+        declarations.DeclarationIndex(tmp_path),
+        'NoSuchName',
+        inspect_tool='lean_inspect_declarations',
+    )
+
+    (note,) = missed.diagnostics
+    assert 'lean_inspect_declarations' in note.message
+
+
 def test_a_declaration_inside_a_comment_is_not_a_declaration(tmp_path) -> None:
     """Doc comments quote declaration heads all the time -- `/-- like
     `theorem foo` -/` -- and indexing those would answer name questions with
