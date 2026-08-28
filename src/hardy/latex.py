@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .layout import WriteGuard, files_under, guard_for, read_bytes
 from .models import ToolResult
@@ -99,17 +99,36 @@ def _includes(root: str, path: str) -> bool:
     )
 
 
+def _normalise_include(found: str) -> str:
+    r"""A captured `\input{...}` argument, in the spelling `by_stem` is keyed by.
+
+    Tectonic accepts either path separator and resolves `.` as the including
+    file's own directory, so `\input{./lemma1}` and `\input{lemma1}` name the
+    same file -- and did, in the PDF, while an un-normalised lookup here
+    called the first one an orphan nothing includes.
+    """
+    posix = PurePosixPath(found.strip().replace("\\", "/"))
+    parts = [part for part in posix.parts if part != "."]
+    return str(PurePosixPath(*parts)) if parts else ""
+
+
 def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
     r"""Writeup files no `\input` chain from the root reaches.
 
     A fragment nothing includes is in no PDF, whatever it says. A session once
     wrote itself a status report that way and nobody could have read it.
     Follows the same commands `_includes` does, through comments dropped the
-    same way, and accepts a path with or without `.tex` and with either
-    separator, as TeX does.
+    same way, and accepts a path with or without `.tex`, with either
+    separator, and with a leading `./`, as TeX does.
+
+    Returns `[]` when there is no root document yet, rather than every
+    fragment: the prompt itself prescribes saving a fragment before
+    `writeup.tex` mentions it, so a missing root is the normal state of a
+    mid-build workspace, not a workspace where everything is an orphan.
+    Nothing can be judged unreached from a root that does not exist.
     """
     if ROOT_DOCUMENT not in sources:
-        return sorted(sources)
+        return []
     by_stem = {}
     for path in sources:
         normal = path.replace("\\", "/")
@@ -121,7 +140,12 @@ def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
     while frontier:
         current = frontier.pop()
         for found in INCLUSION.findall(uncommented(sources[current])):
-            target = by_stem.get(found.strip().replace("\\", "/"))
+            key = _normalise_include(found)
+            target = by_stem.get(key)
+            if target is None and key.endswith(".tex"):
+                target = by_stem.get(key[: -len(".tex")])
+            elif target is None:
+                target = by_stem.get(f"{key}.tex")
             if target is not None and target not in reached:
                 reached.add(target)
                 frontier.append(target)
