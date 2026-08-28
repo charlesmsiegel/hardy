@@ -277,6 +277,68 @@ def test_an_anonymous_instance_contributes_no_name(tmp_path) -> None:
     assert [record.name for record in _index(tmp_path).search('named_one', 10)] == ['named_one']
 
 
+def test_a_guillemet_named_namespace_prefixes_like_any_other(tmp_path) -> None:
+    """`namespace «my scope»` is one namespace whose name contains a space --
+    and can contain a dot -- so components are read with the same grammar the
+    workspace scanner uses, not split on `.` blindly."""
+    root = _package(tmp_path)
+    _write(
+        root,
+        'Mathlib/Guillemet.lean',
+        'namespace «my scope»\n'
+        'theorem inside_guillemets : True := trivial\n'
+        'end «my scope»\n'
+        'theorem after_guillemets : True := trivial\n',
+    )
+
+    index = _index(tmp_path)
+
+    assert [record.name for record in index.search('inside_guillemets', 5)] == [
+        '«my scope».inside_guillemets'
+    ]
+    assert [record.name for record in index.search('after_guillemets', 5)] == [
+        'after_guillemets'
+    ]
+
+
+def test_a_body_marker_inside_a_string_literal_does_not_cut_the_signature(tmp_path) -> None:
+    """`theorem t : "a := b" = "a := b" := rfl` carries `:=` inside its
+    proposition's literals. Cutting at the first raw occurrence recorded
+    `theorem t : "a` -- a malformed type shown as though it were the head --
+    so markers are found on the comment- and string-blanked text and the cut
+    applied to the raw at the same offset, which line-length-preserving
+    blanking makes valid."""
+    root = _package(tmp_path)
+    _write(
+        root,
+        'Mathlib/Literal.lean',
+        'theorem quoted_marker : "a := b" = "a := b" := rfl\n',
+    )
+
+    (found,) = _index(tmp_path).search('quoted_marker', 5)
+
+    assert found.signature == 'theorem quoted_marker : "a := b" = "a := b"'
+
+
+def test_a_newline_between_the_keyword_and_the_name_still_declares(tmp_path) -> None:
+    """Lean allows the break, and `workspace.py`'s scanner documents scanning
+    the whole source for exactly this reason: a line-oriented match loses the
+    declaration entirely."""
+    root = _package(tmp_path)
+    _write(
+        root,
+        'Mathlib/Split.lean',
+        '@[simp]\n'
+        'theorem\n'
+        '    split_name : True := trivial\n',
+    )
+
+    (found,) = _index(tmp_path).search('split_name', 5)
+
+    assert found.name == 'split_name'
+    assert found.line == 2
+
+
 def test_a_declaration_behind_a_same_line_command_wrapper_is_still_seen(tmp_path) -> None:
     """`set_option x y in theorem foo` is Lean's way of scoping one command,
     and the workspace scanner already reads through it (`workspace.WRAPPER`)
