@@ -342,5 +342,8 @@ what is already present.
 
 Hardy executes model-generated Lean and LaTeX directly, without isolation.
 Install and run it on a machine you are willing to treat as disposable, and only
-with model output you are willing to trust. See
-[DESIGN.md](../DESIGN.md#trust-boundary-and-safety).
+with model output you are willing to trust. [security.md](security.md) says how
+to make that disposability real — install into a container or VM that holds
+only the work — and what the trust boundary is and is not;
+[DESIGN.md](../DESIGN.md#trust-boundary-and-safety) carries the design
+argument.

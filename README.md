@@ -418,7 +418,9 @@ the kernel and reports its version, treating a named non-default backend as
 required and the built-in SymPy as advisory. Cells are executed without
 isolation, like Lean and LaTeX — the session's opening banner says which backend
 is live (or why none is) and extends the unsandboxed-execution warning to name
-computer algebra cells whenever one is.
+computer algebra cells whenever one is. What to do about that warning —
+containing the whole of Hardy in a container or VM until isolation is restored
+— is [docs/security.md](docs/security.md).
 
 ### The interactive session
 
@@ -531,6 +533,9 @@ artifact. One number it reports is a measurement limit rather than a gap:
   design and planned feature areas.
 - [docs/INSTALL.md](docs/INSTALL.md) covers the per-OS installers, configuration,
   and installation troubleshooting.
+- [docs/security.md](docs/security.md) states the trust boundary as it stands —
+  what is controlled, what is not — and how to contain Hardy in a container or
+  VM until process isolation is restored.
 - [AGENTS.md](AGENTS.md) gives Codex and other coding agents the repository's
   startup context.
 
