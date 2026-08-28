@@ -249,7 +249,16 @@ both:
 
 Issue #23 records why this is worth reversing: bounded experiments, trajectory
 fidelity, cheap Lean closers before model tokens, and token budgets all live in
-the loop, and Hardy cannot make those decisions while it does not run one.
+the loop, and Hardy cannot make those decisions while it does not run one. So
+does compaction, and that reason is stronger than the four: Hardy has no
+compaction of its own, so when a long session outgrows the context window the
+provider decides, invisibly, what survives about which lemmas were proved,
+which axioms are standing, and which attempts failed — and `transcript.jsonl`
+does not record what was dropped. Most of a useful mathematical summary is
+already in `session.json` and `read_workspace`, mechanical and therefore
+checkable in a way no coding agent's summary can be; only "what was tried and
+why it failed" needs the model, and none of it can be built while Hardy does
+not run the loop. `DESIGN.md` records the full argument.
 
 ## Install
 
