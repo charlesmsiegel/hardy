@@ -102,8 +102,14 @@ def discover(pile: Path) -> Pile:
     symlink anywhere as a repository saying something Hardy cannot honour. A
     pile is the user's own accumulation and a symlink in it is ordinary; it is
     skipped and reported, so the triage of every other file still happens.
-    Dot-directories are skipped silently -- a pile is very often a git
-    checkout, and triaging `.git/` would be noise about files nobody brought.
+    Dot-DIRECTORIES are skipped silently -- a pile is very often a git
+    checkout, and triaging `.git/` would be noise about files nobody brought
+    -- but a dot-named FILE is triaged like any other: `.scratch.lean` is
+    still mathematics somebody wrote, and a report that silently omitted it
+    would claim the pile was fully triaged when it was not. An entry that is
+    neither a directory nor a regular file -- a named pipe, a device node --
+    is reported as skipped rather than read: reading a FIFO blocks forever,
+    with no child for Esc or a timeout to reach.
     """
     lean: list[PurePosixPath] = []
     tex: list[PurePosixPath] = []
@@ -126,20 +132,21 @@ def _walk(
         skipped.append(f"{directory}: {error}")
         return
     for entry in listing:
-        if entry.name.startswith("."):
-            continue
         path = Path(entry.path)
         relative = PurePosixPath(path.relative_to(base).as_posix())
         try:
             if entry.is_symlink():
                 skipped.append(f"{relative} (symlink; Hardy does not read through links)")
-                continue
-            if entry.is_dir():
-                _walk(base, path, lean, tex, skipped)
-            elif entry.name.endswith(".lean"):
-                lean.append(relative)
-            elif entry.name.endswith(".tex"):
-                tex.append(relative)
+            elif entry.is_dir():
+                if not entry.name.startswith("."):
+                    _walk(base, path, lean, tex, skipped)
+            elif entry.name.endswith((".lean", ".tex")):
+                if not entry.is_file():
+                    skipped.append(f"{relative} (not a regular file)")
+                elif entry.name.endswith(".lean"):
+                    lean.append(relative)
+                else:
+                    tex.append(relative)
         except OSError as error:
             skipped.append(f"{relative}: {error}")
     return

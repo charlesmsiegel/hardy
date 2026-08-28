@@ -392,9 +392,14 @@ async def handle_import(ui: Ui, argument: str, state: State) -> State:
         method = getattr(session, IMPORT_KINDS[verb])
         arguments: tuple[Any, ...] = (Path(words[1]), words[2] if len(words) == 3 else None)
     else:
-        # Anything else is a directory to triage. The unsplit argument, not
-        # `words[0]`: a path with spaces should not need quoting to triage.
-        method, arguments = session.triage_pile, (Path(argument.strip()),)
+        # Anything else is a directory to triage. One token means the user
+        # gave a plain path or a quoted one, and `words[0]` is already
+        # unquoted -- building the path from the raw argument kept the quote
+        # characters and reported a perfectly good directory as unreadable.
+        # Several tokens are an unquoted path with spaces, which must not
+        # need quoting to triage, so there the raw argument is the path.
+        pile = words[0] if len(words) == 1 else argument.strip()
+        method, arguments = session.triage_pile, (Path(pile),)
     # Triage runs Lean once per pile file and promotion elaborates a save;
     # both go to a thread so the input box stays responsive, like /doctor.
     try:

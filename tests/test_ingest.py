@@ -355,3 +355,89 @@ def test_a_commented_documentclass_is_still_a_fragment(tmp_path: Path):
     assert chat.triage_pile(pile).ok
     recorded = [e for e in events(tmp_path / "problem") if e.get("type") == "import_triage"]
     assert recorded[0]["tex"][0]["verdict"] == ingest.FRAGMENT
+
+
+def test_a_stop_during_the_last_elaboration_records_nothing(tmp_path: Path, monkeypatch):
+    """Esc landing on the final file leaves an interrupted run graded broken;
+    with no next iteration to notice the stop, a completed triage would be
+    recorded carrying a verdict the interruption manufactured."""
+    answers = iter([False])  # the pre-check passes; the post-loop check trips
+    monkeypatch.setattr(process, "stopping", lambda: next(answers, True))
+    pile = pile_with(tmp_path, {"only.lean": CLEAN})
+    chat = make_session(tmp_path / "problem")
+    result = chat.triage_pile(pile)
+    assert not result.ok
+    assert "interrupted" in result.output
+    assert not [e for e in events(tmp_path / "problem") if e.get("type") == "import_triage"]
+
+
+def test_a_pile_of_only_skipped_entries_reports_the_reasons(tmp_path: Path):
+    pile = tmp_path / "pile"
+    pile.mkdir()
+    try:
+        os.symlink(tmp_path / "elsewhere.lean", pile / "linked.lean")
+    except (OSError, NotImplementedError):
+        pytest.skip("no symlinks on this platform")
+    chat = make_session(tmp_path / "problem")
+    result = chat.triage_pile(pile)
+    assert not result.ok
+    assert "linked.lean" in result.output
+
+
+def test_a_hidden_lean_file_is_triaged_not_silently_omitted(tmp_path: Path):
+    """`.git/` is noise nobody brought; `.scratch.lean` is mathematics
+    somebody wrote, and a report omitting it would claim to be complete."""
+    pile = pile_with(tmp_path, {".scratch.lean": CLEAN})
+    (pile / ".git").mkdir()
+    (pile / ".git" / "config.lean").write_text("lemma gitNoise : True := by exact True.intro\n", encoding="utf-8")
+    chat = make_session(tmp_path / "problem")
+    result = chat.triage_pile(pile)
+    assert result.ok, result.output
+    recorded = [e for e in events(tmp_path / "problem") if e.get("type") == "import_triage"]
+    assert [entry["path"] for entry in recorded[0]["lean"]] == [".scratch.lean"]
+
+
+def test_a_named_pipe_is_skipped_not_read(tmp_path: Path):
+    """Reading a FIFO blocks forever, with no child for Esc to reach."""
+    pile = pile_with(tmp_path, {"clean.lean": CLEAN})
+    mkfifo = getattr(os, "mkfifo", None)
+    if mkfifo is None:
+        pytest.skip("no FIFOs on this platform")
+    mkfifo(pile / "trap.lean")
+    chat = make_session(tmp_path / "problem")
+    result = chat.triage_pile(pile)
+    assert result.ok, result.output
+    recorded = [e for e in events(tmp_path / "problem") if e.get("type") == "import_triage"]
+    assert [entry["path"] for entry in recorded[0]["lean"]] == ["clean.lean"]
+    assert any("trap.lean" in note for note in recorded[0]["skipped"])
+
+
+def test_triage_builds_the_problems_own_modules_first(tmp_path: Path):
+    """A fresh clone has sources and no oleans; a pile file importing a saved
+    module must triage the way promotion would build, not against a build
+    directory that happens to be empty."""
+    import shutil as shutil_module
+
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    assert chat._save_lean_unbraked("Base.lean", CLEAN).ok
+    shutil_module.rmtree(problem / ".build")
+    pile = pile_with(tmp_path, {"uses.lean": "import Base\n\nlemma pileUser : True := by exact True.intro\n"})
+    result = chat.triage_pile(pile)
+    assert result.ok, result.output
+    recorded = [e for e in events(problem) if e.get("type") == "import_triage"]
+    assert recorded[-1]["lean"][0]["verdict"] == ingest.CLEAN
+
+
+def test_importing_the_problems_own_work_is_refused(tmp_path: Path):
+    """"Imported" is a provenance claim -- this arrived from outside -- and
+    the problem's own authored work must not be recorded under it."""
+    pile = pile_with(tmp_path, {"clean.lean": CLEAN})
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    assert chat.import_lean(pile / "clean.lean", "Imported.lean").ok
+    result = chat.import_lean(problem / "lean" / "Imported.lean", "Copy.lean")
+    assert not result.ok
+    assert "own tree" in result.output
+    reference = chat.import_reference(problem / "lean" / "Imported.lean")
+    assert not reference.ok
