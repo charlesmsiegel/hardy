@@ -1272,11 +1272,22 @@ class MathematicsSession:
         unplaced = any(item.line is None for item in errors)
         first_probe = 3
         declaration_line = first_probe + len(self.PROBES) + 1
+        # An error before the probes even started -- `import Mathlib` failing
+        # on line 1, or landing on line 2's blank line -- or after the
+        # declaration is not about any probe tactic closing the goal. Reading
+        # the *absence* of an error on a probe's own line as "that tactic
+        # closed the goal" is only sound once Lean actually reached the
+        # probes; an error here means it did not, and every probe line then
+        # looks clean for the same reason a killed process would.
+        stray = any(
+            item.line is not None and (item.line < first_probe or item.line > declaration_line)
+            for item in errors
+        )
         # The declaration is read first, and an error Lean could not place is
         # read against it. A statement Lean will not accept fails on every probe
         # line too, and "every tactic failed" would otherwise be reported back as
         # a clean assumption.
-        if unplaced or declaration_line in placed:
+        if unplaced or stray or declaration_line in placed:
             return (
                 f"Lean does not accept this statement, so nothing can be built on it:\n"
                 f"{result.output}\n"
@@ -1343,8 +1354,16 @@ class MathematicsSession:
         errors = [item for item in result.diagnostics if item.severity == "error"]
         if not result.ok and not errors:
             return "The vacuity probe could not be run (Lean failed without diagnostics)."
-        if any(item.line is None for item in errors):
-            return ""
+        # An error outside the `example` lines -- unplaced, or on `import
+        # Mathlib`'s line 1 before the probes even ran -- is not a probe
+        # having closed the goal. Reading the *absence* of an error on a
+        # probe's own line as success is only sound once Lean actually
+        # reached the probes; this is the same exposure `_assumption_probe`
+        # carries, and a warning built on it would misreport a Lean failure
+        # as the assumption being vacuous.
+        tactic_lines = range(3, 3 + len(tactics))
+        if any(item.line is None or item.line not in tactic_lines for item in errors):
+            return "The vacuity probe could not be run (Lean failed before reaching the probes)."
         placed = {item.line for item in errors}
         for index, tactic in enumerate(tactics):
             line = 3 + index
