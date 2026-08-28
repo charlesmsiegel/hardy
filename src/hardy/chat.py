@@ -280,6 +280,67 @@ def _probe_suggestion(result: Any, line: int) -> str:
     return ""
 
 
+_BINDER = re.compile(r"\{[^{}]*\}|\[[^\[\]]*\]|\((?:[^()]|\([^()]*\))*\)")
+_DATA_TYPE = re.compile(r"^(?:Type|Sort|Prop)\b|^(?:ℕ|ℤ|ℚ|ℝ|ℂ|Nat|Int|Rat|Real|Complex|Bool|String)$")
+
+
+def _split_top(text: str, separator: str) -> list[str]:
+    """`text` split on `separator` outside every bracket."""
+    parts, depth, start = [], 0, 0
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif depth == 0 and text.startswith(separator, index):
+            parts.append(text[start:index])
+            start = index + len(separator)
+            index = start
+            continue
+        index += 1
+    parts.append(text[start:])
+    return parts
+
+
+def _strip_hypotheses(statement: str) -> str | None:
+    """`statement` with its hypotheses removed, or None if it has none.
+
+    What the vacuity probe elaborates. A binder is a hypothesis when its type
+    is neither a universe, a known data type, nor a name bound earlier in the
+    same statement; an arrow premise always is. Best effort: a statement this
+    cannot read is probed only as the whole it was given.
+    """
+    text = " ".join(statement.split())
+    binders, body = "", text
+    for keyword in ("∀ ", "forall "):
+        if text.startswith(keyword):
+            head, comma, rest = text[len(keyword):], "", ""
+            parts = _split_top(head, ", ")
+            if len(parts) < 2:
+                return None
+            binders, body = parts[0], ", ".join(parts[1:])
+            break
+    kept, bound = [], set()
+    for group in _BINDER.findall(binders):
+        inner = group[1:-1]
+        names, colon, typ = inner.partition(" : ")
+        typ = typ.strip()
+        if group[0] == "[" or not colon or _DATA_TYPE.match(typ) or typ in bound:
+            kept.append(group)
+            bound.update(names.split())
+            continue
+        # A hypothesis; dropped.
+    premises = _split_top(body, " → ")
+    conclusion = premises[-1].strip()
+    if not binders and len(premises) == 1:
+        return None
+    if kept:
+        return f"∀ {' '.join(kept)}, {conclusion}"
+    return conclusion
+
+
 class MathematicsSession:
     def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True):
         self.workspace = workspace

@@ -249,3 +249,39 @@ def test_a_lean_that_fails_without_readable_diagnostics_is_a_caveat(
 
     assert refusal is None
     assert "could not be checked" in caveat
+
+
+# --- Vacuity ---
+
+
+import importlib
+
+_chat = importlib.import_module("hardy.chat")
+
+SYLOW = (
+    "∀ {G : Type*} [Group G] [Fintype G] (p : ℕ) (hprime : Nat.Prime p) "
+    "(h_order : p ∣ Fintype.card G), ∃ P : Subgroup G, P.Normal"
+)
+
+
+def test_stripping_drops_prop_hypotheses_and_keeps_data() -> None:
+    assert _chat._strip_hypotheses(SYLOW) == (
+        "∀ {G : Type*} [Group G] [Fintype G] (p : ℕ), ∃ P : Subgroup G, P.Normal"
+    )
+
+
+def test_stripping_drops_arrow_premises() -> None:
+    assert _chat._strip_hypotheses("∀ (n : ℕ), 0 < n → n ≠ 0") == "∀ (n : ℕ), n ≠ 0"
+
+
+def test_a_binder_typed_by_an_earlier_binder_is_data() -> None:
+    assert _chat._strip_hypotheses("∀ (G : Type*) (g : G), g = g") == "∀ (G : Type*) (g : G), g = g"
+
+
+def test_a_statement_with_nothing_to_strip_is_none() -> None:
+    assert _chat._strip_hypotheses("True") is None
+    assert _chat._strip_hypotheses(TRIVIAL) is None
+
+
+def test_a_forall_that_loses_every_binder_becomes_its_body() -> None:
+    assert _chat._strip_hypotheses("∀ (h : True), False") == "False"
