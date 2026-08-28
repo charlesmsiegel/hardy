@@ -399,6 +399,10 @@ def test_the_vacuity_warning_reaches_the_human(session, approvals, fake_lean) ->
     session._tool("request_assumption", _request(lean_statement=SYLOW))
 
     assert "may be vacuous" in approvals[0]["checked"]
+    # The elaboration sentence leads; the warning is appended, not swapped in.
+    assert approvals[0]["checked"].startswith(
+        "Lean elaborated this statement and could not prove it. "
+    )
     assert approvals  # warned, not refused
 
 
@@ -445,22 +449,63 @@ def test_a_binder_too_deeply_nested_for_one_level_is_refused() -> None:
     """`_BINDER`'s paren alternative handles one level of nesting; `h`'s type
     here has two, so the regex matches only the inner `(Nat.succ (Nat.succ
     n))` and leaves `h : Nat.Prime` unconsumed -- exactly the text that used
-    to go missing from the stripped statement."""
-    assert _chat._strip_hypotheses(_DOUBLY_NESTED_HYPOTHESIS) is None
+    to go missing from the stripped statement. The binder list is bracketed
+    (`(n : ℕ) (h : ...)`), so this is `UNREADABLE`, not `None`: real
+    hypothesis text is being lost, not merely a shape this function never
+    parses."""
+    assert _chat._strip_hypotheses(_DOUBLY_NESTED_HYPOTHESIS) is _chat.UNREADABLE
 
 
 def test_a_strict_implicit_binder_is_refused() -> None:
     """`⦃H : Subgroup G⦄` is not a bracket `_BINDER` knows, so `H` used to be
     dropped and left free in the stripped text -- read by Lean's
     `autoImplicit`, not bound by the statement any more."""
-    assert _chat._strip_hypotheses(_STRICT_IMPLICIT_BINDER) is None
+    assert _chat._strip_hypotheses(_STRICT_IMPLICIT_BINDER) is _chat.UNREADABLE
 
 
 def test_a_bare_binder_with_no_bracket_is_refused() -> None:
     """`id : Nat → Nat` -- the ordinary Lean spelling of a binder, with no
     wrapping `(...)`/`{...}` -- matches nothing in `_BINDER`, so the whole
-    binder text is unconsumed."""
-    assert _chat._strip_hypotheses(_BARE_BINDER) is None
+    binder text is unconsumed. Unlike an unparseable bare binder with
+    nothing behind it, this one has a genuine top-level premise arrow in its
+    body (`(∀ n, …) → ∀ n : Nat, …`), so failing to read it is failing to
+    read a real hypothesis, and it is `UNREADABLE`."""
+    assert _chat._strip_hypotheses(_BARE_BINDER) is _chat.UNREADABLE
+
+
+def test_a_bare_typed_binder_with_no_premise_is_nothing_to_strip() -> None:
+    """Finding #5 (second brutal review): `n : ℕ` matches nothing in
+    `_BINDER` either, but there is no top-level arrow behind it to lose --
+    nothing here was ever going to be stripped, so this is `None` (nothing
+    to strip), not a fail-closed refusal that throws away Lean's own
+    elaboration for an entirely ordinary quantifier."""
+    assert _chat._strip_hypotheses("∀ n : ℕ, Nat.Prime (2 ^ (2 ^ n) + 1)") is None
+
+
+def test_a_bounded_quantifier_with_no_premise_is_nothing_to_strip() -> None:
+    """The `∀ x ∈ s, …` row of finding #5's table: a bounded quantifier is
+    not binder-list syntax `_BINDER` knows either, and again there is no
+    top-level arrow behind it, so this is `None`."""
+    assert _chat._strip_hypotheses("∀ x ∈ Set.Icc (0:ℝ) 1, x ≤ 1") is None
+
+
+def test_an_iff_before_the_first_top_level_arrow_is_refused() -> None:
+    """Finding #1 (second brutal review), confirmed against real Lean:
+    `↔` binds looser than `→`, so in `A ↔ B → C` the arrow is not a premise
+    separator -- it sits inside the equivalence's own right-hand side, `A ↔
+    (B → C)`. The old split read it as one anyway and reported `B` as a
+    hypothesis of a statement that has none, turning a false axiom into one
+    described as merely vacuous."""
+    assert _chat._strip_hypotheses("∀ (n : Nat), n = 1 ↔ n ≠ 0 → 0 ≤ n") is _chat.UNREADABLE
+
+
+def test_an_iff_after_the_first_top_level_arrow_still_strips() -> None:
+    """`A → B ↔ C` is `A → (B ↔ C)`: the arrow precedes the `↔`, so it is a
+    genuine premise separator and the existing split already gets it
+    right."""
+    assert _chat._strip_hypotheses("∀ (n : Nat), 0 < n → n = 1 ↔ n ≠ 0") == (
+        "∀ (n : Nat), n = 1 ↔ n ≠ 0"
+    )
 
 
 def test_a_colon_with_no_surrounding_spaces_is_still_read() -> None:
@@ -511,3 +556,43 @@ def test_a_statement_with_genuinely_nothing_to_strip_stays_silent(session, fake_
     a statement stripping was owed and did not get, not every plain one."""
     assert session._vacuity_probe("True") == ""
     assert fake_lean.sources == []
+
+
+# --- The four rows of finding #5's table (second brutal review) ---------------
+#
+# `fake_lean`'s default (`closes_with = None`) elaborates every declaration
+# and closes no probe, so each of these reaches `checked` by way of a genuine
+# "Lean tried and could not prove it" rather than a caveat or a warning --
+# the only thing under test here is whether a strip note is wrongly shown, or
+# wrongly withheld.
+
+_ORDINARY_ROW = "∀ (p : ℕ) (hp : Nat.Prime p), p ≠ 1"
+_BARE_ROW = "∀ n : ℕ, Nat.Prime (2 ^ (2 ^ n) + 1)"
+_BOUNDED_ROW = "∀ x ∈ Set.Icc (0:ℝ) 1, x ≤ 1"
+_DOUBLY_NESTED_ROW = "∀ {G : Type*} [Group G] (h : Nat.card (Subgroup.center (G)) = 1), True"
+
+_ELABORATED = "Lean elaborated this statement and could not prove it."
+
+
+def test_the_four_rows_of_finding_5_show_the_checked_text_the_finding_wants(
+    session, approvals, fake_lean
+) -> None:
+    for index, statement in enumerate(
+        (_ORDINARY_ROW, _BARE_ROW, _BOUNDED_ROW, _DOUBLY_NESTED_ROW)
+    ):
+        result = session._tool(
+            "request_assumption",
+            _request(formal_name=f"row{index}", latex_name=f"Row{index}", lean_statement=statement),
+        )
+        assert result.ok
+
+    # Row 1: an ordinary statement that strips cleanly and warns of nothing.
+    assert approvals[0]["checked"] == _ELABORATED
+    # Rows 2 and 3: bare/bounded binders with no premise to lose -- nothing
+    # to strip, so no strip note, exactly as an ordinary `Nat.Prime 7` stays
+    # silent.
+    assert approvals[1]["checked"] == _ELABORATED
+    assert approvals[2]["checked"] == _ELABORATED
+    # Row 4: a bracketed binder nested too deeply to read -- real hypothesis
+    # text was lost, so the elaboration sentence is followed by the note.
+    assert approvals[3]["checked"] == f"{_ELABORATED} {_chat.VACUITY_STRIP_REFUSED}"
