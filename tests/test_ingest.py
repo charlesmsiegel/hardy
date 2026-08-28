@@ -441,3 +441,76 @@ def test_importing_the_problems_own_work_is_refused(tmp_path: Path):
     assert "own tree" in result.output
     reference = chat.import_reference(problem / "lean" / "Imported.lean")
     assert not reference.ok
+
+
+def test_a_broken_saved_tree_does_not_stop_an_unrelated_triage(tmp_path: Path):
+    """A hand-edited workspace can hold an import cycle. Building the whole
+    saved tree up front crashed the triage of a pile that never touched it;
+    only the saved modules each file imports are built, so the breakage lands
+    on the files it affects and nowhere else."""
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    (problem / "lean").mkdir(parents=True, exist_ok=True)
+    (problem / "lean" / "CycleA.lean").write_text("import CycleB\n\nlemma cycleA : True := by exact True.intro\n", encoding="utf-8")
+    (problem / "lean" / "CycleB.lean").write_text("import CycleA\n\nlemma cycleB : True := by exact True.intro\n", encoding="utf-8")
+    pile = pile_with(tmp_path, {
+        "clean.lean": CLEAN,
+        "uses.lean": "import CycleA\n\nlemma pileUser : True := by exact True.intro\n",
+    })
+    result = chat.triage_pile(pile)
+    assert result.ok, result.output
+    recorded = [e for e in events(problem) if e.get("type") == "import_triage"]
+    verdicts = {entry["path"]: entry["verdict"] for entry in recorded[0]["lean"]}
+    assert verdicts["clean.lean"] == ingest.CLEAN
+    assert verdicts["uses.lean"] == ingest.BROKEN
+
+
+def test_triage_records_the_environment_behind_its_verdicts(tmp_path: Path):
+    """A verdict is an answer about an environment and expires with it."""
+    pile = pile_with(tmp_path, {"clean.lean": CLEAN})
+    chat = make_session(tmp_path / "problem")
+    assert chat.triage_pile(pile).ok
+    recorded = [e for e in events(tmp_path / "problem") if e.get("type") == "import_triage"]
+    assert recorded[0]["environment"] == chat._environment
+    assert "project_signatures" in recorded[0]
+
+
+def test_a_pile_module_shadowing_a_saved_one_is_called_out(tmp_path: Path):
+    """The scratch build wins the name on LEAN_PATH, so the verdict was
+    graded against a tree one-file promotion cannot create; the list says so
+    instead of leaving the choice silent."""
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    assert chat._save_lean_unbraked("Base.lean", CLEAN).ok
+    pile = pile_with(tmp_path, {
+        "Base.lean": "import Mathlib\n\nlemma pileBase : True := by exact True.intro\n",
+        "Uses.lean": "import Base\n\nlemma pileUser : True := by exact True.intro\n",
+    })
+    result = chat.triage_pile(pile)
+    assert result.ok, result.output
+    recorded = [e for e in events(problem) if e.get("type") == "import_triage"]
+    details = {entry["path"]: entry.get("detail", "") for entry in recorded[-1]["lean"]}
+    assert "graded against the pile's copy" in details["Uses.lean"]
+    assert "refused as an overwrite" in details["Base.lean"]
+
+
+def test_a_non_regular_import_source_is_refused(tmp_path: Path):
+    mkfifo = getattr(os, "mkfifo", None)
+    if mkfifo is None:
+        pytest.skip("no FIFOs on this platform")
+    trap = tmp_path / "trap.lean"
+    mkfifo(trap)
+    chat = make_session(tmp_path / "problem")
+    result = chat.import_lean(trap)
+    assert not result.ok
+    assert "not a regular file" in result.output
+
+
+def test_an_unreadable_tex_reason_reaches_the_report(tmp_path: Path):
+    pile = tmp_path / "pile"
+    pile.mkdir()
+    (pile / "notes.tex").write_bytes(b"\xff\xfe broken bytes")
+    chat = make_session(tmp_path / "problem")
+    result = chat.triage_pile(pile)
+    assert result.ok, result.output
+    assert "not UTF-8 text" in result.output
