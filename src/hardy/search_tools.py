@@ -31,6 +31,7 @@ from .domain import RunLimits
 from .lean import DeclarationInspection, LeanService, environment_identity
 from .models import ToolResult
 from .modules import ModuleIndex
+from .prompts import CONCEPT_HINT, SPELLINGS_HINT
 from .retrieval import PremiseRetriever, build_retriever
 
 SEARCH_TOOLS: list[dict[str, Any]] = [
@@ -118,25 +119,6 @@ SEARCH_TOOL_NAMES = tuple(spec["function"]["name"] for spec in SEARCH_TOOLS)
 # What one `inspect_declarations` call may resolve. The session bounds a model
 # observation elsewhere; this bounds the work before it is done.
 MAX_NAMES = 20
-
-# What a completed batch with nothing resolved is told. It IS evidence -- about
-# the spellings. The failing run inspected `IsCyclic`, `Commute` and
-# `Subgroup.center` in three batches, got nothing back each time, and wrote
-# "Mathlib does not expose this" into three axiom requests.
-SPELLINGS_HINT = (
-    "none of these names exist under these spellings. That is evidence about the "
-    "spellings, not about the result: try qualified or alternate forms "
-    "(`Subgroup.center`, `IsPGroup.center_nontrivial`) before concluding anything "
-    "is absent from Mathlib.\n"
-)
-
-# What a multi-word `search_modules` miss is told. The failing run asked for
-# `Sylow simple group` and `center normal group` -- a description of a
-# concept, which the package index was never going to have as a module name.
-CONCEPT_HINT = (
-    "\n`search_modules` matches module *names*, not concepts. For a theorem, use "
-    "`inspect_declarations` with several candidate spellings."
-)
 
 
 def _did_not_finish(value: Any) -> str:
