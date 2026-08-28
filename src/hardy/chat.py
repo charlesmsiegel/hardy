@@ -50,6 +50,7 @@ from .truncation import truncate
 from .usage import Usage
 from .workspace import (
     COMMAND,
+    QUALIFIED_NAME,
     BuildFailure,
     ImportCycle,
     LeanWorkspace,
@@ -271,11 +272,13 @@ def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None
 PROBE_SECONDS = 600.0
 
 # The head of a saved theorem's statement as `statements` reports it: the
-# keyword, then the declared name -- one token, or one `«...»` quotation, the
-# one spelling Lean lets a name carry whitespace in -- then the signature an
-# anonymous `example` can carry verbatim. A whitespace split read `«obvious`
-# as the name of `theorem «obvious result» : True` and probed garbage.
-THEOREM_HEAD = re.compile(r"^theorem\s+(«[^»]*»|\S+)\s*(.*)$")
+# keyword, then the declared name, then the signature an anonymous `example`
+# can carry verbatim. The name is `QUALIFIED_NAME` -- the same alphabet the
+# declaration scan reads, where any component may be a `«...»` quotation
+# carrying whitespace -- because a whitespace split read `«obvious` as the
+# name of `theorem «obvious result» : True`, and a guillemet-only alternative
+# still misread the qualified `theorem Foo.«obvious result» : True`.
+THEOREM_HEAD = re.compile(rf"^theorem\s+({QUALIFIED_NAME})\s*(.*)$")
 
 # Shown in `checked` when `_strip_hypotheses` refuses a statement that had
 # hypotheses to strip. Distinct wording from every vacuity warning, so a
@@ -1151,6 +1154,31 @@ class MathematicsSession:
             source, env={"LEAN_PATH": self._lean_path()}, timeout=timeout
         )
 
+    def _probe_lean_source(self, source: str, timeout: float | None = None) -> ToolResult:
+        """Run a probe file against the configured environment alone.
+
+        No `LEAN_PATH` entry for the workspace or the shared builds: `lake
+        env` computes its own path, so `import Mathlib` here can only mean the
+        configured package. With the workspace build on the path, a saved
+        module named `Mathlib` answered for it -- and then the theorem under
+        question was in scope and `exact?` closed its own example by citing
+        it, which is exactly the self-citation the automation probe's
+        declaration-free layout exists to rule out.
+        """
+        return self.lean.run_source(source, timeout=timeout)
+
+    def _probe_environment(self) -> str:
+        """What an automation verdict is valid under.
+
+        The toolchain identity the audit records carry, plus what the Mathlib
+        olean the probe imports currently *is* -- `_external_stamp`'s size-
+        and-mtime identity, restatted on every ask for `_external_stamp`'s
+        reason: a configured Lake project whose Mathlib is edited and rebuilt
+        changes what the probe's tactics can do without moving the pin or the
+        manifest, and a verdict from before that rebuild is not current.
+        """
+        return f"{self._toolchain}|{self._external_stamp('Mathlib')}"
+
     def _assumption_shape(self, formal_name: str, lean_statement: str) -> str | None:
         """Why this could never be declared, or None.
 
@@ -1470,10 +1498,17 @@ class MathematicsSession:
         block = (*self.PROBES, "sorry")
         lines: list[str] = []
         signed: list[str] = []
+        verdicts: dict[str, str | None] = {}
         for name in ordered:
-            # The declared name is one token or one `«...»` quotation --
-            # `theorem «obvious result» : True` is ordinary Lean -- and a
-            # whitespace split read `«obvious` as the name and probed garbage.
+            if "\n" in proposed[name] or "\r" in proposed[name]:
+                # `normalise_lean` preserves a newline inside a string
+                # literal, and every conclusion below is drawn from which
+                # line an error landed on -- an example spanning several
+                # physical lines would attribute its neighbours' errors to
+                # the wrong tactic. Recorded as unanswered rather than
+                # guessed at.
+                verdicts[name] = None
+                continue
             found = THEOREM_HEAD.match(proposed[name])
             if found is None or not found.group(2).strip():
                 # No proposition to probe. A tree holding it could not have
@@ -1481,12 +1516,11 @@ class MathematicsSession:
                 continue
             signed.append(name)
             lines.extend(f"example {found.group(2).strip()} := by {tactic}" for tactic in block)
-        verdicts: dict[str, str | None] = {}
         if not lines:
             return verdicts
         source = "import Mathlib\n\n" + "\n".join(lines) + "\n"
         try:
-            result = self._run_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
+            result = self._probe_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
         except Exception:  # noqa: BLE001 - an unrunnable probe withholds a disclosure, never a save
             return None
         if (
@@ -1562,11 +1596,12 @@ class MathematicsSession:
         stored = self.state.setdefault("automation", {})
         for name in [found for found in stored if found not in current]:
             del stored[name]
+        environment = self._probe_environment()
         needed = {
             name: text
             for name, text in current.items()
             if stored.get(name, {}).get("statement") != text
-            or stored.get(name, {}).get("environment") != self._toolchain
+            or stored.get(name, {}).get("environment") != environment
         }
         if not needed:
             return ""
@@ -1581,7 +1616,7 @@ class MathematicsSession:
             stored[name] = {
                 "statement": needed[name],
                 "tactic": tactic,
-                "environment": self._toolchain,
+                "environment": environment,
             }
         notes = []
         flagged = {name: tactic for name, tactic in probed.items() if tactic}
@@ -1601,9 +1636,10 @@ class MathematicsSession:
         if unreached:
             names = ", ".join(f"`{name}`" for name in unreached)
             notes.append(
-                f"automation probe: {names} did not elaborate outside the workspace "
-                "(section variables, or a local definition), so whether one tactic "
-                "closes it was not established in either direction."
+                f"automation probe: {names} could not be probed in isolation "
+                "(section variables, a local definition, or a multi-line string "
+                "literal), so whether one tactic closes it was not established in "
+                "either direction."
             )
         return "".join(f"\n\n{note}" for note in notes)
 
@@ -1625,12 +1661,13 @@ class MathematicsSession:
         if not stored:
             return {}
         current = self._theorem_statements()
+        environment = self._probe_environment()
         return {
             name: str(record.get("tactic"))
             for name, record in stored.items()
             if record.get("tactic")
             and current.get(name) == record.get("statement")
-            and record.get("environment") == self._toolchain
+            and record.get("environment") == environment
         }
 
     def automation_closed(self) -> dict[str, str]:

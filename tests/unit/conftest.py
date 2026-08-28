@@ -270,4 +270,7 @@ def fake_lean(session, monkeypatch):
 
     fake = Fake()
     monkeypatch.setattr(session, "_run_lean_source", fake)
+    # The automation probe runs through its own entry point, with no workspace
+    # LEAN_PATH; the same fake answers both, and `sources` records every call.
+    monkeypatch.setattr(session, "_probe_lean_source", fake)
     return fake
