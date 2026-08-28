@@ -56,6 +56,13 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
     instructions = getattr(state.session, "project_context_detail", "")
     if instructions:
         ui.write(f"  Instructions: {instructions}")
+    # Whether this session started on a fresh provider thread. The banner says
+    # it once at startup; mid-conversation, this is the only place other than
+    # the model itself to ask whether the conversation remembers the
+    # workspace's earlier turns.
+    fresh = getattr(state.session, "fresh_thread_detail", "")
+    if fresh:
+        ui.write(f"  Conversation: {fresh}")
     # `getattr` because `/status` is safe in flight and the shell builds before
     # its session does -- there is a window where there is nothing to ask.
     spent = getattr(state.session, "usage", None)

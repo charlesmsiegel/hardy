@@ -430,6 +430,15 @@ Priority labels are sequencing hints:
   stop an interactive session reading it at all — which governs this run's
   system prompt, not what a resumed provider thread already remembers, with the
   transcript marking the turn the file stopped being sent.
+- **Now (implemented):** `--fresh-thread` starts an interactive session on a new
+  provider conversation in an existing workspace: the artifacts, the record and
+  the spend ledger continue unchanged, only the resumable thread id in
+  machine-local `.local/state.json` is discarded, and the discard is recorded in
+  `transcript.jsonl` as a change of experimental condition. A per-run flag with
+  deliberately no config key or `HARDY_*` variable, orthogonal to
+  `--no-project-context` — the pair composes into the fully clean interactive
+  condition. With no resumable conversation to discard it is a silent no-op;
+  the banner and `/status` name the fresh start either way.
 - **Known gap:** the SDK owns the turn loop, so turn limits are enforced by the
   provider, only the wall clock is Hardy's, and a long session's context is
   compacted by the provider's rules with no record of what was dropped.

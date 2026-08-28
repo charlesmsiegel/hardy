@@ -514,6 +514,11 @@ class ProjectOpener:
         )
         opening.refuse_if_cancelled(cas)
         try:
+            # Deliberately no `fresh_thread` here: the flag is one act on the
+            # session the launch opened. Carried into `/project switch`, it
+            # would silently discard the conversation of every problem visited
+            # afterwards -- the standing-preference behaviour the flag refuses
+            # to be.
             session = MathematicsSession(
                 config.layout.problem,
                 runtime_factory(str(config.model)),
@@ -673,6 +678,11 @@ def _chat(
             search=search,
             search_detail=search_detail,
             project_context=config.project_context,
+            # Off the args, not the config: a per-run act, with no setting
+            # behind it. Idempotent across `run_session` calling this factory
+            # twice (the interactive shell falling back to plain): the first
+            # build already discarded the thread, so the second finds nothing.
+            fresh_thread=getattr(args, "fresh_thread", False),
         )
 
     try:
@@ -1386,6 +1396,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-project-context",
         action="store_true",
         help="do not read the project's AGENTS.md or HARDY.md (or set project_context = false, or HARDY_PROJECT_CONTEXT=0)",
+    )
+    # A flag only, deliberately: unlike every entry in `config.SETTINGS`,
+    # "always start fresh" is not a coherent standing preference -- persisted,
+    # it would silently discard the conversation on every launch -- so there is
+    # no config key and no HARDY_* variable behind this one. Orthogonal to
+    # `--no-project-context`: each names the one thing it governs, and the pair
+    # composes into the fully clean interactive condition.
+    parser.add_argument(
+        "--fresh-thread",
+        action="store_true",
+        help="start this session on a new provider conversation; the workspace, its record and the spend ledger continue unchanged",
     )
     subparsers = parser.add_subparsers(dest="command")
     chat = subparsers.add_parser("chat", help="start or resume an interactive session")

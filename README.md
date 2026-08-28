@@ -231,6 +231,19 @@ conversation. The transcript marks the boundary — the full text at the turn it
 was read, a `withheld` event at the turn it stopped — so the record accounts
 for both sides of it. A workspace that never read one is clean outright.
 
+What the conversation remembers has its own flag: `--fresh-thread` starts the
+session on a new provider conversation while the workspace, its artifacts, the
+transcript and the spend ledger continue exactly as they are — only the
+resumable thread id in machine-local `.local/state.json` is discarded, and the
+discard is written into `transcript.jsonl` as a change of experimental
+condition, since a turn produced from an empty conversation is not comparable
+to one produced from a thousand-turn one. It is a per-run act with no config
+key or `HARDY_*` variable behind it — "always start fresh" would silently
+discard the conversation on every launch — and it is orthogonal to
+`--no-project-context`: each governs the one thing it names, and together they
+are the fully clean interactive condition. On a workspace with no resumable
+conversation the flag is a quiet no-op that records nothing.
+
 ### What it does get to do, and why that matters
 
 **The SDK owns the turn loop.** Hardy no longer decides when a model call
