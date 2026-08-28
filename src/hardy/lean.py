@@ -690,17 +690,31 @@ class LeanService:
                     column=diagnostic.column,
                 )
             )
+        # `#check Nope` is an error, so a batch with an unknown name has
+        # `check.success=False` while having answered: the diagnostic Lean
+        # printed for it carries `severity="error"` on the `#check` line that
+        # produced it. `check_scratch` renders `import Mathlib\n\n` followed
+        # by one `#check` per name starting at line 3, so those are lines
+        # `range(3, 3 + len(names))`. An error anywhere else -- on line 1
+        # because `import Mathlib` itself failed, unplaced because the
+        # process only left stderr behind, or preceding the `#check` block
+        # for some other reason -- is not an answer about these names, and
+        # crediting it as one is exactly the bug this guards: every name
+        # comes back `unavailable` and the façade presents that as completed
+        # spelling evidence when Lean never got as far as looking any of them
+        # up. An overflowed process is in the same position: whatever
+        # diagnostics survived are not the whole batch.
+        check_lines = range(3, 3 + len(names))
+        errors = [item for item in check.diagnostics if item.severity == "error"]
+        answered = (
+            not check.process.output_overflow
+            and bool(errors)
+            and all(item.line in check_lines for item in errors)
+        )
         return DeclarationInspection(
             resolved=tuple(resolved),
             unavailable=tuple(unavailable),
-            # `#check Nope` is an error, so a batch with an unknown name has
-            # `check.success=False` while having answered: the diagnostic
-            # Lean printed for it carries `severity="error"`. A process that
-            # crashed instead leaves only whatever stderr said, which
-            # `parse_lean_json` keeps as a fallback `information` diagnostic
-            # rather than discarding it -- that text is not an answer, so it
-            # must not count as one here.
-            success=check.success or any(item.severity == "error" for item in check.diagnostics),
+            success=check.success or answered,
             timed_out=check.process.timed_out,
         )
 
