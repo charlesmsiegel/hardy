@@ -112,6 +112,42 @@ async def test_status_does_not_call_an_empty_workspace_written_up(ui, settings):
     assert "written up" not in ui.text
 
 
+async def test_status_discloses_statements_one_tactic_closes(ui, settings):
+    """The same caveat the document's banner prints, without opening the PDF.
+    A disclosure beside the obligations, never among them: a statement one
+    tactic closes is still a theorem, so it must not read as unfinished."""
+    session = SimpleNamespace(
+        usage=Usage(), obligations=tuple, has_theorems=lambda: True,
+        automation_closed=lambda: {"vacuous_sylow": "aesop"},
+    )
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert "vacuous_sylow (by aesop)" in ui.text
+    assert "single automation call" in ui.text
+    assert "Nothing outstanding" in ui.text
+
+
+async def test_status_says_nothing_about_automation_when_nothing_falls_to_it(ui, settings):
+    session = SimpleNamespace(
+        usage=Usage(), obligations=tuple, has_theorems=lambda: True,
+        automation_closed=dict,
+    )
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert "automation" not in ui.text
+
+
+async def test_status_survives_an_automation_reader_that_raises(ui, settings):
+    """A status line must never end the session, same as the obligations."""
+    def boom():
+        raise RuntimeError("state unreadable")
+
+    session = SimpleNamespace(
+        usage=Usage(), obligations=tuple, has_theorems=lambda: True,
+        automation_closed=boom,
+    )
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert "Nothing outstanding" in ui.text
+
+
 async def test_status_still_works_without_a_session(ui, settings):
     """`/status` is safe in flight and runs before the session is attached."""
     await handlers.handle_status(ui, "", State(config=settings, session=None))

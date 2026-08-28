@@ -65,9 +65,14 @@ An assumption is elaborated before anyone is asked to approve it, and refused if
 Lean can prove it outright — a statement the kernel closes is a theorem nobody
 saved yet, not an assumption. `/goal` records what the session is for and prints
 it beside every such request, so nobody approves an axiom with the assignment
-off-screen. And every compile stamps page one of the writeup with how many
-theorems Lean checked, how many assumptions were approved, and how many of the
-document's own theorem environments are backed by neither.
+off-screen. The same tactic ladder is run against every theorem a save
+introduces — there, one tactic closing the statement is disclosed rather than
+refused, because a lemma that falls to `simp` is still a lemma while a vacuous
+statement under a grand name must not pass silently. And every compile stamps
+page one of the writeup with how many theorems Lean checked, how many
+assumptions were approved, how many of the document's own theorem environments
+are backed by neither, and which saved statements a single automation call
+closes outright.
 
 A persistent computer algebra session sits alongside them, so the question of
 what is worth proving can be answered by computing rather than by guessing.

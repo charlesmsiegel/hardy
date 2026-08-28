@@ -204,6 +204,15 @@ with; all of it is written to the transcript as an `assumption_prompt` event bef
 the approval is asked for, so the durable record says what evidence backed the
 decision rather than only that one was made.
 
+The same tactic ladder is run against every theorem a save introduces or restates,
+with the opposite consequence: a proposed axiom Lean proves is refused, but a saved
+theorem one tactic closes is disclosed rather than refused — a lemma that falls to
+`simp` is still a lemma, while a vacuous statement under a grand name must not be
+counted by the provenance banner on the same terms as a theorem with content,
+silently. The verdict expires with the statement it was established against, and
+while it stands the banner, `/status`, `read_workspace`, and the save's own result
+all name the theorem and the tactic.
+
 ### 4. Lean interaction
 
 The initial path invokes Lean directly in a temporary directory. Persistent sessions, warm pools,
