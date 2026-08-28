@@ -2153,7 +2153,11 @@ class MathematicsSession:
             ]
             unreached = self._unreached_tex()
             if unreached:
-                lines.append(f"tex files not reached from writeup.tex: {', '.join(unreached)}")
+                # "Not yet reached", not "not reached": the model is told to
+                # `\input` a fragment into the writeup before the root ever
+                # mentions it, so this line names an ordinary mid-session state,
+                # not a finished tree with an orphan left in it.
+                lines.append(f"tex files not yet reached from writeup.tex: {', '.join(unreached)}")
             return "\n".join(lines)
         except Exception:  # noqa: BLE001 - a status line must never end a turn
             return ""
