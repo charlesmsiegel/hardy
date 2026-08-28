@@ -50,6 +50,7 @@ from .truncation import truncate
 from .usage import Usage
 from .workspace import (
     COMMAND,
+    IDENTIFIER,
     QUALIFIED_NAME,
     BuildFailure,
     ImportCycle,
@@ -277,8 +278,15 @@ PROBE_SECONDS = 600.0
 # declaration scan reads, where any component may be a `«...»` quotation
 # carrying whitespace -- because a whitespace split read `«obvious` as the
 # name of `theorem «obvious result» : True`, and a guillemet-only alternative
-# still misread the qualified `theorem Foo.«obvious result» : True`.
-THEOREM_HEAD = re.compile(rf"^theorem\s+({QUALIFIED_NAME})\s*(.*)$")
+# still misread the qualified `theorem Foo.«obvious result» : True`. An
+# explicit universe binder (`theorem vacuous.{u} ...`) is captured apart from
+# both: it belongs to neither the name nor the signature -- `example` cannot
+# carry one, so the probe redeclares its names with a `universe` command.
+THEOREM_HEAD = re.compile(rf"^theorem\s+({QUALIFIED_NAME})(\.\{{[^}}]*\}})?\s*(.*)$")
+# What may name a universe in that binder: `IDENTIFIER`, exactly. A binder
+# this cannot read would put an unparseable `universe` command on the probe
+# file's own lines, and a parse error there takes every verdict with it.
+UNIVERSE_NAME = re.compile(rf"^{IDENTIFIER}$")
 
 # Shown in `checked` when `_strip_hypotheses` refuses a statement that had
 # hypotheses to strip. Distinct wording from every vacuity warning, so a
@@ -1499,6 +1507,7 @@ class MathematicsSession:
         lines: list[str] = []
         signed: list[str] = []
         verdicts: dict[str, str | None] = {}
+        universes: set[str] = set()
         for name in ordered:
             if "\n" in proposed[name] or "\r" in proposed[name]:
                 # `normalise_lean` preserves a newline inside a string
@@ -1510,15 +1519,35 @@ class MathematicsSession:
                 verdicts[name] = None
                 continue
             found = THEOREM_HEAD.match(proposed[name])
-            if found is None or not found.group(2).strip():
+            if found is None or not found.group(3).strip():
                 # No proposition to probe. A tree holding it could not have
                 # built, so nothing real is lost by leaving it unanswered.
                 continue
+            binder = found.group(2)
+            bound = [part.strip() for part in binder[2:-1].split(",")] if binder else []
+            if bound and not all(UNIVERSE_NAME.match(part) for part in bound):
+                # A binder the `universe` command below could not redeclare.
+                # Emitting it anyway puts a parse error on the probe file's
+                # own lines, which takes every statement's verdict with it.
+                verdicts[name] = None
+                continue
+            universes.update(bound)
             signed.append(name)
-            lines.extend(f"example {found.group(2).strip()} := by {tactic}" for tactic in block)
+            lines.extend(f"example {found.group(3).strip()} := by {tactic}" for tactic in block)
         if not lines:
             return verdicts
-        source = "import Mathlib\n\n" + "\n".join(lines) + "\n"
+        preamble = "import Mathlib\n\n"
+        first = 3
+        if universes:
+            # One command redeclares every statement's universe names:
+            # `example` cannot carry a `.{u}` binder of its own, and without
+            # this a universe-polymorphic theorem's examples referenced names
+            # nothing bound. File-global on purpose -- universes have no
+            # scope to collide in -- and it costs the line arithmetic exactly
+            # one line, accounted for in `first`.
+            preamble += f"universe {' '.join(sorted(universes))}\n"
+            first = 4
+        source = preamble + "\n".join(lines) + "\n"
         try:
             result = self._probe_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
         except Exception:  # noqa: BLE001 - an unrunnable probe withholds a disclosure, never a save
@@ -1532,7 +1561,6 @@ class MathematicsSession:
         errors = [item for item in result.diagnostics if item.severity == "error"]
         if not result.ok and not errors:
             return None
-        first = 3
         if any(
             item.line is None or item.line < first or item.line >= first + len(lines)
             for item in errors
