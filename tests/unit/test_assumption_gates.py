@@ -381,6 +381,23 @@ def test_a_non_existential_gets_no_witness_lines(session, fake_lean) -> None:
     assert "⟨⊥" not in fake_lean.last_source
 
 
+def test_a_unique_existential_gets_no_witness_lines() -> None:
+    """Nit (d), second brutal review: `∃!` is unique existence, and a bare
+    `⊥`/`⊤` `WITNESSES` guess can prove something exists but never that it
+    is the only one -- trying it against `∃!` can only ever fail."""
+    source, tactics = _chat._vacuity_source("∃! n : ℕ, n = 0", include_probes=False)
+
+    assert tactics == []
+    assert "⟨⊥" not in source
+
+
+def test_a_plain_existential_still_gets_witness_lines() -> None:
+    source, tactics = _chat._vacuity_source("∃ n : ℕ, n = 0", include_probes=False)
+
+    assert tactics == list(_chat.MathematicsSession.WITNESSES)
+    assert "⟨⊥" in source
+
+
 def test_a_stripped_statement_nothing_closes_is_silent(session, fake_lean) -> None:
     assert session._vacuity_probe(SYLOW) == ""
 

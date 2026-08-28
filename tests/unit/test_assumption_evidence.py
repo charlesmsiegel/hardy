@@ -244,3 +244,64 @@ def test_previous_is_not_written_into_the_durable_record(session_factory, fake_l
     session._tool("request_assumption", _request(lean_statement="True"))
 
     assert "previous" not in session.state["assumptions"][0]
+
+
+def _transcript_events(session):
+    return [
+        json.loads(line)
+        for line in session.transcript_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+
+def test_the_transcript_keeps_what_the_human_was_shown_when_approving(
+    session, approvals, fake_lean
+) -> None:
+    """Nit (b), second brutal review: `checked`, `searched` and `previous`
+    reach `confirm` but are stripped out of the durable `state["assumptions"]`
+    record, and nothing else wrote them anywhere durable -- a later reader
+    could never answer "what evidence was the human shown when they approved
+    this axiom?". An `assumption_prompt` event carries them into
+    `transcript.jsonl`."""
+    session._tool("request_assumption", _request(lean_statement="True ∧ True"))
+
+    prompts = [event for event in _transcript_events(session) if event["type"] == "assumption_prompt"]
+
+    assert len(prompts) == 1
+    assert prompts[0]["formal_name"] == "sylow"
+    assert prompts[0]["checked"] == approvals[0]["checked"]
+    assert prompts[0]["searched"] == approvals[0]["searched"]
+
+
+def test_the_transcript_records_the_prompt_before_confirm_is_asked(
+    session_factory, fake_lean
+) -> None:
+    """The record must exist even for a request the human declines --
+    otherwise a refusal is the one outcome the evidence trail forgets."""
+    session = session_factory(confirm=lambda proposal: False)
+
+    session._tool("request_assumption", _request())
+
+    prompts = [event for event in _transcript_events(session) if event["type"] == "assumption_prompt"]
+    assert len(prompts) == 1
+
+
+def test_a_long_search_history_is_truncated_to_the_last_20_for_the_human(
+    session_factory, approvals
+) -> None:
+    """Nit (c), second brutal review: a session that inspects across several
+    calls (`inspect_declarations` refuses more than 20 names in one call --
+    finding #2's own validation) can still pile up a `searched` list beyond
+    20 names for one `request_assumption`, and nobody is going to read all
+    of it."""
+    names = [f"N{index}" for index in range(25)]
+    search = Search(resolved=tuple(names))
+    session = _searching_session(session_factory, approvals, search)
+    session._tool("inspect_declarations", {"names": names[:20]})
+    session._tool("inspect_declarations", {"names": names[20:]})
+
+    session._tool("request_assumption", _request())
+
+    searched = approvals[0]["searched"]
+    assert searched[0] == "25 names inspected; last 20:"
+    assert len(searched) == 21
+    assert searched[1:] == [f"N{index} ✓" for index in range(5, 25)]
