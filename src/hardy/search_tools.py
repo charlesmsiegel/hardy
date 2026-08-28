@@ -98,11 +98,10 @@ SEARCH_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "search_modules",
             "description": (
-                "Find the module to `import` for a name you have in mind. Module paths are "
-                "not stable across Mathlib versions and a remembered one is a guess: "
-                "`Mathlib.GroupTheory.Sylow.Basic` was a real module once and is now "
-                "`Mathlib.GroupTheory.Sylow`. Check here before importing. This answers "
-                "from the project's package index, so it works even when Lean will not run."
+                "Confirm a module path exists, and find the path of a workspace or "
+                "shared-library module. From Mathlib itself, import `Mathlib` whole -- use "
+                "this to check a path you were about to name, not to narrow an import. "
+                "Answers from the package index, so it works even when Lean will not run."
             ),
             "parameters": {
                 "type": "object",

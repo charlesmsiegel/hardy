@@ -79,6 +79,27 @@ def test_the_session_advertises_a_module_search() -> None:
     assert "search_modules" in offered
 
 
+def test_the_module_search_description_does_not_tell_the_model_to_narrow_a_mathlib_import() -> None:
+    """Finding #6 (second brutal review): the tool description used to say
+    "find the module to `import` for a name you have in mind" and "Check
+    here before importing", which is exactly what the prompt (`chat.md.j2`)
+    now forbids -- a model calling `search_modules("Sylow")` and importing
+    what it returned did exactly what the tool told it to and exactly what
+    the system prompt forbids. The description read here must scope the
+    tool to confirming a path, not to narrowing a Mathlib import."""
+    from hardy.search_tools import SEARCH_TOOLS
+
+    description = next(
+        spec["function"]["description"]
+        for spec in SEARCH_TOOLS
+        if spec["function"]["name"] == "search_modules"
+    )
+
+    assert "import `Mathlib` whole" in description
+    assert "Check here before importing" not in description
+    assert "find the module to `import`" not in description
+
+
 def test_a_ranking_asked_for_reaches_the_search_runtime(session_factory) -> None:
     search = FakeSearch()
     session = session_factory(search=search, search_detail="Mathlib abcdef in /lean")

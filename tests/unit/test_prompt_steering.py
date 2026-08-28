@@ -28,3 +28,16 @@ def test_the_prompt_says_to_build_a_proof_as_several_small_files() -> None:
 def test_the_prompt_still_tells_the_model_to_look_modules_up() -> None:
     """The workspace-module case still needs `search_modules`."""
     assert "search_modules" in CHAT_SYSTEM_PROMPT
+
+
+def test_the_prompt_no_longer_tells_the_model_to_search_before_every_mathlib_import() -> None:
+    """Finding #6 (second brutal review): under `import Mathlib` and nothing
+    narrower, the only Mathlib import needs no lookup, so "call
+    `search_modules` before you write a Mathlib import" is advice for a
+    workflow the rest of this same prompt forbids. `search_modules` is for
+    a failing import, not a gate in front of every one."""
+    assert "Call `search_modules` before you write a Mathlib import" not in CHAT_SYSTEM_PROMPT
+    assert (
+        "If an import fails, look the module up with `search_modules` rather than "
+        "concluding the toolchain is broken."
+    ) in CHAT_SYSTEM_PROMPT
