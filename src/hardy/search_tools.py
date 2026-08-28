@@ -130,6 +130,14 @@ SPELLINGS_HINT = (
     "is absent from Mathlib.\n"
 )
 
+# What a multi-word `search_modules` miss is told. The failing run asked for
+# `Sylow simple group` and `center normal group` -- a description of a
+# concept, which the package index was never going to have as a module name.
+CONCEPT_HINT = (
+    "\n`search_modules` matches module *names*, not concepts. For a theorem, use "
+    "`inspect_declarations` with several candidate spellings."
+)
+
 
 def _did_not_finish(value: Any) -> str:
     """Why this answer is not a report about Mathlib, or "".
@@ -220,11 +228,13 @@ class SearchToolRuntime:
         found = self.modules.search(query, limit)
         if not found:
             where = f" under {self.modules.project}" if self.modules.project else ""
-            return ToolResult(
-                False,
+            message = (
                 f"no module in this project has `{query}` in its name; "
-                f"{len(self.modules.names())} modules were read from the package index{where}",
+                f"{len(self.modules.names())} modules were read from the package index{where}"
             )
+            if len(query.split()) > 1:
+                message += CONCEPT_HINT
+            return ToolResult(False, message)
         return ToolResult(True, json.dumps({"modules": list(found)}, ensure_ascii=False))
 
     def _answer(self, call: Any) -> ToolResult:
