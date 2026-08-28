@@ -525,6 +525,24 @@ def test_an_iff_after_the_first_top_level_arrow_still_strips() -> None:
     )
 
 
+def test_an_arrow_free_iff_with_no_binders_is_nothing_to_strip() -> None:
+    """Brutal review pass 3, finding #1: the `arrow_index == -1` disjunct in
+    the old guard fired on any `↔`, refusing even a statement with no arrow
+    and no binders to mis-split in the first place. `Nat.Prime 7 ↔ True` has
+    nothing whose binders could fail to be read, so this is `None`, not
+    `UNREADABLE`."""
+    assert _chat._strip_hypotheses("Nat.Prime 7 ↔ True") is None
+
+
+def test_an_arrow_free_iff_with_a_hypothesis_still_strips() -> None:
+    """The same regression's binder-bearing case: with no top-level arrow at
+    all, there is no premise chain for the `↔` to corrupt, so the ordinary
+    hypothesis strip should still run."""
+    assert _chat._strip_hypotheses("∀ (n : ℕ) (h : 0 < n), n = 1 ↔ n ≠ 0") == (
+        "∀ (n : ℕ), n = 1 ↔ n ≠ 0"
+    )
+
+
 def test_a_colon_with_no_surrounding_spaces_is_still_read() -> None:
     """`(hp:Nat.Prime 2)` used to be read as an untyped, always-kept binder,
     because the old parser looked for a literal `" : "`. The fixed colon
