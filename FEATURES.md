@@ -490,7 +490,15 @@ Priority labels are sequencing hints:
   tree -- a run that writes relative to `__file__` writes beside the artifact,
   which is what running the artifact does. The read-back and restore keep the
   script equal to the hash the manifest records for it, and a restore the write
-  guard refuses is reported rather than swallowed.
+  guard refuses is reported rather than swallowed. Whatever the run started is
+  stopped before the file is read back: a descendant that redirects its own
+  output is invisible to every check -- the drain workers finish, the capture
+  looks complete -- and it outlives the run, so one that slept and then rewrote
+  `sys.argv[0]` changed the artifact after the manifest had recorded its hash.
+  What such a run printed is still compared first, because a concrete
+  disagreement is worth more than a caveat; a script that left a process
+  running and agreed with the record everywhere else is reported `unverified`,
+  since what running it *does* is not bounded by what was seen of it.
 - **Now (implemented):** the published script names the environment it was
   checked under, and `export.json` records it. A verdict is a claim about
   running those exact bytes *that way*: `PYTHONHASHSEED` is pinned for the
@@ -504,14 +512,20 @@ Priority labels are sequencing hints:
   nothing has to be guessed -- and extra output the session never saw is no
   longer tolerated in front of or behind the record. A cell guarded by
   `if __name__ == "__main__":` is silent under the driver and prints from the
-  published file; that used to export as `verified`. Which closing marker goes
-  out says whether the file *finished*: the marker is an `atexit` callback, so
-  it is out of reach of anything a cell can rebind and it also fires on
-  `SystemExit(0)` -- a first cell raising one is silent under the driver and
-  ends the script, and both markers used to go out around an empty transcript
-  that matched a record of silent cells. The last statement in the file is what
-  distinguishes the two, and a run that never reached it is reported as cut
-  short rather than as reproduction.
+  published file; that used to export as `verified`. A second line, just inside
+  the closing marker, says whether the file *finished*: the closing marker is
+  an `atexit` callback, which is what puts it out of reach of anything a cell
+  can rebind and also what makes it fire on `SystemExit(0)` -- a first cell
+  raising one is silent under the driver and ends the script, so both markers
+  went out around an empty transcript that matched a record of silent cells.
+  The file's last statement leaves a string for a second shutdown hook to
+  print, and the string is generated fresh for each export: a flag would be a
+  name in the script's own namespace, and a cell that sets it buys itself the
+  claim that the file finished. Every way of failing to produce it -- the
+  statement never reached, the hook never registered -- reports the run cut
+  short rather than as reproduction, and the statement is a bare assignment, so
+  a cell that has broken `print` or `__import__` costs the export its verdict
+  and not the artifact's ability to run.
 - **Now (implemented):** the default kernel captures at the *file descriptor*
   rather than by rebinding `sys.stdout`, so output from `os.system`, a
   subprocess, or a native library is the cell's output instead of bytes in

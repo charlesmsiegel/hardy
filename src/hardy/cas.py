@@ -189,6 +189,13 @@ class RebuildReport(FrozenModel):
     # the session can say which cells it could not check rather than reporting
     # a rebuild as if it had.
     unverified: tuple[int, ...] = ()
+    # Which of the two reasons put each of them there. A cell can be on the
+    # list because nothing fingerprinted its namespace, or because a capture
+    # stopped at `cas_output_bytes` and the discarded tails were never
+    # compared -- and a report that named only the first told a reader whose
+    # state *had* been compared to go and look at the wrong thing.
+    digestless: tuple[int, ...] = ()
+    clipped: tuple[int, ...] = ()
 
 
 def normalise(text: str) -> str:
@@ -204,6 +211,28 @@ def normalise(text: str) -> str:
     value.
     """
     return "\n".join(line.rstrip() for line in text.rstrip().splitlines())
+
+
+def _why_unverified(report: RebuildReport) -> str:
+    """Say which of the two gaps a rebuild's unverified cells actually have.
+
+    Both end in "the replay agreed with everything Hardy compared, and that is
+    not everything", but they are different omissions and a reader chasing one
+    will not find the other. A cell can be on the list for both.
+    """
+    reasons = []
+    if report.digestless:
+        reasons.append(
+            f"cell(s) {list(report.digestless)} carry no state digest, so their "
+            "replay agrees whatever namespace it rebuilt"
+        )
+    if report.clipped:
+        reasons.append(
+            f"cell(s) {list(report.clipped)} were captured up to cas_output_bytes, "
+            "so the discarded tails were never compared"
+        )
+    return ("; ".join(reasons) + ". What they printed, as far as it was kept, "
+            "did reproduce.")
 
 
 def reproduces(record: CellRecord, outcome: CellOutcome) -> bool:
@@ -326,23 +355,38 @@ class SympyBackend:
     # global a cell can touch. The begin marker needs no such care: it has
     # already run before a cell can rebind anything.
     #
-    # Which marker goes out is decided by a list, not by a name resolved at
-    # shutdown. `atexit` fires on `SystemExit(0)` as readily as on reaching
-    # the end of the file, so an early exit used to print the closing marker
-    # around an empty transcript and an export called that reproduction. The
-    # last statement in the file fills the list; the callback holds the list
-    # object itself, bound by `partial` at registration, so a cell rebinding
-    # the name cannot make an unfinished run look finished -- and every way of
-    # getting it wrong reports the run cut short, which is the safe direction.
+    # A shutdown hook cannot say whether the file *finished*, though: `atexit`
+    # fires on `SystemExit(0)` as readily as on reaching the end, so a first
+    # cell raising one put both markers around an empty transcript that matched
+    # a record of silent cells. The second registration below prints whatever
+    # the file's last statement left under one name -- registered after the
+    # first, so LIFO runs it before, and the line lands just inside the closing
+    # marker.
+    #
+    # Everything it needs is bound at registration, the namespace included, so
+    # nothing here resolves at the end either. And what the epilogue does is a
+    # bare assignment of a string: it imports nothing, calls nothing, and
+    # cannot raise, so a cell that has broken `__import__` or `print` costs the
+    # export its verdict and not the artifact's ability to run.
+    #
+    # The evidence is the string rather than the name. A flag would be a name
+    # in the script's own namespace, and a cell that sets it buys itself the
+    # claim that the file finished; this one has to be `completion_marker`'s
+    # value, which is generated per export. A cell that reads its own source
+    # can still find it -- as it can find the markers -- but nothing a cell
+    # writes can collide with it by accident, and every way of failing to
+    # produce it reports the run cut short.
     transcript_prologue = (
-        "_hardy_reached_the_end = []",
         '__import__("atexit").register(__import__("functools").partial('
-        '(lambda write, finished, end, early: write(end if finished else early)), '
+        '__import__("builtins").print, "{end}", '
+        'file=__import__("sys").stdout))',
+        '__import__("atexit").register(__import__("functools").partial('
+        '(lambda write, namespace: write(namespace.get("_hardy_finished", ""))), '
         '__import__("functools").partial(__import__("builtins").print, '
-        'file=__import__("sys").stdout), _hardy_reached_the_end, "{end}", "{early}"))',
+        'file=__import__("sys").stdout), globals()))',
         '__import__("builtins").print("{begin}")',
     )
-    transcript_epilogue: tuple[str, ...] = ("_hardy_reached_the_end.append(True)",)
+    transcript_epilogue: tuple[str, ...] = ('_hardy_finished = "{finished}"',)
     # The exported script is run as an ordinary Python program, not through the
     # driver: the artifact under test is the file a reader would run.
     script_stdin = False
@@ -1786,12 +1830,16 @@ class CasSession:
                         if len(report.unverified) == report.replayed
                         else f"cell(s) {list(report.unverified)}'"
                     )
+                    # And which of the two reasons, because they point a reader
+                    # at different things. Saying "there is no state digest" of
+                    # a cell whose state *was* compared, and whose unread
+                    # output tail is the actual gap, sends them to look in the
+                    # wrong place.
+                    because = _why_unverified(report)
                     notes = (notes + " " if notes else "") + (
-                        f"[{which} state could be compared against the record: "
-                        "there is no state digest for them, so their replay "
-                        "agrees whatever namespace it rebuilt. What they printed "
-                        "did reproduce. The state is reconstructed, not verified: "
-                        "rerun anything you mean to build on.]"
+                        f"[{which} replay could be fully compared against the "
+                        f"record: {because} The state is reconstructed, not "
+                        "verified: rerun anything you mean to build on.]"
                     )
                 # The rebuild is billed, so it can be what exhausts the budget.
                 self._guard()
@@ -1971,6 +2019,12 @@ class CasSession:
                 or record.capture_truncated
                 or record.seq in set(clipped)
             ),
+            digestless=tuple(record.seq for record in pending if unobservable(record)),
+            clipped=tuple(
+                record.seq
+                for record in pending
+                if record.capture_truncated or record.seq in set(clipped)
+            ),
         )
 
     def reset(self, *, author: str = "model") -> None:
@@ -2023,6 +2077,14 @@ class ScriptRun(FrozenModel):
     # Any verdict drawn from it can only be `unverified`: an unread tail is not
     # evidence of agreement and is not evidence of disagreement either.
     capture_truncated: bool = False
+    # The script exited while something it started was still running. What such
+    # a run *does* is not bounded by what was observed of it: a descendant with
+    # its own stdout keeps every worker here happy, outlives the check, and was
+    # free to rewrite the published file after the verdict had been drawn on
+    # it. The group is killed before anything reads the artifact back, so the
+    # race is closed; this says the run had one, which is not something a
+    # verdict can be drawn over.
+    left_processes: bool = False
 
 
 def _drain_capped(pipe: Any, into: bytearray, cap: int, overflowed: list[bool]) -> None:
@@ -2095,6 +2157,7 @@ def run_exported_script(
     cap = max(1, max_output_bytes)
     out, err = bytearray(), bytearray()
     overflowed = [False]
+    left_behind = [False]
     try:
         process = subprocess.Popen(
             argv,
@@ -2153,6 +2216,21 @@ def run_exported_script(
         # a transcript that was still arriving -- and report `verified` for it.
         if stdout_worker.is_alive() or stderr_worker.is_alive():
             overflowed[0] = True
+        # Whatever the script started is stopped here, before the caller reads
+        # the published file back. A descendant that redirected its own output
+        # is invisible to every check above -- the workers finish, the capture
+        # looks complete -- and it outlives the run: one that slept and then
+        # rewrote `sys.argv[0]` changed the artifact after the manifest had
+        # recorded its hash, with the verdict already `verified`. The group
+        # exists to be addressed as one, and the run is over.
+        #
+        # Probed before it is killed, because a group with members after the
+        # leader has been reaped is the evidence, and killing it destroys the
+        # evidence. What this cannot see is a descendant that left the group
+        # with `setsid`, and on Windows there is no group to reach at all --
+        # `kill_group` falls back to the leader, which has already exited.
+        left_behind[0] = _group_has_members(process)
+        kill_group(process)
         # And each stream is closed only once its own worker has actually let
         # go of it. A drain thread blocked in `pipe.read1` -- because, say, a
         # grandchild the child spawned inherited the handle and is still
@@ -2182,7 +2260,28 @@ def run_exported_script(
         stderr=_decode(bytes(err)),
         timed_out=timed_out,
         capture_truncated=overflowed[0],
+        left_processes=left_behind[0],
     )
+
+
+def _group_has_members(child: subprocess.Popen) -> bool:
+    """Whether anything is still running in the child's process group.
+
+    Signal 0 is the existence check: it delivers nothing and reports whether
+    there was anyone to deliver to. The leader has been waited on by the time
+    this is asked, so it is no longer a member of its own group and a positive
+    answer means the script left something behind.
+
+    False on Windows and on any platform without process groups, because there
+    is nothing to ask rather than because the answer is no.
+    """
+    if os.name == "nt":
+        return False
+    try:
+        os.killpg(child.pid, 0)
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _decode(raw: bytes | str | None) -> str:

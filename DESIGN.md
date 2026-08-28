@@ -238,7 +238,9 @@ what is checked: moving the file changes `__file__`, so a check run from
 somewhere else describes a run nobody will perform. What that costs is the
 artifact — a cell may rewrite the path it was run from — and the answer is to
 put the published bytes back and refuse the verdict, rather than to check a
-file no reader will run. A kernel evaluates a trailing expression and reports its
+file no reader will run — and to stop whatever the run started before reading
+the file back, since a descendant that outlives the script was free to rewrite
+the artifact after the verdict had been drawn on it. A kernel evaluates a trailing expression and reports its
 value where a plain script discards it, and a construct that is legal at the
 head of a cell can be illegal partway down a file. Both verdicts are published;
 an export reproduces only when both hold.
