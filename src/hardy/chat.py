@@ -651,6 +651,13 @@ class MathematicsSession:
         # This session's own tool use, in memory only: it describes behaviour,
         # not the workspace, so it belongs in neither manifest.
         self._save_streak: dict[str, int] = {}
+        # Streak key -> sha256 hex digests of sources that passed `check_lean`
+        # on that path this turn. A green check on a path lifts the brake only
+        # for the source it actually checked, not for whatever the model saves
+        # next -- `check_lean` elaborates the source it is handed, never the
+        # file, so a save of a *different* source has not been shown to fix
+        # anything and must still count against the streak.
+        self._checked_green: dict[str, set[str]] = {}
         self._tool_tally: dict[str, list[int]] = {"save_lean": [0, 0], "check_lean": [0, 0]}
         # Whether a *completed* `inspect_declarations` batch has run since the
         # last axiom request. `_searched_since_request`, below, carries what it
@@ -1733,8 +1740,16 @@ class MathematicsSession:
         except WorkspacePathError:
             return path
 
-    def _streak_refusal(self, path: str) -> ToolResult | None:
-        if self._save_streak.get(self._streak_key(path), 0) < self.SAVE_STREAK_LIMIT:
+    def _streak_refusal(self, path: str, source: str) -> ToolResult | None:
+        key = self._streak_key(path)
+        if self._save_streak.get(key, 0) < self.SAVE_STREAK_LIMIT:
+            return None
+        # The brake promises "until `check_lean` passes on this path" -- so it
+        # is lifted only by a green check of this exact source, not by any
+        # `check_lean` call that happens to land on the same path. A save of
+        # something else has not been shown to fix anything.
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        if digest in self._checked_green.get(key, ()):
             return None
         return ToolResult(
             False,
@@ -1745,7 +1760,7 @@ class MathematicsSession:
         )
 
     def _save_lean(self, path: str, source: str) -> ToolResult:
-        refusal = self._streak_refusal(path)
+        refusal = self._streak_refusal(path, source)
         if refusal is not None:
             return refusal
         result = self._save_lean_unbraked(path, source)
@@ -3022,9 +3037,15 @@ class MathematicsSession:
     def _tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if name == "check_lean":
             path = str(arguments.get("path") or DEFAULT_LEAN_PATH)
-            result = self._check_lean(path, str(arguments["source"]))
+            source = str(arguments["source"])
+            result = self._check_lean(path, source)
             if result.ok:
-                self._save_streak.pop(self._streak_key(path), None)
+                # Remembered by digest, not used to clear the streak outright:
+                # see `_streak_refusal` for why a green check only ever lifts
+                # the brake for the exact source it checked.
+                key = self._streak_key(path)
+                digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+                self._checked_green.setdefault(key, set()).add(digest)
             return result
         if name == "save_lean":
             return self._save_lean(str(arguments.get("path") or DEFAULT_LEAN_PATH), str(arguments["source"]))
@@ -3776,8 +3797,10 @@ class MathematicsSession:
         # Cleared here rather than in `cancel`: a turn cancelled during the
         # previous exchange must not silently disarm this one's tool gate.
         self._cancelled.clear()
-        # A new turn is a new chance; the tally is not reset, the streak is.
+        # A new turn is a new chance; the tally is not reset, the streak is --
+        # and with it, which sources a `check_lean` this turn has vouched for.
         self._save_streak.clear()
+        self._checked_green.clear()
         # Same reasoning, and the same thread: what the last exchange reported
         # says nothing about whether this one will.
         with self._spend:
