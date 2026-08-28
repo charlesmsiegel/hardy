@@ -265,6 +265,15 @@ def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None
 # exists to avoid.
 PROBE_SECONDS = 600.0
 
+# Shown in `checked` when `_strip_hypotheses` refuses a statement that had
+# hypotheses to strip. Distinct wording from every vacuity warning, so a
+# reader -- and a test -- cannot mistake "the question was never asked" for
+# "the question was asked and came back concerning".
+VACUITY_STRIP_REFUSED = (
+    "Hypothesis stripping was not attempted: the statement's binders could "
+    "not be read, so the vacuity question was not asked."
+)
+
 
 def _probe_suggestion(result: Any, line: int) -> str:
     """What `exact?` offered on `line`, if anything.
@@ -314,19 +323,122 @@ def _mentions(name: str, text: str) -> bool:
     return re.search(rf"(?<![\w.']){re.escape(name)}(?![\w'])", text) is not None
 
 
-def _strip_hypotheses(statement: str) -> str | None:
-    """`statement` with its hypotheses removed, or None if it has none.
+_TOP_LEVEL_QUANTIFIER_SYMBOLS = "∀∃Σλ"
 
-    What the vacuity probe elaborates. A binder is a hypothesis unless it is
-    an instance, its type is a universe or a known data type, its type is
-    exactly a name bound earlier in the same statement, or it is depended on
-    -- named in the conclusion, or in the type of another binder that is
-    kept. An arrow premise always is a hypothesis. Returns None when there is
-    nothing to strip -- no leading `∀`/`forall`, or one with nothing after a
-    top-level comma -- so the caller probes the statement whole, exactly as
-    it was given.
+
+def _first_top_level_quantifier(text: str) -> int:
+    """Index in `text` of the first `∀`/`∃`/`∃!`/`Σ`/`λ`/`fun` outside every
+    bracket, or `len(text)` if none occurs.
+
+    Marks where an arrow premise chain has to stop. `∃ f : α → Prop, …`
+    holds an arrow that belongs to the bound variable's own type, not a
+    premise separator -- splitting on it is the bug behind finding #3's
+    first and fourth rows. Nothing at or past the first top-level quantifier
+    is a candidate premise boundary, whatever punctuation it contains.
+    """
+    depth = 0
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif depth == 0:
+            if character in _TOP_LEVEL_QUANTIFIER_SYMBOLS:
+                return index
+            before_ok = index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_")
+            after = index + 3
+            after_ok = after >= len(text) or not (text[after].isalnum() or text[after] == "_")
+            if before_ok and after_ok and text.startswith("fun", index):
+                return index
+        index += 1
+    return len(text)
+
+
+def _split_top_before(text: str, separator: str, limit: int) -> list[str]:
+    """`text` split on `separator` outside every bracket, using only splits
+    that start strictly before `limit`.
+
+    Everything from `limit` on -- see `_first_top_level_quantifier` -- lands
+    unsplit in the final part, even if it contains `separator` itself.
+    """
+    parts, depth, start = [], 0, 0
+    index = 0
+    while index < limit:
+        character = text[index]
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif depth == 0 and text.startswith(separator, index):
+            parts.append(text[start:index])
+            start = index + len(separator)
+            index = start
+            continue
+        index += 1
+    parts.append(text[start:])
+    return parts
+
+
+def _split_binder_colon(inner: str) -> tuple[str, str] | None:
+    """A binder's inner text split on the first `:` that introduces its
+    type, or None if it has none.
+
+    Skips `:=` (a default value) and `::` (list cons, or a namespace
+    separator) and any colon inside a further bracket, so `(hp:Nat.Prime 2)`
+    -- no space around the colon -- is read as a hypothesis rather than,
+    under a literal `" : "` search, as an untyped binder that is always
+    kept.
+    """
+    depth = 0
+    index = 0
+    while index < len(inner):
+        character = inner[index]
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif character == ":" and depth == 0:
+            before = inner[index - 1] if index > 0 else ""
+            after = inner[index + 1] if index + 1 < len(inner) else ""
+            if after == ":":
+                index += 2
+                continue
+            if before == ":" or after == "=":
+                index += 1
+                continue
+            return inner[:index].strip(), inner[index + 1:].strip()
+        index += 1
+    return None
+
+
+def _strip_hypotheses(statement: str) -> str | None:
+    """`statement` with its hypotheses removed, or None if it has none, or if
+    reading its binders could not be trusted.
+
+    What the vacuity probe elaborates, so a wrong answer here is not a
+    missing warning but a false one shown to a human relying on it -- this
+    fails closed rather than guess. Refuses (returns None) when a
+    strict-implicit binder (`⦃…⦄`) appears anywhere, since `_BINDER` has no
+    alternative for that bracket and would silently drop it and its name,
+    and when `binders` holds text `_BINDER` did not consume -- a bare
+    binder written with no wrapping bracket at all (`∀ n : ℕ, …`), or one
+    nested more deeply than `_BINDER`'s one level of parenthesis nesting
+    handles. A binder is a hypothesis unless it is an instance, its type is
+    a universe or a known data type, its type is exactly a name bound
+    earlier in the same statement, or it is depended on -- named in the
+    conclusion, or in the type of another binder that is kept. An arrow
+    premise before the statement's first top-level quantifier is always a
+    hypothesis; an arrow at or after that quantifier is left untouched,
+    because it sits inside the quantifier's own binder type rather than
+    separating premises. Returns None when there is nothing to strip -- no
+    leading `∀`/`forall`, or one with nothing after a top-level comma -- so
+    the caller probes the statement whole, exactly as it was given.
     """
     text = " ".join(statement.split())
+    if "⦃" in text or "⦄" in text:
+        return None
     binders, body = "", text
     for keyword in ("∀ ", "forall "):
         if text.startswith(keyword):
@@ -336,7 +448,11 @@ def _strip_hypotheses(statement: str) -> str | None:
                 return None
             binders, body = parts[0], ", ".join(parts[1:])
             break
-    premises = _split_top(body, " → ")
+    consumed = "".join(_BINDER.findall(binders))
+    if "".join(consumed.split()) != "".join(binders.split()):
+        return None
+    quantifier_index = _first_top_level_quantifier(body)
+    premises = _split_top_before(body, " → ", quantifier_index)
     conclusion = premises[-1].strip()
     if not binders and len(premises) == 1:
         return None
@@ -346,9 +462,9 @@ def _strip_hypotheses(statement: str) -> str | None:
     bound = set()
     for group in _BINDER.findall(binders):
         inner = group[1:-1]
-        names, colon, typ = inner.partition(" : ")
-        typ = typ.strip()
-        keep = group[0] == "[" or not colon or bool(_DATA_TYPE.match(typ)) or typ in bound
+        split = _split_binder_colon(inner)
+        names, typ = (inner, "") if split is None else split
+        keep = group[0] == "[" or split is None or bool(_DATA_TYPE.match(typ)) or typ in bound
         parsed.append([group, names.split(), typ, keep])
         if keep:
             bound.update(names.split())
@@ -1106,9 +1222,12 @@ class MathematicsSession:
 
         Run only after `_assumption_probe` returned no refusal, as its own
         elaboration: nothing here needs the axiom in scope, and the first
-        file's layout is pinned by its tests. A statement the stripper cannot
-        read is not probed, and says so. When every binder turns out to be
-        data -- nothing was actually stripped -- `PROBES` is left out of the
+        file's layout is pinned by its tests. A statement `_strip_hypotheses`
+        refuses to read is not probed, and says so -- but only when there was
+        something to say no to: a plain statement with no leading `∀`/`forall`
+        and no top-level `→` never had hypotheses in the first place, and
+        stays silent exactly as it always has. When every binder turns out to
+        be data -- nothing was actually stripped -- `PROBES` is left out of the
         file `_vacuity_source` builds: `_assumption_probe` already ran them
         against this exact text and failed, so running them again would only
         risk describing that same, unstripped statement as proved "with every
@@ -1124,6 +1243,15 @@ class MathematicsSession:
         normalised = normalise_lean(statement).strip()
         stripped = _strip_hypotheses(normalised)
         if stripped is None:
+            # A statement with a leading quantifier or a top-level arrow did
+            # have hypotheses to strip, and the refusal means Hardy could not
+            # read them safely -- the escape hatch spec section 5b names,
+            # rather than silence that would look identical to "nothing to
+            # strip". A bare statement (`True`, the trivial-conjunction
+            # constant used in these tests) never had anything to strip, and
+            # stays silent as before.
+            if normalised.startswith("∀ ") or normalised.startswith("forall ") or len(_split_top(normalised, " → ")) > 1:
+                return VACUITY_STRIP_REFUSED
             return ""
         hypotheses_removed = stripped != normalised
         source, tactics = _vacuity_source(stripped, include_probes=hypotheses_removed)
