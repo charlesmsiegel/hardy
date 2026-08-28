@@ -414,6 +414,11 @@ class MathematicsSession:
         # not the workspace, so it belongs in neither manifest.
         self._save_streak: dict[str, int] = {}
         self._tool_tally: dict[str, list[int]] = {"save_lean": [0, 0], "check_lean": [0, 0]}
+        # Every name a *completed* `inspect_declarations` batch asked about
+        # this session, and whether one has run since the last axiom request.
+        self._inspected: list[tuple[str, bool]] = []
+        self._inspected_since_request = False
+        self._searched_since_request: list[str] = []
         # State first: the runtime is built from the system prompt, which embeds
         # the manifest, and it resumes the provider thread the local state
         # remembers.
@@ -2670,6 +2675,18 @@ class MathematicsSession:
             return ToolResult(True, f"recorded mapping: {entry}")
         if name == "request_assumption":
             proposal = {key: str(arguments[key]) for key in ("formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason")}
+            if self.search is not None and not self._inspected_since_request:
+                # Three axioms were approved on a failing run with the reason
+                # "Mathlib does not expose this" and nothing had been searched
+                # for. When search is available, a request is refused until it
+                # has actually been used since the last request -- the reason
+                # given in `reason` is free text and proves nothing on its own.
+                return ToolResult(
+                    False,
+                    "no `inspect_declarations` has been run since the last assumption "
+                    "request. Look for the result before assuming it: pass several "
+                    "candidate spellings and let Lean say which exist.",
+                )
             # Both gates run before `confirm`. Nobody should be asked to approve
             # a statement Hardy has not read, and nobody should be asked at all
             # about one that could never be declared or that Lean proves itself.
@@ -2687,11 +2704,17 @@ class MathematicsSession:
             # unchecked statement is owed the word "unchecked".
             proposal["checked"] = caveat or "Lean elaborated this statement and could not prove it."
             proposal["goal"] = self.goal()
+            proposal["searched"] = list(self._searched_since_request)
+            # The request is spent whether it is approved or refused: either
+            # way the human has now seen this search, and the next request
+            # owes them a fresh one.
+            self._inspected_since_request = False
+            self._searched_since_request = []
             if not self.confirm(proposal):
                 return ToolResult(False, "The user declined this assumption. Do not use it.")
-            # `checked` and `goal` describe this one request, not the
-            # assumption, and have no business in the durable record.
-            record = {key: value for key, value in proposal.items() if key not in {"checked", "goal"}}
+            # `checked`, `goal` and `searched` describe this one request, not
+            # the assumption, and have no business in the durable record.
+            record = {key: value for key, value in proposal.items() if key not in {"checked", "goal", "searched"}}
             record["status"] = "user-approved"
             if not any(item["formal_name"] == record["formal_name"] for item in self.state["assumptions"]):
                 self.state["assumptions"].append(record)
@@ -3222,7 +3245,26 @@ class MathematicsSession:
         names = arguments.get("names") or []
         if not isinstance(names, list):
             return ToolResult(False, "names must be a list of declaration names")
-        return self.search.inspect_declarations([str(item) for item in names])
+        result = self.search.inspect_declarations([str(item) for item in names])
+        if result.ok:
+            self._note_inspected([str(item) for item in names], result.output)
+        return result
+
+    def _note_inspected(self, names: list[str], output: str) -> None:
+        """Remember what a completed inspection asked, and what it found."""
+        resolved: set[str] = set()
+        try:
+            payload = json.loads(output[output.index("{"):])
+            resolved = {item["name"] for item in payload.get("resolved", [])}
+        except (ValueError, KeyError, TypeError):
+            # A hint line with no JSON after it, or JSON in an unexpected
+            # shape -- either way, nothing was resolved as far as this can
+            # tell, and every name below is recorded as not found.
+            pass
+        for name in names:
+            self._inspected.append((name, name in resolved))
+            self._searched_since_request.append(f"{name} {'✓' if name in resolved else '✗'}")
+        self._inspected_since_request = True
 
     def _cas_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """The computer algebra tools. Errors are answers, not exceptions.
