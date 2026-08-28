@@ -80,6 +80,24 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   language is out of scope. Macro definition bodies are excluded, so a `\begin{theorem}`
   inside a `\newcommand` nobody expands asserts nothing — without that the first false
   positive would be a document that was honest.
+- **Known limit — the theorem gate reads environments, not claims.** Two routes past
+  it are open by design, both observed on live runs of the same problem: a document
+  that declares no `\newtheorem` at all and asserts its result in ordinary prose owes
+  nothing, and so does one that puts the same claim in a `lemma` environment, which
+  the gate exempts. Neither is an oversight. The `lemma` exemption is load-bearing —
+  it is what keeps scaffolding free, mirroring the Lean-side split where a `theorem`
+  is what you would report and a `lemma` is what you would not — and prose is out of
+  reach on principle: whether a paragraph asserts a result is judgment, these gates
+  are deliberately mechanical, and a rule a model can talk its way past is not a
+  rule. What covers both routes is the provenance banner, which prints how much Lean
+  checked and how much was assumed on page one of every compile regardless of how
+  the body phrases its claims — on both observed runs it told the reader the truth
+  the gate never saw. So a document that moves its claims into prose or `lemma`
+  environments thins its own writeup; it does not defeat the banner. If that ever
+  proves insufficient, the stronger answer is the staged pipeline's `known_gaps` — a
+  stated list of what the work does not establish, which the banner could
+  cross-check — brought across to the interactive session, not a wider environment
+  scan.
 - **Now (implemented):** only a compile of the writeup itself publishes anything. Saving
   a fragment the root does not `\input` yet is checked through a probe document carrying
   the real preamble — that answers whether the fragment is sound and nothing about the

@@ -66,6 +66,24 @@ def test_features_claims_the_faithfulness_gate_as_implemented() -> None:
         assert property_ in bullet, f'the gate is claimed without saying it is {property_}'
 
 
+def test_features_records_what_the_theorem_gate_does_not_cover() -> None:
+    """Two live runs on the same problem walked past the theorem gate -- one
+    asserted its result in ordinary prose with no theorem environment at all,
+    the other put the same claim in a `lemma` environment, which is exempt.
+    Both routes are open by design, and the provenance banner is what covers
+    them. That is a decision, and FEATURES.md must record it beside the other
+    scanner limits rather than leave it to be rediscovered as a bug.
+    """
+    features = (ROOT / 'FEATURES.md').read_text(encoding='utf-8')
+    start = features.index('Known limit — the theorem gate reads environments')
+    bullet = features[start:features.index('\n- ', start)]
+
+    for route in ('prose', '`lemma`'):
+        assert route in bullet, f'the {route} route past the gate is not named'
+    assert 'banner' in bullet, 'the bullet does not say what covers the rest'
+    assert 'known_gaps' in bullet, 'the stronger answer is not named'
+
+
 def test_the_readme_does_not_promise_isolation_codex_cannot_give() -> None:
     """AGENTS.md requires README.md, DESIGN.md, FEATURES.md and
     ARCHITECTURE.html to stay consistent, and the README is what a user reads
