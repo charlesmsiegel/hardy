@@ -111,6 +111,18 @@ def test_the_cas_line_sits_between_the_lean_project_and_the_warning(tmp_path: Pa
     assert rows[3] == ("hint", "Computer algebra: sympy 1.12")
 
 
+def test_the_fresh_thread_line_appears_only_when_the_flag_was_given(tmp_path: Path):
+    """The ordinary session owes the user no line about a thing it did not do.
+    A session that DID start on a fresh thread must say so: the user who asked
+    for it knows, but the next person reading the terminal does not."""
+    config = settings(tmp_path)
+    assert banner.lines(config) == banner.lines(config, fresh_thread="")
+
+    detail = "started fresh (--fresh-thread); the prior conversation was discarded"
+    rows = banner.lines(config, fresh_thread=detail)
+    assert ("hint", f"Conversation: {detail}") in rows
+
+
 def test_the_project_instructions_line_appears_only_when_there_are_some(tmp_path: Path):
     """A project with no `AGENTS.md` is the ordinary case and owes the user no
     line about it. A session that IS carrying the project's instructions must

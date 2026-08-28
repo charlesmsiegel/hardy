@@ -104,6 +104,7 @@ def run(
         cas=getattr(session, "cas", None),
         cas_detail=getattr(session, "cas_detail", ""),
         project_context=getattr(session, "project_context_detail", ""),
+        fresh_thread=getattr(session, "fresh_thread_detail", ""),
     ):
         ui.write(text, style=style)
     out("")

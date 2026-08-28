@@ -132,6 +132,31 @@ def test_chat_calls_prepare_layout_before_building_the_cas_runtime(tmp_path, mon
     assert ".hardy/" not in root_ignore, "unignore_tooling must have run"
 
 
+def test_chat_hands_the_fresh_thread_flag_to_the_session(tmp_path, monkeypatch):
+    """`--fresh-thread` is a per-run act with no config key, so the flag's only
+    road to `MathematicsSession` is `_chat` reading it off the parsed args --
+    the parser test elsewhere cannot notice this wire being cut."""
+    import io
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(cli.cas_tools, "build_runtime", lambda **kwargs: (None, ""))
+    monkeypatch.setattr(cli, "MathematicsSession", FakeMathematicsSession)
+    monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
+
+    FakeMathematicsSession.instances = []
+    code = cli._chat(settings(tmp_path), plain=True, args=SimpleNamespace(fresh_thread=True))
+
+    assert code == 0
+    assert FakeMathematicsSession.instances[0].kwargs["fresh_thread"] is True
+
+    # And absent args -- a direct caller, or a path with no flag -- means no
+    # discard: the default must be the resuming behaviour every session has.
+    monkeypatch.setattr("sys.stdin", io.StringIO("/exit\n"))
+    FakeMathematicsSession.instances = []
+    cli._chat(settings(tmp_path), plain=True)
+    assert FakeMathematicsSession.instances[0].kwargs["fresh_thread"] is False
+
+
 def test_chat_wraps_a_schema_error_through_the_given_parser(tmp_path, monkeypatch, capsys):
     """The schema-1 refusal is deliberate; how it reaches the user is not.
 

@@ -591,7 +591,7 @@ def _vacuity_source(stripped: str, *, include_probes: bool = True) -> tuple[str,
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -766,8 +766,19 @@ class MathematicsSession:
         # total rather than restarting it. Read before the first turn can add
         # to it.
         self.usage = self._recover_spend()
+        # `--fresh-thread`: discard the resumable provider thread, before the
+        # runtime is built from it. A per-run act asked for by a flag, never a
+        # setting -- "always start fresh" would silently discard the
+        # conversation on every launch. Everything else stays: the transcript
+        # is the versioned record of the mathematics and keeps going, the
+        # ledger keeps counting (a new conversation is not a new budget), and
+        # nothing in the workspace is deleted. Only the thread id in
+        # `.local/state.json`, machine-local and disposable by design, goes.
+        self.fresh_thread_detail = self._discard_thread() if fresh_thread else ""
         # The runtime needs a way to reach the tools, and the tools need the
         # workspace, so it is built here rather than handed in ready-made.
+        # After a discard `_carried_thread` finds nothing, which is the point:
+        # the fresh session takes the same road every first-ever session takes.
         self.runtime = self._build(session_id=self._carried_thread())
         self._sync_provenance()
         self._sync_project_context()
@@ -4271,6 +4282,43 @@ class MathematicsSession:
         if self._transcript_identity(length)["transcript_digest"] != self.local.get("transcript_digest"):
             return None
         return str(thread)
+
+    def _discard_thread(self) -> str:
+        """Drop the resumable provider thread, and say what that amounted to.
+
+        The returned sentence is the banner's and `/status`'s: a user who asked
+        for `--fresh-thread` knows, but the next person reading the terminal
+        does not.
+
+        Only a thread `_carried_thread` would actually have resumed counts as
+        discarded. A workspace with none -- a first open, a fresh clone, a
+        thread whose transcript no longer fits it -- starts empty on every
+        open, so the flag changed nothing and the transcript gets no event,
+        exactly as an unchanged model or an unchanged `AGENTS.md` appends
+        nothing. Asking for a discard with nothing to discard is a no-op, not
+        a refusal: the condition the user asked for is the condition they get.
+
+        When there is one, the local state is cleared FIRST and the event
+        appended second, the reverse of `_sync_project_context`'s order and
+        for the same crash-shaped reason: interrupted between the two, this
+        way loses only the event -- the next open starts empty like any fresh
+        clone, which the record already accounts for. The other way round, the
+        record would say the conversation was discarded while the next open
+        quietly resumed it.
+
+        The event carries no thread id. The id is machine-local by design --
+        the reason it lives in `.local/state.json` and not the record -- and
+        the boundary the event marks is its own position in the transcript:
+        turns above it were produced on a conversation the turns below have no
+        memory of.
+        """
+        if self._carried_thread() is None:
+            return "started fresh (--fresh-thread); there was no prior conversation to discard"
+        for key in (THREAD_KEY, "transcript_length", "transcript_digest"):
+            self.local.pop(key, None)
+        self._save_local()
+        self._record({"type": "thread", "reason": "fresh"})
+        return "started fresh (--fresh-thread); the prior conversation was discarded"
 
     def _remember_thread(self) -> None:
         """Record the provider thread, and what the transcript was when it was.

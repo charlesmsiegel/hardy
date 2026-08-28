@@ -27,7 +27,7 @@ def status_line(config: Any) -> str:
     return f"Project: {config.project}  ({config.layout.problem})"
 
 
-def lines(config: Any, *, cas: Any = None, cas_detail: str = "", project_context: str = "") -> list[tuple[str, str]]:
+def lines(config: Any, *, cas: Any = None, cas_detail: str = "", project_context: str = "", fresh_thread: str = "") -> list[tuple[str, str]]:
     """`cas` is the runtime (or `None` if no backend was discovered) and
     `cas_detail` is `cas_tools.build_runtime`'s second return value: a
     version string when `cas` is not `None`, the reason it is `None`
@@ -58,6 +58,12 @@ def lines(config: Any, *, cas: Any = None, cas_detail: str = "", project_context
     # `setting_sources=[]` refuses.
     if project_context:
         rows.append(("hint", f"Project instructions: {project_context}"))
+    # Only when `--fresh-thread` was given. The ordinary session owes the user
+    # no line about a thing it did not do, but a discarded conversation must be
+    # said out loud: the user who asked knows, the next person reading the
+    # terminal does not.
+    if fresh_thread:
+        rows.append(("hint", f"Conversation: {fresh_thread}"))
     rows.append(("warning", warning))
     rows.append(
         (

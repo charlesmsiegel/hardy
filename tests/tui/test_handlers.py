@@ -293,3 +293,19 @@ async def test_status_says_nothing_about_instructions_when_there_are_none(ui, se
     session = SimpleNamespace(project_context_detail="")
     await handlers.handle_status(ui, "", State(config=settings, session=session))
     assert "Instructions" not in ui.text
+
+
+async def test_status_says_the_session_started_on_a_fresh_thread(ui, settings):
+    """The banner says it once at startup; mid-conversation, `/status` is the
+    only place other than the model to ask whether the conversation remembers
+    the workspace's earlier turns."""
+    detail = "started fresh (--fresh-thread); the prior conversation was discarded"
+    session = SimpleNamespace(fresh_thread_detail=detail)
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert detail in ui.text
+
+
+async def test_status_says_nothing_about_the_thread_on_an_ordinary_session(ui, settings):
+    session = SimpleNamespace(fresh_thread_detail="")
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+    assert "Conversation" not in ui.text
