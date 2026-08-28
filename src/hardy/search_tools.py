@@ -28,7 +28,7 @@ from typing import Any
 
 from .config import Config
 from .domain import RunLimits
-from .lean import LeanService, environment_identity
+from .lean import DeclarationInspection, LeanService, environment_identity
 from .models import ToolResult
 from .modules import ModuleIndex
 from .retrieval import PremiseRetriever, build_retriever
@@ -119,6 +119,17 @@ SEARCH_TOOL_NAMES = tuple(spec["function"]["name"] for spec in SEARCH_TOOLS)
 # observation elsewhere; this bounds the work before it is done.
 MAX_NAMES = 20
 
+# What a completed batch with nothing resolved is told. It IS evidence -- about
+# the spellings. The failing run inspected `IsCyclic`, `Commute` and
+# `Subgroup.center` in three batches, got nothing back each time, and wrote
+# "Mathlib does not expose this" into three axiom requests.
+SPELLINGS_HINT = (
+    "none of these names exist under these spellings. That is evidence about the "
+    "spellings, not about the result: try qualified or alternate forms "
+    "(`Subgroup.center`, `IsPGroup.center_nontrivial`) before concluding anything "
+    "is absent from Mathlib.\n"
+)
+
 
 def _did_not_finish(value: Any) -> str:
     """Why this answer is not a report about Mathlib, or "".
@@ -176,9 +187,25 @@ class SearchToolRuntime:
                 False,
                 f"inspect_declarations takes at most {MAX_NAMES} names; {len(names)} were given",
             )
-        return self._answer(
-            lambda: self.service.inspect_declarations(tuple(str(name) for name in names))
-        )
+        # `_answer` only hands back rendered text, and the decision below needs
+        # the answer itself: `answer.resolved` empty is what makes a completed
+        # batch worth the hint, and nothing in `result.output` says that any
+        # more reliably than re-parsing the JSON `_answer` already built.
+        answer = None
+
+        def call() -> DeclarationInspection:
+            nonlocal answer
+            answer = self.service.inspect_declarations(tuple(str(name) for name in names))
+            return answer
+
+        result = self._answer(call)
+        # A completed batch that resolved nothing is not a stopped run --
+        # `_did_not_finish` already refused that case -- but it still is not
+        # ordinary silence: it is telling the model about its spellings, not
+        # about Mathlib.
+        if result.ok and answer is not None and not answer.resolved:
+            return ToolResult(True, SPELLINGS_HINT + result.output)
+        return result
 
     def search_modules(self, query: str, limit: int = 20) -> ToolResult:
         """Module names, from the package index rather than from Lean.

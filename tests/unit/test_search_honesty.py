@@ -70,3 +70,55 @@ def test_the_payload_travels_with_the_refusal() -> None:
     result = _answer(Answer(success=False, timed_out=True))
 
     assert '"results": []' in result.output
+
+
+class Inspection:
+    """Enough of a `DeclarationInspection` for the façade to judge it."""
+
+    def __init__(self, *, resolved=(), unavailable=(), success=True, timed_out=False):
+        self.resolved = resolved
+        self.unavailable = unavailable
+        self.success = success
+        self.timed_out = timed_out
+
+    def model_dump_json(self) -> str:
+        return (
+            f'{{"resolved": [], "unavailable": {list(self.unavailable)!r}, '
+            f'"success": {str(self.success).lower()}}}'
+        ).replace("'", '"')
+
+
+class Service:
+    def __init__(self, answer):
+        self.answer = answer
+
+    def inspect_declarations(self, names):
+        return self.answer
+
+
+def _inspect(answer, names=("IsCyclic",)):
+    runtime = search_tools.SearchToolRuntime.__new__(search_tools.SearchToolRuntime)
+    runtime.service = Service(answer)
+    return runtime.inspect_declarations(list(names))
+
+
+def test_a_stopped_inspection_is_refused_not_reported_as_absence() -> None:
+    result = _inspect(Inspection(unavailable=("IsCyclic",), success=False, timed_out=True))
+
+    assert not result.ok
+    assert "NOT a report that nothing matched" in result.output
+
+
+def test_a_completed_inspection_that_resolved_nothing_hints_at_spellings() -> None:
+    result = _inspect(Inspection(unavailable=("IsCyclic",)))
+
+    assert result.ok
+    assert result.output.startswith(search_tools.SPELLINGS_HINT)
+    assert '"unavailable": ["IsCyclic"]' in result.output
+
+
+def test_a_completed_inspection_that_resolved_something_has_no_hint() -> None:
+    result = _inspect(Inspection(resolved=("x",)))
+
+    assert result.ok
+    assert search_tools.SPELLINGS_HINT not in result.output
