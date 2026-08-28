@@ -62,7 +62,7 @@ from .lean import (
     DeclarationSearch,
     LeanDiagnostic,
 )
-from .workspace import QUALIFIED, QUALIFIED_NAME, WRAPPER, parse_imports, strip_comments
+from .workspace import ANY_NAME, QUALIFIED_NAME, WRAPPER, parse_imports, strip_comments
 
 # One declaration head. The keyword list is Lean's surface grammar for named
 # declarations; `example` is deliberately absent (anonymous by construction)
@@ -74,18 +74,25 @@ _KEYWORD = r"theorem|lemma|abbrev|structure|class(?:\s+inductive)?|inductive|ins
 # `workspace.WRAPPER` reads through `set_option x y in`, `open Foo in` and the
 # rest of Lean's same-line command scoping, for the same reason it matters
 # there: a declaration behind one is a declaration the sources really ship.
+# Multiline (`(?m)`, matched over the whole blanked source) for the reason
+# `workspace.DECLARATION`'s comment states: Lean allows a newline between the
+# keyword and the name, and a line-oriented match loses the declaration
+# entirely. The same crossing lets an attribute sit on its own line.
 DECLARATION = re.compile(
-    rf"^\s*{WRAPPER}{_ATTRIBUTES}({_MODIFIERS})({_KEYWORD})\s+({QUALIFIED_NAME})"
+    rf"(?m)^[ \t]*{WRAPPER}{_ATTRIBUTES}({_MODIFIERS})({_KEYWORD})\s+({QUALIFIED_NAME})"
 )
 
 # Scope lines. `namespace Foo.Bar` opens one scope per component, because that
 # is how Lean closes them: `end Foo.Bar` closes both while `end Bar` closes
-# only the inner one. A `section` may carry a name and may be `noncomputable`;
-# a `mutual` block ends with a bare `end` that must not pop anything else.
-_NAMESPACE = re.compile(rf"^\s*namespace\s+({QUALIFIED})\s*$")
+# only the inner one. Components are read with `ANY_NAME` rather than split on
+# `.`, because `namespace «my scope»` is one component whose name may contain
+# anything. A `section` may carry a name and may be `noncomputable`; a
+# `mutual` block ends with a bare `end` that must not pop anything else.
+_NAMESPACE = re.compile(rf"^\s*namespace\s+({QUALIFIED_NAME})\s*$")
 _SECTION = re.compile(r"^\s*(?:noncomputable\s+)?section\b")
 _MUTUAL = re.compile(r"^\s*mutual\s*$")
-_END = re.compile(rf"^\s*end(?:\s+({QUALIFIED}))?\s*$")
+_END = re.compile(rf"^\s*end(?:\s+({QUALIFIED_NAME}))?\s*$")
+_COMPONENT = re.compile(ANY_NAME)
 
 # The same bound `retrieval.py` puts on a signature a model reads, restated
 # here so this module does not import the one that imports it.
@@ -283,26 +290,35 @@ class DeclarationIndex:
         """
         found: list[tuple[str, str, str, str, int]] = []
         raw = source.splitlines()
-        # scopes holds namespace components as strings and None for any scope
+        blanked_source = strip_comments(source)
+        blanked = blanked_source.splitlines()
+        # First pass: the namespace prefix in effect at each line. scopes
+        # holds namespace components as strings and None for any scope
         # (`section`, `mutual`) that contributes nothing to a name.
         scopes: list[str | None] = []
-        for number, line in enumerate(strip_comments(source).splitlines(), start=1):
+        prefixes: list[tuple[str, ...]] = []
+        for line in blanked:
+            prefixes.append(tuple(part for part in scopes if part is not None))
             opened = _NAMESPACE.match(line)
             if opened:
-                scopes.extend(opened.group(1).split("."))
-                continue
-            if _SECTION.match(line) or _MUTUAL.match(line):
+                scopes.extend(_COMPONENT.findall(opened.group(1)))
+            elif _SECTION.match(line) or _MUTUAL.match(line):
                 scopes.append(None)
-                continue
-            closed = _END.match(line)
-            if closed:
-                depth = len(closed.group(1).split(".")) if closed.group(1) else 1
-                del scopes[max(0, len(scopes) - depth) :]
-                continue
-            head = DECLARATION.match(line)
-            if head is None or "private" in head.group(1):
+            else:
+                closed = _END.match(line)
+                if closed:
+                    depth = len(_COMPONENT.findall(closed.group(1))) if closed.group(1) else 1
+                    del scopes[max(0, len(scopes) - depth) :]
+        # Second pass: declarations, over the whole blanked source rather than
+        # line by line -- Lean allows a newline between the keyword and the
+        # name, and `workspace.DECLARATION`'s comment records losing exactly
+        # those. The prefix is taken at the *keyword's* line, which is also
+        # the line the record reports and the signature starts from.
+        for head in DECLARATION.finditer(blanked_source):
+            if "private" in head.group(1):
                 continue
             written = head.group(3)
+            number = blanked_source.count("\n", 0, head.start(2)) + 1
             # `_root_.` escapes every open namespace -- that is what it is for
             # -- so the prefix is dropped along with the marker. Mathlib's own
             # `Sylow.lean` declares `_root_.IsPGroup.toSylow` inside
@@ -311,13 +327,14 @@ class DeclarationIndex:
             if written.startswith("_root_."):
                 name = written[len("_root_.") :]
             else:
-                prefix = [component for component in scopes if component is not None]
-                name = ".".join((*prefix, written))
-            found.append((name, name.lower(), _signature(raw, number - 1), module, number))
+                name = ".".join((*prefixes[number - 1], written))
+            found.append(
+                (name, name.lower(), _signature(raw, blanked, number - 1), module, number)
+            )
         return found
 
 
-def _signature(raw: list[str], start: int) -> str:
+def _signature(raw: list[str], blanked: list[str], start: int) -> str:
     """The declaration head, including the lines it was wrapped onto.
 
     Mathlib routinely puts a head's binders and result type on indented
@@ -328,28 +345,31 @@ def _signature(raw: list[str], start: int) -> str:
     wrapped goal, and the body is cut off at `_BODY`: what follows `:=` or
     `where` is the proof or the fields, not the head.
 
-    Read from the raw source rather than the comment-blanked copy, because
-    this is context for a reader and the blanked copy has holes where its
-    strings were. A comment inside a wrapped head therefore survives into the
-    signature -- cosmetic, where the blanked copy's holes were wrong.
+    The marker is *found* on the blanked copy and the cut *applied* to the
+    raw, because `theorem t : "a := b" = ... := rfl` carries the marker
+    inside a literal, and cutting at the first raw occurrence recorded a
+    malformed fragment as though it were the head. `strip_comments` blanks
+    in place, so the two texts are index-aligned line by line and the offset
+    carries over; the raw is what is shown, holes and all intact.
     """
-    taken = [raw[start].strip()]
-    length = len(taken[0])
-    for line in raw[start + 1 :]:
+    taken = [start]
+    length = len(raw[start])
+    for index in range(start + 1, len(blanked)):
         # An unindented or blank line is the next declaration, not this head;
         # a body marker means the head is already complete; and past the cap
         # there is nothing left to show anyway.
+        line = blanked[index]
         if not line.strip() or not line[:1].isspace():
             break
-        if _BODY.search(taken[-1]) or length >= _MAX_SIGNATURE_CHARACTERS:
+        if _BODY.search(blanked[taken[-1]]) or length >= _MAX_SIGNATURE_CHARACTERS:
             break
-        taken.append(line.strip())
-        length += len(line)
-    signature = " ".join(taken)
-    body = _BODY.search(signature)
+        taken.append(index)
+        length += len(raw[index])
+    joined_raw = " ".join(raw[index] for index in taken)
+    body = _BODY.search(" ".join(blanked[index] for index in taken))
     if body:
-        signature = signature[: body.start()].rstrip()
-    return signature[:_MAX_SIGNATURE_CHARACTERS]
+        joined_raw = joined_raw[: body.start()]
+    return " ".join(joined_raw.split())[:_MAX_SIGNATURE_CHARACTERS]
 
 
 def search_result(
