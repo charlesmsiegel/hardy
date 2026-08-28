@@ -400,3 +400,83 @@ def test_a_relative_dot_input_into_a_subdirectory_is_reached() -> None:
     sources = {"writeup.tex": "\\input{./sec/one}", "sec/one.tex": "x"}
 
     assert unreached_fragments(sources) == []
+
+
+# --- Text TeX never executes (`_executed`) --------------------------------
+
+
+def test_an_input_inside_iffalse_is_not_reached() -> None:
+    sources = {
+        "writeup.tex": "\\iffalse\\input{ghost}\\fi\\input{a}",
+        "a.tex": "x",
+        "ghost.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["ghost.tex"]
+
+
+def test_an_input_inside_a_macro_definition_body_is_not_reached() -> None:
+    sources = {
+        "writeup.tex": "\\newcommand{\\g}{\\input{ghost}}\\input{a}",
+        "a.tex": "x",
+        "ghost.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["ghost.tex"]
+
+
+def test_a_conditional_nested_inside_a_false_branch_does_not_close_it_early() -> None:
+    """`\\ifx\\a\\b ... \\fi` inside the `\\iffalse` branch has its own `\\fi`,
+    which closes the inner conditional, not the outer `\\iffalse` -- reading
+    the first `\\fi` seen as the match would leave the second `\\fi` and
+    `\\input{a}` looking like ordinary, executed text at the top level, which
+    they still are, but only because the whole thing is nested one level
+    deeper than a naive match would find."""
+    sources = {
+        "writeup.tex": "\\iffalse \\ifx\\a\\b \\input{x} \\fi \\fi \\input{a}",
+        "a.tex": "x",
+        "x.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["x.tex"]
+
+
+def test_an_input_after_a_closed_iffalse_is_still_reached() -> None:
+    """The false branch ends at its own matching `\\fi` -- ordinary text
+    after that `\\fi` is executed normally, `\\input` included."""
+    sources = {
+        "writeup.tex": "\\iffalse\\input{ghost}\\fi\\input{a}",
+        "a.tex": "x",
+        "ghost.tex": "never",
+    }
+
+    assert "a.tex" not in unreached_fragments(sources)
+
+
+def test_a_renewcommand_body_is_also_not_executed() -> None:
+    sources = {
+        "writeup.tex": "\\renewcommand{\\g}{\\input{ghost}}\\input{a}",
+        "a.tex": "x",
+        "ghost.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["ghost.tex"]
+
+
+def test_a_def_body_is_also_not_executed() -> None:
+    sources = {
+        "writeup.tex": "\\def\\g{\\input{ghost}}\\input{a}",
+        "a.tex": "x",
+        "ghost.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["ghost.tex"]
+
+
+def test_an_input_that_follows_a_macro_definition_on_the_same_line_is_reached() -> None:
+    sources = {
+        "writeup.tex": "\\newcommand{\\g}[2]{body}\\input{a}",
+        "a.tex": "x",
+    }
+
+    assert unreached_fragments(sources) == []
