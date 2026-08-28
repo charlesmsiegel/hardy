@@ -555,16 +555,22 @@ def outstanding(
     for name in known:
         by_leaf.setdefault(name.rsplit(".", 1)[-1], []).append(name)
     # An approved axiom carries a registry entry of its own, and it describes
-    # the assumption rather than any theorem. Exact naming still finds it if a
-    # theorem really is recorded under that name; what is excluded is the *leaf*
-    # fallback resolving `A.t` onto an axiom approved as `t`, whose label points
-    # a reader at an appendix entry instead of at the theorem.
+    # the assumption rather than any theorem: its label points a reader at an
+    # appendix entry. So a theorem is resolved against the result mappings
+    # alone -- by exact name as well as by leaf, because excluding it from the
+    # fallback only was enough until the *assumption* held the qualified name
+    # and the result held the bare one, and then the exact lookup preferred the
+    # axiom. `_theorem_obligations` still reads the whole registry, where an
+    # approved name backing an appendix environment is the point.
     assumed = {str(item["formal_name"]) for item in assumptions}
+    results = [
+        entry for entry in registry if str(entry.get("formal_name") or "") not in assumed
+    ]
     for name in sorted(theorems):
         leaf = name.rsplit(".", 1)[-1]
-        entry = covering(name, registry)
-        if entry is None and len(by_leaf[leaf]) == 1 and leaf not in assumed:
-            entry = covering(leaf, registry)
+        entry = covering(name, results)
+        if entry is None and len(by_leaf[leaf]) == 1:
+            entry = covering(leaf, results)
         if entry is None:
             owed.append(
                 Obligation(
