@@ -210,8 +210,9 @@ theorem one tactic closes is disclosed rather than refused — a lemma that fall
 `simp` is still a lemma, while a vacuous statement under a grand name must not be
 counted by the provenance banner on the same terms as a theorem with content,
 silently. The verdict expires with the statement it was established against and
-the toolchain it was asked under, and while it stands the banner, `/status`,
-`read_workspace`, and the save's own result all name the theorem and the tactic.
+the toolchain it was asked under; the save that establishes it names the theorem
+and the tactic in its own result, and while it stands the banner, `/status`,
+`read_workspace`, and the per-turn steering block carry the same fact.
 A statement that does not elaborate outside its workspace — section variables, a
 local definition — is recorded as unanswered rather than clean, told apart from
 "nothing closes it" by a `sorry` sentinel beside the probes.

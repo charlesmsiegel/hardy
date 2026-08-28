@@ -1184,8 +1184,15 @@ class MathematicsSession:
         reason: a configured Lake project whose Mathlib is edited and rebuilt
         changes what the probe's tactics can do without moving the pin or the
         manifest, and a verdict from before that rebuild is not current.
+
+        Resolved over Lake's own search path alone, not the default that
+        looks in the shared builds first, because `_probe_lean_source` runs
+        with no shared entries: a shared library that happened to provide a
+        `Mathlib.olean` would otherwise stamp the verdict with an artifact
+        the probe never imported -- kept current past a rebuild of the real
+        one, and expired by rebuilds of one it does not use.
         """
-        return f"{self._toolchain}|{self._external_stamp('Mathlib')}"
+        return f"{self._toolchain}|{self._external_stamp('Mathlib', self._lean_search_path())}"
 
     def _assumption_shape(self, formal_name: str, lean_statement: str) -> str | None:
         """Why this could never be declared, or None.
@@ -2074,8 +2081,13 @@ class MathematicsSession:
         self._search_path = tuple(found)
         return self._search_path
 
-    def _external_stamp(self, module: str) -> str:
+    def _external_stamp(self, module: str, directories: Sequence[Path] | None = None) -> str:
         """What the olean behind an import outside the workspace currently is.
+
+        `directories` narrows where the artifact may be found; the default is
+        every place a workspace import resolves -- the shared builds first,
+        then Lake's answer. `_probe_environment` passes Lake's path alone,
+        because the probe it stamps for runs with no shared entries.
 
         Mixed into the build signature so a workspace file is rebuilt when a
         module it imports from the configured Lake project is edited and
@@ -2101,7 +2113,12 @@ class MathematicsSession:
         # workspace and Lake has never heard of it, so searching Lake alone
         # stamped every such import `missing` -- a stamp that never moves, for
         # a file that does.
-        for directory in (*(build for _, build in self.shared_roots), *self._lean_search_path()):
+        searched = (
+            (*(build for _, build in self.shared_roots), *self._lean_search_path())
+            if directories is None
+            else directories
+        )
+        for directory in searched:
             candidate = directory / relative
             try:
                 if candidate.is_file():

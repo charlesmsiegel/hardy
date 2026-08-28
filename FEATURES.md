@@ -226,10 +226,13 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   exact statement it was established against and the toolchain it was asked under, and
   expires with either; each save re-asks, in the same single elaboration, every saved
   theorem whose record has expired, so a statement edited on disk or a toolchain switch
-  is caught by the next save of anything rather than of its own file. While a verdict
-  stands, the save's own result, the banner, `/status`, `read_workspace`, and the
-  per-turn steering block all name the theorem and the tactic, so the reader of any
-  surface sees the same caveat. The probe imports Mathlib alone — the workspace's
+  is caught by the next save of anything rather than of its own file. The save that
+  establishes a flag names the theorem and the tactic in its own result -- the model
+  that just wrote the statement is the one that can still strengthen it -- and while
+  the verdict stands the banner, `/status`, `read_workspace`, and the per-turn
+  steering block go on carrying it, so every surface a reader consults agrees; a
+  later save that establishes nothing new repeats none of it, because the steering
+  block already retells the model the standing flags on every turn. The probe imports Mathlib alone — the workspace's
   modules would put the theorem in scope and let `exact?` close every statement by
   citing it — so a statement resting on workspace-local definitions or section
   variables does not elaborate there: a `sorry` sentinel beside the probes tells that

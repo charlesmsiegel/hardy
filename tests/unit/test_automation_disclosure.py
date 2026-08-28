@@ -483,7 +483,9 @@ def test_a_verdict_from_before_a_mathlib_rebuild_is_reprobed(
     _register(session)
     _save(session)
     assert len(fake_lean.sources) == 1
-    monkeypatch.setattr(session, "_external_stamp", lambda module: "rebuilt-mathlib")
+    monkeypatch.setattr(
+        session, "_external_stamp", lambda module, directories=None: "rebuilt-mathlib"
+    )
     fake_lean.closes_with = "simp"
 
     _save(session, source=SOURCE + "\nlemma extra : True := by exact True.intro\n")
