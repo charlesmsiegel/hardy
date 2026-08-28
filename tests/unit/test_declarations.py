@@ -223,6 +223,32 @@ def test_a_section_does_not_disturb_the_namespace_its_end_sits_inside(tmp_path) 
     assert names == {'Nat.in_section', 'Nat.in_named_section', 'Nat.after_sections'}
 
 
+def test_a_qualified_section_closes_as_one_scope_not_two(tmp_path) -> None:
+    """`section Foo.Bar` is one scope whatever its name looks like, and
+    `end Foo.Bar` closes it alone -- counting the end's components popped the
+    section *and* the namespace around it, unprefixing everything after."""
+    root = _package(tmp_path)
+    _write(
+        root,
+        'Mathlib/QualifiedSection.lean',
+        'namespace N\n'
+        'section Foo.Bar\n'
+        'theorem in_qualified_section : True := trivial\n'
+        'end Foo.Bar\n'
+        'theorem after_qualified_section : True := trivial\n'
+        'end N\n',
+    )
+
+    index = _index(tmp_path)
+
+    assert [record.name for record in index.search('in_qualified_section', 5)] == [
+        'N.in_qualified_section'
+    ]
+    assert [record.name for record in index.search('after_qualified_section', 5)] == [
+        'N.after_qualified_section'
+    ]
+
+
 def test_every_declaration_keyword_is_recognised_with_its_modifiers(tmp_path) -> None:
     root = _package(tmp_path)
     _write(

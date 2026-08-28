@@ -307,7 +307,15 @@ class DeclarationIndex:
             else:
                 closed = _END.match(line)
                 if closed:
-                    depth = len(_COMPONENT.findall(closed.group(1))) if closed.group(1) else 1
+                    # An `end` naming components closes that many namespace
+                    # frames -- unless the innermost scope is a `section` or
+                    # `mutual` (a None entry), which is one frame whatever its
+                    # name looks like: `end Foo.Bar` after `section Foo.Bar`
+                    # closes the section alone, not the namespace around it.
+                    if not closed.group(1) or (scopes and scopes[-1] is None):
+                        depth = 1
+                    else:
+                        depth = len(_COMPONENT.findall(closed.group(1)))
                     del scopes[max(0, len(scopes) - depth) :]
         # Second pass: declarations, over the whole blanked source rather than
         # line by line -- Lean allows a newline between the keyword and the
