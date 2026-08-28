@@ -24,6 +24,7 @@ from mcp.server.fastmcp import FastMCP
 from .cas_export import ExportReport, export_session
 from .cas_tools import CasCellResult, CasStateResult, CasToolRuntime, build_runtime
 from .config import load as load_config
+from .declarations import DeclarationIndex, search_result
 from .domain import FrozenClaim, freeze_claim
 from .lean import DeclarationInspection, DeclarationSearch, LeanCheckResult, LeanService
 from .retrieval import PremiseRanking, PremiseRetriever, build_retriever
@@ -42,6 +43,7 @@ class LeanToolRuntime:
         official_checks: int,
         observation_bytes: int,
         retriever: PremiseRetriever | None = None,
+        declarations: DeclarationIndex | None = None,
     ) -> None:
         self.claim = claim
         self.service = service
@@ -50,14 +52,21 @@ class LeanToolRuntime:
         self.observation_bytes = observation_bytes
         # Optional because a machine can be configured without one; the tool
         # then says there is no retrieval rather than ranking an empty list,
-        # which a model would read as "no such lemma exists".
+        # which a model would read as "no such lemma exists". The declaration
+        # index is optional for the same reason and answers the same way.
         self.retriever = retriever
+        self.declarations = declarations
         self._artifact_sequence = 0
 
     def rank_premises(self, goal: str, limit: int) -> PremiseRanking:
         if self.retriever is None:
             raise ValueError("no premise retrieval is configured for this run")
         return self.bound_ranking(self.retriever.rank(goal, limit))
+
+    def search_declarations(self, query: str, limit: int) -> DeclarationSearch:
+        if self.declarations is None:
+            raise ValueError("no declaration index is configured for this run")
+        return self.bound_search(search_result(self.declarations, query, limit))
 
     def check_proof(self, claim_id: str, proof_body: str) -> LeanCheckResult:
         if claim_id != self.claim.content_hash:
@@ -257,13 +266,17 @@ def load_runtime(environ: Mapping[str, str]) -> LeanToolRuntime:
         environment=claim.environment,
         limits=config.limits,
     )
+    # One declaration index shared between the plain search tool and the
+    # ranking's index source, so the run pays the one-time source scan once.
+    declarations = DeclarationIndex(config.lean_project)
     runtime = LeanToolRuntime(
         claim=claim,
         service=service,
         store=RunStore(run_dir, UUID(int=0)),
         official_checks=config.limits.official_checks,
         observation_bytes=config.limits.model_observation_bytes,
-        retriever=build_retriever(service, config.limits),
+        retriever=build_retriever(service, config.limits, declarations),
+        declarations=declarations,
     )
     configure_runtime(runtime)
 
@@ -314,18 +327,23 @@ def lean_inspect_declarations(names: list[str]) -> DeclarationInspection:
 
 @mcp.tool()
 def lean_search_declarations(query: str, limit: int = 10) -> DeclarationSearch:
-    """Search the pinned Lean environment for declarations."""
-    runtime = _configured()
-    return runtime.bound_search(runtime.service.search_declarations(query, limit))
+    """Search declaration names read from the pinned package sources.
+
+    No Lean process runs: the names come from the sources on disk, so this
+    answers instantly and offline. A hit is a lead to confirm with
+    lean_inspect_declarations; a miss is about the index, not Mathlib.
+    """
+    return _configured().search_declarations(query, limit)
 
 
 @mcp.tool()
 def rank_premises(goal: str, limit: int = 10) -> PremiseRanking:
     """Rank the declarations most likely to help with one goal.
 
-    Fuses Lean's own search with Loogle. The answer carries the provenance of
-    every source that was asked, and says whether the ranking can be replayed:
-    Loogle tracks a Mathlib it does not name, so a ranking it shaped cannot.
+    Fuses the declaration-name index over the pinned sources with Loogle. The
+    answer carries the provenance of every source that was asked, and says
+    whether the ranking can be replayed: Loogle tracks a Mathlib it does not
+    name, so a ranking it shaped cannot.
     """
     return _configured().rank_premises(goal, limit)
 

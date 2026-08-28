@@ -21,7 +21,21 @@ import pytest
 
 from hardy import cli, layout, search_tools
 from hardy import config as configuration
+from hardy.declarations import DeclarationIndex
+from hardy.domain import EnvironmentIdentity
 from hardy.retrieval import build_retriever
+
+
+class _FakeLeanService:
+    """Just enough of a `LeanService` for `build_retriever` to name a corpus."""
+
+    lean_project = None
+    environment = EnvironmentIdentity(
+        lean_version="4.32.0",
+        lean_commit="8c9756b",
+        mathlib_revision="81a5d257",
+        lake_manifest_sha256="b" * 64,
+    )
 
 
 def _decline(proposal: dict) -> bool:
@@ -84,7 +98,10 @@ def opener(monkeypatch, args, live):
         live.project,
         FakeCas(live.layout.cas),
         search=search_tools.SearchToolRuntime(
-            object(), build_retriever(object(), live.limits), object()
+            _FakeLeanService(),
+            build_retriever(_FakeLeanService(), live.limits),
+            object(),
+            DeclarationIndex(None),
         ),
         search_detail="Mathlib abc",
     )

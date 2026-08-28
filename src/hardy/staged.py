@@ -81,7 +81,12 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "lean_search_declarations",
-            "description": "Search the pinned Lean environment for declarations.",
+            "description": (
+                "Search declaration names read from the pinned Mathlib package "
+                "sources -- instant, no Lean process. A hit is a lead to confirm "
+                "with lean_inspect_declarations; a miss is about the index, not "
+                "Mathlib."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
@@ -94,7 +99,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "rank_premises",
-            "description": "Rank the declarations most likely to help with one goal, fusing Lean's own search with Loogle. The answer names every source it asked and says whether the ranking can be replayed.",
+            "description": "Rank the declarations most likely to help with one goal, fusing a name index over the pinned Mathlib sources with Loogle. The answer names every source it asked and says whether the ranking can be replayed.",
             "parameters": {
                 "type": "object",
                 "properties": {"goal": {"type": "string"}, "limit": {"type": "integer"}},
@@ -290,10 +295,8 @@ class ClaudeStagedRuntime:
                         )
                     )
                 elif name == "lean_search_declarations":
-                    result = lean_runtime.bound_search(
-                        lean_runtime.service.search_declarations(
-                            str(arguments["query"]), int(arguments.get("limit", 10))
-                        )
+                    result = lean_runtime.search_declarations(
+                        str(arguments["query"]), int(arguments.get("limit", 10))
                     )
                 elif name == "rank_premises":
                     result = lean_runtime.rank_premises(

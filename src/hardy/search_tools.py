@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Config
+from .declarations import DeclarationIndex, search_result
 from .domain import RunLimits
 from .lean import DeclarationInspection, LeanService, environment_identity
 from .models import ToolResult
@@ -62,9 +63,11 @@ SEARCH_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "search_declarations",
             "description": (
-                "Search the pinned Lean environment for declarations whose result type "
-                "matches a pattern, with `_` for holes. Use rank_premises instead when you "
-                "do not already know the shape you are looking for."
+                "Search declaration names read from the pinned Mathlib package sources -- "
+                "instant, no Lean process. Give a name fragment or concept words "
+                "(`simple group` finds `IsSimpleGroup`). A hit is a lead to confirm with "
+                "inspect_declarations; a miss is about this index, not Mathlib. For a "
+                "result-type pattern, use rank_premises."
             ),
             "parameters": {
                 "type": "object",
@@ -154,17 +157,29 @@ class SearchToolRuntime:
     """The search tools, bound to one pinned environment."""
 
     def __init__(
-        self, service: LeanService, retriever: PremiseRetriever, modules: ModuleIndex
+        self,
+        service: LeanService,
+        retriever: PremiseRetriever,
+        modules: ModuleIndex,
+        declarations: DeclarationIndex,
     ) -> None:
         self.service = service
         self.retriever = retriever
         self.modules = modules
+        self.declarations = declarations
 
     def rank_premises(self, goal: str, limit: int = 10) -> ToolResult:
         return self._answer(lambda: self.retriever.rank(goal, limit))
 
     def search_declarations(self, query: str, limit: int = 10) -> ToolResult:
-        return self._answer(lambda: self.service.search_declarations(query, limit))
+        """Declaration names from the package sources, not from a Lean process.
+
+        This ran `#find` in a fresh Lean process, and on the pinned toolchain
+        that never answered once -- `declarations.py` records the measurement.
+        The index answers instantly and offline; what it gives up is pattern
+        matching, which `rank_premises` still speaks through Loogle.
+        """
+        return self._answer(lambda: search_result(self.declarations, query, limit))
 
     def inspect_declarations(self, names: list[str]) -> ToolResult:
         # Refused, not truncated. `DeclarationInspection` carries no marker for
@@ -313,11 +328,15 @@ def build_runtime(config: Config) -> tuple[SearchToolRuntime | None, str]:
         environment=environment,
         limits=config.limits,
     )
+    # One declaration index shared between the plain search and the ranking's
+    # index source, so the session pays the one-time source scan once.
+    declarations = DeclarationIndex(config.lean_project)
     return (
         SearchToolRuntime(
             service,
-            build_retriever(service, config.limits),
+            build_retriever(service, config.limits, declarations),
             ModuleIndex(config.lean_project),
+            declarations,
         ),
         f"Mathlib {environment.mathlib_revision[:12]} in {config.lean_project}",
     )
@@ -338,10 +357,13 @@ def renew(runtime: SearchToolRuntime, limits: RunLimits) -> SearchToolRuntime:
     what it spent against it, so a problem whose allowance had already been
     spent elsewhere produced rankings shaped by calls that appear nowhere in
     its own record -- the reproducible-provenance claim `rank_premises` makes
-    is exactly what that breaks. `LeanService` and `ModuleIndex` hold no such
-    counter (config and a runner, and a read-only index), so they are shared
-    without the same hazard.
+    is exactly what that breaks. `LeanService`, `ModuleIndex` and
+    `DeclarationIndex` hold no such counter (config and a runner, and two
+    read-only indexes), so they are shared without the same hazard.
     """
     return SearchToolRuntime(
-        runtime.service, build_retriever(runtime.service, limits), runtime.modules
+        runtime.service,
+        build_retriever(runtime.service, limits, runtime.declarations),
+        runtime.modules,
+        runtime.declarations,
     )

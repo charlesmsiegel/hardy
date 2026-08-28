@@ -78,6 +78,35 @@ def test_a_configured_project_yields_a_runtime_that_can_search(tmp_path) -> None
     assert 'Mathlib' in detail
 
 
+def test_declaration_search_answers_from_the_sources_without_lean(tmp_path) -> None:
+    """The `IsSimpleGroup` question, asked on the surface where it failed.
+
+    No Lean process runs -- `lake` here is a stub that only exits -- and the
+    answer still names the declaration, because it comes from the package
+    sources on disk. A miss carries the sentence saying what a miss means, so
+    an empty answer cannot read as Lean's word on Mathlib.
+    """
+    search_tools = importlib.import_module('hardy.search_tools')
+    project = _project(tmp_path)
+    package = project / '.lake' / 'packages' / 'mathlib' / 'Mathlib'
+    package.mkdir(parents=True)
+    (package / 'Simple.lean').write_text(
+        'class IsSimpleGroup (G : Type u) : Prop where\n', encoding='utf-8'
+    )
+    runtime, _ = search_tools.build_runtime(_config(tmp_path, project))
+    assert runtime is not None
+
+    found = runtime.search_declarations('simple group')
+    assert found.ok
+    payload = json.loads(found.output)
+    assert [record['name'] for record in payload['results']] == ['IsSimpleGroup']
+
+    missed = runtime.search_declarations('IsSympleGroup')
+    assert missed.ok
+    (note,) = json.loads(missed.output)['diagnostics']
+    assert 'not Lean' in note['message'] and 'inspect_declarations' in note['message']
+
+
 def test_no_lake_project_yields_no_runtime_and_the_reason_why(tmp_path) -> None:
     """The reason travels, because it is what the tools will refuse with.
 

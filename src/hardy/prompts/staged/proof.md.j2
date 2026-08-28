@@ -8,9 +8,11 @@ Use the five Hardy tools as needed:
 - lean_check_proof for official candidates against the Frozen Claim;
 - lean_check_scratch for bounded exploration;
 - lean_inspect_declarations for exact known names;
-- lean_search_declarations for discovery; and
+- lean_search_declarations for discovery -- it matches declaration names read
+  from the pinned Mathlib sources, so a hit is a lead and a miss is about the
+  index, not Mathlib; and
 - rank_premises when you do not know what the relevant lemma is called, which
-  ranks candidates for a goal across Lean's own search and Loogle. Its results
+  ranks candidates for a goal across that name index and Loogle. Its results
   are a heuristic ordering, not evidence: confirm any name it offers with
   lean_inspect_declarations before relying on it.
 

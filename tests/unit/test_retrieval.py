@@ -874,153 +874,141 @@ def test_the_budget_is_scoped_to_the_retriever_and_says_so() -> None:
     assert restarted.seconds_remaining == 5.0
 
 
-class _Service:
-    """A `LeanService` as far as retrieval is concerned."""
-
-    lean_project = None
-
-    def __init__(self, domain, lean_module, *, success=True, timed_out=False, results=()):
-        self.environment = domain.EnvironmentIdentity(
-            lean_version='4.32.0',
-            lean_commit='8c9756b',
-            mathlib_revision='81a5d257',
-            lake_manifest_sha256='b' * 64,
-        )
-        self._lean = lean_module
-        self._success = success
-        self._timed_out = timed_out
-        self._results = results
-        self.calls: list[tuple[str, int]] = []
-
-    def search_declarations(self, query, limit=10):
-        self.calls.append((query, limit))
-        return self._lean.DeclarationSearch(
-            query=query,
-            results=tuple(self._results),
-            truncated=False,
-            success=self._success,
-            timed_out=self._timed_out,
-            diagnostics=(),
-        )
+def _environment(domain, manifest_sha256='b' * 64):
+    return domain.EnvironmentIdentity(
+        lean_version='4.32.0',
+        lean_commit='8c9756b',
+        mathlib_revision='81a5d257',
+        lake_manifest_sha256=manifest_sha256,
+    )
 
 
-def test_the_lean_source_searches_the_environment_the_run_is_frozen_under() -> None:
-    retrieval = importlib.import_module('hardy.retrieval')
-    lean_module = importlib.import_module('hardy.lean')
-    domain = importlib.import_module('hardy.domain')
-    service = _Service(domain, lean_module, results=[_record('Nat.add_comm')])
-
-    source = retrieval.LeanSearchSource(service, limits=domain.RunLimits(lean_process_seconds=30))
-
-    assert [record.name for record in source.search('_ + _ = _ + _', 5)] == ['Nat.add_comm']
-    # The Lean deadline plus what `run_process` may spend stopping a child that
-    # reached it: one bounded `wait` and one bounded `join` per output reader.
-    # Declaring the deadline alone let an admitted search overrun the budget.
-    process = importlib.import_module('hardy.process')
-    assert source.worst_case_seconds == 30.0 + process.MAX_TEARDOWN_SECONDS
-    assert process.MAX_TEARDOWN_SECONDS == process.TEARDOWN_SECONDS * 3
-    # Every toolchain identity that can move a `#find` result, `lean_commit`
-    # included: two builds can display one version and be different Leans.
-    for identity in ('81a5d257', '4.32.0', '8c9756b', 'b' * 64):
-        assert identity in source.identity.corpus
-    # `search_declarations` accepts 1..20, and a ranking may ask for more.
-    source.search('_ + _ = _ + _', 40)
-    assert service.calls == [('_ + _ = _ + _', 5), ('_ + _ = _ + _', 20)]
+def _index_source(retrieval, domain, project, manifest_sha256='b' * 64):
+    declarations = importlib.import_module('hardy.declarations')
+    return retrieval.DeclarationIndexSource(
+        declarations.DeclarationIndex(project),
+        environment=_environment(domain, manifest_sha256),
+    )
 
 
-def test_the_corpus_identity_names_the_toolchain_that_will_actually_run(tmp_path) -> None:
-    """`cli._environment_identity` hard-codes `lean_version` and `lean_commit`,
-    so those two fields are asserted rather than measured. Claiming `pinned` on
-    them alone would be the exact failure this module exists to prevent: a
-    ranking promising it can be replayed on evidence nobody checked.
-
-    The project's `lean-toolchain` is what `elan` pins the compiler with, and
-    `chat.py` already reads it for this reason. Without it there is no evidence
-    of which Lean runs, so the source is not pinned.
+def test_the_index_source_searches_the_sources_the_run_is_frozen_under(tmp_path) -> None:
+    """The motivating case from the graded failure: `IsSimpleGroup` is text in
+    Mathlib's own sources, and the index answers about it without Lean running
+    -- where `#find`, measured on the pinned toolchain, never answered at all.
     """
     retrieval = importlib.import_module('hardy.retrieval')
-    lean_module = importlib.import_module('hardy.lean')
+    domain = importlib.import_module('hardy.domain')
+    package = tmp_path / '.lake' / 'packages' / 'mathlib' / 'Mathlib'
+    package.mkdir(parents=True)
+    (package / 'Simple.lean').write_text(
+        'class IsSimpleGroup (G : Type u) : Prop where\n', encoding='utf-8'
+    )
+
+    source = _index_source(retrieval, domain, tmp_path)
+    asked = source.query_for('⊢ IsSimpleGroup _')
+
+    assert asked == 'IsSimpleGroup'
+    assert [record.name for record in source.search(asked, 5)] == ['IsSimpleGroup']
+    for identity in ('81a5d257', 'b' * 64):
+        assert identity in source.identity.corpus
+
+
+def test_the_index_source_extracts_only_the_constants_a_name_index_can_use() -> None:
+    """The shared query is a type pattern; a name index can use the names in it
+    and nothing else. The wildcards standing where locals were, the turnstile
+    and the operators fall away, keywords are dropped, and what remains is
+    deduplicated in order -- so the provenance records the question this source
+    actually ran rather than one it cannot parse.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
     domain = importlib.import_module('hardy.domain')
 
-    service = _Service(domain, lean_module)
-    unverified = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
-    assert not unverified.identity.pinned
+    source = _index_source(retrieval, domain, None)
 
-    service.lean_project = tmp_path
-    (tmp_path / 'lean-toolchain').write_text('leanprover/lean4:v4.32.0\n', encoding='utf-8')
-    manifest = b'{"packages": []}'
-    (tmp_path / 'lake-manifest.json').write_bytes(manifest)
-    service.environment = service.environment.model_copy(
-        update={'lake_manifest_sha256': hashlib.sha256(manifest).hexdigest()}
+    assert source.query_for('⊢ Nat.succ _ = _ + _') == 'Nat.succ'
+    assert source.query_for('⊢ IsSimpleGroup _ → IsCyclic _') == 'IsSimpleGroup IsCyclic'
+    assert source.query_for('⊢ Nat.succ _ = Nat.succ _') == 'Nat.succ'
+    assert source.query_for('⊢ fun _ => Continuous _') == 'Continuous'
+    assert source.query_for('⊢ _ + _ = _ + _') == ''
+
+
+def test_a_pure_shape_query_is_this_source_refusing_and_loogle_answering(tmp_path) -> None:
+    """`#find` took `_ + _ = _ + _`; a name index cannot, and must say so
+    rather than matching everything or nothing. The refusal is recorded
+    against the source while Loogle still shapes the ranking.
+    """
+    retrieval = importlib.import_module('hardy.retrieval')
+    domain = importlib.import_module('hardy.domain')
+    index_source = _index_source(retrieval, domain, tmp_path)
+    loogle = FakeSource(_unpinned(retrieval), [_record('Nat.add_comm')])
+
+    ranking = _retriever(retrieval, [index_source, loogle]).rank('_ + _ = _ + _')
+
+    assert [premise.name for premise in ranking.premises] == ['Nat.add_comm']
+    assert not ranking.complete
+    refused = next(
+        item for item in ranking.provenance.sources
+        if item.identity.name == 'declaration-index'
     )
-    verified = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
-
-    assert verified.identity.pinned
-    corpus = verified.identity.corpus
-    assert 'leanprover/lean4:v4.32.0' in corpus
-    # A project pinned to a different compiler is a different corpus, even with
-    # the same Mathlib manifest beside it. Captured above rather than compared
-    # against `verified.identity` again -- the identity is read from the file
-    # each time, so both sides would see the rewrite.
-    (tmp_path / 'lean-toolchain').write_text('leanprover/lean4:v4.33.0\n', encoding='utf-8')
-    moved = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
-    assert moved.identity.corpus != corpus
+    assert not refused.answered
+    assert 'Loogle' in (refused.detail or '')
 
 
-def test_a_project_that_is_not_the_one_the_claim_was_frozen_against_is_not_pinned(
+def test_the_index_source_is_pinned_only_when_the_manifest_is_the_frozen_one(
     tmp_path,
 ) -> None:
     """`load_runtime` takes the project from `HARDY_CONFIG` and the environment
     identity from the frozen claim, and never checks that they are the same
-    thing. So `#find` can run in one Lake project while the corpus identity
+    thing. So the index can read one Lake project while the corpus identity
     names another -- a ranking claiming to be replayable against a corpus it
-    did not search.
+    did not search. No toolchain pin is demanded, unlike the `#find` source
+    this replaces: no compiler runs, so the corpus is the text alone.
     """
     retrieval = importlib.import_module('hardy.retrieval')
-    lean_module = importlib.import_module('hardy.lean')
     domain = importlib.import_module('hardy.domain')
     manifest = b'{"packages": [{"name": "mathlib", "rev": "81a5d257"}]}'
-
-    service = _Service(domain, lean_module)
-    service.lean_project = tmp_path
-    (tmp_path / 'lean-toolchain').write_text('leanprover/lean4:v4.32.0\n', encoding='utf-8')
     (tmp_path / 'lake-manifest.json').write_bytes(manifest)
 
-    # The claim's environment names a manifest hash of 'b' * 64, which is not
-    # this project's, so the toolchain being readable is not enough.
-    assert not retrieval.LeanSearchSource(service, limits=domain.RunLimits()).identity.pinned
+    mismatched = _index_source(retrieval, domain, tmp_path)
+    assert not mismatched.identity.pinned
+    assert 'NOT the project searched' in mismatched.identity.corpus
 
-    service.environment = service.environment.model_copy(
-        update={'lake_manifest_sha256': hashlib.sha256(manifest).hexdigest()}
+    matched = _index_source(
+        retrieval, domain, tmp_path, hashlib.sha256(manifest).hexdigest()
     )
-    matched = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
-
     assert matched.identity.pinned
+    assert 'NOT the project searched' not in matched.identity.corpus
+
+    # And with no project at all there is nothing to pin.
+    assert not _index_source(retrieval, domain, None).identity.pinned
 
 
-def test_the_lean_source_strips_the_turnstile_that_find_does_not_take() -> None:
-    """One query, two syntaxes, and each source speaks its own.
-
-    Loogle takes `⊢ p` as a conclusion filter -- verified against the live
-    service. Mathlib's `#find t` instead matches the *result type* directly
-    (`#find _ + _ = _ + _`), so the turnstile is not merely redundant there but
-    unsupported. Passing it through meant the pinned source failed on exactly
-    the input the tool was built for, leaving the ranking to the unpinned one.
-
-    Stripping loses nothing: `#find`'s bare term and Loogle's `⊢` mean the same
-    search.
-    """
+def test_the_index_source_declares_its_cold_bound_until_the_read_has_happened(
+    tmp_path,
+) -> None:
+    """The admission meter spends the declared figure, and a cold index walks
+    every source file the packages ship where a warm one reads memory. One
+    figure for both either overcharges every later call or lets the first one
+    overrun the budget after passing the check meant to stop it."""
     retrieval = importlib.import_module('hardy.retrieval')
-    lean_module = importlib.import_module('hardy.lean')
     domain = importlib.import_module('hardy.domain')
-    service = _Service(domain, lean_module, results=[_record('Nat.add_comm')])
 
-    source = retrieval.LeanSearchSource(service, limits=domain.RunLimits())
+    source = _index_source(retrieval, domain, tmp_path)
 
-    assert source.query_for('⊢ _ + _ = _ + _') == '_ + _ = _ + _'
-    assert source.query_for('_ + _ = _ + _') == '_ + _ = _ + _'
-    # And the retriever records what it actually sent, per source, rather than
-    # the shared spelling neither of them may have received.
+    assert source.worst_case_seconds == retrieval.DECLARATION_INDEX_COLD_SECONDS
+    source.search('anything', 5)
+    assert source.worst_case_seconds == retrieval.DECLARATION_INDEX_WARM_SECONDS
+    assert (
+        retrieval.DECLARATION_INDEX_WARM_SECONDS
+        < retrieval.DECLARATION_INDEX_COLD_SECONDS
+    )
+
+
+def test_the_retriever_records_what_each_source_was_actually_asked() -> None:
+    """One query, two spellings, and the provenance must carry each source's
+    own -- recording only the shared one would name a query the pinned source
+    never ran."""
+    retrieval = importlib.import_module('hardy.retrieval')
     lean = FakeSource(_pinned(retrieval), [_record('Nat.add_comm')])
     lean.query_for = lambda query: query.removeprefix('⊢ ')
     loogle = FakeSource(_unpinned(retrieval), [_record('Nat.mul_comm')])
@@ -1030,45 +1018,6 @@ def test_the_lean_source_strips_the_turnstile_that_find_does_not_take() -> None:
     asked = {item.identity.name: item.query for item in ranking.provenance.sources}
     assert asked == {'lean-find': '_ + _ = _ + _', 'loogle': '⊢ _ + _ = _ + _'}
     assert ranking.query == '⊢ _ + _ = _ + _'
-
-
-def test_a_toolchain_that_can_change_under_the_same_name_is_not_a_pin(tmp_path) -> None:
-    """`stable` and `nightly` are elan aliases, not toolchains.
-
-    The compiler behind one changes while the file, the corpus string and the
-    provenance digest all stay identical -- so a ranking would promise to
-    replay on a Lean that no longer exists. A pin has to name a version that
-    cannot move.
-    """
-    retrieval = importlib.import_module('hardy.retrieval')
-    lean_module = importlib.import_module('hardy.lean')
-    domain = importlib.import_module('hardy.domain')
-    manifest = b'{"packages": []}'
-
-    service = _Service(domain, lean_module)
-    service.lean_project = tmp_path
-    (tmp_path / 'lake-manifest.json').write_bytes(manifest)
-    service.environment = service.environment.model_copy(
-        update={'lake_manifest_sha256': hashlib.sha256(manifest).hexdigest()}
-    )
-
-    def pinned_with(toolchain):
-        (tmp_path / 'lean-toolchain').write_text(toolchain, encoding='utf-8')
-        return retrieval.LeanSearchSource(service, limits=domain.RunLimits()).identity.pinned
-
-    for immutable in (
-        'leanprover/lean4:v4.32.0\n',
-        'leanprover/lean4:v4.33.0-rc1',
-        'leanprover/lean4:nightly-2026-01-15',
-    ):
-        assert pinned_with(immutable), immutable
-    for movable in (
-        'leanprover/lean4:stable',
-        'leanprover/lean4:nightly',
-        'stable',
-        'my-local-toolchain',
-    ):
-        assert not pinned_with(movable), movable
 
 
 def test_two_rankings_at_once_cannot_each_spend_the_whole_budget() -> None:
@@ -1124,35 +1073,23 @@ def test_two_rankings_at_once_cannot_each_spend_the_whole_budget() -> None:
     assert len(admitted) == 1, 'both calls were admitted against a budget sized for one'
 
 
-def test_the_lean_source_reports_an_unsuccessful_search_as_no_answer() -> None:
-    """`#find` that timed out returned no results, which is not the same as
-    there being none -- and the ranking must not present it as the latter."""
+def test_an_index_signature_outranks_a_remote_rendering_of_the_same_name() -> None:
+    """The declaration index reads the head line the local sources actually
+    hold, so its rendering wins over Loogle's for the same reason Lean's own
+    used to: it is what the model's environment will elaborate."""
     retrieval = importlib.import_module('hardy.retrieval')
-    lean_module = importlib.import_module('hardy.lean')
-    domain = importlib.import_module('hardy.domain')
+    local = retrieval.SourceIdentity(
+        name='declaration-index',
+        kind='declaration_index',
+        corpus='Mathlib 81a5d257 sources',
+        pinned=True,
+    )
+    index = FakeSource(local, [_record('Nat.add_comm', 'theorem add_comm : n + m = m + n')])
+    loogle = FakeSource(_unpinned(retrieval), [_record('Nat.add_comm', 'from the internet')])
 
-    class Service:
-        environment = domain.EnvironmentIdentity(
-            lean_version='4.32.0',
-            lean_commit='8c9756b',
-            mathlib_revision='81a5d257',
-            lake_manifest_sha256='b' * 64,
-        )
+    ranking = _retriever(retrieval, [loogle, index]).rank('_ + _ = _ + _')
 
-        def search_declarations(self, query, limit=10):
-            return lean_module.DeclarationSearch(
-                query=query,
-                results=(),
-                truncated=True,
-                success=False,
-                timed_out=True,
-                diagnostics=(),
-            )
-
-    source = retrieval.LeanSearchSource(Service(), limits=domain.RunLimits())
-    assert '81a5d257' in source.identity.corpus
-    with pytest.raises(retrieval.RetrievalError):
-        source.search('_ + _ = _ + _', 5)
+    assert ranking.premises[0].signature == 'theorem add_comm : n + m = m + n'
 
 
 def test_loogle_hits_that_are_not_lean_declaration_names_are_discarded() -> None:
@@ -1290,19 +1227,40 @@ def test_a_source_outcome_cannot_say_nothing_about_why_it_did_not_answer() -> No
         retrieval.SourceOutcome(identity=_pinned(retrieval), answered=False)
 
 
-def test_the_default_source_set_puts_the_pinned_environment_first() -> None:
+def test_the_default_source_set_puts_the_pinned_local_index_first() -> None:
     """Which is what decides, when the budget runs short, that the source
-    dropped is the one whose answers could not be replayed anyway."""
+    dropped is the one whose answers could not be replayed anyway. `#find` is
+    deliberately absent: measured on the pinned toolchain it never answered
+    while costing a full process timeout per ranking."""
     retrieval = importlib.import_module('hardy.retrieval')
-    lean_module = importlib.import_module('hardy.lean')
     domain = importlib.import_module('hardy.domain')
 
-    retriever = retrieval.build_retriever(
-        _Service(domain, lean_module, results=[_record('Nat.add_comm')]), domain.RunLimits()
-    )
+    class Service:
+        lean_project = None
+        environment = _environment(domain)
+
+    retriever = retrieval.build_retriever(Service(), domain.RunLimits())
     kinds = [source.identity.kind for source in retriever._sources]
 
-    assert kinds == ['lean_search', 'loogle']
+    assert kinds == ['declaration_index', 'loogle']
+
+
+def test_a_caller_can_share_one_index_between_search_and_ranking() -> None:
+    """`build_retriever` takes the index the plain `search_declarations` tool
+    already holds, so a session pays the one-time source scan once rather than
+    once per surface."""
+    retrieval = importlib.import_module('hardy.retrieval')
+    declarations = importlib.import_module('hardy.declarations')
+    domain = importlib.import_module('hardy.domain')
+
+    class Service:
+        lean_project = None
+        environment = _environment(domain)
+
+    shared = declarations.DeclarationIndex(None)
+    retriever = retrieval.build_retriever(Service(), domain.RunLimits(), shared)
+
+    assert retriever._sources[0]._index is shared
 
 
 def test_the_retrieval_budget_is_a_run_limit_like_every_other() -> None:

@@ -383,7 +383,7 @@ def environment_identity(lean_project: Path | None) -> EnvironmentIdentity:
     put it out of reach.
 
     The manifest digest is taken over the bytes on disk, not over a
-    re-serialisation of the parsed JSON, because `LeanSearchSource
+    re-serialisation of the parsed JSON, because `DeclarationIndexSource
     ._manifest_matches` compares it against a fresh hash of the same file.
     """
     if lean_project is None:
@@ -631,8 +631,8 @@ class LeanService:
     def environment(self) -> EnvironmentIdentity:
         """The pinned toolchain every answer here was computed against.
 
-        Public because it is the corpus identity of `search_declarations`, and
-        premise retrieval has to be able to name what it searched.
+        Public because it is the corpus identity premise retrieval names when
+        it says what was searched.
         """
         return self._environment
 
@@ -640,10 +640,9 @@ class LeanService:
     def lean_project(self) -> Path:
         """The Lake project every answer here is elaborated in.
 
-        Public alongside `environment` because the project holds the
-        `lean-toolchain` pin, and that file is the only local evidence of which
-        compiler actually runs -- which premise retrieval needs before it can
-        call a ranking replayable.
+        Public alongside `environment` because the project is where the
+        declaration index reads its sources and where the manifest sits --
+        which premise retrieval needs before it can call a ranking replayable.
         """
         return self._lean_project
 
@@ -718,38 +717,12 @@ class LeanService:
             timed_out=check.process.timed_out,
         )
 
-    def search_declarations(self, query: str, limit: int = 10) -> DeclarationSearch:
-        if not 1 <= len(query) <= 512 or "\n" in query or "\r" in query:
-            raise ValueError("declaration search query must be one bounded line")
-        if not 1 <= limit <= 20:
-            raise ValueError("declaration search limit must be between 1 and 20")
-        check = self.check_scratch(f"#find {query}")
-        candidates = []
-        for diagnostic in check.diagnostics:
-            name = diagnostic.message.split(maxsplit=1)[0] if diagnostic.message else ""
-            if not DECLARATION_NAME.fullmatch(name):
-                continue
-            candidates.append(
-                DeclarationRecord(
-                    name=name,
-                    signature=diagnostic.message,
-                    source_file=diagnostic.file,
-                    line=diagnostic.line,
-                    column=diagnostic.column,
-                )
-            )
-        return DeclarationSearch(
-            query=query,
-            results=tuple(candidates[:limit]),
-            truncated=(
-                len(candidates) > limit
-                or check.process.output_overflow
-                or check.process.timed_out
-            ),
-            success=check.success,
-            timed_out=check.process.timed_out,
-            diagnostics=check.diagnostics,
-        )
+    # `search_declarations` used to live here, running `#find` in a scratch
+    # check. It is gone because it was measured never to answer on the pinned
+    # toolchain -- every call spent the whole process deadline and returned
+    # nothing -- and the finding and its replacement are recorded in
+    # `declarations.py`, which reads the names from the package sources
+    # without starting Lean at all.
 
     def _check_source(self, source: str) -> LeanCheckResult:
         elaboration = elaborate(

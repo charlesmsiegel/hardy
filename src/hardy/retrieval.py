@@ -14,10 +14,10 @@ rebuild the record and recompute the number.
 
 Two consequences worth stating plainly, because they are the honest part:
 
-- **Pinning.** Lean's own search runs against the environment the run is frozen
-  under, so it is reproducible. Loogle is a live service that tracks whatever
-  Mathlib it tracks today, and it reports no revision, so a ranking it shaped
-  cannot be replayed. `SourceIdentity.pinned` records which is which and
+- **Pinning.** The declaration-name index reads the package sources the run is
+  frozen under, so it is reproducible. Loogle is a live service that tracks
+  whatever Mathlib it tracks today, and it reports no revision, so a ranking it
+  shaped cannot be replayed. `SourceIdentity.pinned` records which is which and
   `PremiseRanking.reproducible` is the conjunction over the sources that
   actually answered. Retrieval is a heuristic and this is not a defect; a
   ranking that implied otherwise would be.
@@ -34,6 +34,13 @@ that could outlast what is left of the run's budget is never started -- so the
 budget cannot be overspent by the query that happens to be last. Wall-clock
 seconds, not CPU: Loogle's CPU burns on someone else's machine, and what Hardy
 can actually enforce is how long it is willing to wait.
+
+There used to be another source here: `LeanSearchSource`, running Lean's own
+`#find` in the frozen environment. It is gone because it was measured never to
+answer -- on the pinned toolchain `#find` still ran at 300 seconds while
+`exact?` finished in 22, so every ranking spent a full process timeout to
+learn nothing. The measurement and its reading are recorded in
+`declarations.py`, whose index is the replacement.
 """
 
 from __future__ import annotations
@@ -52,9 +59,9 @@ from urllib.parse import urlencode
 
 from pydantic import model_validator
 
-from .domain import FrozenModel, RunLimits
+from .declarations import DeclarationIndex
+from .domain import EnvironmentIdentity, FrozenModel, RunLimits
 from .lean import DECLARATION_NAME, DeclarationRecord
-from .process import MAX_TEARDOWN_SECONDS
 
 # Loogle's public instance. The endpoint is configurable because a project that
 # cares about reproducibility will want to run its own against a pinned Mathlib.
@@ -77,33 +84,29 @@ MAX_SIGNATURE_CHARACTERS = 512
 MAX_NAME_CHARACTERS = 256
 MAX_HITS = 200
 
-# The query is one bounded line, matching what `LeanService.search_declarations`
-# will accept: a query Lean would refuse is refused here, before it costs any
-# source a call. The goal it is derived from may be longer, because Lean prints
-# a goal with its hypotheses and that is the form a model has to hand.
+# The query is one bounded line, matching what the search tools accept: a
+# query they would refuse is refused here, before it costs any source a call.
+# The goal it is derived from may be longer, because Lean prints a goal with
+# its hypotheses and that is the form a model has to hand.
 MAX_QUERY_CHARACTERS = 512
 MAX_GOAL_CHARACTERS = 4_096
-# What Lean puts before a goal's conclusion, and what Loogle accepts at the head
-# of a conclusion filter. `#find` does not take it -- see `LeanSearchSource`.
+# What Lean puts before a goal's conclusion, and what Loogle accepts at the
+# head of a conclusion filter. The declaration index reads only the constant
+# names out of a query, so it never sees it either way.
 TURNSTILE = "⊢"
 
-# A `lean-toolchain` naming a compiler that cannot change under it: a release
-# tag or a dated nightly. `stable`, `nightly` and a local toolchain name are
-# aliases -- elan repoints them, and a ranking recorded under one would promise
-# to replay on a Lean that is no longer there.
-IMMUTABLE_TOOLCHAIN = re.compile(
-    r":(?:v\d+\.\d+\.\d+(?:-[\w.]+)?|nightly-\d{4}-\d{2}-\d{2})\Z"
-)
-
-# And the same demand of a self-hosted Loogle's declared corpus. A git object
-# name is immutable because it *is* the content; `master`, a branch or a tag can
-# all be repointed under the identity that named them. Accepting any nonempty
-# string would have re-made the `stable`/`nightly` mistake one field over.
+# What a self-hosted Loogle's declared corpus has to look like. A git object
+# name is immutable because it *is* the content; `master`, a branch or a tag
+# can all be repointed under the identity that named them -- the same way an
+# elan `stable` alias repoints while the file naming it stays byte-identical.
+# Accepting any nonempty string would let a corpus identity move under the
+# ranking that recorded it.
 IMMUTABLE_REVISION = re.compile(r"\A[0-9a-f]{7,40}\Z")
 
 # Reciprocal rank fusion. The sources return ordered names and no comparable
-# scores -- `#find` reports matches, Loogle reports hits -- so rank is the only
-# signal they share, and 60 is the constant the method is usually stated with.
+# scores -- the index reports name matches, Loogle reports hits -- so rank is
+# the only signal they share, and 60 is the constant the method is usually
+# stated with.
 RRF_K = 60
 RANKER = "reciprocal-rank-fusion/1"
 
@@ -115,17 +118,25 @@ RANKER = "reciprocal-rank-fusion/1"
 # at *any* depth from the other moves its score. So there is nothing to derive.
 #
 # What is left is to ask each source for as much as it will give and be honest
-# that the result is bounded by that: `LeanSearchSource` clamps to the 20 that
-# `search_declarations` accepts, and Loogle to `MAX_HITS`. Costless in
-# requests -- each source is asked once either way, and only the parsing goes
-# deeper.
+# that the result is bounded by that: every source is asked to `MAX_HITS`
+# deep. Costless in requests -- each source is asked once either way, and only
+# the parsing goes deeper.
 
 # HTTP statuses that mean the service is unwell rather than that Hardy asked it
 # the wrong thing. Everything else in 4xx says the request was refused on its
 # merits, which is the endpoint's contract having moved.
 TRANSIENT_STATUSES = frozenset({408, 429})
 
-SourceKind = Literal["lean_search", "loogle", "embedding"]
+# `lean_search` stays in the vocabulary although no default source produces
+# one any more -- `#find` was dropped for never answering, see
+# `declarations.py` -- because rankings already written to run stores carry
+# it, and a kind removed from the Literal would refuse to read them back.
+SourceKind = Literal["lean_search", "declaration_index", "loogle", "embedding"]
+
+# The kinds whose rendering of a signature is the local environment's own --
+# what the model's Lean will actually elaborate -- as opposed to a remote
+# service's. See the signature-preference note in `PremiseRetriever._ranked`.
+LOCAL_KINDS = frozenset({"lean_search", "declaration_index"})
 
 
 class RetrievalError(RuntimeError):
@@ -185,10 +196,11 @@ class SourceOutcome(FrozenModel):
 
     identity: SourceIdentity
     answered: bool
-    # What this source was actually asked, which is not always the shared query:
-    # `#find` does not take Loogle's turnstile, so the two are handed different
-    # spellings of one question. Recording only the shared one would leave the
-    # provenance naming a query the pinned source never ran.
+    # What this source was actually asked, which is not always the shared
+    # query: the declaration index reads only the constant names out of it, so
+    # the two are handed different spellings of one question. Recording only
+    # the shared one would leave the provenance naming a query the pinned
+    # source never ran.
     query: str | None = None
     returned: int = 0
     seconds: float = 0.0
@@ -375,39 +387,46 @@ class PremiseSource(Protocol):
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]: ...
 
 
-class LeanSearchSource:
-    """Lean's own `#find`, run in the environment the run is frozen under."""
+# The identifier-shaped words that name no declaration: Lean keywords and the
+# sorts. Small and static rather than complete -- an unfiltered `fun` would
+# match hundreds of names about functors, while a keyword this list misses
+# merely widens one query. Locals are already `_` by the time a query gets
+# here, so what remains identifier-shaped is either a constant or one of these.
+NOT_A_CONSTANT = frozenset(
+    {"fun", "let", "in", "if", "then", "else", "match", "with", "do", "by",
+     "at", "have", "show", "from", "where", "Type", "Prop", "Sort"}
+)
 
-    def __init__(self, service: object, *, limits: RunLimits) -> None:
-        self._service = service
-        self._limits = limits
+# What the admission meter spends on the index, by temperature. The cold
+# figure covers the one-time read of every source file the packages ship;
+# measured at 7.5s for half a million lines on this machine, which
+# extrapolates to ~30s for Mathlib whole, and `modules.py` records a build
+# tree walk taking two minutes on Windows -- so the declared figure carries
+# that margin rather than the flattering one. The warm figure covers a
+# substring pass over names already in memory, measured in tenths of a
+# second. Declared, not enforced: nothing interrupts a scan that outruns
+# them, the same honest limit `LeanSearchSource` used to state about a wedged
+# child process. Generous beats flattering here, because the admission check
+# protects the run's budget with exactly these numbers.
+DECLARATION_INDEX_COLD_SECONDS = 120.0
+DECLARATION_INDEX_WARM_SECONDS = 5.0
 
-    @property
-    def _toolchain_pin(self) -> str | None:
-        """What `elan` will actually start, read from the project it runs in.
 
-        `cli._environment_identity` supplies `lean_version` and `lean_commit`
-        as string literals -- they are asserted, not measured -- so a corpus
-        identity resting on them alone would promise a replayable ranking on
-        evidence nobody checked. The project's `lean-toolchain` is the file
-        `elan` obeys, and `chat.py` reads it for this same reason: cheaper than
-        running Lean to ask, and it is what decides the answer.
+class DeclarationIndexSource:
+    """The declaration-name index over the package sources the run is frozen under.
 
-        None when there is no project or the pin cannot be read. That is a
-        state to report, not a reason to refuse to search.
-        """
-        project = getattr(self._service, "lean_project", None)
-        if project is None:
-            return None
-        try:
-            pin = (Path(project) / "lean-toolchain").read_text(encoding="utf-8").strip()
-        except OSError:
-            return None
-        # Nonempty was never the question. `leanprover/lean4:stable` is a name
-        # elan repoints, so the file can stay byte-identical while the compiler
-        # behind it changes -- and the corpus string and provenance digest would
-        # not move either.
-        return pin if IMMUTABLE_TOOLCHAIN.search(pin) else None
+    This is the replacement for `LeanSearchSource`, which ran Lean's own
+    `#find` and was measured never to answer on the pinned toolchain -- the
+    finding is recorded in `declarations.py`. What it gives up is honest to
+    name: `#find` matched *result types*, and a name index matches names, so a
+    pure-shape query is this source refusing and Loogle answering. What it
+    gains is that it answers at all, instantly and offline, which `#find` did
+    not do once.
+    """
+
+    def __init__(self, index: DeclarationIndex, *, environment: EnvironmentIdentity) -> None:
+        self._index = index
+        self._environment = environment
 
     @property
     def _manifest_matches(self) -> bool:
@@ -415,99 +434,76 @@ class LeanSearchSource:
 
         `mcp_server.load_runtime` takes the project from `HARDY_CONFIG` and the
         environment identity from the claim on disk, and never checks that they
-        describe the same thing -- so `#find` can run in one Lake project while
-        the corpus identity names another. Hashing the manifest beside the
-        toolchain pin is the check that was missing, and it is the same number
-        `EnvironmentIdentity` already carries.
+        describe the same thing -- so the index can read one Lake project while
+        the corpus identity names another. Hashing the manifest is the check
+        that closes it, and it is the same number `EnvironmentIdentity` already
+        carries.
 
         What it does not establish, said plainly rather than implied: the
-        manifest names the revisions Lake resolved, not the source that was
-        built. A locally edited and rebuilt Mathlib, or replaced oleans, leaves
-        it byte-identical while `#find` searches something else. Closing that
-        would mean hashing the build output on every identity call, which for
-        Mathlib is not a thing to do per search. So `pinned` means the manifest
-        and toolchain match -- the same shape of limit the axiom audit states
-        about the environment it elaborates in.
+        manifest names the revisions Lake resolved, not the bytes on disk. A
+        locally edited Mathlib leaves it byte-identical while the index reads
+        something else. Closing that would mean hashing every source file per
+        identity call, which for Mathlib is not a thing to do per search -- the
+        same shape of limit the axiom audit states about the environment it
+        elaborates in. No toolchain pin is required here, unlike the `#find`
+        source it replaces: no compiler runs, so the corpus is the text alone.
         """
-        project = getattr(self._service, "lean_project", None)
+        project = self._index.project
         if project is None:
             return False
         try:
             manifest = (Path(project) / "lake-manifest.json").read_bytes()
         except OSError:
             return False
-        return hashlib.sha256(manifest).hexdigest() == self._service.environment.lake_manifest_sha256
+        return hashlib.sha256(manifest).hexdigest() == self._environment.lake_manifest_sha256
 
     @property
     def identity(self) -> SourceIdentity:
-        environment = self._service.environment
-        toolchain = self._toolchain_pin
         frozen = self._manifest_matches
         return SourceIdentity(
-            name="lean-find",
-            kind="lean_search",
-            # `lean_commit` and not only `lean_version`: two builds can display
-            # one version and be different Leans, and `#find` runs in whichever
-            # of them this is. `EnvironmentIdentity` carries the commit for
-            # exactly that reason, so a corpus identity that dropped it would
-            # give two toolchains the same provenance digest.
+            name="declaration-index",
+            kind="declaration_index",
             corpus=(
-                f"Mathlib {environment.mathlib_revision} / "
-                f"Lean {environment.lean_version} ({environment.lean_commit}) / "
-                f"manifest {environment.lake_manifest_sha256}"
-                f"{'' if frozen else ' (NOT the project searched)'} / "
-                f"toolchain {toolchain or 'unverified'}"
+                f"Mathlib {self._environment.mathlib_revision} sources / "
+                f"manifest {self._environment.lake_manifest_sha256}"
+                f"{'' if frozen else ' (NOT the project searched)'}"
             ),
-            # Pinned only with evidence of *which* compiler answers and *which*
-            # corpus it answers over. Without the pin file the declared Lean
-            # version is a constant in `cli.py`; without a matching manifest the
-            # declared Mathlib belongs to some other project. Either way the
-            # ranking cannot promise to replay.
-            pinned=toolchain is not None and frozen,
+            pinned=frozen,
         )
 
     @property
     def worst_case_seconds(self) -> float:
-        """The Lean deadline plus what it costs to stop a child that reached it.
-
-        `run_process` bounds the search, and then bounds the *teardown*
-        separately: a `wait` on the terminated child and a `join` on each output
-        reader. Declaring only the deadline was the same defect
-        `LoogleSource.worst_case_seconds` documents in the other direction -- a
-        search admitted with exactly its deadline left could overrun the run's
-        budget by the teardown, having passed the check meant to stop it.
-
-        Not a hard maximum, and this is the honest limit of it: after `kill()`,
-        `run_process` reaps with an unbounded `child.wait()`, so a child wedged
-        in uninterruptible I/O blocks past any figure declared here. Bounding
-        that wait would trade a rare hang for a leaked zombie in a path shared
-        by Lean, Tectonic and the CAS kernel, which is a decision for that
-        module rather than a side effect of this one. So: the bound under the
-        assumption that a killed process dies, said out loud rather than
-        implied.
-        """
-        return float(self._limits.lean_process_seconds) + MAX_TEARDOWN_SECONDS
+        return (
+            DECLARATION_INDEX_WARM_SECONDS
+            if self._index.read
+            else DECLARATION_INDEX_COLD_SECONDS
+        )
 
     def query_for(self, query: str) -> str:
-        # `#find t` matches the *result type* against `t` -- `#find _ + _ = _ +
-        # _` -- so Loogle's `⊢` conclusion filter is not redundant here but
-        # unsupported, and passing it through failed the pinned source on
-        # exactly the input this tool exists to take. The two spellings mean
-        # the same search, so nothing is lost by dropping it.
-        return query[len(TURNSTILE) :].strip() if query.startswith(TURNSTILE) else query
+        """The constant names in the shared query, which are all an index can use.
+
+        `⊢ Nat.succ _ = _ + _` becomes `Nat.succ`: the turnstile and the
+        operators are not identifiers and fall away on their own, the
+        wildcards and keyword-shaped words are dropped, and what remains is
+        deduplicated in order. Empty when the query is pure shape, and
+        `search` then refuses rather than matching everything -- recorded in
+        the provenance as this source not answering, with Loogle left to do
+        what a name index cannot.
+        """
+        tokens = [
+            token
+            for token in DECLARATION_NAME.findall(query)
+            if set(token) != {"_"} and token not in NOT_A_CONSTANT
+        ]
+        return " ".join(dict.fromkeys(tokens))
 
     def search(self, goal: str, limit: int) -> tuple[DeclarationRecord, ...]:
-        # `search_declarations` takes 1..20; the retriever's limit is the
-        # ranking's length, which a caller may set higher than one source will
-        # serve.
-        found = self._service.search_declarations(goal, max(1, min(limit, 20)))
-        if not found.success:
-            # An empty list from a search that failed reads as "no such lemma",
-            # which is the one thing it does not mean.
+        if not goal.strip():
             raise RetrievalError(
-                "Lean search timed out" if found.timed_out else "Lean search failed"
+                "the query names no constant for the declaration index to match; "
+                "a pure-shape pattern is a question for Loogle"
             )
-        return tuple(found.results)
+        return self._index.search(goal, limit)
 
 
 class LoogleSource:
@@ -887,8 +883,9 @@ class PremiseRetriever:
         # against a figure the other was already spending -- a budget sized for
         # one paying for two. The staged transport gates its dispatch; the MCP
         # server does not, so the budget defends itself here. Serializing is the
-        # right shape rather than a concession: the sources share one Lake
-        # project, and two `#find` runs at once were never going to be faster.
+        # right shape rather than a concession: the sources share one
+        # declaration index, and two scans of it at once were never going to
+        # be faster.
         self._admission = threading.Lock()
 
     @property
@@ -997,12 +994,12 @@ class PremiseRetriever:
                 # wins over a remote service's rendering.
                 #
                 # Keyed on the *kind*, not on `pinned`. Tightening what pinning
-                # requires -- an immutable toolchain, a matching manifest --
-                # quietly cost a legitimately-unpinned local environment its
-                # say over signatures, and handed the model a remote type for a
+                # requires -- a matching manifest -- quietly cost a
+                # legitimately-unpinned local environment its say over
+                # signatures, and handed the model a remote type for a
                 # declaration its own Lean was about to elaborate. Whether a
                 # ranking can be replayed is a question for `reproducible`.
-                local = identity.kind == "lean_search"
+                local = identity.kind in LOCAL_KINDS
                 if record.name not in records or (local and record.name not in local_signature):
                     records[record.name] = record
                 if local:
@@ -1045,15 +1042,30 @@ class PremiseRetriever:
         )
 
 
-def build_retriever(service: object, limits: RunLimits) -> PremiseRetriever:
+def build_retriever(
+    service: object, limits: RunLimits, index: DeclarationIndex | None = None
+) -> PremiseRetriever:
     """The default source set, in the order the budget should spend on them.
 
-    The pinned environment goes first, which decides two things when the budget
-    is tight: its rendering of a signature is the one a model reads, and the
-    source dropped for want of time is the unpinned one. A ranking that lost
-    Lean's own search and kept Loogle would be the worse half of the feature.
+    The pinned local source goes first, which decides two things when the
+    budget is tight: its rendering of a signature is the one a model reads,
+    and the source dropped for want of time is the unpinned one.
+
+    `index` lets a caller that also serves `search_declarations` share one
+    index between the plain search and the ranking, so a session pays the
+    one-time source scan once. Left out, the retriever builds its own over the
+    same project.
+
+    Lean's own `#find` is deliberately not a source any more: measured on the
+    pinned toolchain it never answered while costing a full process timeout
+    per ranking -- the finding is recorded in `declarations.py`.
     """
+    if index is None:
+        index = DeclarationIndex(getattr(service, "lean_project", None))
     return PremiseRetriever(
-        sources=(LeanSearchSource(service, limits=limits), LoogleSource()),
+        sources=(
+            DeclarationIndexSource(index, environment=service.environment),
+            LoogleSource(),
+        ),
         limits=limits,
     )

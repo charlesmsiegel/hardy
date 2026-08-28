@@ -1026,6 +1026,7 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
     """Assemble the staged workflow around the chosen backend."""
     from . import lean as lean_module
     from . import retrieval
+    from .declarations import DeclarationIndex
     from .lean import LeanService
     from .mcp_server import LeanToolRuntime
     from .prompts import PROMPT_SET_SHA256
@@ -1099,6 +1100,9 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
             ).relative_path,
             observe=observe_cas,
         )
+        # One declaration index for the whole run: it is read-only once built,
+        # and the one-time source scan should not be paid per proving stage.
+        declarations = DeclarationIndex(config.lean_project)
         return ClaudeStagedRuntime(
             store=store,
             lean_runtime_factory=lambda claim: LeanToolRuntime(
@@ -1109,7 +1113,8 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
                 observation_bytes=config.limits.model_observation_bytes,
                 # One retriever per proving stage, because the retrieval budget
                 # is spent across the stage rather than per call.
-                retriever=retrieval.build_retriever(lean, config.limits),
+                retriever=retrieval.build_retriever(lean, config.limits, declarations),
+                declarations=declarations,
             ),
             cas_runtime=cas_runtime,
             cas_directory=cas_directory,
