@@ -122,3 +122,35 @@ def test_a_completed_inspection_that_resolved_something_has_no_hint() -> None:
 
     assert result.ok
     assert search_tools.SPELLINGS_HINT not in result.output
+
+
+class Modules:
+    project = None
+
+    def search(self, query, limit):
+        return ()
+
+    def names(self):
+        return ("Mathlib.GroupTheory.Sylow",)
+
+
+def _modules(query):
+    runtime = search_tools.SearchToolRuntime.__new__(search_tools.SearchToolRuntime)
+    runtime.modules = Modules()
+    return runtime.search_modules(query)
+
+
+def test_a_multi_word_module_miss_says_it_matches_names_not_concepts() -> None:
+    """The failing run asked for `Sylow simple group` and `center normal group`."""
+    result = _modules("Sylow simple group")
+
+    assert not result.ok
+    assert search_tools.CONCEPT_HINT in result.output
+    assert "inspect_declarations" in result.output
+
+
+def test_a_single_word_module_miss_is_unchanged() -> None:
+    result = _modules("Sylwo")
+
+    assert not result.ok
+    assert search_tools.CONCEPT_HINT not in result.output
