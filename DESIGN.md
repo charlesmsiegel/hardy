@@ -38,7 +38,12 @@ checked, quoted verbatim in a document a human can read against it, with every
 unproved assumption stated in an appendix in both languages. Whether the work is
 finished is therefore computed from the artifacts, not asserted by the model —
 which is the same principle as grading on the axioms Lean reports rather than on
-an exit code, applied to the human-readable half.
+an exit code, applied to the human-readable half. The document side of that
+computation reads what is formally asserted: a theorem environment owes a label
+backed by saved Lean or an approved assumption, while a claim made in prose or
+in a `lemma` environment owes nothing, by design — the page-one banner's counts
+are what tell a reader how much of the document is backed at all. FEATURES.md
+records that limit and the reasoning beside the other scanner limits.
 
 Both formalization grades follow an audit of the axioms Lean reports for each
 graded declaration, not a process exit code. `sorryAx` is a hole and no approval

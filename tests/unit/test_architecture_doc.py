@@ -82,6 +82,38 @@ def test_features_records_what_the_theorem_gate_does_not_cover() -> None:
         assert route in bullet, f'the {route} route past the gate is not named'
     assert 'banner' in bullet, 'the bullet does not say what covers the rest'
     assert 'known_gaps' in bullet, 'the stronger answer is not named'
+    # The banner's cover is aggregate -- counts, never which claim is unbacked.
+    # A bullet that presents it as coverage without that residue overstates,
+    # which is the failure the banner itself is documented to refuse.
+    assert 'which' in bullet and 'count' in bullet, (
+        'the bullet does not say the banner counts and never points at a claim'
+    )
+    # The observation the decision rests on has a record; name it.
+    assert 'issue #117' in bullet, 'the evidence for the two routes is not cited'
+
+
+def test_the_theorem_gate_limit_reaches_the_other_required_surfaces() -> None:
+    """AGENTS.md requires README.md, DESIGN.md, FEATURES.md and
+    ARCHITECTURE.html to stay consistent. DESIGN.md says whether the work is
+    finished is computed from the artifacts, and the trust panel says calling
+    anything finished is a refused tool call -- both true of `report_result`,
+    and both read as a stronger guarantee than the theorem gate gives once
+    FEATURES.md records that a claim in prose or a `lemma` environment owes
+    nothing. The qualification must appear where the guarantee is stated.
+    """
+    design = (ROOT / 'DESIGN.md').read_text(encoding='utf-8')
+    start = design.index('computed from the artifacts')
+    paragraph = design[start:design.index('\n\n', start)]
+    assert 'prose' in paragraph and '`lemma`' in paragraph, (
+        'DESIGN.md states the guarantee without the prose/lemma limit'
+    )
+
+    html = (ROOT / 'ARCHITECTURE.html').read_text(encoding='utf-8')
+    panel_start = html.index('<div class="trust">')
+    panel = html[panel_start:html.index('</div>', panel_start)]
+    assert 'theorem environment' in panel and 'lemma' in panel, (
+        'the trust panel states the guarantee without the prose/lemma limit'
+    )
 
 
 def test_the_readme_does_not_promise_isolation_codex_cannot_give() -> None:
