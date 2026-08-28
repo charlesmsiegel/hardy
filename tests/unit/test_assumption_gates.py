@@ -310,3 +310,73 @@ def test_a_hypothesis_nothing_mentions_is_still_dropped() -> None:
         "∀ {G : Type*} [Group G] [Finite G] (p : ℕ) [Fact p.Prime] "
         "(P : Sylow p G), (P : Subgroup G).Normal"
     )
+
+
+def test_the_vacuity_probe_is_skipped_when_there_is_nothing_to_strip(session, fake_lean) -> None:
+    warning = session._vacuity_probe("True")
+
+    assert warning == ""
+    assert fake_lean.sources == []
+
+
+def test_the_vacuity_file_has_no_declaration_and_one_example_per_line(session, fake_lean) -> None:
+    session._vacuity_probe(SYLOW)
+
+    lines = fake_lean.last_source.splitlines()
+    assert lines[0] == "import Mathlib"
+    assert lines[1] == ""
+    assert all(line.startswith("example : ") for line in lines[2:])
+    assert not any(line.startswith("axiom") for line in lines)
+
+
+def test_a_stripped_statement_a_probe_closes_is_a_warning(session, fake_lean) -> None:
+    fake_lean.closes_with = "aesop"
+
+    warning = session._vacuity_probe(SYLOW)
+
+    assert "with every hypothesis removed" in warning
+    assert "by aesop" in warning
+
+
+def test_an_existential_is_tried_with_bottom_and_top(session, fake_lean) -> None:
+    fake_lean.closes_with = "exact ⟨⊥, inferInstance⟩"
+
+    warning = session._vacuity_probe(SYLOW)
+
+    assert "exact ⟨⊥, inferInstance⟩" in warning
+
+
+def test_a_non_existential_gets_no_witness_lines(session, fake_lean) -> None:
+    session._vacuity_probe("∀ (n : ℕ), 0 < n → n ≠ 0")
+
+    assert "⟨⊥" not in fake_lean.last_source
+
+
+def test_a_stripped_statement_nothing_closes_is_silent(session, fake_lean) -> None:
+    assert session._vacuity_probe(SYLOW) == ""
+
+
+def test_a_vacuity_probe_that_cannot_run_says_so(session, fake_lean) -> None:
+    fake_lean.raises = TimeoutError("lean did not start")
+
+    warning = session._vacuity_probe(SYLOW)
+
+    assert "could not be run" in warning
+
+
+def test_the_vacuity_warning_reaches_the_human(session, approvals, fake_lean) -> None:
+    fake_lean.closes_with = "exact ⟨⊥, inferInstance⟩"
+
+    session._tool("request_assumption", _request(lean_statement=SYLOW))
+
+    assert "may be vacuous" in approvals[0]["checked"]
+    assert approvals  # warned, not refused
+
+
+def test_a_whole_statement_close_is_still_a_refusal(session, approvals, fake_lean) -> None:
+    fake_lean.closes_with = "simp"
+
+    result = session._tool("request_assumption", _request(lean_statement=SYLOW))
+
+    assert not result.ok
+    assert approvals == []

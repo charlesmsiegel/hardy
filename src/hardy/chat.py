@@ -956,6 +956,18 @@ class MathematicsSession:
     # run, which is the same species of vacuity stated a little more carelessly.
     PROBES = ("trivial", "simp", "tauto", "aesop", "exact?")
 
+    # Tried on the stripped statement when its conclusion is an existential.
+    # `exact?` and `aesop` do not synthesise a witness, and the bad axiom the
+    # failing run approved -- `∃ P : Subgroup G, P.Normal` -- is closed by the
+    # first of these.
+    WITNESSES = (
+        "exact ⟨⊥, inferInstance⟩",
+        "exact ⟨⊤, inferInstance⟩",
+        "exact ⟨⊥, by simp⟩",
+        "exact ⟨⊤, by simp⟩",
+        "exact ⟨1, by simp⟩",
+    )
+
     # Consecutive refused `save_lean` calls on one path before the next is
     # refused without running Lean. A failing run made 21 in a row.
     SAVE_STREAK_LIMIT = 3
@@ -1053,6 +1065,57 @@ class MathematicsSession:
                 "",
             )
         return None, ""
+
+    def _vacuity_probe(self, statement: str) -> str:
+        """Whether the conclusion holds with the hypotheses gone. A warning or "".
+
+        Run only after `_assumption_probe` returned no refusal, as its own
+        elaboration: nothing here needs the axiom in scope, and the first
+        file's layout is pinned by its tests. A statement the stripper cannot
+        read is not probed, and says so.
+        """
+        stripped = _strip_hypotheses(normalise_lean(statement).strip())
+        if stripped is None:
+            return ""
+        tactics = list(self.PROBES)
+        # The conclusion is everything after the leading binders' top-level
+        # comma, not the text after the LAST comma: a stripped existential's
+        # own `∃ x, P x` carries a top-level comma of its own, so splitting on
+        # the last one lands inside the witness type and never sees the `∃`.
+        # `_split_top` rejoins to the same substring `_strip_hypotheses` built
+        # its own body from, so this mirrors that split rather than guessing
+        # at a new one.
+        if stripped.startswith("∀ "):
+            conclusion = ", ".join(_split_top(stripped[2:], ", ")[1:])
+        else:
+            conclusion = stripped
+        if conclusion.lstrip().startswith("∃"):
+            tactics.extend(self.WITNESSES)
+        examples = "\n".join(f"example : {stripped} := by {tactic}" for tactic in tactics)
+        source = f"import Mathlib\n\n{examples}\n"
+        try:
+            result = self._run_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
+        except Exception as error:  # noqa: BLE001 - a warning that cannot be computed is itself reported
+            return f"The vacuity probe could not be run ({error})."
+        if getattr(result, "timed_out", False) or getattr(result, "interrupted", False):
+            return "The vacuity probe could not be run (the elaboration did not finish)."
+        errors = [item for item in result.diagnostics if item.severity == "error"]
+        if not result.ok and not errors:
+            return "The vacuity probe could not be run (Lean failed without diagnostics)."
+        if any(item.line is None for item in errors):
+            return ""
+        placed = {item.line for item in errors}
+        for index, tactic in enumerate(tactics):
+            line = 3 + index
+            if line in placed:
+                continue
+            proof = _probe_suggestion(result, line) or f"by {tactic}"
+            return (
+                "Lean elaborated this statement and could not prove it as stated — but "
+                f"proves it with every hypothesis removed (`{proof}`): the conclusion "
+                f"`{stripped}` holds without the hypotheses. This assumption may be vacuous."
+            )
+        return ""
 
     def _lean_path(self, space: LeanWorkspace | None = None) -> str:
         """Where Lean looks for a module, nearest first.
@@ -2816,8 +2879,14 @@ class MathematicsSession:
         if refusal is not None:
             return ToolResult(False, refusal)
         # Carried to the prompt rather than swallowed: a human approving an
-        # unchecked statement is owed the word "unchecked".
-        proposal["checked"] = caveat or "Lean elaborated this statement and could not prove it."
+        # unchecked statement is owed the word "unchecked", and one whose
+        # hypotheses turn out to be doing no work is owed that too.
+        warning = self._vacuity_probe(proposal["lean_statement"])
+        proposal["checked"] = (
+            caveat
+            or warning
+            or "Lean elaborated this statement and could not prove it."
+        )
         proposal["goal"] = self.goal()
         proposal["searched"] = list(self._searched_since_request)
         # A name refused or declined earlier this session gets its last

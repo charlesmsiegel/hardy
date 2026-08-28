@@ -228,49 +228,39 @@ def fake_lean(session, monkeypatch):
         output: str = ""
         raises: Exception | None = None
         last_source: str = ""
+        sources: list[str] = []
 
         def __call__(self, source: str, timeout: float | None = None):
             self.last_source = source
             self.last_timeout = timeout
+            self.sources.append(source)
             if self.raises is not None:
                 raise self.raises
             diagnostics = []
-            # The layout the probe builds: import on 1, probes from 3, the
-            # declaration last. The axiom sits *after* the probes so `exact?`
-            # cannot close a statement by citing the axiom being proposed.
-            declaration_line = 3 + len(session.PROBES) + 1
-            if not self.elaborates:
-                diagnostics.append(
-                    LeanDiagnostic(
-                        severity="error", message=self.output, line=declaration_line, column=0
-                    )
-                )
-            else:
-                for index, tactic in enumerate(session.PROBES):
-                    line = 3 + index
+            lines = source.splitlines()
+            # Whatever the layout: an `example` line closes iff its tactic
+            # is `closes_with`; a declaration line fails iff `elaborates`
+            # is False. Both probe files put one example per line from 3.
+            for number, line in enumerate(lines, start=1):
+                if line.startswith("example"):
+                    tactic = line.split(" := by ", 1)[1] if " := by " in line else line.split(" := ", 1)[1]
                     if tactic == self.closes_with:
                         if self.suggestion:
-                            diagnostics.append(
-                                LeanDiagnostic(
-                                    severity="information",
-                                    message=f"Try this: {self.suggestion}",
-                                    line=line,
-                                    column=0,
-                                )
-                            )
+                            diagnostics.append(LeanDiagnostic(
+                                severity="information", message=f"Try this: {self.suggestion}",
+                                line=number, column=0,
+                            ))
                         continue
-                    diagnostics.append(
-                        LeanDiagnostic(
-                            severity="error", message="unsolved goals", line=line, column=0
-                        )
-                    )
-            return LeanToolResult(
-                not diagnostics,
-                self.output,
-                source,
-                diagnostics=tuple(diagnostics),
-            )
+                    diagnostics.append(LeanDiagnostic(
+                        severity="error", message="unsolved goals", line=number, column=0
+                    ))
+                elif line.startswith("axiom") and not self.elaborates:
+                    diagnostics.append(LeanDiagnostic(
+                        severity="error", message=self.output, line=number, column=0
+                    ))
+            return LeanToolResult(not diagnostics, self.output, source, diagnostics=tuple(diagnostics))
 
     fake = Fake()
+    fake.sources = []
     monkeypatch.setattr(session, "_run_lean_source", fake)
     return fake
