@@ -421,3 +421,93 @@ def test_a_whole_statement_close_is_still_a_refusal(session, approvals, fake_lea
 
     assert not result.ok
     assert approvals == []
+
+
+# --- Fail-closed stripping (findings #2 and #3) --------------------------------
+#
+# `_strip_hypotheses` must never hand the vacuity probe text that is not an
+# honest weakening of the statement it was given. A binder `_BINDER` cannot
+# fully consume, or a strict-implicit binder it does not know at all, used to
+# be silently dropped instead -- garbage text elaborated as though it meant
+# something. These pin the four confirmed inputs from finding #3's table, the
+# bare-binder case from finding #2, and the two shapes the fix must still get
+# right: a colon with no surrounding spaces, and every statement already
+# proven to strip correctly before this change.
+
+_DOUBLY_NESTED_HYPOTHESIS = "∀ (n : ℕ) (h : Nat.Prime (Nat.succ (Nat.succ n))), 2 ≤ n + 2"
+_STRICT_IMPLICIT_BINDER = (
+    "∀ {G : Type*} [Group G] ⦃H : Subgroup G⦄ (hH : H.Normal), Nonempty (G ⧸ H)"
+)
+_BARE_BINDER = "∀ id : Nat → Nat, (∀ n, id (id n) = n) → ∀ n : Nat, id n = n"
+
+
+def test_a_binder_too_deeply_nested_for_one_level_is_refused() -> None:
+    """`_BINDER`'s paren alternative handles one level of nesting; `h`'s type
+    here has two, so the regex matches only the inner `(Nat.succ (Nat.succ
+    n))` and leaves `h : Nat.Prime` unconsumed -- exactly the text that used
+    to go missing from the stripped statement."""
+    assert _chat._strip_hypotheses(_DOUBLY_NESTED_HYPOTHESIS) is None
+
+
+def test_a_strict_implicit_binder_is_refused() -> None:
+    """`⦃H : Subgroup G⦄` is not a bracket `_BINDER` knows, so `H` used to be
+    dropped and left free in the stripped text -- read by Lean's
+    `autoImplicit`, not bound by the statement any more."""
+    assert _chat._strip_hypotheses(_STRICT_IMPLICIT_BINDER) is None
+
+
+def test_a_bare_binder_with_no_bracket_is_refused() -> None:
+    """`id : Nat → Nat` -- the ordinary Lean spelling of a binder, with no
+    wrapping `(...)`/`{...}` -- matches nothing in `_BINDER`, so the whole
+    binder text is unconsumed."""
+    assert _chat._strip_hypotheses(_BARE_BINDER) is None
+
+
+def test_a_colon_with_no_surrounding_spaces_is_still_read() -> None:
+    """`(hp:Nat.Prime 2)` used to be read as an untyped, always-kept binder,
+    because the old parser looked for a literal `" : "`. The fixed colon
+    search finds it and drops `hp` as the hypothesis it is."""
+    assert _chat._strip_hypotheses("∀ (n : ℕ) (hp:Nat.Prime 2), True") == "∀ (n : ℕ), True"
+
+
+def test_an_arrow_inside_a_quantifier_s_own_binder_type_is_not_a_premise() -> None:
+    """`∃ f : α → Prop, …` holds an arrow that types `f`, not a premise
+    boundary. The old unconditional top-level split cut the statement there
+    and threw the `∃` away, leaving a `Prop, ∀ x, …` fragment Lean could not
+    parse. Now nothing past the first top-level quantifier in `body` is
+    treated as a candidate split point, so `h` is read as the one genuine
+    hypothesis and dropped, and the existential survives intact."""
+    statement = (
+        "∀ {α : Type*} (s : Set α) (h : s.Nonempty), ∃ f : α → Prop, ∀ x, f x ↔ x ∈ s"
+    )
+    assert _chat._strip_hypotheses(statement) == (
+        "∀ {α : Type*} (s : Set α), ∃ f : α → Prop, ∀ x, f x ↔ x ∈ s"
+    )
+
+
+def test_a_colon_with_no_spaces_beside_other_binders_still_strips() -> None:
+    """The third row of finding #3's table: with the colon fix, `hp` is read
+    correctly and dropped alongside the ordinary bracketed binders `G` and
+    `[Group G]`, rather than being wrongly kept as data (the old "unchanged"
+    behaviour)."""
+    statement = "∀ {G : Type*} [Group G] (hp:Nat.Prime 2), Nonempty G"
+    assert _chat._strip_hypotheses(statement) == "∀ {G : Type*} [Group G], Nonempty G"
+
+
+def test_the_checked_text_for_a_bailed_statement_says_stripping_was_not_attempted(
+    session, fake_lean
+) -> None:
+    warning = session._vacuity_probe(_STRICT_IMPLICIT_BINDER)
+
+    assert "not attempted" in warning
+    # Not a vacuity warning: a reader (and a test) must never mistake "the
+    # question was never asked" for "the question was asked and is concerning".
+    assert "vacuous" not in warning
+    assert fake_lean.sources == []
+
+
+def test_a_statement_with_genuinely_nothing_to_strip_stays_silent(session, fake_lean) -> None:
+    """`True` never had a hypothesis to lose; the escape-hatch message is for
+    a statement stripping was owed and did not get, not every plain one."""
+    assert session._vacuity_probe("True") == ""
+    assert fake_lean.sources == []
