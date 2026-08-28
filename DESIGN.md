@@ -134,6 +134,19 @@ Graded runs — `prove` and `batch` — read no such file, since a run whose
 instructions came partly from a project-local file cannot be compared with one
 that did not.
 
+Reopening a workspace resumes the provider conversation it left off in, and the
+two switches of experimental condition around that are per-run flags with a
+recorded boundary rather than settings. `--no-project-context` governs what
+this run's system prompt carries; `--fresh-thread` starts the session on a new
+provider conversation, keeping the workspace, the artifacts, the transcript and
+the spend ledger exactly as they are — only the machine-local thread id in
+`.local/state.json` is discarded, and the discard is an event in the
+transcript, because a turn produced from an empty conversation is not
+comparable to one produced from a thousand-turn one. Each flag names the one
+thing it governs; together they are the fully clean interactive condition.
+Neither persists, deliberately: "always start fresh" would silently discard the
+conversation on every launch, which is not a coherent standing preference.
+
 Losing the loop costs real things, and they are recorded rather than glossed:
 turn limits become the SDK's to enforce, cheap Lean closers cannot run before a
 model turn is spent, and token budgets have no decision point. The wall clock is
