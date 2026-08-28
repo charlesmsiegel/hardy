@@ -132,15 +132,16 @@ it does not name. A ranking is a heuristic, never evidence: only the kernel
 verifies anything.
 
 Two searches answer without a ranking. `inspect_declarations` asks Lean whether
-names exist and hands back their real signatures, which is the direct way to
-settle whether Mathlib already has a result; `search_modules` says which module
-to `import` for a name, read from the package index Lake already wrote, so it
-answers even on a machine where Lean will not start. A search that does not
-finish is refused rather than returned empty — an empty answer from a search
-that never ran reads as "Mathlib does not have it", and a session that believed
-that went on to assume four theorems Mathlib proves. On the toolchain pinned
-here `#find` does not return at all, so `rank_premises` and
-`search_declarations` are the two that may be unavailable, and they say so.
+names exist and hands back their real signatures — a batch that finishes
+settles those spellings, and one that resolves nothing says so rather than
+implying the result is absent; `search_modules` says which module to `import`
+for a name, read from the package index Lake already wrote, so it answers even
+on a machine where Lean will not start. A search that does not finish is
+refused rather than returned empty — an empty answer from a search that never
+ran reads as "Mathlib does not have it", and a session that believed that went
+on to assume four theorems Mathlib proves. On the toolchain pinned here `#find`
+does not return at all, so `rank_premises` and `search_declarations` are the
+two that may be unavailable, and they say so.
 
 All three surfaces read `#print axioms` through the same parser, so a proof
 standing on `sorryAx` or on an axiom nobody approved is reported as such rather
