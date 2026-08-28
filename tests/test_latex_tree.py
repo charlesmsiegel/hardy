@@ -380,5 +380,23 @@ def test_reachability_is_transitive_and_ignores_comments() -> None:
     assert unreached_fragments(sources) == ["ghost.tex"]
 
 
-def test_without_a_root_everything_is_unreached() -> None:
-    assert unreached_fragments({"a.tex": "x"}) == ["a.tex"]
+def test_without_a_root_nothing_is_judged_unreached() -> None:
+    """The prompt itself prescribes saving a fragment before `writeup.tex`
+    mentions it, so a missing root is the normal state of a mid-build
+    workspace -- not a workspace where every fragment is an orphan."""
+    assert unreached_fragments({"a.tex": "x"}) == []
+
+
+def test_a_relative_dot_input_is_reached() -> None:
+    """`\\input{./lemma1}` compiles fine under Tectonic -- `.` is the
+    including file's own directory -- so the file is in the PDF even though
+    the raw captured argument does not match any workspace key verbatim."""
+    sources = {"writeup.tex": "\\input{./lemma1}", "lemma1.tex": "x"}
+
+    assert unreached_fragments(sources) == []
+
+
+def test_a_relative_dot_input_into_a_subdirectory_is_reached() -> None:
+    sources = {"writeup.tex": "\\input{./sec/one}", "sec/one.tex": "x"}
+
+    assert unreached_fragments(sources) == []
