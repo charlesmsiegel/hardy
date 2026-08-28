@@ -102,7 +102,7 @@ def test_the_earliest_closing_tactic_is_the_one_reported(session, monkeypatch) -
             ),
         )
 
-    monkeypatch.setattr(session, "_run_lean_source", closes_all_but_trivial)
+    monkeypatch.setattr(session, "_probe_lean_source", closes_all_but_trivial)
 
     assert session._automation_probe({"t": "theorem t : True"}) == {"t": "simp"}
 
@@ -124,7 +124,7 @@ def test_two_statements_are_attributed_independently(session, monkeypatch) -> No
             ),
         )
 
-    monkeypatch.setattr(session, "_run_lean_source", first_fails_every_tactic)
+    monkeypatch.setattr(session, "_probe_lean_source", first_fails_every_tactic)
 
     probed = session._automation_probe(
         {"a": "theorem a : False", "b": "theorem b : True"}
@@ -155,7 +155,7 @@ def test_a_statement_whose_sentinel_errors_is_no_verdict_for_that_statement(
             ),
         )
 
-    monkeypatch.setattr(session, "_run_lean_source", first_does_not_elaborate)
+    monkeypatch.setattr(session, "_probe_lean_source", first_does_not_elaborate)
 
     probed = session._automation_probe(
         {"a": "theorem a : x = x", "b": "theorem b : True"}
@@ -176,7 +176,7 @@ def test_an_elaboration_that_does_not_finish_is_no_verdict(session, monkeypatch)
     def unfinished(source: str, timeout: float | None = None):
         return LeanToolResult(False, "", source, diagnostics=(), timed_out=True)
 
-    monkeypatch.setattr(session, "_run_lean_source", unfinished)
+    monkeypatch.setattr(session, "_probe_lean_source", unfinished)
 
     assert session._automation_probe({"t": "theorem t : True"}) is None
 
@@ -198,7 +198,7 @@ def test_overflowed_output_is_no_verdict(session, monkeypatch) -> None:
             output_overflow=True,
         )
 
-    monkeypatch.setattr(session, "_run_lean_source", overflowing)
+    monkeypatch.setattr(session, "_probe_lean_source", overflowing)
 
     assert session._automation_probe({"t": "theorem t : True"}) is None
 
@@ -215,7 +215,7 @@ def test_an_unplaced_error_is_no_verdict(session, monkeypatch) -> None:
             diagnostics=(LeanDiagnostic(severity="error", message="boom", line=None),),
         )
 
-    monkeypatch.setattr(session, "_run_lean_source", unplaced)
+    monkeypatch.setattr(session, "_probe_lean_source", unplaced)
 
     assert session._automation_probe({"t": "theorem t : True"}) is None
 
@@ -234,7 +234,7 @@ def test_an_error_before_the_examples_is_no_verdict(session, monkeypatch) -> Non
             ),
         )
 
-    monkeypatch.setattr(session, "_run_lean_source", stray)
+    monkeypatch.setattr(session, "_probe_lean_source", stray)
 
     assert session._automation_probe({"t": "theorem t : True"}) is None
 
@@ -243,7 +243,7 @@ def test_a_failure_without_readable_diagnostics_is_no_verdict(session, monkeypat
     def mute(source: str, timeout: float | None = None):
         return LeanToolResult(False, "something went wrong", source, diagnostics=())
 
-    monkeypatch.setattr(session, "_run_lean_source", mute)
+    monkeypatch.setattr(session, "_probe_lean_source", mute)
 
     assert session._automation_probe({"t": "theorem t : True"}) is None
 
@@ -254,6 +254,56 @@ def test_a_statement_with_no_proposition_is_skipped_without_lean(session, fake_l
     rather than pronounced clean."""
     assert session._automation_probe({"t": "theorem t"}) == {}
     assert fake_lean.sources == []
+
+
+def test_a_qualified_guillemet_name_is_parsed_off_whole(session, fake_lean) -> None:
+    """`theorem Foo.«obvious result» : True` is valid Lean too -- the
+    quotation may be any *component* of a qualified name, and a
+    guillemet-or-token alternative still stopped at the embedded space."""
+    fake_lean.closes_with = "trivial"
+
+    probed = session._automation_probe(
+        {"Foo.«obvious result»": "theorem Foo.«obvious result» : True"}
+    )
+
+    assert "example : True := by trivial" in fake_lean.last_source.splitlines()
+    assert probed == {"Foo.«obvious result»": "trivial"}
+
+
+def test_a_statement_spanning_lines_is_unanswered_without_lean(session, fake_lean) -> None:
+    """`normalise_lean` preserves a newline inside a string literal, and every
+    conclusion the probe draws is from which line an error landed on -- a
+    multi-line example would attribute its neighbours' errors to the wrong
+    tactic. Unanswered, never guessed at, and the statement beside it is
+    still probed."""
+    fake_lean.closes_with = "trivial"
+
+    probed = session._automation_probe(
+        {"strange": 'theorem strange : "a\nb" = "a\nb"', "plain": "theorem plain : True"}
+    )
+
+    assert probed == {"strange": None, "plain": "trivial"}
+    assert "strange" not in fake_lean.last_source
+
+
+def test_the_probe_runs_without_the_workspace_on_the_lean_path(session, monkeypatch) -> None:
+    """With the workspace build on `LEAN_PATH`, a saved module named `Mathlib`
+    answers the probe's `import Mathlib` -- and then the theorem under
+    question is in scope and `exact?` closes its own example by citing it.
+    The probe asks the configured environment alone."""
+    seen: dict[str, object] = {}
+
+    def capture(source, *, env=None, audit=(), timeout=None):
+        seen["env"] = env
+        from hardy.lean import LeanToolResult
+
+        return LeanToolResult(True, "", source, diagnostics=())
+
+    monkeypatch.setattr(session.lean, "run_source", capture)
+
+    session._probe_lean_source("import Mathlib\n")
+
+    assert seen["env"] is None
 
 
 # --- The save that records it ---------------------------------------------------
@@ -274,7 +324,7 @@ def test_a_flagged_save_is_saved_and_says_so_in_its_own_result(session, fake_lea
     assert session.state["automation"]["vacuous"] == {
         "statement": "theorem vacuous : True",
         "tactic": "aesop",
-        "environment": session._toolchain,
+        "environment": session._probe_environment(),
     }
 
 
@@ -314,7 +364,7 @@ def test_a_changed_statement_is_asked_again(session, fake_lean) -> None:
     assert session.state["automation"]["vacuous"] == {
         "statement": "theorem vacuous : 1 = 1",
         "tactic": "simp",
-        "environment": session._toolchain,
+        "environment": session._probe_environment(),
     }
 
 
@@ -358,7 +408,26 @@ def test_a_verdict_from_another_toolchain_is_reprobed(session, fake_lean) -> Non
     _save(session, source=SOURCE + "\nlemma extra : True := by exact True.intro\n")
 
     assert len(fake_lean.sources) == 2
-    assert session.state["automation"]["vacuous"]["environment"] == session._toolchain
+    assert session.state["automation"]["vacuous"]["environment"] == session._probe_environment()
+    assert session._automation_closed() == {"vacuous": "simp"}
+
+
+def test_a_verdict_from_before_a_mathlib_rebuild_is_reprobed(
+    session, fake_lean, monkeypatch
+) -> None:
+    """A configured Lake project whose Mathlib is edited and rebuilt changes
+    what the probe's tactics can do without moving the pin or the manifest,
+    so the verdict identity carries the olean's own stamp, not only the
+    toolchain's."""
+    _register(session)
+    _save(session)
+    assert len(fake_lean.sources) == 1
+    monkeypatch.setattr(session, "_external_stamp", lambda module: "rebuilt-mathlib")
+    fake_lean.closes_with = "simp"
+
+    _save(session, source=SOURCE + "\nlemma extra : True := by exact True.intro\n")
+
+    assert len(fake_lean.sources) == 2
     assert session._automation_closed() == {"vacuous": "simp"}
 
 
@@ -380,19 +449,19 @@ def test_an_unelaboratable_statement_is_recorded_as_unanswered_and_said_once(
             ),
         )
 
-    monkeypatch.setattr(session, "_run_lean_source", nothing_elaborates)
+    monkeypatch.setattr(session, "_probe_lean_source", nothing_elaborates)
     _register(session)
 
     result = _save(session)
 
     assert result.ok
-    assert "did not elaborate outside the workspace" in result.output
+    assert "could not be probed in isolation" in result.output
     assert session.state["automation"]["vacuous"]["tactic"] is None
     assert session._automation_closed() == {}
 
     second = _save(session, source=SOURCE + "\nlemma extra : True := by exact True.intro\n")
 
-    assert "did not elaborate" not in second.output
+    assert "could not be probed" not in second.output
 
 
 def test_a_probe_that_cannot_run_stores_nothing_and_the_save_still_lands(
@@ -450,7 +519,7 @@ def _plant(session, name="extra", statement="theorem extra : True", tactic="simp
     session.state.setdefault("automation", {})[name] = {
         "statement": statement,
         "tactic": tactic,
-        "environment": session._toolchain,
+        "environment": session._probe_environment(),
     }
 
 
@@ -550,7 +619,7 @@ def test_the_flag_is_a_disclosure_and_never_an_obligation(session) -> None:
     session.state.setdefault("automation", {})["extra"] = {
         "statement": "theorem extra : True",
         "tactic": "simp",
-        "environment": session._toolchain,
+        "environment": session._probe_environment(),
     }
 
     assert session._obligations() == before
