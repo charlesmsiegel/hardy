@@ -107,14 +107,12 @@ REAL_SYLOW = (
 
 def _closed_by(statement: str) -> list[str]:
     """Which vacuity tactics close `statement` stripped, read as `_vacuity_probe` reads them."""
-    from hardy.chat import MathematicsSession, _strip_hypotheses
+    from hardy.chat import _strip_hypotheses, _vacuity_source
+    from hardy.workspace import normalise_lean
 
-    stripped = _strip_hypotheses(statement)
+    stripped = _strip_hypotheses(normalise_lean(statement).strip())
     assert stripped is not None
-    tactics = list(MathematicsSession.PROBES) + list(MathematicsSession.WITNESSES)
-    source = "import Mathlib\n\n" + "\n".join(
-        f"example : {stripped} := by {tactic}" for tactic in tactics
-    ) + "\n"
+    source, tactics = _vacuity_source(stripped)
     check = _service(_environment())._check_source(source)
     errored = {item.line for item in check.diagnostics if item.severity == "error"}
     return [tactic for index, tactic in enumerate(tactics) if 3 + index not in errored]

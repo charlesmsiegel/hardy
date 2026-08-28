@@ -372,6 +372,30 @@ def _strip_hypotheses(statement: str) -> str | None:
     return conclusion
 
 
+def _vacuity_source(stripped: str) -> tuple[str, list[str]]:
+    """Build the vacuity probe's Lean source and tactics for this stripped statement.
+
+    The integration test elaborates the same file, so there is one place the layout lives.
+    """
+    # Start with PROBES, add WITNESSES only if the conclusion starts with ∃.
+    tactics = list(MathematicsSession.PROBES)
+
+    # Extract the conclusion (after leading binders' top-level comma).
+    if stripped.startswith("∀ "):
+        conclusion = ", ".join(_split_top(stripped[2:], ", ")[1:])
+    else:
+        conclusion = stripped
+
+    if conclusion.lstrip().startswith("∃"):
+        tactics.extend(MathematicsSession.WITNESSES)
+
+    # Build the Lean source.
+    examples = "\n".join(f"example : {stripped} := by {tactic}" for tactic in tactics)
+    source = f"import Mathlib\n\n{examples}\n"
+
+    return source, tactics
+
+
 class MathematicsSession:
     def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True):
         self.workspace = workspace
@@ -1077,22 +1101,7 @@ class MathematicsSession:
         stripped = _strip_hypotheses(normalise_lean(statement).strip())
         if stripped is None:
             return ""
-        tactics = list(self.PROBES)
-        # The conclusion is everything after the leading binders' top-level
-        # comma, not the text after the LAST comma: a stripped existential's
-        # own `∃ x, P x` carries a top-level comma of its own, so splitting on
-        # the last one lands inside the witness type and never sees the `∃`.
-        # `_split_top` rejoins to the same substring `_strip_hypotheses` built
-        # its own body from, so this mirrors that split rather than guessing
-        # at a new one.
-        if stripped.startswith("∀ "):
-            conclusion = ", ".join(_split_top(stripped[2:], ", ")[1:])
-        else:
-            conclusion = stripped
-        if conclusion.lstrip().startswith("∃"):
-            tactics.extend(self.WITNESSES)
-        examples = "\n".join(f"example : {stripped} := by {tactic}" for tactic in tactics)
-        source = f"import Mathlib\n\n{examples}\n"
+        source, tactics = _vacuity_source(stripped)
         try:
             result = self._run_lean_source(source, timeout=max(self.lean.timeout, PROBE_SECONDS))
         except Exception as error:  # noqa: BLE001 - a warning that cannot be computed is itself reported
