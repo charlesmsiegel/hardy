@@ -117,7 +117,15 @@ _IFFALSE = re.compile(r"\\iffalse(?![a-zA-Z])")
 # or `\fi`, with the lookahead making sure a longer command name -- `\finish`
 # is not `\fi` followed by `nish` -- is never mistaken for either.
 _CONDITIONAL = re.compile(r"\\(if[a-zA-Z]*|fi)(?![a-zA-Z])")
-_MACRO_DEF = re.compile(r"\\(?:newcommand|renewcommand|providecommand|def)\b")
+# `\b` after an optional `*` never matches: `*` is a non-word character, so a
+# starred command followed by `{` or `\` -- both also non-word -- has no
+# word/non-word transition for `\b` to land on. `\newcommand*{\g}{...}` fell
+# through unrecognised, and `_drop_macro_bodies` then read the *name* argument
+# `{\g}` as the body to drop while leaving the real body, `{\input{ghost}}`,
+# untouched and reachable. The lookahead used in its place asks the same
+# question `\b` was for -- "not a letter next" -- without depending on `*`
+# counting as a word character.
+_MACRO_DEF = re.compile(r"\\(?:newcommand|renewcommand|providecommand)\*?(?![a-zA-Z])|\\def\b")
 
 
 def _skip_balanced(text: str, index: int, opener: str, closer: str) -> int:

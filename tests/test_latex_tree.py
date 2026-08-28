@@ -425,6 +425,23 @@ def test_an_input_inside_a_macro_definition_body_is_not_reached() -> None:
     assert unreached_fragments(sources) == ["ghost.tex"]
 
 
+def test_a_starred_newcommand_body_is_also_not_executed() -> None:
+    """`\\newcommand*` (and `\\renewcommand*`, `\\providecommand*`) declare a
+    non-long macro, and are exactly as unexecuted at definition time as the
+    unstarred form. `\\b` after the `*` never matches -- `*` and the `{`
+    that follows are both non-word characters -- so the starred spelling used
+    to slip past `_MACRO_DEF` entirely and have its *name* argument read as
+    the body to drop, leaving the real body, and the `\\input` inside it,
+    untouched."""
+    sources = {
+        "writeup.tex": "\\newcommand*{\\g}{\\input{ghost}}\\input{a}",
+        "a.tex": "x",
+        "ghost.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["ghost.tex"]
+
+
 def test_a_conditional_nested_inside_a_false_branch_does_not_close_it_early() -> None:
     """`\\ifx\\a\\b ... \\fi` inside the `\\iffalse` branch has its own `\\fi`,
     which closes the inner conditional, not the outer `\\iffalse` -- reading
