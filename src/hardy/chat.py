@@ -2115,6 +2115,21 @@ class MathematicsSession:
                 continue
         return unreached_fragments(sources)
 
+    def _theorem_counts(self) -> tuple[int, int]:
+        """(machine-checked theorems, open theorems), from `_obligations` and
+        `_saved_theorems`.
+
+        `_stamp` and `_steering_block` both report these two numbers -- one to
+        the document, one to the model -- and had each grown their own copy of
+        the same set arithmetic. One place computing it is one place to get it
+        right.
+        """
+        owed = self._obligations()
+        gaps = {item.subject for item in owed if item.kind == "lean"}
+        opened = {item.subject for item in owed if item.kind == "open"}
+        saved = self._saved_theorems()
+        return len(saved - gaps - opened), len(saved & opened)
+
     def _steering_block(self) -> str:
         """What the workspace and this session amount to, for the model.
 
@@ -2138,14 +2153,11 @@ class MathematicsSession:
             # first turn purely because the directory happens to exist.
             if no_tools and not self.lean_workspace.sources() and not self._tex_paths():
                 return ""
-            owed = self._obligations()
-            gaps = {item.subject for item in owed if item.kind == "lean"}
-            opened = {item.subject for item in owed if item.kind == "open"}
-            saved = self._saved_theorems()
+            checked, opened_count = self._theorem_counts()
             lines = [
                 "[Hardy workspace state — written by Hardy, not the user]",
-                f"saved theorems: {len(saved - gaps - opened)} machine-checked, "
-                f"{len(saved & opened)} open (resting on a hole)",
+                f"saved theorems: {checked} machine-checked, "
+                f"{opened_count} open (resting on a hole)",
                 f"approved assumptions: {len(self.state['assumptions'])}",
                 f"this session: {calls['save_lean'][0]} save_lean calls, "
                 f"{calls['save_lean'][1]} accepted; {calls['check_lean'][0]} check_lean calls, "
@@ -3192,9 +3204,8 @@ class MathematicsSession:
         """
         owed = self._obligations()
         unbacked = sum(1 for item in owed if item.kind == "theorem")
-        gaps = {item.subject for item in owed if item.kind == "lean"}
         opened = {item.subject for item in owed if item.kind == "open"}
-        checked = len(self._saved_theorems() - gaps - opened)
+        checked, _ = self._theorem_counts()
         assumed = len(self.state["assumptions"])
         parts = [
             f"\\textbf{{Hardy}} --- {checked} theorem{'' if checked == 1 else 's'} "
