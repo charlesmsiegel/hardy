@@ -48,13 +48,33 @@ def test_the_brake_does_not_climb_the_counter(session) -> None:
 
 
 def test_a_green_check_lifts_the_brake(session) -> None:
+    """The brake promises "until `check_lean` passes on this path" -- and a
+    green check only ever means the source it was actually handed, so this
+    saves the same source the check just vouched for."""
     for _ in range(session.SAVE_STREAK_LIMIT):
         _save(session)
-    assert _check(session).ok
+    assert _check(session, source=GREEN).ok
 
-    result = _save(session)
+    result = _save(session, source=GREEN)
 
     assert "consecutive saves" not in result.output
+
+
+def test_an_unrelated_green_check_does_not_lift_the_brake(session) -> None:
+    """`check_lean` elaborates whatever `source` it is handed, never the file
+    at `path` -- so a check on an unrelated one-line source must not lift a
+    brake earned by repeated failures of a different, much larger source.
+    Reproduces the confirmed sequence: four refused saves of one failing
+    source, one unrelated green `check_lean` on the same path, and the fifth
+    save of the original failing source is still braked."""
+    for _ in range(session.SAVE_STREAK_LIMIT):
+        assert not _save(session, source=UNREGISTERED).ok
+    assert _check(session, source=GREEN).ok
+
+    result = _save(session, source=UNREGISTERED)
+
+    assert not result.ok
+    assert "consecutive saves" in result.output
 
 
 def test_a_new_turn_clears_the_streak(session) -> None:
