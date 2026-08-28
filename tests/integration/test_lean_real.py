@@ -93,3 +93,41 @@ def test_real_lean_checks_valid_and_invalid_proofs_and_inspects_mathlib() -> Non
     assert any('Type mismatch' in diagnostic.message for diagnostic in invalid.diagnostics)
     inspection = service.inspect_declarations(('Nat.add_comm',))
     assert inspection.resolved[0].name == 'Nat.add_comm'
+
+
+BAD_SYLOW = (
+    "∀ {G : Type*} [Group G] [Fintype G] (p : ℕ) (hprime : Nat.Prime p) "
+    "(h_order : p ∣ Fintype.card G), ∃ P : Subgroup G, P.Normal"
+)
+REAL_SYLOW = (
+    "∀ {G : Type*} [Group G] [Finite G] (p : ℕ) [Fact p.Prime] (P : Sylow p G), "
+    "(∀ Q : Sylow p G, Q = P) → (P : Subgroup G).Normal"
+)
+
+
+def _closed_by(statement: str) -> list[str]:
+    """Which vacuity tactics close `statement` stripped, read as `_vacuity_probe` reads them."""
+    from hardy.chat import MathematicsSession, _strip_hypotheses
+
+    stripped = _strip_hypotheses(statement)
+    assert stripped is not None
+    tactics = list(MathematicsSession.PROBES) + list(MathematicsSession.WITNESSES)
+    source = "import Mathlib\n\n" + "\n".join(
+        f"example : {stripped} := by {tactic}" for tactic in tactics
+    ) + "\n"
+    check = _service(_environment())._check_source(source)
+    errored = {item.line for item in check.diagnostics if item.severity == "error"}
+    return [tactic for index, tactic in enumerate(tactics) if 3 + index not in errored]
+
+
+def test_the_failing_runs_approved_axiom_is_closed_by_a_witness() -> None:
+    """`sylow_unique_normal` as approved: its conclusion is `∃ P, P.Normal`."""
+    if not (LEAN_PROJECT / 'lake-manifest.json').exists():
+        pytest.skip('the pinned Lean project is not built; run `hardy setup`')
+    assert "exact ⟨⊥, inferInstance⟩" in _closed_by(BAD_SYLOW)
+
+
+def test_a_genuine_sylow_statement_is_closed_by_nothing() -> None:
+    if not (LEAN_PROJECT / 'lake-manifest.json').exists():
+        pytest.skip('the pinned Lean project is not built; run `hardy setup`')
+    assert _closed_by(REAL_SYLOW) == []
