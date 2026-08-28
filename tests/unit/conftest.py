@@ -228,7 +228,12 @@ def fake_lean(session, monkeypatch):
         output: str = ""
         raises: Exception | None = None
         last_source: str = ""
-        sources: list[str] = []
+
+        def __init__(self) -> None:
+            # An instance attribute, not a class one: appended to on every
+            # call, and a class-level list would be the same list shared by
+            # every `Fake` this fixture ever builds, across tests.
+            self.sources: list[str] = []
 
         def __call__(self, source: str, timeout: float | None = None):
             self.last_source = source
@@ -261,6 +266,5 @@ def fake_lean(session, monkeypatch):
             return LeanToolResult(not diagnostics, self.output, source, diagnostics=tuple(diagnostics))
 
     fake = Fake()
-    fake.sources = []
     monkeypatch.setattr(session, "_run_lean_source", fake)
     return fake
