@@ -207,8 +207,9 @@ def render(pile: Path, lean: list[Triaged], tex: list[Triaged], skipped: tuple[s
     """The triage list, grouped by verdict, for a human at the prompt."""
     lines = [
         f"Triaged {pile}: {len(lean)} Lean file{'s' if len(lean) != 1 else ''}, "
-        f"{len(tex)} TeX file{'s' if len(tex) != 1 else ''}. Nothing was written; "
-        "the pile was not modified."
+        f"{len(tex)} TeX file{'s' if len(tex) != 1 else ''}. No file in the pile "
+        "or the project's sources was touched; the verdicts, each under the digest "
+        "of the file's bytes, are recorded in the transcript."
     ]
     for verdict in (CLEAN, HOLES, BROKEN, NOTES, UNREADABLE):
         rows = [item for item in lean if item.verdict == verdict]
@@ -228,6 +229,12 @@ def render(pile: Path, lean: list[Triaged], tex: list[Triaged], skipped: tuple[s
         lines.append(f"\nTeX ({len(tex)}):")
         for item in tex:
             lines.append(f"  {item.path}  ({item.verdict})")
+            # The reason, not only the fact: "(unreadable)" alone leaves the
+            # user unable to tell a permissions problem from an encoding one,
+            # with the diagnostic sitting in the transcript unshown.
+            if item.detail:
+                for detail_line in item.detail.splitlines():
+                    lines.append(f"    {detail_line}")
         lines.append(
             "  A TeX file is not part of the writeup until writeup.tex \\inputs it; "
             "where it belongs is a decision about the document."
@@ -238,7 +245,8 @@ def render(pile: Path, lean: list[Triaged], tex: list[Triaged], skipped: tuple[s
             lines.append(f"  {note}")
     lines.append(
         "\nBring one in with /import lean <file> [dest] (into the authored tree, "
-        "through every save gate), /import reference <file> [dest] (into .hardy/lean/ "
-        "as assumed background), or /import tex <file> [dest]."
+        "through every verification gate -- only the authorship ratchet is skipped), "
+        "/import reference <file> [dest] (into .hardy/lean/ as assumed background), "
+        "or /import tex <file> [dest]."
     )
     return "\n".join(lines)

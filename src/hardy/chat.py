@@ -3207,15 +3207,6 @@ class MathematicsSession:
         # resolves against an olean, and nothing builds that olean but this.
         if found.lean:
             self.build_shared()
-            # The problem's own saved modules too. A pile file may `import`
-            # one, that import resolves against an olean, and on a fresh
-            # clone nothing has built it yet -- so without this pass a file
-            # that promotion would accept triaged as broken. A failure is
-            # tolerated rather than refused: the elaboration that needed the
-            # broken module reports it, about exactly the file it affects.
-            mine = self.lean_workspace.sources()
-            if mine:
-                self.lean_workspace.build_modules(tuple(mine))
         lean_rows = self._triage_lean(resolved, found.lean)
         if lean_rows is None:
             # Interrupted, so the verdicts gathered are not the pile's: every
@@ -3224,9 +3215,25 @@ class MathematicsSession:
             # would be a false record, so nothing is recorded at all.
             return ToolResult(False, f"triage of {resolved} was interrupted; nothing was recorded")
         tex_rows = self._triage_tex(resolved, found.tex)
+        # A verdict is an answer about an environment, and expires with it:
+        # the same identity that keys the olean cache and stamps every audit
+        # verdict -- toolchain plus the shared-source digest -- and the
+        # current signature of each saved module a pile file could have
+        # imported, so a reader after a toolchain or dependency change can
+        # tell these verdicts were not produced under it. A saved tree broken
+        # enough that its signatures cannot even be computed -- a hand-edited
+        # import cycle -- records the reason instead: the per-file verdicts
+        # already carry that breakage where it applies, and crashing the
+        # whole triage over the record's footnote would be backwards.
+        try:
+            signatures: dict[str, str] = self.lean_workspace.current_signatures()
+        except (ImportCycle, LayoutError, OSError) as error:
+            signatures = {"unavailable": str(error)}
         self._record({
             "type": "import_triage",
             "pile": str(resolved),
+            "environment": self._environment,
+            "project_signatures": signatures,
             "lean": [row.as_dict() for row in lean_rows],
             "tex": [row.as_dict() for row in tex_rows],
             "skipped": list(found.skipped),
@@ -3291,10 +3298,19 @@ class MathematicsSession:
             )
             sources = space.sources()
             approved = self._approved_assumptions()
+            # The problem's own saved sources, read once and BUILT per file
+            # rather than as one whole-workspace pass up front. A saved tree
+            # broken by a hand edit -- an import cycle, a module that no
+            # longer compiles -- would fail that pass before the first pile
+            # file was looked at, refusing (or crashing) a triage the broken
+            # module may have nothing to do with. Building exactly the saved
+            # modules each file imports keeps an unrelated breakage out of
+            # its verdict and attaches a related one to it.
+            mine = self.lean_workspace.sources()
             for relative, (content, text) in texts.items():
                 if process.stopping():
                     return None
-                rows.append(self._triage_one(space, sources, approved, str(relative), content, text))
+                rows.append(self._triage_one(space, sources, mine, approved, str(relative), content, text))
             # Asked once more after the last elaboration, not only before
             # each. Esc landing during the final file leaves an interrupted
             # Lean run graded "does not compile", and with no next iteration
@@ -3310,6 +3326,7 @@ class MathematicsSession:
         self,
         space: LeanWorkspace,
         sources: dict[str, str],
+        mine: dict[str, str],
         approved: set[str],
         posix: str,
         content: bytes,
@@ -3320,28 +3337,56 @@ class MathematicsSession:
             return ingest.Triaged(posix, sha, ingest.NOTES)
         declared = tuple(name for name, _ in assumptions(text))
         unapproved = tuple(name for name in declared if name not in approved)
-        detail = ""
+        notes: list[str] = []
         unreadable = unreadable_assumptions(text)
         if unreadable:
-            detail = (
+            notes.append(
                 f"declares an axiom Hardy cannot read as `axiom NAME : STATEMENT` "
                 f"({unreadable[0]}); promotion into the authored tree will refuse it"
             )
-        verdict, complaint = self._triage_compile(space, sources, text)
+        # A name the pile and the project both use is a verdict caveat, not a
+        # silent choice. The scratch build sits first on LEAN_PATH, so this
+        # file elaborated against the PILE's copy -- a tree the advertised
+        # one-file promotion cannot create, because the project's module of
+        # that name cannot be overwritten. Said here so the verdict is read
+        # for what it is.
+        shadowed = sorted(set(internal_imports(text, sources)) & set(mine))
+        if shadowed:
+            notes.append(
+                f"imports {shadowed} from the pile, but this project already saves "
+                "modules of the same name: the verdict was graded against the pile's "
+                "copy, which a one-file promotion cannot put in its place"
+            )
+        module = module_name(PurePosixPath(posix))
+        if module in mine:
+            notes.append(
+                f"this project already saves a module named {module}; promotion to "
+                "the same path will be refused as an overwrite"
+            )
+        verdict, complaint = self._triage_compile(space, sources, mine, text)
         return ingest.Triaged(
             posix, sha, verdict,
-            detail="\n".join(part for part in (complaint, detail) if part),
+            detail="\n".join(part for part in (complaint, *notes) if part),
             axioms=declared, unapproved=unapproved,
         )
 
-    def _triage_compile(self, space: LeanWorkspace, sources: dict[str, str], text: str) -> tuple[str, str]:
+    def _triage_compile(
+        self, space: LeanWorkspace, sources: dict[str, str], mine: dict[str, str], text: str
+    ) -> tuple[str, str]:
         try:
-            needed = internal_imports(text, sources)
-            failure = space.build_modules(needed) if needed else None
+            # Only the saved modules THIS file imports -- see `_triage_lean`
+            # for why the whole workspace is not built up front. A cycle in
+            # the saved tree surfaces here too, as this file's verdict rather
+            # than as an exception ending the whole pass.
+            saved = internal_imports(text, mine) if mine else ()
+            failure = self.lean_workspace.build_modules(saved) if saved else None
+            if failure is None:
+                needed = internal_imports(text, sources)
+                failure = space.build_modules(needed) if needed else None
         except ImportCycle as error:
             return ingest.BROKEN, str(error)
         if failure is not None:
-            return ingest.BROKEN, f"pile import {failure.module} does not build: {ingest.brief(failure.output)}"
+            return ingest.BROKEN, f"import {failure.module} does not build: {ingest.brief(failure.output)}"
         result = self.lean.run_source(
             text, env={"LEAN_PATH": os.pathsep.join([space.lean_path(), self._lean_path()])}
         )
@@ -3531,6 +3576,11 @@ class MathematicsSession:
                     f"{source_path} is a directory; /import brings in one file at a "
                     "time (triage the directory first to see what is in it)",
                 )
+            # Regular files only, for the same reason the pile walk requires
+            # them: reading a FIFO with no writer blocks forever, with no
+            # tracked child for Esc or a timeout to reach.
+            if not origin.is_file():
+                return ToolResult(False, f"{source_path} is not a regular file; Hardy will not read it")
             content = origin.read_bytes()
         except OSError as error:
             return ToolResult(False, f"{source_path} cannot be read: {error}")
