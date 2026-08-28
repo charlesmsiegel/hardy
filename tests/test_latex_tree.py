@@ -353,3 +353,35 @@ def test_a_symlinked_writeup_pdf_is_refused_rather_than_written_through(tmp_path
         LatexTools(COMMAND).check(FINE, output_dir=output)
 
     assert victim.read_text(encoding="utf-8") == "export PATH=/usr/bin\n"
+
+
+from hardy.latex import unreached_fragments
+
+
+def test_a_fragment_the_root_inputs_is_reached() -> None:
+    sources = {"writeup.tex": "\\input{sections/one}", "sections/one.tex": "x"}
+
+    assert unreached_fragments(sources) == []
+
+
+def test_a_fragment_nothing_inputs_is_unreached() -> None:
+    """The failing run wrote a 90-line `completion_status.tex` no document
+    ever pulled in, and it appeared in no PDF."""
+    sources = {"writeup.tex": "hello", "completion_status.tex": "done!"}
+
+    assert unreached_fragments(sources) == ["completion_status.tex"]
+
+
+def test_reachability_is_transitive_and_ignores_comments() -> None:
+    sources = {
+        "writeup.tex": "\\input{a}\n% \\input{ghost}",
+        "a.tex": "\\input{b.tex}",
+        "b.tex": "leaf",
+        "ghost.tex": "never",
+    }
+
+    assert unreached_fragments(sources) == ["ghost.tex"]
+
+
+def test_without_a_root_everything_is_unreached() -> None:
+    assert unreached_fragments({"a.tex": "x"}) == ["a.tex"]

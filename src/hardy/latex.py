@@ -4,7 +4,7 @@ import re
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from .layout import WriteGuard, files_under, guard_for, read_bytes
@@ -97,6 +97,35 @@ def _includes(root: str, path: str) -> bool:
         found.strip().replace("\\", "/") in wanted
         for found in INCLUSION.findall(uncommented(root))
     )
+
+
+def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
+    r"""Writeup files no `\input` chain from the root reaches.
+
+    A fragment nothing includes is in no PDF, whatever it says. A session once
+    wrote itself a status report that way and nobody could have read it.
+    Follows the same commands `_includes` does, through comments dropped the
+    same way, and accepts a path with or without `.tex` and with either
+    separator, as TeX does.
+    """
+    if ROOT_DOCUMENT not in sources:
+        return sorted(sources)
+    by_stem = {}
+    for path in sources:
+        normal = path.replace("\\", "/")
+        by_stem[normal] = path
+        if normal.endswith(".tex"):
+            by_stem[normal[: -len(".tex")]] = path
+    reached = {ROOT_DOCUMENT}
+    frontier = [ROOT_DOCUMENT]
+    while frontier:
+        current = frontier.pop()
+        for found in INCLUSION.findall(uncommented(sources[current])):
+            target = by_stem.get(found.strip().replace("\\", "/"))
+            if target is not None and target not in reached:
+                reached.add(target)
+                frontier.append(target)
+    return sorted(path for path in sources if path not in reached)
 
 
 def _probe_root(root: str, path: str) -> str:
