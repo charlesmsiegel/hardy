@@ -261,6 +261,66 @@ def test_an_inspection_that_failed_silently_is_not_a_success(tmp_path) -> None:
     assert inspection.success is False
 
 
+def test_an_inspection_with_an_error_before_the_check_lines_is_not_a_success(tmp_path) -> None:
+    """`import Mathlib` on line 1 failing leaves every name `unavailable`, and
+    that error has nothing to do with any of the names asked about -- crediting
+    it as an answer is the bug this guards against."""
+    process = importlib.import_module('hardy.process')
+    message = json.dumps({
+        'data': "unknown module Mathlib", 'fileName': 'Inspect.lean',
+        'pos': {'line': 1, 'column': 0}, 'severity': 'error',
+    })
+
+    def runner(spec):
+        return process.ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=1, stdout=message, stderr='',
+            timed_out=False, output_overflow=False, duration_ms=1,
+        )
+
+    inspection = _inspecting_service(tmp_path, runner).inspect_declarations(('Nope',))
+
+    assert inspection.success is False
+    assert inspection.unavailable == ('Nope',)
+
+
+def test_an_inspection_with_an_error_on_the_check_line_is_a_success(tmp_path) -> None:
+    process = importlib.import_module('hardy.process')
+    message = json.dumps({
+        'data': "unknown identifier 'Nope'", 'fileName': 'Inspect.lean',
+        'pos': {'line': 3, 'column': 7}, 'severity': 'error',
+    })
+
+    def runner(spec):
+        return process.ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=1, stdout=message, stderr='',
+            timed_out=False, output_overflow=False, duration_ms=1,
+        )
+
+    inspection = _inspecting_service(tmp_path, runner).inspect_declarations(('Nope',))
+
+    assert inspection.success is True
+
+
+def test_an_inspection_that_overflowed_is_not_a_success(tmp_path) -> None:
+    """Whatever diagnostics survived an overflowed process are not the whole
+    batch, even if every one that came through landed on a `#check` line."""
+    process = importlib.import_module('hardy.process')
+    message = json.dumps({
+        'data': "unknown identifier 'Nope'", 'fileName': 'Inspect.lean',
+        'pos': {'line': 3, 'column': 7}, 'severity': 'error',
+    })
+
+    def runner(spec):
+        return process.ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=1, stdout=message, stderr='',
+            timed_out=False, output_overflow=True, duration_ms=1,
+        )
+
+    inspection = _inspecting_service(tmp_path, runner).inspect_declarations(('Nope',))
+
+    assert inspection.success is False
+
+
 def test_search_declarations_bounds_and_structures_find_results(tmp_path) -> None:
     domain = importlib.import_module('hardy.domain')
     lean = importlib.import_module('hardy.lean')
