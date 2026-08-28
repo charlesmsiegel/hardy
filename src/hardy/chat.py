@@ -530,9 +530,9 @@ class MathematicsSession:
         # not the workspace, so it belongs in neither manifest.
         self._save_streak: dict[str, int] = {}
         self._tool_tally: dict[str, list[int]] = {"save_lean": [0, 0], "check_lean": [0, 0]}
-        # Every name a *completed* `inspect_declarations` batch asked about
-        # this session, and whether one has run since the last axiom request.
-        self._inspected: list[tuple[str, bool]] = []
+        # Whether a *completed* `inspect_declarations` batch has run since the
+        # last axiom request. `_searched_since_request`, below, carries what it
+        # found.
         self._inspected_since_request = False
         self._searched_since_request: list[str] = []
         # Prior statements this session requested under each name and did not
@@ -3472,7 +3472,6 @@ class MathematicsSession:
             # tell, and every name below is recorded as not found.
             pass
         for name in names:
-            self._inspected.append((name, name in resolved))
             self._searched_since_request.append(f"{name} {'✓' if name in resolved else '✗'}")
         self._inspected_since_request = True
 
