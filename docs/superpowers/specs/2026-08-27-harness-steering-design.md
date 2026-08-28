@@ -203,7 +203,9 @@ it resolved. Appended by the dispatch in `_search_tool` after §2's fields say
 the batch finished. `self._inspected_since_request: bool` is set true by the
 same append and false after every `request_assumption` returns.
 
-A request with `_inspected_since_request` false is refused:
+A request with `_inspected_since_request` false is refused — when the session
+has a search runtime at all. A session built with `search=None` cannot be asked
+to search, and the gate does not apply there:
 
 > no `inspect_declarations` has been run since the last assumption request.
 > Look for the result before assuming it: pass several candidate spellings and
@@ -215,9 +217,13 @@ tried.
 
 ### 5b. Vacuity probe
 
-`_assumption_probe` keeps its layout and its refusal. Two blocks of `example`
-lines are added *after* the existing five and *before* the declaration, and the
-line arithmetic (`first_probe`, `declaration_line`) is extended to cover them.
+`_assumption_probe` keeps its layout and its refusal unchanged. The vacuity
+questions are asked in a **second** elaboration, `_vacuity_probe`, run only when
+the first returned no refusal: a file of `import Mathlib`, a blank line, and one
+`example` per line from line 3, with no declaration at the end (nothing here
+needs the axiom in scope). One more Lean run per request that has already
+passed the triviality gate is cheap; extending the first file's line
+arithmetic would have changed a layout the existing tests and fixture pin.
 
 **Stripped statement.** From the normalised statement, every named binder whose
 type Hardy can see is a `Prop` hypothesis is removed: a binder group
