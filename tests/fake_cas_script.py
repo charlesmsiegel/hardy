@@ -20,21 +20,15 @@ def main() -> None:
     sys.path.insert(0, str(Path(__file__).parent))
     from fake_cas import answer
 
-    at_exit: list[tuple[str, ...]] = []
-    # Whether the file's last statement ran. Hardy's closing marker says which
-    # of two things happened -- the file finished, or the interpreter shut down
-    # before it did -- and a fake interpreter that always reported the first
-    # would be no test of the difference. These two statements are Hardy's own,
-    # from `SympyBackend.transcript_prologue` and `transcript_epilogue`.
-    reached_the_end = False
+    # What the file's last statement left, and the lines its shutdown hooks
+    # will print. Hardy registers two: one carrying the closing marker
+    # literally, and one that prints whatever `_hardy_finished` holds when the
+    # process ends -- which is nothing at all if the file never got there.
+    finished = ""
+    at_exit: list[str | None] = []
     for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
         source = line.strip()
         if not source or source.startswith("#"):
-            continue
-        if source == "_hardy_reached_the_end = []":
-            continue
-        if source == "_hardy_reached_the_end.append(True)":
-            reached_the_end = True
             continue
         # The transcript brackets Hardy writes around a script's own output.
         # A real interpreter runs them as ordinary statements; this one has to
@@ -45,17 +39,30 @@ def main() -> None:
         # the foot of the file, so that it cannot resolve a name the cells
         # have had a chance to rebind. Held to the end here for the same
         # reason a real interpreter holds it: that is when it runs.
-        # Anchored on the markers' own guillemets. The statement carries other
+        # Anchored on the marker's own guillemets. The statement carries other
         # quoted strings -- the module names it imports -- and a looser match
-        # registered `functools` as the closing marker. Two of them travel
-        # together: the one for a file that finished and the one for a process
-        # that shut down before it did.
+        # registered `functools` as the closing marker. The registration that
+        # carries no marker at all is the other one: it reads the namespace at
+        # shutdown, so what it prints is decided then and not here.
         if source.startswith('__import__("atexit").register('):
-            markers = re.findall(r'"(\u00ab[^"]*\u00bb)"', source)
-            if markers:
-                at_exit.append(tuple(markers))
-                continue
-        literal = re.fullmatch(r'(?:__import__\("builtins"\)\.)?print\("(.*)"\)', source)
+            registered = re.search(r'"(\u00ab[^"]*\u00bb)"', source)
+            at_exit.append(None if registered is None else registered.group(1))
+            continue
+        # The file's last statement. A bare assignment of a string, so that a
+        # cell which has broken `print` or `__import__` cannot stop it.
+        leaves = re.fullmatch(r'_hardy_finished = "(.*)"', source)
+        if leaves is not None:
+            finished = leaves.group(1)
+            continue
+        # The begin marker, and the file's own closing statement -- the one
+        # that says it reached the end. The destination is named on that one
+        # and not on the other, because only the second runs after cells have
+        # had a chance to rebind `sys.stdout`; both print here.
+        literal = re.fullmatch(
+            r'(?:__import__\("builtins"\)\.)?print\("(.*?)"'
+            r'(?:, file=__import__\("sys"\)\.stdout)?\)',
+            source,
+        )
         if literal is not None:
             sys.stdout.write(literal.group(1) + "\n")
             continue
@@ -65,12 +72,10 @@ def main() -> None:
             sys.stdout.write(reply["value_repr"] + "\n")
         sys.stderr.write(reply["stderr"])
     # LIFO, as `atexit` runs them: Hardy registers its closing marker before
-    # any cell, so it is the last thing the process prints. Where two markers
-    # were registered together, which one goes out is what the callback
-    # decides -- the file's own report of whether it got to the end.
-    for markers in reversed(at_exit):
-        finished, cut_short = markers[0], markers[-1]
-        sys.stdout.write((finished if reached_the_end else cut_short) + "\n")
+    # any cell, so it is the last thing the process prints, and the completion
+    # line registered after it comes out just inside.
+    for marker in reversed(at_exit):
+        sys.stdout.write((finished if marker is None else marker) + "\n")
     sys.stdout.flush()
     sys.stderr.flush()
 

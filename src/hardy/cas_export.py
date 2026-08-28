@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import shutil
 import time
 from datetime import UTC, datetime
@@ -183,16 +184,32 @@ def _content_lines(text: str) -> list[str]:
 
 TRANSCRIPT_BEGIN = "«hardy-transcript-begin»"
 TRANSCRIPT_END = "«hardy-transcript-end»"
-# Printed in place of the end marker when the interpreter shut down without
-# the file's last statement having run. The closing marker is an `atexit`
-# callback, which is what puts it out of reach of anything a cell can rebind
-# -- and also what makes it fire on `SystemExit(0)`. A first cell guarded by
-# `if __name__ == "__main__": raise SystemExit(0)` is silent under the driver
-# and ends the script under `python session.py`, so both markers went out
-# around an empty transcript, the file exited 0, and an export reported
-# reproduction for a run in which none of the later cells existed. Shutting
-# down cleanly is not the same as having finished.
-TRANSCRIPT_CUT_SHORT = "«hardy-transcript-cut-short»"
+def completion_marker() -> str:
+    """A line the published file prints as its own last statement.
+
+    Evidence that the script *finished*, which the closing marker cannot give.
+    That marker is an `atexit` callback -- which is what puts it out of reach
+    of anything a cell can rebind, and also what makes it fire on
+    `SystemExit(0)`: a first cell guarded by
+    `if __name__ == "__main__": raise SystemExit(0)` is silent under the driver
+    and ends the script under `python session.py`, so the markers went out
+    around an empty transcript, the file exited 0, and an export reported
+    reproduction for a run in which none of the later cells existed.
+
+    A printed line rather than a flag a later statement sets. The flag was a
+    name in the script's own namespace, so a cell could `append` to it and buy
+    itself the finished marker; there is no name here to reach. It is fresh per
+    export because a fixed sentinel is a string a cell may legitimately print
+    -- which would have failed a faithful export on the strength of its output
+    matching Hardy's own -- and because a constant is one a cell could type on
+    purpose. A cell that reads its own source can still find this, exactly as
+    it can find the markers; what it cannot do is collide with it by accident.
+
+    Every way of failing to print it reports the run cut short: the statement
+    never reached, `print` rebound to something that swallows it, `__import__`
+    broken so the statement raises and the file exits non-zero.
+    """
+    return f"«hardy-transcript-finished-{secrets.token_hex(8)}»"
 
 
 def _after_end_marker(text: str) -> str:
@@ -260,14 +277,22 @@ def _expected_transcript(cells: tuple[CellRecord, ...]) -> tuple[str, str]:
     return "".join(out), "".join(err)
 
 
-def _markers(statements: tuple[str, ...]) -> list[str]:
+def _markers(statements: tuple[str, ...], finished: str = "") -> list[str]:
     """Fill a backend's transcript-bracket templates with the actual markers."""
     return [
-        statement.format(
-            begin=TRANSCRIPT_BEGIN, end=TRANSCRIPT_END, early=TRANSCRIPT_CUT_SHORT
-        )
+        statement.format(begin=TRANSCRIPT_BEGIN, end=TRANSCRIPT_END, finished=finished)
         for statement in statements
     ]
+
+
+def _wants_completion(backend: Any) -> bool:
+    """Whether this backend's last statement is the one that says it finished.
+
+    Only where the closing marker is a shutdown hook. Singular and Macaulay2
+    print theirs from the foot of the file, so an interpreter that stopped
+    early never prints it and `_between_markers` already has nothing to cut.
+    """
+    return "{finished}" in "".join(getattr(backend, "transcript_epilogue", ()))
 
 
 def _without_chrome(backend: Any, text: str) -> str:
@@ -382,7 +407,11 @@ def _restore_published(script: Path, published: bytes) -> bool:
 
 
 def _verify_script(
-    session: CasSession, cells: tuple[CellRecord, ...], script: Path, directory: Path
+    session: CasSession,
+    cells: tuple[CellRecord, ...],
+    script: Path,
+    directory: Path,
+    completion: str = "",
 ) -> tuple[Verdict, str]:
     """Run the published file and say whether it reproduced the session.
 
@@ -489,18 +518,25 @@ def _verify_script(
         )
 
     expected_out, expected_err = _expected_transcript(cells)
-    if TRANSCRIPT_CUT_SHORT in stdout:
-        # Said by the file about itself, at shutdown, and only when its last
-        # statement never ran. Checked before the transcript is compared,
+    transcript = _between_markers(stdout)
+    if transcript is not None and _wants_completion(session.backend):
+        # Printed by the file's own last statement, so its absence says the
+        # file did not get there. Checked before the transcript is compared,
         # because the comparison would otherwise pass: a run that stopped
         # after cell one prints exactly what cell one printed, and a run that
         # stopped before cell one prints nothing at all, which is what a
         # session of silent cells recorded.
-        return "failed", (
-            "the script stopped before it reached its last cell, so what it printed "
-            "is not what running this file does"
-        )
-    transcript = _between_markers(stdout)
+        #
+        # Presence is the whole of the claim, so the first occurrence is cut
+        # out and the rest compared as usual -- rather than requiring it last,
+        # which would misreport a cell's own `atexit` output as an early exit
+        # when it is an ordinary divergence.
+        if completion not in transcript:
+            return "failed", (
+                "the script stopped before it reached its last cell, so what it "
+                "printed is not what running this file does"
+            )
+        transcript = transcript.replace(completion + "\n", "", 1).replace(completion, "", 1)
     if transcript is None:
         # The script exited 0 and its capture was complete, so the two
         # statements bracketing its own transcript are statements it ran. A
@@ -532,6 +568,22 @@ def _verify_script(
                 f"the script's {stream} is not the {stream} the session recorded; "
                 f"recorded {_excerpt(want)}, script printed {_excerpt(got)}"
             )
+    if run.left_processes:
+        # Last, because a concrete disagreement is worth more than this. What a
+        # descendant printed *was* compared -- it arrives on the inherited
+        # descriptor and is drained before anything is killed -- so a script
+        # whose child contradicts the record is `diverged` on the evidence
+        # rather than unverified for want of it. This is what is left when
+        # everything comparable agreed: the run outlived itself, a descendant
+        # with its own stdout is invisible to every check here, and one that
+        # slept and then rewrote `sys.argv[0]` changed the artifact after the
+        # verdict had been drawn on it. The group is killed before the file is
+        # read back, so that race is closed; what running this file *does* is
+        # still not bounded by what was seen of it.
+        return "unverified", (
+            "the script left a process running when it exited, so what running "
+            "this file does is not bounded by what was observed of it"
+        )
     return "verified", ""
 
 
@@ -539,6 +591,7 @@ def render_script(
     session: CasSession,
     cells: tuple[CellRecord, ...],
     verdicts: list[CellVerdict],
+    completion: str = "",
 ) -> str:
     """Write the accepted cells out as a file that behaves the way they did.
 
@@ -593,7 +646,7 @@ def render_script(
         f"{mark} bracket what this file prints -- so Hardy can compare that against",
         f"{mark} the session without mistaking an interpreter's startup banner for",
         f"{mark} something a cell printed. See `script_verdict` in export.json.",
-        *_markers(backend.transcript_prologue),
+        *_markers(backend.transcript_prologue, completion),
         "",
     ]
     for record, verdict in zip(cells, verdicts, strict=True):
@@ -605,7 +658,7 @@ def render_script(
         lines.append(f"{mark} --- cell {record.seq} ({record.author}){note}")
         lines.append(backend.render_cell(record.source).rstrip())
         lines.append("")
-    epilogue = _markers(backend.transcript_epilogue)
+    epilogue = _markers(backend.transcript_epilogue, completion)
     if epilogue:
         lines += [*epilogue, ""]
     return "\n".join(lines) + "\n"
@@ -726,12 +779,14 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
 
     script_path = directory / f"session{session.backend.script_suffix}"
     notebook_path = directory / "session.ipynb"
-    script = render_script(session, cells, verdicts).encode("utf-8")
+    # Fresh for this export, and known to both the file and the check.
+    completion = completion_marker() if _wants_completion(session.backend) else ""
+    script = render_script(session, cells, verdicts, completion).encode("utf-8")
     # The script is published before it is checked, because the thing checked
     # has to be the thing published: these exact bytes are what gets run.
     guard.write_bytes(script_path.name, script)
     try:
-        script_verdict = _verify_script(session, cells, script_path, directory)
+        script_verdict = _verify_script(session, cells, script_path, directory, completion)
     except Exception as error:  # noqa: BLE001 - see below
         # Deliberately everything. `DESIGN.md` requires a partial export to be
         # written and marked rather than withheld, and the check is the *last*

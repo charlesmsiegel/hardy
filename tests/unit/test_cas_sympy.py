@@ -8,6 +8,7 @@ actually ship with computes, keeps state, and reports values — the behaviours
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 
@@ -171,6 +172,24 @@ def test_an_exported_sympy_session_reproduces(sympy_session, tmp_path) -> None:
     assert "from sympy import *" in script
 
 
+#: The line the published file's last statement leaves for its closing
+#: callback to print — evidence that the file *finished* rather than exiting
+#: cleanly partway through. Generated fresh for each export, so a test cannot
+#: write its value into an expectation.
+COMPLETION = re.compile(r"\u00abhardy-transcript-finished-[0-9a-f]+\u00bb")
+
+
+def transcript_lines(stdout: str) -> list[str]:
+    """What the script printed, with the completion line taken out.
+
+    Asserts it was there exactly once on the way past, so removing it from the
+    comparison does not quietly stop checking for it.
+    """
+    lines = stdout.splitlines()
+    assert sum(bool(COMPLETION.fullmatch(line)) for line in lines) == 1, lines
+    return [line for line in lines if not COMPLETION.fullmatch(line)]
+
+
 def test_running_the_exported_script_prints_what_the_session_recorded(
     sympy_session, tmp_path
 ) -> None:
@@ -203,7 +222,7 @@ def test_running_the_exported_script_prints_what_the_session_recorded(
     # Not "it ran": every recorded output, in order, is what it printed --
     # inside the brackets the script prints around its own transcript, which
     # is how the export check tells the file's output from the interpreter's.
-    assert finished.stdout.splitlines() == [
+    assert transcript_lines(finished.stdout) == [
         TRANSCRIPT_BEGIN,
         "computing",
         "(x - 1)*(x + 1)",
@@ -307,7 +326,7 @@ def test_a_tuple_valued_cell_still_exports_a_runnable_script(
         check=False,
     )
     assert finished.returncode == 0, finished.stderr
-    assert finished.stdout.splitlines() == [TRANSCRIPT_BEGIN, printed, TRANSCRIPT_END]
+    assert transcript_lines(finished.stdout) == [TRANSCRIPT_BEGIN, printed, TRANSCRIPT_END]
     assert report.script_verdict == "verified", report.script_detail
     assert report.reproduces
 

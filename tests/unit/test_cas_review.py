@@ -11,9 +11,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -123,7 +125,8 @@ def test_a_backend_with_no_digest_says_what_it_could_not_check(cas_session) -> N
     rebuilt = session.execute("after")
     assert rebuilt.status == "ok"
     assert "reconstructed, not verified" in rebuilt.restart_note
-    assert "no cell's state could be compared" in rebuilt.restart_note
+    assert "no cell's replay could be fully compared" in rebuilt.restart_note
+    assert "carry no state digest" in rebuilt.restart_note
 
 
 # ------------------------------------------------------ bounds that do not bind
@@ -1217,3 +1220,153 @@ def test_the_fingerprint_payload_is_bounded_as_well_as_the_node_count(
 def test_an_ordinary_namespace_is_still_within_the_payload_bound() -> None:
     """The bound above must not have cost every digest."""
     assert state_digest({"a": list(range(1000)), "b": "x" * 100}, {}, 4096)
+
+
+# --------------------------------------------------- and the twelfth review's
+
+
+def test_a_descendant_cannot_rewrite_the_artifact_after_the_verdict(
+    sympy_session, tmp_path
+) -> None:
+    """A descendant with its own stdout is invisible to every check the run
+    makes: the drain workers finish, the capture looks complete, and it
+    outlives the script. One that slept and then rewrote `sys.argv[0]` changed
+    the published file after the manifest had recorded its hash — with the
+    verdict already `verified`.
+    """
+    sympy_session.execute(
+        'if __name__ == "__main__":\n'
+        "    import subprocess, sys\n"
+        "    subprocess.Popen(\n"
+        "        [sys.executable, '-c',\n"
+        "         'import time, sys, pathlib; time.sleep(3); "
+        "pathlib.Path(sys.argv[1]).write_text(\"# late\\\\n\")', sys.argv[0]],\n"
+        "        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,\n"
+        "    )\n"
+    )
+    directory = tmp_path / "cas"
+    report = export_session(sympy_session, directory)
+    published = directory / "session.py"
+    before = published.read_bytes()
+
+    # The verdict says what it is: nothing here disagreed with the record, and
+    # a run that outlives itself is not one the check saw the whole of.
+    assert report.script_verdict == "unverified", report.model_dump_json(indent=2)
+    assert "left a process running" in report.script_detail
+    # And the manifest's hash still describes the file, which it did not when
+    # the descendant was left to run.
+    recorded = json.loads((directory / "export.json").read_text(encoding="utf-8"))
+    time.sleep(4)
+    assert published.read_bytes() == before, "the artifact was rewritten after the export"
+    digest = hashlib.sha256(published.read_bytes()).hexdigest()
+    assert digest in json.dumps(recorded), recorded
+
+
+def test_output_from_a_descendant_is_still_compared_not_waved_through(
+    sympy_session, tmp_path
+) -> None:
+    """Killing what the run left behind must not throw away the evidence. A
+    child that prints arrives on the inherited descriptor and is drained before
+    anything is killed, so a script whose child contradicts the record is
+    `diverged` on the evidence rather than unverified for want of it."""
+    sympy_session.execute(
+        'if __name__ == "__main__":\n'
+        "    import subprocess, sys\n"
+        "    subprocess.Popen([sys.executable, '-c', "
+        "\"import time; time.sleep(0.5); print('after the marker')\"])\n"
+    )
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "diverged", report.model_dump_json(indent=2)
+
+
+def test_a_cell_cannot_claim_the_script_finished(sympy_session, tmp_path) -> None:
+    """The completion evidence was a list in the script's own namespace, so a
+    cell could `append` to it and buy itself the finished marker before exiting
+    early. There is no name to reach now: the evidence is a string generated
+    per export, and a cell that assigns the name something of its own gets
+    exactly what it assigned."""
+    sympy_session.execute(
+        'if __name__ == "__main__":\n'
+        '    _hardy_finished = "«hardy-transcript-finished-0000000000000000»"\n'
+        "    raise SystemExit(0)\n"
+    )
+    sympy_session.execute("y = 1")
+    sympy_session.execute("z = 2")
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "failed", report.model_dump_json(indent=2)
+    assert "stopped before it reached its last cell" in report.script_detail
+
+
+def test_the_completion_evidence_is_fresh_for_each_export(
+    sympy_session, tmp_path
+) -> None:
+    """A constant is one a cell could type on purpose."""
+    sympy_session.execute("1 + 1")
+    first = export_session(sympy_session, tmp_path / "one").script_path
+    second = export_session(sympy_session, tmp_path / "two").script_path
+    pattern = re.compile(r"«hardy-transcript-finished-[0-9a-f]+»")
+    one = pattern.findall(Path(first).read_text(encoding="utf-8"))
+    two = pattern.findall(Path(second).read_text(encoding="utf-8"))
+    assert len(one) == len(two) == 1, (one, two)
+    assert one != two
+
+
+def test_a_cell_may_print_something_that_looks_like_hardys_own_sentinel(
+    sympy_session, tmp_path
+) -> None:
+    """The first attempt at this used a fixed marker and looked for it anywhere
+    in the output, so a cell whose legitimate output happened to equal Hardy's
+    sentinel failed a faithful export on the strength of its own text."""
+    sympy_session.execute("print('«hardy-transcript-finished-0123456789abcdef»')")
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+    assert report.reproduces
+
+
+def test_a_cell_that_sabotages_the_interpreter_keeps_a_runnable_artifact(
+    sympy_session, tmp_path
+) -> None:
+    """Whatever says the file finished runs at the end of the file, where a
+    cell has had its turn with every name. An `__import__("builtins").print`
+    there would raise under `__import__ = None` and leave a published script
+    that dies when a reader runs it — Hardy's own statement breaking an
+    otherwise working artifact. A bare assignment cannot."""
+    sympy_session.execute("2 + 2")
+    sympy_session.execute("__import__ = None")
+    sympy_session.execute("print = lambda *_: None")
+    directory = tmp_path / "cas"
+    report = export_session(sympy_session, directory)
+    assert report.script_verdict == "verified", report.model_dump_json(indent=2)
+
+    run = subprocess.run(
+        [sys.executable, str(directory / "session.py")],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONHASHSEED": "0"},
+    )
+    assert run.returncode == 0, run.stderr
+
+
+def test_a_rebuild_says_which_gap_its_unverified_cells_have(sympy_session) -> None:
+    """`unverified` carries cells that carry no digest and cells whose capture
+    was clipped, and the note named only the first. Telling a reader whose
+    state *was* compared that there is no state digest for it sends them to
+    look in the wrong place."""
+    session = CasSession(
+        backend=backend_for("sympy"),
+        command=None,
+        log_path=sympy_session.log_path.parent / "which-gap.jsonl",
+        limits=RunLimits(cas_cell_seconds=120, cas_output_bytes=4_096),
+        cwd=sympy_session.cwd,
+    )
+    try:
+        clipped = session.execute("print('x' * 5000)")
+        assert clipped.capture_truncated is True
+        assert clipped.state_digest, "its namespace was fingerprinted"
+
+        session._drop_kernel()
+        rebuilt = session.execute("1 + 1")
+        assert "captured up to cas_output_bytes" in rebuilt.restart_note
+        assert "no state digest" not in rebuilt.restart_note
+    finally:
+        session.close()
