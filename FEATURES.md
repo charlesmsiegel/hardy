@@ -431,7 +431,9 @@ Priority labels are sequencing hints:
   system prompt, not what a resumed provider thread already remembers, with the
   transcript marking the turn the file stopped being sent.
 - **Known gap:** the SDK owns the turn loop, so turn limits are enforced by the
-  provider and only the wall clock is Hardy's. Tracked in issue #23.
+  provider, only the wall clock is Hardy's, and a long session's context is
+  compacted by the provider's rules with no record of what was dropped.
+  Tracked in issue #23.
 - **Now (implemented):** a Codex backend for ChatGPT subscriptions, on the same
   shape, shipped as the optional `codex` extra.
 - **Now (implemented):** an interactive session accumulates the cost and token
@@ -453,8 +455,10 @@ Priority labels are sequencing hints:
   budget and what remains of it alongside the spend in `/status`. Recording is
   done; enforcement still needs a decision point before each call, which the SDK
   owns (issue #23).
-- **Next:** reclaim enough of the loop to enforce Hardy's own bounds and run
-  cheap Lean closers before spending a model turn (issue #23).
+- **Next:** reclaim enough of the loop to enforce Hardy's own bounds, run
+  cheap Lean closers before spending a model turn, and choose — or at least
+  record — what a compaction keeps, whether by owning the loop or through the
+  SDK's `PreCompact` hook (issue #23).
 - **Later:** adapters for other agent SDKs, and an API-key path for users who
   prefer one to a subscription.
 - **Later:** summarize failed attempts into compact lessons rather than replaying

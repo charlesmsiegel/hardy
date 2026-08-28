@@ -257,8 +257,9 @@ which axioms are standing, and which attempts failed — and `transcript.jsonl`
 does not record what was dropped. Most of a useful mathematical summary is
 already in `session.json` and `read_workspace`, mechanical and therefore
 checkable in a way no coding agent's summary can be; only "what was tried and
-why it failed" needs the model, and none of it can be built while Hardy does
-not run the loop. `DESIGN.md` records the full argument.
+why it failed" needs the model. `DESIGN.md` records the full argument,
+including how much of it the SDK's own `PreCompact` hook could recover
+without reclaiming the loop.
 
 ## Install
 

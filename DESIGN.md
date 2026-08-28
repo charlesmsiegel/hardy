@@ -155,8 +155,14 @@ audit verdicts are already in `session.json`, and the declaration list is
 already what `read_workspace` returns — so almost every heading is derivable
 from the workspace rather than narrated by a model, which makes it checkable
 in a way no coding agent's summary can be. Only "what was tried and why it
-failed" needs the model. None of that can be built while the SDK runs the
-loop.
+failed" needs the model. Whether building it requires owning the loop outright
+is the question issue #23 already poses as "hooks as a control surface": the
+pinned SDK exposes a `PreCompact` hook — the compaction's trigger and the
+provider transcript path — which may be enough to persist the mechanical
+summary and mark the boundary in `transcript.jsonl` without reclaiming
+anything. What the hook cannot do is decide what the surviving context
+contains; establishing what it can and cannot provide comes before concluding
+that a harness-owned loop is required.
 
 ### 3. Tool layer
 
