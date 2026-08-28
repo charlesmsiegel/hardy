@@ -740,16 +740,8 @@ def _walk(
     return _emit(emit, budget, type(value).__name__ + ":" + rendered)
 
 
-def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
-    """A fingerprint of everything a cell has put in the namespace.
-
-    Recovery replays the accepted cells and compares what they printed. That
-    is not the same as comparing what they *did*: `import random; x =
-    random.random()` prints nothing at all, so a replay that rebuilt a
-    different `x` reproduced three empty fields and was called faithful, and
-    every cell after it was standing on a value nobody had checked. The digest
-    is what makes that comparable -- it is recorded per cell and compared on
-    replay, so an unobservable change is observable after all.
+def _fingerprint(namespace: dict, baseline: dict, limit: int) -> str:
+    """One pass: hash the namespace, or return "" because it cannot be hashed.
 
     `baseline` is the namespace as the preamble left it. A name still bound to
     the very object the preamble bound is skipped, which keeps the digest to
@@ -818,6 +810,42 @@ def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
     for name in sorted((key for key in baseline if key not in namespace), key=repr):
         _record(digest, name, b"deleted", b"")
     return digest.hexdigest()
+
+
+def state_digest(namespace: dict, baseline: dict, limit: int) -> str:
+    """A fingerprint of everything a cell has put in the namespace.
+
+    Recovery replays the accepted cells and compares what they printed. That
+    is not the same as comparing what they *did*: `import random; x =
+    random.random()` prints nothing at all, so a replay that rebuilt a
+    different `x` reproduced three empty fields and was called faithful, and
+    every cell after it was standing on a value nobody had checked. The digest
+    is what makes that comparable -- it is recorded per cell and compared on
+    replay, so an unobservable change is observable after all.
+
+    Taken twice, and withheld unless the two agree. Fingerprinting runs
+    `repr`, and a `__repr__` is a cell's own code: one that assigns
+    `globals()["a"]` mutates a name that has already been hashed, so the digest
+    describes a namespace that no longer exists by the time it is finished --
+    and if what it assigns differs run to run, the recorded digest and the
+    replay's agree while the two namespaces do not. That is the exact failure
+    the digest exists to catch, arriving through the digest itself.
+
+    A second pass is what detects it, because there is no asking an object
+    whether its repr has side effects. A pass over an unchanged namespace
+    hashes it identically; any mutation that a fingerprint could have seen
+    moves the second answer off the first, and no digest is the honest result.
+    One that a fingerprint could *not* have seen is the limit named in
+    `DESIGN.md` either way. This also reports a namespace being changed under
+    Hardy by a thread a cell started as unfingerprintable, which it is.
+
+    The cost is one extra walk per cell, bounded by the same node and payload
+    budgets as the first.
+    """
+    first = _fingerprint(namespace, baseline, limit)
+    if not first:
+        return ""
+    return first if first == _fingerprint(namespace, baseline, limit) else ""
 
 
 def run_cell(source: str, namespace: dict, limit: int, capture: _Capture) -> dict:

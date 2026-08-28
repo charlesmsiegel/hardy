@@ -214,7 +214,15 @@ reports itself unverified. What it cannot see is an object whose repr is
 stable, concise, and silent about its contents: a module a cell has attached an
 attribute to, an open file, a class with a `__repr__` of its own. The digest
 catches everything from a plain assignment to a lost mutation to a lost alias,
-and it does not catch that. Making it total
+and it does not catch that.
+
+A repr is also a cell's own code, so fingerprinting can *change* what it is
+fingerprinting: a `__repr__` that assigns `globals()["a"]` mutates a name
+already hashed, and if what it assigns differs run to run the recorded digest
+and the replay's agree while the two namespaces do not — the failure the digest
+exists to catch, arriving through the digest. There is no asking an object
+whether its repr has side effects, so the namespace is fingerprinted twice and
+the answer withheld unless the two passes agree. Making it total
 would mean fingerprinting only a fixed list of types with canonical reprs,
 which would refuse far more sessions than it saves; the case for that trade has
 not been made, so what is here is a strong check with a named limit rather than

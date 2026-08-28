@@ -449,7 +449,11 @@ Priority labels are sequencing hints:
   fallback for a leaf only, so what the digest cannot see is an object whose
   repr is stable, concise, and silent about its contents -- a module a cell has
   attached an attribute to, an open file, a class with a `__repr__` of its own.
-  A strong check with a named limit, not a proof. Where the default backend records no digest, an export
+  A strong check with a named limit, not a proof. It is taken twice and
+  withheld unless the two passes agree, because a repr is a cell's own code:
+  one that assigns `globals()["a"]` mutates a name already hashed, so a digest
+  taken once described a namespace that no longer existed by the time it was
+  finished. Where the default backend records no digest, an export
   marks that cell `unverified` for the same reason a rebuild does -- its replay
   reproduced everything Hardy can see and nothing more. A sentinel backend is
   untouched by that rule: every record there is digestless, so the absence says
@@ -498,7 +502,11 @@ Priority labels are sequencing hints:
   What such a run printed is still compared first, because a concrete
   disagreement is worth more than a caveat; a script that left a process
   running and agreed with the record everywhere else is reported `unverified`,
-  since what running it *does* is not bounded by what was seen of it.
+  since what running it *does* is not bounded by what was seen of it. Where the
+  platform has no process groups -- Windows -- a script's children can neither
+  be accounted for nor stopped, so no script verdict there is `verified`:
+  saying nothing was left behind would have been "nobody looked" reported as
+  "nobody was there".
 - **Now (implemented):** the published script names the environment it was
   checked under, and `export.json` records it. A verdict is a claim about
   running those exact bytes *that way*: `PYTHONHASHSEED` is pinned for the

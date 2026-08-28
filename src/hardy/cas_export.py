@@ -568,6 +568,16 @@ def _verify_script(
                 f"the script's {stream} is not the {stream} the session recorded; "
                 f"recorded {_excerpt(want)}, script printed {_excerpt(got)}"
             )
+    if run.descendants_unknown:
+        # Not "it left one" but "nobody could look". Same position and the
+        # same reason: everything comparable agreed, and what is left is a
+        # claim Hardy is not in a position to make -- a delayed child can
+        # rewrite the artifact after the readback, and there is no group to
+        # account for it or to stop it.
+        return "unverified", (
+            "this platform cannot account for what a script starts, so a process "
+            "left running by it could still change the published file"
+        )
     if run.left_processes:
         # Last, because a concrete disagreement is worth more than this. What a
         # descendant printed *was* compared -- it arrives on the inherited
