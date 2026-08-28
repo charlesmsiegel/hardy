@@ -48,14 +48,49 @@ def test_the_brake_does_not_climb_the_counter(session) -> None:
 
 
 def test_a_green_check_lifts_the_brake(session) -> None:
-    """The brake promises "until `check_lean` passes on this path" -- and a
-    green check only ever means the source it was actually handed, so this
-    saves the same source the check just vouched for."""
+    """The brake promises "until `check_lean` passes on the exact source you
+    intend to save" -- and a green check only ever means the source it was
+    actually handed, so this saves the same source the check just vouched
+    for."""
     for _ in range(session.SAVE_STREAK_LIMIT):
         _save(session)
     assert _check(session, source=GREEN).ok
 
     result = _save(session, source=GREEN)
+
+    assert "consecutive saves" not in result.output
+
+
+def test_the_brake_returns_after_one_admitted_save_spends_the_vouch(session) -> None:
+    """Finding #3 (second brutal review), reproduced with the failing run's
+    own fixture: a green `check_lean(UNREGISTERED)` used to exempt that
+    digest from the brake for the rest of the turn, so twelve further,
+    identical refused saves ran unbraked -- exactly the shape (21
+    consecutive refused saves of `Main.lean`) the brake exists for. Spending
+    the vouch on the first admitted save means at most one of the twelve
+    gets through."""
+    for _ in range(session.SAVE_STREAK_LIMIT):
+        _save(session)
+    assert _check(session, source=UNREGISTERED).ok
+
+    results = [_save(session) for _ in range(12)]
+
+    braked = [result for result in results if "consecutive saves" in result.output]
+    unbraked = [result for result in results if "consecutive saves" not in result.output]
+    assert len(unbraked) == 1
+    assert len(braked) == 11
+
+
+def test_check_then_save_with_a_trailing_newline_is_admitted(session) -> None:
+    """Finding #4 (second brutal review): `_save_lean_unbraked` writes
+    `source.rstrip() + "\\n"`, so `check_lean(X)` and `save_lean(X + "\\n")`
+    produce identical bytes on disk -- one string vouched for and the other
+    braked was the sharpest confirmed case of the message being false."""
+    for _ in range(session.SAVE_STREAK_LIMIT):
+        _save(session)
+    assert _check(session, source=UNREGISTERED).ok
+
+    result = _save(session, source=UNREGISTERED + "\n")
 
     assert "consecutive saves" not in result.output
 
