@@ -857,14 +857,22 @@ Priority labels are sequencing hints:
 ## Retrieval and memory
 
 - **Now (implemented):** `rank_premises` ranks declarations for a goal by fusing
-  Lean's own `#find` with Loogle, offered on the in-process staged tools, the MCP
-  server, and the interactive session. The interactive session offers them even
+  a declaration-name index over the pinned Mathlib sources with Loogle, offered
+  on the in-process staged tools, the MCP server, and the interactive session.
+  It fused Lean's own `#find` until that was measured never to answer on the
+  pinned toolchain — still running at 300 seconds where `exact?` took 22, so
+  every call spent a full process timeout to learn nothing; the finding is
+  recorded in `hardy/declarations.py` beside the index that replaced it, which
+  answers name questions instantly, offline, and without a Lean process.
+  `search_declarations` answers from the same index, and an index miss says it
+  is about the index rather than passing for Lean's word on Mathlib. The
+  interactive session offers the search tools even
   when no Lake project is configured, where they refuse and name the reason: a
   model handed no search tool concludes Hardy cannot search, rather than that
   this machine is not set up. Every ranking carries the provenance of each source that was
   asked — what it searched, whether it answered, and what it spent — under a
   digest a reader can recompute, and reports whether it can be replayed at all:
-  Lean's search runs in the environment the run is frozen under, while the public
+  the index reads the sources the run is frozen under, while the public
   Loogle tracks a Mathlib it does not name.
 - **Now (implemented):** retrieval is metered against `retrieval_seconds` like any
   other run budget — spent across the run rather than refilled per call, and a

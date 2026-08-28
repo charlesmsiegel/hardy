@@ -166,39 +166,34 @@ def test_oversized_proof_input_is_rejected_without_spending_a_check(tmp_path) ->
 
 
 def test_declaration_search_observation_is_bounded(tmp_path) -> None:
+    declarations = importlib.import_module('hardy.declarations')
     domain = importlib.import_module('hardy.domain')
-    lean = importlib.import_module('hardy.lean')
     server = importlib.import_module('hardy.mcp_server')
     storage = importlib.import_module('hardy.storage')
     claim = _claim(domain)
 
-    class Service:
-        def search_declarations(self, query, limit):
-            return lean.DeclarationSearch(
-                query=query,
-                results=(
-                    lean.DeclarationRecord(name='Huge.result', signature='x' * 10_000),
-                ),
-                truncated=False,
-                success=True,
-                timed_out=False,
-                diagnostics=(),
-            )
+    package = tmp_path / 'project' / '.lake' / 'packages' / 'mathlib' / 'Mathlib'
+    package.mkdir(parents=True)
+    (package / 'Huge.lean').write_text(
+        f'theorem huge_result : {"x" * 600} := trivial\n', encoding='utf-8'
+    )
 
     store = storage.RunStore.create(tmp_path, 'mcp', now=NOW, run_id=RUN_ID)
     server.configure_runtime(
         server.LeanToolRuntime(
             claim=claim,
-            service=Service(),
+            service=object(),
             store=store,
             official_checks=1,
-            observation_bytes=1_024,
+            observation_bytes=600,
+            declarations=declarations.DeclarationIndex(tmp_path / 'project'),
         )
     )
 
     result = server.lean_search_declarations('huge')
 
+    assert [record.name for record in result.results] == ['huge_result']
     assert result.observation_truncated
     assert result.output_artifact is not None
-    assert len(result.model_dump_json().encode('utf-8')) <= 1_024
+    assert len(result.model_dump_json().encode('utf-8')) <= 600
     assert (store.path / result.output_artifact).exists()

@@ -321,75 +321,10 @@ def test_an_inspection_that_overflowed_is_not_a_success(tmp_path) -> None:
     assert inspection.success is False
 
 
-def test_search_declarations_bounds_and_structures_find_results(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
-    lean = importlib.import_module('hardy.lean')
-    process = importlib.import_module('hardy.process')
-    messages = '\n'.join(
-        json.dumps({'data': text, 'severity': 'information'})
-        for text in (
-            'Nat.add_comm (n m : Nat) : n + m = m + n',
-            'Nat.mul_comm (n m : Nat) : n * m = m * n',
-        )
-    )
-
-    def runner(spec):
-        return process.ProcessResult(
-            argv=spec.argv,
-            cwd=spec.cwd,
-            returncode=0,
-            stdout=messages,
-            stderr='',
-            timed_out=False,
-            output_overflow=False,
-            duration_ms=1,
-        )
-
-    service = lean.LeanService(
-        lake=tmp_path / 'lake.exe',
-        lean_project=tmp_path,
-        environment=_claim(domain).environment,
-        limits=domain.RunLimits(),
-        runner=runner,
-    )
-
-    search = service.search_declarations('_ + _ = _ + _', limit=1)
-
-    assert search.query == '_ + _ = _ + _'
-    assert [result.name for result in search.results] == ['Nat.add_comm']
-    assert search.truncated
-
-
-def test_search_reports_lean_timeout_instead_of_claiming_no_results(tmp_path) -> None:
-    domain = importlib.import_module('hardy.domain')
-    lean = importlib.import_module('hardy.lean')
-    process = importlib.import_module('hardy.process')
-
-    def runner(spec):
-        return process.ProcessResult(
-            argv=spec.argv,
-            cwd=spec.cwd,
-            returncode=None,
-            stdout='',
-            stderr='',
-            timed_out=True,
-            output_overflow=False,
-            duration_ms=30_000,
-        )
-
-    service = lean.LeanService(
-        lake=tmp_path / 'lake.exe',
-        lean_project=tmp_path,
-        environment=_claim(domain).environment,
-        limits=domain.RunLimits(),
-        runner=runner,
-    )
-
-    search = service.search_declarations('_ + _ = _ + _', limit=3)
-
-    assert not search.success
-    assert search.timed_out
-    assert search.results == ()
+# `search_declarations` tests used to sit here, exercising `#find` through a
+# scripted runner. The method is gone -- measured never to answer on the pinned
+# toolchain -- and its replacement's contract is covered in
+# `test_declarations.py::test_search_result_*`.
 
 
 def _elaboration(lean, process, messages: tuple[str, ...]):

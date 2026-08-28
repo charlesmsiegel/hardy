@@ -71,7 +71,7 @@ def test_the_session_advertises_the_search_tools() -> None:
 
 def test_the_session_advertises_a_module_search() -> None:
     """The other three answer about declarations. The failure that motivated
-    this one was a module path, which `#find` cannot speak to at all."""
+    this one was a module path, which a declaration search cannot speak to."""
     chat = importlib.import_module("hardy.chat")
 
     offered = {spec["function"]["name"] for spec in chat.CHAT_TOOLS}

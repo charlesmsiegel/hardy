@@ -32,8 +32,11 @@ class RunLimits(FrozenModel):
     # Every source Hardy sends Lean opens with `import Mathlib`, and that import
     # alone was measured at ~21s warm and 223s cold on a developer machine. At
     # the old 30 it left about nine seconds of actual work warm and could not
-    # finish at all cold -- so `search_declarations` timed out on every call,
-    # every time, and reported the timeout as a search that found nothing. The
+    # finish at all cold -- so the then-`#find`-backed `search_declarations`
+    # timed out on every call, every time, and reported the timeout as a
+    # search that found nothing. (That search now answers from the declaration
+    # index without a Lean process; this deadline still governs every check
+    # and inspection.) The
     # run as a whole is still bounded by `active_seconds` and `proof_seconds`;
     # this only stops a single process being killed before Mathlib has loaded.
     lean_process_seconds: int = 180
@@ -53,11 +56,12 @@ class RunLimits(FrozenModel):
     # and how long Hardy waits is the part Hardy can enforce.
     #
     # Sized against what a source may cost rather than what it usually costs,
-    # because admission is what spends this. A ranking worst-cases at Lean's
-    # 30s plus its process teardown, and Loogle's 60 (see each source's
-    # `worst_case_seconds`), so 600 guarantees six rounds where a typical round
-    # -- a few seconds of `#find` and ~19s of Loogle -- fits two dozen. It was
-    # 300 while Loogle's bound was believed to be 30s; correcting the bound
+    # because admission is what spends this. A first ranking worst-cases at the
+    # declaration index's cold read plus Loogle's 60 (see each source's
+    # `worst_case_seconds`), and every later one at the warm figure plus
+    # Loogle's -- so 600 guarantees seven rounds where a typical round, a
+    # near-instant index pass and ~19s of Loogle, fits two dozen. It was 300
+    # while Loogle's bound was believed to be 30s; correcting the bound
     # without correcting this would have quietly halved how much retrieval a
     # proving stage gets.
     retrieval_seconds: int = 600

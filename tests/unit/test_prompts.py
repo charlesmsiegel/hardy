@@ -133,8 +133,8 @@ def test_the_recorded_prompt_set_is_the_one_that_was_reviewed():
     this pin in the same commit — a deliberate act, not a side effect.
     """
     prompts = importlib.import_module("hardy.prompts")
-    assert prompts.PROMPT_SET_VERSION == "2026-08-27.4"
-    assert prompts.PROMPT_SET_SHA256 == "54e1affa09ee58015f462e6c0c03a7a6775e1461032566d7c6e5c1634edfc383"
+    assert prompts.PROMPT_SET_VERSION == "2026-08-28.1"
+    assert prompts.PROMPT_SET_SHA256 == "50c207a708e3696c9846957a60089ccd0fb4a6ddbc6a6920449887455cf3f5e2"
 
 
 def test_each_entry_point_sends_the_template_rather_than_its_own_copy():
