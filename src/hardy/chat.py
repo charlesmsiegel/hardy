@@ -2776,6 +2776,28 @@ class MathematicsSession:
                     found.update(set(entry.get("axioms", ())) & approved)
         return found
 
+    @staticmethod
+    def _tex_ascii(value: str) -> str:
+        """`value` escaped for TeX, and safe for a compiler that is not Unicode.
+
+        The banner is injected into the author's own document, and the default
+        interactive compiler is `pdflatex`, which stops on a character it has
+        no mapping for. A Lean identifier is routinely Unicode -- `α`, `h₁` --
+        and so is a stated goal, so naming one here could have failed every
+        later `save_latex` over a character the author never typed, with an
+        error pointing at a line Hardy wrote.
+
+        The codepoint is spelled out rather than dropped or transliterated: a
+        reader must still be able to tell *which* theorem is unproved, and a
+        placeholder that lost the name would trade one dishonesty for another.
+        Only applies here. The one-shot writeup path compiles with Tectonic,
+        which reads Unicode happily, and mangling it there would be a loss.
+        """
+        return "".join(
+            character if character.isascii() else f"[U+{ord(character):04X}]"
+            for character in escape_tex_text(value)
+        )
+
     def _stamp(self) -> str:
         r"""What the document is, printed in the document.
 
@@ -2827,7 +2849,7 @@ class MathematicsSession:
             # tell which. Escaped like the goal is: a Lean name carries `_`,
             # which is TeX's subscript, and an unescaped one breaks the
             # document it was added to be honest in.
-            listed = ", ".join(escape_tex_text(name) for name in sorted(opened))
+            listed = ", ".join(self._tex_ascii(name) for name in sorted(opened))
             parts.append(
                 f"{count} theorem{'' if count == 1 else 's'} here "
                 f"{'is' if count == 1 else 'are'} still open ({listed})"
@@ -2835,7 +2857,7 @@ class MathematicsSession:
         text = ". ".join(parts) + "."
         goal = self.goal()
         if goal:
-            text += f"\\\\ Goal, as stated by the user: {escape_tex_text(goal)}"
+            text += f"\\\\ Goal, as stated by the user: {self._tex_ascii(goal)}"
         return text
 
     def _tex_signature(self, open_names: Sequence[str] | None = None) -> str:

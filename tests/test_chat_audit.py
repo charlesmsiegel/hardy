@@ -1130,3 +1130,38 @@ def test_an_approved_axiom_does_not_authorise_a_theorem_sharing_its_leaf(tmp_pat
     refusal = results(tmp_path, "save_lean")[-1]
     assert not refusal["ok"], refusal["output"]
     assert "lemma" in refusal["output"]
+
+
+def test_the_banner_stays_ascii_for_a_unicode_theorem_name(tmp_path: Path):
+    """Lean identifiers are Unicode and the interactive compiler is `pdflatex`
+    by default, which fails on a character it has no mapping for.
+
+    So naming an open theorem in the banner could break every later
+    `save_latex` over a character the author never typed -- Hardy injecting the
+    fault into the author's document. `escape_tex_text` handles TeX's own
+    specials and leaves `α` alone, which is right for the Tectonic path and
+    wrong here.
+    """
+    holed = (
+        "import Mathlib\n\ntheorem α : True := by exact True.intro -- axioms: sorryAx\n"
+    )
+    chat = session(
+        tmp_path,
+        FakeChatRuntime([call("save_lean", {"source": holed}, "lean")]),
+        registered=("α",),
+    )
+    chat.send("Save a skeleton with a Greek name.")
+    banner = chat._stamp()
+    assert banner.isascii(), banner
+    # Still identified: a count alone would not say which claim is unproved.
+    assert "03B1" in banner
+
+
+def test_the_banner_stays_ascii_for_a_unicode_goal(tmp_path: Path):
+    """The same fault, on the line that already printed free text from the user
+    before this change: a goal saying `√2` broke the same compiler."""
+    chat = session(tmp_path, FakeChatRuntime([]), registered=())
+    chat.set_goal("√2 is irrational")
+    banner = chat._stamp()
+    assert banner.isascii(), banner
+    assert "221A" in banner
