@@ -368,9 +368,11 @@ and hostile-input tests.
    Lean and LaTeX invocation, linked names, explicitly approved assumptions,
    durable transcript, and saved artifacts. Both artifacts are multi-file trees,
    with Lean modules importing each other and a save refused whole if it would
-   break a dependent; a saved `theorem` owes a writeup — its label, and its exact
-   Lean statement quoted where a reader can check it — before another may be
-   added, with every assumption stated in an appendix in both languages, and
+   break a dependent; a saved `theorem` owes a writeup *once it closes* — its
+   label, and its exact Lean statement quoted where a reader can check it —
+   before another may be added, while one still resting on a hole owes none of
+   it yet and skeletons accumulate freely, with every assumption stated in an
+   appendix in both languages, and
    nothing may be reported as finished until the artifacts carry all of it. The older one-shot proof loop remains as a dependency smoke path. A
    real model/Mathlib acceptance run remains to be recorded.
 2. **Honest experiment harness:** faithfulness and axiom checks, budgets, fixed
