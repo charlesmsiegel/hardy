@@ -312,6 +312,24 @@ def test_a_hypothesis_nothing_mentions_is_still_dropped() -> None:
     )
 
 
+def test_a_string_literal_with_doubled_whitespace_is_unreadable() -> None:
+    """A bare `" ".join(statement.split())` collapsed `"a  b"` to `"a b"` --
+    a different Lean string reported as if it were the one the statement
+    actually has -- and then split the premise on the literal's own
+    separator-shaped contents. `normalise_lean` leaves the literal alone;
+    this still refuses, because the splits below cannot tell a `, ` or ` → `
+    inside the literal from one outside it."""
+    assert _chat._strip_hypotheses('∀ (h : "a  b" = "a b"), True') is _chat.UNREADABLE
+
+
+def test_a_guillemet_name_with_doubled_whitespace_is_unreadable() -> None:
+    assert _chat._strip_hypotheses("∀ («weird  name» : ℕ) (h : 0 < 1), True") is _chat.UNREADABLE
+
+
+def test_doubled_whitespace_outside_any_literal_still_strips() -> None:
+    assert _chat._strip_hypotheses("∀ (n : ℕ)  (h : 0 < n),  True") == "∀ (n : ℕ), True"
+
+
 def test_the_vacuity_probe_is_skipped_when_there_is_nothing_to_strip(session, fake_lean) -> None:
     warning = session._vacuity_probe("True")
 
