@@ -285,3 +285,28 @@ def test_a_statement_with_nothing_to_strip_is_none() -> None:
 
 def test_a_forall_that_loses_every_binder_becomes_its_body() -> None:
     assert _chat._strip_hypotheses("∀ (h : True), False") == "False"
+
+
+def test_a_data_binder_the_conclusion_uses_is_kept() -> None:
+    """`H` looks like a hypothesis by its own rules -- a `Subgroup G` is not
+    a universe, a known data type, or an earlier binder's exact name -- but
+    dropping it leaves `H.index` dangling. The conclusion names it, so it is
+    data too."""
+    statement = (
+        "∀ {G : Type*} [Group G] (H : Subgroup G) (hH : H ≠ ⊤), "
+        "Nat.card G ∣ (H.index)!"
+    )
+    assert _chat._strip_hypotheses(statement) == (
+        "∀ {G : Type*} [Group G] (H : Subgroup G), Nat.card G ∣ (H.index)!"
+    )
+
+
+def test_a_hypothesis_nothing_mentions_is_still_dropped() -> None:
+    statement = (
+        "∀ {G : Type*} [Group G] [Finite G] (p : ℕ) [Fact p.Prime] "
+        "(P : Sylow p G), (∀ Q : Sylow p G, Q = P) → (P : Subgroup G).Normal"
+    )
+    assert _chat._strip_hypotheses(statement) == (
+        "∀ {G : Type*} [Group G] [Finite G] (p : ℕ) [Fact p.Prime] "
+        "(P : Sylow p G), (P : Subgroup G).Normal"
+    )
