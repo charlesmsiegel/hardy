@@ -1722,9 +1722,13 @@ class MathematicsSession:
         return self._run_lean_source(source)
 
     def _tally(self, name: str, ok: bool) -> None:
-        if name in self._tool_tally:
-            self._tool_tally[name][0] += 1
-            self._tool_tally[name][1] += int(ok)
+        # Every tool name, not only `save_lean`/`check_lean`: `_steering_block`
+        # reads this to decide whether the session has done *anything* at all,
+        # and a session that got three axioms approved and wrote nothing else
+        # must not read as having made no tool call.
+        counts = self._tool_tally.setdefault(name, [0, 0])
+        counts[0] += 1
+        counts[1] += int(ok)
 
     def _streak_key(self, path: str) -> str:
         """The `_save_streak` key `path` counts against.

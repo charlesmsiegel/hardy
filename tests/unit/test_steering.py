@@ -124,6 +124,39 @@ def test_a_fresh_workspace_with_no_tool_calls_gets_no_block(session) -> None:
     assert session._steering_block() == ""
 
 
+def _assumption_request(**overrides):
+    request = {
+        "formal_name": "sylow",
+        "lean_statement": "True",
+        "latex_name": "Sylow",
+        "informal_statement": "Sylow's theorems",
+        "source": "Dummit and Foote",
+        "reason": "not in Mathlib",
+    }
+    request.update(overrides)
+    return request
+
+
+def test_the_block_is_not_suppressed_when_only_assumptions_were_approved(session, fake_lean) -> None:
+    """The omission is meant to spare a genuinely empty first turn, not the
+    one session shape the block most needs to report: three axioms approved
+    and nothing else saved. `_tool_tally` used to be seeded only for
+    `save_lean`/`check_lean`, so `no_tools` read "no save or check call" as
+    "no tool call at all" and silenced the block entirely."""
+    for index in range(3):
+        # `_dispatch`, not `_tool` directly: the tally this test is pinning is
+        # kept by `_dispatch`, the same path every real tool call takes.
+        result = session._dispatch(
+            "request_assumption", _assumption_request(formal_name=f"axiom{index}", latex_name=f"A{index}")
+        )
+        assert result.ok
+
+    block = session._steering_block()
+
+    assert block != ""
+    assert "approved assumptions: 3" in block
+
+
 def test_the_block_counts_theorems_assumptions_and_this_session(session) -> None:
     _save(session)
 
