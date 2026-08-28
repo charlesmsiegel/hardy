@@ -381,6 +381,35 @@ def _split_top_before(text: str, separator: str, limit: int) -> list[str]:
     return parts
 
 
+def _first_top_level(text: str, separator: str, limit: int) -> int:
+    """Index of the first top-level `separator` in `text[:limit]`, or -1.
+
+    Same bracket-depth tracking as `_split_top`/`_split_top_before`, kept as
+    its own function because `_strip_hypotheses` needs the *position* of an
+    arrow relative to an equivalence, not a split on it.
+    """
+    depth = 0
+    index = 0
+    while index < limit:
+        character = text[index]
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif depth == 0 and text.startswith(separator, index):
+            return index
+        index += 1
+    return -1
+
+
+# Returned by `_strip_hypotheses` when one of its fail-closed checks fires,
+# so a caller can tell "Hardy could not read this safely" apart from `None`
+# ("there was nothing here to strip"). The two used to be one value, and a
+# bare `∀ n : ℕ, …` -- which has no hypotheses at all -- was reported to the
+# human as unreadable exactly like a binder whose type really was lost.
+UNREADABLE = object()
+
+
 def _split_binder_colon(inner: str) -> tuple[str, str] | None:
     """A binder's inner text split on the first `:` that introduces its
     type, or None if it has none.
@@ -413,32 +442,43 @@ def _split_binder_colon(inner: str) -> tuple[str, str] | None:
     return None
 
 
-def _strip_hypotheses(statement: str) -> str | None:
-    """`statement` with its hypotheses removed, or None if it has none, or if
-    reading its binders could not be trusted.
+def _strip_hypotheses(statement: str) -> Any:
+    """`statement` with its hypotheses removed; `None` if it has none; or
+    `UNREADABLE` if reading its binders or its premise chain could not be
+    trusted.
 
     What the vacuity probe elaborates, so a wrong answer here is not a
     missing warning but a false one shown to a human relying on it -- this
-    fails closed rather than guess. Refuses (returns None) when a
+    fails closed rather than guess. Returns `UNREADABLE` when a
     strict-implicit binder (`⦃…⦄`) appears anywhere, since `_BINDER` has no
-    alternative for that bracket and would silently drop it and its name,
-    and when `binders` holds text `_BINDER` did not consume -- a bare
-    binder written with no wrapping bracket at all (`∀ n : ℕ, …`), or one
-    nested more deeply than `_BINDER`'s one level of parenthesis nesting
-    handles. A binder is a hypothesis unless it is an instance, its type is
-    a universe or a known data type, its type is exactly a name bound
-    earlier in the same statement, or it is depended on -- named in the
-    conclusion, or in the type of another binder that is kept. An arrow
+    alternative for that bracket and would silently drop it and its name;
+    when a top-level `↔` precedes the first top-level arrow in the body,
+    since `↔` binds looser than `→` and that arrow is not a premise
+    separator at all but sits inside the equivalence's own right-hand side
+    (`A ↔ B → C` is `A ↔ (B → C)`) -- splitting on it anyway reports a
+    hypothesis the statement never had; and when `binders` holds text
+    `_BINDER` did not consume *and* the binder list was written with at
+    least one wrapping bracket (`(…)`/`{…}`/`[…]`), because a nested paren
+    one level deeper than `_BINDER` handles is losing real hypothesis text.
+    A binder list with no wrapping bracket at all (`∀ n : ℕ, …`, `∀ x ∈ s,
+    …`) has never been something this function could parse, and if there is
+    also no top-level premise arrow behind it, nothing was going to be
+    stripped even had it parsed -- that case returns `None`, not
+    `UNREADABLE`, so an entirely ordinary quantifier is not reported to the
+    human as unreadable. A binder is a hypothesis unless it is an instance,
+    its type is a universe or a known data type, its type is exactly a name
+    bound earlier in the same statement, or it is depended on -- named in
+    the conclusion, or in the type of another binder that is kept. An arrow
     premise before the statement's first top-level quantifier is always a
     hypothesis; an arrow at or after that quantifier is left untouched,
     because it sits inside the quantifier's own binder type rather than
-    separating premises. Returns None when there is nothing to strip -- no
+    separating premises. Returns `None` when there is nothing to strip -- no
     leading `∀`/`forall`, or one with nothing after a top-level comma -- so
     the caller probes the statement whole, exactly as it was given.
     """
     text = " ".join(statement.split())
     if "⦃" in text or "⦄" in text:
-        return None
+        return UNREADABLE
     binders, body = "", text
     for keyword in ("∀ ", "forall "):
         if text.startswith(keyword):
@@ -448,12 +488,19 @@ def _strip_hypotheses(statement: str) -> str | None:
                 return None
             binders, body = parts[0], ", ".join(parts[1:])
             break
-    consumed = "".join(_BINDER.findall(binders))
-    if "".join(consumed.split()) != "".join(binders.split()):
-        return None
     quantifier_index = _first_top_level_quantifier(body)
+    arrow_index = _first_top_level(body, " → ", quantifier_index)
+    iff_index = _first_top_level(body, " ↔ ", quantifier_index)
+    if iff_index != -1 and (arrow_index == -1 or iff_index < arrow_index):
+        return UNREADABLE
     premises = _split_top_before(body, " → ", quantifier_index)
     conclusion = premises[-1].strip()
+    consumed = "".join(_BINDER.findall(binders))
+    if "".join(consumed.split()) != "".join(binders.split()):
+        bracket_led = bool(binders) and binders.lstrip()[:1] in "({[⦃"
+        if not bracket_led and len(premises) == 1:
+            return None
+        return UNREADABLE
     if not binders and len(premises) == 1:
         return None
 
@@ -1230,12 +1277,14 @@ class MathematicsSession:
         Run only after `_assumption_probe` returned no refusal, as its own
         elaboration: nothing here needs the axiom in scope, and the first
         file's layout is pinned by its tests. A statement `_strip_hypotheses`
-        refuses to read is not probed, and says so -- but only when there was
-        something to say no to: a plain statement with no leading `∀`/`forall`
-        and no top-level `→` never had hypotheses in the first place, and
-        stays silent exactly as it always has. When every binder turns out to
-        be data -- nothing was actually stripped -- `PROBES` is left out of the
-        file `_vacuity_source` builds: `_assumption_probe` already ran them
+        reports `UNREADABLE` is not probed, and says so -- that sentinel
+        means there was something to say no to, unlike `None`, which means
+        the statement never had hypotheses in the first place (a bare
+        statement such as `True`, or an ordinary quantifier `_strip_hypotheses`
+        was never going to strip anything from) and stays silent exactly as
+        it always has. When every binder turns out to be data -- nothing was
+        actually stripped -- `PROBES` is left out of the file
+        `_vacuity_source` builds: `_assumption_probe` already ran them
         against this exact text and failed, so running them again would only
         risk describing that same, unstripped statement as proved "with every
         hypothesis removed".
@@ -1249,16 +1298,9 @@ class MathematicsSession:
         """
         normalised = normalise_lean(statement).strip()
         stripped = _strip_hypotheses(normalised)
+        if stripped is UNREADABLE:
+            return VACUITY_STRIP_REFUSED
         if stripped is None:
-            # A statement with a leading quantifier or a top-level arrow did
-            # have hypotheses to strip, and the refusal means Hardy could not
-            # read them safely -- the escape hatch spec section 5b names,
-            # rather than silence that would look identical to "nothing to
-            # strip". A bare statement (`True`, the trivial-conjunction
-            # constant used in these tests) never had anything to strip, and
-            # stays silent as before.
-            if normalised.startswith("∀ ") or normalised.startswith("forall ") or len(_split_top(normalised, " → ")) > 1:
-                return VACUITY_STRIP_REFUSED
             return ""
         hypotheses_removed = stripped != normalised
         source, tactics = _vacuity_source(stripped, include_probes=hypotheses_removed)
@@ -3135,11 +3177,14 @@ class MathematicsSession:
         # Lean was unreachable or unreadable, and a second full Lean run
         # would spend up to PROBE_SECONDS on an answer `or caveat` discards.
         warning = self._vacuity_probe(proposal["lean_statement"]) if not caveat else ""
-        proposal["checked"] = (
-            caveat
-            or warning
-            or "Lean elaborated this statement and could not prove it."
-        )
+        # The elaboration sentence always leads: it is the one fact that is
+        # true of every request that reaches this line, so a vacuity warning
+        # or a strip-refused note is appended to it rather than displacing
+        # it -- finding #5 of the second brutal review, where a stripper
+        # refusal used to replace the only sentence saying Lean had read the
+        # statement at all.
+        elaborated = "Lean elaborated this statement and could not prove it."
+        proposal["checked"] = caveat or (f"{elaborated} {warning}" if warning else elaborated)
         proposal["goal"] = self.goal()
         if self._inspect_attempts_since_request and not self._inspected_since_request:
             # Every attempt since the last request was stopped before it
