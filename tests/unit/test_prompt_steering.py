@@ -11,7 +11,13 @@ from hardy.prompts import CHAT_SYSTEM_PROMPT
 
 
 def test_the_prompt_says_to_import_mathlib_and_nothing_narrower() -> None:
-    assert "Write `import Mathlib` and nothing narrower." in CHAT_SYSTEM_PROMPT
+    """Scoped to Mathlib, not to every import: §6's decomposition
+    instruction has a model write `import Helpers` for its own workspace
+    module, and that must not read as forbidden by this sentence."""
+    assert (
+        "From Mathlib, write `import Mathlib` and nothing narrower; your own "
+        "workspace modules are imported by their module name (`import Group.Sylow`)."
+    ) in CHAT_SYSTEM_PROMPT
 
 
 def test_the_prompt_says_to_build_a_proof_as_several_small_files() -> None:
