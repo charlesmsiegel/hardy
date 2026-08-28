@@ -6,6 +6,8 @@ Each refusal was local; nothing said "stop saving and check".
 
 from __future__ import annotations
 
+from hardy import chat as hardy_chat
+
 UNREGISTERED = "import Mathlib\n\ntheorem Nobody : True := by exact True.intro\n"
 GREEN = "import Mathlib\n\nlemma fine : True := by exact True.intro\n"
 
@@ -185,6 +187,30 @@ def test_a_tex_file_that_is_not_utf8_does_not_abort_the_block(session) -> None:
 
     assert "tex files not reached from writeup.tex:" in block
     assert "bad.tex" in block
+
+
+def test_one_unreadable_tex_file_does_not_hide_the_others(session, monkeypatch) -> None:
+    """A `.tex` file that cannot be read at all -- unlike `bad.tex` above,
+    whose bytes are merely not UTF-8 -- used to fail the whole `sources`
+    comprehension and hide every orphan, including the one in a file that
+    read just fine."""
+    (session.tex_root).mkdir(parents=True, exist_ok=True)
+    (session.tex_root / "writeup.tex").write_text("\\begin{document}x\\end{document}", encoding="utf-8")
+    (session.tex_root / "orphan.tex").write_text("x", encoding="utf-8")
+    (session.tex_root / "unreadable.tex").write_text("x", encoding="utf-8")
+
+    real_read_text = hardy_chat.read_text
+
+    def flaky(base, relative, **kwargs):
+        if str(relative) == "unreadable.tex":
+            raise OSError("permission denied")
+        return real_read_text(base, relative, **kwargs)
+
+    monkeypatch.setattr(hardy_chat, "read_text", flaky)
+
+    unreached = session._unreached_tex()
+
+    assert unreached == ["orphan.tex"]
 
 
 def test_a_broken_obligations_call_does_not_abort_the_turn(session, monkeypatch) -> None:
