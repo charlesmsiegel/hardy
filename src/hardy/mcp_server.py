@@ -66,7 +66,15 @@ class LeanToolRuntime:
     def search_declarations(self, query: str, limit: int) -> DeclarationSearch:
         if self.declarations is None:
             raise ValueError("no declaration index is configured for this run")
-        return self.bound_search(search_result(self.declarations, query, limit))
+        # This runtime serves the staged and MCP surfaces, and both register
+        # the inspection tool under its `lean_` name; a miss diagnostic
+        # naming the chat spelling would send the model to a tool that does
+        # not exist here.
+        return self.bound_search(
+            search_result(
+                self.declarations, query, limit, inspect_tool="lean_inspect_declarations"
+            )
+        )
 
     def check_proof(self, claim_id: str, proof_body: str) -> LeanCheckResult:
         if claim_id != self.claim.content_hash:

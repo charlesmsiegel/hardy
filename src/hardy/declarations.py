@@ -49,6 +49,7 @@ lead this index exists to prevent.
 
 from __future__ import annotations
 
+import heapq
 import json
 import re
 import threading
@@ -61,7 +62,7 @@ from .lean import (
     DeclarationSearch,
     LeanDiagnostic,
 )
-from .workspace import QUALIFIED, QUALIFIED_NAME, parse_imports, strip_comments
+from .workspace import QUALIFIED, QUALIFIED_NAME, WRAPPER, parse_imports, strip_comments
 
 # One declaration head. The keyword list is Lean's surface grammar for named
 # declarations; `example` is deliberately absent (anonymous by construction)
@@ -70,8 +71,11 @@ from .workspace import QUALIFIED, QUALIFIED_NAME, parse_imports, strip_comments
 # as the name. An approximation of Lean's grammar, like every scan in Hardy
 # that reads Lean as text, and documented as one where it is offered.
 _KEYWORD = r"theorem|lemma|abbrev|structure|class(?:\s+inductive)?|inductive|instance|opaque|axiom|def"
+# `workspace.WRAPPER` reads through `set_option x y in`, `open Foo in` and the
+# rest of Lean's same-line command scoping, for the same reason it matters
+# there: a declaration behind one is a declaration the sources really ship.
 DECLARATION = re.compile(
-    rf"^\s*{_ATTRIBUTES}({_MODIFIERS})({_KEYWORD})\s+({QUALIFIED_NAME})"
+    rf"^\s*{WRAPPER}{_ATTRIBUTES}({_MODIFIERS})({_KEYWORD})\s+({QUALIFIED_NAME})"
 )
 
 # Scope lines. `namespace Foo.Bar` opens one scope per component, because that
@@ -159,18 +163,25 @@ class DeclarationIndex:
         tokens = [token.lower() for token in query.split()]
         if not tokens:
             return ()
-        found: list[tuple[int, bool, str, str, str, int]] = []
-        for name, lowered, signature, module, line in self._read():
-            matched = sum(1 for token in tokens if token in lowered)
-            if not matched:
-                continue
-            leaf = lowered.rsplit(".", 1)[-1]
-            in_leaf = any(token in leaf for token in tokens)
-            found.append((-matched, not in_leaf, name, signature, module, line))
-        found.sort()
+
+        def matches():
+            for name, lowered, signature, module, line in self._read():
+                matched = sum(1 for token in tokens if token in lowered)
+                if not matched:
+                    continue
+                leaf = lowered.rsplit(".", 1)[-1]
+                in_leaf = any(token in leaf for token in tokens)
+                yield (-matched, not in_leaf, name, signature, module, line)
+
+        # Top-k, not sort-everything: a broad fragment can match hundreds of
+        # thousands of names, and the caller wants at most a couple of dozen.
+        # `nsmallest` over these tuples returns exactly what a full sort's
+        # head would, name included in the key, so the answer stays
+        # deterministic while a warm search stops scaling with its own
+        # popularity.
         return tuple(
             DeclarationRecord(name=name, signature=signature, source_file=module, line=line)
-            for _, _, name, signature, module, line in found[:limit]
+            for _, _, name, signature, module, line in heapq.nsmallest(limit, matches())
         )
 
     def _read(self) -> list[tuple[str, str, str, str, int]]:
@@ -341,7 +352,13 @@ def _signature(raw: list[str], start: int) -> str:
     return signature[:_MAX_SIGNATURE_CHARACTERS]
 
 
-def search_result(index: DeclarationIndex, query: str, limit: int = 10) -> DeclarationSearch:
+def search_result(
+    index: DeclarationIndex,
+    query: str,
+    limit: int = 10,
+    *,
+    inspect_tool: str = "inspect_declarations",
+) -> DeclarationSearch:
     """One bounded index search, in the shape every search surface answers with.
 
     The bounds mirror what the `#find`-backed service method enforced, so the
@@ -353,7 +370,10 @@ def search_result(index: DeclarationIndex, query: str, limit: int = 10) -> Decla
     finished name search that matched nothing is evidence about the *index* --
     a macro-built name is invisible to a textual scan -- and the sentence
     travels inside the answer so no surface can present the miss as Lean's
-    word on Mathlib.
+    word on Mathlib. `inspect_tool` is the recovery step's name *on the
+    calling surface*: the staged and MCP tools are prefixed `lean_`, and a
+    diagnostic naming the chat spelling there sends the model to a tool that
+    does not exist exactly when it needs one that does.
     """
     if not 1 <= len(query) <= 512 or "\n" in query or "\r" in query:
         raise ValueError("declaration search query must be one bounded line")
@@ -372,7 +392,7 @@ def search_result(index: DeclarationIndex, query: str, limit: int = 10) -> Decla
                     f"{index.count()} names were read from the package sources{where}. "
                     "An index miss is not Lean's word -- a name a macro builds is "
                     "invisible to a textual scan -- so try other spellings with "
-                    "inspect_declarations before concluding anything is absent."
+                    f"{inspect_tool} before concluding anything is absent."
                 ),
             ),
         )
