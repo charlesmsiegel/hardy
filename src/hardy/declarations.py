@@ -35,13 +35,21 @@ symmetric:
 
 Only package sources are read -- the workspace's own files hold the model's
 work in progress, and a package's nested `.lake` build tree can hold a stale
-copy of anything. Private declarations are skipped: offering a name the
+copy of anything. Two further filters narrow the read toward what the frozen
+environment can actually reach, each degrading open when its evidence is
+missing: a readable `lake-manifest.json` decides which package directories
+count (Lake does not sweep a removed package's checkout), and a package's
+root index files decide which of its modules count (a checkout ships test
+trees and scripts its umbrella never imports). A hand-assembled project
+without either is read whole -- the direction that costs precision rather
+than hiding a lead. Private declarations are skipped: offering a name the
 caller's own file could never elaborate would manufacture the exact wrong
 lead this index exists to prevent.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from pathlib import Path
@@ -53,7 +61,7 @@ from .lean import (
     DeclarationSearch,
     LeanDiagnostic,
 )
-from .workspace import QUALIFIED, QUALIFIED_NAME, strip_comments
+from .workspace import QUALIFIED, QUALIFIED_NAME, parse_imports, strip_comments
 
 # One declaration head. The keyword list is Lean's surface grammar for named
 # declarations; `example` is deliberately absent (anonymous by construction)
@@ -176,21 +184,77 @@ class DeclarationIndex:
         assert self.project is not None
         records: list[tuple[str, str, str, str, int]] = []
         packages = self.project / ".lake" / "packages"
+        named = self._manifest_packages()
         for root in sorted(path for path in packages.glob("*") if path.is_dir()):
+            # Lake does not sweep a removed package's checkout, and a stale
+            # directory's declarations are not in the environment the corpus
+            # identity describes. Filtered only when the manifest can say so.
+            if named is not None and root.name not in named:
+                continue
+            declared = self._declared_modules(root)
             for path in sorted(root.rglob("*.lean")):
                 # A package can hold its own `.lake` build tree, which can hold
                 # a stale copy of anything; only what the package ships counts.
                 relative = path.relative_to(root)
                 if ".lake" in relative.parts or path.name in _NOT_A_SOURCE:
                     continue
+                module = ".".join((*relative.parts[:-1], relative.stem))
+                # A checkout ships more than its library -- test trees,
+                # scripts, modules the umbrella deliberately omits -- and
+                # `import Mathlib` reaches none of it. The root index is the
+                # list of what a package ships, the same reading `modules.py`
+                # settled on, so where one exists it decides.
+                if declared is not None and module not in declared:
+                    continue
                 try:
                     source = path.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     # An unreadable file costs its declarations, never the index.
                     continue
-                module = ".".join((*relative.parts[:-1], relative.stem))
                 records.extend(self._file(source, module))
         return records
+
+    def _manifest_packages(self) -> set[str] | None:
+        """The package names the manifest resolves, or None to read them all.
+
+        None on any failure to read or parse, not an empty set: a project
+        whose manifest is missing or malformed should degrade toward extra
+        leads, never toward an index that silently holds nothing.
+        """
+        assert self.project is not None
+        try:
+            manifest = json.loads(
+                (self.project / "lake-manifest.json").read_text(encoding="utf-8")
+            )
+            names = {
+                str(package["name"])
+                for package in manifest["packages"]
+                if isinstance(package, dict) and "name" in package
+            }
+        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+            return None
+        return names or None
+
+    def _declared_modules(self, root: Path) -> set[str] | None:
+        """What this package's root index files say it ships, or None for all.
+
+        The same files `ModuleIndex._index_files` reads, for the same reason:
+        `Mathlib.lean` is thousands of lines of nothing but imports, and it is
+        the package's own statement of which modules are the library. The
+        stems join the set because an index ships the module it is named for.
+        A package with no readable root index is scanned whole.
+        """
+        declared: set[str] = set()
+        for index in sorted(root.glob("*.lean")):
+            if index.name in _NOT_A_SOURCE:
+                continue
+            try:
+                source = index.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            declared.update(parse_imports(source))
+            declared.add(index.stem)
+        return declared or None
 
     def _file(self, source: str, module: str) -> list[tuple[str, str, str, str, int]]:
         """One file's declaration heads, with their namespace prefixes.

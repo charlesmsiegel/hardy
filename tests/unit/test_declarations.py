@@ -358,6 +358,54 @@ def test_only_package_sources_are_read_and_build_trees_are_skipped(tmp_path) -> 
     assert index.search('workspace_own', 5) == ()
 
 
+def test_a_package_the_manifest_does_not_name_is_not_scanned(tmp_path) -> None:
+    """`.lake/packages` can hold a directory the current manifest no longer
+    names -- Lake does not sweep removed packages -- and its declarations are
+    not part of the environment the identity describes. When the manifest is
+    readable it decides which packages count; when it is not, every package
+    directory is read, because a project someone assembled by hand should
+    degrade toward extra leads rather than toward none. The fixtures in the
+    rest of this file exercise exactly that fallback: none of them write a
+    manifest."""
+    import json
+
+    (tmp_path / 'lake-manifest.json').write_text(
+        json.dumps({'packages': [{'name': 'mathlib'}]}), encoding='utf-8'
+    )
+    _write(_package(tmp_path, 'mathlib'), 'Mathlib/Named.lean',
+           'theorem manifest_named : True := trivial\n')
+    _write(_package(tmp_path, 'stale'), 'Stale/Left.lean',
+           'theorem stale_left_behind : True := trivial\n')
+
+    index = _index(tmp_path)
+
+    assert [record.name for record in index.search('manifest_named', 5)] == ['manifest_named']
+    assert index.search('stale_left_behind', 5) == ()
+
+
+def test_only_modules_the_package_root_index_declares_are_read(tmp_path) -> None:
+    """A package checkout ships more than its library: test trees, scripts,
+    and modules its umbrella deliberately does not import, none of which
+    `import Mathlib` reaches. The root index is the list of what a package
+    ships -- the same reading `modules.py` settled on -- so when one exists it
+    decides which files this index reads. A package shipping no root index is
+    scanned whole, the direction that costs precision rather than hiding a
+    lead."""
+    root = _package(tmp_path)
+    _write(root, 'Mathlib.lean', 'import Mathlib.A\n')
+    _write(root, 'Mathlib/A.lean', 'theorem declared_module_decl : True := trivial\n')
+    _write(root, 'Mathlib/B.lean', 'theorem undeclared_module_decl : True := trivial\n')
+    _write(root, 'test/T.lean', 'theorem test_tree_decl : True := trivial\n')
+
+    index = _index(tmp_path)
+
+    assert [record.name for record in index.search('declared_module_decl', 5)] == [
+        'declared_module_decl'
+    ]
+    assert index.search('undeclared_module_decl', 5) == ()
+    assert index.search('test_tree_decl', 5) == ()
+
+
 def test_an_unreadable_file_costs_its_declarations_and_nothing_else(tmp_path, monkeypatch) -> None:
     """Simulated rather than `chmod(0)`, which a root test runner reads anyway."""
     from pathlib import Path
