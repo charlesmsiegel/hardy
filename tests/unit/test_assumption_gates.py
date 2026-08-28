@@ -373,6 +373,18 @@ def test_the_vacuity_warning_reaches_the_human(session, approvals, fake_lean) ->
     assert approvals  # warned, not refused
 
 
+def test_a_caveat_from_the_first_probe_skips_the_second_lean_run(session, approvals, fake_lean) -> None:
+    """A caveat already means Lean could not be asked anything, so a second
+    full elaboration for the vacuity probe would only spend up to
+    PROBE_SECONDS on an answer `caveat or ...` throws away."""
+    fake_lean.raises = TimeoutError("lean did not start")
+
+    session._tool("request_assumption", _request(lean_statement=SYLOW))
+
+    assert len(fake_lean.sources) == 1
+    assert "could not be checked" in approvals[0]["checked"]
+
+
 def test_a_whole_statement_close_is_still_a_refusal(session, approvals, fake_lean) -> None:
     fake_lean.closes_with = "simp"
 

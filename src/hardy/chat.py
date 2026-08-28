@@ -2880,8 +2880,11 @@ class MathematicsSession:
             return ToolResult(False, refusal)
         # Carried to the prompt rather than swallowed: a human approving an
         # unchecked statement is owed the word "unchecked", and one whose
-        # hypotheses turn out to be doing no work is owed that too.
-        warning = self._vacuity_probe(proposal["lean_statement"])
+        # hypotheses turn out to be doing no work is owed that too. Only run
+        # when the first probe actually elaborated: a caveat already means
+        # Lean was unreachable or unreadable, and a second full Lean run
+        # would spend up to PROBE_SECONDS on an answer `or caveat` discards.
+        warning = self._vacuity_probe(proposal["lean_statement"]) if not caveat else ""
         proposal["checked"] = (
             caveat
             or warning
