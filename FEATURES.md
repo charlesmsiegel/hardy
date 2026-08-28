@@ -223,15 +223,20 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   theorem — and the banner counted it machine-checked without a word. The answer is a
   disclosure, never a refusal: plenty of legitimate scaffolding is `simp`-closable, and
   a lemma that falls to one tactic is still a lemma. The verdict is recorded with the
-  exact statement it was established against and expires with it; while it stands, the
-  save's own result, the banner, `/status`, `read_workspace`, and the per-turn steering
-  block all name the theorem and the tactic, so the reader of any surface sees the same
-  caveat. The probe imports Mathlib alone — the workspace's modules would put the
-  theorem in scope and let `exact?` close every statement by citing it — so a statement
-  resting on workspace-local definitions is recorded as closed by nothing: a filter,
-  not a decision procedure, exactly as the assumption ladder documents. A probe that
-  cannot run stores nothing, says so on the save, and is asked again on the next save
-  of the file.
+  exact statement it was established against and the toolchain it was asked under, and
+  expires with either; each save re-asks, in the same single elaboration, every saved
+  theorem whose record has expired, so a statement edited on disk or a toolchain switch
+  is caught by the next save of anything rather than of its own file. While a verdict
+  stands, the save's own result, the banner, `/status`, `read_workspace`, and the
+  per-turn steering block all name the theorem and the tactic, so the reader of any
+  surface sees the same caveat. The probe imports Mathlib alone — the workspace's
+  modules would put the theorem in scope and let `exact?` close every statement by
+  citing it — so a statement resting on workspace-local definitions or section
+  variables does not elaborate there: a `sorry` sentinel beside the probes tells that
+  case apart from "every tactic tried and failed", and it is recorded as unanswered
+  rather than clean, and said once on the save. A filter, not a decision procedure,
+  exactly as the assumption ladder documents; a probe that cannot run at all stores
+  nothing, says so on the save, and is asked again on the next save.
 - **Now (implemented):** saving Lean audits every *exported* theorem and lemma in
   the modules the save rebuilt — the edited one and everything importing it, since
   a dependent inherits whatever the edit brought in. An axiom reached through an

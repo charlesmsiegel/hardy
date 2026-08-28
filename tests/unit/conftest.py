@@ -249,7 +249,10 @@ def fake_lean(session, monkeypatch):
             for number, line in enumerate(lines, start=1):
                 if line.startswith("example"):
                     tactic = line.split(" := by ", 1)[1] if " := by " in line else line.split(" := ", 1)[1]
-                    if tactic == self.closes_with:
+                    # `sorry` closes any goal a statement that elaborates can
+                    # pose -- real Lean warns, never errors -- which is what
+                    # makes it the automation probe's elaboration sentinel.
+                    if tactic == self.closes_with or tactic == "sorry":
                         if self.suggestion:
                             diagnostics.append(LeanDiagnostic(
                                 severity="information", message=f"Try this: {self.suggestion}",
