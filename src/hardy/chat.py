@@ -17,7 +17,7 @@ from . import audit, completion, process
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
-from .latex import ROOT_DOCUMENT, LatexTools, compiles_document
+from .latex import ROOT_DOCUMENT, LatexTools, compiles_document, unreached_fragments
 from .layout import (
     LOCAL_DIR,
     LOCAL_STATE,
@@ -1885,6 +1885,66 @@ class MathematicsSession:
                 continue
         return found
 
+    def _tex_paths(self) -> list[str]:
+        """Workspace-relative paths of every `.tex` file under the writeup root.
+
+        An absent `tex/` is not an error -- a workspace that has not written
+        any LaTeX yet is the ordinary starting state -- so this returns an
+        empty list rather than raising, and both `_unreached_tex` and the
+        steering block's omission check share this one place that decides it.
+        """
+        if not self.tex_root.is_dir():
+            return []
+        try:
+            return [relative.as_posix() for relative in files_under(self.tex_root, ".tex")]
+        except (OSError, WorkspacePathError):
+            return []
+
+    def _unreached_tex(self) -> list[str]:
+        """Writeup files no `\\input` chain from the root reaches."""
+        paths = self._tex_paths()
+        if not paths:
+            return []
+        try:
+            sources = {path: read_text(self.tex_root, path) for path in paths}
+        except (OSError, WorkspacePathError):
+            return []
+        return unreached_fragments(sources)
+
+    def _steering_block(self) -> str:
+        """What the workspace and this session amount to, for the model.
+
+        The end-of-turn notice tells the *user* that nothing is saved. A
+        failing run was told eight times; the model saw none of them, and
+        wrote itself a status report saying the work was done. This is the
+        same arithmetic, put where the model reads, and nothing it wrote.
+        """
+        calls = self._tool_tally
+        no_tools = all(count[0] == 0 for count in calls.values())
+        # File existence, not `self.tex_root.is_dir()`: a session that creates
+        # `tex/` at init but has written nothing into it must still count as
+        # having no writeup, or a fresh workspace would get a block on its
+        # first turn purely because the directory happens to exist.
+        if no_tools and not self.lean_workspace.sources() and not self._tex_paths():
+            return ""
+        owed = self._obligations()
+        gaps = {item.subject for item in owed if item.kind == "lean"}
+        opened = {item.subject for item in owed if item.kind == "open"}
+        saved = self._saved_theorems()
+        lines = [
+            "[Hardy workspace state — written by Hardy, not the user]",
+            f"saved theorems: {len(saved - gaps - opened)} machine-checked, "
+            f"{len(saved & opened)} open (resting on a hole)",
+            f"approved assumptions: {len(self.state['assumptions'])}",
+            f"this session: {calls['save_lean'][0]} save_lean calls, "
+            f"{calls['save_lean'][1]} accepted; {calls['check_lean'][0]} check_lean calls, "
+            f"{calls['check_lean'][1]} passed",
+        ]
+        unreached = self._unreached_tex()
+        if unreached:
+            lines.append(f"tex files not reached from writeup.tex: {', '.join(unreached)}")
+        return "\n".join(lines)
+
     def _used_assumptions(self) -> set[str]:
         """Approved axioms the saved tree actually rests on.
 
@@ -2359,6 +2419,9 @@ class MathematicsSession:
             "manifest": self._without(*WITHHELD),
             "lean": lean,
             "tex": tex,
+            # Files no `\input` chain from the root reaches: in no PDF,
+            # whatever they say.
+            "tex_unreached": self._unreached_tex(),
             # The Lean this project may import but did not author, and which of
             # its own modules answer to a shared name instead. Reported rather
             # than left implicit: a model that cannot see the library cannot
@@ -3222,6 +3285,14 @@ class MathematicsSession:
         # started the turn, wiping a cancellation the transcript had already
         # recorded. Starting a turn belongs on the thread that sequenced it;
         # only the waiting belongs on the worker.
+        # Computed before the `user` event: the block reports the tally and
+        # the workspace as they stood when the turn started, and it must
+        # appear in the transcript ahead of the text it is prepended to, or a
+        # reader replaying the record would see the model's context before
+        # the human line that is supposed to have come first.
+        block = self._steering_block()
+        if block:
+            self._record({"type": "steering", "text": block})
         self._record({"type": "user", "message": {"role": "user", "content": text}})
         # Cleared here rather than in `cancel`: a turn cancelled during the
         # previous exchange must not silently disarm this one's tool gate.
@@ -3238,7 +3309,12 @@ class MathematicsSession:
         # means something has to lift it, or this turn's first child would be
         # killed on sight by the last turn's Esc.
         self.resume_work()
-        return self._stream(self.runtime.stream(text))
+        # Sent to the model as one string ahead of what the person typed,
+        # rather than as a separate message: the runtime's history is a
+        # sequence of turns, and a block that arrived as its own turn would
+        # read back as something one of the parties said, not as the
+        # workspace's own arithmetic addressed to whoever reads next.
+        return self._stream(self.runtime.stream(f"{block}\n\n{text}" if block else text))
 
     def _stream(self, events: Iterator[TurnEvent]) -> Iterator[TurnEvent]:
         # An explicit `yield`, not `yield from`. A consumer that unwinds --
