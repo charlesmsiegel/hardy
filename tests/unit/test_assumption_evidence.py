@@ -110,13 +110,35 @@ def test_the_human_sees_what_was_searched(session_factory, approvals) -> None:
     assert approvals[0]["searched"] == ["IsCyclic ✓", "Sylwo ✗"]
 
 
-def test_a_stopped_inspection_does_not_count(session_factory, approvals) -> None:
+def test_a_stopped_inspection_still_lets_the_request_through(session_factory, approvals) -> None:
+    """A machine whose Lean cannot finish must not be one where
+    `request_assumption` is refused forever. `inspect_declarations` returning
+    `ok=False` is exactly `_did_not_finish` -- the failing run's `#check`
+    elaborations stopped, not the case where nothing was tried at all. One
+    stopped attempt is enough to open the gate, and the human is told,
+    verbatim, that none of the attempts finished."""
     session = _searching_session(session_factory, approvals, Search(unavailable=("X",), ok=False))
     session._tool("inspect_declarations", {"names": ["X"]})
 
     result = session._tool("request_assumption", _request())
 
+    assert result.ok
+    assert approvals[0]["searched"] == ["1 inspection(s) attempted since the last request, none finished"]
+
+
+def test_with_zero_attempts_the_gate_still_refuses_with_the_existing_wording(
+    session_factory, approvals
+) -> None:
+    """No `inspect_declarations` call at all -- not even one that failed to
+    finish -- must still be refused, and with the same message a search-first
+    request has always been refused with."""
+    session = _searching_session(session_factory, approvals, Search())
+
+    result = session._tool("request_assumption", _request())
+
     assert not result.ok
+    assert "no `inspect_declarations` has been run" in result.output
+    assert approvals == []
 
 
 def test_a_session_that_cannot_search_is_not_asked_to(session, approvals, fake_lean) -> None:
