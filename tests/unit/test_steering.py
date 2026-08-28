@@ -161,3 +161,14 @@ def test_read_workspace_lists_unreached_tex(session) -> None:
     listing = json.loads(session._dispatch("read_workspace", {}).output)
 
     assert listing["tex_unreached"] == ["orphan.tex"]
+
+
+def test_a_tex_file_that_is_not_utf8_does_not_abort_the_block(session) -> None:
+    (session.tex_root).mkdir(parents=True, exist_ok=True)
+    (session.tex_root / "writeup.tex").write_text("\\begin{document}x\\end{document}", encoding="utf-8")
+    (session.tex_root / "bad.tex").write_bytes(b"\xff\xfe")
+
+    block = session._steering_block()
+
+    assert "tex files not reached from writeup.tex:" in block
+    assert "bad.tex" in block

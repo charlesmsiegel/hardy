@@ -1901,13 +1901,23 @@ class MathematicsSession:
             return []
 
     def _unreached_tex(self) -> list[str]:
-        """Writeup files no `\\input` chain from the root reaches."""
+        """Writeup files no `\\input` chain from the root reaches.
+
+        Read with `errors="replace"`, as `_tex_sources` is, and `ValueError`
+        caught alongside `OSError` and `WorkspacePathError` -- `UnicodeDecodeError`
+        is one -- so a `.tex` file that is not valid UTF-8 degrades to an
+        unreadable fragment instead of raising out of `_steering_block` and
+        aborting the turn before the `user` event this block is meant to
+        precede is even recorded.
+        """
         paths = self._tex_paths()
         if not paths:
             return []
         try:
-            sources = {path: read_text(self.tex_root, path) for path in paths}
-        except (OSError, WorkspacePathError):
+            sources = {
+                path: read_text(self.tex_root, path, errors="replace") for path in paths
+            }
+        except (OSError, ValueError, WorkspacePathError):
             return []
         return unreached_fragments(sources)
 
