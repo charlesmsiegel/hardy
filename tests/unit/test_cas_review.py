@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from hardy import cas
 from hardy.cas import CasError, CasSession, backend_for
 from hardy.cas_driver import HEADER_BYTES, _Stream, bounded_repr, state_digest
 from hardy.cas_export import TRANSCRIPT_BEGIN, export_session
@@ -1370,3 +1371,91 @@ def test_a_rebuild_says_which_gap_its_unverified_cells_have(sympy_session) -> No
         assert "no state digest" not in rebuilt.restart_note
     finally:
         session.close()
+
+
+# ------------------------------------------------- and the thirteenth review's
+
+
+def test_a_repr_that_changes_the_namespace_withholds_the_digest() -> None:
+    """Fingerprinting runs `repr`, and a `__repr__` is a cell's own code.
+
+    One that assigns `globals()["a"]` mutates a name already hashed, so the
+    digest describes a namespace that no longer exists by the time it is
+    finished — and if what it assigns differs run to run, the recorded digest
+    and the replay's agree while the two namespaces do not. That is the exact
+    failure the digest exists to catch, arriving through the digest itself.
+    """
+    import time as clock
+
+    namespace: dict = {}
+
+    class Restless:
+        def __repr__(self) -> str:
+            # `a` sorts first, so this lands after it has been hashed.
+            namespace["a"] = clock.time_ns()
+            return "<Restless>"
+
+    namespace.update({"a": 0, "b": Restless()})
+    assert state_digest(namespace, {}, 4096) == ""
+
+    # A repr that merely drifts is refused too: the second pass hashes what
+    # the first left, and any mutation a fingerprint could see moves it.
+    drifting: dict = {}
+
+    class Counting:
+        def __repr__(self) -> str:
+            drifting["a"] += 1
+            return "<Counting>"
+
+    drifting.update({"a": 0, "b": Counting()})
+    assert state_digest(drifting, {}, 4096) == ""
+
+
+def test_a_namespace_nothing_touches_is_still_fingerprinted() -> None:
+    """The second pass must not have cost every digest."""
+    assert state_digest({"a": 1, "b": [2, 3], "c": "four"}, {}, 4096)
+    assert state_digest({"x": __import__("sympy").Symbol("x")}, {}, 4096)
+
+
+def test_a_mutating_repr_is_caught_end_to_end(sympy_session, tmp_path) -> None:
+    """And the session says the rebuild was not checked, rather than checking
+    it against a fingerprint of a namespace that had already moved on."""
+    sympy_session.execute("import time")
+    sympy_session.execute(
+        "class Restless:\n"
+        "    def __repr__(self):\n"
+        "        globals()['a'] = time.time_ns()\n"
+        "        return '<Restless>'\n"
+    )
+    quiet = sympy_session.execute("a = 0\nb = Restless()")
+    assert quiet.accepted is True
+    assert quiet.state_digest == "", "a fingerprint that moves the namespace is not one"
+
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.unverified >= 1, report.model_dump_json(indent=2)
+    assert any("state not compared" in verdict.detail for verdict in report.verdicts)
+
+
+def test_a_platform_that_cannot_sweep_descendants_does_not_claim_verified(
+    sympy_session, tmp_path, monkeypatch
+) -> None:
+    """Windows has no process group to ask about or to signal, so a script's
+    children can neither be accounted for nor stopped. Reporting "nothing was
+    left behind" there said `verified` where the truth is that nobody looked —
+    and a delayed child was still free to rewrite the published file after the
+    readback and the manifest hash.
+    """
+    monkeypatch.setattr(cas, "can_sweep_descendants", lambda: False)
+    sympy_session.execute("1 + 1")
+    report = export_session(sympy_session, tmp_path / "cas")
+    assert report.script_verdict == "unverified", report.model_dump_json(indent=2)
+    assert "cannot account for what a script starts" in report.script_detail
+
+
+def test_a_platform_that_can_sweep_still_verifies(sympy_session, tmp_path) -> None:
+    """And where Hardy can look, it says what it found."""
+    assert cas.can_sweep_descendants() is (os.name != "nt")
+    sympy_session.execute("1 + 1")
+    report = export_session(sympy_session, tmp_path / "cas")
+    expected = "verified" if cas.can_sweep_descendants() else "unverified"
+    assert report.script_verdict == expected, report.model_dump_json(indent=2)
