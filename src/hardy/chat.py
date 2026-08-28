@@ -491,7 +491,11 @@ def _strip_hypotheses(statement: str) -> Any:
     quantifier_index = _first_top_level_quantifier(body)
     arrow_index = _first_top_level(body, " → ", quantifier_index)
     iff_index = _first_top_level(body, " ↔ ", quantifier_index)
-    if iff_index != -1 and (arrow_index == -1 or iff_index < arrow_index):
+    # `↔` only corrupts the split when it precedes a top-level arrow; with no
+    # such arrow there is no premise chain for it to mis-split, so an
+    # arrow-free equivalence -- however many binders it carries, including
+    # none -- is safe to strip and probe like any other statement.
+    if arrow_index != -1 and iff_index != -1 and iff_index < arrow_index:
         return UNREADABLE
     premises = _split_top_before(body, " → ", quantifier_index)
     conclusion = premises[-1].strip()
