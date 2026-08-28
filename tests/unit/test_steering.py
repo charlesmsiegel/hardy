@@ -179,10 +179,17 @@ def test_the_block_names_tex_files_nothing_reaches(session) -> None:
 
 
 def test_the_block_line_is_omitted_when_every_tex_file_is_reached(session) -> None:
+    """The one test asserting the *absence* of the orphan line has to be able
+    to fail: a fixture with only `writeup.tex` has no orphan to name whether
+    or not reachability is checked at all, so a second file the root does
+    `\\input` is needed to exercise the omission branch for real."""
     (session.tex_root).mkdir(parents=True, exist_ok=True)
-    (session.tex_root / "writeup.tex").write_text("\\begin{document}x\\end{document}", encoding="utf-8")
+    (session.tex_root / "writeup.tex").write_text(
+        "\\begin{document}\\input{lemma1}\\end{document}", encoding="utf-8"
+    )
+    (session.tex_root / "lemma1.tex").write_text("x", encoding="utf-8")
 
-    assert "tex files not reached" not in session._steering_block()
+    assert "not yet reached" not in session._steering_block()
 
 
 def test_the_block_precedes_the_user_text_in_the_transcript(session) -> None:
