@@ -189,12 +189,15 @@ class RebuildReport(FrozenModel):
     # the session can say which cells it could not check rather than reporting
     # a rebuild as if it had.
     unverified: tuple[int, ...] = ()
-    # Which of the two reasons put each of them there. A cell can be on the
-    # list because nothing fingerprinted its namespace, or because a capture
-    # stopped at `cas_output_bytes` and the discarded tails were never
-    # compared -- and a report that named only the first told a reader whose
-    # state *had* been compared to go and look at the wrong thing.
+    # Which reason put each of them there. A cell can be on the list because
+    # the record carries no fingerprint, because the *replay* could not take
+    # one, or because a capture stopped at `cas_output_bytes` and the
+    # discarded tails were never compared -- and a report that named one told
+    # a reader to go and look at the wrong thing. They point somewhere
+    # different: the log never had it, this kernel could not produce it, or
+    # the evidence exists and stops early.
     digestless: tuple[int, ...] = ()
+    unfingerprintable: tuple[int, ...] = ()
     clipped: tuple[int, ...] = ()
 
 
@@ -226,6 +229,11 @@ def _why_unverified(report: RebuildReport) -> str:
             f"cell(s) {list(report.digestless)} carry no state digest, so their "
             "replay agrees whatever namespace it rebuilt"
         )
+    if report.unfingerprintable:
+        reasons.append(
+            f"cell(s) {list(report.unfingerprintable)} were recorded with a state "
+            "digest the replay could not produce one to compare against"
+        )
     if report.clipped:
         reasons.append(
             f"cell(s) {list(report.clipped)} were captured up to cas_output_bytes, "
@@ -250,16 +258,33 @@ def reproduces(record: CellRecord, outcome: CellOutcome) -> bool:
     digest includes an effect left behind by a *failed* cell (`x = 41; 1 / 0`,
     then an accepted `pass`) cannot match a replay that never ran the failure.
 
-    Compared only when the record carries one. A log written before the field
+    Compared only when *both* sides carry one. A log written before the field
     existed, or by a backend with no protocol to carry it, has nothing to
-    compare -- `unobservable` is what says so, rather than this quietly
-    passing.
+    compare; so does a replay that could not fingerprint what it rebuilt --
+    a leaf whose `__repr__` succeeds live and mutates the namespace under some
+    changed external condition leaves the same state and no digest for it.
+    Testing only the record for absence read that as a *different* namespace,
+    poisoned the session, and told the reader the one thing that had not been
+    established. `state_unchecked` is what says so instead, and it says it in
+    the field meant for it.
     """
     if not same_output(record, outcome):
         return False
-    if record.state_digest:
+    if record.state_digest and outcome.state_digest:
         return outcome.state_digest == record.state_digest
     return True
+
+
+def state_unchecked(record: CellRecord, outcome: CellOutcome | None) -> bool:
+    """Whether this replay proved anything about the state the cell left.
+
+    Either side missing is the whole answer. `unobservable` is the record's
+    half, kept separate because a rebuild reports on records it has not
+    replayed yet and because the two absences have different causes: one says
+    the log never carried a fingerprint, the other that this kernel could not
+    take one.
+    """
+    return unobservable(record) or outcome is None or not outcome.state_digest
 
 
 def same_output(record: CellRecord, outcome: CellOutcome) -> bool:
@@ -1947,6 +1972,8 @@ class CasSession:
         # exact original against a replay that printed more still matches on
         # what was retained, with the rest never looked at.
         clipped: list[int] = []
+        unrecorded: set[int] = set()
+        unfingerprinted: set[int] = set()
         for record in pending:
             # A rebuild is the session's own time. Left unbilled, a session
             # holding expensive accepted cells could time out and replay many
@@ -1991,6 +2018,14 @@ class CasSession:
             # built on it.
             if outcome.capture_truncated:
                 clipped.append(record.seq)
+            # Recorded per cell as the replay goes, because the report below
+            # needs the replay's half of it and the loop is where the outcome
+            # exists. A cell whose replay could not be fingerprinted is
+            # unchecked, not divergent.
+            if unobservable(record):
+                unrecorded.add(record.seq)
+            elif not outcome.state_digest:
+                unfingerprinted.add(record.seq)
             if not reproduces(record, outcome):
                 diverged.append(record.seq)
         if diverged:
@@ -2015,11 +2050,15 @@ class CasSession:
             unverified=tuple(
                 record.seq
                 for record in pending
-                if unobservable(record)
+                if record.seq in unrecorded
+                or record.seq in unfingerprinted
                 or record.capture_truncated
                 or record.seq in set(clipped)
             ),
-            digestless=tuple(record.seq for record in pending if unobservable(record)),
+            digestless=tuple(record.seq for record in pending if record.seq in unrecorded),
+            unfingerprintable=tuple(
+                record.seq for record in pending if record.seq in unfingerprinted
+            ),
             clipped=tuple(
                 record.seq
                 for record in pending

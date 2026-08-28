@@ -45,6 +45,7 @@ from .cas import (
     reproduces,
     run_exported_script,
     same_output,
+    state_unchecked,
     unobservable,
 )
 from .domain import FrozenModel
@@ -146,18 +147,28 @@ def _verdicts(
                     ),
                 )
             )
-        elif records_state and unobservable(record):
+        elif records_state and state_unchecked(record, outcome):
             # The replay reproduced everything Hardy can see and nothing more.
             # `_restore` already refuses to call this a checked rebuild; an
             # export publishing the same replay as `verified` would be the
             # same overclaim on the other path.
+            #
+            # Either side of the comparison missing puts a cell here. A record
+            # with no fingerprint and a replay that could not take one are
+            # different causes with the same consequence: nothing was compared.
             verdicts.append(
                 CellVerdict(
                     seq=record.seq,
                     verdict="unverified",
                     detail=(
-                        "output reproduced, state not compared: this kernel could not "
-                        "fingerprint the namespace this cell left"
+                        "output reproduced, state not compared: "
+                        + (
+                            "this kernel could not fingerprint the namespace this "
+                            "cell left"
+                            if unobservable(record)
+                            else "the replay could not fingerprint the namespace it "
+                            "rebuilt"
+                        )
                     ),
                 )
             )
@@ -807,6 +818,43 @@ def export_session(session: CasSession, directory: Path) -> ExportReport:
         script_verdict = ("unverified", _excerpt(f"the script could not be checked: {error!r}"))
     notebook = render_notebook(session, cells, verdicts, script_verdict).encode("utf-8")
     guard.write_bytes(notebook_path.name, notebook)
+
+    # Read back at the last possible moment, because the manifest is a claim
+    # about what is on disk and not about what was handed to `write_bytes`.
+    # `_verify_script` checks the script the instant the run ends and the
+    # notebook is rendered after that, so anything that changed a published
+    # file in between -- a descendant that left its process group and outlived
+    # the sweep, most of all -- would have been recorded under a hash of bytes
+    # nothing on disk had. This closes the window an export controls. It
+    # cannot close the one after that: a file on disk can be changed at any
+    # later time by anything at all, which is what the manifest's hashes are
+    # for.
+    changed = [
+        path.name
+        for path, published in ((script_path, script), (notebook_path, notebook))
+        if not path.exists() or path.read_bytes() != published
+    ]
+    if changed:
+        for path, published in ((script_path, script), (notebook_path, notebook)):
+            _restore_published(path, published)
+        # Not over a verdict that already failed. `_verify_script` reads the
+        # script back the instant the run ends and says something more precise
+        # when it finds it changed -- including that the guard refused to put
+        # it back, which this would have replaced with a message saying the
+        # bytes were restored. A second report of one event is not more honest
+        # than the first.
+        #
+        # The cell verdicts are left alone. They are claims about replaying
+        # cells in a fresh kernel, which is evidence a file being clobbered
+        # afterwards does not touch; it is the claim about the published file
+        # that stops being supportable.
+        if script_verdict[0] != "failed":
+            script_verdict = (
+                "failed",
+                f"{', '.join(changed)} changed on disk while this export was still "
+                "being written, so the verdict would not describe the files it "
+                "publishes; the published bytes have been put back",
+            )
 
     counts = {name: 0 for name in ("verified", "diverged", "failed", "unverified")}
     for verdict in verdicts:

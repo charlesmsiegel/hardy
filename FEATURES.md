@@ -506,7 +506,12 @@ Priority labels are sequencing hints:
   platform has no process groups -- Windows -- a script's children can neither
   be accounted for nor stopped, so no script verdict there is `verified`:
   saying nothing was left behind would have been "nobody looked" reported as
-  "nobody was there".
+  "nobody was there". Both published files are read back once more just before
+  the manifest is written, and put back and marked if they changed: a
+  descendant that left its process group outlives the sweep, and a manifest
+  recording the hash of bytes nothing on disk had is the one thing an export
+  must not do. What becomes of a file after an export has finished is what
+  those hashes exist to let a reader detect.
 - **Now (implemented):** the published script names the environment it was
   checked under, and `export.json` records it. A verdict is a claim about
   running those exact bytes *that way*: `PYTHONHASHSEED` is pinned for the

@@ -248,7 +248,11 @@ artifact — a cell may rewrite the path it was run from — and the answer is t
 put the published bytes back and refuse the verdict, rather than to check a
 file no reader will run — and to stop whatever the run started before reading
 the file back, since a descendant that outlives the script was free to rewrite
-the artifact after the verdict had been drawn on it. A kernel evaluates a trailing expression and reports its
+the artifact after the verdict had been drawn on it. A descendant that leaves
+its process group outlives that sweep, so both published files are read back
+once more before the manifest describes them; what becomes of a file after an
+export has finished is what the manifest's hashes let a reader detect, and not
+something any verdict can speak for. A kernel evaluates a trailing expression and reports its
 value where a plain script discards it, and a construct that is legal at the
 head of a cell can be illegal partway down a file. Both verdicts are published;
 an export reproduces only when both hold.
