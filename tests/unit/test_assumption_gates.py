@@ -329,6 +329,35 @@ def test_the_vacuity_file_has_no_declaration_and_one_example_per_line(session, f
     assert not any(line.startswith("axiom") for line in lines)
 
 
+NOTHING_TO_STRIP_EXISTENTIAL = (
+    "∀ {G : Type*} [Group G] (P : Subgroup G), ∃ Q : Subgroup G, Q ≤ P"
+)
+
+
+def test_a_statement_with_nothing_to_strip_gets_no_probes_only_witnesses(session, fake_lean) -> None:
+    """Every binder here is data -- `P` is kept because the conclusion
+    names it -- so nothing is actually stripped, and `PROBES` would only
+    repeat the question `_assumption_probe` already asked against this
+    exact text and failed."""
+    session._vacuity_probe(NOTHING_TO_STRIP_EXISTENTIAL)
+
+    lines = fake_lean.last_source.splitlines()
+    tactics = [line.split(" := by ", 1)[1] for line in lines if line.startswith("example : ")]
+    assert not any(tactic in session.PROBES for tactic in tactics)
+    assert tactics == list(session.WITNESSES)
+
+
+def test_a_witness_close_with_nothing_stripped_names_a_theorem_not_a_vacuity(
+    session, fake_lean
+) -> None:
+    fake_lean.closes_with = "exact ⟨⊥, inferInstance⟩"
+
+    warning = session._vacuity_probe(NOTHING_TO_STRIP_EXISTENTIAL)
+
+    assert "theorem, not an assumption" in warning
+    assert "hypothesis removed" not in warning
+
+
 def test_a_stripped_statement_a_probe_closes_is_a_warning(session, fake_lean) -> None:
     fake_lean.closes_with = "aesop"
 
