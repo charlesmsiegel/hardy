@@ -2065,12 +2065,16 @@ class MathematicsSession:
         any LaTeX yet is the ordinary starting state -- so this returns an
         empty list rather than raising, and both `_unreached_tex` and the
         steering block's omission check share this one place that decides it.
+        Caught as `ValueError` rather than naming `WorkspacePathError`
+        specifically: `files_under` raises the sibling `LayoutError` for a
+        symlink anywhere under `tex/`, and both are `ValueError` subclasses,
+        so one broad clause catches whichever this workspace produces.
         """
         if not self.tex_root.is_dir():
             return []
         try:
             return [relative.as_posix() for relative in files_under(self.tex_root, ".tex")]
-        except (OSError, WorkspacePathError):
+        except (OSError, ValueError):
             return []
 
     def _unreached_tex(self) -> list[str]:
@@ -2101,32 +2105,41 @@ class MathematicsSession:
         failing run was told eight times; the model saw none of them, and
         wrote itself a status report saying the work was done. This is the
         same arithmetic, put where the model reads, and nothing it wrote.
+
+        Everything below is wrapped in one `try`: `stream()` calls this ahead
+        of recording the `user` event for the turn, and `lean_workspace.sources()`,
+        `_obligations()` and `_tex_paths()` can all raise for reasons that have
+        nothing to do with whether the turn should proceed -- a status line
+        must never be the thing that aborts the turn it is reporting on.
         """
         calls = self._tool_tally
         no_tools = all(count[0] == 0 for count in calls.values())
-        # File existence, not `self.tex_root.is_dir()`: a session that creates
-        # `tex/` at init but has written nothing into it must still count as
-        # having no writeup, or a fresh workspace would get a block on its
-        # first turn purely because the directory happens to exist.
-        if no_tools and not self.lean_workspace.sources() and not self._tex_paths():
+        try:
+            # File existence, not `self.tex_root.is_dir()`: a session that creates
+            # `tex/` at init but has written nothing into it must still count as
+            # having no writeup, or a fresh workspace would get a block on its
+            # first turn purely because the directory happens to exist.
+            if no_tools and not self.lean_workspace.sources() and not self._tex_paths():
+                return ""
+            owed = self._obligations()
+            gaps = {item.subject for item in owed if item.kind == "lean"}
+            opened = {item.subject for item in owed if item.kind == "open"}
+            saved = self._saved_theorems()
+            lines = [
+                "[Hardy workspace state — written by Hardy, not the user]",
+                f"saved theorems: {len(saved - gaps - opened)} machine-checked, "
+                f"{len(saved & opened)} open (resting on a hole)",
+                f"approved assumptions: {len(self.state['assumptions'])}",
+                f"this session: {calls['save_lean'][0]} save_lean calls, "
+                f"{calls['save_lean'][1]} accepted; {calls['check_lean'][0]} check_lean calls, "
+                f"{calls['check_lean'][1]} passed",
+            ]
+            unreached = self._unreached_tex()
+            if unreached:
+                lines.append(f"tex files not reached from writeup.tex: {', '.join(unreached)}")
+            return "\n".join(lines)
+        except Exception:  # noqa: BLE001 - a status line must never end a turn
             return ""
-        owed = self._obligations()
-        gaps = {item.subject for item in owed if item.kind == "lean"}
-        opened = {item.subject for item in owed if item.kind == "open"}
-        saved = self._saved_theorems()
-        lines = [
-            "[Hardy workspace state — written by Hardy, not the user]",
-            f"saved theorems: {len(saved - gaps - opened)} machine-checked, "
-            f"{len(saved & opened)} open (resting on a hole)",
-            f"approved assumptions: {len(self.state['assumptions'])}",
-            f"this session: {calls['save_lean'][0]} save_lean calls, "
-            f"{calls['save_lean'][1]} accepted; {calls['check_lean'][0]} check_lean calls, "
-            f"{calls['check_lean'][1]} passed",
-        ]
-        unreached = self._unreached_tex()
-        if unreached:
-            lines.append(f"tex files not reached from writeup.tex: {', '.join(unreached)}")
-        return "\n".join(lines)
 
     def _used_assumptions(self) -> set[str]:
         """Approved axioms the saved tree actually rests on.

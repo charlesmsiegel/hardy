@@ -172,3 +172,24 @@ def test_a_tex_file_that_is_not_utf8_does_not_abort_the_block(session) -> None:
 
     assert "tex files not reached from writeup.tex:" in block
     assert "bad.tex" in block
+
+
+def test_a_broken_obligations_call_does_not_abort_the_turn(session, monkeypatch) -> None:
+    """`_steering_block` runs at the top of `stream()`, before the `user`
+    event for the turn is recorded. A failure inside it -- here forced on
+    `_obligations`, but the same is true of `lean_workspace.sources()` and
+    `_saved_theorems()` -- must degrade to no block rather than take the
+    turn down with it."""
+    _save(session)  # so `no_tools` is False and `_obligations` is reached
+
+    def boom():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(session, "_obligations", boom)
+
+    assert session._steering_block() == ""
+
+    list(session.stream("hi"))
+
+    kinds = [event["type"] for event in _events(session)]
+    assert "user" in kinds
