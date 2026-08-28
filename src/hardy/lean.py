@@ -164,6 +164,12 @@ class DeclarationRecord(FrozenModel):
 class DeclarationInspection(FrozenModel):
     resolved: tuple[DeclarationRecord, ...]
     unavailable: tuple[str, ...]
+    # Whether Lean answered at all. A batch every name of which is
+    # `unavailable` is evidence only when this is true: the same shape comes
+    # back when the elaboration was stopped before it said anything, and a
+    # live session read that as "Mathlib does not have `IsCyclic`".
+    success: bool = True
+    timed_out: bool = False
     observation_truncated: bool = False
     output_artifact: str | None = None
 
@@ -684,7 +690,19 @@ class LeanService:
                     column=diagnostic.column,
                 )
             )
-        return DeclarationInspection(resolved=tuple(resolved), unavailable=tuple(unavailable))
+        return DeclarationInspection(
+            resolved=tuple(resolved),
+            unavailable=tuple(unavailable),
+            # `#check Nope` is an error, so a batch with an unknown name has
+            # `check.success=False` while having answered: the diagnostic
+            # Lean printed for it carries `severity="error"`. A process that
+            # crashed instead leaves only whatever stderr said, which
+            # `parse_lean_json` keeps as a fallback `information` diagnostic
+            # rather than discarding it -- that text is not an answer, so it
+            # must not count as one here.
+            success=check.success or any(item.severity == "error" for item in check.diagnostics),
+            timed_out=check.process.timed_out,
+        )
 
     def search_declarations(self, query: str, limit: int = 10) -> DeclarationSearch:
         if not 1 <= len(query) <= 512 or "\n" in query or "\r" in query:

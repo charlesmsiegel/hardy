@@ -195,6 +195,72 @@ def test_inspect_declarations_returns_resolved_signatures(tmp_path) -> None:
     assert inspection.unavailable == ()
 
 
+def _inspecting_service(tmp_path, runner):
+    domain = importlib.import_module('hardy.domain')
+    lean = importlib.import_module('hardy.lean')
+    return lean.LeanService(
+        lake=tmp_path / 'lake.exe',
+        lean_project=tmp_path,
+        environment=_claim(domain).environment,
+        limits=domain.RunLimits(),
+        runner=runner,
+    )
+
+
+def test_an_inspection_lean_was_stopped_on_says_so(tmp_path) -> None:
+    """Every name came back `unavailable` with nothing to distinguish
+    "Lean said no" from "Lean was killed". A live session read the second
+    as the first, about `IsCyclic` and `Subgroup.center`."""
+    process = importlib.import_module('hardy.process')
+
+    def runner(spec):
+        return process.ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=None, stdout='', stderr='',
+            timed_out=True, output_overflow=False, duration_ms=180_000,
+        )
+
+    inspection = _inspecting_service(tmp_path, runner).inspect_declarations(('IsCyclic',))
+
+    assert inspection.timed_out is True
+    assert inspection.success is False
+    assert inspection.unavailable == ('IsCyclic',)
+
+
+def test_an_inspection_that_answered_with_unknown_names_is_a_success(tmp_path) -> None:
+    """`#check Nope` is an error to Lean, but the batch *answered*."""
+    process = importlib.import_module('hardy.process')
+    message = json.dumps({
+        'data': "unknown identifier 'Nope'", 'fileName': 'Inspect.lean',
+        'pos': {'line': 3, 'column': 7}, 'severity': 'error',
+    })
+
+    def runner(spec):
+        return process.ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=1, stdout=message, stderr='',
+            timed_out=False, output_overflow=False, duration_ms=1,
+        )
+
+    inspection = _inspecting_service(tmp_path, runner).inspect_declarations(('Nope',))
+
+    assert inspection.success is True
+    assert inspection.timed_out is False
+    assert inspection.unavailable == ('Nope',)
+
+
+def test_an_inspection_that_failed_silently_is_not_a_success(tmp_path) -> None:
+    process = importlib.import_module('hardy.process')
+
+    def runner(spec):
+        return process.ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=1, stdout='', stderr='crash',
+            timed_out=False, output_overflow=False, duration_ms=1,
+        )
+
+    inspection = _inspecting_service(tmp_path, runner).inspect_declarations(('Nope',))
+
+    assert inspection.success is False
+
+
 def test_search_declarations_bounds_and_structures_find_results(tmp_path) -> None:
     domain = importlib.import_module('hardy.domain')
     lean = importlib.import_module('hardy.lean')
