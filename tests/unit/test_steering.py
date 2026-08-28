@@ -123,7 +123,7 @@ def test_the_block_names_tex_files_nothing_reaches(session) -> None:
 
     block = session._steering_block()
 
-    assert "tex files not reached from writeup.tex: completion_status.tex" in block
+    assert "tex files not yet reached from writeup.tex: completion_status.tex" in block
 
 
 def test_the_block_line_is_omitted_when_every_tex_file_is_reached(session) -> None:
@@ -185,7 +185,7 @@ def test_a_tex_file_that_is_not_utf8_does_not_abort_the_block(session) -> None:
 
     block = session._steering_block()
 
-    assert "tex files not reached from writeup.tex:" in block
+    assert "tex files not yet reached from writeup.tex:" in block
     assert "bad.tex" in block
 
 
