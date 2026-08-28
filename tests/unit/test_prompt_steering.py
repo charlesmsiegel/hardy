@@ -30,6 +30,36 @@ def test_the_prompt_still_tells_the_model_to_look_modules_up() -> None:
     assert "search_modules" in CHAT_SYSTEM_PROMPT
 
 
+def test_the_tool_bullet_does_not_offer_search_modules_as_a_narrowing_step() -> None:
+    """Brutal review pass 3, finding #3: the tool bullet used to say
+    `search_modules` "finds the module to `import` for a name you have in
+    mind", which reads as license to import the narrower path it returns --
+    exactly what the "import `Mathlib` and nothing narrower" paragraph below
+    it forbids, and what the tool's own description (`search_tools.py`)
+    already disclaims. The bullet now names the same rule the rest of the
+    prompt gives: `search_modules` confirms a path exists; from Mathlib,
+    import `Mathlib` whole."""
+    assert (
+        "`search_modules` confirms a module path exists and finds a workspace or "
+        "shared-library module's path — from Mathlib, import `Mathlib` whole;"
+    ) in CHAT_SYSTEM_PROMPT
+    assert "finds the module to `import` for a name you have in mind" not in CHAT_SYSTEM_PROMPT
+
+
+def test_inspect_declarations_is_not_said_to_settle_mathlib_outright() -> None:
+    """Brutal review pass 3, finding #3: the prompt used to say
+    `inspect_declarations` "settles 'does Mathlib have this' outright", which
+    contradicts `SPELLINGS_HINT`'s "that is evidence about the spellings, not
+    about the result" for the very same answer. Softened to what is actually
+    true: a finished batch settles which spellings exist, not whether the
+    result is absent from Mathlib."""
+    assert (
+        "it asks Lean directly whether names exist and hands back their real "
+        "signatures, so a batch that finishes settles those spellings."
+    ) in CHAT_SYSTEM_PROMPT
+    assert 'so it settles "does Mathlib have this" outright' not in CHAT_SYSTEM_PROMPT
+
+
 def test_the_prompt_no_longer_tells_the_model_to_search_before_every_mathlib_import() -> None:
     """Finding #6 (second brutal review): under `import Mathlib` and nothing
     narrower, the only Mathlib import needs no lookup, so "call
