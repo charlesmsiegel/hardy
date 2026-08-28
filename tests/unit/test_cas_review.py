@@ -1459,3 +1459,100 @@ def test_a_platform_that_can_sweep_still_verifies(sympy_session, tmp_path) -> No
     report = export_session(sympy_session, tmp_path / "cas")
     expected = "verified" if cas.can_sweep_descendants() else "unverified"
     assert report.script_verdict == expected, report.model_dump_json(indent=2)
+
+
+# ----------------------------------------------- and the fourteenth review's
+
+
+def test_a_replay_that_cannot_fingerprint_is_unchecked_not_divergent(
+    sympy_session, tmp_path
+) -> None:
+    """The record carries a digest and the replay cannot produce one.
+
+    A leaf whose `__repr__` succeeds live and mutates the namespace under a
+    changed external condition leaves the same state and no fingerprint for
+    it. Testing only the record for absence read that as a *different*
+    namespace: the session was poisoned and the reader told the one thing that
+    had not been established.
+    """
+    flag = tmp_path / "calm"
+    flag.write_text("yes", encoding="utf-8")
+    sympy_session.execute(f"import os, time\npath = {str(flag)!r}")
+    sympy_session.execute(
+        "class Weather:\n"
+        "    def __repr__(self):\n"
+        "        if not os.path.exists(path):\n"
+        "            globals()['drift'] = time.time_ns()\n"
+        "        return '<Weather>'\n"
+    )
+    quiet = sympy_session.execute("drift = 0\nw = Weather()")
+    assert quiet.state_digest, "live, nothing moved and it was fingerprinted"
+
+    flag.unlink()
+    sympy_session._drop_kernel()
+    after = sympy_session.execute("1 + 1")
+
+    assert after.status == "ok", "the rebuild is not a divergence"
+    assert "reconstructed, not verified" in after.restart_note
+    # And it says which side was missing, rather than blaming the log for a
+    # fingerprint it did carry.
+    assert "the replay could not produce one" in after.restart_note
+    assert "carry no state digest" not in after.restart_note
+
+
+def test_an_export_says_which_side_could_not_be_fingerprinted(
+    sympy_session, tmp_path
+) -> None:
+    """The same distinction on the export path."""
+    flag = tmp_path / "calm"
+    flag.write_text("yes", encoding="utf-8")
+    sympy_session.execute(f"import os, time\npath = {str(flag)!r}")
+    sympy_session.execute(
+        "class Weather:\n"
+        "    def __repr__(self):\n"
+        "        if not os.path.exists(path):\n"
+        "            globals()['drift'] = time.time_ns()\n"
+        "        return '<Weather>'\n"
+    )
+    sympy_session.execute("drift = 0\nw = Weather()")
+
+    flag.unlink()
+    report = export_session(sympy_session, tmp_path / "cas")
+    unverified = [v for v in report.verdicts if v.verdict == "unverified"]
+    assert unverified, report.model_dump_json(indent=2)
+    assert any("the replay could not fingerprint" in v.detail for v in unverified)
+    assert not any(v.verdict == "diverged" for v in report.verdicts), (
+        "not being able to compare is not a disagreement"
+    )
+
+
+def test_an_artifact_changed_while_the_export_is_written_is_not_described_as_sound(
+    sympy_session, tmp_path, monkeypatch
+) -> None:
+    """`_verify_script` reads the script back the instant the run ends, and the
+    notebook is rendered after that. Anything that changed a published file in
+    between — a descendant that left its process group and outlived the sweep,
+    most of all — would have been recorded under a hash of bytes nothing on
+    disk had. The rewrite is simulated here, because a race cannot be timed
+    from a test; the window is what is being pinned.
+    """
+    from hardy import cas_export
+
+    real = cas_export.render_notebook
+
+    def rewrite_then_render(session, cells, verdicts, script_verdict):
+        (tmp_path / "cas" / "session.py").write_text("# clobbered\n", encoding="utf-8")
+        return real(session, cells, verdicts, script_verdict)
+
+    sympy_session.execute("1 + 1")
+    monkeypatch.setattr(cas_export, "render_notebook", rewrite_then_render)
+    report = export_session(sympy_session, tmp_path / "cas")
+
+    assert report.script_verdict == "failed", report.model_dump_json(indent=2)
+    assert "changed on disk while this export was still being written" in report.script_detail
+    assert report.reproduces is False
+    # The bytes are back, and the manifest describes what is there.
+    published = (tmp_path / "cas" / "session.py").read_bytes()
+    assert published.decode("utf-8").strip() != "# clobbered"
+    manifest = json.loads((tmp_path / "cas" / "export.json").read_text(encoding="utf-8"))
+    assert manifest["files"]["session.py"] == hashlib.sha256(published).hexdigest()
