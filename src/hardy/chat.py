@@ -2401,9 +2401,15 @@ class MathematicsSession:
         nothing to do with whether the turn should proceed -- a status line
         must never be the thing that aborts the turn it is reporting on.
         """
-        calls = self._tool_tally
-        no_tools = all(count[0] == 0 for count in calls.values())
         try:
+            # `calls` and `no_tools` moved inside the `try`, and `list(...)`
+            # snapshots the values: `_tally` on an SDK thread may resize
+            # `_tool_tally` (`setdefault` on a tool name seen for the first
+            # time) while a new turn starts `_steering_block` on the
+            # sequencing thread, and iterating a dict that resizes underneath
+            # you raises rather than returning stale-but-safe data.
+            calls = self._tool_tally
+            no_tools = all(count[0] == 0 for count in list(calls.values()))
             # File existence, not `self.tex_root.is_dir()`: a session that creates
             # `tex/` at init but has written nothing into it must still count as
             # having no writeup, or a fresh workspace would get a block on its

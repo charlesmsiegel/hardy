@@ -326,3 +326,26 @@ def test_a_broken_obligations_call_does_not_abort_the_turn(session, monkeypatch)
 
     kinds = [event["type"] for event in _events(session)]
     assert "user" in kinds
+
+
+def test_a_tally_that_resizes_mid_iteration_does_not_abort_the_turn(session, monkeypatch) -> None:
+    """Brutal review pass 3, finding #2: `_tally` runs `setdefault` on an SDK
+    thread and can resize `_tool_tally` while `_steering_block` iterates it
+    on the sequencing thread, ahead of the `user` event being recorded.
+    `calls.values()` is stood in for here with a dict subclass that raises
+    the way CPython does on a genuine concurrent resize, so the fix -- both
+    lines inside the `try`, over a `list(...)` snapshot -- is what is under
+    test, not the race itself."""
+
+    class ResizingDuringIteration(dict):
+        def values(self):
+            raise RuntimeError("dictionary changed size during iteration")
+
+    monkeypatch.setattr(session, "_tool_tally", ResizingDuringIteration(session._tool_tally))
+
+    assert session._steering_block() == ""
+
+    list(session.stream("hi"))
+
+    kinds = [event["type"] for event in _events(session)]
+    assert "user" in kinds
