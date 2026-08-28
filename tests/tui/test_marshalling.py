@@ -171,6 +171,70 @@ def test_the_approval_declines_by_default(settings):
     assert cli.confirm_assumption(Holder())(PROPOSAL) is False
 
 
+def test_the_prompt_shows_previous_and_searched_when_the_proposal_carries_them(settings):
+    """`request_assumption` sets `previous` and `searched` on the proposal --
+    a weakened statement and the search that preceded this request -- and a
+    human deciding whether to approve is owed both, not only the six lines
+    the prompt showed before they existed.
+    """
+    from hardy import cli
+
+    class Ui:
+        def __init__(self):
+            self.written: list[str] = []
+
+        def write(self, text, *, style="system"):
+            self.written.append(text)
+
+        def choose(self, title, rows, *, current=0, subtitle=""):
+            return None  # Esc; only what was written is under test here
+
+        def ask_line(self, prompt):
+            return None
+
+        def confirm(self, question):
+            return False
+
+    class Holder:
+        from_thread = Ui()
+
+    proposal = dict(PROPOSAL, previous="a weaker True", searched=["foo ✓", "bar ✗"])
+    cli.confirm_assumption(Holder())(proposal)
+
+    written = Holder.from_thread.written
+    assert any("Previously requested as: a weaker True" in line for line in written)
+    assert any("Searched since the last request: foo ✓, bar ✗" in line for line in written)
+
+
+def test_the_prompt_omits_previous_and_searched_when_the_proposal_lacks_them(settings):
+    from hardy import cli
+
+    class Ui:
+        def __init__(self):
+            self.written: list[str] = []
+
+        def write(self, text, *, style="system"):
+            self.written.append(text)
+
+        def choose(self, title, rows, *, current=0, subtitle=""):
+            return None
+
+        def ask_line(self, prompt):
+            return None
+
+        def confirm(self, question):
+            return False
+
+    class Holder:
+        from_thread = Ui()
+
+    cli.confirm_assumption(Holder())(PROPOSAL)
+
+    written = Holder.from_thread.written
+    assert not any("Previously requested as" in line for line in written)
+    assert not any("Searched since the last request" in line for line in written)
+
+
 async def test_an_escaped_prompt_from_a_tool_thread_also_declines(settings):
     """A cancelled/Esc'd selector from a real thread, not a fake `Ui`, still
     hard-gates the assumption -- failing open here would be the worst bug in

@@ -397,7 +397,7 @@ def _vacuity_source(stripped: str) -> tuple[str, list[str]]:
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, str]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a

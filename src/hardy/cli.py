@@ -27,7 +27,7 @@ from .runner import WARNING, run
 from .tui.ports import Choice
 
 
-def confirm_assumption(ui: Any) -> Callable[[dict[str, str]], bool]:
+def confirm_assumption(ui: Any) -> Callable[[dict[str, Any]], bool]:
     """The axiom gate, reached from an SDK tool thread.
 
     `MathematicsSession` calls this synchronously from inside a tool call
@@ -42,7 +42,7 @@ def confirm_assumption(ui: Any) -> Callable[[dict[str, str]], bool]:
     path must not be able to fail this gate open.
     """
 
-    def confirm(proposal: dict[str, str]) -> bool:
+    def confirm(proposal: dict[str, Any]) -> bool:
         blocking = ui.from_thread
         try:
             # The goal first, and the absence of one shown rather than hidden.
@@ -60,6 +60,16 @@ def confirm_assumption(ui: Any) -> Callable[[dict[str, str]], bool]:
             blocking.write(f"  Source: {proposal['source']}")
             blocking.write(f"  Reason: {proposal['reason']}")
             blocking.write(f"  Checked: {proposal.get('checked', 'not checked')}")
+            # A name refused or declined earlier this session is shown beside
+            # the new statement, so a weakening between the two is seen rather
+            # than approved sight unseen.
+            if proposal.get("previous"):
+                blocking.write(f"  Previously requested as: {proposal['previous']}", style="warning")
+            # What has been searched since the last request -- proof the
+            # `reason` given is not free text alone, since the search-first
+            # gate that required it is otherwise invisible at the prompt.
+            if proposal.get("searched"):
+                blocking.write(f"  Searched since the last request: {', '.join(proposal['searched'])}")
             picked = blocking.choose(
                 f"Approve the assumption {proposal['formal_name']}?",
                 [Choice("no", "No, decline it"), Choice("yes", "Yes, approve it")],
