@@ -546,7 +546,7 @@ def _vacuity_source(stripped: str, *, include_probes: bool = True) -> tuple[str,
     question twice and, if it happened to close, describe an unstripped
     statement as proved "with every hypothesis removed".
     """
-    # Start with PROBES, add WITNESSES only if the conclusion starts with ∃.
+    # Start with PROBES, add WITNESSES only if the conclusion is a plain ∃.
     tactics = list(MathematicsSession.PROBES) if include_probes else []
 
     # Extract the conclusion (after leading binders' top-level comma).
@@ -555,7 +555,11 @@ def _vacuity_source(stripped: str, *, include_probes: bool = True) -> tuple[str,
     else:
         conclusion = stripped
 
-    if conclusion.lstrip().startswith("∃"):
+    # `∃!` is unique existence: a bare witness (`⊥`, `⊤`) proves something
+    # exists, never that it is the only one, so trying `WITNESSES` against a
+    # `∃!` conclusion can only ever fail and is not worth the elaboration.
+    stripped_conclusion = conclusion.lstrip()
+    if stripped_conclusion.startswith("∃") and not stripped_conclusion.startswith("∃!"):
         tactics.extend(MathematicsSession.WITNESSES)
 
     # Build the Lean source.
@@ -3221,7 +3225,15 @@ class MathematicsSession:
                 "since the last request, none finished"
             ]
         else:
-            proposal["searched"] = list(self._searched_since_request)
+            searched = list(self._searched_since_request)
+            if len(searched) > 20:
+                # A session that inspects in large batches across many
+                # requests can pile up a `searched` list a human is never
+                # going to read in full. Show the count and the most recent
+                # 20 -- what was just asked, not the whole session's
+                # history -- rather than let the field grow without bound.
+                searched = [f"{len(searched)} names inspected; last 20:"] + searched[-20:]
+            proposal["searched"] = searched
         # A name refused or declined earlier this session gets its last
         # statement shown beside the new one: `sylow_unique_normal` lost a
         # conjunct between a refused request and an approved one, unseen,
@@ -3235,6 +3247,17 @@ class MathematicsSession:
         self._inspected_since_request = False
         self._searched_since_request = []
         self._inspect_attempts_since_request = 0
+        # `checked`, `searched` and `previous` reach `confirm` but never
+        # `record` below, so without this nothing durable ever says what
+        # evidence the human was actually shown when they approved (or
+        # refused) an axiom -- a nit from the second brutal review.
+        self._record({
+            "type": "assumption_prompt",
+            "formal_name": proposal["formal_name"],
+            "checked": proposal["checked"],
+            "searched": proposal["searched"],
+            "previous": proposal.get("previous", ""),
+        })
         if not self.confirm(proposal):
             return ToolResult(False, "The user declined this assumption. Do not use it.")
         # `checked`, `goal`, `searched` and `previous` describe this one

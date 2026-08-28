@@ -435,7 +435,7 @@ class ProjectOpener:
         return dataclasses.replace(current, project=layout.validate_slug(slug))
 
     def __call__(
-        self, slug: str, confirm: Callable[[dict[str, str]], bool], current: configuration.Config
+        self, slug: str, confirm: Callable[[dict[str, Any]], bool], current: configuration.Config
     ) -> tuple[configuration.Config, Any]:
         # Whatever `arm` published, or a fresh one for a caller that did not
         # arm. The worker's first statement is still too late for a terminal:
@@ -472,7 +472,7 @@ class ProjectOpener:
     def _open(
         self,
         slug: str,
-        confirm: Callable[[dict[str, str]], bool],
+        confirm: Callable[[dict[str, Any]], bool],
         current: configuration.Config,
         opening: _Reopen,
     ) -> tuple[configuration.Config, Any]:
@@ -659,7 +659,7 @@ def _chat(
         register_lakefile=getattr(args, "register_lakefile", None),
     )
 
-    def build(confirm: Callable[[dict[str, str]], bool]) -> MathematicsSession:
+    def build(confirm: Callable[[dict[str, Any]], bool]) -> MathematicsSession:
         return MathematicsSession(
             config.layout.problem,
             runtime_factory(str(config.model)),
