@@ -148,6 +148,21 @@ the managed workspace, record formal-to-document names, and pause for explicit
 human approval before admitting an assumption. The naming manifest is bookkeeping
 for a later translation audit, not evidence that the formalization is faithful.
 
+Assumption approval is gated on more than a human clicking yes. Where a search
+runtime exists, a request is refused until `inspect_declarations` has actually been
+tried since the last one — a free-text reason for why Mathlib lacks a result proves
+nothing on its own. Before a human is asked, Hardy elaborates the proposed axiom
+itself and runs two fail-closed probes against it: whether standard tactics close
+the goal outright, which makes it a theorem rather than an assumption, and whether
+the conclusion survives with its hypotheses stripped, which warns that the
+assumption may be vacuous. Both probes read Lean's diagnostics by line number, and
+an error outside the lines a probe wrote is never credited as a tactic closing the
+goal. The human sees what was searched, what Lean found, and — on a resubmitted
+name — the statement an earlier request under that name was refused or declined
+with; all of it is written to the transcript as an `assumption_prompt` event before
+the approval is asked for, so the durable record says what evidence backed the
+decision rather than only that one was made.
+
 ### 4. Lean interaction
 
 The initial path invokes Lean directly in a temporary directory. Persistent sessions, warm pools,

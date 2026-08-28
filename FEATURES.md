@@ -109,16 +109,36 @@ Mathlib, and LaTeX acceptance run is still needed before it is validated.
   once asked about. What the appendix cannot fix is the limit above it: the Lean line
   it quotes is the one Hardy was given, which for an imported axiom is still what the
   *model* said that declaration says.
-- **Now (implemented):** `request_assumption` settles three things before any human
-  is asked. The statement must be a statement — not a whole `axiom Name : ...`
-  declaration, not binders before the colon, not more than one line — checked with the
-  same code `save_lean` uses, so the two ends cannot approve text the other refuses.
-  The constructed declaration is then elaborated verbatim, and four tactics are tried
-  against it in the same pass: a statement Lean proves outright is a theorem nobody has
-  saved yet, and the refusal hands back the proof. The probe carries its own timeout,
-  because `import Mathlib` costs seconds warm and minutes cold; when it genuinely cannot
-  run, the caveat travels to the approval prompt rather than being resolved silently in
-  either direction.
+- **Now (implemented):** `request_assumption` settles several things before any human
+  is asked. When a search runtime exists, the request is refused outright unless
+  `inspect_declarations` has actually been *tried* since the last request — three
+  axioms were once approved on a failing run with the reason "Mathlib does not expose
+  this" and nothing had been searched for, and free-text `reason` proves nothing on its
+  own. The gate is on attempts, not completions, so a machine whose Lean cannot finish
+  an inspection still gets through; the human is shown either what was searched or, if
+  every attempt since the last request was stopped before it could report anything, how
+  many attempts that was. The statement must be a statement — not a whole
+  `axiom Name : ...` declaration, not binders before the colon, not more than one line
+  — checked with the same code `save_lean` uses, so the two ends cannot approve text the
+  other refuses. The constructed declaration is then elaborated verbatim, and four
+  tactics are tried against it in the same pass: a statement Lean proves outright is a
+  theorem nobody has saved yet, and the refusal hands back the proof. The probe carries
+  its own timeout, because `import Mathlib` costs seconds warm and minutes cold; when it
+  genuinely cannot run, the caveat travels to the approval prompt rather than being
+  resolved silently in either direction. A second, fail-closed probe then asks whether
+  the conclusion holds once the hypotheses are gone — `_strip_hypotheses` removes the
+  `Prop`-valued binders and arrow premises, `_vacuity_source` builds a scratch file from
+  what is left (adding `WITNESSES` guesses when the conclusion is existential), and
+  `_vacuity_probe` reads the result the same way the first probe does: an error outside
+  the lines it wrote is never credited as a tactic closing the goal, only "could not be
+  run". A conclusion that holds anyway is appended to `checked`, after the elaboration
+  sentence, as a warning that the assumption may be vacuous. A name refused or declined
+  earlier in the session has its last statement shown beside the new one at the approval
+  prompt, so a conjunct dropped between a refused request and a resubmitted one is not
+  silently lost. Everything the human was shown — what was checked, what was searched,
+  and the previous statement if any — is written to the transcript as an
+  `assumption_prompt` event, so the durable record says what evidence backed an
+  approval or a refusal, not only that one happened.
 - **Now (implemented):** a root holds several problems side by side, and the session
   moves between them without ending. `/project list` names every problem the root
   holds and marks the active one; `/project switch <name>` opens another;
