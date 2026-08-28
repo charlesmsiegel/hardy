@@ -538,9 +538,14 @@ class MathematicsSession:
         self._tool_tally: dict[str, list[int]] = {"save_lean": [0, 0], "check_lean": [0, 0]}
         # Whether a *completed* `inspect_declarations` batch has run since the
         # last axiom request. `_searched_since_request`, below, carries what it
-        # found.
+        # found. `_inspect_attempts_since_request` counts every call, whether
+        # it completed or not: a machine whose Lean cannot finish still has to
+        # let a request through eventually, or the search-first gate below
+        # would refuse every `request_assumption` forever and blame a search
+        # that was, in fact, attempted.
         self._inspected_since_request = False
         self._searched_since_request: list[str] = []
+        self._inspect_attempts_since_request = 0
         # Prior statements this session requested under each name and did not
         # get approved, so a human sees a statement beside what it was
         # weakened from.
@@ -2939,12 +2944,18 @@ class MathematicsSession:
         return ToolResult(False, f"unknown tool: {name}")
 
     def _request_assumption(self, proposal: dict[str, str]) -> ToolResult:
-        if self.search is not None and not self._inspected_since_request:
+        if self.search is not None and self._inspect_attempts_since_request == 0:
             # Three axioms were approved on a failing run with the reason
             # "Mathlib does not expose this" and nothing had been searched
-            # for. When search is available, a request is refused until it
-            # has actually been used since the last request -- the reason
-            # given in `reason` is free text and proves nothing on its own.
+            # for. When search is available, a request is refused until
+            # `inspect_declarations` has actually been *tried* since the last
+            # request -- the reason given in `reason` is free text and proves
+            # nothing on its own. Gated on attempts, not completions: a
+            # machine whose Lean cannot finish an inspection still tried, and
+            # refusing it forever with a message claiming nothing was even
+            # attempted is the failure this fix exists to close. Below, once
+            # an attempt has been made, the request goes through even if none
+            # of them finished -- `searched` tells the human that state.
             return ToolResult(
                 False,
                 "no `inspect_declarations` has been run since the last assumption "
@@ -2977,7 +2988,18 @@ class MathematicsSession:
             or "Lean elaborated this statement and could not prove it."
         )
         proposal["goal"] = self.goal()
-        proposal["searched"] = list(self._searched_since_request)
+        if self._inspect_attempts_since_request and not self._inspected_since_request:
+            # Every attempt since the last request was stopped before it
+            # could report anything -- `_searched_since_request` is empty for
+            # the honest reason that nothing to put in it ever finished, not
+            # because nothing was tried. Say which is true, in the human's
+            # own count, rather than leave the list looking untouched.
+            proposal["searched"] = [
+                f"{self._inspect_attempts_since_request} inspection(s) attempted "
+                "since the last request, none finished"
+            ]
+        else:
+            proposal["searched"] = list(self._searched_since_request)
         # A name refused or declined earlier this session gets its last
         # statement shown beside the new one: `sylow_unique_normal` lost a
         # conjunct between a refused request and an approved one, unseen,
@@ -2990,6 +3012,7 @@ class MathematicsSession:
         # owes them a fresh one.
         self._inspected_since_request = False
         self._searched_since_request = []
+        self._inspect_attempts_since_request = 0
         if not self.confirm(proposal):
             return ToolResult(False, "The user declined this assumption. Do not use it.")
         # `checked`, `goal`, `searched` and `previous` describe this one
@@ -3518,6 +3541,10 @@ class MathematicsSession:
         names = arguments.get("names") or []
         if not isinstance(names, list):
             return ToolResult(False, "names must be a list of declaration names")
+        # Counted whether or not this finishes: a machine on which Lean keeps
+        # timing out still attempted a search, and `_request_assumption`'s
+        # gate needs to be able to tell that apart from never having tried.
+        self._inspect_attempts_since_request += 1
         result = self.search.inspect_declarations([str(item) for item in names])
         if result.ok:
             self._note_inspected([str(item) for item in names], result.output)
