@@ -419,6 +419,10 @@ class MathematicsSession:
         self._inspected: list[tuple[str, bool]] = []
         self._inspected_since_request = False
         self._searched_since_request: list[str] = []
+        # Prior statements this session requested under each name and did not
+        # get approved, so a human sees a statement beside what it was
+        # weakened from.
+        self._rejected: dict[str, list[str]] = {}
         # State first: the runtime is built from the system prompt, which embeds
         # the manifest, and it resumes the provider thread the local state
         # remembers.
@@ -2675,60 +2679,16 @@ class MathematicsSession:
             return ToolResult(True, f"recorded mapping: {entry}")
         if name == "request_assumption":
             proposal = {key: str(arguments[key]) for key in ("formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason")}
-            if self.search is not None and not self._inspected_since_request:
-                # Three axioms were approved on a failing run with the reason
-                # "Mathlib does not expose this" and nothing had been searched
-                # for. When search is available, a request is refused until it
-                # has actually been used since the last request -- the reason
-                # given in `reason` is free text and proves nothing on its own.
-                return ToolResult(
-                    False,
-                    "no `inspect_declarations` has been run since the last assumption "
-                    "request. Look for the result before assuming it: pass several "
-                    "candidate spellings and let Lean say which exist.",
+            result = self._request_assumption(proposal)
+            if not result.ok:
+                # Every refusal is remembered under the name it was refused
+                # for, so a later request under the same name can show a human
+                # what changed -- gate refusal, probe refusal, and a plain
+                # decline are all "not approved" from here.
+                self._rejected.setdefault(proposal["formal_name"], []).append(
+                    proposal["lean_statement"]
                 )
-            # Both gates run before `confirm`. Nobody should be asked to approve
-            # a statement Hardy has not read, and nobody should be asked at all
-            # about one that could never be declared or that Lean proves itself.
-            refusal = self._assumption_shape(proposal["formal_name"], proposal["lean_statement"])
-            if refusal is not None:
-                return ToolResult(False, refusal)
-            # Built once and reused: the text elaborated, the text approved, and
-            # the text the model is told to write are one string, which is the
-            # whole point.
-            declaration = f"axiom {proposal['formal_name']} : {proposal['lean_statement'].strip()}"
-            refusal, caveat = self._assumption_probe(declaration)
-            if refusal is not None:
-                return ToolResult(False, refusal)
-            # Carried to the prompt rather than swallowed: a human approving an
-            # unchecked statement is owed the word "unchecked".
-            proposal["checked"] = caveat or "Lean elaborated this statement and could not prove it."
-            proposal["goal"] = self.goal()
-            proposal["searched"] = list(self._searched_since_request)
-            # The request is spent whether it is approved or refused: either
-            # way the human has now seen this search, and the next request
-            # owes them a fresh one.
-            self._inspected_since_request = False
-            self._searched_since_request = []
-            if not self.confirm(proposal):
-                return ToolResult(False, "The user declined this assumption. Do not use it.")
-            # `checked`, `goal` and `searched` describe this one request, not
-            # the assumption, and have no business in the durable record.
-            record = {key: value for key, value in proposal.items() if key not in {"checked", "goal", "searched"}}
-            record["status"] = "user-approved"
-            if not any(item["formal_name"] == record["formal_name"] for item in self.state["assumptions"]):
-                self.state["assumptions"].append(record)
-                mapping = {"formal_name": record["formal_name"], "latex_name": record["latex_name"], "description": record["informal_statement"]}
-                self.state["names"].append(mapping)
-                self._save_state()
-            return ToolResult(
-                True,
-                f"User approved. Declare exactly `{declaration}`, disclose source "
-                f"`{proposal['source']}`, and state it in the writeup's \\appendix -- both "
-                f"that Lean line, verbatim, and \\label{{{proposal['latex_name']}}} on the "
-                "prose statement of what was assumed. Nothing resting on it can be "
-                "reported until the appendix carries both.",
-            )
+            return result
         if name == "report_result":
             claimed = arguments.get("theorems")
             return self._report_result(
@@ -2736,6 +2696,70 @@ class MathematicsSession:
                 str(arguments.get("summary") or ""),
             )
         return ToolResult(False, f"unknown tool: {name}")
+
+    def _request_assumption(self, proposal: dict[str, str]) -> ToolResult:
+        if self.search is not None and not self._inspected_since_request:
+            # Three axioms were approved on a failing run with the reason
+            # "Mathlib does not expose this" and nothing had been searched
+            # for. When search is available, a request is refused until it
+            # has actually been used since the last request -- the reason
+            # given in `reason` is free text and proves nothing on its own.
+            return ToolResult(
+                False,
+                "no `inspect_declarations` has been run since the last assumption "
+                "request. Look for the result before assuming it: pass several "
+                "candidate spellings and let Lean say which exist.",
+            )
+        # Both gates run before `confirm`. Nobody should be asked to approve
+        # a statement Hardy has not read, and nobody should be asked at all
+        # about one that could never be declared or that Lean proves itself.
+        refusal = self._assumption_shape(proposal["formal_name"], proposal["lean_statement"])
+        if refusal is not None:
+            return ToolResult(False, refusal)
+        # Built once and reused: the text elaborated, the text approved, and
+        # the text the model is told to write are one string, which is the
+        # whole point.
+        declaration = f"axiom {proposal['formal_name']} : {proposal['lean_statement'].strip()}"
+        refusal, caveat = self._assumption_probe(declaration)
+        if refusal is not None:
+            return ToolResult(False, refusal)
+        # Carried to the prompt rather than swallowed: a human approving an
+        # unchecked statement is owed the word "unchecked".
+        proposal["checked"] = caveat or "Lean elaborated this statement and could not prove it."
+        proposal["goal"] = self.goal()
+        proposal["searched"] = list(self._searched_since_request)
+        # A name refused or declined earlier this session gets its last
+        # statement shown beside the new one: `sylow_unique_normal` lost a
+        # conjunct between a refused request and an approved one, unseen,
+        # because nothing put the two statements side by side.
+        earlier = self._rejected.get(proposal["formal_name"])
+        if earlier:
+            proposal["previous"] = earlier[-1]
+        # The request is spent whether it is approved or refused: either
+        # way the human has now seen this search, and the next request
+        # owes them a fresh one.
+        self._inspected_since_request = False
+        self._searched_since_request = []
+        if not self.confirm(proposal):
+            return ToolResult(False, "The user declined this assumption. Do not use it.")
+        # `checked`, `goal`, `searched` and `previous` describe this one
+        # request, not the assumption, and have no business in the durable
+        # record.
+        record = {key: value for key, value in proposal.items() if key not in {"checked", "goal", "searched", "previous"}}
+        record["status"] = "user-approved"
+        if not any(item["formal_name"] == record["formal_name"] for item in self.state["assumptions"]):
+            self.state["assumptions"].append(record)
+            mapping = {"formal_name": record["formal_name"], "latex_name": record["latex_name"], "description": record["informal_statement"]}
+            self.state["names"].append(mapping)
+            self._save_state()
+        return ToolResult(
+            True,
+            f"User approved. Declare exactly `{declaration}`, disclose source "
+            f"`{proposal['source']}`, and state it in the writeup's \\appendix -- both "
+            f"that Lean line, verbatim, and \\label{{{proposal['latex_name']}}} on the "
+            "prose statement of what was assumed. Nothing resting on it can be "
+            "reported until the appendix carries both.",
+        )
 
     def _report_result(self, claimed: list[str], summary: str) -> ToolResult:
         """Say the work is done, and be refused until the artifacts say it too.

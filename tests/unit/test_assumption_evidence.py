@@ -124,3 +124,38 @@ def test_a_session_that_cannot_search_is_not_asked_to(session, approvals, fake_l
     result = session._tool("request_assumption", _request())
 
     assert result.ok
+
+
+def test_a_resubmitted_name_shows_the_human_the_previous_statement(
+    session_factory, approvals, fake_lean
+) -> None:
+    """`sylow_unique_normal` lost its `Fintype.card P = p` conjunct between
+    a refused request and an approved one, and nobody saw the change."""
+    declined = []
+
+    def confirm(proposal):
+        declined.append(dict(proposal))
+        return len(declined) > 1
+
+    session = session_factory(confirm=confirm)
+    session._tool("request_assumption", _request(lean_statement="True ∧ True"))
+
+    session._tool("request_assumption", _request(lean_statement="True"))
+
+    assert declined[1]["previous"] == "True ∧ True"
+    assert "previous" not in declined[0]
+
+
+def test_a_gate_refused_statement_is_also_remembered(session, approvals) -> None:
+    session._tool("request_assumption", _request(lean_statement="axiom f : True"))
+
+    assert session._rejected["sylow"] == ["axiom f : True"]
+
+
+def test_previous_is_not_written_into_the_durable_record(session_factory, fake_lean) -> None:
+    answers = iter([False, True])
+    session = session_factory(confirm=lambda proposal: next(answers))
+    session._tool("request_assumption", _request(lean_statement="True ∧ True"))
+    session._tool("request_assumption", _request(lean_statement="True"))
+
+    assert "previous" not in session.state["assumptions"][0]
