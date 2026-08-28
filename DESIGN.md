@@ -209,9 +209,12 @@ with the opposite consequence: a proposed axiom Lean proves is refused, but a sa
 theorem one tactic closes is disclosed rather than refused — a lemma that falls to
 `simp` is still a lemma, while a vacuous statement under a grand name must not be
 counted by the provenance banner on the same terms as a theorem with content,
-silently. The verdict expires with the statement it was established against, and
-while it stands the banner, `/status`, `read_workspace`, and the save's own result
-all name the theorem and the tactic.
+silently. The verdict expires with the statement it was established against and
+the toolchain it was asked under, and while it stands the banner, `/status`,
+`read_workspace`, and the save's own result all name the theorem and the tactic.
+A statement that does not elaborate outside its workspace — section variables, a
+local definition — is recorded as unanswered rather than clean, told apart from
+"nothing closes it" by a `sorry` sentinel beside the probes.
 
 ### 4. Lean interaction
 
