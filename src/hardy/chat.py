@@ -1108,6 +1108,13 @@ class MathematicsSession:
         against this exact text and failed, so running them again would only
         risk describing that same, unstripped statement as proved "with every
         hypothesis removed".
+
+        Reads each `example` line's diagnostic by its line number alone, which
+        assumes Lean reached every `example` in the file: a parse-level error
+        that aborts elaboration before the first one would leave every later
+        line with no diagnostic of its own, and this would read that silence
+        as every tactic having closed its goal. The same exposure
+        `_assumption_probe` carries, for the same reason.
         """
         normalised = normalise_lean(statement).strip()
         stripped = _strip_hypotheses(normalised)
