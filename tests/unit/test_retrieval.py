@@ -944,6 +944,13 @@ def test_the_index_source_extracts_only_the_constants_a_name_index_can_use() -> 
     # as a substring is half of Mathlib.
     assert source.query_for('⊢ ∀ n : Nat, n + 0 = n') == 'Nat'
     assert source.query_for('⊢ Eq _ _') == ''
+    # Text inside a string literal is not a constant the proposition uses --
+    # `search_query` deliberately leaves literals intact, so the extraction
+    # has to look past them itself. Interpolation holes are expressions and
+    # their names still count.
+    assert source.query_for('⊢ _ = "Nat.succ"') == ''
+    assert source.query_for('⊢ Continuous _ ∧ _ = "Nat.succ"') == 'Continuous'
+    assert source.query_for('⊢ s!"{Continuous _}" = _') == 'Continuous'
 
 
 def test_a_pure_shape_query_is_this_source_refusing_and_loogle_answering(tmp_path) -> None:
