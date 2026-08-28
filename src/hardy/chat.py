@@ -18,7 +18,7 @@ from . import audit, completion, ingest, process
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
-from .latex import ROOT_DOCUMENT, LatexTools, compiles_document, unreached_fragments
+from .latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented, unreached_fragments
 from .layout import (
     HARDY_DIR,
     LOCAL_DIR,
@@ -3096,6 +3096,10 @@ class MathematicsSession:
             # describe declarations the workspace no longer has.
             if self.state.get("audit", {}).pop(module, None) is not None:
                 self._save_state()
+            # And so does imported provenance: an entry naming a path that no
+            # longer exists would attribute whatever is saved there next to
+            # the old origin and digest.
+            self._forget_import(f"{LEAN_DIR}/{relative.as_posix()}")
             if lost:
                 self.state["names"] = [
                     item for item in self.state["names"] if item["formal_name"] not in lost
@@ -3151,6 +3155,9 @@ class MathematicsSession:
             # deletion left a freshly compiled writeup reading as stale, and
             # the only way out was a save that changed nothing.
             self._stamp_writeup()
+        # After the point of no return: a deletion the compile above refused
+        # was restored, and its provenance must survive with it.
+        self._forget_import(f"{TEX_DIR}/{relative}")
         return ToolResult(True, f"deleted {path}")
 
     # -- Ingestion (#112): an existing pile, triaged and promoted -----------
@@ -3196,6 +3203,12 @@ class MathematicsSession:
         if found.lean:
             self.build_shared()
         lean_rows = self._triage_lean(resolved, found.lean)
+        if lean_rows is None:
+            # Interrupted, so the verdicts gathered are not the pile's: every
+            # remaining file would have graded "broken" only because its Lean
+            # was stopped on arrival. A partial list recorded as the triage
+            # would be a false record, so nothing is recorded at all.
+            return ToolResult(False, f"triage of {resolved} was interrupted; nothing was recorded")
         tex_rows = self._triage_tex(resolved, found.tex)
         self._record({
             "type": "import_triage",
@@ -3206,13 +3219,19 @@ class MathematicsSession:
         })
         return ToolResult(True, ingest.render(resolved, lean_rows, tex_rows, found.skipped))
 
-    def _triage_lean(self, pile: Path, files: Sequence[PurePosixPath]) -> list[ingest.Triaged]:
+    def _triage_lean(self, pile: Path, files: Sequence[PurePosixPath]) -> list[ingest.Triaged] | None:
         """One verdict per Lean file, each earned by an actual elaboration.
 
         The pile's readable files are copied into a scratch tree first, so
         that files importing each other triage the way they will build after
         promotion -- and so the compile never reads the pile itself through a
         workspace walk that would refuse the first symlink it met.
+
+        None means the pass was interrupted. Esc reaches the Lean child in
+        flight and `process.tracked` stops any spawned after it, but neither
+        tells this loop to stop scheduling more -- so it asks between files,
+        rather than grinding through the rest of the pile spawning children
+        that each arrive only to be stopped.
         """
         rows: list[ingest.Triaged] = []
         texts: dict[PurePosixPath, tuple[bytes, str]] = {}
@@ -3259,6 +3278,8 @@ class MathematicsSession:
             sources = space.sources()
             approved = self._approved_assumptions()
             for relative, (content, text) in texts.items():
+                if process.stopping():
+                    return None
                 rows.append(self._triage_one(space, sources, approved, str(relative), content, text))
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
@@ -3328,7 +3349,11 @@ class MathematicsSession:
             except UnicodeDecodeError:
                 rows.append(ingest.Triaged(posix, ingest.digest(content), ingest.UNREADABLE, detail="not UTF-8 text"))
                 continue
-            verdict = ingest.DOCUMENT if "\\documentclass" in text else ingest.FRAGMENT
+            # Over `uncommented` text: old piles keep commented-out preambles,
+            # and `% copied from \documentclass{article}` is a fragment TeX
+            # never reads as a document -- classifying it as one would hand
+            # the user the wrong promotion guidance.
+            verdict = ingest.DOCUMENT if "\\documentclass" in uncommented(text) else ingest.FRAGMENT
             rows.append(ingest.Triaged(posix, ingest.digest(content), verdict))
         return sorted(rows, key=lambda row: row.path)
 
@@ -3512,6 +3537,30 @@ class MathematicsSession:
         self._save_state()
         self._record({"type": "imported", **entry})
         return entry
+
+    def _forget_import(self, path: str) -> None:
+        """Drop the imported-provenance entry for a path that was deleted.
+
+        The transcript keeps the arrival -- history is append-only -- but the
+        manifest describes the workspace as it is now, and an entry naming a
+        path that no longer exists would attribute whatever authored work is
+        later saved at that path to the old origin and digest.
+        """
+        stored = self.state.get("imported")
+        if not stored:
+            return
+        kept = [item for item in stored if item.get("path") != path]
+        if len(kept) == len(stored):
+            return
+        if kept:
+            self.state["imported"] = kept
+        else:
+            # Gone entirely rather than left as `[]`: a workspace that never
+            # imported anything and one whose imports were all deleted should
+            # read the same way, and an empty list in every manifest would put
+            # a key in front of the model that means nothing.
+            del self.state["imported"]
+        self._save_state()
 
     def _resolve(self, path: str) -> tuple[Path, str, str] | ToolResult:
         """Where a tool path lives: the Lean tree or the writeup tree.

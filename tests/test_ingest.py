@@ -19,7 +19,7 @@ import pytest
 from test_chat import FakeChatRuntime, factory
 from workspace_helpers import events
 
-from hardy import ingest
+from hardy import ingest, process
 from hardy.chat import MathematicsSession
 
 CLEAN = "import Mathlib\n\nlemma pileFact : True := by exact True.intro\n"
@@ -293,3 +293,65 @@ def test_the_manifest_shows_imported_provenance_to_the_model(tmp_path: Path):
     assert chat.import_lean(pile / "clean.lean", "Imported.lean").ok
     stored = json.loads((problem / "session.json").read_text(encoding="utf-8"))
     assert stored["imported"][0]["kind"] == "lean"
+
+
+def test_module_system_files_are_not_read_as_notes():
+    """`prelude`, `module`, `opaque`, and a `public`/`meta` import prefix are
+    Lean, and the import parser already says so; the triage classifier must
+    not read a file whose only commands wear those spellings as prose."""
+    assert ingest.looks_like_lean("prelude\nopaque secret : Nat\n")
+    assert ingest.looks_like_lean("module\npublic import Basic\n")
+    assert ingest.looks_like_lean("meta import Basic\n")
+    assert not ingest.looks_like_lean("Remember to buy milk.\nMaybe induction?\n")
+
+
+def test_triage_stops_between_files_when_a_stop_is_in_force(tmp_path: Path):
+    """Esc reaches the child in flight; this is the loop's half of the stop.
+
+    A cancelled triage must not grind through the remaining files spawning
+    children that each arrive only to be stopped -- and must not record the
+    verdicts it happened to gather, because every file after the stop would
+    have graded broken for being interrupted rather than for being wrong.
+    """
+    pile = pile_with(tmp_path, {"a.lean": CLEAN, "b.lean": CLEAN})
+    chat = make_session(tmp_path / "problem")
+    process.interrupt_children()
+    result = chat.triage_pile(pile)
+    assert not result.ok
+    assert "interrupted" in result.output
+    assert not [e for e in events(tmp_path / "problem") if e.get("type") == "import_triage"]
+
+
+def test_deleting_an_imported_lean_file_clears_its_provenance(tmp_path: Path):
+    """The manifest describes the workspace as it is; the transcript keeps the
+    history. An entry naming a deleted path would attribute whatever authored
+    work lands there next to the old origin and digest."""
+    pile = pile_with(tmp_path, {"clean.lean": CLEAN})
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    assert chat.import_lean(pile / "clean.lean", "Imported.lean").ok
+    assert chat._delete_file("Imported.lean").ok
+    assert "imported" not in chat.state
+    stored = json.loads((problem / "session.json").read_text(encoding="utf-8"))
+    assert "imported" not in stored
+    # The arrival stays in the transcript: history is append-only.
+    assert [e for e in events(problem) if e.get("type") == "imported"]
+
+
+def test_deleting_an_imported_fragment_clears_its_provenance(tmp_path: Path):
+    pile = pile_with(tmp_path, {"section.tex": FRAGMENT})
+    problem = tmp_path / "problem"
+    chat = make_session(problem)
+    assert chat._save_latex("writeup.tex", PLAIN_ROOT).ok
+    assert chat.import_tex(pile / "section.tex", "old/section.tex").ok
+    assert chat._delete_file("old/section.tex").ok
+    assert "imported" not in chat.state
+
+
+def test_a_commented_documentclass_is_still_a_fragment(tmp_path: Path):
+    """Old piles keep commented-out preambles; TeX never executes those."""
+    pile = pile_with(tmp_path, {"notes.tex": "% copied from \\documentclass{article}\nSome prose.\n"})
+    chat = make_session(tmp_path / "problem")
+    assert chat.triage_pile(pile).ok
+    recorded = [e for e in events(tmp_path / "problem") if e.get("type") == "import_triage"]
+    assert recorded[0]["tex"][0]["verdict"] == ingest.FRAGMENT

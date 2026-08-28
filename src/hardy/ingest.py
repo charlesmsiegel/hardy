@@ -26,11 +26,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .workspace import COMMAND, strip_comments
+from .workspace import COMMAND, HEADER_KEYWORDS, IMPORT_PREFIX, strip_comments
 
 # The four Lean verdicts #112 asks a first pass for, plus the two ways a file
 # can refuse to be read at all. String constants rather than an Enum because
@@ -144,18 +145,36 @@ def _walk(
     return
 
 
+# Command keywords `COMMAND` deliberately leaves out because the assumption
+# scanner never needs them, and this classifier does: `opaque` opens an
+# ordinary declaration, and a module-system file may open with `public` or
+# `meta` before a keyword `COMMAND` knows. `prelude` and `module` come from
+# `HEADER_KEYWORDS`, the same set the import parser reads a header by.
+_EXTRA_COMMAND = re.compile(r"^opaque\b")
+
+
 def looks_like_lean(source: str) -> bool:
     """Whether a ``.lean`` file contains anything Lean would call a command.
 
     The extension is a claim, not a fact: a pile holds notes, TODO lists and
     prose that somebody once named `.lean`. Read over comment-stripped text,
     because a file that is one long comment is exactly the notes case this
-    exists to catch -- and `COMMAND` is the same line-shape the axiom scanner
-    already trusts, so the two cannot disagree about what a Lean line is.
+    exists to catch. `COMMAND` is the same line-shape the axiom scanner
+    already trusts, widened by exactly what the import parser already accepts
+    -- `prelude`, `module`, and a `public`/`meta` prefix before `import` --
+    so a module-system file whose only commands wear those spellings is not
+    read as prose and left unelaborated.
     """
-    return any(
-        COMMAND.match(line.strip()) for line in strip_comments(source).splitlines() if line.strip()
-    )
+    for line in strip_comments(source).splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        if text in HEADER_KEYWORDS:
+            return True
+        unprefixed = IMPORT_PREFIX.sub("", text, count=1)
+        if COMMAND.match(unprefixed) or _EXTRA_COMMAND.match(unprefixed):
+            return True
+    return False
 
 
 def digest(content: bytes) -> str:
