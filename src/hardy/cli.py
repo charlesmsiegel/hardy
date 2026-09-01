@@ -1039,7 +1039,9 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
     # frozen under names the compiler that checks it and not the one on PATH.
     try:
         environment = lean_module.environment_identity(
-            config.lean_project, lean_command=(str(config.lake), "env", "lean")
+            config.lean_project,
+            lean_command=(str(config.lake), "env", "lean"),
+            timeout_seconds=config.limits.lean_process_seconds,
         )
     except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
         # A Lean that cannot be identified is a setup failure, and a setup

@@ -321,7 +321,9 @@ def build_runtime(config: Config) -> tuple[SearchToolRuntime | None, str]:
         # Identified by the Lean chat elaborates with, which `_same_toolchain`
         # has just established is the one search would run.
         environment = environment_identity(
-            config.lean_project, lean_command=tuple(config.lean_command)
+            config.lean_project,
+            lean_command=tuple(config.lean_command),
+            timeout_seconds=config.limits.lean_process_seconds,
         )
     except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
         return None, str(error) or f"the Lake project could not be read: {type(error).__name__}"

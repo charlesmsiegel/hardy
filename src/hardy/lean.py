@@ -384,6 +384,12 @@ LEAN_COMMIT = re.compile(r"commit (?P<commit>[0-9a-fA-F]+)")
 # The command every pinned project answers to: Lake resolves the project's
 # `lean-toolchain` through elan, so this is the Lean the project is built with.
 LAKE_ENV_LEAN: tuple[str, ...] = ("lake", "env", "lean")
+# `lake env` loads the whole workspace before it runs anything, and on a cold
+# page cache that alone was measured at over a minute here -- the same
+# machine answered in under a second once warm. The default matches
+# `RunLimits.lean_process_seconds`, the budget every other Lean call gets,
+# and callers with a configured limit pass theirs.
+DEFAULT_IDENTITY_SECONDS = 180.0
 
 
 def environment_identity(
@@ -391,7 +397,7 @@ def environment_identity(
     *,
     lean_command: tuple[str, ...] = LAKE_ENV_LEAN,
     runner: Callable[[ProcessSpec], ProcessResult] = run_process,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = DEFAULT_IDENTITY_SECONDS,
 ) -> EnvironmentIdentity:
     """Identify the exact Lean environment a run is frozen against.
 
@@ -441,7 +447,7 @@ def lean_identity(
     project: Path,
     *,
     runner: Callable[[ProcessSpec], ProcessResult] = run_process,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = DEFAULT_IDENTITY_SECONDS,
 ) -> tuple[str, str]:
     """The version and commit of the Lean `lean_command` runs, as it reports them.
 
