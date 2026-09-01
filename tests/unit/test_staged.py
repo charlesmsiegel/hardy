@@ -306,3 +306,21 @@ def test_an_exchange_the_provider_never_reported_on_is_still_counted(tmp_path) -
     assert usage['exchanges'] == 1
     assert usage['cost_usd'] is None and usage['input_tokens'] is None
     assert usage['reported']['cost_usd'] == 0
+
+
+def test_each_provider_report_is_counted_whole(tmp_path) -> None:
+    """The staged runtime's reports are per exchange, not session-to-date:
+    the recorded staged run's manifest stated $0.68 for five reports summing
+    to $0.78 because a report smaller than the last was read as an increment
+    or a restart. Two reports under one session id must simply add."""
+    _, _, runtime = _staged(tmp_path)
+
+    for cost, read in ((0.06, 38443), (0.04, 38443)):
+        runtime._observe(
+            {'type': 'result', 'cost_usd': cost, 'usage': {'input_tokens': 2, 'cache_read_input_tokens': read}, 'session_id': 'same'}
+        )
+
+    usage = runtime.usage
+    assert usage['exchanges'] == 2
+    assert abs(usage['cost_usd'] - 0.10) < 1e-9
+    assert usage['cache_read_tokens'] == 2 * 38443

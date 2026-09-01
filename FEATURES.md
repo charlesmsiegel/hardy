@@ -2,8 +2,11 @@
 
 This is the consolidated backlog extracted from the former milestone specs and
 implementation plans. It describes desired behavior and current sequencing. The
-interactive CLI slice covers the items marked **Now (implemented)**; a real model,
-Mathlib, and LaTeX acceptance run is still needed before it is validated.
+interactive CLI slice covers the items marked **Now (implemented)**. The batch
+and staged surfaces have been validated against a real model, the pinned
+Mathlib, and a real Tectonic on a nontrivial theorem, with the runs recorded
+under `acceptance/recorded/` (see "First experiment acceptance test"); the
+interactive surface's own live run is still to come.
 
 ## Interactive exploration
 

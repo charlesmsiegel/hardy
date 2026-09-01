@@ -600,12 +600,14 @@ def _usage_issues(usage: Any, where: str) -> list[str]:
 def _discarded(events: list[dict[str, Any]], index: int) -> bool:
     """Whether the tool event at `index` carries the runner's discard marker.
 
-    The runner appends the marker just before the tool event of a submission
-    that finished after the deadline; either neighbour is accepted so the
-    order of the two appends is not something the audit has to know.
+    The runner appends the marker immediately before the tool event of a
+    submission that finished after the deadline, so the marker belongs to the
+    event that follows it and to no other. Looking on both sides was tried
+    and is wrong: an on-time acceptance followed by a late one reads
+    `tool, discarded, tool`, and the marker then condemned the valid one.
     """
-    beside = events[max(0, index - 1) : index] + events[index + 1 : index + 2]
-    return any(item.get("type") == "discarded" for item in beside)
+    previous = events[index - 1] if index > 0 else {}
+    return previous.get("type") == "discarded" and previous.get("name") == events[index].get("name")
 
 
 def _axiom_line(
@@ -714,6 +716,16 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     else:
         if reason not in BATCH_FAILURES:
             issues.append(f"unknown terminal reason: {reason!r}")
+        # A failure reason names an event the runner recorded when it
+        # happened; a record relabelled after the fact has no such event.
+        errors = [str(event.get("error", "")) for event in events if event.get("type") == "error"]
+        limits_hit = [event.get("limit") for event in events if event.get("type") == "limit"]
+        if reason == "wall_clock_limit" and not any(text.startswith("TimeoutError") for text in errors):
+            issues.append("a wall_clock_limit run records no TimeoutError event")
+        if reason == "turn_limit" and "max_turns" not in limits_hit:
+            issues.append("a turn_limit run records no max_turns limit event")
+        if reason == "runtime_error" and not any(not text.startswith("TimeoutError") for text in errors):
+            issues.append("a runtime_error run records no error event")
         if result.get("formalization") != "not formalized":
             issues.append("a run that did not verify is graded as formalized")
         if result.get("proof") is not None:
@@ -862,6 +874,16 @@ def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
             for line in (f"Lean: {manifest.environment.lean_version}", f"Mathlib: {manifest.environment.mathlib_revision}"):
                 if line not in text:
                     issues.append(f"paper.tex does not carry the identity line {line!r}")
+            # And the exact statement, verbatim as the frozen claim renders it:
+            # the claim hash alone would let a document about another theorem
+            # pass on a hash it merely quotes.
+            claim_path = run_dir / "formalization.json"
+            if claim_path.exists():
+                proposal = FrozenClaim.model_validate_json(claim_path.read_text(encoding="utf-8")).proposal
+                binders = f" {proposal.binders.strip()}" if proposal.binders.strip() else ""
+                signature = f"theorem {proposal.theorem_name}{binders} : {proposal.proposition.strip()}"
+                if signature not in text:
+                    issues.append("paper.tex does not quote the Frozen Claim's exact Lean statement")
             if "Tectonic: unrecorded" in text:
                 issues.append("paper.tex says its compiler was not identified")
     return issues
