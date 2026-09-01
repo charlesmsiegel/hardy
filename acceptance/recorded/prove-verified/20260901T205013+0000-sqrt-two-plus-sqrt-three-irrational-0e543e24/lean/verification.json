@@ -1,0 +1,38 @@
+{
+  "axioms": [
+    "propext",
+    "Classical.choice",
+    "Quot.sound"
+  ],
+  "diagnostics": [
+    {
+      "column": 0,
+      "file": "/tmp/hardy-lean-dcd9y7hi/Main.lean",
+      "line": 18,
+      "message": "'irrational_sqrt_two_add_sqrt_three' depends on axioms: [propext, Classical.choice, Quot.sound]",
+      "severity": "information"
+    }
+  ],
+  "evidence": {
+    "axioms": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "claim_sha256": "2c1618098577b6a91f8602cd4e53d9ac2a361f979ca93444bd3ce32d35c4a06b",
+    "source_sha256": "e9adc3c703f981860651c4ef8b8ca8540745152a22b483672b3793a857665912",
+    "toolchain": {
+      "imports": [
+        "Mathlib"
+      ],
+      "lake_manifest_sha256": "a264846501a0dd3dac546c239ecb27cd2222f2bdcd3594829901310323d49fc8",
+      "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+      "lean_version": "4.33.1",
+      "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474"
+    }
+  },
+  "reason": null,
+  "source_sha256": "e9adc3c703f981860651c4ef8b8ca8540745152a22b483672b3793a857665912",
+  "verification_sha256": "b158ba7d4c8ee2b98bb0aa9fc81044873016df1558df27456339324f5b0a20b1",
+  "verified": true
+}

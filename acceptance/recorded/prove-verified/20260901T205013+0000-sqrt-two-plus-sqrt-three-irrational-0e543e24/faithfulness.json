@@ -1,0 +1,16 @@
+{
+  "claim_sha256": "2c1618098577b6a91f8602cd4e53d9ac2a361f979ca93444bd3ce32d35c4a06b",
+  "detail": "",
+  "outcome": "agreed",
+  "prompt_sha256": "59cd6bae5d6d42306fa1ebae634b9f4ee9348fc67958a5036d4aec97cacc23b5",
+  "response_schema_sha256": "a2529b3bba63e17092317fc7886ec5998987699303e79baaaed8202becfc7f18",
+  "review": {
+    "claim_entails_formalization": true,
+    "divergences": [],
+    "formalization_entails_claim": true,
+    "notes": ""
+  },
+  "reviewer_backend": "claude",
+  "reviewer_isolation": "tools-refused",
+  "reviewer_model": "claude-opus-5"
+}

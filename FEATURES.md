@@ -983,39 +983,45 @@ not a one-liner. The toolchain was Lean 4.33.1 (commit `819816b2`), Mathlib
 `0df444a3` (the `v4.33.1` tag), Tectonic 0.16.9 with the pinned bundle; the
 model was `claude-opus-5` through the Claude Code CLI.
 
-1. **`hardy batch`, verified.** Nine provider turns, about two minutes, one
-   `inspect_goal`, two `search_declaration` calls, four `check_proof` rounds,
-   then `submit_proof`. The proof states three intermediate facts as `have`s
-   (that 6 is not a square, that `sqrt 6` is irrational via
-   `irrational_sqrt_natCast_iff`, and the expansion of `(sqrt 2 + sqrt 3)^2`).
-   `proof.lean` is byte for byte the request's declaration, the accepted proof,
-   and `#print axioms HardySqrtSum`; the trajectory keeps the hash of the source
-   the final check elaborated, and it is that file's. Lean's axiom line reads
-   `propext, Classical.choice, Quot.sound`, the audit verdict says the same, and
-   a fresh Lean started by the test says it again.
+1. **`hardy batch`, verified.** Eleven provider turns, about two minutes
+   and a quarter, three `inspect_goal` calls, three `search_declaration`
+   calls, three `check_proof` rounds, then `submit_proof`. The proof states
+   four intermediate facts as `have`s — that `sqrt 6` is irrational (via
+   `irrational_sqrt_natCast_iff` and a kernel-checked `decide` that 6 is not
+   a square), that `sqrt 2 * sqrt 3 = sqrt 6`, the two squares, and the
+   expansion of `(sqrt 2 + sqrt 3)^2` — before deriving the rational value of
+   `sqrt 6`. `proof.lean` is byte for byte the request's declaration, the
+   accepted proof, and `#print axioms HardySqrtSum`; the trajectory keeps the
+   hash of the source the final check elaborated, and it is that file's.
+   Lean's axiom line reads `propext, Classical.choice, Quot.sound`, the audit
+   verdict says the same, and a fresh Lean started by the test says it again.
 2. **Staged `hardy prove`, verified, through the document pipeline** — the half
    this section had said was never run live. The first formalization proposal
    did not elaborate and was rejected without being shown for approval; the
    second was frozen, read back by the independent reader on a tools-refused
-   thread and agreed with, and proved on the second official check after the
-   model called `lean_search_declarations` and `rank_premises`. It took a
-   different route from the batch run (reducing to `irrational_sqrt_two` through
-   the identity `2 q sqrt 2 = q^2 - 1`), which is the point of not asserting on
+   thread and agreed with, and proved on the first official check after three
+   `lean_search_declarations` calls and four `lean_check_scratch` rounds. It
+   found a different route from the batch run (`norm_num` closes the
+   irrationality of `sqrt 6` outright), which is the point of not asserting on
    what the model said. The verifier rebuilt `lean/Main.lean` from the frozen
    claim; `verification.json` carries the fresh Lean's own axiom line; the
-   manifest's environment equals the claim's; the compiled paper names the run,
-   the Lean, the Mathlib, and the Tectonic; and the manifest states the spend
-   per field.
-3. **A false statement, refused.** The negation of the theorem. The model used
-   `check_proof` to derive the *positive* statement inside a scratch proof,
-   reported that the claim is false, and never called `submit_proof`: terminal
-   reason `no_proof_submitted`, `not formalized`, no `proof.lean`, an axiom
-   record of `not audited`, and a writeup that says no artifact was produced.
-   Nothing was graded, partial or otherwise.
+   manifest's environment equals the claim's; the compiled paper names the
+   run, the Lean, the Mathlib, and the Tectonic; and the manifest states the
+   spend per field over its five exchanges.
+3. **A false statement, refused.** The negation of the theorem. The model
+   inspected the goal, searched, explained why the claim is false (with the
+   proof of the positive statement in prose), and never called `submit_proof`:
+   terminal reason `no_proof_submitted`, `not formalized`, no `proof.lean`, an
+   axiom record of `not audited`, and a writeup that says no artifact was
+   produced. Nothing was graded, partial or otherwise. The test refuses a
+   budget limit as this run's ending — that is run 4's — and, had the model
+   explored, would have required every Lean-accepted scratch check to carry a
+   hole.
 4. **A starved budget.** Thirty seconds on the nontrivial problem ends as
    `wall_clock_limit`, with the tool calls made before the cut in the
    trajectory, `TimeoutError` recorded as Hardy's own deadline, no turn count,
-   no proof, and the toolchain still named.
+   no cost stated, no proof, and the toolchain still named. It overran its
+   budget by five seconds, which is the Lean check in flight finishing.
 
 The record now carries the toolchain by revision on every surface (see
 "Installation and environment"), and cost, the four token counters, and the
@@ -1036,8 +1042,10 @@ What the runs showed that the fake-process tests assume differently:
   refused. That is a property of the loop (issue #23), recorded here rather
   than changed; the refused-false-statement run is therefore a batch run.
 - A `check_proof` (not `submit_proof`) accepts a scratch proof containing
-  `sorry`, which is how the false-statement run derived the negation without
-  anything reaching the gate.
+  `sorry`, so a model can derive the negation of a false claim inside a
+  scratch check without anything reaching the gate; the first recording of
+  run 3 did exactly that, and the test now requires such a check to have
+  carried a hole.
 
 What is not exercised by these four runs: multi-file saving and the
 rebuild-dependents refusal live only on the interactive surface, which neither

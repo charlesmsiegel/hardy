@@ -1,0 +1,39 @@
+{
+  "terminal_reason": "no_proof_submitted",
+  "formalization": "not formalized",
+  "informal_completeness": "not assessed",
+  "proof": null,
+  "lean_output": "No hole-free proof was accepted.",
+  "axioms": {
+    "status": "not audited"
+  },
+  "turns": 3,
+  "usage": {
+    "exchanges": 1,
+    "cost_usd": 0.11449500000000001,
+    "input_tokens": 4,
+    "output_tokens": 2071,
+    "cache_write_tokens": 2393,
+    "cache_read_tokens": 76172,
+    "total_tokens": 80640,
+    "reported": {
+      "cost_usd": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cache_write_tokens": 1,
+      "cache_read_tokens": 1
+    }
+  },
+  "warnings": [
+    "Generated Lean is not sandboxed. Run Hardy only with trusted output in a disposable development environment."
+  ],
+  "toolchain": {
+    "lean_version": "4.33.1",
+    "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+    "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474",
+    "lake_manifest_sha256": "a264846501a0dd3dac546c239ecb27cd2222f2bdcd3594829901310323d49fc8",
+    "imports": [
+      "Mathlib"
+    ]
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "approved_at": "2026-09-01T20:50:59.859693Z",
+  "content_hash": "2c1618098577b6a91f8602cd4e53d9ac2a361f979ca93444bd3ce32d35c4a06b",
+  "environment": {
+    "imports": [
+      "Mathlib"
+    ],
+    "lake_manifest_sha256": "a264846501a0dd3dac546c239ecb27cd2222f2bdcd3594829901310323d49fc8",
+    "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+    "lean_version": "4.33.1",
+    "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474"
+  },
+  "imports": [
+    "Mathlib"
+  ],
+  "original_text": "The real number sqrt(2) + sqrt(3) is irrational.",
+  "proposal": {
+    "assumptions": [
+      "None; the claim is unconditional, so the theorem has no hypotheses.",
+      "Standard Mathlib meanings for `Real`, `Real.sqrt`, and `Irrational` are taken as given.",
+      "The arguments 2 and 3 are the real numbers 2 and 3; being nonnegative, `Real.sqrt 2` and `Real.sqrt 3` are the genuine positive square roots and not the junk value 0."
+    ],
+    "binders": "",
+    "domains": [
+      "The real numbers ℝ (Lean/Mathlib's `Real`), a complete ordered field",
+      "The rational numbers ℚ, embedded in ℝ by the coercion `((↑) : ℚ → ℝ)`",
+      "`Real.sqrt : ℝ → ℝ`, the nonnegative square-root function on ℝ (returning 0 on negative inputs)"
+    ],
+    "interpretation_choices": [
+      "'sqrt(2)' and 'sqrt(3)' are the principal (nonnegative) real square roots, written `Real.sqrt (2 : ℝ)` and `Real.sqrt (3 : ℝ)`.",
+      "'is irrational' is Mathlib's `Irrational : ℝ → Prop`, defined as `x ∉ Set.range ((↑) : ℚ → ℝ)`. This is the standard reading; it neither weakens nor strengthens the claim.",
+      "Numerals are given explicit type ascriptions `(2 : ℝ)` and `(3 : ℝ)` so that elaboration fixes their type as ℝ rather than leaving a metavariable for the default-instance mechanism; this is a purely syntactic repair and does not change the mathematical content.",
+      "Addition is the field addition of ℝ.",
+      "No stronger algebraic claim (e.g. that √2 + √3 has degree 4 over ℚ, or that √2 and √3 are individually irrational) is asserted, since the user's claim is only about irrationality of the sum."
+    ],
+    "proposition": "Irrational (Real.sqrt (2 : ℝ) + Real.sqrt (3 : ℝ))",
+    "quantifiers": [
+      "The user's claim is closed: it asserts a property of one fixed real number, so the theorem statement has no explicit binders.",
+      "One implicit universal quantifier is hidden inside `Irrational`: `Irrational x` unfolds to `x ∉ Set.range ((↑) : ℚ → ℝ)`, i.e. `∀ q : ℚ, (q : ℝ) ≠ x`."
+    ],
+    "restatement": "The real number obtained by adding the principal square root of 2 to the principal square root of 3 is irrational: it is not equal to the image of any rational number in ℝ.",
+    "theorem_name": "irrational_sqrt_two_add_sqrt_three"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "terminal_reason": "verified",
+  "formalization": "kernel verified",
+  "informal_completeness": "not assessed",
+  "proof": "by\n  have h6 : Irrational (Real.sqrt 6) := by\n    have h : ¬ IsSquare (6:ℕ) := by decide +kernel\n    have := irrational_sqrt_natCast_iff.mpr h\n    simpa using this\n  have hmul : Real.sqrt 2 * Real.sqrt 3 = Real.sqrt 6 := by\n    rw [← Real.sqrt_mul (by norm_num : (0:ℝ) ≤ 2)]\n    norm_num\n  have h2 : Real.sqrt 2 ^ 2 = 2 := Real.sq_sqrt (by norm_num)\n  have h3 : Real.sqrt 3 ^ 2 = 3 := Real.sq_sqrt (by norm_num)\n  rintro ⟨q, hq⟩\n  apply h6\n  refine ⟨(q ^ 2 - 5) / 2, ?_⟩\n  have hsq : ((q : ℝ)) ^ 2 = 5 + 2 * Real.sqrt 6 := by\n    rw [hq]\n    have hexp : (Real.sqrt 2 + Real.sqrt 3) ^ 2\n        = Real.sqrt 2 ^ 2 + Real.sqrt 3 ^ 2 + 2 * (Real.sqrt 2 * Real.sqrt 3) := by ring\n    rw [hexp, h2, h3, hmul]\n    ring\n  push_cast\n  linarith\n",
+  "lean_output": "exit=0 elapsed=7.413s\n/tmp/hardy-lean-gf6fsio3/Main.lean:25:0: information: 'HardySqrtSum' depends on axioms: [propext, Classical.choice, Quot.sound]",
+  "axioms": {
+    "status": "clean",
+    "declarations": [
+      {
+        "name": "HardySqrtSum",
+        "axioms": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ]
+      }
+    ],
+    "forbidden": [],
+    "unapproved": [],
+    "assumed": []
+  },
+  "turns": 11,
+  "usage": {
+    "exchanges": 1,
+    "cost_usd": 0.4329025,
+    "input_tokens": 16,
+    "output_tokens": 5024,
+    "cache_write_tokens": 13230,
+    "cache_read_tokens": 348461,
+    "total_tokens": 366731,
+    "reported": {
+      "cost_usd": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cache_write_tokens": 1,
+      "cache_read_tokens": 1
+    }
+  },
+  "warnings": [
+    "Generated Lean is not sandboxed. Run Hardy only with trusted output in a disposable development environment."
+  ],
+  "toolchain": {
+    "lean_version": "4.33.1",
+    "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+    "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474",
+    "lake_manifest_sha256": "a264846501a0dd3dac546c239ecb27cd2222f2bdcd3594829901310323d49fc8",
+    "imports": [
+      "Mathlib"
+    ]
+  }
+}

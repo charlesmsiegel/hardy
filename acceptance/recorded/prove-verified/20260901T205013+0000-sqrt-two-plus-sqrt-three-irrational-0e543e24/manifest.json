@@ -1,0 +1,108 @@
+{
+  "artifacts": {
+    "faithfulness-prompt.md": "59cd6bae5d6d42306fa1ebae634b9f4ee9348fc67958a5036d4aec97cacc23b5",
+    "faithfulness-schema.json": "a2529b3bba63e17092317fc7886ec5998987699303e79baaaed8202becfc7f18",
+    "faithfulness.json": "e10120233841211415c452def1656466f1d572cde5bd4754650fef606a3b1d8d",
+    "formalization.json": "c4d3408d1d058ec22550b8a1f99ce04e777aa8e85b8ec03322c0a723aec17bf1",
+    "lean/Main.lean": "e9adc3c703f981860651c4ef8b8ca8540745152a22b483672b3793a857665912",
+    "lean/verification.json": "92fd5254fe2b8ba60c28be95c467f8abc0e4fa0dde4d2b49f0a53135e48f6904",
+    "request.md": "a3f27bdc87e0bf9bc097f75c0f6807817b6dc3b96dfbcb1f7ab714c4269c62f7",
+    "trajectory.jsonl": "655f56cdb2b8c29a21e36142b24a94b07d105c382ccb7cd069b4b91b36ffc546",
+    "writeup/compile.log": "e020400665cc8eb889896c4651fe84fd6b04da084c650aaa34cca00f460ad09c",
+    "writeup/paper.pdf": "a798d6b9f7b9048bc5152b91f2f6cfa2b65d6d3358b88826225022cb35a4831d",
+    "writeup/paper.tex": "e0bcc898f36020ef5539592ee58166cff0d468ee1e0abd1d65eccd17cb629fac"
+  },
+  "claim_sha256": "2c1618098577b6a91f8602cd4e53d9ac2a361f979ca93444bd3ce32d35c4a06b",
+  "created_at": "2026-09-01T20:50:13.996749Z",
+  "environment": {
+    "imports": [
+      "Mathlib"
+    ],
+    "lake_manifest_sha256": "a264846501a0dd3dac546c239ecb27cd2222f2bdcd3594829901310323d49fc8",
+    "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+    "lean_version": "4.33.1",
+    "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474"
+  },
+  "grades": {
+    "document": "tex_compiled",
+    "faithfulness": "user_approved",
+    "faithfulness_review": {
+      "claim_sha256": "2c1618098577b6a91f8602cd4e53d9ac2a361f979ca93444bd3ce32d35c4a06b",
+      "detail": "",
+      "outcome": "agreed",
+      "prompt_sha256": "59cd6bae5d6d42306fa1ebae634b9f4ee9348fc67958a5036d4aec97cacc23b5",
+      "response_schema_sha256": "a2529b3bba63e17092317fc7886ec5998987699303e79baaaed8202becfc7f18",
+      "review": {
+        "claim_entails_formalization": true,
+        "divergences": [],
+        "formalization_entails_claim": true,
+        "notes": ""
+      },
+      "reviewer_backend": "claude",
+      "reviewer_isolation": "tools-refused",
+      "reviewer_model": "claude-opus-5"
+    },
+    "formal": "kernel_verified",
+    "informal": "not_independently_assessed",
+    "known_gaps": [],
+    "verification_evidence": {
+      "axioms": [
+        "propext",
+        "Classical.choice",
+        "Quot.sound"
+      ],
+      "claim_sha256": "2c1618098577b6a91f8602cd4e53d9ac2a361f979ca93444bd3ce32d35c4a06b",
+      "source_sha256": "e9adc3c703f981860651c4ef8b8ca8540745152a22b483672b3793a857665912",
+      "toolchain": {
+        "imports": [
+          "Mathlib"
+        ],
+        "lake_manifest_sha256": "a264846501a0dd3dac546c239ecb27cd2222f2bdcd3594829901310323d49fc8",
+        "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+        "lean_version": "4.33.1",
+        "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474"
+      }
+    },
+    "verification_sha256": "b158ba7d4c8ee2b98bb0aa9fc81044873016df1558df27456339324f5b0a20b1"
+  },
+  "limits": {
+    "active_seconds": 1800,
+    "cas_cell_seconds": 60,
+    "cas_output_bytes": 262144,
+    "cas_session_seconds": 900,
+    "formalization_proposals": 5,
+    "lean_process_seconds": 180,
+    "model_observation_bytes": 32768,
+    "official_checks": 40,
+    "process_output_bytes": 4194304,
+    "proof_seconds": 1200,
+    "retrieval_seconds": 600,
+    "tex_process_seconds": 120
+  },
+  "model": "claude-opus-5",
+  "phase": "completed",
+  "prompt_set_sha256": "50c207a708e3696c9846957a60089ccd0fb4a6ddbc6a6920449887455cf3f5e2",
+  "run_id": "0e543e24-002e-4f43-bdc6-5c09a86d95a6",
+  "schema_version": 5,
+  "terminal_reason": null,
+  "timings_ms": {
+    "active": 226801,
+    "user_wait_excluded": 0
+  },
+  "usage": {
+    "cache_read_tokens": 394804,
+    "cache_write_tokens": 27576,
+    "cost_usd": 0.6805919999999999,
+    "exchanges": 5,
+    "input_tokens": 18,
+    "output_tokens": 8250,
+    "reported": {
+      "cache_read_tokens": 5,
+      "cache_write_tokens": 5,
+      "cost_usd": 5,
+      "input_tokens": 5,
+      "output_tokens": 5
+    },
+    "total_tokens": 430648
+  }
+}
