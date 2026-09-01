@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "model": "claude-opus-5",
+  "backend": "claude",
+  "endpoint": "claude-code (subscription)",
+  "lean_command": [
+    "lake",
+    "env",
+    "lean"
+  ],
+  "lean_project": "/root/.local/share/hardy/lean",
+  "toolchain": {
+    "lean_version": "4.33.1",
+    "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+    "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474",
+    "lake_manifest_sha256": "a264846501a0dd3dac546c239ecb27cd2222f2bdcd3594829901310323d49fc8",
+    "imports": [
+      "Mathlib"
+    ]
+  },
+  "request": {
+    "declaration": "theorem HardySqrtSum : Irrational (Real.sqrt 2 + Real.sqrt 3)",
+    "informal_claim": "The real number sqrt(2) + sqrt(3) is irrational.",
+    "imports": [
+      "Mathlib"
+    ]
+  },
+  "limits": {
+    "max_turns": 60,
+    "wall_seconds": 30.0,
+    "turns_enforced_by": "provider sdk",
+    "wall_clock_enforced_by": "hardy",
+    "note": "the SDK owns the loop; see issue #23",
+    "elapsed_seconds": 35.52551589399991
+  },
+  "usage": {
+    "exchanges": 1,
+    "cost_usd": null,
+    "input_tokens": null,
+    "output_tokens": null,
+    "cache_write_tokens": null,
+    "cache_read_tokens": null,
+    "total_tokens": null,
+    "reported": {
+      "cost_usd": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_write_tokens": 0,
+      "cache_read_tokens": 0
+    }
+  },
+  "events": [
+    {
+      "type": "assistant",
+      "message": {
+        "role": "assistant",
+        "content": "I'll start by exploring the goal and what's available in Mathlib."
+      }
+    },
+    {
+      "type": "tool_use",
+      "name": "mcp__hardy__inspect_goal",
+      "input": {}
+    },
+    {
+      "type": "tool_use",
+      "name": "mcp__hardy__search_declaration",
+      "input": {
+        "name": "Nat.Prime.irrational_sqrt"
+      }
+    },
+    {
+      "type": "tool",
+      "name": "inspect_goal",
+      "arguments": {},
+      "result": {
+        "ok": true,
+        "output": "exit=0 elapsed=8.757s\n/tmp/hardy-lean-cd0szpgt/Main.lean:4:2: information: ⊢ Irrational (√2 + √3)\n/tmp/hardy-lean-cd0szpgt/Main.lean:3:8: warning: declaration uses `sorry`",
+        "source": "import Mathlib\n\ntheorem HardySqrtSum : Irrational (Real.sqrt 2 + Real.sqrt 3) := by\n  trace_state\n  sorry\n",
+        "diagnostics": [
+          {
+            "severity": "information",
+            "message": "⊢ Irrational (√2 + √3)",
+            "file": "/tmp/hardy-lean-cd0szpgt/Main.lean",
+            "line": 4,
+            "column": 2
+          },
+          {
+            "severity": "warning",
+            "message": "declaration uses `sorry`",
+            "file": "/tmp/hardy-lean-cd0szpgt/Main.lean",
+            "line": 3,
+            "column": 8
+          }
+        ],
+        "open_goals": [],
+        "timed_out": false,
+        "output_overflow": false,
+        "interrupted": false,
+        "observation_truncated": false,
+        "source_sha256": "2dfb7a0eaa23b5ce7284f12db2b4521a940bf6bb817906c5b7a67cd237d923e6"
+      }
+    },
+    {
+      "type": "tool",
+      "name": "search_declaration",
+      "arguments": {
+        "name": "Nat.Prime.irrational_sqrt"
+      },
+      "result": {
+        "ok": true,
+        "output": "exit=0 elapsed=6.375s\n/tmp/hardy-lean-dfipw9pc/Main.lean:3:0: information: Nat.Prime.irrational_sqrt {p : ℕ} (hp : Nat.Prime p) : Irrational √↑p\n/tmp/hardy-lean-dfipw9pc/Main.lean:4:0: information: theorem Nat.Prime.irrational_sqrt : ∀ {p : ℕ}, Nat.Prime p → Irrational √↑p :=\nfun {p} hp => irrational_sqrt_natCast_iff.mpr (Irreducible.not_isSquare hp)",
+        "source": "import Mathlib\n\n#check Nat.Prime.irrational_sqrt\n#print Nat.Prime.irrational_sqrt\n",
+        "diagnostics": [
+          {
+            "severity": "information",
+            "message": "Nat.Prime.irrational_sqrt {p : ℕ} (hp : Nat.Prime p) : Irrational √↑p",
+            "file": "/tmp/hardy-lean-dfipw9pc/Main.lean",
+            "line": 3,
+            "column": 0
+          },
+          {
+            "severity": "information",
+            "message": "theorem Nat.Prime.irrational_sqrt : ∀ {p : ℕ}, Nat.Prime p → Irrational √↑p :=\nfun {p} hp => irrational_sqrt_natCast_iff.mpr (Irreducible.not_isSquare hp)",
+            "file": "/tmp/hardy-lean-dfipw9pc/Main.lean",
+            "line": 4,
+            "column": 0
+          }
+        ],
+        "open_goals": [],
+        "timed_out": false,
+        "output_overflow": false,
+        "interrupted": false,
+        "observation_truncated": false,
+        "source_sha256": "e07cdbacabd9b2411c9b6ef1fb267f6862c20616763e088d5b4756765c0f9eb1"
+      }
+    },
+    {
+      "type": "wall_clock_limit",
+      "seconds": 30.0
+    },
+    {
+      "type": "error",
+      "error": "TimeoutError: the run exceeded its 30s wall-clock budget"
+    }
+  ],
+  "terminal_reason": "wall_clock_limit"
+}
