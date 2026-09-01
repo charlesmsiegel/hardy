@@ -157,7 +157,7 @@ def test_a_manifest_version_identifies_one_shape_including_its_nested_ones() -> 
     ).model_dump(mode='json')
 
     assert 'retrieval_seconds' in written['limits']
-    assert written['schema_version'] == 4
+    assert written['schema_version'] == 5
     with pytest.raises(ValidationError):
         domain.RunLimits(**{**written['limits'], 'a_limit_from_the_future': 1})
 
@@ -174,7 +174,7 @@ def test_run_manifest_has_stable_phase_and_terminal_reason_values() -> None:
         terminal_reason=None,
     )
 
-    assert manifest.schema_version == 4
+    assert manifest.schema_version == 5
     assert manifest.phase.value == 'setup'
     assert domain.TerminalReason.STATEMENT_MISMATCH.value == 'statement_mismatch'
 

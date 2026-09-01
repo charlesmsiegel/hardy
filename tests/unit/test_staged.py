@@ -260,3 +260,30 @@ def test_the_appended_schema_is_the_shared_rendering(tmp_path) -> None:
 
     sent = thread.runtime.asked[0]
     assert sent.endswith(domain.schema_text(domain.FaithfulnessReview))
+
+
+def test_provider_reports_fold_into_the_runs_usage_ledger(tmp_path) -> None:
+    """The manifest records what the run cost, and the staged runtime is the
+    one thing that sees the provider's reports. Folded by the same ledger the
+    batch runner uses, so `None` means unreported in both records and never
+    stands for 0."""
+    _, _, runtime = _staged(tmp_path)
+
+    before = runtime.usage
+    runtime._observe(
+        {
+            'type': 'result',
+            'cost_usd': 0.25,
+            'usage': {'input_tokens': 120, 'output_tokens': 30},
+            'session_id': 'thread-1',
+        }
+    )
+    after = runtime.usage
+
+    assert before['exchanges'] == 0 and before['cost_usd'] is None
+    assert after['exchanges'] == 1
+    assert after['cost_usd'] == 0.25
+    assert after['input_tokens'] == 120 and after['output_tokens'] == 30
+    # Counters the provider never stated stay unstated.
+    assert after['cache_read_tokens'] is None
+    assert after['reported']['cache_read_tokens'] == 0

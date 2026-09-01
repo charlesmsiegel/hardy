@@ -948,3 +948,51 @@ def test_the_reader_is_given_the_budget_that_is_actually_left(tmp_path) -> None:
     # Threads in order: formalizing, the reader, proving. Only the reader is
     # bounded — 1800 declared, 1000 already spent by the elaboration above.
     assert state.deadlines == [None, 800.0, None]
+
+
+def test_the_manifest_records_what_the_runtime_says_the_run_cost(tmp_path) -> None:
+    """Version 4 typed `usage` as integers and every staged run left it empty,
+    which read as a run that had spent nothing. The runtime's ledger is what
+    the manifest now carries, `None` where the provider said nothing."""
+    workflow, domain, controller, _ = _scripted_controller(tmp_path)
+    spend = {
+        'exchanges': 3,
+        'cost_usd': 1.5,
+        'input_tokens': 1000,
+        'output_tokens': None,
+        'cache_write_tokens': None,
+        'cache_read_tokens': None,
+        'total_tokens': 1000,
+        'reported': {'cost_usd': 3, 'input_tokens': 3, 'output_tokens': 0, 'cache_write_tokens': 0, 'cache_read_tokens': 0},
+    }
+    original = controller._runtime_factory
+
+    class Metered:
+        def __init__(self, inner):
+            self._inner = inner
+            self.usage = spend
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    controller._runtime_factory = lambda store: Metered(original(store))
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='fixture', problem_slug='spend'),
+        Terminal(),
+    )
+
+    assert manifest.usage == spend
+    assert manifest.schema_version == 5
+
+
+def test_a_run_that_opened_no_provider_thread_records_no_spend(tmp_path) -> None:
+    workflow, domain, controller, _ = _scripted_controller(tmp_path, healthy=False)
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='fixture', problem_slug='unwell'),
+        Terminal(),
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.SETUP_FAILURE
+    assert manifest.usage == {}

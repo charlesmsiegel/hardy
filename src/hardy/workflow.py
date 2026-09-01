@@ -135,8 +135,30 @@ class ProveWorkflow:
         self._now = now
         self._monotonic = monotonic
         self._uuid_factory = uuid_factory
+        # The runtime of the run in flight, so `_finalize` can ask it what the
+        # run cost. Per run: `run` sets it as soon as a runtime exists and
+        # clears it on the way out.
+        self._runtime_in_flight: Any | None = None
+
+    def _usage(self) -> dict[str, Any]:
+        """What the provider said this run cost, or `{}` when no thread was opened.
+
+        Read off the runtime rather than kept here because the runtime is the
+        one thing that sees the provider's reports, and a runtime without a
+        ledger (the deterministic fixture, a test double) simply reports
+        nothing rather than inventing a total.
+        """
+        usage = getattr(self._runtime_in_flight, "usage", None)
+        return dict(usage) if isinstance(usage, dict) else {}
 
     def run(self, request: ProveRequest, terminal: Terminal) -> RunManifest:
+        self._runtime_in_flight = None
+        try:
+            return self._run(request, terminal)
+        finally:
+            self._runtime_in_flight = None
+
+    def _run(self, request: ProveRequest, terminal: Terminal) -> RunManifest:
         created_at = self._now()
         run_id = self._uuid_factory()
         store = RunStore.create(
@@ -204,6 +226,7 @@ class ProveWorkflow:
                 )
             state.transition(RunPhase.FORMALIZING)
             runtime = self._runtime_factory(store)
+            self._runtime_in_flight = runtime
             # `active_thread` too, not only once proving starts: it is the handle
             # the cancellation path below reaches for, and a Ctrl+C while
             # formalizing has just as much running behind it. Without this the
@@ -596,6 +619,7 @@ class ProveWorkflow:
             terminal_reason=reason,
             artifacts=artifacts,
             timings_ms={"active": active_ms, "user_wait_excluded": round(user_wait * 1_000)},
+            usage=self._usage(),
         )
         store.finalize(manifest)
         terminal.show_result(manifest)
