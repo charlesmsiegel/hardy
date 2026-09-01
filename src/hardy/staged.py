@@ -29,6 +29,7 @@ from .domain import FrozenClaim, RunPhase, schema_text
 from .models import ToolResult
 from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS, STRUCTURE_INSTRUCTION
 from .storage import RunStore
+from .usage import Usage
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -162,6 +163,18 @@ class ClaudeStagedRuntime:
         # trajectory, so it is the one that has to be closable. See `_seal`.
         self._records = threading.Lock()
         self._sealed = False
+        # What the provider said the run cost, folded by the same ledger the
+        # batch runner and the interactive session use, so a staged manifest
+        # cannot disagree with a batch record about what "unreported" means.
+        # Rebound under `_records`, never mutated: `Usage` is frozen.
+        self._spend = Usage()
+
+    @property
+    def usage(self) -> dict[str, Any]:
+        """The run's spend as `Usage.summary` states it: `None` where the
+        provider said nothing, never 0 standing in for a figure nobody took."""
+        with self._records:
+            return self._spend.summary()
 
     def start(
         self,
@@ -221,6 +234,8 @@ class ClaudeStagedRuntime:
         with self._records:
             if self._sealed:
                 return
+            if event.get("type") == "result":
+                self._spend = self._spend.record(event)
             self._store.append("claude." + str(event.get("type", "event")), event, phase=phase)
 
     def _seal(self, phase: RunPhase = RunPhase.PROVING) -> None:

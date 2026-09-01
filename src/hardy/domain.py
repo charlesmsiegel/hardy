@@ -11,7 +11,7 @@ import hashlib
 import json
 from datetime import datetime
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -423,10 +423,14 @@ class RunManifest(BaseModel):
     # incompatible shapes. 4 added `grades.faithfulness_review`, and with it
     # the rule that `user_approved` names an independent reader's agreement --
     # a version-3 manifest's approval was the human's alone, which is exactly
-    # the weaker claim this version stopped accepting.
+    # the weaker claim this version stopped accepting. 5 gave `usage` the
+    # shape `hardy.usage.Usage.summary` writes -- a figure the provider never
+    # stated is `None`, and `reported` says how many exchanges each figure
+    # covers -- where version 4 typed it as a map of integers and every
+    # staged run left it empty, which read as a run that had spent nothing.
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[4] = 4
+    schema_version: Literal[5] = 5
     run_id: UUID
     created_at: datetime
     phase: RunPhase
@@ -439,4 +443,8 @@ class RunManifest(BaseModel):
     terminal_reason: TerminalReason | None = None
     artifacts: dict[str, str] = Field(default_factory=dict)
     timings_ms: dict[str, int] = Field(default_factory=dict)
-    usage: dict[str, int] = Field(default_factory=dict)
+    # What the provider said the run cost, as `Usage.summary` states it: the
+    # cost, the four token counters, and the exchange count, each `None` where
+    # nothing was reported rather than 0. Empty only for a run that never
+    # opened a provider thread.
+    usage: dict[str, Any] = Field(default_factory=dict)
