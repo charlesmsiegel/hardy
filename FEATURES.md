@@ -999,18 +999,24 @@ model was `claude-opus-5` through the Claude Code CLI.
    Lean's axiom line reads `propext, Classical.choice, Quot.sound`, the audit
    verdict says the same, and a fresh Lean started by the test says it again.
 2. **Staged `hardy prove`, verified, through the document pipeline** — the half
-   this section had said was never run live. The first formalization proposal
-   did not elaborate and was rejected without being shown for approval; the
-   second was frozen, read back by the independent reader on a tools-refused
-   thread and agreed with, and proved on the first official check after three
-   `lean_search_declarations` calls and four `lean_check_scratch` rounds. It
-   found a different route from the batch run (`norm_num` closes the
-   irrationality of `sqrt 6` outright), which is the point of not asserting on
-   what the model said. The verifier rebuilt `lean/Main.lean` from the frozen
-   claim; `verification.json` carries the fresh Lean's own axiom line; the
-   manifest's environment equals the claim's; the compiled paper names the
+   this section had said was never run live. The first two formalization
+   proposals did not elaborate and were rejected without being shown for
+   approval; the third — stated as "no rational equals `sqrt 2 + sqrt 3`",
+   which is the same claim in different Lean — was frozen, read back by the
+   independent reader on a tools-refused thread and agreed with, and proved
+   on the first official check after one `lean_search_declarations`, one
+   `rank_premises`, and one `lean_check_scratch`. It found a different route
+   from the batch run (`norm_num` closes the irrationality of `sqrt 6`
+   outright), which is the point of not asserting on what the model said. The
+   verifier rebuilt `lean/Main.lean` from the frozen claim; `verification.json`
+   carries the fresh Lean's own axiom line; the manifest's environment equals
+   the claim's; the compiled paper quotes the exact statement and names the
    run, the Lean, the Mathlib, and the Tectonic; and the manifest states the
-   spend per field over its five exchanges.
+   spend per field over its six exchanges — each provider report counted
+   whole, since the staged runtime's reports are per exchange rather than
+   running totals, a fact the first recording of this run exposed by stating
+   less than its own trajectory summed to.
+
 3. **A false statement, refused.** The negation of the theorem. The model
    inspected the goal, searched, explained why the claim is false (with the
    proof of the positive statement in prose), and never called `submit_proof`:

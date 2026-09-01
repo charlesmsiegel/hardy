@@ -1,19 +1,19 @@
 {
   "artifacts": {
-    "faithfulness-prompt.md": "59cd6bae5d6d42306fa1ebae634b9f4ee9348fc67958a5036d4aec97cacc23b5",
+    "faithfulness-prompt.md": "1ad175c9ab99934593118bed641d8bee623f80454432f8ae405b634de72319f9",
     "faithfulness-schema.json": "a2529b3bba63e17092317fc7886ec5998987699303e79baaaed8202becfc7f18",
-    "faithfulness.json": "e10120233841211415c452def1656466f1d572cde5bd4754650fef606a3b1d8d",
-    "formalization.json": "c4d3408d1d058ec22550b8a1f99ce04e777aa8e85b8ec03322c0a723aec17bf1",
-    "lean/Main.lean": "e9adc3c703f981860651c4ef8b8ca8540745152a22b483672b3793a857665912",
-    "lean/verification.json": "92fd5254fe2b8ba60c28be95c467f8abc0e4fa0dde4d2b49f0a53135e48f6904",
+    "faithfulness.json": "875581ecebbc7677d8499b5ef2bd2a399324b88de3fb0c16224b25883f9e4b0e",
+    "formalization.json": "8a2a73fbede9455b5837546059f80c1052f1032172c0260dfbdfecbde4d24821",
+    "lean/Main.lean": "7280e5b6de3e27f93d0d41605a25aafda4c36fb3d8955945633cd93c5cbebec3",
+    "lean/verification.json": "9cc262d481d434417ff68a18aa0a4010a8cf671e0a5ed489e8de8f715ac15446",
     "request.md": "a3f27bdc87e0bf9bc097f75c0f6807817b6dc3b96dfbcb1f7ab714c4269c62f7",
-    "trajectory.jsonl": "655f56cdb2b8c29a21e36142b24a94b07d105c382ccb7cd069b4b91b36ffc546",
-    "writeup/compile.log": "e020400665cc8eb889896c4651fe84fd6b04da084c650aaa34cca00f460ad09c",
-    "writeup/paper.pdf": "a798d6b9f7b9048bc5152b91f2f6cfa2b65d6d3358b88826225022cb35a4831d",
-    "writeup/paper.tex": "e0bcc898f36020ef5539592ee58166cff0d468ee1e0abd1d65eccd17cb629fac"
+    "trajectory.jsonl": "8fc8dc7e9b791cfa5e4fd374fa6580389772aeb9428727536adf1888e1c7102e",
+    "writeup/compile.log": "978ca598200d951b5e2ce27c2a1258085c2ee8b888943bf01fbcaa7f424fa525",
+    "writeup/paper.pdf": "e1da4814418bf43666cf8211184e32f0ddd6f16ad7f277b075bcb66f2293d9bb",
+    "writeup/paper.tex": "60bdabf63df76e09c176decc50d242e3bf7cf223a5beb92aced64db98485ab76"
   },
-  "claim_sha256": "2c1618098577b6a91f8602cd4e53d9ac2a361f979ca93444bd3ce32d35c4a06b",
-  "created_at": "2026-09-01T20:50:13.996749Z",
+  "claim_sha256": "67bbf6be3f6cce3fbcf0c18652aeedf6f61ed5d0c09a91ebedbfd36aa4077204",
+  "created_at": "2026-09-01T21:28:44.561300Z",
   "environment": {
     "imports": [
       "Mathlib"
@@ -27,10 +27,10 @@
     "document": "tex_compiled",
     "faithfulness": "user_approved",
     "faithfulness_review": {
-      "claim_sha256": "2c1618098577b6a91f8602cd4e53d9ac2a361f979ca93444bd3ce32d35c4a06b",
+      "claim_sha256": "67bbf6be3f6cce3fbcf0c18652aeedf6f61ed5d0c09a91ebedbfd36aa4077204",
       "detail": "",
       "outcome": "agreed",
-      "prompt_sha256": "59cd6bae5d6d42306fa1ebae634b9f4ee9348fc67958a5036d4aec97cacc23b5",
+      "prompt_sha256": "1ad175c9ab99934593118bed641d8bee623f80454432f8ae405b634de72319f9",
       "response_schema_sha256": "a2529b3bba63e17092317fc7886ec5998987699303e79baaaed8202becfc7f18",
       "review": {
         "claim_entails_formalization": true,
@@ -51,8 +51,8 @@
         "Classical.choice",
         "Quot.sound"
       ],
-      "claim_sha256": "2c1618098577b6a91f8602cd4e53d9ac2a361f979ca93444bd3ce32d35c4a06b",
-      "source_sha256": "e9adc3c703f981860651c4ef8b8ca8540745152a22b483672b3793a857665912",
+      "claim_sha256": "67bbf6be3f6cce3fbcf0c18652aeedf6f61ed5d0c09a91ebedbfd36aa4077204",
+      "source_sha256": "7280e5b6de3e27f93d0d41605a25aafda4c36fb3d8955945633cd93c5cbebec3",
       "toolchain": {
         "imports": [
           "Mathlib"
@@ -63,7 +63,7 @@
         "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474"
       }
     },
-    "verification_sha256": "b158ba7d4c8ee2b98bb0aa9fc81044873016df1558df27456339324f5b0a20b1"
+    "verification_sha256": "35f53ddbf64ff223571daedcd425260158466ce1e30ff2a44144b13088e4b2f9"
   },
   "limits": {
     "active_seconds": 1800,
@@ -82,27 +82,27 @@
   "model": "claude-opus-5",
   "phase": "completed",
   "prompt_set_sha256": "50c207a708e3696c9846957a60089ccd0fb4a6ddbc6a6920449887455cf3f5e2",
-  "run_id": "0e543e24-002e-4f43-bdc6-5c09a86d95a6",
+  "run_id": "3c689084-8c38-41f6-ad81-c3bf4130b0ce",
   "schema_version": 5,
   "terminal_reason": null,
   "timings_ms": {
-    "active": 226801,
+    "active": 618279,
     "user_wait_excluded": 0
   },
   "usage": {
-    "cache_read_tokens": 394804,
-    "cache_write_tokens": 27576,
-    "cost_usd": 0.6805919999999999,
-    "exchanges": 5,
+    "cache_read_tokens": 386911,
+    "cache_write_tokens": 32653,
+    "cost_usd": 0.8429685,
+    "exchanges": 6,
     "input_tokens": 18,
-    "output_tokens": 8250,
+    "output_tokens": 12760,
     "reported": {
-      "cache_read_tokens": 5,
-      "cache_write_tokens": 5,
-      "cost_usd": 5,
-      "input_tokens": 5,
-      "output_tokens": 5
+      "cache_read_tokens": 6,
+      "cache_write_tokens": 6,
+      "cost_usd": 6,
+      "input_tokens": 6,
+      "output_tokens": 6
     },
-    "total_tokens": 430648
+    "total_tokens": 432342
   }
 }
