@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from . import audit
 from .chat import provenance
 from .claude_runtime import TurnLimitReached
+from .latency import manifest_binds
 from .lean import LeanToolResult, LeanTools, environment_identity
 from .models import Request, RunResult, ToolResult
 from .prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
@@ -76,8 +77,21 @@ def identify_toolchain(lean: LeanTools) -> dict[str, Any]:
     never silent: `{"unrecorded": ...}` is a finding the acceptance audit can
     refuse, where a missing key is one it would have to assume.
     """
+    command = tuple(lean.lean_command)
+    # Only `lake env lean` necessarily resolves imports through the project's
+    # manifest; a bare `lean` or a wrapper may import from another Mathlib
+    # entirely, and pairing its version with this manifest's revision would
+    # attribute the proof to a library it may not have used. The same test
+    # `hardy latency` applies (`latency.manifest_binds`), for the same reason.
+    if not manifest_binds(command):
+        return {
+            "unrecorded": (
+                f"lean_command {' '.join(command)!r} is not `lake env lean`, so the Mathlib "
+                "it imports cannot be read from the project manifest"
+            )
+        }
     try:
-        identity = environment_identity(lean.project, lean_command=tuple(lean.lean_command))
+        identity = environment_identity(lean.project, lean_command=command)
     except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
         return {"unrecorded": str(error) or type(error).__name__}
     return identity.model_dump(mode="json")

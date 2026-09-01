@@ -26,6 +26,7 @@ from pydantic import BaseModel, ValidationError, field_validator
 from .domain import FrozenClaim, FrozenModel, RunPhase
 from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS
 from .storage import RunStore
+from .usage import Usage
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -88,6 +89,21 @@ class CodexRuntime:
         # `close`. Outside the run tree on purpose: a directory inside it is
         # one `..` from the artifacts the reader must not see.
         self._isolated: list[Path] = []
+        # Exchanges Hardy asked this SDK for. It reports no cost and no token
+        # counts Hardy reads, so the ledger states the count and leaves every
+        # figure null -- the manifest then says the run spent something
+        # unstated rather than nothing, which is what a missing ledger read
+        # as. Counted when sent, so a turn that times out is still counted.
+        self._asked = 0
+
+    @property
+    def usage(self) -> dict[str, Any]:
+        """The run's spend as `Usage.summary` states it: one exchange per
+        turn asked, cost and tokens `None` because this SDK states none."""
+        spend = Usage()
+        for _ in range(self._asked):
+            spend = spend.record({})
+        return spend.summary()
 
     def start(
         self,
@@ -184,6 +200,7 @@ class CodexRuntime:
         prompt: str,
         output_type: type[T],
     ) -> T:
+        self._asked += 1
         handle = thread.sdk_thread.turn(
             prompt,
             output_schema=output_type.model_json_schema(),

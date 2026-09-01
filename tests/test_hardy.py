@@ -766,7 +766,9 @@ def test_a_batch_run_that_cannot_identify_its_toolchain_says_why(tmp_path: Path,
 
     trajectory = json.loads((tmp_path / "trajectory.json").read_text())
     assert "toolchain" in trajectory
-    assert "lean_project" in trajectory["toolchain"]["unrecorded"]
+    # The fake Lean is not `lake env lean`, which is the first thing that
+    # stops the Mathlib identity being read; the reason says so by name.
+    assert "not `lake env lean`" in trajectory["toolchain"]["unrecorded"]
     assert "Not identified" in (tmp_path / "writeup.md").read_text()
 
 
@@ -776,19 +778,41 @@ def test_the_toolchain_is_asked_of_the_lean_the_run_invokes(tmp_path: Path, proo
     project = tmp_path / "project"
     project.mkdir()
     (project / "lake-manifest.json").write_text(json.dumps({"packages": [{"name": "mathlib", "rev": "f" * 40}]}), encoding="utf-8")
-    versioned = tmp_path / "lean-with-version.py"
-    versioned.write_text(
-        "import sys, runpy\n"
-        "if sys.argv[-1] == '--version':\n"
-        "    print('Lean (version 4.30.0, x86_64-unknown-linux-gnu, commit 0123456789abcdef, Release)')\n"
-        "    raise SystemExit(0)\n"
-        f"runpy.run_path({str(Path(__file__).with_name('fake_lean.py'))!r}, run_name='__main__')\n",
+    # A `lake` whose `env lean` is the fake Lean, and which answers `--version`
+    # the way the real one does. Named `lake` on purpose: only `lake env lean`
+    # is known to resolve imports through the project's manifest.
+    lake = tmp_path / "bin" / "lake"
+    lake.parent.mkdir()
+    lake.write_text(
+        "#!/bin/sh\n"
+        'if [ "$3" = "--version" ]; then\n'
+        "  echo 'Lean (version 4.30.0, x86_64-unknown-linux-gnu, commit 0123456789abcdef, Release)'\n"
+        "  exit 0\n"
+        "fi\n"
+        f'exec {sys.executable} {Path(__file__).with_name("fake_lean.py")} "$@"\n',
         encoding="utf-8",
     )
-    lean = LeanTools(proof_request, (sys.executable, str(versioned)), project=project)
+    lake.chmod(0o755)
+    lean = LeanTools(proof_request, (str(lake), "env", "lean"), project=project)
     run(proof_request, factory([call("submit_proof", {"proof": "by exact True.intro"})]), lean, tmp_path / "out", max_turns=2)
 
     toolchain = json.loads((tmp_path / "out" / "trajectory.json").read_text())["toolchain"]
     assert toolchain["lean_version"] == "4.30.0"
     assert toolchain["lean_commit"] == "0123456789abcdef"
     assert toolchain["mathlib_revision"] == "f" * 40
+
+
+def test_a_lean_that_is_not_lake_env_lean_leaves_the_mathlib_identity_unestablished(
+    tmp_path: Path, proof_request: Request
+):
+    """A bare `lean` or a wrapper may import from a Mathlib the project's
+    manifest does not describe. Pairing its version with that manifest would
+    attribute the proof to a revision it may never have used."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "lake-manifest.json").write_text(json.dumps({"packages": [{"name": "mathlib", "rev": "f" * 40}]}), encoding="utf-8")
+    lean = LeanTools(proof_request, (sys.executable, str(Path(__file__).with_name("fake_lean.py"))), project=project)
+    run(proof_request, factory([call("submit_proof", {"proof": "by exact True.intro"})]), lean, tmp_path / "out", max_turns=2)
+
+    toolchain = json.loads((tmp_path / "out" / "trajectory.json").read_text())["toolchain"]
+    assert "not `lake env lean`" in toolchain["unrecorded"]
