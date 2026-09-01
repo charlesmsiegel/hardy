@@ -1003,20 +1003,22 @@ model was `claude-opus-5` through the Claude Code CLI.
    did not elaborate and was rejected without being shown for approval; the
    second — `Irrational (Real.sqrt (2 : ℝ) + Real.sqrt (3 : ℝ))` — was frozen,
    read back by the independent reader on a provider session of its own with
-   no tools, agreed with, and proved on the first official check after four
-   `lean_search_declarations` calls and four `lean_check_scratch` rounds. It
-   found a different route from the batch run (`norm_num` closes the
-   irrationality of `sqrt 6` outright), which is the point of not asserting
-   on what the model said. The verifier rebuilt `lean/Main.lean` from the
+   no tools, agreed with, and proved on the first official check after one
+   `lean_inspect_declarations` and one `lean_search_declarations` call, with
+   no scratch check at all. It found a different route from the batch run
+   (`norm_num` closes the irrationality of `sqrt 6` outright), which is the
+   point of not asserting on what the model said. The verifier rebuilt `lean/Main.lean` from the
    frozen claim; `verification.json` carries the fresh Lean's own axiom line;
    the manifest's environment equals the claim's; the compiled paper quotes
-   the exact statement with every symbol set, states the verified grade in
-   its own prose, and names the run, the Lean, the Mathlib, and the Tectonic;
-   and the manifest states the spend per field over its five exchanges, each
-   provider report counted whole.
+   the exact statement with every symbol set in faces the pinned bundle
+   served, states the verified grade in its own prose, and names the run,
+   the Lean, the Mathlib, and the Tectonic; and the manifest states the
+   spend per field over its five exchanges, each provider report counted
+   whole.
 
-   This is the third recording of the run, and the two it replaces are worth
-   stating because each exposed something the fake-process suite could not.
+   This is the fourth recording of the run, and the three it replaces are
+   worth stating because each exposed something the fake-process suite could
+   not.
    The first stated $0.68 for five provider reports that summed to $0.78: the
    staged runtime's reports are per exchange, not running totals, and the
    ledger's differencing had read a smaller report as an increment. The
@@ -1037,13 +1039,16 @@ model was `claude-opus-5` through the Claude Code CLI.
    claimed here" under a heading reading kernel verified (the proving thread
    hears about a rejection and never about an acceptance). Each runtime now
    names a fresh session for a new conversation and the audit refuses a
-   reader that shares one; the template sets DejaVu through `fontspec`, by
-   file name so the pinned bundle serves the faces (named by family, the
-   third recording's Tectonic read them from `/usr/share/fonts` and warned
-   that the build may not be reproducible), and a compile that drops a
-   glyph or reads a file from outside the bundle is a failed document, which
-   the audit refuses too; and the writeup stage is told the verification
-   outcome, under a new prompt-set version.
+   reader that shares one; the template sets DejaVu through `fontspec`, and
+   a compile that drops a glyph is a failed document; and the writeup stage
+   is told the verification outcome, under a new prompt-set version. The
+   third recording, made under those fixes, then showed one more: named by
+   family, the faces were resolved through the host's fontconfig, and its
+   Tectonic read every one from `/usr/share/fonts` while warning that the
+   build may not be reproducible. The template now names the font files, so
+   the pinned bundle serves them, and a compile that reads a file from
+   outside the bundle is a failed document too, refused by the audit as
+   well.
 
 3. **A false statement, refused.** The negation of the theorem. The model
    inspected the goal, searched, explained why the claim is false (with the

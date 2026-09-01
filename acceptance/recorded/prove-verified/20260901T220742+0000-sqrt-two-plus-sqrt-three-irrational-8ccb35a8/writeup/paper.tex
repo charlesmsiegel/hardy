@@ -1,0 +1,168 @@
+\documentclass[11pt]{article}
+% Unicode fonts, because the statement and the prose carry Lean's symbols
+% (ℝ, ℚ, ∀, ≠, √, ⟨⟩) and the Latin Modern faces under T1 have no glyph for
+% them: Tectonic then logs "Missing character" and emits a PDF whose exact
+% Lean statement has silently lost its quantifier and its domains. DejaVu
+% covers every symbol the recorded runs used. Named by file, not by family:
+% a family name is resolved through the host's fontconfig, which served
+% /usr/share/fonts on the machine that recorded the third staged run and
+% made Tectonic warn that the build may not be reproducible, whereas a file
+% name is served by the pinned bundle, whose digest the manifest records.
+\usepackage{fontspec}
+\setmainfont{DejaVuSans}[Extension=.ttf, UprightFont=*, BoldFont=*-Bold, ItalicFont=*-Oblique, BoldItalicFont=*-BoldOblique]
+\setmonofont{DejaVuSansMono}[Extension=.ttf, UprightFont=*, BoldFont=*-Bold, ItalicFont=*-Oblique, BoldItalicFont=*-BoldOblique]
+\usepackage[margin=1in]{geometry}
+\usepackage{fancyvrb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{HardyBlue}{RGB}{24,64,112}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.7em}
+\setlist[itemize]{leftmargin=1.5em}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\color{HardyBlue}\bfseries The Irrationality of √2 + √3\par}
+\vspace{1em}
+Formal status: Kernel verified\\
+Faithfulness: User approved; independently reviewed by claude-opus-5 on claude (agreed)\\
+Informal completeness: Not independently assessed\\
+Document status: TeX compiled
+\end{center}
+
+\hrule
+\vspace{1em}
+
+\section*{Theorem}
+The real number √2 + √3 is irrational; that is, there is no rational number q with q = √2 + √3.
+
+Formally (Lean 4 / Mathlib):
+
+    theorem irrational\_sqrt\_two\_add\_sqrt\_three : Irrational (Real.sqrt 2 + Real.sqrt 3)
+
+Here `Irrational x` is Mathlib's definition `x ∉ Set.range ((↑) : ℚ → ℝ)`, i.e. x is not the image of any rational number under the canonical embedding ℚ → ℝ.
+
+\section*{Approved interpretation}
+\begin{itemize}
+\item The real numbers ℝ, with its standard complete ordered field structure and the nonnegative square root function Real.sqrt : ℝ → ℝ
+\item The rational numbers ℚ, embedded into ℝ by the canonical cast Rat.cast : ℚ → ℝ
+\item Numeric literals 2 and 3 elaborated as elements of ℝ via OfNat
+\item No user-visible quantifiers: the statement is a closed proposition about one specific real number, so the theorem takes no binders at all.
+\item The quantification hidden inside 'irrational' is universal-negative: for every q : ℚ, (q : ℝ) ≠ Real.sqrt 2 + Real.sqrt 3, i.e. the number does not lie in Set.range ((↑) : ℚ → ℝ).
+\item None; the claim is unconditional and needs no hypotheses beyond Mathlib's standard theory of ℝ, ℚ, and Real.sqrt.
+\item Real.sqrt is total in Mathlib (returning 0 on negative inputs); since 2 ≥ 0 and 3 ≥ 0, Real.sqrt 2 and Real.sqrt 3 are the genuine nonnegative square roots.
+\item Availability of Mathlib's Irrational predicate (Mathlib.Analysis.SpecialFunctions.Pow / Mathlib.RingTheory.Int.Basic import chain, e.g. via `import Mathlib`).
+\item Repair of the previous non-elaborating signature: the binders field previously carried the parenthesized prose '(no binders; closed statement)', which is not valid Lean binder syntax and would be spliced directly into `theorem <name> <binders> : <prop>`, causing elaboration to fail. The binders field is now the empty string, yielding `theorem irrational\_sqrt\_two\_add\_sqrt\_three : Irrational (Real.sqrt 2 + Real.sqrt 3)`.
+\item Fully qualified names are used (Real.sqrt, Irrational) so the statement elaborates without relying on `open Real`; no notation such as √ is used, avoiding dependence on a scoped notation being open.
+\item 'sqrt(2)' and 'sqrt(3)' are the principal (nonnegative) real square roots, formalized as Real.sqrt 2 and Real.sqrt 3 — not two-valued algebraic roots and not elements of an abstract field extension.
+\item 'is irrational' is Mathlib's predicate Irrational x, definitionally x ∉ Set.range ((↑) : ℚ → ℝ), which is exactly 'not equal to the cast of any rational'.
+\item '+' is addition in ℝ, and the whole sum is the argument of Irrational, so the claim is about the single number Real.sqrt 2 + Real.sqrt 3 — neither weakened (e.g. to irrationality of Real.sqrt 2 alone) nor strengthened (e.g. to linear independence over ℚ or a general theorem about sums of square roots).
+\end{itemize}
+
+\section*{Human-readable proof}
+Overview
+--------
+The sum of two irrational numbers need not be irrational (for instance √2 + (−√2) = 0), so irrationality of √2 and of √3 separately does not settle the question. The argument below instead assumes rationality of the sum and then *solves algebraically for √2*, reducing the statement to the single classical fact that √2 is irrational.
+
+Setup
+-----
+Suppose, for contradiction, that √2 + √3 is rational. By the definition of `Irrational`, this means there exists q ∈ ℚ whose image in ℝ satisfies
+
+    (q : ℝ) = √2 + √3.                                          (1)
+
+We use two facts about the real square root, both instances of Mathlib's `Real.sq\_sqrt` (valid because the radicands are nonnegative):
+
+    (√2)² = 2,        (√3)² = 3.                                 (2)
+
+Step 1: q ≠ 0
+-------------
+Since 2 > 0 and 3 > 0, both √2 > 0 and √3 > 0, hence √2 + √3 > 0. By (1), (q : ℝ) > 0, so in particular (q : ℝ) ≠ 0. (In the formal proof this positivity is discharged by the `positivity` tactic, which knows that √x > 0 for x > 0.)
+
+Step 2: isolate and square
+--------------------------
+Rearranging (1) gives
+
+    √3 = (q : ℝ) − √2.
+
+Squaring both sides and substituting (√3)² = 3 from (2):
+
+    3 = ((q : ℝ) − √2)² = q² − 2q·√2 + (√2)² = q² − 2q·√2 + 2,
+
+where the last equality uses (√2)² = 2. Rearranging the resulting identity yields the key linear relation for √2:
+
+    2q·√2 = q² − 1.                                              (3)
+
+Note that this step is purely algebraic: no sign or branch considerations are needed, because we only expand a square and substitute the two identities in (2).
+
+Step 3: solve for √2 and conclude
+---------------------------------
+By Step 1 we have q ≠ 0, so 2q ≠ 0 and we may divide (3) by 2q:
+
+    √2 = (q² − 1) / (2q).
+
+The right-hand side is the image in ℝ of the rational number (q² − 1)/(2q) ∈ ℚ — the field operations on ℚ commute with the embedding ℚ → ℝ, so the cast of the rational quotient equals the quotient of the casts. Hence √2 lies in the range of ℚ → ℝ, i.e. √2 is rational.
+
+This contradicts the classical theorem that √2 is irrational (Mathlib's `irrational\_sqrt\_two`, itself a consequence of the fact that 2 is prime and therefore not a perfect square).
+
+Therefore no rational q with (q : ℝ) = √2 + √3 exists, and √2 + √3 is irrational. ∎
+
+Remarks
+-------
+• A common alternative route squares the sum directly: (√2 + √3)² = 5 + 2√6, so rationality of the sum would force √6 to be rational, contradicting the irrationality of √6. The route taken here is shorter to formalize because it needs only the irrationality of √2, a named lemma in Mathlib, rather than a fresh non-square argument for 6.
+• The same technique generalizes: if a and b are distinct nonnegative rationals with √a irrational, the identity above shows √a + √b is irrational, since assuming rationality of the sum lets one solve for √a as a rational expression in the assumed rational value.
+
+Formal status
+-------------
+The Lean statement above was rebuilt from the Frozen Claim, checked by a fresh Lean kernel using Mathlib, and its axiom dependencies were audited by Hardy's independent FinalVerifier: the formal proof is kernel verified. The formal script follows exactly the three steps above — positivity of the sum to get q ≠ 0, squaring to obtain relation (3) (closed by `nlinarith` from the two square-root identities), then exhibiting (q² − 1)/(2q) as a rational witness for √2 and appealing to `irrational\_sqrt\_two`.
+
+This prose exposition is a human-readable rendering of that formal argument; the exposition itself has not been independently assessed, and the machine-checked guarantee attaches to the Lean statement and proof, not to the wording here.
+
+\section*{Known gaps}
+\begin{itemize}
+\item None in the formal development: the Lean proof of the exact Frozen Claim is complete, with no `sorry`, no additional axioms beyond Lean/Mathlib's standard ones, and no auxiliary hypotheses.
+\item The narrative prose above (including the two Remarks, which are commentary rather than part of the theorem) has not been independently assessed; only the Lean statement and proof were kernel verified.
+\item The generalization mentioned in the Remarks — that √a + √b is irrational whenever a, b are nonnegative rationals with √a irrational — was not formalized or verified; it is stated as informal commentary only.
+\item The proof relies on Mathlib's `irrational\_sqrt\_two`, `Real.sq\_sqrt`, and the standard ring/field structure of ℚ and ℝ; these are taken as given from the pinned Mathlib revision rather than reproved here.
+\end{itemize}
+
+\section*{Exact Lean statement}
+\begin{Verbatim}[fontsize=\small]
+theorem irrational_sqrt_two_add_sqrt_three : Irrational (Real.sqrt 2 + Real.sqrt 3)
+\end{Verbatim}
+
+\section*{Verification appendix}
+\textbf{Axioms used:} propext, Classical.choice, Quot.sound
+
+\begin{Verbatim}[fontsize=\small]
+Frozen Claim SHA-256: 371232aaf211dc1fa654c850779771e449297d01f99cc286d6fd1dd320cb1dfc
+Lean source SHA-256: 056705a85205dc64acf5084aedad9ceac0fb9f0253a5eaca534d02230eaa473a
+Verification SHA-256: 3083bfbb4a5dc6e6d043571a4a9909cae8ce115b8805662d16d63dcede1b143a
+Prompt set SHA-256: c418edba223323cd3bbb730ae110d1270be3d23e93994f25a6ddcf2c7f9436a6
+Tectonic bundle SHA-256: 6ffe055852f8faf66c0acbe1a7fb27f87b869a90bad1204f3bf4d9683f597c7c
+\end{Verbatim}
+
+\begin{samepage}
+\textbf{Run and tool identities}
+\begin{itemize}
+\item Run ID: 8ccb35a8-74bd-4af0-9015-71cf0b1dedca
+\item Model: claude-opus-5
+\item Backend: claude
+\item Runtime SDK: 0.2.127
+\item Lean: 4.33.1
+\item Mathlib: 0df444a360eaa60ab8c11dca51a86af692955474
+\item Tectonic: 0.16.9
+\item Tectonic bundle: https://data1.fullyjustified.net/tlextras-2022.0r0.tar
+\end{itemize}
+\end{samepage}
+
+\vfill
+\small
+Lean kernel verification, faithfulness (approved by the user and read back by an
+independent model before proof search), heuristic informal review, and document
+compilation are independent statuses. This trusted-development MVP
+does not sandbox generated Lean or TeX.
+
+\end{document}
