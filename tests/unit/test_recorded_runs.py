@@ -332,3 +332,50 @@ def test_a_directory_holding_one_run_is_audited_as_that_run(tmp_path) -> None:
 
     _batch(parent, [('submit_proof', {'proof': 'by exact True.intro'})], name='20260902-run')
     assert acceptance.validate_recorded_run(parent) == (f'{parent} holds 2 runs; name one of them',)
+
+
+def test_a_discarded_acceptance_cannot_be_the_proof_a_verified_grade_rests_on(tmp_path) -> None:
+    """The runner would not have graded a submission it discarded, so a record
+    that grades one is inconsistent however sound the axiom line beside it."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _verified(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    index = next(
+        i for i, event in enumerate(trajectory['events'])
+        if event.get('type') == 'tool' and event['name'] == 'submit_proof'
+    )
+    trajectory['events'].insert(index, {'type': 'discarded', 'name': 'submit_proof', 'why': 'late'})
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any("over proof.lean's own bytes" in issue for issue in issues)
+
+
+def test_a_staged_manifest_cannot_state_fewer_exchanges_than_the_provider_reported(tmp_path) -> None:
+    """The manifest is covered by no hash of its own; the provider's result
+    events in the trajectory are what its spend is held to."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    domain = importlib.import_module('hardy.domain')
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    (run_dir / 'trajectory.jsonl').write_text(
+        '\n'.join(json.dumps({'kind': kind, 'payload': {}}) for kind in ('claude.result', 'claude.result'))
+        + '\n',
+        encoding='utf-8',
+    )
+    manifest = domain.RunManifest(
+        run_id=UUID(int=1),
+        created_at=datetime(2026, 9, 1, tzinfo=UTC),
+        phase=domain.RunPhase.CANCELLED,
+        model='claude-opus-5',
+        prompt_set_sha256='p' * 64,
+        usage={'exchanges': 0, 'cost_usd': None, 'input_tokens': None, 'output_tokens': None, 'cache_write_tokens': None, 'cache_read_tokens': None},
+    )
+
+    issues = acceptance._live_staged_issues(run_dir, manifest)
+
+    assert any('states 0 exchanges but the trajectory holds 2' in issue for issue in issues)

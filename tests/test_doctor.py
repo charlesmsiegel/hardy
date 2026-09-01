@@ -186,3 +186,22 @@ def test_a_repinned_project_is_named_beside_what_hardy_pins(tmp_path: Path) -> N
     assert not check.required
     assert "v4.20.0" in check.detail and "master" in check.detail
     assert "results record what actually ran" in check.detail
+
+
+def test_an_unreadable_pin_file_is_a_named_check_not_a_traceback(tmp_path: Path) -> None:
+    """The check diagnoses a broken installation; it must not be what breaks on one."""
+    if os.geteuid() == 0:
+        pytest.skip("root reads unreadable files")
+    project = tmp_path / "lean"
+    project.mkdir()
+    (project / "lakefile.toml").write_text('name = "hardymath"\n', encoding="utf-8")
+    pin = project / "lean-toolchain"
+    pin.write_text("leanprover/lean4:v4.33.1\n", encoding="utf-8")
+    pin.chmod(0)
+    try:
+        check = named(doctor.run_checks(configuration(tmp_path)), "toolchain pin")
+    finally:
+        pin.chmod(0o644)
+
+    assert not check.ok and not check.required
+    assert "could not be read" in check.detail

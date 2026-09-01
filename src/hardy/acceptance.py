@@ -597,6 +597,17 @@ def _usage_issues(usage: Any, where: str) -> list[str]:
     return issues
 
 
+def _discarded(events: list[dict[str, Any]], index: int) -> bool:
+    """Whether the tool event at `index` carries the runner's discard marker.
+
+    The runner appends the marker just before the tool event of a submission
+    that finished after the deadline; either neighbour is accepted so the
+    order of the two appends is not something the audit has to know.
+    """
+    beside = events[max(0, index - 1) : index] + events[index + 1 : index + 2]
+    return any(item.get("type") == "discarded" for item in beside)
+
+
 def _axiom_line(
     events: list[dict[str, Any]], name: str, source_sha256: str
 ) -> tuple[str, ...] | None:
@@ -613,10 +624,13 @@ def _axiom_line(
     """
     accepted = [
         event
-        for event in events
+        for index, event in enumerate(events)
         if event.get("type") == "tool" and event.get("name") == "submit_proof"
         and isinstance(event.get("result"), dict) and event["result"].get("ok")
         and event["result"].get("source_sha256") == source_sha256
+        # An acceptance the deadline discarded was never graded, so it cannot
+        # be the one the grade rests on; the runner writes the marker beside it.
+        and not _discarded(events, index)
     ]
     if not accepted:
         return None
@@ -715,10 +729,8 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
         ]
         for index in accepted:
             # An acceptance the deadline discarded is recorded as such, beside
-            # it -- the runner appends the marker just before the tool event
-            # -- and one that was not is a verified proof graded as nothing.
-            beside = events[max(0, index - 1) : index] + events[index + 1 : index + 2]
-            if not any(item.get("type") == "discarded" for item in beside):
+            # it, and one that was not is a verified proof graded as nothing.
+            if not _discarded(events, index):
                 issues.append("an accepted submission was recorded but the run is not verified")
         axioms = result.get("axioms") or {}
         if axioms.get("status") == "clean":
@@ -813,6 +825,15 @@ def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
         kinds = [json.loads(line).get("kind") for line in trajectory.read_text(encoding="utf-8").splitlines()]
     if not any(str(kind).startswith(("claude.", "codex.")) for kind in kinds):
         issues.append("trajectory records no provider events; nothing a model did is on record")
+    # The manifest is covered by no hash of its own, so its spend is checked
+    # against the provider's reports the trajectory kept: every exchange the
+    # provider reported on is one the run asked for.
+    reported = sum(1 for kind in kinds if kind in ("claude.result", "codex.turn.completed"))
+    exchanges = manifest.usage.get("exchanges") if isinstance(manifest.usage, dict) else None
+    if reported and (not isinstance(exchanges, int) or exchanges < reported):
+        issues.append(
+            f"manifest states {exchanges!r} exchanges but the trajectory holds {reported} provider reports"
+        )
     if manifest.grades.formal is FormalStatus.KERNEL_VERIFIED:
         if "workflow.transition" not in kinds:
             issues.append("trajectory records no phase transitions")
