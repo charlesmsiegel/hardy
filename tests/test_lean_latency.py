@@ -255,10 +255,11 @@ def test_a_missing_manifest_is_named_rather_than_passed_over():
 def test_the_identity_names_the_lean_that_was_actually_invoked(tmp_path: Path):
     """Reusing the staged-run helper attributed every measurement to its pins.
 
-    `_environment_identity` hard-codes lean_version="4.32.0", which is right
-    where the toolchain is fixed and false here, where `--lean-command` picks
-    the compiler. A report naming a version nobody verified is worse evidence
-    than one admitting it does not know.
+    `_environment_identity` hard-coded lean_version="4.32.0" at the time --
+    right where the toolchain was fixed and false here, where `--lean-command`
+    picks the compiler. A report naming a version nobody verified is worse
+    evidence than one admitting it does not know. (`lean.environment_identity`
+    now asks the compiler too; this probe keeps its own reason-carrying shape.)
     """
     from hardy.latency import probe_toolchain
 

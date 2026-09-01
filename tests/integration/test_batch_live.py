@@ -183,9 +183,13 @@ def test_a_real_model_proves_a_real_theorem_through_the_kernel(
     assert trajectory["backend"] == "claude"
     assert trajectory["lean_command"] == list(live_config.lean_command)
     assert trajectory["lean_project"] == str(live_config.lean_project)
-    # The compiler and Mathlib revisions behind that project are not recorded
-    # here yet; FEATURES.md tracks pinning toolchain identities as outstanding.
+    # And the compiler and Mathlib revisions behind that project, by identity:
+    # what the toolchain answers here, not a literal (issue #81).
     assert _mathlib_olean(live_config.lean_project) is not None
+    toolchain = trajectory["toolchain"]
+    assert "unrecorded" not in toolchain, toolchain
+    assert toolchain["lean_version"] and toolchain["lean_commit"] and toolchain["mathlib_revision"]
+    assert result.toolchain == toolchain
     # The provider ran the loop and said how many turns it took.
     assert isinstance(result.turns, int) and result.turns >= 1
 

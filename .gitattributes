@@ -2,3 +2,7 @@
 # them fail at the shebang with "bad interpreter: bash^M", so they are LF
 # whatever the platform and whatever core.autocrlf says.
 *.sh text eol=lf
+# Recorded acceptance runs are evidence: their bytes are hashed by their
+# own manifests and rechecked by `hardy accept --recorded`, so no line-ending
+# conversion may touch them on any platform.
+acceptance/recorded/** -text

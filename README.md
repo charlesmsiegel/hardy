@@ -573,8 +573,14 @@ and to whichever problem is already there. A staged run is `hardy prove "every
 prime above two is odd"`, and its artifacts — request, frozen claim, trajectory,
 Lean source, verification, paper, and manifest — are written under `runs_root`.
 The retained batch check is `hardy batch examples/true.json --output
-hardy-output`. `hardy setup` finds and records the pinned toolchain, verifying
-the Tectonic download against its recorded digest before installing it. Global
+hardy-output`, and `examples/sqrt-two-plus-sqrt-three.json` is the nontrivial
+problem the recorded acceptance runs used. `hardy accept --recorded
+acceptance/recorded/*` rechecks those committed runs — manifest against
+trajectory against Lean source against document, the axiom line Lean printed
+against the graded verdict, the toolchain named by revision — with no model,
+network, or toolchain present. `hardy setup` finds and records the pinned
+toolchain, verifying the Tectonic download against its recorded digest before
+installing it. Global
 options such as `--model`, `--lean-command`, and `--latex-command` go before the
 subcommand. Use `uv run --extra test pytest` for the hermetic suite, which
 substitutes fake model, Lean, and LaTeX processes and does not establish a real
