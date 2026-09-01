@@ -501,3 +501,42 @@ def test_a_compiled_document_that_read_host_files_is_refused_by_the_audit(tmp_pa
     issues = acceptance._live_staged_issues(run_dir, manifest)
 
     assert any('read files outside the pinned bundle' in issue for issue in issues)
+
+
+def test_a_reader_result_without_a_session_is_not_independence_on_record(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    run_dir, manifest = _staged_record(
+        tmp_path,
+        [('claude.result', 'proving', 'one'), ('claude.result', 'awaiting_approval', None)],
+    )
+
+    issues = acceptance._live_staged_issues(run_dir, manifest)
+
+    assert any("reader's result records no provider session" in issue for issue in issues)
+
+
+def test_a_credited_review_with_no_reader_result_is_refused(tmp_path) -> None:
+    """The comparison of sessions has nothing to compare when the reader left
+    no result event, and silence must not pass as independence."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    domain = importlib.import_module('hardy.domain')
+
+    run_dir, manifest = _staged_record(tmp_path, [('claude.result', 'proving', 'one')])
+    review = domain.FaithfulnessVerdict(
+        claim_sha256='a' * 64,
+        reviewer_model='claude-opus-5',
+        prompt_sha256='d' * 64,
+        reviewer_backend='claude',
+        reviewer_isolation='tools-refused',
+        outcome=domain.FaithfulnessOutcome.AGREED,
+        review=domain.FaithfulnessReview(
+            formalization_entails_claim=True, claim_entails_formalization=True
+        ),
+    )
+    credited = manifest.model_copy(
+        update={'grades': domain.Grades(faithfulness=domain.FaithfulnessStatus.USER_APPROVED, faithfulness_review=review)}
+    )
+
+    issues = acceptance._live_staged_issues(run_dir, credited)
+
+    assert any('holds no reader result' in issue for issue in issues)
