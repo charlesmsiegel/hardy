@@ -872,18 +872,33 @@ def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
     # inherited the conversation which wrote the translation, and the
     # record cannot then support the faithfulness grade it carries.
     sessions: dict[str, set[str]] = {}
+    reader_results = 0
     if trajectory.exists():
         for line in trajectory.read_text(encoding="utf-8").splitlines():
             event = json.loads(line)
-            if event.get("kind") == "claude.result":
-                session = str((event.get("payload") or {}).get("session_id"))
-                sessions.setdefault(session, set()).add(str(event.get("phase")))
+            if event.get("kind") != "claude.result":
+                continue
+            phase = str(event.get("phase"))
+            if phase == RunPhase.AWAITING_APPROVAL.value:
+                reader_results += 1
+            session = (event.get("payload") or {}).get("session_id")
+            if not isinstance(session, str) or not session:
+                if phase == RunPhase.AWAITING_APPROVAL.value:
+                    issues.append("the faithfulness reader's result records no provider session")
+                continue
+            sessions.setdefault(session, set()).add(phase)
     for session, phases in sessions.items():
         if RunPhase.AWAITING_APPROVAL.value in phases and len(phases) > 1:
             issues.append(
                 "the faithfulness reader shares provider session "
                 f"{session} with another stage; its independence is not on record"
             )
+    # A review the manifest credits to a Claude reader owes a reader result
+    # with a session of its own; with no such event the comparison above has
+    # nothing to compare, and silence would pass as independence.
+    review = manifest.grades.faithfulness_review
+    if review is not None and review.reviewer_backend == "claude" and reader_results == 0:
+        issues.append("the manifest records a faithfulness review but the trajectory holds no reader result")
     if manifest.grades.document is DocumentStatus.TEX_COMPILED:
         log = run_dir / "writeup" / "compile.log"
         if log.exists():
