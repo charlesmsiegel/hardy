@@ -8,6 +8,10 @@
         {
             "id": "sqrt-two-irrational",
             "input": "The square root of 2 is irrational."
+        },
+        {
+            "id": "sqrt-two-plus-sqrt-three-irrational",
+            "input": "The real number sqrt(2) + sqrt(3) is irrational."
         }
     ]
 }

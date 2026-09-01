@@ -21,11 +21,12 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import ValidationError
 
+from . import audit
 from .codex_runtime import ProofSubmission
 from .config import Config
 from .domain import (
@@ -39,19 +40,22 @@ from .domain import (
     FrozenClaim,
     FrozenModel,
     RunManifest,
+    RunPhase,
     TerminalReason,
     VerificationEvidence,
 )
-from .lean import LeanCheckResult
+from .lean import DECLARATION_HEAD, LeanCheckResult
 from .process import ProcessResult
 from .prompts import PROMPT_SET_SHA256
 from .verifier import (
     ALLOWED_AXIOMS,
+    FORBIDDEN_TOKEN,
     VerificationResult,
     axiom_report_line,
     verification_source,
 )
 from .workflow import ProveRequest, ProveWorkflow
+from .workspace import declared_name, strip_comments
 from .writeup import RunIdentities, WriteupContent, build_writeup
 
 
@@ -544,3 +548,295 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
     elif pdf.exists():
         issues.append("failed document unexpectedly has a PDF artifact")
     return tuple(issues)
+
+
+# --- recorded runs ---------------------------------------------------------
+#
+# A run that was actually paid for and kept -- a real model, a real Lean, a
+# real Tectonic -- is checked here with none of the three present. What the
+# audit establishes is the same self-consistency `validate_run_consistency`
+# establishes for a staged run, plus the things a *recorded* run owes that a
+# fixture does not: a toolchain named by revision, a spend stated per field
+# or explicitly null, and an axiom line that came out of a Lean process
+# rather than out of the model's own account of itself.
+
+# The counters `Usage.summary` states, each present or `None`. A key that is
+# missing is a run that never said, which reads as free.
+USAGE_FIELDS = ("cost_usd", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens")
+IDENTITY_FIELDS = ("lean_version", "lean_commit", "mathlib_revision", "lake_manifest_sha256")
+# Batch terminal reasons that describe a run which produced no proof, honestly.
+BATCH_FAILURES = frozenset({"no_proof_submitted", "axioms_rejected", "turn_limit", "wall_clock_limit", "runtime_error"})
+
+
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _toolchain_issues(toolchain: Any, where: str) -> list[str]:
+    """A recorded run names its Lean and Mathlib by revision, or it is a story."""
+    if not isinstance(toolchain, dict) or not toolchain:
+        return [f"{where} records no toolchain identity"]
+    if "unrecorded" in toolchain:
+        return [f"{where} toolchain identity is unrecorded: {toolchain['unrecorded']}"]
+    missing = [field for field in IDENTITY_FIELDS if not toolchain.get(field)]
+    if missing:
+        return [f"{where} toolchain identity lacks " + ", ".join(missing)]
+    return []
+
+
+def _usage_issues(usage: Any, where: str) -> list[str]:
+    """Cost, the four counters, and the exchange count: present or explicitly null."""
+    if not isinstance(usage, dict):
+        return [f"{where} records no usage"]
+    issues = []
+    for field in ("exchanges", *USAGE_FIELDS):
+        if field not in usage:
+            issues.append(f"{where} usage does not state {field} (absent is not null)")
+        elif usage[field] is not None and not isinstance(usage[field], (int, float)):
+            issues.append(f"{where} usage states a non-numeric {field}")
+    return issues
+
+
+def _axiom_line(events: list[dict[str, Any]], name: str) -> tuple[str, ...] | None:
+    """What Lean printed for `#print axioms <name>` on the accepted submission.
+
+    Read from the diagnostics the trajectory kept of the last `submit_proof`
+    that Lean accepted and the deadline did not discard. Those diagnostics
+    are Lean's own output as the runner recorded it, which is the nearest a
+    directory without Lean in it has to an independent witness for the
+    verdict in `result.json`. None when no such line was recorded.
+    """
+    accepted = [
+        event
+        for event in events
+        if event.get("type") == "tool" and event.get("name") == "submit_proof"
+        and isinstance(event.get("result"), dict) and event["result"].get("ok")
+    ]
+    if not accepted:
+        return None
+    diagnostics = accepted[-1]["result"].get("diagnostics") or []
+    spoken = "\n".join(str(item.get("message", "")) for item in diagnostics if isinstance(item, dict))
+    reports = audit.parse(spoken, (name,))
+    return reports[0].axioms if reports else None
+
+
+def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
+    """Report every way a `hardy batch` output directory disagrees with itself.
+
+    The four artifacts were written by one run, so agreeing with each other
+    proves less than it looks; what the check refuses is the run that could
+    not have happened as described -- a `verified` with no `proof.lean`, a
+    `proof.lean` that does not end in the audit line the verdict rests on, a
+    proof body carrying a hole the audit never saw, a turn count for a run the
+    wall clock cut off before the provider could report one.
+    """
+    issues: list[str] = []
+    result_path = output_dir / "result.json"
+    trajectory_path = output_dir / "trajectory.json"
+    writeup_path = output_dir / "writeup.md"
+    proof_path = output_dir / "proof.lean"
+    for path in (result_path, trajectory_path, writeup_path):
+        if not path.exists():
+            issues.append(f"{path.name} is missing")
+    if issues:
+        return tuple(issues)
+    try:
+        result = _read_json(result_path)
+        trajectory = _read_json(trajectory_path)
+    except ValueError as error:
+        return (f"a batch record is not readable JSON: {error}",)
+    writeup = writeup_path.read_text(encoding="utf-8")
+    reason = result.get("terminal_reason")
+    if trajectory.get("terminal_reason") != reason:
+        issues.append("terminal reason differs between result.json and trajectory.json")
+    request = trajectory.get("request") or {}
+    declaration = str(request.get("declaration", ""))
+    head = DECLARATION_HEAD.match(declaration)
+    name = declared_name(head.group(1)) if head else None
+    if name is None:
+        issues.append("trajectory names no auditable declaration")
+
+    issues.extend(_toolchain_issues(trajectory.get("toolchain"), "trajectory"))
+    if result.get("toolchain") != trajectory.get("toolchain"):
+        issues.append("toolchain identity differs between result.json and trajectory.json")
+    issues.extend(_usage_issues(result.get("usage"), "result"))
+    if result.get("usage") != trajectory.get("usage"):
+        issues.append("usage differs between result.json and trajectory.json")
+    if "turns" not in result:
+        issues.append("result states no turn count (absent is not null)")
+    elif reason == "wall_clock_limit" and result["turns"] is not None:
+        # The provider's count rides on its final result, which a run Hardy's
+        # clock cancelled never receives. A count here was invented.
+        issues.append("a wall-clock-cancelled run reports a turn count the provider never delivered")
+    limits = trajectory.get("limits") or {}
+    for field in ("wall_seconds", "elapsed_seconds", "max_turns"):
+        if field not in limits:
+            issues.append(f"trajectory limits do not state {field}")
+    if not trajectory.get("model") or not trajectory.get("backend"):
+        issues.append("trajectory does not name the model and backend that ran")
+    events = trajectory.get("events") or []
+
+    if reason == "verified":
+        issues.extend(_verified_batch_issues(result, events, name, declaration, request, proof_path, writeup))
+    else:
+        if reason not in BATCH_FAILURES:
+            issues.append(f"unknown terminal reason: {reason!r}")
+        if result.get("formalization") != "not formalized":
+            issues.append("a run that did not verify is graded as formalized")
+        if result.get("proof") is not None:
+            issues.append("a run that did not verify names a proof")
+        if proof_path.exists():
+            issues.append("a run that did not verify left a proof.lean")
+        if "No completed artifact" not in writeup or f"Terminal reason: `{reason}`" not in writeup:
+            issues.append("writeup.md does not say the run produced no artifact and why")
+        accepted = [
+            index for index, event in enumerate(events)
+            if event.get("type") == "tool" and event.get("name") == "submit_proof"
+            and isinstance(event.get("result"), dict) and event["result"].get("ok")
+        ]
+        for index in accepted:
+            # An acceptance the deadline discarded is recorded as such, right
+            # after it; one that was not is a verified proof graded as nothing.
+            following = events[index + 1 : index + 3]
+            if not any(item.get("type") == "discarded" for item in following):
+                issues.append("an accepted submission was recorded but the run is not verified")
+        axioms = result.get("axioms") or {}
+        if axioms.get("status") == "clean":
+            issues.append("a run that did not verify carries a clean axiom audit")
+    return tuple(issues)
+
+
+def _verified_batch_issues(
+    result: dict[str, Any],
+    events: list[dict[str, Any]],
+    name: str | None,
+    declaration: str,
+    request: dict[str, Any],
+    proof_path: Path,
+    writeup: str,
+) -> list[str]:
+    from .lean import LeanTools
+    from .models import Request
+
+    issues: list[str] = []
+    proof = result.get("proof")
+    if result.get("formalization") != "kernel verified":
+        issues.append("a verified run is not graded kernel verified")
+    if not isinstance(proof, str) or not proof.strip():
+        issues.append("a verified run names no proof")
+        return issues
+    if FORBIDDEN_TOKEN.search(strip_comments(proof)):
+        issues.append("the verified proof carries a forbidden token")
+    if not proof_path.exists():
+        issues.append("a verified run has no proof.lean")
+        return issues
+    source = proof_path.read_text(encoding="utf-8")
+    if name is not None:
+        try:
+            tools = LeanTools(
+                Request(declaration, str(request.get("informal_claim", "")), tuple(request.get("imports") or ("Mathlib",))),
+                ("unused",),
+            )
+            expected = tools.source(proof, audit=True)
+        except ValueError as error:
+            issues.append(f"the request cannot be rebuilt: {error}")
+        else:
+            # Byte for byte: the file is what a reader rechecks, and it must be
+            # the request's declaration, the result's proof, and the audit line
+            # -- nothing the model chose in between.
+            if source != expected:
+                issues.append("proof.lean is not the request's declaration, the result's proof, and the audit line")
+        if not source.rstrip().endswith(axiom_report_line(name)):
+            issues.append("proof.lean does not end with the axiom report the verdict rests on")
+    if FORBIDDEN_TOKEN.search(strip_comments(source)):
+        issues.append("proof.lean carries a forbidden token")
+    audited = result.get("axioms") or {}
+    if audited.get("status") != "clean":
+        issues.append("a verified run's axiom audit is not clean")
+    declared = audited.get("declarations") or []
+    if len(declared) != 1 or (name is not None and declared[0].get("name") != name):
+        issues.append("the axiom audit does not report exactly the target declaration")
+    else:
+        found = tuple(declared[0].get("axioms") or ())
+        unexpected = tuple(axiom for axiom in found if axiom not in ALLOWED_AXIOMS)
+        if unexpected:
+            issues.append("the axiom audit admits unexpected axioms: " + ", ".join(unexpected))
+        if name is not None:
+            printed = _axiom_line(events, name)
+            if printed is None:
+                issues.append("the trajectory keeps no axiom report from Lean for the accepted submission")
+            elif set(printed) != set(found):
+                issues.append("the axiom line Lean printed differs from the audit verdict in result.json")
+    if "Formalization: **kernel verified**" not in writeup or "No completed artifact" in writeup:
+        issues.append("writeup.md does not grade the run as kernel verified")
+    return issues
+
+
+def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
+    """What a recorded staged run owes beyond self-consistency.
+
+    A fixture may leave these blank; a run that names a real model and a real
+    Lean may not. The verification record's diagnostics are Lean's own output
+    as the fresh verifier captured it -- the check is required to have *run*,
+    and the axiom set it printed is compared with the one the grade rests on.
+    """
+    issues: list[str] = []
+    if manifest.environment is None:
+        issues.append("manifest names no toolchain")
+    else:
+        issues.extend(_toolchain_issues(manifest.environment.model_dump(mode="json"), "manifest"))
+    if manifest.phase is not RunPhase.SETUP:
+        issues.extend(_usage_issues(manifest.usage, "manifest"))
+    trajectory = run_dir / "trajectory.jsonl"
+    kinds = []
+    if trajectory.exists():
+        kinds = [json.loads(line).get("kind") for line in trajectory.read_text(encoding="utf-8").splitlines()]
+    if not any(str(kind).startswith(("claude.", "codex.")) for kind in kinds):
+        issues.append("trajectory records no provider events; nothing a model did is on record")
+    if manifest.grades.formal is FormalStatus.KERNEL_VERIFIED:
+        if "workflow.transition" not in kinds:
+            issues.append("trajectory records no phase transitions")
+        verification_path = run_dir / "lean" / "verification.json"
+        evidence = manifest.grades.verification_evidence
+        if verification_path.exists() and evidence is not None:
+            try:
+                verification = VerificationResult.model_validate_json(verification_path.read_text(encoding="utf-8"))
+            except ValidationError:
+                verification = None
+            if verification is not None:
+                spoken = "\n".join(item.message for item in verification.diagnostics)
+                claim_path = run_dir / "formalization.json"
+                theorem = None
+                if claim_path.exists():
+                    theorem = FrozenClaim.model_validate_json(claim_path.read_text(encoding="utf-8")).proposal.theorem_name
+                reports = audit.parse(spoken, (theorem,)) if theorem else None
+                if reports is None:
+                    issues.append("the fresh verifier kept no axiom report from Lean; the check cannot be shown to have run")
+                elif set(reports[0].axioms) != set(evidence.axioms):
+                    issues.append("the axiom line the fresh Lean printed differs from the graded evidence")
+    if manifest.grades.document is DocumentStatus.TEX_COMPILED and manifest.environment is not None:
+        tex = run_dir / "writeup" / "paper.tex"
+        if tex.exists():
+            text = tex.read_text(encoding="utf-8")
+            for line in (f"Lean: {manifest.environment.lean_version}", f"Mathlib: {manifest.environment.mathlib_revision}"):
+                if line not in text:
+                    issues.append(f"paper.tex does not carry the identity line {line!r}")
+            if "Tectonic: unrecorded" in text:
+                issues.append("paper.tex says its compiler was not identified")
+    return issues
+
+
+def validate_recorded_run(run_dir: Path) -> tuple[str, ...]:
+    """Audit a kept run directory of either surface, with no model, network, or toolchain."""
+    if not run_dir.is_dir():
+        return (f"{run_dir} is not a directory",)
+    manifest_path = run_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = RunManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+        except ValidationError as error:
+            return (f"manifest.json does not validate: {error.error_count()} error(s)",)
+        return tuple(validate_run_consistency(run_dir, manifest)) + tuple(_live_staged_issues(run_dir, manifest))
+    if (run_dir / "result.json").exists():
+        return validate_batch_consistency(run_dir)
+    return ("not a Hardy run directory: neither manifest.json nor result.json is here",)

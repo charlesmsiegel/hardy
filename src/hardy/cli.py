@@ -1201,6 +1201,20 @@ def run_accept(args: argparse.Namespace) -> int:
     )
     from .workflow import ProveRequest
 
+    recorded = getattr(args, "recorded", None)
+    if recorded:
+        from .acceptance import validate_recorded_run
+
+        all_passed = True
+        for run_dir in recorded:
+            issues = validate_recorded_run(Path(run_dir))
+            print(f"Recorded run: {run_dir}")
+            for issue in issues:
+                print("CONSISTENCY ERROR: " + issue)
+            all_passed = all_passed and not issues
+        print("All recorded runs are self-consistent." if all_passed else "A recorded run failed its audit.")
+        return 0 if all_passed else 1
+
     config, config_path = _load_config_argument(getattr(args, "config", None))
     reviewer = getattr(args, "faithfulness_model", None)
     if reviewer:
@@ -1223,11 +1237,17 @@ def run_accept(args: argparse.Namespace) -> int:
     payload = json.loads(
         files("hardy").joinpath("acceptance_problems.json").read_text(encoding="utf-8")
     )
-    if payload.get("schema_version") != 1 or len(payload.get("problems", [])) != 2:
+    # Any number of problems, each with an id and an input: the set grows as
+    # the acceptance test does (it began with two trivial statements), and a
+    # count check here refused the third before it could run.
+    problems = payload.get("problems", [])
+    if payload.get("schema_version") != 1 or not problems or any(
+        not isinstance(item, dict) or not item.get("id") or not item.get("input") for item in problems
+    ):
         print("The checked-in acceptance problem set is invalid.")
         return 2
     all_passed = True
-    for problem in payload["problems"]:
+    for problem in problems:
         problem_id = problem["id"]
         print(f"\nAcceptance problem: {problem_id}")
         workflow = build_prove_workflow(
@@ -1514,6 +1534,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--force-budget-exhaustion-test",
         action="store_true",
         help="run the deterministic no-model path instead, and check its artifacts",
+    )
+    # The audit alone, over runs already on disk: no model, no network, no
+    # toolchain. This is how the recorded acceptance runs under
+    # `acceptance/recorded/` are rechecked without being re-run.
+    accept.add_argument(
+        "--recorded",
+        type=Path,
+        nargs="+",
+        metavar="RUN_DIR",
+        help="cross-check these recorded run directories (batch or staged) and run nothing",
     )
     batch = subparsers.add_parser("batch", help="run the earlier one-shot proof experiment")
     batch.add_argument("request", type=Path)
