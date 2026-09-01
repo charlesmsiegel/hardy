@@ -83,7 +83,18 @@ def render(name: str, /, **variables: object) -> str:
 BASE_INSTRUCTIONS = render("staged/base")
 DEVELOPER_INSTRUCTIONS = render("staged/developer")
 FORMALIZATION_PROMPT = render("staged/formalization")
-WRITEUP_PROMPT = render("staged/writeup")
+
+
+def writeup_prompt(*, verified: bool) -> str:
+    """The writeup stage's instructions, carrying the verification outcome.
+
+    The model on the proving thread is told about a rejection and never about
+    an acceptance -- the verifier's yes ends the loop -- so a writeup asked
+    for without this said "no acceptance is claimed here" under a heading
+    reading kernel verified. The grade is Hardy's, not the model's; the
+    prompt says which it will be.
+    """
+    return render("staged/writeup", verified=verified)
 STRUCTURE_INSTRUCTION = "\n\n" + render("staged/structure") + "\n"
 CHAT_SYSTEM_PROMPT = render("chat")
 # What the search façade tells the model about an empty `inspect_declarations`

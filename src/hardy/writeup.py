@@ -108,6 +108,18 @@ def tectonic_version(
     return found.group("version")
 
 
+MISSING_GLYPH = re.compile(r"^Missing character: (.*)$", re.M)
+
+
+def dropped_glyphs(log_text: str) -> tuple[str, ...]:
+    """Every character the engine reported it could not set, from its log.
+
+    Each line names the character and the font that lacked it. Empty means
+    every character of the source reached the page.
+    """
+    return tuple(dict.fromkeys(match.strip() for match in MISSING_GLYPH.findall(log_text)))
+
+
 def escape_tex_text(value: str) -> str:
     return "".join(TEX_ESCAPES.get(character, character) for character in value)
 
@@ -154,6 +166,10 @@ def build_writeup(
             )
         )
         pdf_path = output / "paper.pdf"
+        compiler_log = output / "paper.log"
+        log_text = (
+            compiler_log.read_text(encoding="utf-8", errors="replace") if compiler_log.exists() else ""
+        )
         succeeded = (
             process.returncode == 0
             and not process.timed_out
@@ -165,6 +181,11 @@ def build_writeup(
             and not process.interrupted
             and pdf_path.exists()
             and pdf_path.read_bytes().startswith(b"%PDF-")
+            # A glyph the font lacks is dropped from the page with only a log
+            # line to say so, and the exit code stays 0. A PDF whose exact
+            # Lean statement has lost its ∀ or its ℚ is not this document
+            # compiled; it is a different document, and it is refused.
+            and not dropped_glyphs(log_text)
         )
         final_status = DocumentStatus.TEX_COMPILED if succeeded else DocumentStatus.TEX_FAILED
         # A document that failed to compile must not be stored claiming it did,
@@ -187,14 +208,7 @@ def build_writeup(
             if succeeded
             else None
         )
-        compiler_log = output / "paper.log"
-        log_parts = [
-            compiler_log.read_text(encoding="utf-8", errors="replace")
-            if compiler_log.exists()
-            else "",
-            process.stdout,
-            process.stderr,
-        ]
+        log_parts = [log_text, process.stdout, process.stderr]
         log_artifact = store.write_text(
             PurePosixPath("writeup/compile.log"),
             "\n".join(part for part in log_parts if part).rstrip() + "\n",

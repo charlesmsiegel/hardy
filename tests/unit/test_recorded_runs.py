@@ -419,3 +419,72 @@ def test_a_failure_reason_needs_the_event_that_caused_it(tmp_path) -> None:
     issues = acceptance.validate_batch_consistency(output)
 
     assert any('records no TimeoutError event' in issue for issue in issues)
+
+
+def _staged_record(tmp_path, kinds_with_phase, log_text: str | None = None):
+    domain = importlib.import_module('hardy.domain')
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    (run_dir / 'trajectory.jsonl').write_text(
+        '\n'.join(
+            json.dumps({'kind': kind, 'phase': phase, 'payload': {'session_id': session}})
+            for kind, phase, session in kinds_with_phase
+        )
+        + '\n',
+        encoding='utf-8',
+    )
+    if log_text is not None:
+        (run_dir / 'writeup').mkdir()
+        (run_dir / 'writeup' / 'compile.log').write_text(log_text, encoding='utf-8')
+    manifest = domain.RunManifest(
+        run_id=UUID(int=1),
+        created_at=datetime(2026, 9, 1, tzinfo=UTC),
+        phase=domain.RunPhase.CANCELLED,
+        model='claude-opus-5',
+        prompt_set_sha256='p' * 64,
+        grades=domain.Grades(document=domain.DocumentStatus.TEX_COMPILED if log_text is not None else domain.DocumentStatus.NOT_ATTEMPTED),
+        usage={'exchanges': 3, 'cost_usd': None, 'input_tokens': None, 'output_tokens': None, 'cache_write_tokens': None, 'cache_read_tokens': None},
+    )
+    return run_dir, manifest
+
+
+def test_a_reader_on_the_formalizers_provider_session_is_not_independent(tmp_path) -> None:
+    """One session id across the formalizer and the reader leaves open that
+    the reader inherited the conversation which wrote the translation."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    run_dir, manifest = _staged_record(
+        tmp_path,
+        [('claude.result', 'proving', 'shared'), ('claude.result', 'awaiting_approval', 'shared'), ('claude.result', 'proving', 'shared')],
+    )
+
+    issues = acceptance._live_staged_issues(run_dir, manifest)
+
+    assert any('faithfulness reader shares provider session shared' in issue for issue in issues)
+
+
+def test_a_reader_on_its_own_session_passes(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    run_dir, manifest = _staged_record(
+        tmp_path,
+        [('claude.result', 'proving', 'one'), ('claude.result', 'awaiting_approval', 'two'), ('claude.result', 'proving', 'three')],
+    )
+
+    issues = acceptance._live_staged_issues(run_dir, manifest)
+
+    assert not any('shares provider session' in issue for issue in issues)
+
+
+def test_a_compiled_document_that_dropped_glyphs_is_refused_by_the_audit(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    run_dir, manifest = _staged_record(
+        tmp_path,
+        [('claude.result', 'proving', 'one')],
+        log_text='Missing character: There is no ∀ ("2200) in font ec-lmtt10!\n',
+    )
+
+    issues = acceptance._live_staged_issues(run_dir, manifest)
+
+    assert any('dropped characters the font lacked' in issue for issue in issues)

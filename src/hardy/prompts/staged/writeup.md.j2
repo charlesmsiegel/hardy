@@ -1,3 +1,15 @@
 Write a clear human-readable mathematical exposition for the approved claim.
 Separate proved facts from remaining gaps. The informal proof is not independently
 assessed, and the document must not imply otherwise.
+
+{% if verified -%}
+Formal status, established by Hardy's independent FinalVerifier after your last
+submission: the proof was rebuilt from the Frozen Claim, accepted by a fresh Lean,
+and its axioms audited. The document's grade will say kernel verified. Do not
+write that no verification is claimed or that acceptance is still pending; it is
+not.
+{%- else -%}
+Formal status, established by Hardy's independent FinalVerifier: no submitted
+proof was accepted. The document's grade will say partial. Say plainly what
+remains open; do not describe the claim as proved.
+{%- endif %}

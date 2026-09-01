@@ -314,3 +314,48 @@ def test_a_tectonic_that_cannot_be_asked_is_recorded_as_unidentified(tmp_path) -
     assert absent.startswith('unrecorded (') and 'could not be run' in absent
     assert 'exited 2' in failed
     assert 'named no version' in mute
+
+
+def test_a_compile_that_dropped_glyphs_is_a_failed_document(tmp_path) -> None:
+    """Tectonic exits 0 and writes a PDF after logging "Missing character";
+    the page then lacks the ∀ or the ℚ of the exact Lean statement, which is
+    not this document compiled."""
+    writeup = importlib.import_module('hardy.writeup')
+    domain = importlib.import_module('hardy.domain')
+    process = importlib.import_module('hardy.process')
+    storage = importlib.import_module('hardy.storage')
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    def compile_with_missing_glyphs(spec):
+        output = Path(spec.argv[spec.argv.index('--outdir') + 1])
+        output.mkdir(parents=True, exist_ok=True)
+        (output / 'paper.pdf').write_bytes(b'%PDF-1.5 fake')
+        (output / 'paper.log').write_text(
+            'Missing character: There is no ℚ ("211A) in font ec-lmr10!\n', encoding='utf-8'
+        )
+        return process.ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=0, stdout='', stderr='',
+            timed_out=False, output_overflow=False, duration_ms=1,
+        )
+
+    assert writeup.dropped_glyphs('Missing character: There is no ℚ ("211A) in font ec-lmr10!\nok\n') == (
+        'There is no ℚ ("211A) in font ec-lmr10!',
+    )
+    assert writeup.dropped_glyphs('all good\n') == ()
+    store = storage.RunStore.create(
+        tmp_path, 'glyphs', now=datetime(2026, 9, 1, tzinfo=UTC), run_id=UUID(int=3)
+    )
+    result = writeup.build_writeup(
+        _claim(domain),
+        writeup.WriteupContent(title='t', theorem_text='t', proof_text='p', known_gaps=()),
+        domain.Grades(),
+        None,
+        _identities(writeup, tmp_path),
+        store,
+        limits=domain.RunLimits(),
+        runner=compile_with_missing_glyphs,
+    )
+
+    assert result.status is domain.DocumentStatus.TEX_FAILED
+    assert 'Missing character' in (store.path / 'writeup' / 'compile.log').read_text(encoding='utf-8')

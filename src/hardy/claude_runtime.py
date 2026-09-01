@@ -21,6 +21,7 @@ import contextlib
 import json
 import queue
 import threading
+import uuid
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
@@ -167,6 +168,14 @@ class ClaudeAgentRuntime:
     ):
         self.model = model
         self.session_id = session_id
+        # The session a runtime that resumes nothing will open, chosen here
+        # rather than left to the CLI. Left to the CLI, a `claude` started
+        # inside another Claude Code session took that session's id from its
+        # environment, and every thread of a staged run -- the formalizer,
+        # the independent reader, the prover -- reported one id. Whether the
+        # reader then inherited the formalizer's conversation could not be
+        # told from the record, which is exactly what the record is for.
+        self._fresh_session_id = str(uuid.uuid4())
         self.max_turns, self.wall_seconds = max_turns, wall_seconds
         self.turns: int | None = None
         self.failure: str | None = None
@@ -211,6 +220,9 @@ class ClaudeAgentRuntime:
             setting_sources=[],
             cwd=str(self._cwd) if self._cwd else None,
             resume=self.session_id,
+            # Explicit for a new conversation, absent when resuming one: the
+            # CLI refuses a `--session-id` beside `--resume`.
+            session_id=self._fresh_session_id if self.session_id is None else None,
             # A declared bound has to reach the thing that owns the loop, or the
             # trajectory records a limit that nothing applied.
             max_turns=self.max_turns,
