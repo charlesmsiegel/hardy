@@ -1,0 +1,47 @@
+{
+  "approved_at": "2026-09-01T21:36:20.409897Z",
+  "content_hash": "67bbf6be3f6cce3fbcf0c18652aeedf6f61ed5d0c09a91ebedbfd36aa4077204",
+  "environment": {
+    "imports": [
+      "Mathlib"
+    ],
+    "lake_manifest_sha256": "a264846501a0dd3dac546c239ecb27cd2222f2bdcd3594829901310323d49fc8",
+    "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+    "lean_version": "4.33.1",
+    "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474"
+  },
+  "imports": [
+    "Mathlib"
+  ],
+  "original_text": "The real number sqrt(2) + sqrt(3) is irrational.",
+  "proposal": {
+    "assumptions": [
+      "None; the claim is unconditional.",
+      "Standard Mathlib coercion `ℚ → ℝ` is available as a `RatCast ℝ` instance.",
+      "`Real.sqrt 2` and `Real.sqrt 3` denote the principal nonnegative real square roots, so the sum is the intended real number ≈ 3.14626."
+    ],
+    "binders": "",
+    "domains": [
+      "ℝ — the real numbers, Mathlib's `Real`",
+      "ℚ — the rational numbers, Mathlib's `Rat`, mapped into ℝ by the canonical coercion `Rat.cast : ℚ → ℝ` (written `(q : ℝ)`)",
+      "`Real.sqrt : ℝ → ℝ` — the nonnegative square-root function on ℝ (value 0 on negative inputs, irrelevant here since 2 > 0 and 3 > 0)",
+      "The literals 2 and 3 elaborate as real numbers, forced by the argument type of `Real.sqrt`"
+    ],
+    "interpretation_choices": [
+      "Repair attempt 2: replaced the Mathlib predicate `Irrational` with its unfolded meaning `∀ q : ℚ, (q : ℝ) ≠ Real.sqrt 2 + Real.sqrt 3`. `Irrational` lives in `Mathlib.Data.Real.Irrational` and is not available under a restricted or fixed import set; the unfolded form needs only `Real`, `Rat`, the `ℚ → ℝ` cast, and `Real.sqrt`, so it elaborates under a much weaker import prefix. This is the definitional content of `Irrational x` (`x ∉ Set.range ((↑) : ℚ → ℝ)`), so nothing is weakened or strengthened.",
+      "Also dropped the dependence on `Set.range` and on set-membership notation, which the previous form pulled in implicitly through `Irrational`.",
+      "Used the ∀-with-≠ form rather than `¬ ∃ q : ℚ, ...` to avoid any negation/parenthesization ambiguity when the signature is assembled; the two are logically equivalent.",
+      "`binders` is left empty and the quantifier is carried inside `proposition`, so the statement remains closed; `proposition` contains only a Prop-valued term, never a `theorem` keyword or colon.",
+      "Removed the explicit `(2 : ℝ)` / `(3 : ℝ)` ascriptions: `Real.sqrt`'s argument type already forces the literals to ℝ, and fewer ascriptions means fewer places for elaboration to fail.",
+      "'sqrt(2)' and 'sqrt(3)' are read as principal (nonnegative) square roots, the standard convention; no other branch is asserted.",
+      "The claim is neither weakened (e.g. to 'not an integer') nor strengthened (e.g. to a degree-4 or algebraic-independence claim)."
+    ],
+    "proposition": "∀ q : ℚ, (q : ℝ) ≠ Real.sqrt 2 + Real.sqrt 3",
+    "quantifiers": [
+      "One explicit universal quantifier inside the proposition: `∀ q : ℚ`",
+      "The statement is closed (no free variables, no binders in the signature)"
+    ],
+    "restatement": "For every rational number q, the real number obtained by casting q into ℝ differs from the sum of the principal (nonnegative) square root of 2 and the principal square root of 3; equivalently, sqrt(2) + sqrt(3) is irrational.",
+    "theorem_name": "irrational_sqrt_two_add_sqrt_three"
+  }
+}
