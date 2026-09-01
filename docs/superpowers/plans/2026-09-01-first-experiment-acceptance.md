@@ -51,12 +51,12 @@ acceptance test.
       obligations for a staged one. No model, no network, no toolchain.
 - [x] `tests/integration/test_acceptance_live.py` behind `HARDY_LIVE=1`,
       four runs, artifacts kept under `HARDY_RECORD_DIR`.
-- [ ] Run the four runs; keep the artifacts under `acceptance/recorded/`;
+- [x] Run the four runs; keep the artifacts under `acceptance/recorded/`;
       a hermetic test that audits the committed copies and pins each run's
       terminal reason.
-- [ ] `FEATURES.md` § First experiment acceptance test: what the runs showed,
+- [x] `FEATURES.md` § First experiment acceptance test: what the runs showed,
       including anything that differed from the fake-process assumptions.
-- [ ] Commit, push, PR.
+- [x] Commit, push, PR (#135).
 
 ## Out of scope
 
