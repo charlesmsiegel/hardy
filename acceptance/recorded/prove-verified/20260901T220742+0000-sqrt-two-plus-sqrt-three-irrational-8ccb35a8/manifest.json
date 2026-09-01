@@ -1,19 +1,19 @@
 {
   "artifacts": {
-    "faithfulness-prompt.md": "59cd6bae5d6d42306fa1ebae634b9f4ee9348fc67958a5036d4aec97cacc23b5",
+    "faithfulness-prompt.md": "21ebcb1866ed30cb3dfec1f69ad0aceafc0292af2ef146b0e27ef6afba43b722",
     "faithfulness-schema.json": "a2529b3bba63e17092317fc7886ec5998987699303e79baaaed8202becfc7f18",
-    "faithfulness.json": "1f8bfbef5ab19488def6403dc9ac2d27feab8837787ce2941d1cd086b38165ef",
-    "formalization.json": "ae9f2cba336a05e304c7e457507c3fbd7c50710a846abf1668672e671234ad33",
-    "lean/Main.lean": "f329ece01705b287a80e34ef886918d96d5bb1427378fa3a720720c39a9482c2",
-    "lean/verification.json": "91adf1346635d142bc03a35ae0f19045e0c18f917b4fa2d738d7b9bdd51a32d9",
+    "faithfulness.json": "d31d7f9eb399aa856f3aec1a30b5a574019b88f028c97b9147a223c4c40bf492",
+    "formalization.json": "4b18562d7529f9b71b9d91610f71b412ae9ace718d7e208acb7e98c31b0fd852",
+    "lean/Main.lean": "056705a85205dc64acf5084aedad9ceac0fb9f0253a5eaca534d02230eaa473a",
+    "lean/verification.json": "cf6e3e1fb1f4363b620caa560e7567bee9b3f73608198e8f57f82b806ddf3a47",
     "request.md": "a3f27bdc87e0bf9bc097f75c0f6807817b6dc3b96dfbcb1f7ab714c4269c62f7",
-    "trajectory.jsonl": "784938cc6f09215c1c474dfd8dfe120ee5e3950bacab77bf599e4888cded4c52",
-    "writeup/compile.log": "9bc8d631d1d00ce1a1afc3d6b98d4d41b2b571e91e7b67260eccb99d3d891087",
-    "writeup/paper.pdf": "d145d951407dc4959bb2aaee1fa042086cab92a2cb7bed141b1b48bcf29a37e1",
-    "writeup/paper.tex": "0c03677c7d4dc12c84df7b34aa3d62ee5057a2fdc1cf6d3ed0d415f45ca5ca42"
+    "trajectory.jsonl": "27a762d58bd71c53aad6ef0d844f33389905b92c7a9d52cc1daf26ea5e78ea33",
+    "writeup/compile.log": "b39b3f87e893ba6b9f2b8c2244881f3cd1e8d281762283068e772249a1f4303f",
+    "writeup/paper.pdf": "395c0428e140e7777182e405f5c0e51b54c1721588a1ec755afe018bbd5d7326",
+    "writeup/paper.tex": "aba45e591cc84276edb294e33ea39a542ec1aea744e53d9a5ddffd2884d1ba15"
   },
-  "claim_sha256": "8c21bc2ba346c1a4f8dcc7de768d258522a9b51ba91290759377c2b299750dbc",
-  "created_at": "2026-09-01T21:51:04.510614Z",
+  "claim_sha256": "371232aaf211dc1fa654c850779771e449297d01f99cc286d6fd1dd320cb1dfc",
+  "created_at": "2026-09-01T22:07:42.016852Z",
   "environment": {
     "imports": [
       "Mathlib"
@@ -27,10 +27,10 @@
     "document": "tex_compiled",
     "faithfulness": "user_approved",
     "faithfulness_review": {
-      "claim_sha256": "8c21bc2ba346c1a4f8dcc7de768d258522a9b51ba91290759377c2b299750dbc",
+      "claim_sha256": "371232aaf211dc1fa654c850779771e449297d01f99cc286d6fd1dd320cb1dfc",
       "detail": "",
       "outcome": "agreed",
-      "prompt_sha256": "59cd6bae5d6d42306fa1ebae634b9f4ee9348fc67958a5036d4aec97cacc23b5",
+      "prompt_sha256": "21ebcb1866ed30cb3dfec1f69ad0aceafc0292af2ef146b0e27ef6afba43b722",
       "response_schema_sha256": "a2529b3bba63e17092317fc7886ec5998987699303e79baaaed8202becfc7f18",
       "review": {
         "claim_entails_formalization": true,
@@ -51,8 +51,8 @@
         "Classical.choice",
         "Quot.sound"
       ],
-      "claim_sha256": "8c21bc2ba346c1a4f8dcc7de768d258522a9b51ba91290759377c2b299750dbc",
-      "source_sha256": "f329ece01705b287a80e34ef886918d96d5bb1427378fa3a720720c39a9482c2",
+      "claim_sha256": "371232aaf211dc1fa654c850779771e449297d01f99cc286d6fd1dd320cb1dfc",
+      "source_sha256": "056705a85205dc64acf5084aedad9ceac0fb9f0253a5eaca534d02230eaa473a",
       "toolchain": {
         "imports": [
           "Mathlib"
@@ -63,7 +63,7 @@
         "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474"
       }
     },
-    "verification_sha256": "328fd2f404128c4c7dc35ddabc5c79c9aba3c1249f7738c23478f2e435dfe261"
+    "verification_sha256": "3083bfbb4a5dc6e6d043571a4a9909cae8ce115b8805662d16d63dcede1b143a"
   },
   "limits": {
     "active_seconds": 1800,
@@ -81,21 +81,21 @@
   },
   "model": "claude-opus-5",
   "phase": "completed",
-  "prompt_set_sha256": "777f19c97622765dc491943e1d658d959ad114a7301d9d8654a366a36abf5180",
-  "run_id": "7676b533-d3dd-4598-bbf0-477a2cce7b13",
+  "prompt_set_sha256": "c418edba223323cd3bbb730ae110d1270be3d23e93994f25a6ddcf2c7f9436a6",
+  "run_id": "8ccb35a8-74bd-4af0-9015-71cf0b1dedca",
   "schema_version": 5,
   "terminal_reason": null,
   "timings_ms": {
-    "active": 231264,
+    "active": 188062,
     "user_wait_excluded": 0
   },
   "usage": {
-    "cache_read_tokens": 484751,
-    "cache_write_tokens": 30889,
-    "cost_usd": 0.8031485,
+    "cache_read_tokens": 298088,
+    "cache_write_tokens": 15302,
+    "cost_usd": 0.5244949999999999,
     "exchanges": 5,
-    "input_tokens": 21,
-    "output_tokens": 9916,
+    "input_tokens": 14,
+    "output_tokens": 8741,
     "reported": {
       "cache_read_tokens": 5,
       "cache_write_tokens": 5,
@@ -103,6 +103,6 @@
       "input_tokens": 5,
       "output_tokens": 5
     },
-    "total_tokens": 525577
+    "total_tokens": 322145
   }
 }

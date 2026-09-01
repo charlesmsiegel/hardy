@@ -12,15 +12,15 @@ for its own approval is itself a divergence worth listing.
 
 The user's claim, exactly as they stated it:
 
-===HARDY-4ad6b8f6=== CLAIM
+===HARDY-be97c2ac=== CLAIM
 The real number sqrt(2) + sqrt(3) is irrational.
-===HARDY-4ad6b8f6===
+===HARDY-be97c2ac===
 
 The proposed Lean statement:
 
-===HARDY-4ad6b8f6=== LEAN
-theorem irrational_sqrt_two_add_sqrt_three : Irrational (Real.sqrt (2 : ℝ) + Real.sqrt (3 : ℝ))
-===HARDY-4ad6b8f6===
+===HARDY-be97c2ac=== LEAN
+theorem irrational_sqrt_two_add_sqrt_three : Irrational (Real.sqrt 2 + Real.sqrt 3)
+===HARDY-be97c2ac===
 
 Find where the Lean overstates, understates, or substitutes the claim. Things
 that have gone wrong before: a quantifier reordered, or an implicit "for all"

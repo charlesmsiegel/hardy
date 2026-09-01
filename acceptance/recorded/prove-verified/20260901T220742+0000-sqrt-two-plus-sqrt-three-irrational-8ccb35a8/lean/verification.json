@@ -7,8 +7,8 @@
   "diagnostics": [
     {
       "column": 0,
-      "file": "/tmp/hardy-lean-3ofc3c_4/Main.lean",
-      "line": 19,
+      "file": "/tmp/hardy-lean-je54rk72/Main.lean",
+      "line": 21,
       "message": "'irrational_sqrt_two_add_sqrt_three' depends on axioms: [propext, Classical.choice, Quot.sound]",
       "severity": "information"
     }
@@ -19,8 +19,8 @@
       "Classical.choice",
       "Quot.sound"
     ],
-    "claim_sha256": "8c21bc2ba346c1a4f8dcc7de768d258522a9b51ba91290759377c2b299750dbc",
-    "source_sha256": "f329ece01705b287a80e34ef886918d96d5bb1427378fa3a720720c39a9482c2",
+    "claim_sha256": "371232aaf211dc1fa654c850779771e449297d01f99cc286d6fd1dd320cb1dfc",
+    "source_sha256": "056705a85205dc64acf5084aedad9ceac0fb9f0253a5eaca534d02230eaa473a",
     "toolchain": {
       "imports": [
         "Mathlib"
@@ -32,7 +32,7 @@
     }
   },
   "reason": null,
-  "source_sha256": "f329ece01705b287a80e34ef886918d96d5bb1427378fa3a720720c39a9482c2",
-  "verification_sha256": "328fd2f404128c4c7dc35ddabc5c79c9aba3c1249f7738c23478f2e435dfe261",
+  "source_sha256": "056705a85205dc64acf5084aedad9ceac0fb9f0253a5eaca534d02230eaa473a",
+  "verification_sha256": "3083bfbb4a5dc6e6d043571a4a9909cae8ce115b8805662d16d63dcede1b143a",
   "verified": true
 }

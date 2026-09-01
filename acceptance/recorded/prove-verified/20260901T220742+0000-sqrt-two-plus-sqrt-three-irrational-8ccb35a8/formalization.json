@@ -1,0 +1,44 @@
+{
+  "approved_at": "2026-09-01T22:08:30.894928Z",
+  "content_hash": "371232aaf211dc1fa654c850779771e449297d01f99cc286d6fd1dd320cb1dfc",
+  "environment": {
+    "imports": [
+      "Mathlib"
+    ],
+    "lake_manifest_sha256": "a264846501a0dd3dac546c239ecb27cd2222f2bdcd3594829901310323d49fc8",
+    "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+    "lean_version": "4.33.1",
+    "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474"
+  },
+  "imports": [
+    "Mathlib"
+  ],
+  "original_text": "The real number sqrt(2) + sqrt(3) is irrational.",
+  "proposal": {
+    "assumptions": [
+      "None; the claim is unconditional and needs no hypotheses beyond Mathlib's standard theory of ℝ, ℚ, and Real.sqrt.",
+      "Real.sqrt is total in Mathlib (returning 0 on negative inputs); since 2 ≥ 0 and 3 ≥ 0, Real.sqrt 2 and Real.sqrt 3 are the genuine nonnegative square roots.",
+      "Availability of Mathlib's Irrational predicate (Mathlib.Analysis.SpecialFunctions.Pow / Mathlib.RingTheory.Int.Basic import chain, e.g. via `import Mathlib`)."
+    ],
+    "binders": "",
+    "domains": [
+      "The real numbers ℝ, with its standard complete ordered field structure and the nonnegative square root function Real.sqrt : ℝ → ℝ",
+      "The rational numbers ℚ, embedded into ℝ by the canonical cast Rat.cast : ℚ → ℝ",
+      "Numeric literals 2 and 3 elaborated as elements of ℝ via OfNat"
+    ],
+    "interpretation_choices": [
+      "Repair of the previous non-elaborating signature: the binders field previously carried the parenthesized prose '(no binders; closed statement)', which is not valid Lean binder syntax and would be spliced directly into `theorem <name> <binders> : <prop>`, causing elaboration to fail. The binders field is now the empty string, yielding `theorem irrational_sqrt_two_add_sqrt_three : Irrational (Real.sqrt 2 + Real.sqrt 3)`.",
+      "Fully qualified names are used (Real.sqrt, Irrational) so the statement elaborates without relying on `open Real`; no notation such as √ is used, avoiding dependence on a scoped notation being open.",
+      "'sqrt(2)' and 'sqrt(3)' are the principal (nonnegative) real square roots, formalized as Real.sqrt 2 and Real.sqrt 3 — not two-valued algebraic roots and not elements of an abstract field extension.",
+      "'is irrational' is Mathlib's predicate Irrational x, definitionally x ∉ Set.range ((↑) : ℚ → ℝ), which is exactly 'not equal to the cast of any rational'.",
+      "'+' is addition in ℝ, and the whole sum is the argument of Irrational, so the claim is about the single number Real.sqrt 2 + Real.sqrt 3 — neither weakened (e.g. to irrationality of Real.sqrt 2 alone) nor strengthened (e.g. to linear independence over ℚ or a general theorem about sums of square roots)."
+    ],
+    "proposition": "Irrational (Real.sqrt 2 + Real.sqrt 3)",
+    "quantifiers": [
+      "No user-visible quantifiers: the statement is a closed proposition about one specific real number, so the theorem takes no binders at all.",
+      "The quantification hidden inside 'irrational' is universal-negative: for every q : ℚ, (q : ℝ) ≠ Real.sqrt 2 + Real.sqrt 3, i.e. the number does not lie in Set.range ((↑) : ℚ → ℝ)."
+    ],
+    "restatement": "The sum of the square root of 2 and the square root of 3, taken as a real number, is not a rational number; that is, it cannot be written as the quotient of two integers.",
+    "theorem_name": "irrational_sqrt_two_add_sqrt_three"
+  }
+}
