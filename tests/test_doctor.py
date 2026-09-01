@@ -145,3 +145,44 @@ def test_the_suite_does_not_depend_on_a_claude_cli_being_installed(tmp_path: Pat
     checks = doctor.run_checks(configuration(tmp_path))
     assert named(checks, "claude cli").ok is False
     assert "npm install" in named(checks, "claude cli").detail
+
+
+def test_a_project_on_hardys_pins_is_reported_as_pinned(tmp_path: Path) -> None:
+    from hardy import installers
+
+    project = tmp_path / "lean"
+    project.mkdir()
+    (project / "lakefile.toml").write_text('name = "hardymath"\n', encoding="utf-8")
+    (project / "lean-toolchain").write_text(installers.LEAN_TOOLCHAIN + "\n", encoding="utf-8")
+    (project / "lake-manifest.json").write_text(
+        '{"packages": [{"name": "mathlib", "rev": "0df444a3", "inputRev": "'
+        + installers.MATHLIB_REVISION
+        + '"}]}',
+        encoding="utf-8",
+    )
+
+    check = named(doctor.run_checks(configuration(tmp_path)), "toolchain pin")
+
+    assert check.ok
+    assert not check.required
+    assert installers.MATHLIB_REVISION in check.detail
+
+
+def test_a_repinned_project_is_named_beside_what_hardy_pins(tmp_path: Path) -> None:
+    """Advisory rather than fatal -- a deliberately repinned project is a
+    supported way to run, and results record what actually ran -- but never
+    silent: a project on another Lean must not pass as the pinned one."""
+    project = tmp_path / "lean"
+    project.mkdir()
+    (project / "lakefile.toml").write_text('name = "hardymath"\n', encoding="utf-8")
+    (project / "lean-toolchain").write_text("leanprover/lean4:v4.20.0\n", encoding="utf-8")
+    (project / "lake-manifest.json").write_text(
+        '{"packages": [{"name": "mathlib", "rev": "abc", "inputRev": "master"}]}', encoding="utf-8"
+    )
+
+    check = named(doctor.run_checks(configuration(tmp_path)), "toolchain pin")
+
+    assert not check.ok
+    assert not check.required
+    assert "v4.20.0" in check.detail and "master" in check.detail
+    assert "results record what actually ran" in check.detail

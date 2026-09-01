@@ -1032,9 +1032,18 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
     from .prompts import PROMPT_SET_SHA256
     from .verifier import FinalVerifier
     from .workflow import ProveWorkflow
-    from .writeup import RunIdentities, build_writeup
+    from .writeup import RunIdentities, build_writeup, tectonic_version
 
-    environment = lean_module.environment_identity(config.lean_project)
+    # Identified by the Lean the verifier will run -- `config.lake env lean`,
+    # exactly as `FinalVerifier` spells it -- so the identity the claim is
+    # frozen under names the compiler that checks it and not the one on PATH.
+    environment = lean_module.environment_identity(
+        config.lean_project, lean_command=(str(config.lake), "env", "lean")
+    )
+    # Asked of the binary once, here, and written into every document: a
+    # version literal beside a real bundle digest read as a pinned toolchain
+    # while describing whatever release the machine happened to have.
+    compiler_version = tectonic_version(config.tectonic, config.limits)
     lean = LeanService(
         lake=config.lake,
         lean_project=config.lean_project,
@@ -1057,7 +1066,7 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
             prompt_set_sha256=PROMPT_SET_SHA256,
             lean_version=environment.lean_version,
             mathlib_revision=environment.mathlib_revision,
-            tectonic_version="0.16.9",
+            tectonic_version=compiler_version,
             tectonic_executable=config.tectonic,
             tectonic_bundle=config.tectonic_bundle,
             tectonic_bundle_sha256=config.tectonic_bundle_sha256,

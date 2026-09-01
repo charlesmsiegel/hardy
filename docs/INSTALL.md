@@ -104,9 +104,14 @@ installer is cheap and safe.
    `hardy` too) and re-run the installer after moving it.
 3. **`lake`** — installed through [elan](https://github.com/leanprover/elan),
    the Lean toolchain manager, which supplies `lake`, `lean`, and `elan`.
-4. **A shared Mathlib project** — a Lake project pinned to Mathlib's own
-   toolchain, with Mathlib's prebuilt cache fetched (`lake exe cache get`).
-   This is the long step: several gigabytes and typically 10–30 minutes.
+4. **A shared Mathlib project** — a Lake project pinned to one Lean release
+   and one Mathlib tag (the values in `scripts/lib/common.sh`, which
+   `hardy.installers` and the Windows installer repeat), with Mathlib's
+   prebuilt cache fetched (`lake exe cache get`). This is the long step:
+   several gigabytes and typically 10–30 minutes. Every recorded run names the
+   Lean version and commit, the Mathlib revision, and the manifest digest it
+   actually ran against, and `hardy doctor` says when a project has been
+   repinned away from these.
 5. **`pdflatex`** — a LaTeX subset large enough for Hardy's writeups
    (`amsmath`, `amsthm`, `amssymb`, `geometry`, `hyperref`). Use `--full-latex`
    for the distribution's complete TeX instead.

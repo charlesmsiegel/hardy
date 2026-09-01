@@ -925,8 +925,24 @@ Priority labels are sequencing hints:
   TeX are skipped there for time and disk; everything else — Python discovery,
   the environment, the wheel, the shim, PATH, elan, the config file, and a
   deterministic acceptance run of the installed command — is exercised.
-- **Next:** pin the Lean toolchain, Mathlib revision, and TeX package set by
-  identity so an installation is reproducible and can be recorded in results.
+- **Now (implemented):** the Lean toolchain and Mathlib revision are pinned by
+  identity — one Lean release and one Mathlib tag, held in
+  `scripts/lib/common.sh`, `scripts/install-windows.ps1`, and
+  `hardy.installers`, with a test that keeps the three in agreement — and the
+  installers write the shared project from those pins rather than letting
+  `lake init` require whatever Mathlib's default branch holds. The TeX side was
+  already a checksum-pinned Tectonic bundle. A result records what it actually
+  ran against, not what was pinned: the Lean version and commit are asked of the
+  compiler the run invokes, the Mathlib revision is read from the resolved
+  manifest, and the Tectonic version is asked of the binary. `hardy batch`
+  writes that identity into `trajectory.json`, `result.json`, and `writeup.md`;
+  `hardy prove` freezes it into the claim and the manifest as before, only now
+  from the machine instead of from constants. A compiler that cannot be
+  identified is a refusal (`prove`) or an `unrecorded` field naming the reason
+  (`batch`, the Tectonic line), never a literal standing in for a measurement.
+  `hardy doctor` reports a project that has drifted from the pins as advisory,
+  since running against a deliberately repinned project is supported and the
+  record says which one it was.
 
 ## Safety and operations
 

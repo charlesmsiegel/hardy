@@ -37,7 +37,6 @@ import hashlib
 import json
 import os
 import platform
-import re
 import shlex
 import statistics
 from collections.abc import Callable
@@ -46,7 +45,7 @@ from pathlib import Path
 from pydantic import NonNegativeInt
 
 from .domain import EnvironmentIdentity, FrozenModel
-from .lean import DECLARATION_NAME, Elaboration, elaborate
+from .lean import DECLARATION_NAME, LEAN_COMMIT, LEAN_VERSION, Elaboration, elaborate
 from .process import ProcessResult, ProcessSpec, run_process
 
 # How many probes a measurement takes when the caller does not say. The first
@@ -70,15 +69,10 @@ DEFAULT_THRESHOLD = 0.25
 MINIMUM_SAMPLES = 3
 
 
-# `Lean (version 4.32.0, x86_64-unknown-linux-gnu, commit 8c9756b28d64, Release)`.
-# Matched as two independent fields rather than one pattern: real builds put a
-# target triple between them, and requiring `, commit` to follow the version
-# directly failed on exactly the compilers this is meant to identify -- leaving
-# the identity `unrecorded` beside a perfectly readable manifest.
-# Both halves are still required; an identity carrying one and inventing the
-# other is the failure this whole helper exists to avoid.
-LEAN_VERSION = re.compile(r"version (?P<version>[^\s,)]+)")
-LEAN_COMMIT = re.compile(r"commit (?P<commit>[0-9a-fA-F]+)")
+# `LEAN_VERSION` and `LEAN_COMMIT` are `hardy.lean`'s: the staged path now asks
+# the compiler the same question this probe does, and two parsers of one
+# format would drift apart on exactly the builds one of them had been fixed
+# for.
 
 
 class ToolchainProbe(FrozenModel):
@@ -137,12 +131,15 @@ def probe_toolchain(
 ) -> ToolchainProbe:
     """Identify the Lean that is about to be probed, or return None.
 
-    Deliberately not `cli._environment_identity`, which is where this started
-    and which is wrong here: its `lean_version` and `lean_commit` are literal
-    constants, correct for the staged path whose Lean is fixed, and false for
-    this command whose `--lean-command` is configurable. A report attributing
-    someone else's compiler to Lean 4.32.0 is worse evidence than one
-    admitting it does not know, because only the second can be caught.
+    This is where asking the compiler started. `cli._environment_identity`,
+    which `lean.environment_identity` replaced, held `lean_version` and
+    `lean_commit` as literal constants -- correct for one machine and false
+    for this command, whose `--lean-command` is configurable. A report
+    attributing someone else's compiler to Lean 4.32.0 is worse evidence than
+    one admitting it does not know, because only the second can be caught.
+    Both helpers now read the same way; this one keeps the reason for a
+    failure rather than raising, because a latency report is still worth
+    printing with its identity marked `unrecorded`.
 
     So the version is asked of the binary actually being invoked, and the
     Mathlib revision is read from the manifest actually on disk. If either is

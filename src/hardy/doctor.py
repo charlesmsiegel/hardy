@@ -59,6 +59,39 @@ def _lean_project_check(config: Config) -> Check:
     return Check("lean project", True, str(project))
 
 
+def _toolchain_pin_check(config: Config) -> Check:
+    """Whether the project is the one Hardy pins, said rather than assumed.
+
+    Advisory, not required: running against a project someone deliberately
+    repinned is supported, and every result records the identity it actually
+    ran against. What is not supported is not knowing -- so a project on a
+    different Lean or Mathlib is named here beside what Hardy pins.
+    """
+    from .installers import LEAN_TOOLCHAIN, MATHLIB_REVISION
+
+    project = config.lean_project
+    if project is None or not project.is_dir():
+        return Check("toolchain pin", True, "no configured project to compare against Hardy's pins", required=False)
+    drift = []
+    pin = project / "lean-toolchain"
+    pinned = pin.read_text(encoding="utf-8").strip() if pin.is_file() else None
+    if pinned != LEAN_TOOLCHAIN:
+        drift.append(f"lean-toolchain is {pinned!r}, Hardy pins {LEAN_TOOLCHAIN!r}")
+    manifest = project / "lake-manifest.json"
+    requested = None
+    if manifest.is_file():
+        try:
+            packages = json.loads(manifest.read_text(encoding="utf-8")).get("packages", [])
+            requested = next((item.get("inputRev") for item in packages if item.get("name") == "mathlib"), None)
+        except (ValueError, AttributeError):
+            requested = None
+    if requested != MATHLIB_REVISION:
+        drift.append(f"Mathlib is required at {requested!r}, Hardy pins {MATHLIB_REVISION!r}")
+    if drift:
+        return Check("toolchain pin", False, "; ".join(drift) + " (results record what actually ran)", required=False)
+    return Check("toolchain pin", True, f"{LEAN_TOOLCHAIN} with Mathlib {MATHLIB_REVISION}", required=False)
+
+
 def _subscription_checks() -> list[Check]:
     """Hardy authenticates as Claude Code does, so this is what it needs.
 
@@ -141,6 +174,7 @@ def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
     checks = [
         Check("python", sys.version_info >= (3, 11), f"{sys.version.split()[0]} at {sys.executable}"),
         _lean_project_check(config),
+        _toolchain_pin_check(config),
     ]
 
     lean_executable = config.lean_command[0]

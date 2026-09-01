@@ -95,6 +95,11 @@ class RunResult:
     # exists to stop a record saying.
     usage: dict[str, Any]
     warnings: list[str] = field(default_factory=list)
+    # The Lean and Mathlib the verdict was computed against, shaped like
+    # `domain.EnvironmentIdentity`, or `{"unrecorded": <why>}` when the run
+    # could not identify them. Never absent and never a literal: a `verified`
+    # beside no toolchain is a claim about a Lean nobody can name.
+    toolchain: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

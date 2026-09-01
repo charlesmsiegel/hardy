@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from . import audit
 from .chat import provenance
 from .claude_runtime import TurnLimitReached
-from .lean import LeanToolResult, LeanTools
+from .lean import LeanToolResult, LeanTools, environment_identity
 from .models import Request, RunResult, ToolResult
 from .prompts import BATCH_SYSTEM_PROMPT, batch_task_prompt
 from .usage import Usage
@@ -65,8 +65,43 @@ def _audited(result: LeanToolResult, lean: LeanTools) -> tuple[ToolResult, audit
     return result, verdict, None
 
 
-def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools, output_dir: Path, *, max_turns: int = 8, wall_seconds: float = 300) -> RunResult:
+def identify_toolchain(lean: LeanTools) -> dict[str, Any]:
+    """The Lean and Mathlib this run's checks answer for, or why it is not known.
+
+    `lean_command` names a program and `lean_project` a directory; neither is
+    the identity of what elaborated the proof, and two projects on different
+    Mathlib revisions answer to both identically. So the identity is asked of
+    the project and the compiler -- the same question the staged path asks --
+    and a run that cannot answer it records the reason. Never a guess, and
+    never silent: `{"unrecorded": ...}` is a finding the acceptance audit can
+    refuse, where a missing key is one it would have to assume.
+    """
+    try:
+        identity = environment_identity(lean.project, lean_command=tuple(lean.lean_command))
+    except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
+        return {"unrecorded": str(error) or type(error).__name__}
+    return identity.model_dump(mode="json")
+
+
+def describe_toolchain(toolchain: dict[str, Any] | None) -> str:
+    """The toolchain block of `writeup.md`, in words a reader can quote."""
+    if not toolchain:
+        return "Not recorded."
+    if "unrecorded" in toolchain:
+        return f"Not identified: {toolchain['unrecorded']}"
+    return (
+        f"- Lean: {toolchain.get('lean_version')} (commit {toolchain.get('lean_commit')})\n"
+        f"- Mathlib: {toolchain.get('mathlib_revision')}\n"
+        f"- Lake manifest SHA-256: {toolchain.get('lake_manifest_sha256')}"
+    )
+
+
+def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools, output_dir: Path, *, max_turns: int = 8, wall_seconds: float = 300, toolchain: dict[str, Any] | None = None) -> RunResult:
     output_dir.mkdir(parents=True, exist_ok=True)
+    # Before the first turn, so a run the wall clock cuts short still says
+    # what it ran against; and asked rather than trusted from the caller when
+    # nobody said.
+    toolchain = identify_toolchain(lean) if toolchain is None else toolchain
     events: list[dict[str, Any]] = []
     found: dict[str, Any] = {"result": None, "proof": None, "verdict": None}
     # A submission Lean accepted and the audit then refused. Kept so the terminal
@@ -194,7 +229,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     formal = "kernel verified" if final else "not formalized"
     informal = "not assessed"
     axioms = verdict.as_dict() if final and verdict is not None else refused["record"] or {"status": "not audited"}
-    result = RunResult(reason, formal, informal, proof if final else None, final.output if final else "No hole-free proof was accepted.", axioms, turns, spent.summary(), [WARNING])
+    result = RunResult(reason, formal, informal, proof if final else None, final.output if final else "No hole-free proof was accepted.", axioms, turns, spent.summary(), [WARNING], toolchain)
     if final and proof:
         (output_dir / "proof.lean").write_text(lean.source(proof, audit=True), encoding="utf-8")
     # The grade and what it rests on, together. "kernel verified" beside a
@@ -204,10 +239,10 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         if final and verdict is not None and verdict.reports
         else audit.summarise(axioms)
     )
-    writeup = f"# Hardy proof result\n\n## Claim\n\n{request.informal_claim}\n\n## Exact Lean statement\n\n```lean\n{request.declaration}\n```\n\n## Grades\n\n- Formalization: **{formal}**\n- Informal completeness: **{informal}**\n- Audited axioms: {stands_on}\n\n## Limits\n\n{WARNING}\n"
+    writeup = f"# Hardy proof result\n\n## Claim\n\n{request.informal_claim}\n\n## Exact Lean statement\n\n```lean\n{request.declaration}\n```\n\n## Grades\n\n- Formalization: **{formal}**\n- Informal completeness: **{informal}**\n- Audited axioms: {stands_on}\n\n## Toolchain\n\n{describe_toolchain(toolchain)}\n\n## Limits\n\n{WARNING}\n"
     if not final:
         writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
-    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds, "turns_enforced_by": "provider sdk", "wall_clock_enforced_by": "hardy", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "usage": spent.summary(), "events": events, "terminal_reason": reason})
+    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds, "turns_enforced_by": "provider sdk", "wall_clock_enforced_by": "hardy", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "usage": spent.summary(), "events": events, "terminal_reason": reason})
     _write_json(output_dir / "result.json", result.as_dict())
     return result

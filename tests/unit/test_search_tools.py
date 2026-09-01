@@ -39,7 +39,15 @@ def _lake(tmp_path: Path) -> Path:
     """
     lake = tmp_path / 'bin' / 'lake'
     lake.parent.mkdir(parents=True, exist_ok=True)
-    lake.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+    # It answers `--version` the way real Lean does, because the environment
+    # identity is now asked of the binary rather than written as a literal.
+    lake.write_text(
+        '#!/bin/sh\n'
+        "printf 'Lean (version 4.32.0, x86_64-unknown-linux-gnu, "
+        "commit 8c9756b28d64dab099da31a4c09229a9e6a2ef35, Release)\\n'\n"
+        'exit 0\n',
+        encoding='utf-8',
+    )
     lake.chmod(0o755)
     return lake
 
@@ -228,7 +236,13 @@ def test_a_relative_lake_resolves_where_the_child_will_run_it(tmp_path) -> None:
     project = _project(tmp_path)
     lake = project / 'bin' / 'lake'
     lake.parent.mkdir(parents=True, exist_ok=True)
-    lake.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+    lake.write_text(
+        '#!/bin/sh\n'
+        "printf 'Lean (version 4.32.0, x86_64-unknown-linux-gnu, "
+        "commit 8c9756b28d64dab099da31a4c09229a9e6a2ef35, Release)\\n'\n"
+        'exit 0\n',
+        encoding='utf-8',
+    )
     lake.chmod(0o755)
     config = configuration.Config(
         root=tmp_path,

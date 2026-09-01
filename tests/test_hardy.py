@@ -734,3 +734,61 @@ def test_a_run_nobody_billed_reads_as_unreported_rather_than_free(
     # off; only the report is missing.
     assert spent["exchanges"] == 1
     assert not any(spent["reported"].values())
+
+
+def test_a_batch_run_records_the_toolchain_it_ran_against(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    """`lean_command` and `lean_project` name a program and a directory. Neither
+    is the identity of the compiler and library that accepted the proof, and a
+    recorded run without one is a story rather than evidence (issue #81)."""
+    identity = {
+        "lean_version": "4.33.1",
+        "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+        "mathlib_revision": "0df444a360eaa60ab8c11dca51a86af692955474",
+        "lake_manifest_sha256": "m" * 64,
+        "imports": ["Mathlib"],
+    }
+    result = run(proof_request, factory([call("submit_proof", {"proof": "by exact True.intro"})]), lean, tmp_path, max_turns=2, toolchain=identity)
+
+    assert result.toolchain == identity
+    assert json.loads((tmp_path / "trajectory.json").read_text())["toolchain"] == identity
+    assert json.loads((tmp_path / "result.json").read_text())["toolchain"] == identity
+    writeup = (tmp_path / "writeup.md").read_text()
+    assert "## Toolchain" in writeup
+    assert "Lean: 4.33.1 (commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6)" in writeup
+    assert "Mathlib: 0df444a360eaa60ab8c11dca51a86af692955474" in writeup
+
+
+def test_a_batch_run_that_cannot_identify_its_toolchain_says_why(tmp_path: Path, proof_request: Request, lean: LeanTools):
+    """No project means no manifest and no pinned compiler. The record says so
+    in a field the acceptance audit can refuse, rather than omitting the key
+    -- an absence reads as an oversight, a reason reads as a finding."""
+    run(proof_request, factory([call("submit_proof", {"proof": "by exact True.intro"})]), lean, tmp_path, max_turns=2)
+
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text())
+    assert "toolchain" in trajectory
+    assert "lean_project" in trajectory["toolchain"]["unrecorded"]
+    assert "Not identified" in (tmp_path / "writeup.md").read_text()
+
+
+def test_the_toolchain_is_asked_of_the_lean_the_run_invokes(tmp_path: Path, proof_request: Request):
+    """The batch runner's Lean is `lean_command` in `lean_project`, so that is
+    what its identity is asked of, not `lake` on PATH."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "lake-manifest.json").write_text(json.dumps({"packages": [{"name": "mathlib", "rev": "f" * 40}]}), encoding="utf-8")
+    versioned = tmp_path / "lean-with-version.py"
+    versioned.write_text(
+        "import sys, runpy\n"
+        "if sys.argv[-1] == '--version':\n"
+        "    print('Lean (version 4.30.0, x86_64-unknown-linux-gnu, commit 0123456789abcdef, Release)')\n"
+        "    raise SystemExit(0)\n"
+        f"runpy.run_path({str(Path(__file__).with_name('fake_lean.py'))!r}, run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    lean = LeanTools(proof_request, (sys.executable, str(versioned)), project=project)
+    run(proof_request, factory([call("submit_proof", {"proof": "by exact True.intro"})]), lean, tmp_path / "out", max_turns=2)
+
+    toolchain = json.loads((tmp_path / "out" / "trajectory.json").read_text())["toolchain"]
+    assert toolchain["lean_version"] == "4.30.0"
+    assert toolchain["lean_commit"] == "0123456789abcdef"
+    assert toolchain["mathlib_revision"] == "f" * 40

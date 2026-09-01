@@ -22,6 +22,14 @@ from .domain import FrozenModel
 from .process import ProcessResult, ProcessSpec
 
 ELAN_VERSION = "4.2.1"
+# The Lean and Mathlib every installer pins the shared project to, by identity
+# rather than by "whatever Mathlib's master says today". The shell and
+# PowerShell installers carry the same two strings, and a test holds all
+# three in agreement; a result records what it actually ran against
+# (`lean.environment_identity`), so a project someone repinned is reported as
+# what it is rather than as this. (Issue #81.)
+LEAN_TOOLCHAIN = "leanprover/lean4:v4.33.1"
+MATHLIB_REVISION = "v4.33.1"
 TECTONIC_VERSION = "0.16.9"
 TECTONIC_URL = (
     "https://github.com/tectonic-typesetting/tectonic/releases/download/"
