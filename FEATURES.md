@@ -966,21 +966,83 @@ The retained one-shot harness and its fake-process tests exercise this contract 
 a trivial theorem. The primary interactive shell additionally has fake-process
 coverage for linked Lean/LaTeX artifacts and assumption approval.
 
-`hardy batch` has since been run against a real Claude subscription and a real
-Mathlib, on a trivial theorem, and `tests/integration/test_batch_live.py` keeps
-that exercise repeatable behind `HARDY_LIVE=1`. All three terminal paths behaved:
-a real model chose `submit_proof` and reached `verified` with a kernel-checked
-`proof.lean` carrying its `#print axioms` line; a false statement was refused
-rather than graded; and a starved budget recorded `wall_clock_limit` rather than
-a provider error. Two things only a real run could show: the provider's turn
-count arrives with its final result, so a run the clock cancels has no count at
-all, and Hardy's wall clock cancels the exchange without killing a Lean check
-already running — so `elapsed_seconds` legitimately exceeds `wall_seconds`.
+`hardy batch` was first run against a real Claude subscription and a real
+Mathlib on a trivial theorem, and `tests/integration/test_batch_live.py` keeps
+that exercise repeatable behind `HARDY_LIVE=1`.
 
-What remains is an actual, recorded model + pinned Mathlib/LaTeX run on a
-nontrivial exploration, the same treatment for the staged `hardy prove` workflow
-and its document pipeline, plus pinning toolchain identities rather than
-accepting caller-provided commands.
+**Now (recorded):** the same claim on a nontrivial theorem, on both surfaces,
+against a toolchain named by revision. `tests/integration/test_acceptance_live.py`
+makes four runs behind `HARDY_LIVE=1`, and what they produced is committed under
+`acceptance/recorded/` and rechecked in the hermetic suite by
+`tests/integration/test_recorded_acceptance.py` and by
+`hardy accept --recorded`, with no model, network, or toolchain present. The
+problem is "sqrt 2 + sqrt 3 is irrational" (`acceptance/problems.json`,
+`examples/sqrt-two-plus-sqrt-three.json`): it needs an intermediate fact the
+model has to state itself and a Mathlib lemma it has to find, and its proof is
+not a one-liner. The toolchain was Lean 4.33.1 (commit `819816b2`), Mathlib
+`0df444a3` (the `v4.33.1` tag), Tectonic 0.16.9 with the pinned bundle; the
+model was `claude-opus-5` through the Claude Code CLI.
+
+1. **`hardy batch`, verified.** Nine provider turns, about two minutes, one
+   `inspect_goal`, two `search_declaration` calls, four `check_proof` rounds,
+   then `submit_proof`. The proof states three intermediate facts as `have`s
+   (that 6 is not a square, that `sqrt 6` is irrational via
+   `irrational_sqrt_natCast_iff`, and the expansion of `(sqrt 2 + sqrt 3)^2`).
+   `proof.lean` is byte for byte the request's declaration, the accepted proof,
+   and `#print axioms HardySqrtSum`; the trajectory keeps the hash of the source
+   the final check elaborated, and it is that file's. Lean's axiom line reads
+   `propext, Classical.choice, Quot.sound`, the audit verdict says the same, and
+   a fresh Lean started by the test says it again.
+2. **Staged `hardy prove`, verified, through the document pipeline** — the half
+   this section had said was never run live. The first formalization proposal
+   did not elaborate and was rejected without being shown for approval; the
+   second was frozen, read back by the independent reader on a tools-refused
+   thread and agreed with, and proved on the second official check after the
+   model called `lean_search_declarations` and `rank_premises`. It took a
+   different route from the batch run (reducing to `irrational_sqrt_two` through
+   the identity `2 q sqrt 2 = q^2 - 1`), which is the point of not asserting on
+   what the model said. The verifier rebuilt `lean/Main.lean` from the frozen
+   claim; `verification.json` carries the fresh Lean's own axiom line; the
+   manifest's environment equals the claim's; the compiled paper names the run,
+   the Lean, the Mathlib, and the Tectonic; and the manifest states the spend
+   per field.
+3. **A false statement, refused.** The negation of the theorem. The model used
+   `check_proof` to derive the *positive* statement inside a scratch proof,
+   reported that the claim is false, and never called `submit_proof`: terminal
+   reason `no_proof_submitted`, `not formalized`, no `proof.lean`, an axiom
+   record of `not audited`, and a writeup that says no artifact was produced.
+   Nothing was graded, partial or otherwise.
+4. **A starved budget.** Thirty seconds on the nontrivial problem ends as
+   `wall_clock_limit`, with the tool calls made before the cut in the
+   trajectory, `TimeoutError` recorded as Hardy's own deadline, no turn count,
+   no proof, and the toolchain still named.
+
+The record now carries the toolchain by revision on every surface (see
+"Installation and environment"), and cost, the four token counters, and the
+turn count are present or explicitly null in every run, never zero standing in
+for unreported.
+
+What the runs showed that the fake-process tests assume differently:
+
+- The provider's turn count arrives with its final result, so a run the wall
+  clock cancels has no count at all — `null`, not zero — and `hardy accept`
+  refuses a wall-clock-cancelled record that claims one.
+- Hardy's clock cancels the exchange without killing a Lean check already in
+  flight, so `elapsed_seconds` legitimately exceeds `wall_seconds`.
+- The SDK names an in-process tool `mcp__hardy__<name>` in the staged
+  trajectory; the tool-use record is under that name.
+- The staged workflow grades every run that did not verify as `partial`, so a
+  false statement given to `hardy prove` would be graded partial rather than
+  refused. That is a property of the loop (issue #23), recorded here rather
+  than changed; the refused-false-statement run is therefore a batch run.
+- A `check_proof` (not `submit_proof`) accepts a scratch proof containing
+  `sorry`, which is how the false-statement run derived the negation without
+  anything reaching the gate.
+
+What is not exercised by these four runs: multi-file saving and the
+rebuild-dependents refusal live only on the interactive surface, which neither
+`batch` nor `prove` offers. A recorded interactive run is a separate
+deliverable.
 
 ## Staged proving, verification, and acceptance
 

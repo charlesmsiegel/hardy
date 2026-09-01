@@ -507,8 +507,11 @@ and hostile-input tests.
    before another may be added, while one still resting on a hole owes none of
    it yet and skeletons accumulate freely, with every assumption stated in an
    appendix in both languages, and
-   nothing may be reported as finished until the artifacts carry all of it. The older one-shot proof loop remains as a dependency smoke path. A
-   real model/Mathlib acceptance run remains to be recorded.
+   nothing may be reported as finished until the artifacts carry all of it. The older one-shot proof loop remains as a dependency smoke path. The
+   real model/Mathlib acceptance runs are recorded under `acceptance/recorded/`
+   — both surfaces on a nontrivial theorem, a refused false statement, and a
+   starved budget — each naming the Lean, Mathlib and Tectonic it ran against
+   by revision, and rechecked without a model by `hardy accept --recorded`.
 2. **Honest experiment harness:** faithfulness and axiom checks, budgets, fixed
    evaluation inputs, reproducible identities, and useful failure reports.
 3. **Broaden capability:** literature, critique/repair, alternative runtimes and
