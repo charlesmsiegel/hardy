@@ -151,6 +151,9 @@ def test_a_wall_clock_cancelled_run_may_not_claim_a_turn_count(tmp_path) -> None
     output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
     for name in ('result.json', 'trajectory.json'):
         _rewrite(output / name, terminal_reason='wall_clock_limit')
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    trajectory['events'].append({'type': 'error', 'error': 'TimeoutError: the run exceeded its budget'})
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
     writeup = output / 'writeup.md'
     writeup.write_text(
         writeup.read_text(encoding='utf-8').replace('`no_proof_submitted`', '`wall_clock_limit`'),
@@ -379,3 +382,40 @@ def test_a_staged_manifest_cannot_state_fewer_exchanges_than_the_provider_report
     issues = acceptance._live_staged_issues(run_dir, manifest)
 
     assert any('states 0 exchanges but the trajectory holds 2' in issue for issue in issues)
+
+
+def test_a_discard_marker_condemns_only_the_submission_it_precedes(tmp_path) -> None:
+    """`tool(on-time), discarded, tool(late)` is what the runner writes when a
+    valid acceptance is followed by a late one; the valid one still stands."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _verified(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    index = next(
+        i for i, event in enumerate(trajectory['events'])
+        if event.get('type') == 'tool' and event['name'] == 'submit_proof'
+    )
+    late = dict(trajectory['events'][index])
+    trajectory['events'].insert(index + 1, {'type': 'discarded', 'name': 'submit_proof', 'why': 'late'})
+    trajectory['events'].insert(index + 2, late)
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    assert acceptance.validate_batch_consistency(output) == ()
+
+
+def test_a_failure_reason_needs_the_event_that_caused_it(tmp_path) -> None:
+    """A completed run relabelled as starved would otherwise pass on its
+    labels alone, with a trajectory that shows no deadline ever fired."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
+    for name in ('result.json', 'trajectory.json'):
+        _rewrite(output / name, terminal_reason='wall_clock_limit')
+    _rewrite(output / 'result.json', turns=None)
+    writeup = output / 'writeup.md'
+    writeup.write_text(
+        writeup.read_text(encoding='utf-8').replace('`no_proof_submitted`', '`wall_clock_limit`'),
+        encoding='utf-8',
+    )
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('records no TimeoutError event' in issue for issue in issues)

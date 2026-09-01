@@ -247,7 +247,18 @@ class ClaudeStagedRuntime:
             if self._sealed:
                 return
             if event.get("type") == "result":
-                self._spend = self._spend.record(event)
+                # One report per exchange, each stated for that exchange
+                # alone: `ClaudeAgentRuntime._ask` opens a fresh client per
+                # turn, so its reports do not accumulate the way a resumed
+                # interactive session's do (see `claude_runtime._blocks`). The
+                # ledger's differencing exists for running totals, and applied
+                # here it read the second of two exchanges as the increment
+                # over the first -- the recorded staged run's manifest stated
+                # $0.68 for five reports that sum to $0.78. Each report is
+                # therefore folded under its own key, so every figure counts
+                # whole.
+                exchange = {**event, "session_id": f"{event.get('session_id')}#{self._spend.turns + 1}"}
+                self._spend = self._spend.record(exchange)
             self._store.append("claude." + str(event.get("type", "event")), event, phase=phase)
 
     def _seal(self, phase: RunPhase = RunPhase.PROVING) -> None:
