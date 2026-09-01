@@ -373,3 +373,38 @@ def test_accept_takes_the_same_reviewer_override_as_prove() -> None:
     )
 
     assert args.faithfulness_model == 'gpt-reviewer'
+
+
+def test_a_lean_that_cannot_be_identified_is_a_recorded_setup_failure(tmp_path) -> None:
+    """Not a traceback: the identity probe runs before the workflow exists,
+    and a `lake` that answers `--version` with nothing used to escape
+    `run_prove` uncaught, leaving no manifest and no trajectory behind."""
+    cli = importlib.import_module('hardy.cli')
+    domain = importlib.import_module('hardy.domain')
+    workflow_module = importlib.import_module('hardy.workflow')
+    config = _staged_config(tmp_path)
+    config.lake.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+
+    workflow = cli.build_prove_workflow(config, tmp_path / 'config.toml')
+
+    class Terminal:
+        def acknowledge_unsafe_execution(self):
+            return True
+
+        def show_result(self, manifest):
+            pass
+
+    manifest = workflow.run(
+        workflow_module.ProveRequest(text='Two equals two.', model='claude-opus-5', problem_slug='unidentified'),
+        Terminal(),
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.SETUP_FAILURE
+    assert manifest.environment is None
+    run_dir = next(path for path in (tmp_path / 'runs').iterdir() if path.is_dir())
+    events = [
+        json.loads(line)
+        for line in (run_dir / 'trajectory.jsonl').read_text(encoding='utf-8').splitlines()
+    ]
+    setup = next(event for event in events if event['kind'] == 'workflow.setup')
+    assert 'named no Lean version' in setup['payload']['detail']
