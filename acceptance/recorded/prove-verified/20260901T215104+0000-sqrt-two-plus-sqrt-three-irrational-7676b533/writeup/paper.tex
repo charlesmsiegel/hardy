@@ -1,0 +1,161 @@
+\documentclass[11pt]{article}
+% Unicode fonts, because the statement and the prose carry Lean's symbols
+% (ℝ, ℚ, ∀, ≠, √, ⟨⟩) and the Latin Modern faces under T1 have no glyph for
+% them: Tectonic then logs "Missing character" and emits a PDF whose exact
+% Lean statement has silently lost its quantifier and its domains. DejaVu
+% covers every symbol the recorded runs used and ships in the pinned bundle.
+\usepackage{fontspec}
+\setmainfont{DejaVu Sans}
+\setmonofont{DejaVu Sans Mono}
+\usepackage[margin=1in]{geometry}
+\usepackage{fancyvrb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{HardyBlue}{RGB}{24,64,112}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.7em}
+\setlist[itemize]{leftmargin=1.5em}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\color{HardyBlue}\bfseries The Irrationality of √2 + √3\par}
+\vspace{1em}
+Formal status: Kernel verified\\
+Faithfulness: User approved; independently reviewed by claude-opus-5 on claude (agreed)\\
+Informal completeness: Not independently assessed\\
+Document status: TeX compiled
+\end{center}
+
+\hrule
+\vspace{1em}
+
+\section*{Theorem}
+The real number √2 + √3 is irrational; that is, there is no rational number q with q = √2 + √3.
+
+Formally (Lean 4 / Mathlib):
+
+    theorem irrational\_sqrt\_two\_add\_sqrt\_three :
+        Irrational (Real.sqrt (2 : ℝ) + Real.sqrt (3 : ℝ))
+
+Here `Irrational x` is Mathlib's definition `x ∉ Set.range ((↑) : ℚ → ℝ)`, i.e. x is not the image of any rational number under the canonical embedding ℚ ↪ ℝ.
+
+\section*{Approved interpretation}
+\begin{itemize}
+\item ℝ — the real numbers, Lean/Mathlib's `Real`
+\item ℚ — the rational numbers, entering only through Mathlib's `Irrational` predicate, defined as `x ∉ Set.range ((↑) : ℚ → ℝ)`
+\item `Real.sqrt : ℝ → ℝ` — the nonnegative square root function on the reals
+\item None explicit: the statement is a closed proposition about the single real number `Real.sqrt (2 : ℝ) + Real.sqrt (3 : ℝ)`.
+\item One universal quantifier is implicit inside `Irrational`: for every `q : ℚ`, `(q : ℝ) ≠ Real.sqrt 2 + Real.sqrt 3`.
+\item No hypotheses; the theorem is unconditional and has no binders.
+\item The numerals 2 and 3 are the real numbers 2 and 3, obtained via `OfNat ℝ`; they are ascribed as `(2 : ℝ)` and `(3 : ℝ)` so numeral elaboration is pinned rather than left to unification.
+\item `Real.sqrt` is Mathlib's total square-root function, which on nonnegative arguments returns the nonnegative root, so `Real.sqrt 2` and `Real.sqrt 3` are the intended principal roots.
+\item `Irrational` and `Real.sqrt` are available from Mathlib (`Mathlib.Analysis.SpecialFunctions.Sqrt` / `Mathlib.RingTheory.Int.Basic` transitively via `import Mathlib`); `Irrational` lives in the root namespace, so it is written unqualified.
+\item Repair applied: the binder field is now genuinely empty rather than a parenthetical English note, so the assembled signature is `theorem irrational\_sqrt\_two\_add\_sqrt\_three : Irrational (Real.sqrt (2 : ℝ) + Real.sqrt (3 : ℝ))` with nothing spurious between the name and the colon.
+\item Repair applied: explicit `(2 : ℝ)` and `(3 : ℝ)` type ascriptions on the numerals, and fully qualified `Real.sqrt`, to avoid any ambiguity in numeral or name elaboration.
+\item 'sqrt(2)' and 'sqrt(3)' are read as the principal (nonnegative) real square roots.
+\item 'is irrational' is formalized with Mathlib's `Irrational` predicate rather than an ad hoc `∀ p q : ℤ, q ≠ 0 → ...` statement; the two are equivalent over ℝ.
+\item The claim concerns the single sum `Real.sqrt 2 + Real.sqrt 3` (≈ 3.146), not the irrationality of the two summands separately, and asserts nothing about algebraic degree or minimal polynomials.
+\item No strengthening or weakening: the logical content is exactly the original claim.
+\end{itemize}
+
+\section*{Human-readable proof}
+\#\# Overview
+
+The argument is the classical one. A sum of two square roots is hard to attack directly, but squaring it collapses the two roots into a single one: (√2 + √3)² = 5 + 2√6. Rationality is preserved by squaring and by the field operations, so if √2 + √3 were rational then √6 would be rational too. Since 6 is not a perfect square, √6 is irrational, and the contradiction is complete.
+
+\#\# Preliminary: √6 is irrational
+
+We use the standard fact that for a natural number n, the real number √n is rational only when n is a perfect square. For n = 6 this gives irrationality directly, since 2² = 4 < 6 < 9 = 3², so 6 lies strictly between consecutive squares and is therefore not a square.
+
+For completeness, here is the self-contained descent argument for this particular case. Suppose √6 = a/b with integers a, b, b > 0, and with a/b in lowest terms. Then a² = 6b². The right-hand side is even, so a² is even, hence a is even; write a = 2a'. Substituting gives 4a'² = 6b², i.e. 2a'² = 3b². Now the left-hand side is even, so 3b² is even, and since 3 is odd, b² is even, hence b is even. So 2 divides both a and b, contradicting the assumption that a/b was in lowest terms. Therefore √6 is irrational.
+
+In the formal development this step is discharged by Mathlib's `norm\_num` extension for irrationality of square roots (`Mathlib.Tactic.NormNum.Irrational`), which certifies `Irrational (√6)` by exhibiting 6 as strictly between the consecutive squares 2² and 3².
+
+\#\# The main argument
+
+Suppose, for contradiction, that √2 + √3 is *not* irrational. Unfolding the definition, this means there exists a rational number q whose image in ℝ satisfies
+
+    (q : ℝ) = √2 + √3.
+
+We record three elementary facts about the square-root function on the nonnegative reals:
+
+1. (√2)² = 2, since 2 ≥ 0;
+2. (√3)² = 3, since 3 ≥ 0;
+3. √2 · √3 = √(2 · 3) = √6, using multiplicativity of √ on nonnegative arguments.
+
+Now square the supposed identity. Expanding the binomial and applying (1)–(3):
+
+    (q : ℝ)² = (√2 + √3)²
+            = (√2)² + 2·√2·√3 + (√3)²
+            = 2 + 2√6 + 3
+            = 5 + 2√6.
+
+Rearranging this real-number identity for √6 gives
+
+    √6 = ((q : ℝ)² − 5) / 2.
+
+The crucial point is that the right-hand side is the image of a *rational* number. Indeed, ℚ is a field and the embedding ℚ ↪ ℝ is a ring homomorphism, so the rational number r := (q² − 5)/2 — formed from q by squaring, subtracting 5, and dividing by 2, all inside ℚ — satisfies (r : ℝ) = ((q : ℝ)² − 5)/2 = √6. Hence √6 lies in the range of the embedding ℚ ↪ ℝ, i.e. √6 is rational.
+
+This contradicts the preliminary result that √6 is irrational. Therefore no such rational q exists, and √2 + √3 is irrational. ∎
+
+\#\# Remarks
+
+- The same argument shows more generally that √m + √n is irrational whenever mn is not a perfect square: squaring gives m + n + 2√(mn), so rationality of √m + √n would force rationality of √(mn).
+- The hypothesis that *mn* is a non-square is what does the work, not that m and n individually are non-squares. For instance √2 + √8 = 3√2 is still irrational, but that case is not covered by the mn-criterion (mn = 16 is a square) and needs a separate observation.
+- The proof never needs the sharper fact that √2 and √3 are individually irrational, nor any theory of field degrees or minimal polynomials; one squaring suffices.
+
+\#\# Formal status
+
+The Lean statement above was rebuilt from the Frozen Claim and checked by a fresh Lean 4 / Mathlib toolchain by Hardy's independent FinalVerifier, and its axiom dependencies were audited: the formal theorem is kernel verified. The formal proof follows the exposition step for step — it introduces the hypothetical rational q by unfolding `Irrational`, supplies (q² − 5)/2 as the rational witness for √6, establishes q² = 5 + 2√6 from `Real.sq\_sqrt` and `Real.sqrt\_mul`, and closes against `Irrational (√6)`.
+
+The English exposition in this document is a human-readable rendering of that formal argument. The prose itself — including the hand-written descent argument for √6 given above, which is an illustrative substitute for the `norm\_num`-certified step rather than a transcription of it — has not been independently machine-checked; only the Lean statement and proof carry that guarantee.
+
+\section*{Known gaps}
+\begin{itemize}
+\item The English exposition has not itself been machine-checked. Only the Lean theorem and its proof term were rebuilt and kernel verified; the prose is a human-readable rendering and could in principle diverge from the formal text in wording or emphasis.
+\item The self-contained parity/descent argument for the irrationality of √6 given in the 'Preliminary' section is presented for the reader's benefit and is not the route taken formally. The formal proof obtains `Irrational (√6)` from Mathlib's `norm\_num` irrationality extension, which certifies it by locating 6 strictly between the consecutive squares 2² and 3². The two arguments establish the same statement, but only the latter is the one that was verified.
+\item The generalization mentioned in the Remarks — that √m + √n is irrational whenever mn is not a perfect square — is stated without proof and was not formalized. Only the specific case m = 2, n = 3 is verified.
+\item The final rearrangement relies on the standard fact that the coercion ℚ → ℝ is a ring homomorphism, so that (q² − 5)/2 computed in ℚ maps to ((q : ℝ)² − 5)/2 in ℝ. This is used silently in the prose; in Lean it is discharged by `push\_cast` together with linear arithmetic, and is part of the verified proof, but a reader should note it is an appeal to the coercion's algebraic compatibility rather than an evident identification.
+\end{itemize}
+
+\section*{Exact Lean statement}
+\begin{Verbatim}[fontsize=\small]
+theorem irrational_sqrt_two_add_sqrt_three : Irrational (Real.sqrt (2 : ℝ) + Real.sqrt (3 : ℝ))
+\end{Verbatim}
+
+\section*{Verification appendix}
+\textbf{Axioms used:} propext, Classical.choice, Quot.sound
+
+\begin{Verbatim}[fontsize=\small]
+Frozen Claim SHA-256: 8c21bc2ba346c1a4f8dcc7de768d258522a9b51ba91290759377c2b299750dbc
+Lean source SHA-256: f329ece01705b287a80e34ef886918d96d5bb1427378fa3a720720c39a9482c2
+Verification SHA-256: 328fd2f404128c4c7dc35ddabc5c79c9aba3c1249f7738c23478f2e435dfe261
+Prompt set SHA-256: 777f19c97622765dc491943e1d658d959ad114a7301d9d8654a366a36abf5180
+Tectonic bundle SHA-256: 6ffe055852f8faf66c0acbe1a7fb27f87b869a90bad1204f3bf4d9683f597c7c
+\end{Verbatim}
+
+\begin{samepage}
+\textbf{Run and tool identities}
+\begin{itemize}
+\item Run ID: 7676b533-d3dd-4598-bbf0-477a2cce7b13
+\item Model: claude-opus-5
+\item Backend: claude
+\item Runtime SDK: 0.2.127
+\item Lean: 4.33.1
+\item Mathlib: 0df444a360eaa60ab8c11dca51a86af692955474
+\item Tectonic: 0.16.9
+\item Tectonic bundle: https://data1.fullyjustified.net/tlextras-2022.0r0.tar
+\end{itemize}
+\end{samepage}
+
+\vfill
+\small
+Lean kernel verification, faithfulness (approved by the user and read back by an
+independent model before proof search), heuristic informal review, and document
+compilation are independent statuses. This trusted-development MVP
+does not sandbox generated Lean or TeX.
+
+\end{document}
