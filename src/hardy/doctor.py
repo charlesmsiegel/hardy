@@ -74,7 +74,12 @@ def _toolchain_pin_check(config: Config) -> Check:
         return Check("toolchain pin", True, "no configured project to compare against Hardy's pins", required=False)
     drift = []
     pin = project / "lean-toolchain"
-    pinned = pin.read_text(encoding="utf-8").strip() if pin.is_file() else None
+    try:
+        pinned = pin.read_text(encoding="utf-8").strip() if pin.is_file() else None
+    except OSError as error:
+        # The check is about a broken installation; it must not be what
+        # breaks on one. Named rather than raised.
+        return Check("toolchain pin", False, f"{pin} could not be read: {error}", required=False)
     if pinned != LEAN_TOOLCHAIN:
         drift.append(f"lean-toolchain is {pinned!r}, Hardy pins {LEAN_TOOLCHAIN!r}")
     manifest = project / "lake-manifest.json"
@@ -83,6 +88,8 @@ def _toolchain_pin_check(config: Config) -> Check:
         try:
             packages = json.loads(manifest.read_text(encoding="utf-8")).get("packages", [])
             requested = next((item.get("inputRev") for item in packages if item.get("name") == "mathlib"), None)
+        except OSError as error:
+            return Check("toolchain pin", False, f"{manifest} could not be read: {error}", required=False)
         except (ValueError, AttributeError):
             requested = None
     if requested != MATHLIB_REVISION:
