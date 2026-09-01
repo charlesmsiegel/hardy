@@ -3,10 +3,14 @@
 % (ℝ, ℚ, ∀, ≠, √, ⟨⟩) and the Latin Modern faces under T1 have no glyph for
 % them: Tectonic then logs "Missing character" and emits a PDF whose exact
 % Lean statement has silently lost its quantifier and its domains. DejaVu
-% covers every symbol the recorded runs used and ships in the pinned bundle.
+% covers every symbol the recorded runs used. Named by file, not by family:
+% a family name is resolved through the host's fontconfig, which served
+% /usr/share/fonts on the machine that recorded the third staged run and
+% made Tectonic warn that the build may not be reproducible, whereas a file
+% name is served by the pinned bundle, whose digest the manifest records.
 \usepackage{fontspec}
-\setmainfont{DejaVu Sans}
-\setmonofont{DejaVu Sans Mono}
+\setmainfont{DejaVuSans}[Extension=.ttf, UprightFont=*, BoldFont=*-Bold, ItalicFont=*-Oblique, BoldItalicFont=*-BoldOblique]
+\setmonofont{DejaVuSansMono}[Extension=.ttf, UprightFont=*, BoldFont=*-Bold, ItalicFont=*-Oblique, BoldItalicFont=*-BoldOblique]
 \usepackage[margin=1in]{geometry}
 \usepackage{fancyvrb}
 \usepackage{xcolor}

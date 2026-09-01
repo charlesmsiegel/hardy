@@ -488,3 +488,16 @@ def test_a_compiled_document_that_dropped_glyphs_is_refused_by_the_audit(tmp_pat
     issues = acceptance._live_staged_issues(run_dir, manifest)
 
     assert any('dropped characters the font lacked' in issue for issue in issues)
+
+
+def test_a_compiled_document_that_read_host_files_is_refused_by_the_audit(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    run_dir, manifest = _staged_record(
+        tmp_path,
+        [('claude.result', 'proving', 'one')],
+        log_text='warning: accessing absolute path `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf`; build may not be reproducible in other environments\n',
+    )
+
+    issues = acceptance._live_staged_issues(run_dir, manifest)
+
+    assert any('read files outside the pinned bundle' in issue for issue in issues)
