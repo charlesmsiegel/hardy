@@ -50,8 +50,8 @@ from .lean import LeanCheckResult
 from .prompts import (
     FORMALIZATION_PROMPT,
     PROMPT_SET_SHA256,
-    WRITEUP_PROMPT,
     proof_prompt,
+    writeup_prompt,
 )
 from .storage import RunStore
 from .verifier import VerificationResult
@@ -516,7 +516,7 @@ class ProveWorkflow:
                 content = runtime.run_structured(
                     active_thread,
                     "writeup",
-                    WRITEUP_PROMPT,
+                    writeup_prompt(verified=verified),
                     WriteupContent,
                 )
             except (ValueError, RuntimeError):

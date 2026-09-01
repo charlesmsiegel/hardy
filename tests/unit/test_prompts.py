@@ -134,7 +134,7 @@ def test_the_recorded_prompt_set_is_the_one_that_was_reviewed():
     """
     prompts = importlib.import_module("hardy.prompts")
     assert prompts.PROMPT_SET_VERSION == "2026-08-28.1"
-    assert prompts.PROMPT_SET_SHA256 == "50c207a708e3696c9846957a60089ccd0fb4a6ddbc6a6920449887455cf3f5e2"
+    assert prompts.PROMPT_SET_SHA256 == "777f19c97622765dc491943e1d658d959ad114a7301d9d8654a366a36abf5180"
 
 
 def test_each_entry_point_sends_the_template_rather_than_its_own_copy():
@@ -274,3 +274,17 @@ def test_the_faithfulness_prompt_asks_for_entailment_and_quotes_its_material():
     # it is reading the translation through the reasoning that produced it.
     assert claim.proposal.restatement not in text
     assert 'read "above two" as 2 < p' not in text
+
+
+def test_the_writeup_prompt_states_the_verification_outcome() -> None:
+    """The proving thread hears about a rejection and never about an
+    acceptance, so a writeup asked for without this said no acceptance was
+    claimed under a heading reading kernel verified."""
+    prompts = importlib.import_module('hardy.prompts')
+
+    accepted = prompts.writeup_prompt(verified=True)
+    refused = prompts.writeup_prompt(verified=False)
+
+    assert 'kernel verified' in accepted and 'no verification is claimed' in accepted
+    assert 'partial' in refused and 'no submitted' in refused.lower()
+    assert accepted != refused

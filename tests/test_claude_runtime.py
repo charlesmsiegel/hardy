@@ -110,3 +110,19 @@ def test_a_stalled_exchange_is_cut_off_at_the_wall_clock_budget():
 
 def test_the_turn_bound_is_handed_to_the_sdk():
     assert runtime(max_turns=6)._options().max_turns == 6
+
+
+def test_a_new_conversation_opens_under_a_session_id_hardy_chose():
+    """Left to the CLI, a `claude` started inside another Claude Code session
+    took that session's id from its environment, and every thread of a
+    staged run reported one id -- so whether the independent reader had
+    inherited the formalizer's conversation could not be told from the
+    record. Each runtime now names its own fresh session, and a resumed one
+    names none (the CLI refuses `--session-id` beside `--resume`)."""
+    fresh = runtime()._options()
+    other = runtime()._options()
+    resumed = runtime(session_id="existing-session")._options()
+
+    assert fresh.session_id and fresh.resume is None
+    assert other.session_id and other.session_id != fresh.session_id
+    assert resumed.resume == "existing-session" and resumed.session_id is None

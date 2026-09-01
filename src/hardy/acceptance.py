@@ -56,7 +56,7 @@ from .verifier import (
 )
 from .workflow import ProveRequest, ProveWorkflow
 from .workspace import declared_name, strip_comments
-from .writeup import RunIdentities, WriteupContent, build_writeup
+from .writeup import RunIdentities, WriteupContent, build_writeup, dropped_glyphs
 
 
 class DeterministicRun(FrozenModel):
@@ -867,6 +867,31 @@ def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
                     issues.append("the fresh verifier kept no axiom report from Lean; the check cannot be shown to have run")
                 elif set(reports[0].axioms) != set(evidence.axioms):
                     issues.append("the axiom line the fresh Lean printed differs from the graded evidence")
+    # The independent reader read on a provider session of its own. One id
+    # across the formalizer and the reader leaves open that the reader
+    # inherited the conversation which wrote the translation, and the
+    # record cannot then support the faithfulness grade it carries.
+    sessions: dict[str, set[str]] = {}
+    if trajectory.exists():
+        for line in trajectory.read_text(encoding="utf-8").splitlines():
+            event = json.loads(line)
+            if event.get("kind") == "claude.result":
+                session = str((event.get("payload") or {}).get("session_id"))
+                sessions.setdefault(session, set()).add(str(event.get("phase")))
+    for session, phases in sessions.items():
+        if RunPhase.AWAITING_APPROVAL.value in phases and len(phases) > 1:
+            issues.append(
+                "the faithfulness reader shares provider session "
+                f"{session} with another stage; its independence is not on record"
+            )
+    if manifest.grades.document is DocumentStatus.TEX_COMPILED:
+        log = run_dir / "writeup" / "compile.log"
+        if log.exists():
+            dropped = dropped_glyphs(log.read_text(encoding="utf-8", errors="replace"))
+            if dropped:
+                issues.append(
+                    "the compiled document dropped characters the font lacked: " + "; ".join(dropped[:3])
+                )
     if manifest.grades.document is DocumentStatus.TEX_COMPILED and manifest.environment is not None:
         tex = run_dir / "writeup" / "paper.tex"
         if tex.exists():
