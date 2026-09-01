@@ -91,7 +91,9 @@ def identify_toolchain(lean: LeanTools) -> dict[str, Any]:
             )
         }
     try:
-        identity = environment_identity(lean.project, lean_command=command)
+        identity = environment_identity(
+            lean.project, lean_command=command, timeout_seconds=lean.timeout
+        )
     except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
         return {"unrecorded": str(error) or type(error).__name__}
     return identity.model_dump(mode="json")
