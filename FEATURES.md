@@ -1037,9 +1037,13 @@ model was `claude-opus-5` through the Claude Code CLI.
    claimed here" under a heading reading kernel verified (the proving thread
    hears about a rejection and never about an acceptance). Each runtime now
    names a fresh session for a new conversation and the audit refuses a
-   reader that shares one; the template sets DejaVu through `fontspec` and a
-   compile that drops a glyph is a failed document; and the writeup stage is
-   told the verification outcome.
+   reader that shares one; the template sets DejaVu through `fontspec`, by
+   file name so the pinned bundle serves the faces (named by family, the
+   third recording's Tectonic read them from `/usr/share/fonts` and warned
+   that the build may not be reproducible), and a compile that drops a
+   glyph or reads a file from outside the bundle is a failed document, which
+   the audit refuses too; and the writeup stage is told the verification
+   outcome, under a new prompt-set version.
 
 3. **A false statement, refused.** The negation of the theorem. The model
    inspected the goal, searched, explained why the claim is false (with the

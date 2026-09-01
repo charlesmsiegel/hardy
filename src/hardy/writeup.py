@@ -109,6 +109,15 @@ def tectonic_version(
 
 
 MISSING_GLYPH = re.compile(r"^Missing character: (.*)$", re.M)
+# Tectonic's own warning for a file it read from outside the bundle -- a
+# host font, typically -- which is its way of saying the document did not
+# come from the pinned bundle alone.
+HOST_PATH = re.compile(r"accessing absolute path `([^`]*)`; build may not be reproducible")
+
+
+def host_paths(log_text: str) -> tuple[str, ...]:
+    """Every file the engine read from outside the pinned bundle, from its log."""
+    return tuple(dict.fromkeys(HOST_PATH.findall(log_text)))
 
 
 def dropped_glyphs(log_text: str) -> tuple[str, ...]:
@@ -186,6 +195,10 @@ def build_writeup(
             # Lean statement has lost its ∀ or its ℚ is not this document
             # compiled; it is a different document, and it is refused.
             and not dropped_glyphs(log_text)
+            # And nothing read from outside the bundle: a font taken from the
+            # host is a document the pinned bundle did not produce, whatever
+            # the manifest says its digest was.
+            and not host_paths(log_text + "\n" + process.stderr)
         )
         final_status = DocumentStatus.TEX_COMPILED if succeeded else DocumentStatus.TEX_FAILED
         # A document that failed to compile must not be stored claiming it did,

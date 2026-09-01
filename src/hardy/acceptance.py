@@ -56,7 +56,7 @@ from .verifier import (
 )
 from .workflow import ProveRequest, ProveWorkflow
 from .workspace import declared_name, strip_comments
-from .writeup import RunIdentities, WriteupContent, build_writeup, dropped_glyphs
+from .writeup import RunIdentities, WriteupContent, build_writeup, dropped_glyphs, host_paths
 
 
 class DeterministicRun(FrozenModel):
@@ -887,10 +887,16 @@ def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
     if manifest.grades.document is DocumentStatus.TEX_COMPILED:
         log = run_dir / "writeup" / "compile.log"
         if log.exists():
-            dropped = dropped_glyphs(log.read_text(encoding="utf-8", errors="replace"))
+            log_text = log.read_text(encoding="utf-8", errors="replace")
+            dropped = dropped_glyphs(log_text)
             if dropped:
                 issues.append(
                     "the compiled document dropped characters the font lacked: " + "; ".join(dropped[:3])
+                )
+            outside = host_paths(log_text)
+            if outside:
+                issues.append(
+                    "the compiled document read files outside the pinned bundle: " + "; ".join(outside[:3])
                 )
     if manifest.grades.document is DocumentStatus.TEX_COMPILED and manifest.environment is not None:
         tex = run_dir / "writeup" / "paper.tex"

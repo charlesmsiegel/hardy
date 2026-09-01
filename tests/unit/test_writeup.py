@@ -359,3 +359,45 @@ def test_a_compile_that_dropped_glyphs_is_a_failed_document(tmp_path) -> None:
 
     assert result.status is domain.DocumentStatus.TEX_FAILED
     assert 'Missing character' in (store.path / 'writeup' / 'compile.log').read_text(encoding='utf-8')
+
+
+def test_a_compile_that_read_a_host_font_is_a_failed_document(tmp_path) -> None:
+    """Tectonic warns "build may not be reproducible" when a file came from
+    outside the bundle. A document set in a host's fonts is not the pinned
+    bundle's document, whatever digest the manifest records for it."""
+    writeup = importlib.import_module('hardy.writeup')
+    domain = importlib.import_module('hardy.domain')
+    process = importlib.import_module('hardy.process')
+    storage = importlib.import_module('hardy.storage')
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    def compile_with_host_font(spec):
+        output = Path(spec.argv[spec.argv.index('--outdir') + 1])
+        output.mkdir(parents=True, exist_ok=True)
+        (output / 'paper.pdf').write_bytes(b'%PDF-1.5 fake')
+        (output / 'paper.log').write_text('all good\n', encoding='utf-8')
+        return process.ProcessResult(
+            argv=spec.argv, cwd=spec.cwd, returncode=0, stdout='',
+            stderr='warning: accessing absolute path `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf`; build may not be reproducible in other environments\n',
+            timed_out=False, output_overflow=False, duration_ms=1,
+        )
+
+    assert writeup.host_paths(
+        'warning: accessing absolute path `/usr/share/fonts/x.ttf`; build may not be reproducible in other environments\n'
+    ) == ('/usr/share/fonts/x.ttf',)
+    store = storage.RunStore.create(
+        tmp_path, 'host', now=datetime(2026, 9, 1, tzinfo=UTC), run_id=UUID(int=4)
+    )
+    result = writeup.build_writeup(
+        _claim(domain),
+        writeup.WriteupContent(title='t', theorem_text='t', proof_text='p', known_gaps=()),
+        domain.Grades(),
+        None,
+        _identities(writeup, tmp_path),
+        store,
+        limits=domain.RunLimits(),
+        runner=compile_with_host_font,
+    )
+
+    assert result.status is domain.DocumentStatus.TEX_FAILED
