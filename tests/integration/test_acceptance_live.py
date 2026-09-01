@@ -365,8 +365,10 @@ def test_run_2_staged_prove_reaches_verified_through_the_document_pipeline(
     events = [
         json.loads(line) for line in (run_dir / "trajectory.jsonl").read_text(encoding="utf-8").splitlines()
     ]
+    # The SDK names an in-process tool `mcp__hardy__<name>`; the trajectory
+    # keeps that name, so the prefix is dropped before comparing.
     used = {
-        str(event["payload"].get("name"))
+        str(event["payload"].get("name")).rsplit("__", 1)[-1]
         for event in events
         if event["kind"] == "claude.tool_use" and isinstance(event.get("payload"), dict)
     }
