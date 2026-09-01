@@ -279,3 +279,56 @@ def test_a_submission_accepted_after_the_deadline_is_read_as_discarded(tmp_path)
     kinds = [event['type'] for event in trajectory['events']]
     assert 'discarded' in kinds
     assert acceptance.validate_recorded_run(output) == ()
+
+
+def test_an_axiom_line_recorded_for_another_source_is_not_a_witness(tmp_path) -> None:
+    """The runner records the hash of what each check elaborated. An accepted
+    event about some other source cannot vouch for `proof.lean`."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _verified(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    for event in trajectory['events']:
+        if event.get('type') == 'tool' and event['name'] == 'submit_proof':
+            event['result']['source_sha256'] = 'e' * 64
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any("over proof.lean's own bytes" in issue for issue in issues)
+
+
+def test_a_record_that_is_json_but_not_an_object_is_a_finding(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _verified(tmp_path)
+    (output / 'result.json').write_text('[]\n', encoding='utf-8')
+
+    assert acceptance.validate_batch_consistency(output) == (
+        'a batch record is valid JSON but not an object',
+    )
+
+
+def test_a_writeup_about_another_statement_is_refused(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _verified(tmp_path)
+    writeup = output / 'writeup.md'
+    writeup.write_text(
+        writeup.read_text(encoding='utf-8').replace('theorem HardyTarget : True', 'theorem Other : 1 = 1'),
+        encoding='utf-8',
+    )
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('does not state the recorded claim' in issue for issue in issues)
+
+
+def test_a_directory_holding_one_run_is_audited_as_that_run(tmp_path) -> None:
+    """A staged run lives one level below the directory a reader names, so
+    `hardy accept --recorded acceptance/recorded/*` has to reach it."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    parent = tmp_path / 'prove-verified'
+    _batch(parent, [('submit_proof', {'proof': 'by exact True.intro'})], name='20260901-run')
+
+    assert acceptance.validate_recorded_run(parent) == ()
+
+    _batch(parent, [('submit_proof', {'proof': 'by exact True.intro'})], name='20260902-run')
+    assert acceptance.validate_recorded_run(parent) == (f'{parent} holds 2 runs; name one of them',)

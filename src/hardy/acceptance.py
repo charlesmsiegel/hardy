@@ -597,20 +597,26 @@ def _usage_issues(usage: Any, where: str) -> list[str]:
     return issues
 
 
-def _axiom_line(events: list[dict[str, Any]], name: str) -> tuple[str, ...] | None:
+def _axiom_line(
+    events: list[dict[str, Any]], name: str, source_sha256: str
+) -> tuple[str, ...] | None:
     """What Lean printed for `#print axioms <name>` on the accepted submission.
 
     Read from the diagnostics the trajectory kept of the last `submit_proof`
-    that Lean accepted and the deadline did not discard. Those diagnostics
-    are Lean's own output as the runner recorded it, which is the nearest a
-    directory without Lean in it has to an independent witness for the
-    verdict in `result.json`. None when no such line was recorded.
+    that Lean accepted, the deadline did not discard, and whose source hash
+    is `proof.lean`'s -- the runner records the hash of what each check
+    elaborated, so an accepted event about some other source is not a
+    witness for this file. Those diagnostics are Lean's own output as the
+    runner recorded it, which is the nearest a directory without Lean in it
+    has to an independent witness for the verdict in `result.json`. None
+    when no such line was recorded.
     """
     accepted = [
         event
         for event in events
         if event.get("type") == "tool" and event.get("name") == "submit_proof"
         and isinstance(event.get("result"), dict) and event["result"].get("ok")
+        and event["result"].get("source_sha256") == source_sha256
     ]
     if not accepted:
         return None
@@ -645,6 +651,8 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
         trajectory = _read_json(trajectory_path)
     except ValueError as error:
         return (f"a batch record is not readable JSON: {error}",)
+    if not isinstance(result, dict) or not isinstance(trajectory, dict):
+        return ("a batch record is valid JSON but not an object",)
     writeup = writeup_path.read_text(encoding="utf-8")
     reason = result.get("terminal_reason")
     if trajectory.get("terminal_reason") != reason:
@@ -665,6 +673,11 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
 
     if describe_toolchain(trajectory.get("toolchain")) not in writeup:
         issues.append("writeup.md names a different toolchain from the record")
+    # And the statement itself: a writeup swapped in from another run on the
+    # same toolchain would otherwise pass on its grade marker alone.
+    claim_block = f"## Claim\n\n{request.get('informal_claim', '')}\n\n## Exact Lean statement\n\n```lean\n{declaration}\n```"
+    if claim_block not in writeup:
+        issues.append("writeup.md does not state the recorded claim and Lean statement")
     issues.extend(_usage_issues(result.get("usage"), "result"))
     if result.get("usage") != trajectory.get("usage"):
         issues.append("usage differs between result.json and trajectory.json")
@@ -769,9 +782,9 @@ def _verified_batch_issues(
         if unexpected:
             issues.append("the axiom audit admits unexpected axioms: " + ", ".join(unexpected))
         if name is not None:
-            printed = _axiom_line(events, name)
+            printed = _axiom_line(events, name, hashlib.sha256(source.encode("utf-8")).hexdigest())
             if printed is None:
-                issues.append("the trajectory keeps no axiom report from Lean for the accepted submission")
+                issues.append("the trajectory keeps no axiom report from Lean over proof.lean's own bytes")
             elif set(printed) != set(found):
                 issues.append("the axiom line Lean printed differs from the audit verdict in result.json")
     if "Formalization: **kernel verified**" not in writeup or "No completed artifact" in writeup:
@@ -846,4 +859,16 @@ def validate_recorded_run(run_dir: Path) -> tuple[str, ...]:
         return tuple(validate_run_consistency(run_dir, manifest)) + tuple(_live_staged_issues(run_dir, manifest))
     if (run_dir / "result.json").exists():
         return validate_batch_consistency(run_dir)
+    # A staged run is written under `runs_root/<timestamp>-<slug>-<id>/`, so
+    # the directory a reader names -- `acceptance/recorded/prove-verified` --
+    # holds the run rather than being it. One nested run is audited as the
+    # run; several is an ambiguity reported rather than resolved.
+    nested = sorted(
+        child for child in run_dir.iterdir()
+        if child.is_dir() and ((child / "manifest.json").exists() or (child / "result.json").exists())
+    )
+    if len(nested) == 1:
+        return validate_recorded_run(nested[0])
+    if nested:
+        return (f"{run_dir} holds {len(nested)} runs; name one of them",)
     return ("not a Hardy run directory: neither manifest.json nor result.json is here",)

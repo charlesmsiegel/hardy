@@ -260,3 +260,27 @@ def test_a_bounded_turn_that_never_answers_is_interrupted_and_reported(
         runtime.run_structured(thread, 'faithfulness', 'Grade this.', domain.FaithfulnessReview)
 
     assert handle.interrupted
+
+
+def test_the_codex_ledger_counts_turns_and_states_no_figures(tmp_path) -> None:
+    """This SDK reports no cost or token counts Hardy reads, so the manifest
+    must say the run spent something unstated rather than nothing."""
+    runtime_module = importlib.import_module('hardy.codex_runtime')
+    storage = importlib.import_module('hardy.storage')
+    domain = importlib.import_module('hardy.domain')
+    store = storage.RunStore.create(
+        tmp_path, 'codex', now=datetime(2026, 7, 24, tzinfo=UTC), run_id=UUID(int=7)
+    )
+    events = [
+        {'method': 'item/completed', 'params': {'item': {'type': 'agent_message', 'text': '{"proof_body": "by rfl", "informal_proof": "Reflexivity."}'}}},
+    ]
+    runtime = runtime_module.CodexRuntime(client=FakeClient(events), store=store, config_path=tmp_path / 'c.toml')
+
+    assert runtime.usage['exchanges'] == 0
+    thread = runtime.start(model='codex', run_dir=store.path, claim=_claim(domain))
+    runtime.run_proof(thread, 'prove it')
+
+    usage = runtime.usage
+    assert usage['exchanges'] == 1
+    assert usage['cost_usd'] is None and usage['input_tokens'] is None
+    assert usage['reported']['cost_usd'] == 0
