@@ -168,13 +168,25 @@ class ClaudeStagedRuntime:
         # cannot disagree with a batch record about what "unreported" means.
         # Rebound under `_records`, never mutated: `Usage` is frozen.
         self._spend = Usage()
+        # Exchanges Hardy sent, counted when they are sent. A stage that times
+        # out, is cancelled, or fails before the provider reports on it was
+        # still sent and may still have been billed; the batch runner counts
+        # such an exchange with nothing stated about it, and so does this.
+        self._asked = 0
 
     @property
     def usage(self) -> dict[str, Any]:
         """The run's spend as `Usage.summary` states it: `None` where the
-        provider said nothing, never 0 standing in for a figure nobody took."""
+        provider said nothing, never 0 standing in for a figure nobody took.
+
+        An exchange the provider never reported on is counted all the same,
+        with every figure left unstated, rather than left out of the ledger.
+        """
         with self._records:
-            return self._spend.summary()
+            spend = self._spend
+            for _ in range(max(0, self._asked - spend.turns)):
+                spend = spend.record({})
+            return spend.summary()
 
     def start(
         self,
@@ -351,6 +363,10 @@ class ClaudeStagedRuntime:
     def run_structured(
         self, thread: StagedThread, stage: str, prompt: str, output_type: type[T]
     ) -> T:
+        # Counted before it is sent, not after it is answered: the answer is
+        # exactly what a cancelled or timed-out stage never has.
+        with self._records:
+            self._asked += 1
         # One rendering, shared with the faithfulness gate, which persists this
         # exact text as the contract the reader answered.
         spoken = thread.runtime.ask(

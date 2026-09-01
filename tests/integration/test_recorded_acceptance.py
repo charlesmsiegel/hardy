@@ -26,7 +26,7 @@ RECORDED = ROOT / "acceptance" / "recorded"
 # reason is `result.json`'s; a staged run's is its manifest's phase.
 BATCH_RUNS = {
     "batch-verified": "verified",
-    "batch-false-statement": {"no_proof_submitted", "axioms_rejected", "turn_limit", "wall_clock_limit"},
+    "batch-false-statement": {"no_proof_submitted", "axioms_rejected"},
     "batch-starved": "wall_clock_limit",
 }
 STAGED_RUNS = ("prove-verified",)
@@ -34,8 +34,9 @@ STAGED_RUNS = ("prove-verified",)
 
 def _batch(name: str) -> tuple[Path, dict, dict]:
     output = RECORDED / name
-    if not (output / "result.json").exists():
-        pytest.skip(f"{output} has not been recorded")
+    # A failure, not a skip: the record is committed evidence, and a suite
+    # that passed without it would be passing on the strength of nothing.
+    assert (output / "result.json").exists(), f"{output} has not been recorded"
     result = json.loads((output / "result.json").read_text(encoding="utf-8"))
     trajectory = json.loads((output / "trajectory.json").read_text(encoding="utf-8"))
     return output, result, trajectory
@@ -44,9 +45,7 @@ def _batch(name: str) -> tuple[Path, dict, dict]:
 def _staged(name: str) -> tuple[Path, RunManifest]:
     root = RECORDED / name
     runs = [path for path in root.iterdir() if (path / "manifest.json").exists()] if root.is_dir() else []
-    if not runs:
-        pytest.skip(f"{root} has not been recorded")
-    assert len(runs) == 1, f"{root} should hold exactly one staged run"
+    assert len(runs) == 1, f"{root} should hold exactly one recorded staged run"
     return runs[0], RunManifest.model_validate_json((runs[0] / "manifest.json").read_text(encoding="utf-8"))
 
 

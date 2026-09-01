@@ -113,7 +113,7 @@ class ProveWorkflow:
         self,
         *,
         config: Config,
-        environment: EnvironmentIdentity,
+        environment: EnvironmentIdentity | None,
         doctor: Callable[[Config], Any],
         lean: Any,
         runtime_factory: Callable[[RunStore], Any],
@@ -207,6 +207,14 @@ class ProveWorkflow:
                 )
             report = self._doctor(self._config)
             if not report.healthy:
+                # Why, in the record: a setup failure with no reason beside it
+                # sends the reader to rerun `hardy doctor` to learn what this
+                # run already knew.
+                store.append(
+                    "workflow.setup",
+                    {"healthy": False, "detail": getattr(report, "detail", None)},
+                    phase=state.phase,
+                )
                 setup_reason = (
                     TerminalReason.AUTHENTICATION_FAILURE
                     if getattr(report, "authenticated", True) is False
@@ -260,6 +268,8 @@ class ProveWorkflow:
                     )
                     revision = "Return a valid structured formalization."
                     continue
+                if self._environment is None:
+                    raise RuntimeError("no Lean environment identity to freeze a claim under")
                 temporary_claim = freeze_claim(
                     request.text, proposal, self._environment, self._now()
                 )

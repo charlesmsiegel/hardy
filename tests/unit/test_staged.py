@@ -287,3 +287,22 @@ def test_provider_reports_fold_into_the_runs_usage_ledger(tmp_path) -> None:
     # Counters the provider never stated stay unstated.
     assert after['cache_read_tokens'] is None
     assert after['reported']['cache_read_tokens'] == 0
+
+
+def test_an_exchange_the_provider_never_reported_on_is_still_counted(tmp_path) -> None:
+    """A stage that times out or fails before its result event was still sent
+    and may still have been billed. The batch runner counts such an exchange
+    with nothing stated; the staged ledger has to agree."""
+    staged, _, runtime = _staged(tmp_path)
+
+    class _Mute:
+        def ask(self, text):
+            return '{"proof_body": "by rfl", "informal_proof": "Reflexivity."}'
+
+    thread = staged.StagedThread(runtime=_Mute(), claim=None)
+    runtime.run_proof(thread, 'prove it')
+
+    usage = runtime.usage
+    assert usage['exchanges'] == 1
+    assert usage['cost_usd'] is None and usage['input_tokens'] is None
+    assert usage['reported']['cost_usd'] == 0

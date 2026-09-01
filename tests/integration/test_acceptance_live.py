@@ -96,8 +96,10 @@ MAX_TURNS = 60
 # and far too short for the nontrivial proof: the point of run 4 is a
 # trajectory with something in it that the clock then cuts off.
 STARVED_SECONDS = 30.0
-# Terminal reasons that honestly describe a batch run which produced no proof.
-HONEST_FAILURES = {"no_proof_submitted", "axioms_rejected", "turn_limit", "wall_clock_limit"}
+# How a batch run on a false statement may end. Not a budget: a run that
+# merely ran out of turns or time shows that Hardy stopped waiting, which run
+# 4 already shows; this one has to show the model gave up or the gate refused.
+REFUSALS = {"no_proof_submitted", "axioms_rejected"}
 # The names of the four recorded runs, as `acceptance/recorded/` keeps them.
 BATCH_VERIFIED = "batch-verified"
 PROVE_VERIFIED = "prove-verified"
@@ -398,18 +400,28 @@ def test_run_3_a_false_statement_is_refused_by_the_gate_not_graded(
 
     result = _batch(request, live_config, output, max_turns=20, wall_seconds=WALL_SECONDS)
 
-    assert result.terminal_reason in HONEST_FAILURES, result.terminal_reason
+    assert result.terminal_reason in REFUSALS, result.terminal_reason
     assert result.formalization == "not formalized"
     assert result.proof is None
     assert result.axioms["status"] != "clean"
     assert not (output / "proof.lean").exists()
     trajectory = _trajectory(output)
+    names = _tool_names(trajectory)
+    # The model engaged Lean on the false statement rather than declining on
+    # sight -- otherwise the run shows a model's opinion, not a gate.
+    assert names, "the model never used a tool"
     # Every submission the model made, the gate refused: nothing accepted,
-    # nothing graded.
+    # nothing graded. And no hole-free check of the false statement ever
+    # elaborated: an exploratory `check_proof` may pass with a `sorry` in it
+    # (that is how a model derives the negation inside a scratch proof), so
+    # each one Lean accepted is required to have carried a hole.
     for event in trajectory["events"]:
-        if event.get("type") == "tool" and event["name"] == "submit_proof":
+        if event.get("type") != "tool":
+            continue
+        if event["name"] == "submit_proof":
             assert not event["result"]["ok"], event["result"]["output"]
-    assert trajectory["events"], "a failed run still owes a record"
+        elif event["name"] == "check_proof" and event["result"]["ok"]:
+            assert LeanTools.has_holes(event["result"]["source"]), event["result"]["source"]
     writeup = (output / "writeup.md").read_text(encoding="utf-8")
     assert "No completed artifact" in writeup
     assert f"Terminal reason: `{result.terminal_reason}`" in writeup

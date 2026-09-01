@@ -229,3 +229,53 @@ def test_accept_recorded_audits_directories_and_runs_nothing(tmp_path, capsys) -
     (good / 'proof.lean').unlink()
     assert cli.run_accept(parser.parse_args(['accept', '--recorded', str(good)])) == 1
     assert 'CONSISTENCY ERROR' in capsys.readouterr().out
+
+
+def test_a_writeup_naming_another_toolchain_is_refused(tmp_path) -> None:
+    """Nothing hashes a batch writeup, so the human-facing copy is compared
+    with the record rather than trusted beside it."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _verified(tmp_path)
+    writeup = output / 'writeup.md'
+    writeup.write_text(
+        writeup.read_text(encoding='utf-8').replace('Lean: 4.33.1', 'Lean: 4.20.0'), encoding='utf-8'
+    )
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('writeup.md names a different toolchain' in issue for issue in issues)
+
+
+def test_a_submission_accepted_after_the_deadline_is_read_as_discarded(tmp_path) -> None:
+    """The runner appends the discard marker just before the late tool event,
+    so an honest timed-out run with a late kernel-accepted submission passes."""
+    import time
+
+    acceptance = importlib.import_module('hardy.acceptance')
+    models = importlib.import_module('hardy.models')
+    lean_module = importlib.import_module('hardy.lean')
+    runner = importlib.import_module('hardy.runner')
+    request = models.Request.from_dict(
+        {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+    )
+    lean = lean_module.LeanTools(request, (sys.executable, str(FAKE_LEAN)))
+
+    class Late(_Runtime):
+        # No final result ever arrives on this path, so no count does either.
+        turns = None
+
+        def ask(self, text):
+            time.sleep(0.25)
+            self.context['dispatch']('submit_proof', {'proof': 'by exact True.intro'})
+            raise TimeoutError('the run exceeded its 0.1s wall-clock budget')
+
+    output = tmp_path / 'late'
+    runner.run(
+        request, lambda model=None, **context: Late([], **context), lean, output,
+        wall_seconds=0.1, toolchain=IDENTITY,
+    )
+
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    kinds = [event['type'] for event in trajectory['events']]
+    assert 'discarded' in kinds
+    assert acceptance.validate_recorded_run(output) == ()

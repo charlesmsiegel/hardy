@@ -659,6 +659,12 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     issues.extend(_toolchain_issues(trajectory.get("toolchain"), "trajectory"))
     if result.get("toolchain") != trajectory.get("toolchain"):
         issues.append("toolchain identity differs between result.json and trajectory.json")
+    # The human-facing copy too. Nothing hashes a batch writeup, so a stale or
+    # edited one could name another Lean beside a record that names this one.
+    from .runner import describe_toolchain
+
+    if describe_toolchain(trajectory.get("toolchain")) not in writeup:
+        issues.append("writeup.md names a different toolchain from the record")
     issues.extend(_usage_issues(result.get("usage"), "result"))
     if result.get("usage") != trajectory.get("usage"):
         issues.append("usage differs between result.json and trajectory.json")
@@ -695,10 +701,11 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
             and isinstance(event.get("result"), dict) and event["result"].get("ok")
         ]
         for index in accepted:
-            # An acceptance the deadline discarded is recorded as such, right
-            # after it; one that was not is a verified proof graded as nothing.
-            following = events[index + 1 : index + 3]
-            if not any(item.get("type") == "discarded" for item in following):
+            # An acceptance the deadline discarded is recorded as such, beside
+            # it -- the runner appends the marker just before the tool event
+            # -- and one that was not is a verified proof graded as nothing.
+            beside = events[max(0, index - 1) : index] + events[index + 1 : index + 2]
+            if not any(item.get("type") == "discarded" for item in beside):
                 issues.append("an accepted submission was recorded but the run is not verified")
         axioms = result.get("axioms") or {}
         if axioms.get("status") == "clean":

@@ -1037,9 +1037,15 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
     # Identified by the Lean the verifier will run -- `config.lake env lean`,
     # exactly as `FinalVerifier` spells it -- so the identity the claim is
     # frozen under names the compiler that checks it and not the one on PATH.
-    environment = lean_module.environment_identity(
-        config.lean_project, lean_command=(str(config.lake), "env", "lean")
-    )
+    try:
+        environment = lean_module.environment_identity(
+            config.lean_project, lean_command=(str(config.lake), "env", "lean")
+        )
+    except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
+        # A Lean that cannot be identified is a setup failure, and a setup
+        # failure is a run: the workflow writes a manifest and a trajectory
+        # saying so, where a traceback here would leave nothing on disk.
+        return _unidentified_workflow(config, str(error) or type(error).__name__)
     # Asked of the binary once, here, and written into every document: a
     # version literal beside a real bundle digest read as a pinned toolchain
     # while describing whatever release the machine happened to have.
@@ -1145,6 +1151,34 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
         verifier=verifier,
         writeup_builder=build_writeup,
         identities_factory=identities,
+    )
+
+
+def _unidentified_workflow(config: configuration.Config, reason: str):
+    """A staged workflow that can only fail setup, because its Lean has no identity.
+
+    The doctor is the workflow's own boundary for an unusable machine, so the
+    reason is reported through it and the run ends `setup_failure` with a
+    manifest that names no environment -- rather than one that names a
+    compiler nobody identified.
+    """
+    from .workflow import ProveWorkflow
+
+    def unusable(_: configuration.Config) -> Any:
+        return SimpleNamespace(healthy=False, authenticated=True, detail=reason)
+
+    def refuse(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("the Lean toolchain could not be identified: " + reason)
+
+    return ProveWorkflow(
+        config=config,
+        environment=None,
+        doctor=unusable,
+        lean=SimpleNamespace(check_proof=refuse),
+        runtime_factory=refuse,
+        verifier=SimpleNamespace(verify=refuse),
+        writeup_builder=refuse,
+        identities_factory=refuse,
     )
 
 
