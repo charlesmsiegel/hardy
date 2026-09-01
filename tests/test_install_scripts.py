@@ -1230,3 +1230,23 @@ def test_the_windows_installers_default_to_the_global_hardy_directory():
         assignment = next(line for line in text.splitlines() if "$ConfigPath" in line and "=" in line)
         assert ".hardy" in assignment, script
         assert "$env:APPDATA" not in assignment, script
+
+
+def test_every_installer_pins_the_same_lean_and_mathlib_as_hardy_records() -> None:
+    """One identity, three places: the shell installer, the PowerShell one,
+    and the Python `installers` module `hardy doctor` compares a project
+    against. A pin bumped in one and not the others would install one
+    environment and report drift against another (issue #81)."""
+    from hardy import installers
+
+    common = (SCRIPTS / "lib" / "common.sh").read_text(encoding="utf-8")
+    windows = (SCRIPTS / "install-windows.ps1").read_text(encoding="utf-8")
+
+    assert re.search(r'^LEAN_TOOLCHAIN="([^"]+)"$', common, re.M).group(1) == installers.LEAN_TOOLCHAIN
+    assert re.search(r'^MATHLIB_REVISION="([^"]+)"$', common, re.M).group(1) == installers.MATHLIB_REVISION
+    assert re.search(r"^\$LeanToolchain = '([^']+)'$", windows, re.M).group(1) == installers.LEAN_TOOLCHAIN
+    assert re.search(r"^\$MathlibRevision = '([^']+)'$", windows, re.M).group(1) == installers.MATHLIB_REVISION
+    # Neither installer generates the project with `lake init` any more: that
+    # template requires Mathlib at its default branch, which is not a pin.
+    assert 'init "$LEAN_PACKAGE" math' not in common
+    assert "init $LeanPackage math" not in windows

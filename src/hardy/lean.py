@@ -373,7 +373,26 @@ def elaborate(
     )
 
 
-def environment_identity(lean_project: Path | None) -> EnvironmentIdentity:
+# `Lean (version 4.32.0, x86_64-unknown-linux-gnu, commit 8c9756b28d64, Release)`.
+# Matched as two independent fields rather than one pattern: real builds put a
+# target triple between them, and requiring `, commit` to follow the version
+# directly failed on exactly the compilers this is meant to identify. Both
+# halves are required; an identity carrying one and inventing the other is the
+# failure `environment_identity` exists to avoid.
+LEAN_VERSION = re.compile(r"version (?P<version>[^\s,)]+)")
+LEAN_COMMIT = re.compile(r"commit (?P<commit>[0-9a-fA-F]+)")
+# The command every pinned project answers to: Lake resolves the project's
+# `lean-toolchain` through elan, so this is the Lean the project is built with.
+LAKE_ENV_LEAN: tuple[str, ...] = ("lake", "env", "lean")
+
+
+def environment_identity(
+    lean_project: Path | None,
+    *,
+    lean_command: tuple[str, ...] = LAKE_ENV_LEAN,
+    runner: Callable[[ProcessSpec], ProcessResult] = run_process,
+    timeout_seconds: float = 60.0,
+) -> EnvironmentIdentity:
     """Identify the exact Lean environment a run is frozen against.
 
     Here rather than in `cli.py` because the command line is not the only
@@ -381,6 +400,17 @@ def environment_identity(lean_project: Path | None) -> EnvironmentIdentity:
     searched, and the interactive session builds a `LeanService` for exactly
     that reason. It took a whole `Config` to read one field, which is what
     put it out of reach.
+
+    Every field is read from the environment, none is a literal. The Lean
+    version and commit used to be constants here -- right for the one
+    toolchain the staged path was written against and false for every other
+    machine, which recorded a compiler nobody had run. They are now asked of
+    the Lean `lean_command` actually invokes, in the project directory, so a
+    project whose `lean-toolchain` elan resolves to a different release is
+    recorded as that release. A compiler that cannot be identified is a
+    `ValueError` naming what went wrong rather than a partly invented
+    identity: a manifest that names a Lean nobody verified is worse evidence
+    than one that refuses to be written. (Issue #81.)
 
     The manifest digest is taken over the bytes on disk, not over a
     re-serialisation of the parsed JSON, because `DeclarationIndexSource
@@ -391,15 +421,67 @@ def environment_identity(lean_project: Path | None) -> EnvironmentIdentity:
     manifest_path = lean_project / "lake-manifest.json"
     if not manifest_path.exists():
         raise ValueError(f"{manifest_path} is missing; run the installer to build the project")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    raw = manifest_path.read_bytes()
+    manifest = json.loads(raw.decode("utf-8"))
     mathlib = next(item for item in manifest["packages"] if item["name"] == "mathlib")
+    version, commit = lean_identity(
+        lean_command, lean_project, runner=runner, timeout_seconds=timeout_seconds
+    )
     return EnvironmentIdentity(
-        lean_version="4.32.0",
-        lean_commit="8c9756b28d64dab099da31a4c09229a9e6a2ef35",
+        lean_version=version,
+        lean_commit=commit,
         mathlib_revision=mathlib["rev"],
-        lake_manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        lake_manifest_sha256=hashlib.sha256(raw).hexdigest(),
         imports=("Mathlib",),
     )
+
+
+def lean_identity(
+    lean_command: tuple[str, ...],
+    project: Path,
+    *,
+    runner: Callable[[ProcessSpec], ProcessResult] = run_process,
+    timeout_seconds: float = 60.0,
+) -> tuple[str, str]:
+    """The version and commit of the Lean `lean_command` runs, as it reports them.
+
+    Asked of the binary in the project directory, because that is where elan
+    reads the `lean-toolchain` pin that decides which Lean `lake env lean`
+    means. Raises `ValueError` when the command cannot be run, fails, or
+    answers with something that names no version and commit -- each with its
+    own message, because a missing elan, a broken project, and an unfamiliar
+    `--version` format each need a different fix.
+    """
+    if not lean_command:
+        raise ValueError("no Lean command is configured, so its version cannot be asked")
+    try:
+        spoken = runner(
+            ProcessSpec(
+                argv=(*lean_command, "--version"),
+                cwd=project,
+                timeout_seconds=timeout_seconds,
+                max_output_bytes=64 * 1024,
+            )
+        )
+    except OSError as error:
+        raise ValueError(f"{lean_command[0]} could not be run to identify Lean: {error}") from error
+    if spoken.timed_out:
+        raise ValueError(f"{' '.join(lean_command)} --version timed out after {timeout_seconds:g}s")
+    if spoken.returncode != 0:
+        detail = (spoken.stderr or spoken.stdout).strip().splitlines()
+        suffix = f": {detail[-1][:200]}" if detail else ""
+        raise ValueError(
+            f"{' '.join(lean_command)} --version exited {spoken.returncode}{suffix}"
+        )
+    text = f"{spoken.stdout}\n{spoken.stderr}"
+    version = LEAN_VERSION.search(text)
+    commit = LEAN_COMMIT.search(text)
+    if version is None or commit is None:
+        raise ValueError(
+            f"{' '.join(lean_command)} --version named no Lean version and commit: "
+            f"{text.strip()[:200]!r}"
+        )
+    return version.group("version"), commit.group("commit")
 
 
 class LeanTools:

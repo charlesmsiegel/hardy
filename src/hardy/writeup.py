@@ -9,6 +9,7 @@ failed to compile still says so on its own front page.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from collections.abc import Callable
 from importlib.resources import files
@@ -66,6 +67,45 @@ TEX_ESCAPES = {
     "~": BACKSLASH + "textasciitilde{}",
     "^": BACKSLASH + "textasciicircum{}",
 }
+
+
+TECTONIC_VERSION = re.compile(r"[Tt]ectonic\s+(?P<version>[0-9][^\s]*)")
+
+
+def tectonic_version(
+    executable: Path,
+    limits: RunLimits,
+    *,
+    runner: Callable[[ProcessSpec], ProcessResult] = run_process,
+) -> str:
+    """What `tectonic --version` says, or why nothing can be said.
+
+    The version used to be a literal in `cli.py` beside a genuinely pinned
+    bundle digest, so every document named Tectonic 0.16.9 whatever compiled
+    it. Asked of the binary instead. A compiler that cannot be asked yields
+    `unrecorded (<reason>)` rather than a guess: the document then says that
+    its compiler was not identified, which a reader can act on, where a wrong
+    version cannot be caught at all.
+    """
+    try:
+        spoken = runner(
+            ProcessSpec(
+                argv=(str(executable), "--version"),
+                cwd=Path.cwd(),
+                timeout_seconds=limits.tex_process_seconds,
+                max_output_bytes=64 * 1024,
+            )
+        )
+    except OSError as error:
+        return f"unrecorded ({executable} could not be run: {error})"
+    if spoken.timed_out:
+        return f"unrecorded ({executable} --version timed out)"
+    if spoken.returncode != 0:
+        return f"unrecorded ({executable} --version exited {spoken.returncode})"
+    found = TECTONIC_VERSION.search(f"{spoken.stdout}\n{spoken.stderr}")
+    if found is None:
+        return f"unrecorded ({executable} --version named no version)"
+    return found.group("version")
 
 
 def escape_tex_text(value: str) -> str:

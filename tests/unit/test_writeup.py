@@ -260,3 +260,57 @@ def test_the_paper_discloses_a_reader_whose_isolation_was_not_established(
 
     assert 'on codex' in label
     assert 'isolation not established' in label
+
+
+def _spoken(stdout: str, returncode: int = 0):
+    process = importlib.import_module('hardy.process')
+
+    def run(spec):
+        return process.ProcessResult(
+            argv=spec.argv,
+            cwd=spec.cwd,
+            returncode=returncode,
+            stdout=stdout,
+            stderr='',
+            timed_out=False,
+            output_overflow=False,
+            duration_ms=1,
+        )
+
+    return run
+
+
+def test_the_tectonic_version_is_asked_of_the_binary(tmp_path) -> None:
+    """It was a literal beside a genuinely pinned bundle digest, so every
+    document named 0.16.9 whatever release compiled it (issue #81)."""
+    writeup = importlib.import_module('hardy.writeup')
+    domain = importlib.import_module('hardy.domain')
+
+    version = writeup.tectonic_version(
+        tmp_path / 'tectonic', domain.RunLimits(), runner=_spoken('Tectonic 0.15.0\n')
+    )
+
+    assert version == '0.15.0'
+
+
+def test_a_tectonic_that_cannot_be_asked_is_recorded_as_unidentified(tmp_path) -> None:
+    """`unrecorded` with the reason, never a guess: a document that says its
+    compiler was not identified can be acted on; a wrong version cannot be
+    caught."""
+    writeup = importlib.import_module('hardy.writeup')
+    domain = importlib.import_module('hardy.domain')
+
+    def missing(spec):
+        raise FileNotFoundError(spec.argv[0])
+
+    absent = writeup.tectonic_version(tmp_path / 'tectonic', domain.RunLimits(), runner=missing)
+    failed = writeup.tectonic_version(
+        tmp_path / 'tectonic', domain.RunLimits(), runner=_spoken('', returncode=2)
+    )
+    mute = writeup.tectonic_version(
+        tmp_path / 'tectonic', domain.RunLimits(), runner=_spoken('hello\n')
+    )
+
+    assert absent.startswith('unrecorded (') and 'could not be run' in absent
+    assert 'exited 2' in failed
+    assert 'named no version' in mute

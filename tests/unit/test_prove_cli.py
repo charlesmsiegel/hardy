@@ -82,9 +82,10 @@ def test_run_prove_dispatches_the_exact_claim_and_model_to_the_workflow(
 def _staged_config(tmp_path, **overrides):
     """A `Config` complete enough for `build_prove_workflow`.
 
-    `_environment_identity` only reads `lake-manifest.json` off disk -- it
-    never shells out to `lake` -- so a minimal manifest is enough to build the
-    staged workflow hermetically.
+    `environment_identity` reads `lake-manifest.json` off disk and asks the
+    configured `lake` what Lean it runs, so the project carries a minimal
+    manifest and `lake` is a stub that answers `--version` the way real Lean
+    does -- enough to build the staged workflow hermetically.
     """
     config_module = importlib.import_module('hardy.config')
     lean_project = tmp_path / 'lean'
@@ -95,15 +96,27 @@ def _staged_config(tmp_path, **overrides):
             json.dumps({'packages': [{'name': 'mathlib', 'rev': 'deadbeefcafe'}]}),
             encoding='utf-8',
         )
+    lake = tmp_path / 'bin' / 'lake'
+    if not lake.exists():
+        lake.parent.mkdir(parents=True, exist_ok=True)
+        lake.write_text(
+            '#!/bin/sh\n'
+            "printf 'Lean (version 4.32.0, x86_64-unknown-linux-gnu, "
+            "commit 8c9756b28d64dab099da31a4c09229a9e6a2ef35, Release)\\n'\n"
+            'exit 0\n',
+            encoding='utf-8',
+        )
+        lake.chmod(0o755)
     settings = {
         'model': 'claude-opus-5',
-        'lean_command': ('lake', 'env', 'lean'),
+        'lean_command': (str(lake), 'env', 'lean'),
         'lean_project': lean_project,
         'lean_timeout': 30.0,
         'latex_command': ('pdflatex',),
         'root': tmp_path,
         'project': 'workspace',
         'runs_root': tmp_path / 'runs',
+        'lake': lake,
     }
     settings.update(overrides)
     return config_module.Config(**settings)
