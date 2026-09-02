@@ -69,6 +69,20 @@ def test_wall_seconds_at_or_below_zero_is_refused_by_the_parser():
     assert parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution", "--wall-seconds", "10"]).wall_seconds == 10.0
 
 
+def test_wall_seconds_non_finite_is_refused_by_the_parser():
+    """`float()` accepts `inf` and `nan`, and both pass a bare positivity
+    check: `asyncio.wait_for(..., timeout=inf)` imposes no effective
+    deadline, so `inf` would let a batch run spend through its turn budget
+    unbounded, while `nan <= 0` is `False` so `nan` slips past too and
+    instead produces an immediate timeout (item 6). Both are refused before
+    any row runs.
+    """
+    parser = cli.build_parser()
+    for bad in ("inf", "-inf", "nan"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution", "--wall-seconds", bad])
+
+
 def test_max_turns_below_one_is_refused_by_the_parser():
     parser = cli.build_parser()
     for bad in ("0", "-1"):

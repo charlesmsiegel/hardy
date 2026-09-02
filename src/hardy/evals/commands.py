@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import sys
@@ -39,10 +40,17 @@ def _positive_wall_seconds(value: str) -> float:
     every proof it submits merely discarded as late. Refused here, before any
     row runs, rather than silently recorded as a budget that never bound
     anything.
+
+    Positivity alone is not enough: `float("inf")` passes it and
+    `asyncio.wait_for(..., timeout=inf)` imposes no effective deadline
+    either, so `--wall-seconds inf` would be the same unbounded run under a
+    condition recorded with a non-standard JSON value; `float("nan")` also
+    passes (`nan <= 0` is `False`) and instead produces an immediate timeout.
+    `math.isfinite` refuses both (item 6).
     """
     parsed = float(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("--wall-seconds must be a positive number of seconds")
+    if parsed <= 0 or not math.isfinite(parsed):
+        raise argparse.ArgumentTypeError("--wall-seconds must be a positive, finite number of seconds")
     return parsed
 
 
