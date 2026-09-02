@@ -52,6 +52,11 @@ def test_baseline_writes_the_tier_file_and_exits_zero_when_the_list_is_clean(tmp
     written = json.loads(out.read_text(encoding="utf-8"))
     assert written["entries"]["t"]["tier"] == 0 and written["problems"] == []
     assert written["environment"]["lean_commit"] == "819816b2"
+    # evals/baseline.json is repository evidence a digest is taken over
+    # (`.gitattributes` marks it `-text`, no line-ending conversion); a
+    # platform-translated write would checkin CRLF on Windows and shift
+    # every later sha256_of comparison.
+    assert b"\r" not in out.read_bytes()
 
 
 def test_baseline_exits_one_but_still_writes_when_the_list_has_problems(tmp_path, capsys):

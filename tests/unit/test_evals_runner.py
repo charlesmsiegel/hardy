@@ -97,6 +97,9 @@ def test_a_batch_set_run_writes_rows_a_scoreboard_and_aggregates(tmp_path):
     assert board["interrupted"] is False and board["finished_at"] is not None
     assert board["baseline_sha256"] == sha256_of(baseline) and board["problems_sha256"] == sha256_of(problems)
     assert (out / "runs" / "t" / "batch-0" / "result.json").exists()
+    # A committed scoreboard is repository evidence too; a platform-
+    # translated write would checkin CRLF on Windows.
+    assert b"\r" not in (out / "scoreboard.json").read_bytes()
 
 
 def test_repeats_and_selection(tmp_path):

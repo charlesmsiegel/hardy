@@ -27,7 +27,7 @@ def _msg(line: int, severity: str, data: str) -> dict:
 
 
 def test_stage_a_source_wraps_every_tactic_in_a_counted_bounded_example():
-    source, spans = sweep.stage_a_source("2 * x * y ≤ x ^ 2 + y ^ 2", ("nlinarith", "intros; simp_all"), ("Mathlib",))
+    source, spans = sweep.stage_a_source("", "2 * x * y ≤ x ^ 2 + y ^ 2", ("nlinarith", "intros; simp_all"), ("Mathlib",))
     assert source.startswith("import Mathlib\nset_option Elab.async false\n")
     block = ("#count_heartbeats in\nset_option maxHeartbeats 200000 in\n"
              "example : 2 * x * y ≤ x ^ 2 + y ^ 2 := by\n  nlinarith\n")
@@ -39,8 +39,14 @@ def test_stage_a_source_wraps_every_tactic_in_a_counted_bounded_example():
     assert spans["intros; simp_all"][0] > end
 
 
+def test_stage_a_source_carries_the_entrys_binders_as_local_hypotheses():
+    source, spans = sweep.stage_a_source("(a b : ℤ) (ha : Odd a) (hb : Odd b)", "¬ IsSquare (a ^ 2 + b ^ 2)", ("nlinarith",), ("Mathlib",))
+    assert "example (a b : ℤ) (ha : Odd a) (hb : Odd b) : ¬ IsSquare (a ^ 2 + b ^ 2) := by\n  nlinarith\n" in source
+    assert "∀" not in source
+
+
 def test_stage_a_reads_each_attempt_by_its_line_range():
-    source, spans = sweep.stage_a_source("P", ("simp", "omega", "decide", "exact?"), ("Mathlib",))
+    source, spans = sweep.stage_a_source("", "P", ("simp", "omega", "decide", "exact?"), ("Mathlib",))
     s, o, d, e = (spans[t][0] for t in ("simp", "omega", "decide", "exact?"))
     elaboration = _elaboration([
         _msg(s, "information", "Used 812 heartbeats, which is less than the current maximum of 200000."),
@@ -60,7 +66,7 @@ def test_stage_a_reads_each_attempt_by_its_line_range():
 
 
 def test_an_unsolved_goals_error_is_a_failure_not_a_candidate():
-    source, spans = sweep.stage_a_source("P", ("simp",), ("Mathlib",))
+    source, spans = sweep.stage_a_source("", "P", ("simp",), ("Mathlib",))
     s = spans["simp"][0]
     elaboration = _elaboration([_msg(s + 2, "error", "unsolved goals\n⊢ P"),
                                 _msg(s, "information", "Used 5 heartbeats, which is less than the current maximum of 200000.")], returncode=1)
@@ -68,7 +74,7 @@ def test_an_unsolved_goals_error_is_a_failure_not_a_candidate():
 
 
 def test_a_timed_out_process_marks_every_attempt_timed_out():
-    source, spans = sweep.stage_a_source("P", ("simp", "decide"), ("Mathlib",))
+    source, spans = sweep.stage_a_source("", "P", ("simp", "decide"), ("Mathlib",))
     elaboration = _elaboration([], returncode=None, timed_out=True)
     attempts = sweep.read_stage_a(elaboration, spans)
     assert {a.status for a in attempts.values()} == {"timed_out"}
@@ -76,7 +82,7 @@ def test_a_timed_out_process_marks_every_attempt_timed_out():
 
 def test_an_error_outside_every_block_fails_the_whole_stage_a_read():
     """A broken header is not a report about any tactic."""
-    source, spans = sweep.stage_a_source("P", ("simp",), ("Mathlib",))
+    source, spans = sweep.stage_a_source("", "P", ("simp",), ("Mathlib",))
     elaboration = _elaboration([_msg(1, "error", "unknown module prefix 'Mathlib'")], returncode=1)
     attempts = sweep.read_stage_a(elaboration, spans)
     assert attempts["simp"].status == "not_run" and "unknown module" in attempts["simp"].message

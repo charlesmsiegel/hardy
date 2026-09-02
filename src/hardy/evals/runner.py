@@ -85,7 +85,12 @@ def select(problems: ProblemSet, baseline: Baseline, *, only: list[str] | None, 
 
 def _write(path: Path, board: Scoreboard) -> None:
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(board.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    # newline="\n": the same repository-evidence integrity concern as
+    # commands.py's baseline write -- Path.write_text's default would
+    # checkin a scoreboard as CRLF on Windows despite `.gitattributes`
+    # marking evals/scoreboards/** -text so its bytes stay the ones any
+    # digest is taken over.
+    tmp.write_text(json.dumps(board.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     tmp.replace(path)
 
 

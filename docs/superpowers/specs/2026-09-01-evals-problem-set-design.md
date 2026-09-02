@@ -145,7 +145,10 @@ on the same statement, which is the false-credit problem `_assumption_probe`
 already met (`src/hardy/chat.py:1312-1320`). So:
 
 - **Stage A, one process per entry.** Every single and chain as an anonymous
-  `example` (nothing enters the environment). An attempt is a *candidate
+  `example` with the entry's binders (nothing enters the environment, but
+  the entry's own bound variables and hypotheses are in local context, the
+  same way stage B's named `theorem` and the actual declaration present
+  them). An attempt is a *candidate
   closer* when its lines carry no error, no `unsolved goals`, and no
   `declaration uses 'sorry'` warning. If the process hits the wall backstop,
   the sweep falls back to one process per remaining attempt for that entry,
