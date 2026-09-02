@@ -330,11 +330,21 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
     # `interrupted: true`, recompute the aggregates, and pass with an
     # inflated solve rate.
     sel = board.condition.selection
+    refused_selection = False
     try:
         expected_order = [(e.id, k) for e in select(problems, baseline, only=sel.get("only"), tiers=sel.get("tiers"), twins=sel.get("twins", True)) for k in range(board.condition.repeats)]
     except RefusedRun as refused:
         issues.append(f"selection names entries not in the list: {refused}")
         expected_order = []
+        refused_selection = True
+    if not expected_order and not refused_selection:
+        # `--tiers 2` against a baseline with no tier-2 entries (or `--only
+        # <twin> --no-twins`) derives the same empty expected order
+        # `run_set` itself refuses before writing anything (item 5); a
+        # committed scoreboard could otherwise empty its rows, recompute the
+        # aggregates to match, and present a zero-sample experiment as
+        # complete (item 3).
+        issues.append("the condition selects no entries; the runner would have refused this scoreboard")
     expected = set(expected_order)
     have_order = [(r.id, r.repeat) for r in board.rows]
     have = set(have_order)

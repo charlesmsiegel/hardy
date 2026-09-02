@@ -458,6 +458,28 @@ def test_a_baseline_recording_problems_is_a_finding(tmp_path):
     assert any(i.startswith("baseline: ") and "records problems" in i for i in issues), issues
 
 
+def test_a_selection_matching_no_entries_is_a_finding(tmp_path):
+    """`--tiers 2` against a baseline with no tier-2 entries (the test
+    baseline here has none) derives the same empty expected order `run_set`
+    itself refuses before ever writing a scoreboard (item 5); a committed
+    scoreboard could otherwise empty its rows, recompute the aggregates to
+    match, and present a zero-sample experiment as complete. The checker
+    must reject an empty derived selection too (item 3).
+    """
+    out, problems, baseline = _board(tmp_path)
+    baseline_obj = sweep.Baseline.model_validate_json(baseline.read_text(encoding="utf-8"))
+    empty_aggregates = scoreboard.aggregate([], baseline_obj).model_dump(mode="json")
+
+    def empty_it(s):
+        s["condition"]["selection"]["tiers"] = [2]
+        s["rows"] = []
+        s["aggregates"] = empty_aggregates
+
+    _edit(out / "scoreboard.json", empty_it)
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("selects no entries" in i for i in issues), issues
+
+
 def test_a_baseline_missing_a_problem_entry_is_a_finding(tmp_path):
     """A baseline no longer covering every problem id cannot be trusted to
     tier this run (item 8): `select` would raise `KeyError` the first time it
