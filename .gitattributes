@@ -6,3 +6,6 @@
 # own manifests and rechecked by `hardy accept --recorded`, so no line-ending
 # conversion may touch them on any platform.
 acceptance/recorded/** -text
+# Evals scoreboards and their run directories are evidence of the same kind:
+# every row points at a run directory whose bytes its own record hashes.
+evals/scoreboards/** -text

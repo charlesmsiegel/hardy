@@ -1,14 +1,17 @@
 """Rows are read off run directories; aggregates are counts and medians over rows."""
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
+from test_evals_runner import GIVE_UP, SOLVE, _batch_runner, _condition, _files
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 from test_recorded_runs import _batch
 
 from hardy.domain import EnvironmentIdentity
-from hardy.evals import scoreboard, sweep
+from hardy.evals import runner, scoreboard, sweep
 from hardy.evals.problems import Entry
 
 TRUE = Entry(id="t", input="True.", name="HardyTarget", conclusion="True", expected="true", source="textbook", area="logic")
@@ -110,3 +113,62 @@ def test_medians_over_solved_rows_only_and_unreported_costs_are_counted_not_zero
     rows = [_row(id="a", cost_usd=None), _row(id="a", repeat=1, cost_usd=2.0)]
     t = scoreboard.aggregate(rows, _baseline({"a": 2})).tiers["2"]
     assert t.medians["cost_usd"] == 2.0 and t.unreported_costs == 1
+
+
+def _board(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)  # `_board` is also called on `tmp_path / "second"` etc, which pytest never made
+    problems, baseline = _files(tmp_path)
+    out = runner.run_set(label="ok", problems_path=problems, baseline_path=baseline, scoreboards_root=tmp_path / "sb", condition=_condition(),
+                         environment=EnvironmentIdentity(**RAW_IDENTITY), batch_runner=_batch_runner({"t": SOLVE, "u": GIVE_UP, "f": GIVE_UP}),
+                         now=lambda: datetime(2026, 9, 1, tzinfo=UTC), report=lambda _: None)
+    return out, problems, baseline
+
+
+def _edit(path: Path, mutate) -> None:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutate(payload)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def test_a_scoreboard_the_runner_wrote_validates(tmp_path):
+    out, problems, baseline = _board(tmp_path)
+    assert scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline) == ()
+
+
+def test_each_check_breaks_one_at_a_time(tmp_path):
+    out, problems, baseline = _board(tmp_path)
+
+    problems.write_text(problems.read_text(encoding="utf-8") + "\n", encoding="utf-8")                       # 1: digests
+    assert any("problems_sha256" in i for i in scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline))
+    problems.write_text(problems.read_text(encoding="utf-8")[:-1], encoding="utf-8")
+
+    (out / "runs" / "t" / "batch-0" / "proof.lean").write_text("tampered", encoding="utf-8")                  # 2: audit
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("runs/t/batch-0" in i for i in issues)
+
+    out2, p2, b2 = _board(tmp_path / "second")
+    _edit(out2 / "runs" / "u" / "batch-0" / "trajectory.json", lambda t: t["request"].__setitem__("declaration", "theorem HardyTarget : False"))
+    _edit(out2 / "runs" / "u" / "batch-0" / "result.json", lambda r: None)
+    issues = scoreboard.validate_scoreboard(out2, problems_path=p2, baseline_path=b2)                          # 3: the run is the entry's
+    assert any("declaration" in i for i in issues)
+
+    out3, p3, b3 = _board(tmp_path / "third")
+    _edit(out3 / "scoreboard.json", lambda s: s["rows"][1].__setitem__("outcome", "solved"))                  # 4: derived fields
+    issues = scoreboard.validate_scoreboard(out3, problems_path=p3, baseline_path=b3)
+    assert any("outcome" in i and "u" in i for i in issues)
+
+    out4, p4, b4 = _board(tmp_path / "fourth")
+    _edit(out4 / "scoreboard.json", lambda s: s["aggregates"]["headline"].__setitem__("solved", 5))          # 6: aggregates
+    assert any("aggregates" in i for i in scoreboard.validate_scoreboard(out4, problems_path=p4, baseline_path=b4))
+
+    out5, p5, b5 = _board(tmp_path / "fifth")
+    _edit(out5 / "scoreboard.json", lambda s: s["rows"].pop())                                                # 7: selection complete
+    assert any("f" in i and "row" in i for i in scoreboard.validate_scoreboard(out5, problems_path=p5, baseline_path=b5))
+    _edit(out5 / "scoreboard.json", lambda s: s.__setitem__("interrupted", True))
+    assert not any("row" in i for i in scoreboard.validate_scoreboard(out5, problems_path=p5, baseline_path=b5))
+
+
+def test_environment_must_match_the_baseline(tmp_path):
+    out, problems, baseline = _board(tmp_path)
+    _edit(out / "scoreboard.json", lambda s: s["environment"].__setitem__("lean_commit", "other"))
+    assert any("environment" in i for i in scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline))
