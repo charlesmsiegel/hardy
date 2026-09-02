@@ -124,7 +124,12 @@ def _row(**kw) -> scoreboard.Row:
 
 def _baseline(tiers: dict[str, int], twins_false: set[str] = frozenset()) -> sweep.Baseline:
     identity = EnvironmentIdentity(**RAW_IDENTITY)
-    entries = {k: _entry_baseline(t, negation=sweep.NegationBaseline(attempts={}, closed_by=("nlinarith",) if k in twins_false else ()) if k.startswith("f") else None)
+    # A `NegationBaseline` whose `closed_by` names a tactic now needs that
+    # tactic's own attempt recorded `closed` (item 4's `_closed_by_must_match_
+    # attempts`, shared with `EntryBaseline`).
+    entries = {k: _entry_baseline(
+        t, negation=sweep.NegationBaseline(attempts={"nlinarith": sweep.Attempt(status="closed")} if k in twins_false else {},
+                                           closed_by=("nlinarith",) if k in twins_false else ()) if k.startswith("f") else None)
                for k, t in tiers.items()}
     return sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256="p" * 64, environment=identity, heartbeat_budget=200000,
                           wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(), entries=entries)

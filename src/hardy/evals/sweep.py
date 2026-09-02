@@ -145,9 +145,28 @@ def read_stage_b(elaboration: Elaboration, name: str, tactic: str) -> Attempt:
 Elaborate = Callable[[str], Elaboration]
 
 
+def _closed_by_must_match_attempts(closed_by: tuple[str, ...], attempts: dict[str, Attempt]) -> None:
+    """Shared by `EntryBaseline` and `NegationBaseline` (item 4): `closed_by`
+    must name exactly the tactics `attempts` records as `closed` -- no fewer
+    (a real closer omitted) and no more (a closer named that never actually
+    closed). Without this on `NegationBaseline`, an edited `negation.closed_by`
+    naming a tactic whose attempt failed would pass validation, and
+    `aggregate` would count every matching twin row `mechanically_false` on
+    kernel evidence its own attempts contradict.
+    """
+    closed_attempts = {name for name, attempt in attempts.items() if attempt.status == "closed"}
+    if set(closed_by) != closed_attempts:
+        raise ValueError(f"closed_by {closed_by!r} does not match the attempts recorded closed {sorted(closed_attempts)!r}")
+
+
 class NegationBaseline(FrozenModel):
     attempts: dict[str, Attempt]
     closed_by: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def closed_by_must_match_attempts(self) -> NegationBaseline:
+        _closed_by_must_match_attempts(self.closed_by, self.attempts)
+        return self
 
 
 class EntryBaseline(FrozenModel):
@@ -174,9 +193,7 @@ class EntryBaseline(FrozenModel):
         expected_tier = tier_of(self.closed_by)
         if self.tier != expected_tier:
             raise ValueError(f"tier {self.tier} does not follow from closed_by {self.closed_by!r} (tier_of gives {expected_tier})")
-        closed_attempts = {name for name, attempt in self.attempts.items() if attempt.status == "closed"}
-        if set(self.closed_by) != closed_attempts:
-            raise ValueError(f"closed_by {self.closed_by!r} does not match the attempts recorded closed {sorted(closed_attempts)!r}")
+        _closed_by_must_match_attempts(self.closed_by, self.attempts)
         return self
 
 
