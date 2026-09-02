@@ -321,8 +321,12 @@ over the trajectory or a field of the manifest; nothing is estimated.
 
 - `condition`: `model`, `backend`, `mode`, `staged_prompt_set_sha256`,
   `batch_prompt_set_sha256` (both always recorded: a twin runs `batch` even
-  under a staged condition, §3.2), `hardy_version`, `limits` (`max_turns`,
-  `wall_seconds`), `repeats`, `selection` (`only`, `tiers`, `twins`).
+  under a staged condition, §3.2), `hardy_version`, `source_revision` (the
+  Git commit the run was made from, `-dirty` suffixed when the working tree
+  had uncommitted changes, `None` when it could not be identified --
+  `hardy_version` alone does not distinguish evals run from different source
+  checkouts of the same release), `limits` (`max_turns`, `wall_seconds`),
+  `repeats`, `selection` (`only`, `tiers`, `twins`).
 - `environment`: the identity, equal to the baseline's.
 - `baseline_sha256`, `problems_sha256`: the bytes this run was tiered by.
 - `rows`: §3.4.
