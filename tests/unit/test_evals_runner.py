@@ -263,14 +263,20 @@ def test_an_interrupted_run_keeps_its_rows_and_says_so(tmp_path):
     assert board["interrupted"] is True and board["finished_at"] is None and len(board["rows"]) == 1
 
 
+def _fake_config(**kw):
+    from types import SimpleNamespace
+
+    base = dict(model="config-model@test", lean_command=("some-other-lean-command",), lake=Path("lake"), lean_timeout=30.0, lean_project=None)
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
 def test_the_batch_runner_uses_the_conditions_selected_model_not_configs(monkeypatch, tmp_path):
     """`--model override@test` selects a model the condition records
     (`run_set_command`'s `condition.model`), and every batch row must
     actually be produced by it -- not by whatever `config.model` happens to
     be, which under an override is a different model entirely (item 1).
     """
-    from types import SimpleNamespace
-
     from hardy import cli as cli_module
     from hardy import runner as hardy_runner
 
@@ -278,11 +284,42 @@ def test_the_batch_runner_uses_the_conditions_selected_model_not_configs(monkeyp
     monkeypatch.setattr(cli_module, "runtime_factory", lambda model: seen.setdefault("model", model))
     monkeypatch.setattr(hardy_runner, "run", lambda *a, **kw: seen.setdefault("called", True))
 
-    config = SimpleNamespace(model="config-model@test", lean_command=("lake", "env", "lean"), lean_timeout=30.0, lean_project=None)
-    run_one = runner._batch_runner(config, "override@test")
+    run_one = runner._batch_runner(_fake_config(), "override@test")
     run_one(ENTRIES[0], tmp_path / "out", 3, 300.0)
     assert seen["model"] == "override@test"
     assert seen["called"] is True
+
+
+def test_the_batch_runner_checks_proofs_with_the_recorded_toolchains_command(monkeypatch, tmp_path):
+    """The batch runner used to build `LeanTools` from `config.lean_command`,
+    which a global `--lean-command` could set to something other than
+    `config.lake env lean` -- the very command `run_set_command` asks
+    `environment_identity` about for the scoreboard's `environment` and the
+    baseline sweep both use. A row's proof checks must run under that same
+    command, or its checks could pass under a toolchain the experiment was
+    never actually measured against (item 2).
+    """
+    from hardy import cli as cli_module
+    from hardy import lean as lean_module
+    from hardy import runner as hardy_runner
+
+    seen: dict = {}
+
+    class _FakeLeanTools:
+        def __init__(self, request, lean_command, *, timeout, project):
+            seen["lean_command"] = lean_command
+            seen["timeout"] = timeout
+            seen["project"] = project
+
+    monkeypatch.setattr(lean_module, "LeanTools", _FakeLeanTools)
+    monkeypatch.setattr(cli_module, "runtime_factory", lambda model: None)
+    monkeypatch.setattr(hardy_runner, "run", lambda *a, **kw: None)
+
+    config = _fake_config(lake=Path("customlake"), lean_timeout=45.0, lean_project=Path("project"))
+    run_one = runner._batch_runner(config, "m@test")
+    run_one(ENTRIES[0], tmp_path / "out", 3, 300.0)
+    assert seen["lean_command"] == ("customlake", "env", "lean")
+    assert seen["timeout"] == 45.0 and seen["project"] == Path("project")
 
 
 def test_twins_run_batch_even_under_staged_mode(tmp_path):
