@@ -229,6 +229,16 @@ file says which one they came from. The baseline refuses to run when the
 identity cannot be read, for the reason `runner.identify_toolchain` gives: a
 tier file that names a Lean nobody verified is worse than none.
 
+`Baseline` itself refuses to load an incomplete tactic record: whenever an
+entry's `elaborates` is `true`, its `attempts` (and its `negation.attempts`,
+when a negation was swept) must name exactly this baseline's own
+`singles`+`chains`, no fewer and no more; an entry with `elaborates: false`
+must carry no attempts at all. Without this, a truncated `attempts: {}`
+beside `closed_by: []` and `elaborates: true` would still satisfy
+`tier_must_follow_its_closers` (the two empty sets agree, and `tier_of([])`
+is 3), letting a statement nobody actually measured pass as one every
+configured tactic was tried against and failed.
+
 ## 3. The set runner
 
 ```
@@ -257,8 +267,13 @@ Writes `evals/scoreboards/<label>/scoreboard.json` and, under
 - A label that already exists is refused (no `--force`; delete it yourself).
 - The selection (`--only`/`--tiers`/`--no-twins`) must match at least one
   entry: an empty selection would otherwise write a finished, zero-row
-  scoreboard that `hardy evals check` also accepts, since the same empty
-  selection derives the same empty expected order.
+  scoreboard, since the same empty selection derives the same empty expected
+  order. `hardy evals check` refuses one too (§5, check 7), so a scoreboard
+  edited to reach this state after the fact is caught as well.
+- `--wall-seconds` must be a positive, finite number: `float("inf")` and
+  `float("nan")` both pass a bare positivity check, but neither imposes a
+  real deadline (`asyncio.wait_for(..., timeout=inf)` waits forever; `nan <=
+  0` is `False`), so both are refused by `math.isfinite` alongside it.
 
 ### 3.2 Modes
 
@@ -330,11 +345,13 @@ over the trajectory or a field of the manifest; nothing is estimated.
 - `condition`: `model`, `backend`, `mode`, `staged_prompt_set_sha256`,
   `batch_prompt_set_sha256` (both always recorded: a twin runs `batch` even
   under a staged condition, §3.2), `hardy_version`, `source_revision` (the
-  Git commit the run was made from, `-dirty` suffixed when the working tree
-  had uncommitted changes, `None` when it could not be identified --
-  `hardy_version` alone does not distinguish evals run from different source
-  checkouts of the same release), `limits` (`max_turns`, `wall_seconds`),
-  `repeats`, `selection` (`only`, `tiers`, `twins`).
+  Git commit Hardy's own running source checkout is at, `-dirty` suffixed
+  when the working tree had uncommitted changes, `None` when it could not be
+  identified -- `hardy_version` alone does not distinguish evals run from
+  different source checkouts of the same release; found by walking up from
+  the installed package's own directory for the nearest `.git`, independent
+  of wherever `--problems` happens to point), `limits` (`max_turns`,
+  `wall_seconds`), `repeats`, `selection` (`only`, `tiers`, `twins`).
 - `environment`: the identity, equal to the baseline's.
 - `baseline_sha256`, `problems_sha256`: the bytes this run was tiered by.
 - `rows`: §3.4.
@@ -378,6 +395,14 @@ For each scoreboard:
 1. `problems_sha256` and `baseline_sha256` match the committed files;
    the baseline's `environment` equals the scoreboard's, and the baseline's
    entries match the current problem list's ids (no extra, none missing).
+   The baseline is also run through the same `staleness()` gate `run_set`
+   refuses a live run over -- its `problems_sha256`, `singles`/`chains`,
+   `heartbeat_budget`, and recorded `problems` -- prefixed `"baseline: "`;
+   without this, a committed baseline could go stale (a Mathlib upgrade, a
+   changed tactic set, a re-swept problem list) while the scoreboard's own
+   digests and aggregates were kept matching it, and `hardy evals check`
+   would still accept tiers measured under configuration the live runner
+   would refuse to run under today.
 2. Every row's `run_dir` exists and `validate_recorded_run` returns nothing.
    The existing dispatcher (`src/hardy/acceptance.py:938`) already handles a
    flat batch directory and a parent holding one staged run.
@@ -403,14 +428,26 @@ For each scoreboard:
    `schema_text(CanonicalReview)`; its prompt and schema files still hash to
    what the verdict itself recorded of them; its `claim_sha256` equals the
    run's `manifest.claim_sha256`; and the row's `canonical` equals its
-   outcome.
+   outcome. `staged_row` itself reads `canonical.json` the same defensive
+   way -- `CanonicalVerdict.model_validate_json`, `canonical` simply
+   `"unavailable"` on any failure to parse -- so a corrupt file (invalid
+   JSON, a JSON array, an unknown `outcome`) reaches this check as a finding
+   rather than crashing the validator before it gets here.
 6. `aggregates` recomputed from `rows` must be equal.
 7. Every entry in `selection` has `repeats` rows, present in the same order
    `run_set` would produce them, and there are no rows outside the selection.
    When `interrupted`, the rows must instead be an exact prefix of that
    order, not merely a subset of it -- otherwise a scoreboard could delete
    only its failed rows, mark itself interrupted, and pass with an inflated
-   solve rate.
+   solve rate. An empty derived selection (`--tiers 2` against a baseline
+   with no tier-2 entries, or the like) is refused here too, the same as
+   `run_set` refuses it before ever writing a scoreboard -- unless the
+   selection is already refused for naming an unknown `--only` id, which
+   carries its own finding. A non-interrupted scoreboard with every expected
+   row present must carry a `finished_at`; an interrupted one must not carry
+   one at all -- `run_set` only ever writes `finished_at` on its closing,
+   non-interrupted write, so a scoreboard claiming both is reachable only by
+   editing the metadata after the fact.
 
 The scoreboard is covered by no hash, the same way a manifest is not; the
 validator's job is that every figure in it is re-derivable from artifacts
