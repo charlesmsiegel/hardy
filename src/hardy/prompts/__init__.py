@@ -162,6 +162,17 @@ def faithfulness_prompt(claim: FrozenClaim) -> str:
     )
 
 
+def canonical_prompt(canonical_declaration: str, model_signature: str) -> str:
+    """The evals reader's question: two Lean statements and nothing else.
+
+    Under `evals/`, not `staged/`, on purpose: it governs no staged run, so
+    it must not move `PROMPT_SET_SHA256`.
+    """
+    canonical = canonical_declaration.strip()
+    model = model_signature.strip()
+    return render("evals/canonical", fence=_fence(canonical, model), canonical=canonical, model=model)
+
+
 def _fence(*texts: str) -> str:
     """A quoting marker none of `texts` contains, derived from them.
 
