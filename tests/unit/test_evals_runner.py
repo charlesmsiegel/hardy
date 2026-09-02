@@ -195,6 +195,9 @@ class _FakeCompleted:
 
 
 def test_source_revision_reads_head_and_marks_a_dirty_working_tree(monkeypatch, tmp_path):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(runner, "_source_anchor", lambda: tmp_path)
+
     def fake_run(argv, **kw):
         if argv[:2] == ["git", "rev-parse"]:
             return _FakeCompleted(0, "abc123\n")
@@ -203,10 +206,13 @@ def test_source_revision_reads_head_and_marks_a_dirty_working_tree(monkeypatch, 
         raise AssertionError(argv)
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
-    assert runner.source_revision(tmp_path) == "abc123-dirty"
+    assert runner.source_revision() == "abc123-dirty"
 
 
 def test_source_revision_is_bare_when_the_tree_is_clean(monkeypatch, tmp_path):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(runner, "_source_anchor", lambda: tmp_path)
+
     def fake_run(argv, **kw):
         if argv[:2] == ["git", "rev-parse"]:
             return _FakeCompleted(0, "abc123\n")
@@ -215,25 +221,44 @@ def test_source_revision_is_bare_when_the_tree_is_clean(monkeypatch, tmp_path):
         raise AssertionError(argv)
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
-    assert runner.source_revision(tmp_path) == "abc123"
+    assert runner.source_revision() == "abc123"
 
 
 def test_source_revision_is_none_when_git_is_not_on_path(monkeypatch, tmp_path):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(runner, "_source_anchor", lambda: tmp_path)
+
     def fake_run(argv, **kw):
         raise FileNotFoundError("git")
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
-    assert runner.source_revision(tmp_path) is None
+    assert runner.source_revision() is None
 
 
 def test_source_revision_is_none_outside_a_git_repository(monkeypatch, tmp_path):
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(runner, "_source_anchor", lambda: tmp_path)
+
     def fake_run(argv, **kw):
         if argv[:2] == ["git", "rev-parse"]:
             return _FakeCompleted(128, "")
         raise AssertionError(argv)
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
-    assert runner.source_revision(tmp_path) is None
+    assert runner.source_revision() is None
+
+
+def test_source_revision_is_none_when_the_anchor_has_no_git_above_it(monkeypatch, tmp_path):
+    """The Hardy package's own directory anchors the search (item 1), walked
+    upward for `.git`; a caller (or, here, a test) can move that anchor
+    anywhere, and finding no `.git` above it at all -- as `tmp_path` never
+    does -- must be `None`, not a crash or a `git` invocation.
+    """
+    monkeypatch.setattr(runner, "_source_anchor", lambda: tmp_path)
+    ran = []
+    monkeypatch.setattr(runner.subprocess, "run", lambda *a, **kw: ran.append(a))
+    assert runner.source_revision() is None
+    assert ran == []
 
 
 def test_the_gates_refuse_a_staged_run_with_no_staged_runner(tmp_path):

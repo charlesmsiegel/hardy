@@ -55,8 +55,34 @@ class Condition(FrozenModel):
     selection: dict[str, Any]
 
 
-def source_revision(root: Path) -> str | None:
-    """The Git commit this process's source checkout is at, or `None`.
+def _source_anchor() -> Path:
+    """Where the walk for Hardy's own source checkout starts: the installed
+    package's own directory, not wherever `--problems` happens to point.
+
+    A problem file under another Git repository (or under `/tmp`, with none
+    above it at all) must not attribute a run to that repository's HEAD --
+    only the checkout the running Hardy code itself came from is `source_
+    revision`'s subject (item 1). Exposed as its own function so a test can
+    monkeypatch the anchor without touching the git-invocation logic below.
+    """
+    import hardy
+
+    return Path(hardy.__file__).resolve().parent
+
+
+def _git_root(start: Path) -> Path | None:
+    """The nearest ancestor of `start` (`start` included) that carries `.git`, or `None` at the filesystem root."""
+    current = start
+    while not (current / ".git").exists():
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+    return current
+
+
+def source_revision() -> str | None:
+    """The Git commit Hardy's own running source checkout is at, or `None`.
 
     Never raises: a source checkout with no `.git` (a stripped clone, a
     packaging step run outside the repository) or no `git` on `PATH` must not
@@ -65,6 +91,9 @@ def source_revision(root: Path) -> str | None:
     scoreboard's `condition` cannot be mistaken for stating a commit's own
     committed state when the tree that actually ran had more than that.
     """
+    root = _git_root(_source_anchor())
+    if root is None:
+        return None
     try:
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
@@ -304,17 +333,10 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
             "wall_seconds": args.wall_seconds if args.wall_seconds is not None else BATCH_DEFAULT_WALL_SECONDS,
             "lean_timeout": float(config.lean_timeout),
         }
-    # `args.problems` defaults to `evals/problems.json`, so its grandparent is
-    # the repository root -- the directory containing `evals/`. Kept this
-    # simple deliberately rather than searching upward for `.git`: a caller
-    # who passes `--problems` somewhere else entirely is already outside the
-    # documented "run from a source checkout's root" contract `_refuse_missing`
-    # states above (item 8).
-    source_root = args.problems.resolve().parent.parent
     condition = Condition(
         model=str(args.model or config.model), backend=args.backend, mode=args.mode,
         staged_prompt_set_sha256=PROMPT_SET_SHA256, batch_prompt_set_sha256=BATCH_PROMPT_SET_SHA256,
-        hardy_version=__version__, source_revision=source_revision(source_root), limits=limits, repeats=args.repeats,
+        hardy_version=__version__, source_revision=source_revision(), limits=limits, repeats=args.repeats,
         selection={"only": args.only.split(",") if args.only else None, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
                    "twins": not args.no_twins},
     )

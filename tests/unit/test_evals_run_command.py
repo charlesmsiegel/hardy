@@ -62,7 +62,7 @@ def test_a_missing_problems_or_baseline_file_is_refused_before_anything_runs(mon
 
 def test_batch_mode_applies_the_default_limits_and_records_the_selection(monkeypatch):
     monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
-    monkeypatch.setattr(runner, "source_revision", lambda root: "deadbeef")
+    monkeypatch.setattr(runner, "source_revision", lambda: "deadbeef")
     seen = {}
 
     def fake_run_set(**kw):
@@ -94,7 +94,7 @@ def test_staged_mode_refuses_max_turns_or_wall_seconds(monkeypatch, capsys):
 def test_staged_mode_records_its_own_budgets_when_no_flag_is_given(monkeypatch):
     monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
     monkeypatch.setattr(staged_module, "staged_runner", lambda config, *, backend: (lambda entry, row_dir, model: None))
-    monkeypatch.setattr(runner, "source_revision", lambda root: None)
+    monkeypatch.setattr(runner, "source_revision", lambda: None)
     seen = {}
 
     def fake_run_set(**kw):
