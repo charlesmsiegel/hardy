@@ -491,7 +491,7 @@ CHAINS: tuple[str, ...] = (
     "intros; simp_all", "constructor <;> simp_all", "simp_all; omega", "norm_num; ring",
     "norm_num; linarith", "field_simp; ring", "by_contra h; push_neg at h; nlinarith", "intros; aesop",
 )
-SEARCHERS: tuple[str, ...] = ("exact?", "apply?")
+SEARCHERS: tuple[str, ...] = ("exact?", "apply?", "hint")
 HEARTBEAT_BUDGET = 200000
 WALL_BACKSTOP_FLOOR = 600.0
 
@@ -710,7 +710,7 @@ def test_tiers_follow_the_floor():
     assert sweep.tier_of(("apply?", "intros; simp_all")) == 1
     assert sweep.tier_of(("intros; simp_all",)) == 2
     assert sweep.tier_of(()) == 3
-    assert sweep.tier_of(("hint",)) == 0
+    assert sweep.tier_of(("hint",)) == 1
 
 
 def test_the_sweep_tiers_every_entry_and_checks_twin_negations():

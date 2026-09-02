@@ -166,7 +166,8 @@ def test_tiers_follow_the_floor():
     assert sweep.tier_of(("apply?", "intros; simp_all")) == 1
     assert sweep.tier_of(("intros; simp_all",)) == 2
     assert sweep.tier_of(()) == 3
-    assert sweep.tier_of(("hint",)) == 0
+    assert sweep.tier_of(("hint",)) == 1
+    assert sweep.tier_of(("norm_num", "hint")) == 0
 
 
 def test_the_sweep_tiers_every_entry_and_checks_twin_negations():

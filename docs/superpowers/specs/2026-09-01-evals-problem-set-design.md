@@ -100,6 +100,8 @@ into the baseline so a later edit to the code is visible as a stale baseline:
 - **Singles:** `simp`, `simp_all`, `omega`, `decide`, `norm_num`, `ring`,
   `field_simp`, `linarith`, `nlinarith`, `positivity`, `tauto`, `aesop`,
   `grind`, `hint`, `exact?`, `apply?`. Not `polyrith`: it needs the network.
+  `hint` is counted with the searchers because Mathlib registers `exact?`
+  among the tactics it runs.
 - **Chains:** short fixed sequences standing in for "a little tactic-level
   planning": `intros; simp_all`, `constructor <;> simp_all`, `simp_all; omega`,
   `norm_num; ring`, `norm_num; linarith`, `field_simp; ring`,
@@ -162,10 +164,11 @@ count message, `null` when the process died), `seconds` (stage B only),
 
 ### 2.4 Tiers, decided by the floor
 
-- **Tier 0:** a single other than `exact?` or `apply?` closes it. Sanity
-  checks; excluded from the headline.
-- **Tier 1:** not tier 0, and `exact?` or `apply?` closes it. The statement is
-  essentially in Mathlib. Useful for testing search, not proving.
+- **Tier 0:** a single other than `exact?`, `apply?` or `hint` closes it.
+  Sanity checks; excluded from the headline.
+- **Tier 1:** not tier 0, and `exact?`, `apply?` or `hint` closes it (`hint`
+  runs `exact?`). The statement is essentially in Mathlib. Useful for testing
+  search, not proving.
 - **Tier 2:** no single closes it, a chain does. Tactic-level planning.
 - **Tier 3:** nothing closes it. An intermediate statement is required; this
   is where `sqrt 2 + sqrt 3` sits and where the multi-file path matters.
