@@ -458,7 +458,13 @@ def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
     if verdict.canonical_declaration != entry.declaration():
         issues.append(f"{where}: canonical.json's canonical_declaration is not the entry's declaration")
     # The existing hash checks: the two files still have to hash to what the
-    # verdict itself recorded of them.
+    # verdict itself recorded of them. `CanonicalVerdict.outcome_must_follow_
+    # the_review` (staged.py) now requires prompt_sha256/response_schema_
+    # sha256 (and claim_sha256/model_signature) to be non-null whenever
+    # outcome is "agreed" or "disputed" -- `expected is None` therefore
+    # cannot happen for those two outcomes any more, and this `continue` is
+    # only ever reached for "unavailable" (the no-formalization path), which
+    # has no files to check.
     for name, expected in (("canonical-prompt.md", verdict.prompt_sha256), ("canonical-schema.json", verdict.response_schema_sha256)):
         if expected is None:
             continue
@@ -468,6 +474,8 @@ def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
     schema_file = row_dir / "canonical-schema.json"
     if schema_file.exists() and schema_file.read_bytes() != schema_text(CanonicalReview).encode("utf-8"):
         issues.append(f"{where}: canonical-schema.json is not the schema rendered from CanonicalReview")
+    # Same reasoning: claim_sha256 is None only for "unavailable" now, so
+    # this guard, too, only ever skips the no-formalization case.
     nested = _nested_run(row_dir)
     if nested is not None and verdict.claim_sha256 is not None:
         manifest = RunManifest.model_validate_json((nested / "manifest.json").read_text(encoding="utf-8"))
