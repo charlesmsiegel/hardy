@@ -46,20 +46,25 @@ def _read(path: Path) -> Any:
 
 
 def batch_row(entry: Entry, tier: int, run_dir: Path, scoreboard_dir: Path, *, repeat: int) -> Row:
+    base = dict(id=entry.id, tier=tier, twin_of=entry.twin_of, expected=entry.expected, mode="batch", repeat=repeat,
+                run_dir=_relative(run_dir, scoreboard_dir))
+    # Asked before anything here is read: a run the audit cannot make sense of
+    # is a finding for it to report, not a missing file for this function to
+    # raise over.
+    if acceptance.validate_recorded_run(run_dir):
+        return Row(outcome="invalid", terminal_reason=None, cost_usd=None, exchanges=None, turns=None,
+                   wall_seconds=None, lean_checks=0, search_calls=0, **base)
     result = _read(run_dir / "result.json")
     trajectory = _read(run_dir / "trajectory.json")
     tools = [e for e in trajectory.get("events", []) if e.get("type") == "tool"]
     usage = result.get("usage") or {}
     common = dict(
-        id=entry.id, tier=tier, twin_of=entry.twin_of, expected=entry.expected, mode="batch", repeat=repeat,
-        run_dir=_relative(run_dir, scoreboard_dir), terminal_reason=result.get("terminal_reason"),
+        base, terminal_reason=result.get("terminal_reason"),
         cost_usd=usage.get("cost_usd"), exchanges=usage.get("exchanges"), turns=result.get("turns"),
         wall_seconds=(trajectory.get("limits") or {}).get("elapsed_seconds"),
         lean_checks=sum(1 for e in tools if e.get("name") in {"check_proof", "submit_proof"}),
         search_calls=sum(1 for e in tools if e.get("name") in acceptance.BATCH_SEARCH),
     )
-    if acceptance.validate_recorded_run(run_dir):
-        return Row(outcome="invalid", **common)
     if entry.expected == "true":
         solved = result.get("terminal_reason") == "verified" and (result.get("axioms") or {}).get("status") == "clean"
         return Row(outcome="solved" if solved else "unsolved", **common)
@@ -77,25 +82,27 @@ def _nested_run(row_dir: Path) -> Path | None:
 
 def staged_row(entry: Entry, tier: int, row_dir: Path, scoreboard_dir: Path, *, repeat: int) -> Row:
     run_dir = _nested_run(row_dir)
-    common: dict[str, Any] = dict(id=entry.id, tier=tier, twin_of=entry.twin_of, expected=entry.expected, mode="staged", repeat=repeat,
-                                  run_dir=_relative(row_dir, scoreboard_dir), approval="automatic")
-    if run_dir is None:
-        return Row(outcome="invalid", terminal_reason=None, cost_usd=None, exchanges=None, turns=None, wall_seconds=None, lean_checks=0, search_calls=0, **common)
+    base: dict[str, Any] = dict(id=entry.id, tier=tier, twin_of=entry.twin_of, expected=entry.expected, mode="staged", repeat=repeat,
+                                run_dir=_relative(row_dir, scoreboard_dir), approval="automatic")
+    # Asked before anything here is read: a run the audit cannot make sense of
+    # (including one with no nested run to find) is a finding for it to
+    # report, not a missing or malformed file for this function to raise over.
+    if run_dir is None or acceptance.validate_recorded_run(run_dir):
+        return Row(outcome="invalid", terminal_reason=None, cost_usd=None, exchanges=None, turns=None,
+                   wall_seconds=None, lean_checks=0, search_calls=0, canonical=None, **base)
     manifest = RunManifest.model_validate_json((run_dir / "manifest.json").read_text(encoding="utf-8"))
     events = [json.loads(line) for line in (run_dir / "trajectory.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     uses = [e for e in events if e.get("kind") == "claude.tool_use"]
     names = [str((e.get("payload") or {}).get("name", "")).removeprefix("mcp__hardy__") for e in uses]
     canonical_path = row_dir / "canonical.json"
     canonical = _read(canonical_path).get("outcome") if canonical_path.exists() else "unavailable"
-    common.update(
-        terminal_reason=manifest.terminal_reason.value if manifest.terminal_reason else manifest.phase.value,
+    common = dict(
+        base, terminal_reason=manifest.terminal_reason.value if manifest.terminal_reason else manifest.phase.value,
         cost_usd=manifest.usage.get("cost_usd"), exchanges=manifest.usage.get("exchanges"), turns=None,
         wall_seconds=manifest.timings_ms.get("active", 0) / 1000.0 if manifest.timings_ms else None,
         lean_checks=sum(1 for n in names if n == "lean_check_proof"),
         search_calls=sum(1 for n in names if n in acceptance.STAGED_SEARCH), canonical=canonical,
     )
-    if acceptance.validate_recorded_run(run_dir):
-        return Row(outcome="invalid", **common)
     verified = manifest.phase is RunPhase.COMPLETED and manifest.grades.formal is FormalStatus.KERNEL_VERIFIED
     if not verified:
         return Row(outcome="unsolved", **common)
@@ -150,7 +157,10 @@ def _tier_aggregate(rows: list[Row], baseline: Baseline) -> TierAggregate:
         unsolved=sum(1 for r in true_rows if r.outcome == "unsolved"), invalid=sum(1 for r in rows if r.outcome == "invalid"),
         solve_rate=len(solved) / n if n else None, interval=wilson(len(solved), n),
         refused=refused, exhausted=sum(1 for r in twins if r.outcome == "exhausted"), graded=sum(1 for r in twins if r.outcome == "graded"),
-        mechanically_false=sum(1 for r in twins if (baseline.entries[r.id].negation or None) and baseline.entries[r.id].negation.closed_by),
+        mechanically_false=sum(
+            1 for r in twins
+            if (negation := baseline.entries[r.id].negation) is not None and negation.closed_by
+        ),
         refusal_rate=refused / len(twins) if twins else None,
         medians=medians, unreported_costs=sum(1 for r in solved if r.cost_usd is None),
     )
