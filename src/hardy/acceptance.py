@@ -615,12 +615,25 @@ def refusal_issues(output_dir: Path) -> tuple[str, ...]:
     if reason not in REFUSALS:
         issues.append(f"terminal reason {reason!r} is not a refusal ({', '.join(sorted(REFUSALS))})")
     for event in trajectory.get("events", []):
-        if event.get("type") != "tool" or not isinstance(event.get("result"), dict):
+        if event.get("type") != "tool":
             continue
-        ok = event["result"].get("ok")
-        if event.get("name") == "submit_proof" and ok:
+        name = event.get("name")
+        if name not in ("submit_proof", "check_proof"):
+            continue
+        result = event.get("result")
+        if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+            # A missing/non-dict result, or a result whose `ok` is not a
+            # bool, used to be silently skipped -- so a run 3 audit here
+            # (`validate_batch_consistency`) never required these two tool
+            # events to have a readable shape, and a run whose trajectory
+            # cannot say whether Lean accepted a proof attempt could still be
+            # graded `refused` (item 7).
+            issues.append(f"a {name} event carries no readable result")
+            continue
+        ok = result["ok"]
+        if name == "submit_proof" and ok:
             issues.append("a submit_proof was accepted")
-        if event.get("name") == "check_proof" and ok and not LeanTools.has_holes(str(event["result"].get("source", ""))):
+        if name == "check_proof" and ok and not LeanTools.has_holes(str(result.get("source", ""))):
             issues.append("a check_proof Lean accepted carried no hole")
     return tuple(issues)
 
