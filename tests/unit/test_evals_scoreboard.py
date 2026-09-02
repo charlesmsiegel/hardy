@@ -480,6 +480,36 @@ def test_a_selection_matching_no_entries_is_a_finding(tmp_path):
     assert any("selects no entries" in i for i in issues), issues
 
 
+def test_a_complete_scoreboard_with_no_finished_at_is_a_finding(tmp_path):
+    """A process that stops after writing the final row but before `run_set`'s
+    own closing `_write(..., finished_at=now())` -- or a `finished_at` edited
+    back to `null` afterwards -- leaves every expected row present with
+    nothing recording that the run actually finished (item 7): this
+    completeness check must not read the board as valid just because it has
+    no missing rows.
+    """
+    out, problems, baseline = _board(tmp_path)
+    _edit(out / "scoreboard.json", lambda s: s.__setitem__("finished_at", None))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("records no finished_at" in i for i in issues), issues
+
+
+def test_an_interrupted_scoreboard_with_a_finished_at_is_a_finding(tmp_path):
+    """`run_set` only ever writes `finished_at` on its final, non-interrupted
+    write; a scoreboard claiming both `interrupted: true` and a `finished_at`
+    is a contradiction the metadata alone reveals, which can only be reached
+    by editing it after the fact (item 7).
+    """
+    out, problems, baseline = _board(tmp_path)
+
+    def contradict(s):
+        s["interrupted"] = True
+
+    _edit(out / "scoreboard.json", contradict)
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("cannot carry a finished_at" in i for i in issues), issues
+
+
 def test_a_baseline_missing_a_problem_entry_is_a_finding(tmp_path):
     """A baseline no longer covering every problem id cannot be trusted to
     tier this run (item 8): `select` would raise `KeyError` the first time it
