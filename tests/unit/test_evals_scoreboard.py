@@ -43,6 +43,27 @@ def test_a_run_the_audit_rejects_is_invalid(tmp_path):
     assert scoreboard.batch_row(TRUE, 3, output, tmp_path, repeat=0).outcome == "invalid"
 
 
+def test_a_batch_run_missing_its_result_is_invalid_not_a_crash(tmp_path):
+    output = _batch(tmp_path, [("submit_proof", {"proof": "by exact True.intro"})], name="d")
+    (output / "result.json").unlink()
+    row = scoreboard.batch_row(TRUE, 3, output, tmp_path, repeat=0)
+    assert row.outcome == "invalid" and row.cost_usd is None
+
+
+def test_a_batch_run_with_unreadable_trajectory_is_invalid_not_a_crash(tmp_path):
+    output = _batch(tmp_path, [("submit_proof", {"proof": "by exact True.intro"})], name="e")
+    (output / "trajectory.json").write_text("not json", encoding="utf-8")
+    row = scoreboard.batch_row(TRUE, 3, output, tmp_path, repeat=0)
+    assert row.outcome == "invalid" and row.cost_usd is None
+
+
+def test_a_staged_row_directory_with_no_nested_run_is_invalid(tmp_path):
+    row_dir = tmp_path / "empty-row"
+    row_dir.mkdir()
+    row = scoreboard.staged_row(TRUE, 3, row_dir, tmp_path, repeat=0)
+    assert row.outcome == "invalid" and row.canonical is None and row.cost_usd is None and row.mode == "staged"
+
+
 def test_wilson_interval_is_the_textbook_one():
     lo, hi = scoreboard.wilson(0, 10)
     assert lo == 0.0 and 0.27 < hi < 0.29
