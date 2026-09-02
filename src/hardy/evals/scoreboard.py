@@ -99,7 +99,7 @@ def staged_row(entry: Entry, tier: int, row_dir: Path, scoreboard_dir: Path, *, 
     common = dict(
         base, terminal_reason=manifest.terminal_reason.value if manifest.terminal_reason else manifest.phase.value,
         cost_usd=manifest.usage.get("cost_usd"), exchanges=manifest.usage.get("exchanges"), turns=None,
-        wall_seconds=manifest.timings_ms.get("active", 0) / 1000.0 if manifest.timings_ms else None,
+        wall_seconds=(active / 1000.0) if (active := manifest.timings_ms.get("active")) is not None else None,
         lean_checks=sum(1 for n in names if n == "lean_check_proof"),
         search_calls=sum(1 for n in names if n in acceptance.STAGED_SEARCH), canonical=canonical,
     )
