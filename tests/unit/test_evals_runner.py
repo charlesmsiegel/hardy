@@ -29,9 +29,17 @@ ENTRIES = (
 _TIER_CLOSERS: dict[int, tuple[str, ...]] = {0: ("simp",), 1: ("exact?",), 2: ("intros; simp_all",), 3: ()}
 
 
+def _full_attempts(closed_by: tuple[str, ...] = ()) -> dict[str, sweep.Attempt]:
+    """Every tactic `sweep.Baseline`'s completeness check now requires
+    (item 4): the code's own `singles`/`chains`, each `closed` if named by
+    `closed_by` and `failed` otherwise -- never a truncated subset.
+    """
+    return {name: sweep.Attempt(status="closed" if name in closed_by else "failed") for name in sweep.SINGLES + sweep.CHAINS}
+
+
 def _entry_baseline(tier: int, **kw) -> sweep.EntryBaseline:
     closed_by = _TIER_CLOSERS[tier]
-    base = dict(tier=tier, elaborates=True, attempts={name: sweep.Attempt(status="closed") for name in closed_by}, closed_by=closed_by)
+    base = dict(tier=tier, elaborates=True, attempts=_full_attempts(closed_by), closed_by=closed_by)
     base.update(kw)
     return sweep.EntryBaseline(**base)
 

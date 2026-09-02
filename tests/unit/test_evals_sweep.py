@@ -318,6 +318,38 @@ def test_staleness_names_an_extra_baseline_entry():
     assert any("extra" in i and "twin" in i for i in issues)
 
 
+def test_an_elaborating_entry_with_no_attempts_is_refused_by_the_baseline():
+    """An edited or truncated baseline can set `elaborates: true` beside
+    `attempts: {}` and `closed_by: []`; `EntryBaseline`'s own validators
+    accept this on their own -- the two empty sets agree with each other, and
+    `tier_of([])` is 3 -- so `sweep.Baseline` itself must refuse it (item 4):
+    otherwise selection and the headline would treat an unmeasured statement
+    as one every configured tactic was tried against and failed.
+    """
+    entry = sweep.EntryBaseline(tier=3, elaborates=True, attempts={}, closed_by=())
+    with pytest.raises(ValidationError, match="attempts"):
+        sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256="p" * 64, environment=IDENTITY,
+                       heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS,
+                       host={}, problems=(), entries={"e": entry})
+
+
+def test_a_negation_missing_one_chain_is_refused_by_the_baseline():
+    """The same completeness check applies to `entry.negation.attempts` when
+    a negation was swept (item 4): a negation record truncated by even one
+    chain must not pass just because its own `closed_by` agrees with what it
+    does carry.
+    """
+    full = {name: sweep.Attempt(status="failed") for name in sweep.SINGLES + sweep.CHAINS}
+    incomplete = dict(full)
+    del incomplete[sweep.CHAINS[0]]
+    negation = sweep.NegationBaseline(attempts=incomplete, closed_by=())
+    entry = sweep.EntryBaseline(tier=3, elaborates=True, attempts=full, closed_by=(), negation=negation)
+    with pytest.raises(ValidationError, match="negation attempts"):
+        sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256="p" * 64, environment=IDENTITY,
+                       heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS,
+                       host={}, problems=(), entries={"e": entry})
+
+
 def test_staleness_names_a_missing_baseline_entry():
     """An id the problem list names but the baseline never tiered (item 8):
     `select` would otherwise raise `KeyError` the first time it is looked up.

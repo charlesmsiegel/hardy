@@ -211,6 +211,32 @@ class Baseline(FrozenModel):
     problems: tuple[str, ...]
     entries: dict[str, EntryBaseline]
 
+    @model_validator(mode="after")
+    def every_entry_carries_a_complete_tactic_record(self) -> Baseline:
+        """Refuse a baseline whose `attempts` were truncated or forged.
+
+        An edited or hand-truncated baseline can set `elaborates: true`
+        beside `attempts: {}` and `closed_by: []`; `EntryBaseline`'s own
+        validators accept this, since the two empty sets agree with each
+        other and `tier_of([])` is 3 -- so the live staleness gate and this
+        checker alike would treat an unmeasured statement as one on which
+        every configured tactic was tried and failed, rather than one no
+        attempt was recorded for at all (item 4). `attempts` must instead
+        name exactly this baseline's own `singles` and `chains` whenever
+        elaboration succeeded -- for the entry itself, and, when a negation
+        was swept, for it too -- and must be empty when it did not.
+        """
+        full = set(self.singles) | set(self.chains)
+        for entry_id, entry in self.entries.items():
+            if entry.elaborates:
+                if set(entry.attempts) != full:
+                    raise ValueError(f"{entry_id}: attempts {sorted(entry.attempts)!r} do not match singles+chains {sorted(full)!r}")
+                if entry.negation is not None and set(entry.negation.attempts) != full:
+                    raise ValueError(f"{entry_id}: negation attempts {sorted(entry.negation.attempts)!r} do not match singles+chains {sorted(full)!r}")
+            elif entry.attempts:
+                raise ValueError(f"{entry_id}: elaborates is false but attempts is not empty")
+        return self
+
 
 def tier_of(closed_by: tuple[str, ...]) -> int:
     closers = set(closed_by)
