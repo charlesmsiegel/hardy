@@ -94,7 +94,7 @@ def test_baseline_writes_the_tier_file_and_exits_zero_when_the_list_is_clean(tmp
     problems = tmp_path / "problems.json"
     problems.write_text(json.dumps(PROBLEMS), encoding="utf-8")
     out = tmp_path / "baseline.json"
-    args = argparse.Namespace(problems=problems, out=out)
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
     code = commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
     assert code == 0
     written = json.loads(out.read_text(encoding="utf-8"))
@@ -112,19 +112,40 @@ def test_baseline_exits_one_but_still_writes_when_the_list_has_problems(tmp_path
     problems = tmp_path / "problems.json"
     problems.write_text(json.dumps({"schema_version": 1, "entries": [PROBLEMS["entries"][0], twin]}), encoding="utf-8")
     out = tmp_path / "baseline.json"
-    code = commands.run_baseline(argparse.Namespace(problems=problems, out=out), config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
+    code = commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
     assert code == 1 and out.exists()
     assert "f: a twin closed by" in capsys.readouterr().err
 
 
 def test_baseline_refuses_a_missing_problems_file_instead_of_a_traceback(tmp_path, capsys):
     missing = tmp_path / "nope.json"
-    args = argparse.Namespace(problems=missing, out=tmp_path / "baseline.json")
+    args = argparse.Namespace(problems=missing, out=tmp_path / "baseline.json", acknowledge_unsafe_execution=True)
     code = commands.run_baseline(args, config=None)
     assert code == 2
     err = capsys.readouterr().err
     assert "Refused:" in err and str(missing) in err
     assert not (tmp_path / "baseline.json").exists()
+
+
+def test_baseline_refuses_unacknowledged_unsafe_execution(tmp_path, capsys):
+    """The sweep interpolates `evals/problems.json`'s imports, binders, and
+    conclusion into real Lean source and elaborates it -- the same unsafe-
+    execution contract `evals run` and the staged terminal already enforce
+    (item 6). An untrusted problem file gets no free pass just because there
+    is no model to hand the warning to.
+    """
+    from hardy.runner import WARNING
+
+    problems = tmp_path / "problems.json"
+    problems.write_text(json.dumps(PROBLEMS), encoding="utf-8")
+    out = tmp_path / "baseline.json"
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=False)
+    code = commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
+    assert code == 2
+    err = capsys.readouterr().err
+    assert WARNING in err and "--acknowledge-unsafe-execution" in err
+    assert not out.exists()
 
 
 def test_check_refuses_missing_problems_or_baseline_instead_of_a_traceback(tmp_path, capsys):
@@ -147,7 +168,7 @@ def test_baseline_reports_a_toolchain_that_cannot_be_identified_instead_of_a_tra
     problems = tmp_path / "problems.json"
     problems.write_text(json.dumps(PROBLEMS), encoding="utf-8")
     out = tmp_path / "baseline.json"
-    args = argparse.Namespace(problems=problems, out=out)
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
     config = argparse.Namespace(lean_project=None, lake="lake", limits=argparse.Namespace(lean_process_seconds=60))
     code = commands.run_baseline(args, config=config, elaborate=_always_closes, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
     assert code == 2

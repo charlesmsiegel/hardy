@@ -59,6 +59,7 @@ def add_parser(subparsers: Any) -> None:
     baseline = verbs.add_parser("baseline", help="sweep the tactic set over every canonical statement and write the tier file")
     baseline.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
     baseline.add_argument("--out", type=Path, default=DEFAULT_BASELINE)
+    baseline.add_argument("--acknowledge-unsafe-execution", action="store_true")
     run = verbs.add_parser("run", help="run every entry through batch or staged and write a scoreboard")
     run.add_argument("--label", required=True)
     run.add_argument("--mode", choices=("batch", "staged"), default="batch")
@@ -117,10 +118,26 @@ def _identity(config: Any) -> EnvironmentIdentity:
 
 def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[str], Elaboration] | None = None,
                  identity: EnvironmentIdentity | None = None, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> int:
+    from ..runner import WARNING
+
     refusal = _refuse_missing(args.problems)
     if refusal is not None:
         print(refusal, file=sys.stderr)
         return 2
+    if not args.acknowledge_unsafe_execution:
+        # Untrusted `evals/problems.json` imports, binders and conclusion are
+        # interpolated into Lean source and elaborated for real -- the same
+        # unsafe-execution contract `evals run` and the staged terminal
+        # already enforce, so a crafted problem file gets no free pass here
+        # just because there is no run-time model to hand it to.
+        print(WARNING, file=sys.stderr)
+        print(
+            "The sweep elaborates Lean built from the problem file's imports, binders and "
+            "conclusion. Re-run with --acknowledge-unsafe-execution to accept this for the whole sweep.",
+            file=sys.stderr,
+        )
+        return 2
+    print(WARNING, file=sys.stderr)
     problems = load_problems(args.problems)
     if identity is None:
         try:
