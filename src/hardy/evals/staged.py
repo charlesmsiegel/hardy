@@ -89,6 +89,17 @@ class CanonicalVerdict(FrozenModel):
             raise ValueError(f"a {self.outcome} verdict requires the review it grades")
         if self.review.agrees is not (self.outcome == "agreed"):
             raise ValueError("verdict does not follow from the review it names")
+        # `unavailable` is the only outcome the no-formalization path
+        # (`compare_canonical`, no `formalization.json`) can produce, and
+        # that is the only place these four fields are ever left `None`. An
+        # `agreed` or `disputed` verdict binds a specific review to a
+        # specific claim, prompt and schema; leaving any of these `None`
+        # would let a reader trajectory copied from comparing a *different*
+        # formalization supply the agreeing review here, with nothing tying
+        # it back to this row's frozen statement.
+        missing = [name for name in ("claim_sha256", "model_signature", "prompt_sha256", "response_schema_sha256") if getattr(self, name) is None]
+        if missing:
+            raise ValueError(f"a {self.outcome} verdict requires " + ", ".join(missing))
         return self
 
 

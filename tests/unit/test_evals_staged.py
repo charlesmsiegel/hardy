@@ -7,6 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
+import pytest
+from pydantic import ValidationError
+
 from hardy import acceptance, prompts
 from hardy.config import Config
 from hardy.domain import EnvironmentIdentity, FormalizationProposal, RunPhase, freeze_claim
@@ -53,6 +56,39 @@ def test_the_canonical_prompt_carries_both_statements_and_lives_outside_the_stag
     text = prompts.canonical_prompt("theorem A : P", "theorem B : Q")
     assert "theorem A : P" in text and "theorem B : Q" in text and "CANONICAL" in text and "MODEL" in text
     assert "canonical" not in prompts._prompt_set_payload()
+
+
+def _verdict_kwargs(**overrides) -> dict:
+    review = staged.CanonicalReview(equivalent=True, canonical_entails_model=True, model_entails_canonical=True)
+    base = dict(claim_sha256="c" * 64, entry_id="odd-sum", canonical_declaration=ENTRY.declaration(), model_signature="theorem SumOdd : True",
+               reviewer_model="reader@test", reviewer_backend="claude", prompt_sha256="p" * 64, response_schema_sha256="s" * 64,
+               outcome="agreed", review=review, usage={})
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.parametrize("field", ["claim_sha256", "model_signature", "prompt_sha256", "response_schema_sha256"])
+@pytest.mark.parametrize("outcome", ["agreed", "disputed"])
+def test_an_agreed_or_disputed_verdict_requires_every_identity_field(field, outcome):
+    """An `agreed`/`disputed` verdict binds one specific review to one
+    specific claim, prompt and schema (item 3); leaving any of these `None`
+    -- the shape only the no-formalization `unavailable` path is allowed to
+    take -- would let a reader trajectory copied from comparing a *different*
+    formalization supply the agreeing review here, unbound from this row's
+    frozen statement.
+    """
+    review = staged.CanonicalReview(equivalent=(outcome == "agreed"), canonical_entails_model=True, model_entails_canonical=True,
+                                    notes="" if outcome == "agreed" else "differs")
+    kwargs = _verdict_kwargs(outcome=outcome, review=review)
+    kwargs[field] = None
+    with pytest.raises(ValidationError, match=field):
+        staged.CanonicalVerdict(**kwargs)
+
+
+def test_an_unavailable_verdict_may_leave_every_identity_field_null():
+    verdict = staged.CanonicalVerdict(**dict(_verdict_kwargs(outcome="unavailable", review=None), claim_sha256=None, model_signature=None,
+                                             prompt_sha256=None, response_schema_sha256=None, detail="no formalization.json"))
+    assert verdict.outcome == "unavailable"
 
 
 def test_an_agreeing_reader_writes_an_agreed_verdict_beside_the_run(tmp_path):
