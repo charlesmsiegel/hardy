@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -65,6 +66,35 @@ def test_a_staged_row_directory_with_no_nested_run_is_invalid(tmp_path):
     row_dir.mkdir()
     row = scoreboard.staged_row(TRUE, 3, row_dir, tmp_path, repeat=0)
     assert row.outcome == "invalid" and row.canonical is None and row.cost_usd is None and row.mode == "staged"
+
+
+def test_nested_run_finds_a_real_run_directory_beneath_the_row(tmp_path):
+    row_dir = tmp_path / "row"
+    row_dir.mkdir()
+    real_run = row_dir / "20260901T000000+0000-real-run-aaaaaaaa"
+    real_run.mkdir()
+    (real_run / "manifest.json").write_text("{}", encoding="utf-8")
+    assert scoreboard._nested_run(row_dir) == real_run
+
+
+def test_nested_run_rejects_a_candidate_that_resolves_outside_the_row_directory(tmp_path):
+    """A row whose single child is a symlink to a run outside the scoreboard
+    tree must not be found (item J): `is_dir()` and the manifest check both
+    follow the link, so without resolving and containing the candidate,
+    `hardy evals check` could certify a scoreboard that does not actually
+    carry its nested run and may read an unrelated external run.
+    """
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    (outside / "manifest.json").write_text("{}", encoding="utf-8")
+    row_dir = tmp_path / "row2"
+    row_dir.mkdir()
+    link = row_dir / "20260901T000000+0000-link-bbbbbbbb"
+    try:
+        os.symlink(outside, link, target_is_directory=True)
+    except OSError:
+        pytest.skip("cannot create a symlink without elevated privileges on this platform")
+    assert scoreboard._nested_run(row_dir) is None
 
 
 def test_wilson_interval_is_the_textbook_one():
@@ -167,6 +197,32 @@ def test_each_check_breaks_one_at_a_time(tmp_path):
     assert not any("row" in i for i in scoreboard.validate_scoreboard(out5, problems_path=p5, baseline_path=b5))
 
 
+def test_a_canonical_json_whose_outcome_does_not_follow_its_review_is_a_finding(tmp_path):
+    """A committed or corrupted `canonical.json` naming `outcome: "agreed"`
+    beside a disputed or absent review must not pass `hardy evals check`
+    (item C): `CanonicalVerdict.model_validate_json` -- what `_canonical_issues`
+    loads it with -- now refuses to parse such a file at all.
+    """
+    from test_evals_staged import DETERMINISTIC_IDENTITY, _solved_fixture
+
+    from hardy.evals.problems import sha256_of
+
+    scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
+    row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
+    assert row.outcome == "solved"
+    condition = _condition(mode="staged", limits={"active_seconds": 1800, "proof_seconds": 1200, "official_checks": 40,
+                                                   "twin_max_turns": 60, "twin_wall_seconds": 1800.0})
+    board = runner.Scoreboard(label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path),
+                              problems_sha256=sha256_of(problems_path), rows=(row,), aggregates=scoreboard.aggregate([row], baseline),
+                              started_at=datetime(2026, 9, 1, tzinfo=UTC), finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False)
+    (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
+
+    # `outcome` stays "agreed" while the review it names is rewritten to no longer agree.
+    _edit(row_dir / "canonical.json", lambda c: c["review"].__setitem__("notes", "hmm"))
+    issues = scoreboard.validate_scoreboard(scoreboard_dir, problems_path=problems_path, baseline_path=baseline_path)
+    assert any("canonical.json" in i for i in issues), issues
+
+
 def test_environment_must_match_the_baseline(tmp_path):
     out, problems, baseline = _board(tmp_path)
     _edit(out / "scoreboard.json", lambda s: s["environment"].__setitem__("lean_commit", "other"))
@@ -201,6 +257,42 @@ def test_a_run_dir_that_escapes_the_scoreboard_directory_is_a_finding_not_a_read
     # the escaping row is the only mutation to an otherwise-clean board: the
     # other two rows validate exactly as they did before it, no other finding.
     assert issues == tuple(escapes)
+
+
+def test_the_validator_enforces_the_conditions_mode(tmp_path):
+    """A committed scoreboard cannot substitute batch artifacts for a staged
+    condition's true entries (item H): the expected mode comes from the
+    condition and the entry, not from the row's own say-so. A twin always
+    runs batch regardless of the condition's mode (#23), so it carries no
+    such finding.
+    """
+    out, problems, baseline = _board(tmp_path)
+
+    def restage(s):
+        s["condition"]["mode"] = "staged"
+        s["condition"]["limits"] = {"active_seconds": 1800, "proof_seconds": 1200, "official_checks": 40,
+                                    "twin_max_turns": 60, "twin_wall_seconds": 1800.0}
+
+    _edit(out / "scoreboard.json", restage)
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    mode_issues = [i for i in issues if "row mode" in i]
+    assert any("runs/t/batch-0" in i and "'staged'" in i for i in mode_issues)
+    assert any("runs/u/batch-0" in i and "'staged'" in i for i in mode_issues)
+    assert not any("runs/f/batch-0" in i for i in mode_issues)
+
+
+def test_duplicate_id_repeat_rows_are_a_finding(tmp_path):
+    out, problems, baseline = _board(tmp_path)
+    _edit(out / "scoreboard.json", lambda s: s["rows"].append(dict(s["rows"][0])))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("repeat (id, repeat)" in i and "'t'" in i for i in issues)
+
+
+def test_two_rows_pointing_at_the_same_run_dir_are_a_finding(tmp_path):
+    out, problems, baseline = _board(tmp_path)
+    _edit(out / "scoreboard.json", lambda s: s["rows"][1].__setitem__("run_dir", s["rows"][0]["run_dir"]))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("is used by more than one row" in i for i in issues)
 
 
 def test_a_selection_naming_an_unknown_id_is_a_finding_not_a_crash(tmp_path):

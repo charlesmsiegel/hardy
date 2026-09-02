@@ -5,6 +5,7 @@ import json
 import math
 import statistics
 import sys
+from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -77,7 +78,26 @@ def batch_row(entry: Entry, tier: int, run_dir: Path, scoreboard_dir: Path, *, r
 
 
 def _nested_run(row_dir: Path) -> Path | None:
-    runs = sorted(p for p in row_dir.iterdir() if p.is_dir() and (p / "manifest.json").exists()) if row_dir.is_dir() else []
+    """The one run directory a staged row carries, resolved and contained.
+
+    A candidate that is a symlink (or otherwise resolves) to somewhere
+    outside `row_dir` is not counted: `is_dir()` and the manifest check both
+    follow such a link, so without this a row could point at, and audit, a
+    run the scoreboard directory never actually carries.
+    """
+    if not row_dir.is_dir():
+        return None
+    resolved_row_dir = row_dir.resolve()
+    candidates = []
+    for candidate in row_dir.iterdir():
+        if not candidate.is_dir() or not (candidate / "manifest.json").exists():
+            continue
+        try:
+            candidate.resolve().relative_to(resolved_row_dir)
+        except ValueError:
+            continue
+        candidates.append(candidate)
+    runs = sorted(candidates)
     return runs[0] if len(runs) == 1 else None
 
 
@@ -203,6 +223,18 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
     if baseline.environment != board.environment:
         issues.append("the scoreboard's environment is not the baseline's")
+    # Rows are samples: a duplicated (id, repeat) key or a run_dir reused
+    # across rows would let one run be counted as more than one independent
+    # sample, inflating solve rates and medians without the audit ever seeing
+    # a problem (item I).
+    key_counts = Counter((row.id, row.repeat) for row in board.rows)
+    for key, count in sorted(key_counts.items()):
+        if count > 1:
+            issues.append(f"rows repeat (id, repeat) {key} {count} times")
+    dir_counts = Counter(row.run_dir for row in board.rows)
+    for run_dir_name, count in sorted(dir_counts.items()):
+        if count > 1:
+            issues.append(f"run_dir {run_dir_name!r} is used by more than one row")
     # 2-5. every row re-derived
     for row in board.rows:
         where = row.run_dir
@@ -230,6 +262,15 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
             continue
         if row.id not in baseline.entries:
             issues.append(f"{where}: row id {row.id!r} is not in the baseline")
+            continue
+        # The condition governs a row's mode, not the row's own say-so: a twin
+        # always runs batch (#23), and any other row must match the
+        # condition's own mode. Substituting batch artifacts for a staged
+        # condition's true entries must not pass as a cheaper alternative
+        # (item H).
+        expected_mode = "batch" if entry.expected == "false" or board.condition.mode == "batch" else "staged"
+        if row.mode != expected_mode:
+            issues.append(f"{where}: row mode {row.mode!r} but the condition calls for {expected_mode!r}")
             continue
         tier = baseline.entries[row.id].tier
         derived = batch_row(entry, tier, run_dir, scoreboard_dir, repeat=row.repeat) if row.mode == "batch" else staged_row(entry, tier, run_dir, scoreboard_dir, repeat=row.repeat)
