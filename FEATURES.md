@@ -1147,9 +1147,17 @@ selection through `batch` or `staged` and writes
 It refuses before anything runs (exit 2) on a stale baseline digest, a
 drifted toolchain identity, `singles`/`chains` drift, a baseline that itself
 recorded problems, an existing label, `--only` naming an id outside the
-list, or `--mode staged` with no staged runner; `--acknowledge-unsafe-execution`
-is the same contract the staged terminal enforces on a human, printed once
-since a set run has no one to say it to. Twins always run `batch`, even
+list, `--mode staged` with no staged runner, `--mode staged` combined with
+`--max-turns`/`--wall-seconds`, or a toolchain that cannot be identified;
+`--acknowledge-unsafe-execution` is the same contract the staged terminal
+enforces on a human, printed once since a set run has no one to say it to.
+`--max-turns`/`--wall-seconds` default to `60`/`1800.0` and govern `batch`
+mode's `condition.limits`; under `--mode staged` they are refused rather
+than silently ignored, because a staged run is bounded by
+`config.limits.active_seconds`, `proof_seconds`, and `official_checks`
+instead, which `condition.limits` records there — along with
+`twin_max_turns`/`twin_wall_seconds` (the same 60/1800.0 defaults), since a
+twin still runs `batch` under staged mode. Twins always run `batch`, even
 under `--mode staged`, because the staged loop grades every unverified run
 `partial` regardless of `expected` (issue #23). A staged row runs `hardy
 prove` behind an approving stand-in for the user (`approval: "automatic"`),
