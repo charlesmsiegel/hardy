@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import subprocess
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -17,6 +19,13 @@ from .sweep import Baseline, staleness
 
 BatchRunner = Callable[[Entry, Path, int, float], None]
 StagedRunner = Callable[[Entry, Path, str], None]   # (entry, row_dir, model): writes the nested run and canonical.json
+
+# A single safe path component: no `/` or `\`, no leading `.` or `-`, nothing
+# that could turn `scoreboards_root / label` into a path outside
+# `evals/scoreboards` (item 4). `..` alone, `../x`, `a/b`, and every absolute
+# path (POSIX or Windows) all fail this on the first character or the
+# separator, so no further check is needed.
+LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class RefusedRun(RuntimeError):
@@ -33,9 +42,45 @@ class Condition(FrozenModel):
     staged_prompt_set_sha256: str
     batch_prompt_set_sha256: str
     hardy_version: str
+    # The Git revision the run was made from, `-dirty` suffixed when the
+    # working tree carried uncommitted changes, `None` when it could not be
+    # identified (no `git`, no `.git`). Evals are run from a source checkout
+    # and no release bump occurs per commit, so `hardy_version` alone cannot
+    # distinguish two runs made from different commits of the same release
+    # (item 8). Defaulted so every existing `Condition(...)` call site --
+    # test fixtures included -- need not name it.
+    source_revision: str | None = None
     limits: dict[str, float | int]
     repeats: int
     selection: dict[str, Any]
+
+
+def source_revision(root: Path) -> str | None:
+    """The Git commit this process's source checkout is at, or `None`.
+
+    Never raises: a source checkout with no `.git` (a stripped clone, a
+    packaging step run outside the repository) or no `git` on `PATH` must not
+    turn "record the revision" into a refusal to run a set. `-dirty` is
+    appended when `git status --porcelain` reports uncommitted changes, so a
+    scoreboard's `condition` cannot be mistaken for stating a commit's own
+    committed state when the tree that actually ran had more than that.
+    """
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if head.returncode != 0:
+        return None
+    revision = head.stdout.strip()
+    if not revision:
+        return None
+    try:
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return revision
+    if status.returncode == 0 and status.stdout.strip():
+        revision += "-dirty"
+    return revision
 
 
 class Scoreboard(FrozenModel):
@@ -97,6 +142,12 @@ def _write(path: Path, board: Scoreboard) -> None:
 def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards_root: Path, condition: Condition,
             environment: EnvironmentIdentity, batch_runner: BatchRunner, staged_runner: StagedRunner | None = None,
             now: Callable[[], datetime], report: Callable[[str], None]) -> Path:
+    if not LABEL_RE.fullmatch(label):
+        # Before anything is read or created: `scoreboards_root / label`
+        # would otherwise resolve outside `evals/scoreboards` for a label
+        # like `../../new-eval` or an absolute path, and the run tree would
+        # be written there despite the documented output contract (item 4).
+        raise RefusedRun(f"--label must be a single path component matching {LABEL_RE.pattern!r}, not {label!r}")
     problems = load_problems(problems_path)
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
     issues = staleness(baseline, problems_sha256=sha256_of(problems_path), environment=environment,
@@ -232,10 +283,17 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
             "wall_seconds": args.wall_seconds if args.wall_seconds is not None else BATCH_DEFAULT_WALL_SECONDS,
             "lean_timeout": float(config.lean_timeout),
         }
+    # `args.problems` defaults to `evals/problems.json`, so its grandparent is
+    # the repository root -- the directory containing `evals/`. Kept this
+    # simple deliberately rather than searching upward for `.git`: a caller
+    # who passes `--problems` somewhere else entirely is already outside the
+    # documented "run from a source checkout's root" contract `_refuse_missing`
+    # states above (item 8).
+    source_root = args.problems.resolve().parent.parent
     condition = Condition(
         model=str(args.model or config.model), backend=args.backend, mode=args.mode,
         staged_prompt_set_sha256=PROMPT_SET_SHA256, batch_prompt_set_sha256=BATCH_PROMPT_SET_SHA256,
-        hardy_version=__version__, limits=limits, repeats=args.repeats,
+        hardy_version=__version__, source_revision=source_revision(source_root), limits=limits, repeats=args.repeats,
         selection={"only": args.only.split(",") if args.only else None, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
                    "twins": not args.no_twins},
     )
