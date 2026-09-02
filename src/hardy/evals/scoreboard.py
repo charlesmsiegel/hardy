@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import math
 import statistics
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from .. import acceptance
@@ -200,12 +200,32 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
         issues.append("the scoreboard's environment is not the baseline's")
     # 2-5. every row re-derived
     for row in board.rows:
-        run_dir = scoreboard_dir / Path(*row.run_dir.split("/"))
         where = row.run_dir
+        # A row's `run_dir` is untrusted committed text, not a path this
+        # function chose: reject anything that could name a file outside
+        # the scoreboard directory as a finding, never let it become a read.
+        candidate = PurePosixPath(row.run_dir)
+        escapes = not row.run_dir or candidate.is_absolute() or Path(row.run_dir).is_absolute() or ".." in candidate.parts
+        run_dir = scoreboard_dir / Path(*candidate.parts) if not escapes else scoreboard_dir
+        if not escapes:
+            try:
+                run_dir.resolve().relative_to(scoreboard_dir.resolve())
+            except ValueError:
+                escapes = True
+        if escapes:
+            issues.append(f"{where}: run_dir points outside the scoreboard directory")
+            continue
         if not run_dir.exists():
             issues.append(f"{where}: missing")
             continue
-        entry = problems.by_id(row.id)
+        try:
+            entry = problems.by_id(row.id)
+        except KeyError:
+            issues.append(f"{where}: row id {row.id!r} is not in the problem list")
+            continue
+        if row.id not in baseline.entries:
+            issues.append(f"{where}: row id {row.id!r} is not in the baseline")
+            continue
         tier = baseline.entries[row.id].tier
         derived = batch_row(entry, tier, run_dir, scoreboard_dir, repeat=row.repeat) if row.mode == "batch" else staged_row(entry, tier, run_dir, scoreboard_dir, repeat=row.repeat)
         if derived.outcome == "invalid":
