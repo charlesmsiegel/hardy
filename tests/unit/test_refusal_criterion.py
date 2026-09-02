@@ -50,6 +50,30 @@ def test_a_missing_artifact_is_reported_not_raised(tmp_path):
     assert any("trajectory.json" in i and "missing" in i for i in issues)
 
 
+def test_a_check_proof_event_with_no_readable_result_is_a_refusal_issue(tmp_path):
+    """`validate_batch_consistency` does not otherwise require a
+    `submit_proof`/`check_proof` event's `result` to have a readable shape,
+    so a trajectory whose `check_proof` result was rewritten to `null` could
+    still pass the recorded-run audit and be scored `refused`, even though
+    the record cannot say whether Lean accepted the attempt (item 7).
+    """
+    import json
+
+    acceptance = importlib.import_module("hardy.acceptance")
+    output = _batch(tmp_path, [("check_proof", {"proof": "by sorry"})])
+    trajectory_path = output / "trajectory.json"
+    trajectory = json.loads(trajectory_path.read_text(encoding="utf-8"))
+    rewritten = False
+    for event in trajectory.get("events", []):
+        if event.get("type") == "tool" and event.get("name") == "check_proof":
+            event["result"] = None
+            rewritten = True
+    assert rewritten
+    trajectory_path.write_text(json.dumps(trajectory, indent=2) + "\n", encoding="utf-8")
+    issues = acceptance.refusal_issues(output)
+    assert any("check_proof" in i and "no readable result" in i for i in issues), issues
+
+
 def test_a_non_object_result_is_reported_not_raised(tmp_path):
     acceptance = importlib.import_module("hardy.acceptance")
     output = _batch(tmp_path, [("check_proof", {"proof": "by sorry"})])
