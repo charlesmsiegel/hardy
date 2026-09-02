@@ -282,6 +282,27 @@ def test_a_closed_attempt_missing_from_closed_by_is_refused():
         )
 
 
+def test_a_negation_closed_by_naming_an_attempt_that_did_not_close_is_refused():
+    """The same `closed_by`-vs-`attempts` invariant `EntryBaseline` enforces,
+    shared onto `NegationBaseline` (item 4): an edited `negation.closed_by`
+    naming a tactic whose own attempt failed would otherwise pass validation,
+    and `aggregate` would count every matching twin row `mechanically_false`
+    on kernel evidence its own attempts contradict.
+    """
+    with pytest.raises(ValidationError, match="closed_by"):
+        sweep.NegationBaseline(attempts={"simp": sweep.Attempt(status="failed")}, closed_by=("simp",))
+
+
+def test_a_negation_closed_attempt_missing_from_closed_by_is_refused():
+    with pytest.raises(ValidationError, match="closed_by"):
+        sweep.NegationBaseline(attempts={"simp": sweep.Attempt(status="closed"), "omega": sweep.Attempt(status="closed")}, closed_by=("simp",))
+
+
+def test_a_negation_closed_by_consistent_with_its_attempts_is_accepted():
+    negation = sweep.NegationBaseline(attempts={"simp": sweep.Attempt(status="closed"), "omega": sweep.Attempt(status="failed")}, closed_by=("simp",))
+    assert negation.closed_by == ("simp",)
+
+
 def test_a_tier_consistent_with_its_closers_and_attempts_is_accepted():
     entry = sweep.EntryBaseline(tier=0, elaborates=True, attempts={"simp": sweep.Attempt(status="closed"), "omega": sweep.Attempt(status="failed")}, closed_by=("simp",))
     assert entry.tier == 0 and entry.closed_by == ("simp",)
