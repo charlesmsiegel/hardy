@@ -251,6 +251,11 @@ def staleness(baseline: Baseline, *, problems_sha256: str, environment: Environm
             issues.append(f"the baseline's {field} is {getattr(baseline.environment, field)!r}, this project's is {getattr(environment, field)!r}")
     if baseline.singles != SINGLES or baseline.chains != CHAINS:
         issues.append("the baseline's singles/chains differ from the code's; re-run `hardy evals baseline`")
+    if baseline.heartbeat_budget != HEARTBEAT_BUDGET:
+        issues.append(
+            f"the baseline's heartbeat_budget is {baseline.heartbeat_budget!r}, the code's is {HEARTBEAT_BUDGET!r}; "
+            "re-run `hardy evals baseline`"
+        )
     if baseline.problems:
         issues.append("the baseline records problems with the list: " + "; ".join(baseline.problems))
     return tuple(issues)
