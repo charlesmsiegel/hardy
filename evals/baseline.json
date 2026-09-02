@@ -276,7 +276,7 @@
       "negation": null
     },
     "sq-sum-ge-two-mul": {
-      "tier": 0,
+      "tier": 1,
       "elaborates": true,
       "attempts": {
         "simp": {

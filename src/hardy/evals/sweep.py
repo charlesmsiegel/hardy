@@ -26,7 +26,9 @@ CHAINS: tuple[str, ...] = (
     "intros; simp_all", "constructor <;> simp_all", "simp_all; omega", "norm_num; ring",
     "norm_num; linarith", "field_simp; ring", "by_contra h; push_neg at h; nlinarith", "intros; aesop",
 )
-SEARCHERS: tuple[str, ...] = ("exact?", "apply?")
+# `hint` runs `exact?` internally (Mathlib's `register_hint 600 exact?`), so a
+# goal it closes is a library-search hit, not a tier-0 automation close.
+SEARCHERS: tuple[str, ...] = ("exact?", "apply?", "hint")
 HEARTBEAT_BUDGET = 200000
 WALL_BACKSTOP_FLOOR = 600.0
 
