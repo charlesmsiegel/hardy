@@ -437,15 +437,16 @@ their run directories; a label is one condition on one day.
 - **Automatic problem generation**, twin generation, or pulling from
   miniF2F/PutnamBench loaders (#73). Entries are written by hand and reviewed.
 
-## 9. Open matter for the reviewer
+## 9. Where the first baseline is swept
 
-This machine's project is pinned to `leanprover/lean4:v4.33.0-rc1` with
-Mathlib `v4.33.0-rc1`, while `installers.LEAN_TOOLCHAIN` is `v4.33.1` and the
-four acceptance runs were recorded under 4.33.1 (`hardy doctor` reports the
-drift). A baseline swept here would be stamped rc1, and no run on a 4.33.1
-machine would accept it. The first baseline should be swept on a project at
-the installers' pin; that is a `hardy setup` on this machine before the sweep
-task, not a code change.
+The baseline is only as portable as the pin it is stamped with. The first
+sweep runs on a project at the installers' pin (`leanprover/lean4:v4.33.1`,
+Mathlib `v4.33.1`, Lean commit `819816b2`), the toolchain the four acceptance
+runs were recorded under, so the tier file and the recorded evidence name one
+environment. The machine this was designed on had drifted to `v4.33.0-rc1`
+and was re-pinned by hand before any sweep; `hardy setup` and the installers
+reuse an existing project without re-pinning it, which is a gap to record as
+an issue, not a change this design makes.
 
 ## Appendix: the first twenty entries
 
