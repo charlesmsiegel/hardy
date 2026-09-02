@@ -433,6 +433,31 @@ def test_an_interrupted_board_with_reordered_rows_is_not_a_prefix(tmp_path):
     assert any("not a prefix of the run order" in i for i in issues), issues
 
 
+def test_a_stale_baseline_heartbeat_budget_is_a_finding(tmp_path):
+    """The same staleness gate `run_set` refuses a live run over (spec
+    §3.1) now applies here too (item 2): before this, a committed baseline
+    was checked here only for its environment and entry ids, so a stale
+    `heartbeat_budget` could sit in a committed baseline whose digest and
+    aggregates were kept matching, and `hardy evals check` would accept
+    tiers measured under a heartbeat budget the live runner would refuse.
+    """
+    out, problems, baseline = _board(tmp_path)
+    _edit(baseline, lambda b: b.__setitem__("heartbeat_budget", 1))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any(i.startswith("baseline: ") and "heartbeat_budget" in i for i in issues), issues
+
+
+def test_a_baseline_recording_problems_is_a_finding(tmp_path):
+    """A baseline that itself recorded problems during the sweep (a twin a
+    tactic closed, or a statement that did not elaborate) cannot be trusted
+    to tier a run, the same as it cannot start one (item 2).
+    """
+    out, problems, baseline = _board(tmp_path)
+    _edit(baseline, lambda b: b.__setitem__("problems", ["f: a twin closed by simp, so it is true"]))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any(i.startswith("baseline: ") and "records problems" in i for i in issues), issues
+
+
 def test_a_baseline_missing_a_problem_entry_is_a_finding(tmp_path):
     """A baseline no longer covering every problem id cannot be trusted to
     tier this run (item 8): `select` would raise `KeyError` the first time it

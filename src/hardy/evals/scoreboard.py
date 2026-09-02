@@ -12,7 +12,7 @@ from typing import Any, Literal
 from .. import acceptance
 from ..domain import EnvironmentIdentity, FormalStatus, FrozenModel, RunManifest, RunPhase
 from .problems import Entry
-from .sweep import Baseline, baseline_entries_mismatch
+from .sweep import Baseline, baseline_entries_mismatch, staleness
 
 # The two backends `_condition_issues` knows how to tell apart in a staged
 # trajectory's provider event kinds (item 5). Not open-ended: `run_set_command`
@@ -228,6 +228,9 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
     problems = load_problems(problems_path)
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
     if baseline.environment != board.environment:
+        # Not redundant with `staleness` below: `EnvironmentIdentity` also
+        # carries `imports`, which `staleness` (mirroring the live gate)
+        # never compares.
         issues.append("the scoreboard's environment is not the baseline's")
     # A baseline that tiers entries the problem list no longer names (or is
     # silent about one the list does) cannot be trusted to tier this run
@@ -235,6 +238,17 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
     mismatch = baseline_entries_mismatch(baseline, (e.id for e in problems.entries))
     if mismatch is not None:
         issues.append(mismatch)
+    # The same staleness gate `run_set` refuses over before a live run
+    # starts (spec §3.1): before this, a committed scoreboard's baseline was
+    # checked here only for its environment and entry ids, so a stale
+    # `heartbeat_budget`, tactic list, `problems_sha256`, or recorded
+    # `problems` finding could sit in a committed baseline whose digest and
+    # aggregates were kept matching, and `hardy evals check` would accept
+    # tiers measured under configuration the live runner would have refused
+    # (item 2).
+    for issue in staleness(baseline, problems_sha256=sha256_of(problems_path), environment=board.environment,
+                           problem_ids=[e.id for e in problems.entries]):
+        issues.append(f"baseline: {issue}")
     # Rows are samples: a duplicated (id, repeat) key or a run_dir reused
     # across rows would let one run be counted as more than one independent
     # sample, inflating solve rates and medians without the audit ever seeing
