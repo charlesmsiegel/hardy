@@ -5,6 +5,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from hardy.domain import EnvironmentIdentity
 from hardy.evals import sweep
 from hardy.evals.problems import Entry, ProblemSet
@@ -253,6 +256,35 @@ def test_staleness_names_each_drift():
     rebudgeted = baseline.model_copy(update={"heartbeat_budget": 1})
     issues = sweep.staleness(rebudgeted, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=PROBLEM_IDS)
     assert any("heartbeat_budget" in i and "1" in i and str(sweep.HEARTBEAT_BUDGET) in i for i in issues)
+
+
+def test_a_forged_tier_beside_its_real_closers_is_refused():
+    """An edited or hand-supplied baseline can otherwise set `tier: 3` beside
+    `closed_by: ["simp"]`, and selection, the automation floor, and the
+    headline would all use the forged tier even though the same artifact
+    names a tier-0 tactic as having closed the statement (item 7).
+    """
+    with pytest.raises(ValidationError, match="tier"):
+        sweep.EntryBaseline(tier=3, elaborates=True, attempts={"simp": sweep.Attempt(status="closed")}, closed_by=("simp",))
+
+
+def test_closed_by_naming_an_attempt_that_did_not_close_is_refused():
+    with pytest.raises(ValidationError, match="closed_by"):
+        sweep.EntryBaseline(tier=0, elaborates=True, attempts={"simp": sweep.Attempt(status="failed")}, closed_by=("simp",))
+
+
+def test_a_closed_attempt_missing_from_closed_by_is_refused():
+    with pytest.raises(ValidationError, match="closed_by"):
+        sweep.EntryBaseline(
+            tier=0, elaborates=True,
+            attempts={"simp": sweep.Attempt(status="closed"), "omega": sweep.Attempt(status="closed")},
+            closed_by=("simp",),
+        )
+
+
+def test_a_tier_consistent_with_its_closers_and_attempts_is_accepted():
+    entry = sweep.EntryBaseline(tier=0, elaborates=True, attempts={"simp": sweep.Attempt(status="closed"), "omega": sweep.Attempt(status="failed")}, closed_by=("simp",))
+    assert entry.tier == 0 and entry.closed_by == ("simp",)
 
 
 def test_staleness_names_an_extra_baseline_entry():
