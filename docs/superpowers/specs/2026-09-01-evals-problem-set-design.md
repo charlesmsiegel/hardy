@@ -84,13 +84,17 @@ problem and four recorded runs; this set grows independently.
 
 ## 2. The baseline sweep
 
-`hardy evals baseline [--problems evals/problems.json] [--out evals/baseline.json]`
+`hardy evals baseline [--problems evals/problems.json] [--out evals/baseline.json] --acknowledge-unsafe-execution`
 
 For every entry, and for every twin's negation, the sweep runs a fixed tactic
 set against the canonical statement and records what happened. It runs Lean
 through `lake env lean --json` in the configured project, the same way the
 verifier does, so the identity it stamps is the identity a set run will be
-checked against.
+checked against. `--acknowledge-unsafe-execution` is required, the same
+contract §3.1 puts on `evals run`: an untrusted problem file's `imports`,
+`binders` and `conclusion` are interpolated into real Lean source the sweep
+elaborates, so it gets no free pass just because there is no model to hand
+the warning to.
 
 ### 2.1 The tactic set
 
@@ -251,6 +255,10 @@ Writes `evals/scoreboards/<label>/scoreboard.json` and, under
   because AGENTS.md requires it never be left unsaid and a set run has no
   one to say it to.
 - A label that already exists is refused (no `--force`; delete it yourself).
+- The selection (`--only`/`--tiers`/`--no-twins`) must match at least one
+  entry: an empty selection would otherwise write a finished, zero-row
+  scoreboard that `hardy evals check` also accepts, since the same empty
+  selection derives the same empty expected order.
 
 ### 3.2 Modes
 

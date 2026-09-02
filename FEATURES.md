@@ -1103,9 +1103,18 @@ assembles the canonical declaration, proposition, and negation the same way,
 and an `expected` verdict. Five are twins — `expected: "false"`, `twin_of`
 naming the true entry they are a plausible neighbour of. This is not
 `acceptance/problems.json`; that one-problem, four-run test is untouched,
-and this list grows independently of it.
+and this list grows independently of it. `imports` must be dotted Lean
+module names and `binders`/`conclusion`/`name` must carry no `\n` or `\r`,
+since every consumer string-concatenates them straight into real Lean source
+a process elaborates, and a newline would let a crafted entry smuggle a
+second Lean command onto the line it lands on.
 
-`hardy evals baseline [--problems] [--out]` (`src/hardy/evals/sweep.py`)
+`hardy evals baseline [--problems] [--out] --acknowledge-unsafe-execution`
+(`src/hardy/evals/sweep.py`) refuses (exit 2, printing `runner.WARNING`) to
+sweep an unacknowledged problem file, the same unsafe-execution contract
+`evals run` and the staged terminal already enforce, since the sweep
+elaborates real Lean built from the file's own imports, binders and
+conclusion; with it acknowledged, the command
 sweeps a fixed tactic set — `SINGLES` and `CHAINS`, module constants copied
 verbatim into the baseline so an edit to the code shows up as a stale tier
 file — against every canonical statement and writes `evals/baseline.json`. A
@@ -1166,7 +1175,10 @@ installed wheel), a stale baseline digest, a drifted toolchain identity,
 `singles`/`chains` drift, a baseline that itself recorded problems, a
 baseline whose entries no longer match the problem list's ids (extra or
 missing, named in the refusal), an existing label, `--only` naming an id
-outside the list, `--mode staged` with no staged runner, `--mode staged`
+outside the list, a selection (`--only`/`--tiers`/`--no-twins`) matching no
+entries (the same empty selection would otherwise write a finished,
+zero-row scoreboard `hardy evals check` also accepts), `--mode staged` with
+no staged runner, `--mode staged`
 combined with `--max-turns`/`--wall-seconds`, a toolchain that cannot be
 identified, `--label` naming anything but a single safe path component (no
 `/`, `\`, leading `.`/`-`, or absolute path -- `scoreboards_root / label`
