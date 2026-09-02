@@ -263,6 +263,28 @@ def test_an_interrupted_run_keeps_its_rows_and_says_so(tmp_path):
     assert board["interrupted"] is True and board["finished_at"] is None and len(board["rows"]) == 1
 
 
+def test_the_batch_runner_uses_the_conditions_selected_model_not_configs(monkeypatch, tmp_path):
+    """`--model override@test` selects a model the condition records
+    (`run_set_command`'s `condition.model`), and every batch row must
+    actually be produced by it -- not by whatever `config.model` happens to
+    be, which under an override is a different model entirely (item 1).
+    """
+    from types import SimpleNamespace
+
+    from hardy import cli as cli_module
+    from hardy import runner as hardy_runner
+
+    seen: dict = {}
+    monkeypatch.setattr(cli_module, "runtime_factory", lambda model: seen.setdefault("model", model))
+    monkeypatch.setattr(hardy_runner, "run", lambda *a, **kw: seen.setdefault("called", True))
+
+    config = SimpleNamespace(model="config-model@test", lean_command=("lake", "env", "lean"), lean_timeout=30.0, lean_project=None)
+    run_one = runner._batch_runner(config, "override@test")
+    run_one(ENTRIES[0], tmp_path / "out", 3, 300.0)
+    assert seen["model"] == "override@test"
+    assert seen["called"] is True
+
+
 def test_twins_run_batch_even_under_staged_mode(tmp_path):
     problems, baseline = _files(tmp_path)
     modes = []
