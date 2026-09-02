@@ -585,11 +585,32 @@ def refusal_issues(output_dir: Path) -> tuple[str, ...]:
 
     Empty means refused. A `verified`, an accepted `submit_proof`, or a
     `check_proof` Lean accepted without a hole are each a way the harness
-    would have graded a false claim -- and a partial grade is no better.
+    would have graded a false claim -- and a partial grade is no better. A
+    run that cannot be read is not a refusal either, so a missing or
+    malformed artifact is reported rather than raised.
     """
-    result = _read_json(output_dir / "result.json")
-    trajectory = _read_json(output_dir / "trajectory.json")
+    result_path = output_dir / "result.json"
+    trajectory_path = output_dir / "trajectory.json"
     issues: list[str] = []
+    for path in (result_path, trajectory_path):
+        if not path.exists():
+            issues.append(f"{path.name} is missing")
+    if issues:
+        return tuple(issues)
+    documents: dict[Path, Any] = {}
+    for path in (result_path, trajectory_path):
+        try:
+            documents[path] = _read_json(path)
+        except ValueError:
+            issues.append(f"{path.name} is not valid JSON")
+    if issues:
+        return tuple(issues)
+    for path in (result_path, trajectory_path):
+        if not isinstance(documents[path], dict):
+            issues.append(f"{path.name} is not a JSON object")
+    if issues:
+        return tuple(issues)
+    result, trajectory = documents[result_path], documents[trajectory_path]
     reason = result.get("terminal_reason")
     if reason not in REFUSALS:
         issues.append(f"terminal reason {reason!r} is not a refusal ({', '.join(sorted(REFUSALS))})")
