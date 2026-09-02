@@ -122,7 +122,7 @@ def test_validate_scoreboard_checks_the_canonical_hashes(tmp_path):
     baseline_path = tmp_path / "baseline.json"
     baseline_path.write_text(json.dumps(baseline.model_dump(mode="json")), encoding="utf-8")
 
-    condition = runner.Condition(model="reader@test", backend="claude", mode="staged", prompt_set_sha256="p" * 64, hardy_version="0.1.0",
+    condition = runner.Condition(model="reader@test", backend="claude", mode="staged", staged_prompt_set_sha256="p" * 64, batch_prompt_set_sha256="q" * 64, hardy_version="0.1.0",
                                  limits={"max_turns": 3, "wall_seconds": 300.0}, repeats=1, selection={"only": None, "tiers": None, "twins": True})
     board = runner.Scoreboard(
         label="x", condition=condition, environment=IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
@@ -258,7 +258,7 @@ def test_a_missing_canonical_file_leaves_the_row_solved_other(tmp_path):
 def test_a_rewritten_request_md_is_named_by_validator_check_3(tmp_path):
     scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
     row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
-    condition = runner.Condition(model="reader@test", backend="claude", mode="staged", prompt_set_sha256="p" * 64, hardy_version="0.1.0",
+    condition = runner.Condition(model="reader@test", backend="claude", mode="staged", staged_prompt_set_sha256="p" * 64, batch_prompt_set_sha256="q" * 64, hardy_version="0.1.0",
                                  limits={"active_seconds": 1800, "proof_seconds": 1200, "official_checks": 40, "twin_max_turns": 60, "twin_wall_seconds": 1800.0},
                                  repeats=1, selection={"only": None, "tiers": None, "twins": True})
     board = runner.Scoreboard(
@@ -284,7 +284,7 @@ def test_a_scoreboard_with_one_solved_staged_row_validates_clean(tmp_path):
     scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
     row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
     assert row.outcome == "solved"
-    condition = runner.Condition(model="reader@test", backend="claude", mode="staged", prompt_set_sha256="p" * 64, hardy_version="0.1.0",
+    condition = runner.Condition(model="reader@test", backend="claude", mode="staged", staged_prompt_set_sha256="p" * 64, batch_prompt_set_sha256="q" * 64, hardy_version="0.1.0",
                                  limits={"active_seconds": 1800, "proof_seconds": 1200, "official_checks": 40, "twin_max_turns": 60, "twin_wall_seconds": 1800.0},
                                  repeats=1, selection={"only": None, "tiers": None, "twins": True})
     board = runner.Scoreboard(

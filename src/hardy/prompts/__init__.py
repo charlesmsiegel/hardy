@@ -130,6 +130,26 @@ def cas_spill_note(*, artifact: str | None, capture_truncated: bool) -> str:
 BATCH_SYSTEM_PROMPT = render("batch/system")
 
 
+def _batch_prompt_set_payload() -> dict[str, str]:
+    """What a batch record's own prompt-set hash is taken over: exactly the two
+    templates a batch run actually sends, `batch/system` and `batch/task`.
+
+    Its own hash, never folded into `PROMPT_SET_SHA256` above: that hash
+    covers the staged templates only, and widening it to include `batch/*`
+    would churn a staged record's hash for an edit no staged run ever saw
+    (see `_prompt_set_payload`'s docstring).
+    """
+    return {"system": source("batch/system"), "task": source("batch/task")}
+
+
+def _batch_prompt_set_hash() -> str:
+    canonical = json.dumps(_batch_prompt_set_payload(), separators=(",", ":"), sort_keys=True).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+BATCH_PROMPT_SET_SHA256 = _batch_prompt_set_hash()
+
+
 def claim_signature(claim: FrozenClaim) -> str:
     """The Lean line a frozen claim states, as every surface must quote it."""
     binders = f" {claim.proposal.binders.strip()}" if claim.proposal.binders.strip() else ""
@@ -216,12 +236,13 @@ def _prompt_set_payload() -> dict[str, str]:
     The other templates stay out, and that is a decision rather than an
     oversight. `chat`, `chat_cas` and `cas_spill` serve an interactive session,
     which is not a comparable experimental unit and writes no manifest.
-    `batch/system` and `batch/task` do govern graded runs, but the batch runner
-    records no prompt-set hash at all (`runner.py` writes `provenance()`, which
-    is model and endpoint), so there is no field for their absence to falsify;
-    folding them in here would instead churn the staged hash for edits no
-    staged run ever saw. If a batch record ever carries a prompt-set hash, it
-    must cover `batch/*` -- as its own hash, not by widening this one.
+    `batch/system` and `batch/task` do govern graded runs, but the one-shot
+    batch runner (`src/hardy/runner.py`) records no prompt-set hash at all (it
+    writes `provenance()`, which is model and endpoint), so there is no field
+    for their absence to falsify; folding them in here would instead churn the
+    staged hash for edits no staged run ever saw. The evals set runner does
+    record a hash over what it actually sends in batch mode, but as its own
+    constant, `BATCH_PROMPT_SET_SHA256` below -- never by widening this one.
 
     One asymmetry this does not close, recorded so it is not mistaken for
     coverage: the Codex backend hands the response schema to the SDK as

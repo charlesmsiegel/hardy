@@ -316,9 +316,10 @@ over the trajectory or a field of the manifest; nothing is estimated.
 
 `scoreboard.json`, `schema_version: 1`:
 
-- `condition`: `model`, `backend`, `mode`, `prompt_set_sha256`,
-  `hardy_version`, `limits` (`max_turns`, `wall_seconds`), `repeats`,
-  `selection` (`only`, `tiers`, `twins`).
+- `condition`: `model`, `backend`, `mode`, `staged_prompt_set_sha256`,
+  `batch_prompt_set_sha256` (both always recorded: a twin runs `batch` even
+  under a staged condition, §3.2), `hardy_version`, `limits` (`max_turns`,
+  `wall_seconds`), `repeats`, `selection` (`only`, `tiers`, `twins`).
 - `environment`: the identity, equal to the baseline's.
 - `baseline_sha256`, `problems_sha256`: the bytes this run was tiered by.
 - `rows`: §3.4.

@@ -40,6 +40,26 @@ def test_the_warning_gate_refuses_before_anything_and_run_set_is_never_called(mo
     assert called == []
 
 
+def test_a_codex_backend_is_refused_before_identity_or_any_other_gate(monkeypatch, capsys):
+    called = []
+    monkeypatch.setattr(runner, "run_set", lambda **kw: called.append(kw))
+    code = runner.run_set_command(_args(backend="codex"), _config())
+    assert code == 2
+    assert "Refused: the evals runner drives the Claude backend only" in capsys.readouterr().err
+    assert called == []
+
+
+def test_a_missing_problems_or_baseline_file_is_refused_before_anything_runs(monkeypatch, capsys, tmp_path):
+    called = []
+    monkeypatch.setattr(runner, "run_set", lambda **kw: called.append(kw))
+    missing = tmp_path / "nope.json"
+    code = runner.run_set_command(_args(problems=missing), _config())
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "Refused:" in err and str(missing) in err
+    assert called == []
+
+
 def test_batch_mode_applies_the_default_limits_and_records_the_selection(monkeypatch):
     monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
     seen = {}

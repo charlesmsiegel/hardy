@@ -47,6 +47,24 @@ def add_parser(subparsers: Any) -> None:
     check.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
 
 
+def _refuse_missing(*paths: Path) -> str | None:
+    """Not packaged: the evaluation set, its tier file and every scoreboard are
+    repository evidence under `evals/`, read relative to the current working
+    directory. A released wheel does not carry `evals/`, so a default path
+    resolved outside a source checkout is a clear refusal here rather than a
+    bare `FileNotFoundError` from whatever reads it next.
+    """
+    for path in paths:
+        if not path.exists():
+            return (
+                f"Refused: {path} is not here. The evaluation set, its tier file and every "
+                "scoreboard are repository evidence under evals/ and are read from the current "
+                "directory; run from a source checkout's root or pass --problems/--baseline "
+                "explicitly."
+            )
+    return None
+
+
 def make_elaborate(config: Any) -> Callable[[str], Elaboration]:
     argv = (str(config.lake), "env", "lean", "--json")
     timeout = max(float(config.lean_timeout), sweep.WALL_BACKSTOP_FLOOR)
@@ -63,6 +81,10 @@ def _identity(config: Any) -> EnvironmentIdentity:
 
 def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[str], Elaboration] | None = None,
                  identity: EnvironmentIdentity | None = None, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> int:
+    refusal = _refuse_missing(args.problems)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 2
     problems = load_problems(args.problems)
     if identity is None:
         try:

@@ -194,12 +194,40 @@ def test_the_prompt_set_hash_is_the_staged_set_and_says_so():
     """The other half of the decision, pinned so it stays a decision.
 
     `chat` and `chat_cas` serve an interactive session, which is not a
-    comparable experimental unit, and `batch/*` runs record no prompt-set hash
-    at all — so there is no manifest for them to be absent from. Adding either
+    comparable experimental unit, and the one-shot batch runner records no
+    prompt-set hash at all — so there is no manifest for either to be absent
+    from. The evals set runner does hash `batch/*`, but as its own constant,
+    `BATCH_PROMPT_SET_SHA256`, never by widening this payload. Adding either
     to the payload is defensible; doing it by accident is not.
     """
     prompts = importlib.import_module("hardy.prompts")
     assert set(prompts._prompt_set_payload()) == set(_staged_template_names(prompts.SUFFIX)) | {"version"}
+
+
+def test_the_batch_prompt_set_hash_is_its_own_and_covers_only_the_batch_templates():
+    """The evals set runner's batch condition needs a hash over what a batch
+    row actually sends -- `batch/system` and `batch/task` -- distinct from
+    `PROMPT_SET_SHA256`, which covers the staged templates and must not widen
+    to include these (`_prompt_set_payload`'s docstring)."""
+    prompts = importlib.import_module("hardy.prompts")
+    assert len(prompts.BATCH_PROMPT_SET_SHA256) == 64
+    assert all(c in "0123456789abcdef" for c in prompts.BATCH_PROMPT_SET_SHA256)
+    assert prompts.BATCH_PROMPT_SET_SHA256 != prompts.PROMPT_SET_SHA256
+    assert prompts._batch_prompt_set_hash() == prompts.BATCH_PROMPT_SET_SHA256
+    assert prompts._batch_prompt_set_payload() == {"system": prompts.source("batch/system"), "task": prompts.source("batch/task")}
+
+
+def test_the_batch_prompt_set_hash_changes_when_a_batch_template_does(monkeypatch):
+    prompts = importlib.import_module("hardy.prompts")
+    original = prompts.BATCH_PROMPT_SET_SHA256
+    real_source = prompts.source
+
+    def patched(name: str) -> str:
+        text = real_source(name)
+        return text + " " if name == "batch/task" else text
+
+    monkeypatch.setattr(prompts, "source", patched)
+    assert prompts._batch_prompt_set_hash() != original
 
 
 def test_the_chat_prompt_describes_the_file_tree():
