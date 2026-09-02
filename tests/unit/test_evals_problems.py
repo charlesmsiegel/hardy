@@ -45,6 +45,28 @@ def test_a_malformed_entry_is_refused(bad):
         Entry(**_entry(**bad))
 
 
+def test_an_import_carrying_a_lean_command_after_a_newline_is_refused():
+    """`imports` is joined one `import <name>\\n` per line and handed straight
+    to a real Lean process (both the baseline sweep and the batch runner); an
+    import carrying a newline followed by a Lean command would execute that
+    command as soon as the sweep or a batch run started (item 6b).
+    """
+    with pytest.raises(ValidationError, match="Lean command injection|imports must be dotted"):
+        Entry(**_entry(imports=["Mathlib\n#eval 1"]))
+
+
+def test_a_conclusion_carrying_a_newline_is_refused():
+    with pytest.raises(ValidationError, match="Lean command injection"):
+        Entry(**_entry(conclusion="True\n#eval 1"))
+
+
+def test_binders_and_name_carrying_a_newline_are_refused():
+    with pytest.raises(ValidationError):
+        Entry(**_entry(binders="(a : ℕ)\n#eval 1"))
+    with pytest.raises(ValidationError):
+        Entry(**_entry(name="Foo\n#eval 1"))
+
+
 def test_twins_point_at_true_entries_and_true_entries_point_nowhere():
     true = _entry()
     twin = _entry(id="squares", name="Squares", binders="(a b : ℤ)", expected="false", twin_of="odd-squares")

@@ -18,6 +18,10 @@ from ..domain import FrozenModel
 
 SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_'.]*$")
+# A dotted Lean module path -- what a real `import` line accepts -- and
+# nothing else: no newline, no space, no stray token that could smuggle a
+# second Lean command onto the same or a following line (item 6b).
+IMPORT = re.compile(r"^[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*$")
 
 
 class Entry(FrozenModel):
@@ -36,6 +40,27 @@ class Entry(FrozenModel):
     def _statement_only(self) -> Entry:
         if ":=" in self.conclusion or ":=" in self.binders:
             raise ValueError("an entry states a theorem, not a proof: no ':='")
+        return self
+
+    @model_validator(mode="after")
+    def _no_lean_command_injection(self) -> Entry:
+        """`declaration`/`proposition`/`negation` assemble Lean source by
+        string concatenation (module docstring), which every consumer --
+        `sweep.py`'s baseline elaborator and the batch runner's request --
+        then hands to a real Lean process. A newline anywhere in `binders`,
+        `conclusion`, or `name` ends the surrounding `theorem`/`example`
+        command and lets whatever text follows run as a new one; a bad
+        `imports` entry can do the same on its own `import` line. Both are a
+        Lean command injection through a problem file neither `evals baseline`
+        nor `evals run` otherwise treats as anything but data.
+        """
+        for field in ("binders", "conclusion", "name"):
+            value = getattr(self, field)
+            if "\n" in value or "\r" in value:
+                raise ValueError(f"{field} carries a newline: no Lean command injection")
+        bad = [name for name in self.imports if not IMPORT.fullmatch(name)]
+        if bad:
+            raise ValueError(f"imports must be dotted Lean module names: {bad!r}")
         return self
 
     def declaration(self) -> str:
