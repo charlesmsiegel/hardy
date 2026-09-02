@@ -97,3 +97,16 @@ def test_a_refused_run_from_run_set_is_reported_and_exits_two(monkeypatch, capsy
     assert "Refused:" in capsys.readouterr().err
 
 
+def test_a_toolchain_that_cannot_be_identified_is_a_refusal_not_a_traceback(monkeypatch, capsys):
+    def boom(*a, **kw):
+        raise ValueError("no lake-manifest.json")
+
+    monkeypatch.setattr(lean_module, "environment_identity", boom)
+    called = []
+    monkeypatch.setattr(runner, "run_set", lambda **kw: called.append(kw))
+    code = runner.run_set_command(_args(), _config())
+    assert code == 2
+    assert "Refused: the Lean toolchain could not be identified" in capsys.readouterr().err
+    assert called == []
+
+

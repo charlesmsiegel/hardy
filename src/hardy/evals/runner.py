@@ -177,7 +177,11 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
             file=sys.stderr,
         )
         return 2
-    environment = environment_identity(config.lean_project, lean_command=(str(config.lake), "env", "lean"), timeout_seconds=config.limits.lean_process_seconds)
+    try:
+        environment = environment_identity(config.lean_project, lean_command=(str(config.lake), "env", "lean"), timeout_seconds=config.limits.lean_process_seconds)
+    except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
+        print(f"Refused: the Lean toolchain could not be identified: {error}", file=sys.stderr)
+        return 2
     if args.mode == "staged":
         # A staged run is bounded by the workflow's own budgets, not
         # --max-turns/--wall-seconds (refused above); a twin still runs

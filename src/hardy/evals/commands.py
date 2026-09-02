@@ -64,7 +64,12 @@ def _identity(config: Any) -> EnvironmentIdentity:
 def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[str], Elaboration] | None = None,
                  identity: EnvironmentIdentity | None = None, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> int:
     problems = load_problems(args.problems)
-    identity = identity or _identity(config)
+    if identity is None:
+        try:
+            identity = _identity(config)
+        except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
+            print(f"Refused: the Lean toolchain could not be identified: {error}", file=sys.stderr)
+            return 2
     elaborate = elaborate or make_elaborate(config)
     import_seconds = None
     if config is not None:

@@ -62,3 +62,22 @@ def test_baseline_exits_one_but_still_writes_when_the_list_has_problems(tmp_path
     code = commands.run_baseline(argparse.Namespace(problems=problems, out=out), config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
     assert code == 1 and out.exists()
     assert "f: a twin closed by" in capsys.readouterr().err
+
+
+def test_baseline_reports_a_toolchain_that_cannot_be_identified_instead_of_a_traceback(tmp_path, capsys, monkeypatch):
+    def boom(*a, **kw):
+        raise ValueError("no lake-manifest.json")
+
+    # commands.py imports environment_identity by name at module scope, unlike
+    # runner.py's per-call local import, so the patch target is the commands
+    # module's own binding, not hardy.lean's.
+    monkeypatch.setattr(commands, "environment_identity", boom)
+    problems = tmp_path / "problems.json"
+    problems.write_text(json.dumps(PROBLEMS), encoding="utf-8")
+    out = tmp_path / "baseline.json"
+    args = argparse.Namespace(problems=problems, out=out)
+    config = argparse.Namespace(lean_project=None, lake="lake", limits=argparse.Namespace(lean_process_seconds=60))
+    code = commands.run_baseline(args, config=config, elaborate=_always_closes, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
+    assert code == 2
+    assert "Refused: the Lean toolchain could not be identified" in capsys.readouterr().err
+    assert not out.exists()
