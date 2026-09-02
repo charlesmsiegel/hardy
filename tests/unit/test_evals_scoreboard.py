@@ -148,7 +148,6 @@ def test_each_check_breaks_one_at_a_time(tmp_path):
 
     out2, p2, b2 = _board(tmp_path / "second")
     _edit(out2 / "runs" / "u" / "batch-0" / "trajectory.json", lambda t: t["request"].__setitem__("declaration", "theorem HardyTarget : False"))
-    _edit(out2 / "runs" / "u" / "batch-0" / "result.json", lambda r: None)
     issues = scoreboard.validate_scoreboard(out2, problems_path=p2, baseline_path=b2)                          # 3: the run is the entry's
     assert any("declaration" in i for i in issues)
 
@@ -172,3 +171,30 @@ def test_environment_must_match_the_baseline(tmp_path):
     out, problems, baseline = _board(tmp_path)
     _edit(out / "scoreboard.json", lambda s: s["environment"].__setitem__("lean_commit", "other"))
     assert any("environment" in i for i in scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline))
+
+
+def test_a_row_naming_an_id_no_longer_in_the_list_is_a_finding_not_a_crash(tmp_path):
+    out, problems, baseline = _board(tmp_path)
+    _edit(out / "scoreboard.json", lambda s: s["rows"][0].__setitem__("id", "ghost"))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("ghost" in i for i in issues)
+
+
+def test_a_run_dir_that_escapes_the_scoreboard_directory_is_a_finding_not_a_read(tmp_path):
+    out, problems, baseline = _board(tmp_path)
+    _edit(out / "scoreboard.json", lambda s: s["rows"][0].__setitem__("run_dir", "../../evals/problems.json"))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    escapes = [i for i in issues if "outside the scoreboard directory" in i]
+    assert len(escapes) == 1 and "../../evals/problems.json" in escapes[0]
+    # the escaping row is the only mutation to an otherwise-clean board: the
+    # other two rows validate exactly as they did before it, no other finding.
+    assert issues == tuple(escapes)
+
+
+def test_a_selection_naming_an_unknown_id_is_a_finding_not_a_crash(tmp_path):
+    out, problems, baseline = _board(tmp_path)
+    _edit(out / "scoreboard.json", lambda s: s["condition"]["selection"].__setitem__("only", ["t", "ghost"]))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("selection" in i and "ghost" in i for i in issues)
+    # a refused selection has nothing to compare rows against, so every recorded row reads as outside it
+    assert {"row t repeat 0 is outside the selection", "row u repeat 0 is outside the selection", "row f repeat 0 is outside the selection"} <= set(issues)
