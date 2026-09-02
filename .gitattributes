@@ -6,6 +6,8 @@
 # own manifests and rechecked by `hardy accept --recorded`, so no line-ending
 # conversion may touch them on any platform.
 acceptance/recorded/** -text
-# Evals scoreboards and their run directories are evidence of the same kind:
-# every row points at a run directory whose bytes its own record hashes.
-evals/scoreboards/** -text
+# Evals evidence is bound by digests over its bytes: the problem list and
+# tier file are hashed into every scoreboard, and every scoreboard's rows
+# point at run directories whose bytes its own record hashes. No line-ending
+# conversion may touch any of it on any platform.
+evals/** -text
