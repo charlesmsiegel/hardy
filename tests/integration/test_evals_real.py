@@ -45,7 +45,7 @@ def test_a_sanity_entry_is_tier_zero_and_the_acceptance_problem_is_not(elaborate
 
 def test_exact_is_not_credited_with_a_neighbours_proof(elaborate):
     """Stage A uses anonymous examples: `exact?` on `True` may cite `trivial`, never `sweep_0`."""
-    source, spans = sweep.stage_a_source("(2 : ℕ) + 2 = 4", ("norm_num", "exact?"), ("Mathlib",))
+    source, spans = sweep.stage_a_source("", "(2 : ℕ) + 2 = 4", ("norm_num", "exact?"), ("Mathlib",))
     attempts = sweep.read_stage_a(elaborate(source), spans)
     assert attempts["norm_num"].status == "candidate"
     suggestion = " ".join(d.message for d in elaborate(source).diagnostics if "Try this" in d.message)

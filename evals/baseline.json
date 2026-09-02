@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "created_at": "2026-09-02T03:43:33.178899Z",
+  "created_at": "2026-09-02T07:46:41.931558Z",
   "problems_sha256": "ca6749dcba47f15db19ca0f21df0b54839143a36cbebd44b0c7f156e21e4fc81",
   "environment": {
     "lean_version": "4.33.1",
@@ -13,7 +13,7 @@
   },
   "heartbeat_budget": 200000,
   "wall_backstop_seconds": 600.0,
-  "import_seconds": 16.188,
+  "import_seconds": 18.094,
   "singles": [
     "simp",
     "simp_all",
@@ -56,7 +56,7 @@
         "simp": {
           "status": "closed",
           "heartbeats": 25,
-          "seconds": 16.094,
+          "seconds": 17.266,
           "axioms": [
             "propext"
           ],
@@ -65,7 +65,7 @@
         "simp_all": {
           "status": "closed",
           "heartbeats": 25,
-          "seconds": 16.141,
+          "seconds": 17.203,
           "axioms": [
             "propext"
           ],
@@ -74,7 +74,7 @@
         "omega": {
           "status": "closed",
           "heartbeats": 42,
-          "seconds": 15.859,
+          "seconds": 17.328,
           "axioms": [
             "propext",
             "Quot.sound"
@@ -84,14 +84,14 @@
         "decide": {
           "status": "closed",
           "heartbeats": 25,
-          "seconds": 15.891,
+          "seconds": 17.453,
           "axioms": [],
           "message": ""
         },
         "norm_num": {
           "status": "closed",
           "heartbeats": 31,
-          "seconds": 16.015,
+          "seconds": 16.844,
           "axioms": [
             "propext"
           ],
@@ -100,7 +100,7 @@
         "ring": {
           "status": "closed",
           "heartbeats": 69,
-          "seconds": 16.11,
+          "seconds": 16.828,
           "axioms": [
             "propext"
           ],
@@ -109,7 +109,7 @@
         "field_simp": {
           "status": "closed",
           "heartbeats": 33,
-          "seconds": 15.953,
+          "seconds": 16.594,
           "axioms": [
             "propext"
           ],
@@ -118,7 +118,7 @@
         "linarith": {
           "status": "closed",
           "heartbeats": 498,
-          "seconds": 15.937,
+          "seconds": 16.797,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -129,7 +129,7 @@
         "nlinarith": {
           "status": "closed",
           "heartbeats": 814,
-          "seconds": 15.938,
+          "seconds": 17.25,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -147,14 +147,14 @@
         "tauto": {
           "status": "closed",
           "heartbeats": 34,
-          "seconds": 15.813,
+          "seconds": 16.5,
           "axioms": [],
           "message": ""
         },
         "aesop": {
           "status": "closed",
           "heartbeats": 86,
-          "seconds": 16.015,
+          "seconds": 16.969,
           "axioms": [
             "propext"
           ],
@@ -163,7 +163,7 @@
         "grind": {
           "status": "closed",
           "heartbeats": 28,
-          "seconds": 15.657,
+          "seconds": 16.86,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -174,28 +174,28 @@
         "hint": {
           "status": "closed",
           "heartbeats": 27,
-          "seconds": 15.828,
+          "seconds": 16.328,
           "axioms": [],
           "message": ""
         },
         "exact?": {
           "status": "closed",
           "heartbeats": 11510,
-          "seconds": 19.781,
+          "seconds": 20.953,
           "axioms": [],
           "message": ""
         },
         "apply?": {
           "status": "closed",
           "heartbeats": 11510,
-          "seconds": 19.453,
+          "seconds": 21.172,
           "axioms": [],
           "message": ""
         },
         "intros; simp_all": {
           "status": "closed",
           "heartbeats": 25,
-          "seconds": 15.843,
+          "seconds": 16.843,
           "axioms": [
             "propext"
           ],
@@ -204,7 +204,7 @@
         "constructor <;> simp_all": {
           "status": "closed",
           "heartbeats": 23,
-          "seconds": 15.954,
+          "seconds": 16.485,
           "axioms": [],
           "message": ""
         },
@@ -246,7 +246,7 @@
         "intros; aesop": {
           "status": "closed",
           "heartbeats": 86,
-          "seconds": 15.921,
+          "seconds": 16.672,
           "axioms": [
             "propext"
           ],
@@ -281,91 +281,91 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 257,
+          "heartbeats": 212,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 256,
+          "heartbeats": 212,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "omega": {
           "status": "failed",
-          "heartbeats": 100,
+          "heartbeats": 96,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 119,
+          "heartbeats": 94,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 290,
+          "heartbeats": 243,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 356,
+          "heartbeats": 349,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 271,
+          "heartbeats": 267,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 101,
+          "heartbeats": 136,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 100,
+          "heartbeats": 663,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 103,
+          "heartbeats": 97,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 131,
+          "heartbeats": 123,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 320,
+          "heartbeats": 310,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "Tactic `aesop` failed, made no progress"
         },
         "grind": {
           "status": "failed",
-          "heartbeats": 698,
+          "heartbeats": 694,
           "seconds": null,
           "axioms": null,
           "message": "`grind` failed"
@@ -373,7 +373,7 @@
         "hint": {
           "status": "closed",
           "heartbeats": 14383,
-          "seconds": 20.672,
+          "seconds": 21.75,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -384,7 +384,7 @@
         "exact?": {
           "status": "closed",
           "heartbeats": 11929,
-          "seconds": 19.594,
+          "seconds": 20.578,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -395,7 +395,7 @@
         "apply?": {
           "status": "closed",
           "heartbeats": 11929,
-          "seconds": 19.719,
+          "seconds": 20.594,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -405,56 +405,56 @@
         },
         "intros; simp_all": {
           "status": "failed",
-          "heartbeats": 216,
+          "heartbeats": 211,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 97,
+          "heartbeats": 94,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `constructor` failed: target is not an inductive datatype"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 256,
+          "heartbeats": 212,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 536,
+          "heartbeats": 486,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 290,
+          "heartbeats": 277,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 519,
+          "heartbeats": 510,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 166,
+          "heartbeats": 688,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 297,
+          "heartbeats": 292,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `aesop` failed, made no progress"
@@ -495,7 +495,7 @@
         "decide": {
           "status": "closed",
           "heartbeats": 2482,
-          "seconds": 15.906,
+          "seconds": 16.625,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -569,7 +569,7 @@
         "hint": {
           "status": "closed",
           "heartbeats": 3179,
-          "seconds": 16.656,
+          "seconds": 17.422,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -689,7 +689,7 @@
         "norm_num": {
           "status": "closed",
           "heartbeats": 56,
-          "seconds": 15.453,
+          "seconds": 16.922,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -756,7 +756,7 @@
         "hint": {
           "status": "closed",
           "heartbeats": 64,
-          "seconds": 15.437,
+          "seconds": 16.734,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -767,7 +767,7 @@
         "exact?": {
           "status": "closed",
           "heartbeats": 10709,
-          "seconds": 20.938,
+          "seconds": 20.953,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -778,7 +778,7 @@
         "apply?": {
           "status": "closed",
           "heartbeats": 10709,
-          "seconds": 20.156,
+          "seconds": 22.594,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -857,14 +857,14 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 808,
+          "heartbeats": 25,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 809,
+          "heartbeats": 265,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
@@ -878,63 +878,63 @@
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 55,
+          "heartbeats": 24,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 822,
+          "heartbeats": 27,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 70,
+          "heartbeats": 38,
           "seconds": null,
           "axioms": null,
           "message": "`ring_nf` made no progress on the goal"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 35,
+          "heartbeats": 27,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 28,
+          "heartbeats": 213,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 26,
+          "heartbeats": 446,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 29,
+          "heartbeats": 34,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 263,
+          "heartbeats": 121,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 365,
+          "heartbeats": 363,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
@@ -949,7 +949,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 12971,
-          "seconds": 20.282,
+          "seconds": 21.313,
           "axioms": [
             "propext",
             "sorryAx",
@@ -968,7 +968,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 12960,
-          "seconds": 19.156,
+          "seconds": 20.39,
           "axioms": [
             "propext",
             "sorryAx",
@@ -986,45 +986,45 @@
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 24,
+          "heartbeats": 323,
           "seconds": null,
           "axioms": null,
-          "message": "Tactic `constructor` failed: target is not an inductive datatype"
+          "message": "simp_all made no progress"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 809,
+          "heartbeats": 266,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 865,
+          "heartbeats": 38,
           "seconds": null,
           "axioms": null,
           "message": "`ring_nf` made no progress on the goal"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 823,
+          "heartbeats": 206,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 34,
+          "heartbeats": 26,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 112,
+          "heartbeats": 47,
           "seconds": null,
           "axioms": null,
-          "message": "linarith failed to find a contradiction"
+          "message": "`push Not` made no progress at `h`"
         },
         "intros; aesop": {
           "status": "failed",
@@ -1072,7 +1072,7 @@
         "norm_num": {
           "status": "closed",
           "heartbeats": 56,
-          "seconds": 15.593,
+          "seconds": 16.688,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -1139,7 +1139,7 @@
         "hint": {
           "status": "closed",
           "heartbeats": 64,
-          "seconds": 15.562,
+          "seconds": 17.109,
           "axioms": [
             "propext",
             "Classical.choice",
@@ -1157,7 +1157,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 11984,
-          "seconds": 19.047,
+          "seconds": 21.0,
           "axioms": [
             "propext",
             "sorryAx",
@@ -1235,91 +1235,91 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 119,
+          "heartbeats": 92,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 119,
+          "heartbeats": 93,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "omega": {
           "status": "failed",
-          "heartbeats": 56,
+          "heartbeats": 55,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 66,
+          "heartbeats": 52,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 140,
+          "heartbeats": 112,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 298,
+          "heartbeats": 404,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 70,
+          "heartbeats": 69,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 57,
+          "heartbeats": 405,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 55,
+          "heartbeats": 629,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 58,
+          "heartbeats": 62,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 164,
+          "heartbeats": 159,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 240,
+          "heartbeats": 233,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "Tactic `aesop` failed, made no progress"
         },
         "grind": {
           "status": "failed",
-          "heartbeats": 209,
+          "heartbeats": 208,
           "seconds": null,
           "axioms": null,
           "message": "`grind` failed"
@@ -1327,7 +1327,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 37599,
-          "seconds": 21.594,
+          "seconds": 23.078,
           "axioms": [
             "propext",
             "sorryAx",
@@ -1338,7 +1338,7 @@
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 22563,
+          "heartbeats": 22548,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -1346,7 +1346,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 45787,
-          "seconds": 21.14,
+          "seconds": 22.125,
           "axioms": [
             "propext",
             "sorryAx",
@@ -1357,56 +1357,56 @@
         },
         "intros; simp_all": {
           "status": "failed",
-          "heartbeats": 95,
+          "heartbeats": 93,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 53,
+          "heartbeats": 70,
           "seconds": null,
           "axioms": null,
-          "message": "Tactic `constructor` failed: target is not an inductive datatype"
+          "message": "Tactic `constructor` failed: no applicable constructor found"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 119,
+          "heartbeats": 93,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 376,
+          "heartbeats": 455,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 140,
+          "heartbeats": 455,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 70,
+          "heartbeats": 68,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 108,
+          "heartbeats": 85,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 217,
+          "heartbeats": 215,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `aesop` failed, made no progress"
@@ -1421,14 +1421,14 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 285,
+          "heartbeats": 261,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 285,
+          "heartbeats": 260,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
@@ -1442,28 +1442,28 @@
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 51,
+          "heartbeats": 36,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 275,
+          "heartbeats": 250,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 264,
+          "heartbeats": 262,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 48,
+          "heartbeats": 47,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
@@ -1484,28 +1484,28 @@
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 42,
+          "heartbeats": 46,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 125,
+          "heartbeats": 120,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 362,
+          "heartbeats": 357,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "Tactic `aesop` failed, made no progress"
         },
         "grind": {
           "status": "failed",
-          "heartbeats": 2336,
+          "heartbeats": 2335,
           "seconds": null,
           "axioms": null,
           "message": "`grind` failed"
@@ -1513,7 +1513,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 23923,
-          "seconds": 20.641,
+          "seconds": 21.656,
           "axioms": [
             "sorryAx"
           ],
@@ -1521,7 +1521,7 @@
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 7953,
+          "heartbeats": 7950,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -1529,7 +1529,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 22858,
-          "seconds": 20.016,
+          "seconds": 20.797,
           "axioms": [
             "sorryAx"
           ],
@@ -1544,49 +1544,49 @@
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 37,
+          "heartbeats": 121,
           "seconds": null,
           "axioms": null,
-          "message": "Tactic `constructor` failed: target is not an inductive datatype"
+          "message": "simp_all made no progress"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 285,
+          "heartbeats": 261,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 494,
+          "heartbeats": 467,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 275,
+          "heartbeats": 251,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 47,
+          "heartbeats": 46,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 83,
+          "heartbeats": 61,
           "seconds": null,
           "axioms": null,
-          "message": "linarith failed to find a contradiction"
+          "message": "`push Not` made no progress at `h`"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 341,
+          "heartbeats": 339,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `aesop` failed, made no progress"
@@ -1601,87 +1601,87 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 1563,
+          "heartbeats": 437,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 1565,
+          "heartbeats": 843,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "omega": {
           "status": "failed",
-          "heartbeats": 242,
+          "heartbeats": 241,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 317,
+          "heartbeats": 204,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 1592,
+          "heartbeats": 457,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 231,
+          "heartbeats": 230,
           "seconds": null,
           "axioms": null,
           "message": "`ring_nf` made no progress on the goal"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 218,
+          "heartbeats": 215,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 207,
+          "heartbeats": 215,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 206,
+          "heartbeats": 213,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 209,
+          "heartbeats": 214,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 478,
+          "heartbeats": 393,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 975,
+          "heartbeats": 972,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "Tactic `aesop` failed, made no progress"
         },
         "grind": {
           "status": "failed",
@@ -1693,7 +1693,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 32760,
-          "seconds": 20.75,
+          "seconds": 21.797,
           "axioms": [
             "propext",
             "sorryAx"
@@ -1702,7 +1702,7 @@
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 18818,
+          "heartbeats": 18812,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -1710,7 +1710,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 38395,
-          "seconds": 20.5,
+          "seconds": 21.344,
           "axioms": [
             "propext",
             "sorryAx"
@@ -1726,49 +1726,49 @@
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 203,
+          "heartbeats": 210,
           "seconds": null,
           "axioms": null,
-          "message": "Tactic `constructor` failed: target is not an inductive datatype"
+          "message": "Tactic `constructor` failed: no applicable constructor found"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 1564,
+          "heartbeats": 843,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 1618,
+          "heartbeats": 481,
           "seconds": null,
           "axioms": null,
           "message": "`ring_nf` made no progress on the goal"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 1592,
+          "heartbeats": 465,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 218,
+          "heartbeats": 214,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 394,
+          "heartbeats": 268,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 954,
+          "heartbeats": 953,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `aesop` failed, made no progress"
@@ -1874,8 +1874,8 @@
         },
         "hint": {
           "status": "unconfirmed",
-          "heartbeats": 13640,
-          "seconds": 19.984,
+          "heartbeats": 13641,
+          "seconds": 21.313,
           "axioms": [
             "propext",
             "sorryAx",
@@ -1894,7 +1894,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 12096,
-          "seconds": 19.062,
+          "seconds": 20.109,
           "axioms": [
             "propext",
             "sorryAx",
@@ -1969,105 +1969,110 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 105,
+          "heartbeats": 41,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 105,
+          "heartbeats": 51,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "omega": {
           "status": "failed",
-          "heartbeats": 45,
+          "heartbeats": 44,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 61,
+          "heartbeats": 39,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 123,
+          "heartbeats": 42,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 233,
+          "heartbeats": 53,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "`ring_nf` made no progress on the goal"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 81,
+          "heartbeats": 42,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "`field_simp` made no progress on the goal"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 45,
+          "heartbeats": 75,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 43,
+          "heartbeats": 83,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 46,
+          "heartbeats": 50,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 126,
+          "heartbeats": 121,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 143,
+          "heartbeats": 137,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "Tactic `aesop` failed, made no progress"
         },
         "grind": {
           "status": "failed",
-          "heartbeats": 609,
+          "heartbeats": 607,
           "seconds": null,
           "axioms": null,
           "message": "`grind` failed"
         },
         "hint": {
           "status": "unconfirmed",
-          "heartbeats": 13822,
-          "seconds": 600.0,
-          "axioms": null,
-          "message": "did not elaborate"
+          "heartbeats": 12776,
+          "seconds": 20.812,
+          "axioms": [
+            "propext",
+            "sorryAx",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "message": "axioms beyond the standard three"
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 910,
+          "heartbeats": 907,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -2075,7 +2080,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 12129,
-          "seconds": 502.953,
+          "seconds": 19.984,
           "axioms": [
             "propext",
             "sorryAx",
@@ -2086,56 +2091,56 @@
         },
         "intros; simp_all": {
           "status": "failed",
-          "heartbeats": 53,
+          "heartbeats": 51,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 41,
+          "heartbeats": 40,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `constructor` failed: target is not an inductive datatype"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 105,
+          "heartbeats": 51,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 307,
+          "heartbeats": 54,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "`ring_nf` made no progress on the goal"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 123,
+          "heartbeats": 70,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 263,
+          "heartbeats": 41,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 95,
+          "heartbeats": 62,
           "seconds": null,
           "axioms": null,
-          "message": "linarith failed to find a contradiction"
+          "message": "`push Not` made no progress at `h`"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 121,
+          "heartbeats": 119,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `aesop` failed, made no progress"
@@ -2150,91 +2155,91 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 1093,
+          "heartbeats": 289,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 1093,
+          "heartbeats": 423,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "omega": {
           "status": "failed",
-          "heartbeats": 85,
+          "heartbeats": 75,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 133,
+          "heartbeats": 71,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 1161,
+          "heartbeats": 320,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 224,
+          "heartbeats": 212,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 95,
+          "heartbeats": 82,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 86,
+          "heartbeats": 76,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 85,
+          "heartbeats": 74,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 88,
+          "heartbeats": 91,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 208,
+          "heartbeats": 174,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 1557,
+          "heartbeats": 1541,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "grind": {
           "status": "failed",
-          "heartbeats": 354,
+          "heartbeats": 342,
           "seconds": null,
           "axioms": null,
           "message": "`grind` failed"
@@ -2242,7 +2247,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 18477,
-          "seconds": 20.843,
+          "seconds": 21.313,
           "axioms": [
             "propext",
             "sorryAx"
@@ -2251,7 +2256,7 @@
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 3981,
+          "heartbeats": 3965,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -2259,7 +2264,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 15861,
-          "seconds": 19.844,
+          "seconds": 20.25,
           "axioms": [
             "propext",
             "sorryAx"
@@ -2268,56 +2273,56 @@
         },
         "intros; simp_all": {
           "status": "failed",
-          "heartbeats": 435,
+          "heartbeats": 423,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 82,
+          "heartbeats": 72,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `constructor` failed: target is not an inductive datatype"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 1094,
+          "heartbeats": 423,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 1287,
+          "heartbeats": 445,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 1161,
+          "heartbeats": 321,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 94,
+          "heartbeats": 81,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 180,
+          "heartbeats": 79,
           "seconds": null,
           "axioms": null,
-          "message": "linarith failed to find a contradiction"
+          "message": "`push Not` made no progress at `h`"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 1530,
+          "heartbeats": 1516,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
@@ -2332,84 +2337,84 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 679,
+          "heartbeats": 500,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 2225,
+          "heartbeats": 823,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "omega": {
           "status": "failed",
-          "heartbeats": 53,
+          "heartbeats": 55,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 94,
+          "heartbeats": 50,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 734,
+          "heartbeats": 537,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 347,
+          "heartbeats": 328,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 308,
+          "heartbeats": 268,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 53,
+          "heartbeats": 247,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 52,
+          "heartbeats": 691,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 54,
+          "heartbeats": 52,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 132,
+          "heartbeats": 111,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 1237,
+          "heartbeats": 1233,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
@@ -2424,7 +2429,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 55017,
-          "seconds": 22.562,
+          "seconds": 23.562,
           "axioms": [
             "propext",
             "sorryAx",
@@ -2435,7 +2440,7 @@
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 37163,
+          "heartbeats": 37159,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -2443,7 +2448,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 87230,
-          "seconds": 23.672,
+          "seconds": 24.594,
           "axioms": [
             "propext",
             "sorryAx",
@@ -2461,42 +2466,42 @@
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 49,
+          "heartbeats": 50,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `constructor` failed: target is not an inductive datatype"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 2232,
+          "heartbeats": 830,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 1016,
+          "heartbeats": 803,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 733,
+          "heartbeats": 712,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 577,
+          "heartbeats": 526,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 144,
+          "heartbeats": 720,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
@@ -2518,91 +2523,91 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 189,
+          "heartbeats": 161,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 192,
+          "heartbeats": 164,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "omega": {
           "status": "failed",
-          "heartbeats": 102,
+          "heartbeats": 100,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 112,
+          "heartbeats": 97,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 208,
+          "heartbeats": 180,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 441,
+          "heartbeats": 549,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 121,
+          "heartbeats": 119,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 103,
+          "heartbeats": 437,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 101,
+          "heartbeats": 664,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 104,
+          "heartbeats": 107,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 473,
+          "heartbeats": 466,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 407,
+          "heartbeats": 400,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "Tactic `aesop` failed, made no progress"
         },
         "grind": {
           "status": "failed",
-          "heartbeats": 344,
+          "heartbeats": 342,
           "seconds": null,
           "axioms": null,
           "message": "`grind` failed"
@@ -2610,7 +2615,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 77534,
-          "seconds": 23.75,
+          "seconds": 24.656,
           "axioms": [
             "propext",
             "sorryAx",
@@ -2621,7 +2626,7 @@
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 60818,
+          "heartbeats": 60802,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -2629,7 +2634,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 85296,
-          "seconds": 23.094,
+          "seconds": 24.172,
           "axioms": [
             "propext",
             "sorryAx",
@@ -2640,56 +2645,56 @@
         },
         "intros; simp_all": {
           "status": "failed",
-          "heartbeats": 167,
+          "heartbeats": 164,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 99,
+          "heartbeats": 160,
           "seconds": null,
           "axioms": null,
-          "message": "Tactic `constructor` failed: target is not an inductive datatype"
+          "message": "Tactic `constructor` failed: no applicable constructor found"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 192,
+          "heartbeats": 164,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 542,
+          "heartbeats": 623,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 209,
+          "heartbeats": 508,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 120,
+          "heartbeats": 118,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 160,
+          "heartbeats": 133,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 385,
+          "heartbeats": 382,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `aesop` failed, made no progress"
@@ -2704,14 +2709,14 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 1394,
+          "heartbeats": 530,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 2092,
+          "heartbeats": 856,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
@@ -2725,56 +2730,56 @@
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 140,
+          "heartbeats": 53,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 1485,
+          "heartbeats": 565,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 147,
+          "heartbeats": 105,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "`ring_nf` made no progress on the goal"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 75,
+          "heartbeats": 68,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 56,
+          "heartbeats": 225,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 55,
+          "heartbeats": 413,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 58,
+          "heartbeats": 62,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 301,
+          "heartbeats": 280,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
@@ -2788,7 +2793,7 @@
         },
         "grind": {
           "status": "failed",
-          "heartbeats": 264,
+          "heartbeats": 263,
           "seconds": null,
           "axioms": null,
           "message": "`grind` failed"
@@ -2796,7 +2801,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 31604,
-          "seconds": 21.516,
+          "seconds": 22.734,
           "axioms": [
             "sorryAx"
           ],
@@ -2804,7 +2809,7 @@
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 13534,
+          "heartbeats": 13533,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -2812,7 +2817,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 25627,
-          "seconds": 20.156,
+          "seconds": 21.172,
           "axioms": [
             "sorryAx"
           ],
@@ -2827,42 +2832,42 @@
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 52,
+          "heartbeats": 639,
           "seconds": null,
           "axioms": null,
-          "message": "Tactic `constructor` failed: target is not an inductive datatype"
+          "message": "simp_all made no progress"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 2105,
+          "heartbeats": 871,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 1574,
+          "heartbeats": 614,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "`ring_nf` made no progress on the goal"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 1483,
+          "heartbeats": 728,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 74,
+          "heartbeats": 68,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 207,
+          "heartbeats": 465,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
@@ -2884,91 +2889,91 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 259,
+          "heartbeats": 214,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 259,
+          "heartbeats": 214,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "omega": {
           "status": "failed",
-          "heartbeats": 101,
+          "heartbeats": 98,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 120,
+          "heartbeats": 95,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 289,
+          "heartbeats": 243,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 354,
+          "heartbeats": 346,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 308,
+          "heartbeats": 299,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 102,
+          "heartbeats": 137,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 101,
+          "heartbeats": 665,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 104,
+          "heartbeats": 99,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 134,
+          "heartbeats": 125,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 354,
+          "heartbeats": 345,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "Tactic `aesop` failed, made no progress"
         },
         "grind": {
           "status": "failed",
-          "heartbeats": 699,
+          "heartbeats": 695,
           "seconds": null,
           "axioms": null,
           "message": "`grind` failed"
@@ -2976,7 +2981,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 52134,
-          "seconds": 22.14,
+          "seconds": 23.36,
           "axioms": [
             "propext",
             "sorryAx",
@@ -2987,7 +2992,7 @@
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 36925,
+          "heartbeats": 36861,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -2995,7 +3000,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 77762,
-          "seconds": 23.078,
+          "seconds": 24.297,
           "axioms": [
             "propext",
             "sorryAx",
@@ -3006,56 +3011,56 @@
         },
         "intros; simp_all": {
           "status": "failed",
-          "heartbeats": 218,
+          "heartbeats": 214,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 98,
+          "heartbeats": 95,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `constructor` failed: target is not an inductive datatype"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 259,
+          "heartbeats": 214,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 533,
+          "heartbeats": 483,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 291,
+          "heartbeats": 277,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 538,
+          "heartbeats": 528,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 167,
+          "heartbeats": 689,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 332,
+          "heartbeats": 327,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `aesop` failed, made no progress"
@@ -3158,7 +3163,7 @@
           "hint": {
             "status": "unconfirmed",
             "heartbeats": 18022,
-            "seconds": 20.562,
+            "seconds": 22.344,
             "axioms": [
               "propext",
               "sorryAx",
@@ -3177,7 +3182,7 @@
           "apply?": {
             "status": "unconfirmed",
             "heartbeats": 12930,
-            "seconds": 19.219,
+            "seconds": 21.265,
             "axioms": [
               "propext",
               "sorryAx",
@@ -3252,168 +3257,168 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 76,
+          "heartbeats": 51,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 76,
+          "heartbeats": 50,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "omega": {
           "status": "failed",
-          "heartbeats": 50,
+          "heartbeats": 48,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 61,
+          "heartbeats": 46,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 93,
+          "heartbeats": 67,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 219,
+          "heartbeats": 216,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 58,
+          "heartbeats": 57,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 52,
+          "heartbeats": 50,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 50,
+          "heartbeats": 49,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 53,
+          "heartbeats": 56,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 87,
+          "heartbeats": 80,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 137,
+          "heartbeats": 130,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "Tactic `aesop` failed, made no progress"
         },
         "grind": {
           "status": "failed",
-          "heartbeats": 203,
+          "heartbeats": 201,
           "seconds": null,
           "axioms": null,
           "message": "`grind` failed"
         },
         "hint": {
           "status": "heartbeats_exhausted",
-          "heartbeats": 200008,
+          "heartbeats": 200009,
           "seconds": null,
           "axioms": null,
           "message": "(deterministic) timeout at `whnf`, maximum number of heartbeats (200000) has been reached"
         },
         "exact?": {
           "status": "heartbeats_exhausted",
-          "heartbeats": 200008,
+          "heartbeats": 200009,
           "seconds": null,
           "axioms": null,
           "message": "(deterministic) timeout at `whnf`, maximum number of heartbeats (200000) has been reached"
         },
         "apply?": {
           "status": "heartbeats_exhausted",
-          "heartbeats": 200008,
+          "heartbeats": 200009,
           "seconds": null,
           "axioms": null,
           "message": "(deterministic) timeout at `whnf`, maximum number of heartbeats (200000) has been reached"
         },
         "intros; simp_all": {
           "status": "failed",
-          "heartbeats": 52,
+          "heartbeats": 50,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 48,
+          "heartbeats": 640,
           "seconds": null,
           "axioms": null,
-          "message": "Tactic `constructor` failed: target is not an inductive datatype"
+          "message": "unsolved goals"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 76,
+          "heartbeats": 50,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 256,
+          "heartbeats": 228,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 94,
+          "heartbeats": 68,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 58,
+          "heartbeats": 56,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 92,
+          "heartbeats": 70,
           "seconds": null,
           "axioms": null,
-          "message": "linarith failed to find a contradiction"
+          "message": "`push Not` made no progress at `h`"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 115,
+          "heartbeats": 112,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `aesop` failed, made no progress"
@@ -3516,7 +3521,7 @@
           "hint": {
             "status": "unconfirmed",
             "heartbeats": 14703,
-            "seconds": 20.204,
+            "seconds": 21.062,
             "axioms": [
               "propext",
               "sorryAx"
@@ -3533,7 +3538,7 @@
           "apply?": {
             "status": "unconfirmed",
             "heartbeats": 12659,
-            "seconds": 19.187,
+            "seconds": 21.625,
             "axioms": [
               "propext",
               "sorryAx"
@@ -3606,14 +3611,14 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 761,
+          "heartbeats": 27,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 761,
+          "heartbeats": 266,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
@@ -3627,66 +3632,66 @@
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 56,
+          "heartbeats": 26,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 770,
+          "heartbeats": 28,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 114,
+          "heartbeats": 39,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "`ring_nf` made no progress on the goal"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 36,
+          "heartbeats": 28,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 29,
+          "heartbeats": 191,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 28,
+          "heartbeats": 382,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 31,
+          "heartbeats": 36,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 173,
+          "heartbeats": 106,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 366,
+          "heartbeats": 363,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "Tactic `aesop` failed, made no progress"
         },
         "grind": {
           "status": "failed",
@@ -3698,7 +3703,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 13171,
-          "seconds": 19.859,
+          "seconds": 46.609,
           "axioms": [
             "propext",
             "sorryAx",
@@ -3709,7 +3714,7 @@
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 982,
+          "heartbeats": 981,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -3717,7 +3722,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 12941,
-          "seconds": 19.234,
+          "seconds": 37.891,
           "axioms": [
             "propext",
             "sorryAx",
@@ -3735,49 +3740,49 @@
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 25,
+          "heartbeats": 324,
           "seconds": null,
           "axioms": null,
-          "message": "Tactic `constructor` failed: target is not an inductive datatype"
+          "message": "simp_all made no progress"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 761,
+          "heartbeats": 266,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 854,
+          "heartbeats": 40,
           "seconds": null,
           "axioms": null,
-          "message": "unsolved goals"
+          "message": "`ring_nf` made no progress on the goal"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 771,
+          "heartbeats": 184,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 35,
+          "heartbeats": 27,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 101,
+          "heartbeats": 49,
           "seconds": null,
           "axioms": null,
-          "message": "linarith failed to find a contradiction"
+          "message": "`push Not` made no progress at `h`"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 345,
+          "heartbeats": 344,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `aesop` failed, made no progress"
@@ -3880,7 +3885,7 @@
           "hint": {
             "status": "unconfirmed",
             "heartbeats": 27907,
-            "seconds": 20.75,
+            "seconds": 31.875,
             "axioms": [
               "propext",
               "sorryAx",
@@ -3899,7 +3904,7 @@
           "apply?": {
             "status": "unconfirmed",
             "heartbeats": 12685,
-            "seconds": 19.094,
+            "seconds": 30.343,
             "axioms": [
               "propext",
               "sorryAx",
@@ -3974,91 +3979,91 @@
       "attempts": {
         "simp": {
           "status": "failed",
-          "heartbeats": 358,
+          "heartbeats": 281,
           "seconds": null,
           "axioms": null,
           "message": "`simp` made no progress"
         },
         "simp_all": {
           "status": "failed",
-          "heartbeats": 358,
+          "heartbeats": 281,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "omega": {
           "status": "failed",
-          "heartbeats": 69,
+          "heartbeats": 65,
           "seconds": null,
           "axioms": null,
           "message": "omega could not prove the goal:"
         },
         "decide": {
           "status": "failed",
-          "heartbeats": 101,
+          "heartbeats": 64,
           "seconds": null,
           "axioms": null,
-          "message": "failed to synthesize"
+          "message": "Expected type must not contain free variables"
         },
         "norm_num": {
           "status": "failed",
-          "heartbeats": 390,
+          "heartbeats": 312,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "ring": {
           "status": "failed",
-          "heartbeats": 209,
+          "heartbeats": 204,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "field_simp": {
           "status": "failed",
-          "heartbeats": 78,
+          "heartbeats": 74,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "linarith": {
           "status": "failed",
-          "heartbeats": 71,
+          "heartbeats": 68,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "nlinarith": {
           "status": "failed",
-          "heartbeats": 70,
+          "heartbeats": 66,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "positivity": {
           "status": "failed",
-          "heartbeats": 73,
+          "heartbeats": 83,
           "seconds": null,
           "axioms": null,
           "message": "not a positivity goal"
         },
         "tauto": {
           "status": "failed",
-          "heartbeats": 125,
+          "heartbeats": 115,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `tauto` failed"
         },
         "aesop": {
           "status": "failed",
-          "heartbeats": 1093,
+          "heartbeats": 1084,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "grind": {
           "status": "failed",
-          "heartbeats": 216,
+          "heartbeats": 211,
           "seconds": null,
           "axioms": null,
           "message": "`grind` failed"
@@ -4066,7 +4071,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 17339,
-          "seconds": 20.313,
+          "seconds": 23.687,
           "axioms": [
             "propext",
             "sorryAx"
@@ -4075,7 +4080,7 @@
         },
         "exact?": {
           "status": "failed",
-          "heartbeats": 3605,
+          "heartbeats": 3594,
           "seconds": null,
           "axioms": null,
           "message": "`exact?` could not close the goal. Try `apply?` to see partial suggestions."
@@ -4083,7 +4088,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 15487,
-          "seconds": 19.75,
+          "seconds": 22.25,
           "axioms": [
             "propext",
             "sorryAx"
@@ -4092,56 +4097,56 @@
         },
         "intros; simp_all": {
           "status": "failed",
-          "heartbeats": 286,
+          "heartbeats": 281,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "constructor <;> simp_all": {
           "status": "failed",
-          "heartbeats": 67,
+          "heartbeats": 64,
           "seconds": null,
           "axioms": null,
           "message": "Tactic `constructor` failed: target is not an inductive datatype"
         },
         "simp_all; omega": {
           "status": "failed",
-          "heartbeats": 358,
+          "heartbeats": 281,
           "seconds": null,
           "axioms": null,
           "message": "simp_all made no progress"
         },
         "norm_num; ring": {
           "status": "failed",
-          "heartbeats": 516,
+          "heartbeats": 438,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
         },
         "norm_num; linarith": {
           "status": "failed",
-          "heartbeats": 390,
+          "heartbeats": 313,
           "seconds": null,
           "axioms": null,
           "message": "linarith failed to find a contradiction"
         },
         "field_simp; ring": {
           "status": "failed",
-          "heartbeats": 77,
+          "heartbeats": 73,
           "seconds": null,
           "axioms": null,
           "message": "`field_simp` made no progress on the goal"
         },
         "by_contra h; push_neg at h; nlinarith": {
           "status": "failed",
-          "heartbeats": 144,
+          "heartbeats": 72,
           "seconds": null,
           "axioms": null,
-          "message": "linarith failed to find a contradiction"
+          "message": "`push Not` made no progress at `h`"
         },
         "intros; aesop": {
           "status": "failed",
-          "heartbeats": 1067,
+          "heartbeats": 1060,
           "seconds": null,
           "axioms": null,
           "message": "unsolved goals"
@@ -4244,7 +4249,7 @@
           "hint": {
             "status": "unconfirmed",
             "heartbeats": 18352,
-            "seconds": 20.265,
+            "seconds": 23.031,
             "axioms": [
               "propext",
               "sorryAx"
@@ -4261,7 +4266,7 @@
           "apply?": {
             "status": "unconfirmed",
             "heartbeats": 12951,
-            "seconds": 19.313,
+            "seconds": 22.016,
             "axioms": [
               "propext",
               "sorryAx"
@@ -4426,7 +4431,7 @@
         "hint": {
           "status": "unconfirmed",
           "heartbeats": 16954,
-          "seconds": 20.328,
+          "seconds": 23.062,
           "axioms": [
             "propext",
             "sorryAx",
@@ -4445,7 +4450,7 @@
         "apply?": {
           "status": "unconfirmed",
           "heartbeats": 14721,
-          "seconds": 19.359,
+          "seconds": 22.344,
           "axioms": [
             "propext",
             "sorryAx",
@@ -4608,7 +4613,7 @@
           "hint": {
             "status": "unconfirmed",
             "heartbeats": 15351,
-            "seconds": 20.218,
+            "seconds": 21.563,
             "axioms": [
               "propext",
               "sorryAx",
@@ -4627,7 +4632,7 @@
           "apply?": {
             "status": "unconfirmed",
             "heartbeats": 13580,
-            "seconds": 19.235,
+            "seconds": 20.781,
             "axioms": [
               "propext",
               "sorryAx",

@@ -1132,11 +1132,15 @@ axioms inside `audit.STANDARD`. If every stage-A attempt times out, the
 sweep falls back to one process per attempt so a single runaway tactic
 cannot mark the whole entry unknown; `apply?` and `hint` often reach stage B
 as candidates and then fail there on `sorryAx`, since a sorry warning is not
-always attributable back to the right line in stage A. The first baseline,
-under Lean 4.33.1 (commit `819816b2`), Mathlib `0df444a3` (the `v4.33.1`
-tag), landed 4 entries in tier 0, 1 in tier 1, 0 in tier 2, 15 in tier 3, and
-took roughly an hour on the machine it ran on; no twin's negation closed
-(refuting `¬ ∀ …` needs a witness none of the tactics supplies), so
+always attributable back to the right line in stage A. The baseline, under
+Lean 4.33.1 (commit `819816b2`), Mathlib `0df444a3` (the `v4.33.1` tag),
+lands 4 entries in tier 0, 1 in tier 1, 0 in tier 2, 15 in tier 3, and takes
+roughly forty minutes on the machine it ran on; the distribution is
+unchanged from the first sweep after stage A was fixed to carry each
+entry's own binders as local hypotheses rather than an anonymous leading
+universal (a Stage A/B mismatch that could fail a tactic in stage A that
+closes the same statement in stage B). No twin's negation closed (refuting
+`¬ ∀ …` needs a witness none of the tactics supplies), so
 `mechanically_false` is 0 for every twin. A twin a tactic closes is a
 problem-list bug: the baseline is still written, `problems` names the
 finding, and the command exits 1 (0 clean). Negations are swept for twins

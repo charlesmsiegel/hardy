@@ -104,7 +104,11 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         report=lambda line: print(line, file=sys.stderr),
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(baseline.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    # newline="\n": Path.write_text's default translates every "\n" to the
+    # platform line separator, so on Windows this would checkin a repository
+    # evidence file as CRLF even though .gitattributes marks it `-text` (no
+    # conversion) precisely so its bytes are the ones a digest is taken over.
+    args.out.write_text(json.dumps(baseline.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     for problem in baseline.problems:
         print("PROBLEM: " + problem, file=sys.stderr)
     tiers = {t: sum(1 for e in baseline.entries.values() if e.tier == t) for t in range(4)}

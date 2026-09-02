@@ -63,12 +63,20 @@ def _block(keyword: str, name: str, binders: str, conclusion: str, tactic: str) 
     )
 
 
-def stage_a_source(proposition: str, tactics: tuple[str, ...], imports: tuple[str, ...]) -> tuple[str, dict[str, tuple[int, int]]]:
-    """Every tactic as an anonymous example, and the 1-based line range of each block."""
+def stage_a_source(binders: str, conclusion: str, tactics: tuple[str, ...], imports: tuple[str, ...]) -> tuple[str, dict[str, tuple[int, int]]]:
+    """Every tactic as an anonymous example carrying the entry's own binders, and the 1-based line range of each block.
+
+    Stage B and the actual theorem present a bound variable as a local
+    hypothesis (`example (a b : ℤ) (ha : Odd a) : ... := by nlinarith`), not
+    as a leading universally-quantified goal (`example : ∀ a b, Odd a → ...
+    := by nlinarith`); a tactic that expects hypotheses already in context
+    can fail the latter and never be confirmed even though it closes the
+    former, and the former is what stage B and the theorem actually ask.
+    """
     text = header(imports) + "\n"
     spans: dict[str, tuple[int, int]] = {}
     for tactic in tactics:
-        block = _block("example", "", "", proposition, tactic)
+        block = _block("example", "", binders, conclusion, tactic)
         start = text.count("\n") + 1
         text += block
         spans[tactic] = (start, text.count("\n"))  # last line of the block
@@ -176,16 +184,16 @@ def tier_of(closed_by: tuple[str, ...]) -> int:
     return 3
 
 
-def sweep_proposition(proposition: str, imports: tuple[str, ...], elaborate: Elaborate, *, confirm: Callable[[str], Attempt]) -> tuple[dict[str, Attempt], tuple[str, ...]]:
+def sweep_proposition(binders: str, conclusion: str, imports: tuple[str, ...], elaborate: Elaborate, *, confirm: Callable[[str], Attempt]) -> tuple[dict[str, Attempt], tuple[str, ...]]:
     """Stage A over every tactic, then stage B for each candidate. Returns attempts and the closers."""
     tactics = SINGLES + CHAINS
-    source, spans = stage_a_source(proposition, tactics, imports)
+    source, spans = stage_a_source(binders, conclusion, tactics, imports)
     attempts = read_stage_a(elaborate(source), spans)
     if all(a.status == "timed_out" for a in attempts.values()):
         # One runaway tactic must not mark the rest unknown (spec §2.3).
         attempts = {}
         for tactic in tactics:
-            single, span = stage_a_source(proposition, (tactic,), imports)
+            single, span = stage_a_source(binders, conclusion, (tactic,), imports)
             attempts[tactic] = read_stage_a(elaborate(single), span)[tactic]
     closed: list[str] = []
     for tactic in tactics:
@@ -205,7 +213,7 @@ def sweep_entry(entry: Entry, elaborate: Elaborate, *, confirm_name: str) -> Ent
     def confirm(tactic: str) -> Attempt:
         return read_stage_b(elaborate(stage_b_source(confirm_name, entry.binders, entry.conclusion, tactic, entry.imports)), confirm_name, tactic)
 
-    attempts, closed = sweep_proposition(entry.proposition(), entry.imports, elaborate, confirm=confirm)
+    attempts, closed = sweep_proposition(entry.binders, entry.conclusion, entry.imports, elaborate, confirm=confirm)
     negation = None
     if entry.expected == "false":
         neg_name = f"{confirm_name}Negation"
@@ -213,7 +221,10 @@ def sweep_entry(entry: Entry, elaborate: Elaborate, *, confirm_name: str) -> Ent
         def confirm_negation(tactic: str) -> Attempt:
             return read_stage_b(elaborate(stage_b_source(neg_name, "", entry.negation(), tactic, entry.imports)), neg_name, tactic)
 
-        n_attempts, n_closed = sweep_proposition(entry.negation(), entry.imports, elaborate, confirm=confirm_negation)
+        # The negation's own binders are always empty: `entry.negation()` is
+        # already `¬ (∀ binders, conclusion)` or `¬ conclusion`, a closed
+        # statement with nothing left to bind.
+        n_attempts, n_closed = sweep_proposition("", entry.negation(), entry.imports, elaborate, confirm=confirm_negation)
         negation = NegationBaseline(attempts=n_attempts, closed_by=n_closed)
     return EntryBaseline(tier=tier_of(closed), elaborates=True, attempts=attempts, closed_by=closed, negation=negation)
 
