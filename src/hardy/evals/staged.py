@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from pydantic import model_validator
+
 from ..domain import FrozenClaim, FrozenModel, RunPhase, schema_text
 from ..prompts import canonical_prompt, claim_signature
 from .problems import Entry
@@ -67,6 +69,27 @@ class CanonicalVerdict(FrozenModel):
     review: CanonicalReview | None = None
     detail: str = ""
     usage: dict[str, Any]
+
+    @model_validator(mode="after")
+    def outcome_must_follow_the_review(self) -> CanonicalVerdict:
+        """Refuse a verdict whose summary can disagree with its own evidence.
+
+        Mirrors `FaithfulnessVerdict.outcome_must_follow_the_review`
+        (`domain.py`): `_canonical_issues` loads this with
+        `model_validate_json`, so a `canonical.json` rewritten to say
+        `outcome: "agreed"` beside a disputed or absent review fails to parse
+        at all, and the validator reports it as a finding rather than
+        crediting a tampered outcome.
+        """
+        if self.outcome == "unavailable":
+            if self.review is not None:
+                raise ValueError("an unavailable verdict carries no review")
+            return self
+        if self.review is None:
+            raise ValueError(f"a {self.outcome} verdict requires the review it grades")
+        if self.review.agrees is not (self.outcome == "agreed"):
+            raise ValueError("verdict does not follow from the review it names")
+        return self
 
 
 def _sha(path: Path) -> str:
