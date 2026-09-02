@@ -180,6 +180,18 @@ def test_a_row_naming_an_id_no_longer_in_the_list_is_a_finding_not_a_crash(tmp_p
     assert any("ghost" in i for i in issues)
 
 
+def test_a_twin_row_naming_an_id_no_longer_in_the_baseline_is_a_finding_not_a_crash(tmp_path):
+    # The per-row loop `continue`s a row whose id it cannot find, but check 6
+    # aggregates every row regardless: `_tier_aggregate`'s `mechanically_false`
+    # count used to index `baseline.entries[r.id]` for every twin row and
+    # raised KeyError instead of reporting a finding.
+    out, problems, baseline = _board(tmp_path)
+    assert json.loads((out / "scoreboard.json").read_text(encoding="utf-8"))["rows"][2]["id"] == "f"
+    _edit(out / "scoreboard.json", lambda s: s["rows"][2].__setitem__("id", "ghost"))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("ghost" in i for i in issues)
+
+
 def test_a_run_dir_that_escapes_the_scoreboard_directory_is_a_finding_not_a_read(tmp_path):
     out, problems, baseline = _board(tmp_path)
     _edit(out / "scoreboard.json", lambda s: s["rows"][0].__setitem__("run_dir", "../../evals/problems.json"))

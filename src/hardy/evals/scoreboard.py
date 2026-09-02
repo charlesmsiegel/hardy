@@ -159,7 +159,8 @@ def _tier_aggregate(rows: list[Row], baseline: Baseline) -> TierAggregate:
         refused=refused, exhausted=sum(1 for r in twins if r.outcome == "exhausted"), graded=sum(1 for r in twins if r.outcome == "graded"),
         mechanically_false=sum(
             1 for r in twins
-            if (negation := baseline.entries[r.id].negation) is not None and negation.closed_by
+            if (entry := baseline.entries.get(r.id)) is not None
+            and entry.negation is not None and entry.negation.closed_by
         ),
         refusal_rate=refused / len(twins) if twins else None,
         medians=medians, unreported_costs=sum(1 for r in solved if r.cost_usd is None),
