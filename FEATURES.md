@@ -1130,11 +1130,11 @@ sweep falls back to one process per attempt so a single runaway tactic
 cannot mark the whole entry unknown; `apply?` and `hint` often reach stage B
 as candidates and then fail there on `sorryAx`, since a sorry warning is not
 always attributable back to the right line in stage A. The first baseline,
-under Lean 4.33.1 / Mathlib v4.33.1 (commit `819816b2`), landed 4 entries in
-tier 0, 1 in tier 1, 0 in tier 2, 15 in tier 3, and took roughly an hour on
-the machine it ran on; no twin's negation closed (refuting `¬ ∀ …` needs a
-witness none of the tactics supplies), so `mechanically_false` is 0 for every
-twin. A twin a tactic closes, or a true entry whose negation closes, is a
+under Lean 4.33.1 (commit `819816b2`), Mathlib `0df444a3` (the `v4.33.1`
+tag), landed 4 entries in tier 0, 1 in tier 1, 0 in tier 2, 15 in tier 3, and
+took roughly an hour on the machine it ran on; no twin's negation closed
+(refuting `¬ ∀ …` needs a witness none of the tactics supplies), so
+`mechanically_false` is 0 for every twin. A twin a tactic closes is a
 problem-list bug: the baseline is still written, `problems` names the
 finding, and the command exits 1 (0 clean). Negations are swept for twins
 only — a deviation from the spec, which also named true entries.

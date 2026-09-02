@@ -129,7 +129,7 @@ pipeline with no model, no network, and no toolchain. The earlier one-shot proof
 experiment remains available as `hardy batch`, but is secondary.
 
 `hardy evals` runs a fixed, tiered problem list (`evals/problems.json`, twenty
-statements plus five false "twins") rather than the three-problem acceptance
+statements, five of them false "twins") rather than the three-problem acceptance
 set: `hardy evals baseline` sweeps a committed tactic set to measure, per
 statement, how much a plain tactic already closes before any model is asked;
 `hardy evals run --label L --acknowledge-unsafe-execution` scores a model
