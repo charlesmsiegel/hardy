@@ -1158,7 +1158,14 @@ only — a deviation from the spec, which also named true entries.
 (`tier == tier_of(closed_by)`, and `closed_by` must name exactly the
 attempts recorded `closed`): a hand-edited or forged baseline cannot set
 `tier: 3` beside `closed_by: ["simp"]` and have selection, the automation
-floor, or the headline use the forged tier.
+floor, or the headline use the forged tier. `Baseline` itself refuses to
+load an incomplete tactic record: whenever an entry's `elaborates` is
+`true`, its `attempts` (and its `negation.attempts`, when swept) must name
+exactly the baseline's own `singles`+`chains`, and an entry with
+`elaborates: false` must carry no attempts at all — otherwise a truncated
+`attempts: {}` beside `closed_by: []` would still satisfy
+`tier_must_follow_its_closers` and pass an unmeasured statement off as one
+every configured tactic was tried against and failed.
 
 `hardy evals run --label L [--mode batch|staged] [--backend] [--model]
 [--repeats N] [--only ids] [--tiers 2,3] [--no-twins] [--max-turns]
@@ -1177,22 +1184,29 @@ baseline whose entries no longer match the problem list's ids (extra or
 missing, named in the refusal), an existing label, `--only` naming an id
 outside the list, a selection (`--only`/`--tiers`/`--no-twins`) matching no
 entries (the same empty selection would otherwise write a finished,
-zero-row scoreboard `hardy evals check` also accepts), `--mode staged` with
+zero-row scoreboard — `hardy evals check` refuses one too, so a scoreboard
+edited into that state after the fact is caught as well), `--mode staged` with
 no staged runner, `--mode staged`
 combined with `--max-turns`/`--wall-seconds`, a toolchain that cannot be
 identified, `--label` naming anything but a single safe path component (no
 `/`, `\`, leading `.`/`-`, or absolute path -- `scoreboards_root / label`
 would otherwise resolve outside `evals/scoreboards`), or `--repeats` below
-`1`, `--max-turns` below `1`, or `--wall-seconds` at or below `0` (refused by
-the parser itself, before any of the above -- a zero wall-clock budget is
-falsy to `ClaudeAgentRuntime._within_budget` and would leave a batch run
-unbounded). `--model` is accepted on the `run` subparser itself (not
+`1`, `--max-turns` below `1`, or `--wall-seconds` at or below `0` or
+non-finite (refused by the parser itself, before any of the above -- a zero
+wall-clock budget is falsy to `ClaudeAgentRuntime._within_budget` and would
+leave a batch run unbounded, and `inf`/`nan` both pass a bare positivity
+check while imposing no real deadline, since `asyncio.wait_for(...,
+timeout=inf)` never fires and `nan <= 0` is `False`). `--model` is accepted on the `run` subparser itself (not
 only before it), the same suppressed-default pattern `prove --model` uses,
 so it defers to the root `--model` when omitted. `condition.source_revision`
-records the Git commit the run was made from (`-dirty` suffixed over an
-unclean working tree, `None` when it could not be identified), since
-`hardy_version` alone cannot tell apart two evals runs made from different
-commits of the same source checkout.
+records the Git commit Hardy's own running source checkout is at (`-dirty`
+suffixed over an unclean working tree, `None` when it could not be
+identified), found by walking up from the installed package's own directory
+for the nearest `.git` — independent of wherever `--problems` happens to
+point, so a problem file passed in from outside the default `evals/` layout
+cannot attribute the run to a different repository's HEAD (or to `None`) —
+since `hardy_version` alone cannot tell apart two evals runs made from
+different commits of the same source checkout.
 `--acknowledge-unsafe-execution` is the same contract the staged terminal
 enforces on a human, printed once since a set run has no one to say it to.
 `--max-turns`/`--wall-seconds` default to `60`/`1800.0` and govern `batch`
@@ -1246,7 +1260,12 @@ committed scoreboard from nothing but the artifacts it points at, the way
 `hardy accept --recorded` does. Any finding fails the run (exit 1; exit 0
 with a headline and per-tier summary when clean): the scoreboard's
 `problems_sha256`/`baseline_sha256` match the committed files and the
-baseline's `environment` equals the scoreboard's; every row's `run_dir`
+baseline's `environment` equals the scoreboard's; the baseline is also run
+through the same `staleness()` gate `run_set` refuses a live run over
+(`problems_sha256`, `singles`/`chains`, `heartbeat_budget`, recorded
+`problems`), each issue prefixed `"baseline: "`, so a committed baseline
+gone stale after the scoreboard was written cannot still validate clean;
+every row's `run_dir`
 exists inside the scoreboard directory and `acceptance.validate_recorded_run`
 reports nothing on it (a `run_dir` that could escape the directory, or a row
 naming an unknown id, is itself a finding, never an exception) — a row the
@@ -1274,11 +1293,20 @@ trusted from the verdict, its `claim_sha256` matches the nested run's
 manifest, and — when its `outcome` is `agreed` or `disputed` — its `review`
 must equal the reader's own last reply as recorded in
 `canonical-trajectory.jsonl`, so a disputing reader's canonical.json cannot
-be rewritten with a self-consistent agreeing review after the fact; the
-scoreboard's `aggregates` recompute from its `rows`; and the selection
+be rewritten with a self-consistent agreeing review after the fact (`staged_row`
+itself now reads `canonical.json` the same defensive way —
+`CanonicalVerdict.model_validate_json`, `canonical` simply `"unavailable"`
+on any failure to parse — so a corrupt file reaches this check as a finding
+instead of crashing the validator first); the
+scoreboard's `aggregates` recompute from its `rows`; the selection
 implied by `condition` produces exactly the rows present in order, unless
 `interrupted`, in which case the rows must still be an exact prefix of the
-order `run_set` would have completed (not merely a subset of it).
+order `run_set` would have completed (not merely a subset of it) — an empty
+derived selection is refused here too, the same as `run_set` refuses it
+before ever writing a scoreboard; and a non-interrupted, complete scoreboard
+must carry a `finished_at` while an interrupted one must not carry one at
+all, since `run_set` only ever writes `finished_at` on its closing,
+non-interrupted write.
 `.gitattributes` marks `evals/scoreboards/** -text` for
 the same reason `acceptance/recorded/**` is, and
 `tests/integration/test_recorded_evals.py` fails, not skips, when
