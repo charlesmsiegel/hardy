@@ -211,7 +211,15 @@ def _batch_runner(config: Any, model: str) -> BatchRunner:
 
     def run_one(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
         request = Request.from_dict({"declaration": entry.declaration(), "informal_claim": entry.input, "imports": list(entry.imports)})
-        lean = LeanTools(request, config.lean_command, timeout=config.lean_timeout, project=config.lean_project)
+        # The same command `environment_identity` was asked about for this
+        # run's `environment` field (run_set_command), not `config.lean_
+        # command`: a global `--lean-command` that differs from `config.lake
+        # env lean` would otherwise check every batch proof against a
+        # different toolchain from the one the scoreboard's `environment`
+        # and the baseline sweep both name, so a row could pass its own
+        # checks under a Lean this experiment was never actually measured
+        # against (item 2).
+        lean = LeanTools(request, (str(config.lake), "env", "lean"), timeout=config.lean_timeout, project=config.lean_project)
         # `model`, not `config.model`: the condition already recorded
         # whichever model `--model` selected (run_set_command), and every row
         # must actually be produced by that model -- not silently by
