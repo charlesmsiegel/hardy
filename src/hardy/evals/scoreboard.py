@@ -366,11 +366,26 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
     if board.interrupted:
         if have_order != expected_order[: len(have_order)]:
             issues.append("interrupted scoreboard rows are not a prefix of the run order")
+        # `run_set` only ever writes `finished_at` on its final, non-
+        # interrupted write, and a process killed after that write but
+        # before the `interrupted: true` one it makes on the way out of its
+        # exception handler cannot land on this combination either; the
+        # only way to reach it is editing the metadata after the fact.
+        if board.finished_at is not None:
+            issues.append("an interrupted scoreboard cannot carry a finished_at")
     else:
         for missing in sorted(expected - have):
             issues.append(f"row {missing[0]} repeat {missing[1]} is missing and the scoreboard is not marked interrupted")
         if have == expected and have_order != expected_order:
             issues.append("the scoreboard's rows are not in the run's order")
+        # A process that stops after writing the final row but before
+        # `run_set`'s own closing `_write(..., finished_at=now())` -- or a
+        # `finished_at` edited back to `null` after the fact -- leaves every
+        # expected row present with nothing recording that the run actually
+        # finished (item 7); every check above this one is silent about it,
+        # since none reads `finished_at` at all.
+        if have == expected and board.finished_at is None:
+            issues.append("the scoreboard is complete but records no finished_at")
     return tuple(issues)
 
 
