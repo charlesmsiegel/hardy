@@ -3,11 +3,21 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from test_evals_runner import GIVE_UP, SOLVE, _batch_runner, _condition, _files
+from test_evals_runner import (
+    ENTRIES,
+    GIVE_UP,
+    SOLVE,
+    _batch_runner,
+    _condition,
+    _entry_baseline,
+    _files,
+    _scripted_batch,
+)
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 from test_recorded_runs import _batch
 
@@ -114,8 +124,7 @@ def _row(**kw) -> scoreboard.Row:
 
 def _baseline(tiers: dict[str, int], twins_false: set[str] = frozenset()) -> sweep.Baseline:
     identity = EnvironmentIdentity(**RAW_IDENTITY)
-    entries = {k: sweep.EntryBaseline(tier=t, elaborates=True, attempts={}, closed_by=("simp",) if t == 0 else (),
-                                      negation=sweep.NegationBaseline(attempts={}, closed_by=("nlinarith",) if k in twins_false else ()) if k.startswith("f") else None)
+    entries = {k: _entry_baseline(t, negation=sweep.NegationBaseline(attempts={}, closed_by=("nlinarith",) if k in twins_false else ()) if k.startswith("f") else None)
                for k, t in tiers.items()}
     return sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256="p" * 64, environment=identity, heartbeat_budget=200000,
                           wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(), entries=entries)
@@ -177,7 +186,15 @@ def test_each_check_breaks_one_at_a_time(tmp_path):
     assert any("runs/t/batch-0" in i for i in issues)
 
     out2, p2, b2 = _board(tmp_path / "second")
-    _edit(out2 / "runs" / "u" / "batch-0" / "trajectory.json", lambda t: t["request"].__setitem__("declaration", "theorem HardyTarget : False"))
+    # A genuinely different, internally self-consistent run swapped into the
+    # row -- not a post-hoc edit of `declaration` alone, which the recorded-
+    # run audit's own byte-for-byte `proof.lean` check would report `invalid`
+    # first, and item 3 then skips `_entry_issues` before it ever runs
+    # (`test_a_missing_batch_trajectory_is_a_finding_not_a_crash` exercises
+    # that skip directly).
+    run_dir2 = out2 / "runs" / "u" / "batch-0"
+    shutil.rmtree(run_dir2)
+    _scripted_batch(run_dir2, GIVE_UP, declaration="theorem HardyTarget : False", informal_claim="True again.")
     issues = scoreboard.validate_scoreboard(out2, problems_path=p2, baseline_path=b2)                          # 3: the run is the entry's
     assert any("declaration" in i for i in issues)
 
@@ -325,15 +342,59 @@ def test_a_condition_limits_mismatch_is_a_finding(tmp_path):
     assert any("max_turns" in i for i in issues), issues
 
 
+def test_a_batch_toolchain_mismatch_is_a_finding(tmp_path):
+    """A row's own recorded toolchain must match the scoreboard's environment
+    (item 1): copying in a run produced under a different Mathlib revision
+    must not pass silently and be credited to this board's toolchain. The
+    run's own three artifacts (`result.json`, `trajectory.json`,
+    `writeup.md`) are kept self-consistent with each other -- as a real
+    swapped-in run's would be -- so only the new cross-check against
+    `board.environment` fires, not the recorded-run audit's own internal
+    consistency check.
+    """
+    out, problems, baseline = _board(tmp_path)
+    old_revision = RAW_IDENTITY["mathlib_revision"]
+    new_revision = "f" * 40
+    run_dir = out / "runs" / "t" / "batch-0"
+    _edit(run_dir / "trajectory.json", lambda t: t["toolchain"].__setitem__("mathlib_revision", new_revision))
+    _edit(run_dir / "result.json", lambda r: r["toolchain"].__setitem__("mathlib_revision", new_revision))
+    writeup_path = run_dir / "writeup.md"
+    writeup_path.write_bytes(writeup_path.read_bytes().replace(old_revision.encode("utf-8"), new_revision.encode("utf-8")))
+
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert not any("audit reports findings" in i for i in issues), issues
+    assert any("environment" in i and "mathlib_revision" in i for i in issues), issues
+
+
+def test_a_missing_batch_trajectory_is_a_finding_not_a_crash(tmp_path):
+    """Once the recorded-run audit already reports a row `invalid`, nothing
+    downstream may still try to read its artifacts (item 3): `_entry_issues`
+    and `_condition_issues` used to run unconditionally and would raise
+    `FileNotFoundError` reading `trajectory.json` for a row missing it.
+    """
+    out, problems, baseline = _board(tmp_path)
+    (out / "runs" / "t" / "batch-0" / "trajectory.json").unlink()
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("audit reports findings" in i for i in issues), issues
+
+
 def test_batch_imports_not_matching_the_entry_is_a_finding(tmp_path):
     """Extra imports could expose a previously proved theorem and let the
     model obtain a clean kernel-verified result unavailable under the
     entry's declared environment (item 7).
+
+    Built as a genuinely different, self-consistent run under the extra
+    import (not a post-hoc edit of `trajectory.json` alone), for the same
+    reason `test_each_check_breaks_one_at_a_time` check 3 is: an edit that
+    leaves `proof.lean` disagreeing with the tampered request trips the
+    recorded-run audit first, and item 3 then skips `_entry_issues`.
     """
     out, problems, baseline = _board(tmp_path)
-    _edit(out / "runs" / "t" / "batch-0" / "trajectory.json", lambda t: t["request"].__setitem__("imports", ["Mathlib", "Extra"]))
+    entry_t = next(e for e in ENTRIES if e.id == "t")
+    run_dir = out / "runs" / "t" / "batch-0"
+    shutil.rmtree(run_dir)
+    _scripted_batch(run_dir, SOLVE, declaration=entry_t.declaration(), informal_claim=entry_t.input, imports=("Mathlib", "Extra"))
     issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
-    # the audit may also complain about the changed trajectory; the imports finding must still be present
     assert any("imports" in i for i in issues), issues
 
 

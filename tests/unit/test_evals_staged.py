@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from hardy import acceptance, prompts
 from hardy.config import Config
-from hardy.domain import EnvironmentIdentity, FormalizationProposal, freeze_claim
+from hardy.domain import EnvironmentIdentity, FormalizationProposal, RunPhase, freeze_claim
 from hardy.evals import runner, scoreboard, staged, sweep
 from hardy.evals.problems import Entry, ProblemSet, sha256_of
 from hardy.storage import RunStore
@@ -136,9 +136,14 @@ def test_validate_scoreboard_checks_the_canonical_hashes(tmp_path):
     assert all("audit reports findings" in issue for issue in issues), issues
     assert not any("canonical-prompt.md" in issue for issue in issues)
 
+    # A row the recorded-run audit already rejects skips every
+    # artifact-dependent check, `_canonical_issues` included (item 3,
+    # `validate_scoreboard`'s `continue` on `outcome == "invalid"`): tampering
+    # `canonical-prompt.md` here adds no further finding, since nothing reads
+    # it for a row this invalid.
     (row_dir / "canonical-prompt.md").write_text("tampered", encoding="utf-8")
     issues = scoreboard.validate_scoreboard(scoreboard_dir, problems_path=problems_path, baseline_path=baseline_path)
-    assert any("canonical-prompt.md" in issue for issue in issues)
+    assert all("audit reports findings" in issue for issue in issues), issues
 
 
 # --- a fully audited staged run, hermetically -------------------------------
@@ -193,11 +198,22 @@ def _audit_clean_deterministic_run(row_dir: Path) -> Path:
 
 
 class _CanonicalRuntime:
+    """A fake `ClaudeStagedRuntime` whose `run_structured` also records the
+    reader's reply through the store, the way the real one does (item 2):
+    `ClaudeStagedRuntime._observe` appends every provider event as
+    `{"kind": "claude." + event["type"], "phase": ..., "payload": event}`, and
+    a completed text block is observed as `{"type": "assistant", "message":
+    {"role": "assistant", "content": <reply text>}}` (`claude_runtime.py:_note`).
+    `scoreboard._canonical_issues` derives the review from exactly that
+    payload shape, so a fixture that never wrote it could not exercise that
+    check.
+    """
+
     backend = "claude"
     isolation_guarantee = "tools-refused"
 
-    def __init__(self, answer):
-        self.answer = answer
+    def __init__(self, answer, store=None):
+        self.answer, self.store = answer, store
         self.usage = {"exchanges": 1, "cost_usd": 0.02, "input_tokens": 1, "output_tokens": 1, "cache_write_tokens": None, "cache_read_tokens": None}
 
     def start(self, **kw):
@@ -206,7 +222,14 @@ class _CanonicalRuntime:
     def run_structured(self, thread, stage, prompt, output_type):
         if isinstance(self.answer, Exception):
             raise self.answer
-        return output_type(**self.answer)
+        result = output_type(**self.answer)
+        if self.store is not None:
+            self.store.append(
+                "claude.assistant",
+                {"type": "assistant", "message": {"role": "assistant", "content": result.model_dump_json()}},
+                phase=RunPhase.AWAITING_APPROVAL,
+            )
+        return result
 
 
 AGREES = {"equivalent": True, "canonical_entails_model": True, "model_entails_canonical": True}
@@ -220,7 +243,7 @@ def _solved_fixture(tmp_path: Path):
     run_dir = _audit_clean_deterministic_run(row_dir)
     entry = Entry(id="odd-sum", input=(run_dir / "request.md").read_text(encoding="utf-8").strip(), name="OddSum",
                  binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", area="sums")
-    staged.compare_canonical(entry, run_dir, row_dir, runtime_factory=lambda store: _CanonicalRuntime(AGREES), model="reader@test", wall_seconds=60.0)
+    staged.compare_canonical(entry, run_dir, row_dir, runtime_factory=lambda store: _CanonicalRuntime(AGREES, store), model="reader@test", wall_seconds=60.0)
 
     problems_path = tmp_path / "problems.json"
     problems_path.write_text(json.dumps(ProblemSet(entries=(entry,)).model_dump(mode="json")), encoding="utf-8")
@@ -243,7 +266,7 @@ def test_a_solved_staged_row_from_a_fully_audited_deterministic_run(tmp_path):
 def test_a_disputing_reader_leaves_the_row_solved_other(tmp_path):
     scoreboard_dir, row_dir, run_dir, entry, *_ = _solved_fixture(tmp_path)
     disputes = dict(AGREES, notes="the index convention differs")
-    staged.compare_canonical(entry, run_dir, row_dir, runtime_factory=lambda store: _CanonicalRuntime(disputes), model="reader@test", wall_seconds=60.0)
+    staged.compare_canonical(entry, run_dir, row_dir, runtime_factory=lambda store: _CanonicalRuntime(disputes, store), model="reader@test", wall_seconds=60.0)
     row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
     assert row.outcome == "solved_other" and row.canonical == "disputed"
 
@@ -253,6 +276,27 @@ def test_a_missing_canonical_file_leaves_the_row_solved_other(tmp_path):
     (row_dir / "canonical.json").unlink()
     row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
     assert row.outcome == "solved_other" and row.canonical == "unavailable"
+
+
+def test_a_canonical_review_rewritten_to_agree_while_the_trajectory_disputes_is_a_finding(tmp_path):
+    """The review is derived from the reader's own recorded reply, not read
+    back from the editable verdict (item 2): `canonical.json` can otherwise be
+    rewritten with a self-consistent agreeing `review` after a disputed
+    comparison, and the row and aggregates updated to match, while
+    `canonical-trajectory.jsonl` still carries the reader's actual disputing
+    reply.
+    """
+    scoreboard_dir, row_dir, run_dir, entry, *_ = _solved_fixture(tmp_path)
+    disputes = dict(AGREES, notes="the index convention differs")
+    staged.compare_canonical(entry, run_dir, row_dir, runtime_factory=lambda store: _CanonicalRuntime(disputes, store), model="reader@test", wall_seconds=60.0)
+
+    def rewrite_to_agree(payload):
+        payload["outcome"] = "agreed"
+        payload["review"]["notes"] = ""
+
+    _edit_canonical(row_dir, rewrite_to_agree)
+    issues = scoreboard._canonical_issues(entry, row_dir, "where")
+    assert any("does not match the reader's reply" in i for i in issues), issues
 
 
 def _deterministic_condition(**kw) -> runner.Condition:
@@ -281,9 +325,19 @@ def test_a_rewritten_request_md_is_named_by_validator_check_3(tmp_path):
     )
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
 
-    (run_dir / "request.md").write_text("Something else entirely.\n", encoding="utf-8")
+    # Kept self-consistent with the manifest's own hash of it (as a real
+    # attacker's swapped-in run would be): otherwise the recorded-run audit's
+    # own hash check reports this row `invalid` first, and item 3 then skips
+    # `_entry_issues` before ever reaching the check this test is about.
+    new_request = b"Something else entirely.\n"
+    (run_dir / "request.md").write_bytes(new_request)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"]["request.md"] = hashlib.sha256(new_request).hexdigest()
+    manifest_path.write_bytes((json.dumps(manifest, indent=2) + "\n").encode("utf-8"))
+
     issues = scoreboard.validate_scoreboard(scoreboard_dir, problems_path=problems_path, baseline_path=baseline_path)
-    assert any("request.md is not the entry's input" in issue for issue in issues)
+    assert any("request.md is not the entry's input" in issue for issue in issues), issues
 
 
 def test_a_tampered_canonical_prompt_is_a_canonical_issue(tmp_path):
@@ -372,3 +426,50 @@ def test_a_condition_model_mismatch_is_a_finding_for_a_staged_row(tmp_path):
 
     issues = scoreboard.validate_scoreboard(scoreboard_dir, problems_path=problems_path, baseline_path=baseline_path)
     assert any("model" in issue and "a-different-model" in issue for issue in issues), issues
+
+
+def test_a_staged_environment_mismatch_is_a_finding(tmp_path):
+    """A staged row's own recorded environment (its manifest's) must match
+    the scoreboard's, not merely the baseline's (item 1): copying in a run
+    made under a different Lean or Mathlib revision must not be credited to
+    this board's toolchain.
+    """
+    scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
+    row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
+    assert row.outcome == "solved"
+    condition = _deterministic_condition()
+    board = runner.Scoreboard(
+        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
+    )
+    (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
+
+    payload = json.loads((scoreboard_dir / "scoreboard.json").read_text(encoding="utf-8"))
+    payload["environment"]["lean_commit"] = "some-other-commit"
+    (scoreboard_dir / "scoreboard.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    issues = scoreboard.validate_scoreboard(scoreboard_dir, problems_path=problems_path, baseline_path=baseline_path)
+    assert any("run's environment" in i for i in issues), issues
+
+
+def test_a_staged_condition_backend_mismatch_is_a_finding(tmp_path):
+    """The offline checker must not be able to certify an existing Claude run
+    as Codex (item 5): `run_set_command` refuses `--backend codex` before any
+    run starts, so a staged trajectory is always Claude-shaped, but nothing
+    before this compared the recorded provider events against the condition's
+    own backend.
+    """
+    scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
+    row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
+    assert row.outcome == "solved"
+    condition = _deterministic_condition(backend="codex")
+    board = runner.Scoreboard(
+        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
+    )
+    (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
+
+    issues = scoreboard.validate_scoreboard(scoreboard_dir, problems_path=problems_path, baseline_path=baseline_path)
+    assert any("codex" in i for i in issues), issues
