@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Status: implemented, with deviations.** Negations are swept for twins only (spec §2.4 also named true entries). Stage-B `seconds` include the Mathlib import; `import_seconds` is recorded once per baseline so the net is derivable. `hint` counts as a searcher (tier 1), since Mathlib's `hint` runs `exact?`. First baseline under Lean 4.33.1 / Mathlib v4.33.1: tiers 0: 4, 1: 1, 2: 0, 3: 15. `select()` follows `--only`'s order and refuses unknown or repeated ids. Row readers ask the audit first and yield `invalid` rows with null figures. No scoreboard committed yet.
+> **Status: implemented, with deviations.** Negations are swept for twins only (spec §2.4 also named true entries). Stage-B `seconds` include the Mathlib import; `import_seconds` is recorded once per baseline so the net is derivable. `hint` counts as a searcher (tier 1), since Mathlib's `hint` runs `exact?`. First baseline under Lean 4.33.1 / Mathlib v4.33.1: tiers 0: 4, 1: 1, 2: 0, 3: 15. `select()` follows `--only`'s order, folds repeated ids to their first occurrence, and refuses unknown ids. Row readers ask the audit first and yield `invalid` rows with null figures. No scoreboard committed yet.
 
 **Goal:** A committed problem list with a mechanically measured automation floor, a set runner that scores a model above that floor, and a validator that re-derives every figure in a committed scoreboard from run directories the existing audit accepts.
 
