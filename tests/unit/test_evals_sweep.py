@@ -241,3 +241,6 @@ def test_staleness_names_each_drift():
     assert any("problems" in i for i in sweep.staleness(broken, problems_sha256="p" * 64, environment=IDENTITY))
     edited = baseline.model_copy(update={"chains": ("simp; simp",)})
     assert any("chains" in i for i in sweep.staleness(edited, problems_sha256="p" * 64, environment=IDENTITY))
+    rebudgeted = baseline.model_copy(update={"heartbeat_budget": 1})
+    issues = sweep.staleness(rebudgeted, problems_sha256="p" * 64, environment=IDENTITY)
+    assert any("heartbeat_budget" in i and "1" in i and str(sweep.HEARTBEAT_BUDGET) in i for i in issues)
