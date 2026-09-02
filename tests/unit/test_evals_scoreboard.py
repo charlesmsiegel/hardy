@@ -302,3 +302,76 @@ def test_a_selection_naming_an_unknown_id_is_a_finding_not_a_crash(tmp_path):
     assert any("selection" in i and "ghost" in i for i in issues)
     # a refused selection has nothing to compare rows against, so every recorded row reads as outside it
     assert {"row t repeat 0 is outside the selection", "row u repeat 0 is outside the selection", "row f repeat 0 is outside the selection"} <= set(issues)
+
+
+def test_a_condition_model_mismatch_is_a_finding_per_batch_row(tmp_path):
+    """A committed scoreboard's `condition` is cross-checked against what
+    each run itself recorded, not trusted on its own say-so (item 2): an
+    edited `condition.model` -- or a run directory copied in from a
+    different experiment -- must not certify results as belonging to the
+    model this board claims.
+    """
+    out, problems, baseline = _board(tmp_path)
+    _edit(out / "scoreboard.json", lambda s: s["condition"].__setitem__("model", "a-different-model"))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    model_issues = [i for i in issues if "a-different-model" in i]
+    assert len(model_issues) == 3, issues  # one per row: t, u, f
+
+
+def test_a_condition_limits_mismatch_is_a_finding(tmp_path):
+    out, problems, baseline = _board(tmp_path)
+    _edit(out / "scoreboard.json", lambda s: s["condition"]["limits"].__setitem__("max_turns", 999))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("max_turns" in i for i in issues), issues
+
+
+def test_batch_imports_not_matching_the_entry_is_a_finding(tmp_path):
+    """Extra imports could expose a previously proved theorem and let the
+    model obtain a clean kernel-verified result unavailable under the
+    entry's declared environment (item 7).
+    """
+    out, problems, baseline = _board(tmp_path)
+    _edit(out / "runs" / "t" / "batch-0" / "trajectory.json", lambda t: t["request"].__setitem__("imports", ["Mathlib", "Extra"]))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    # the audit may also complain about the changed trajectory; the imports finding must still be present
+    assert any("imports" in i for i in issues), issues
+
+
+def test_an_interrupted_board_missing_a_middle_row_is_not_a_prefix(tmp_path):
+    """A committed scoreboard could otherwise delete only its failed rows,
+    set `interrupted: true`, and pass with an inflated solve rate (item 4):
+    an interrupted board's rows must be an exact prefix of the order
+    `run_set` would actually have completed, not just a subset of it.
+    """
+    out, problems, baseline = _board(tmp_path)
+
+    def drop_middle(s):
+        s["rows"].pop(1)  # drop u, keeping t and f: not a prefix
+        s["interrupted"] = True
+
+    _edit(out / "scoreboard.json", drop_middle)
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("not a prefix of the run order" in i for i in issues), issues
+
+
+def test_an_interrupted_board_with_reordered_rows_is_not_a_prefix(tmp_path):
+    out, problems, baseline = _board(tmp_path)
+
+    def reorder(s):
+        s["rows"][0], s["rows"][1] = s["rows"][1], s["rows"][0]  # t and u swapped
+        s["interrupted"] = True
+
+    _edit(out / "scoreboard.json", reorder)
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("not a prefix of the run order" in i for i in issues), issues
+
+
+def test_a_baseline_missing_a_problem_entry_is_a_finding(tmp_path):
+    """A baseline no longer covering every problem id cannot be trusted to
+    tier this run (item 8): `select` would raise `KeyError` the first time it
+    looked the missing id up.
+    """
+    out, problems, baseline = _board(tmp_path)
+    _edit(baseline, lambda b: b["entries"].pop("f"))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("baseline's entries do not match" in i and "missing" in i and "f" in i for i in issues), issues

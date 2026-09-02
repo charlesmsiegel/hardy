@@ -12,7 +12,7 @@ from typing import Any, Literal
 from .. import acceptance
 from ..domain import FormalStatus, FrozenModel, RunManifest, RunPhase
 from .problems import Entry
-from .sweep import Baseline
+from .sweep import Baseline, baseline_entries_mismatch
 
 Outcome = Literal["solved", "solved_other", "unsolved", "refused", "exhausted", "graded", "invalid"]
 EXHAUSTION = frozenset({"turn_limit", "wall_clock_limit"})
@@ -223,6 +223,12 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
     if baseline.environment != board.environment:
         issues.append("the scoreboard's environment is not the baseline's")
+    # A baseline that tiers entries the problem list no longer names (or is
+    # silent about one the list does) cannot be trusted to tier this run
+    # (item 8), the same check `staleness` refuses a live run over.
+    mismatch = baseline_entries_mismatch(baseline, (e.id for e in problems.entries))
+    if mismatch is not None:
+        issues.append(mismatch)
     # Rows are samples: a duplicated (id, repeat) key or a run_dir reused
     # across rows would let one run be counted as more than one independent
     # sample, inflating solve rates and medians without the audit ever seeing
@@ -276,31 +282,87 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
         derived = batch_row(entry, tier, run_dir, scoreboard_dir, repeat=row.repeat) if row.mode == "batch" else staged_row(entry, tier, run_dir, scoreboard_dir, repeat=row.repeat)
         if derived.outcome == "invalid":
             issues.append(f"{where}: the recorded-run audit reports findings: " + "; ".join(acceptance.validate_recorded_run(run_dir if row.mode == "batch" else (_nested_run(run_dir) or run_dir))[:3]))
+        else:
+            # Cross-checked only once the audit passes: a run the audit
+            # cannot make sense of has nothing trustworthy for this to read
+            # (item 2).
+            issues.extend(_condition_issues(row, run_dir, board.condition, where))
         issues.extend(_entry_issues(entry, row, run_dir))
         for field in Row.model_fields:
             if getattr(derived, field) != getattr(row, field):
                 issues.append(f"{where}: {field} is {getattr(row, field)!r} but the run says {getattr(derived, field)!r}")
         if row.mode == "staged":
-            issues.extend(_canonical_issues(run_dir, where))
+            issues.extend(_canonical_issues(entry, run_dir, where))
     # 6. aggregates
     if aggregate(list(board.rows), baseline) != board.aggregates:
         # Not "...from the rows": that phrase's own plural would satisfy
         # check 7's `not any("row" in i for i in ...)` for the wrong reason.
         issues.append("the scoreboard's aggregates do not recompute")
-    # 7. selection complete unless interrupted
+    # 7. selection complete unless interrupted, and -- when interrupted -- a
+    # prefix of the order `run_set` would actually have completed (item 4).
+    # A committed scoreboard could otherwise delete only its failed rows, set
+    # `interrupted: true`, recompute the aggregates, and pass with an
+    # inflated solve rate.
     sel = board.condition.selection
     try:
-        expected = {(e.id, k) for e in select(problems, baseline, only=sel.get("only"), tiers=sel.get("tiers"), twins=sel.get("twins", True)) for k in range(board.condition.repeats)}
+        expected_order = [(e.id, k) for e in select(problems, baseline, only=sel.get("only"), tiers=sel.get("tiers"), twins=sel.get("twins", True)) for k in range(board.condition.repeats)]
     except RefusedRun as refused:
         issues.append(f"selection names entries not in the list: {refused}")
-        expected = set()
-    have = {(r.id, r.repeat) for r in board.rows}
+        expected_order = []
+    expected = set(expected_order)
+    have_order = [(r.id, r.repeat) for r in board.rows]
+    have = set(have_order)
     for extra in sorted(have - expected):
         issues.append(f"row {extra[0]} repeat {extra[1]} is outside the selection")
-    if not board.interrupted:
+    if board.interrupted:
+        if have_order != expected_order[: len(have_order)]:
+            issues.append("interrupted scoreboard rows are not a prefix of the run order")
+    else:
         for missing in sorted(expected - have):
             issues.append(f"row {missing[0]} repeat {missing[1]} is missing and the scoreboard is not marked interrupted")
+        if have == expected and have_order != expected_order:
+            issues.append("the scoreboard's rows are not in the run's order")
     return tuple(issues)
+
+
+def _condition_issues(row: Row, run_dir: Path, condition: Any, where: str) -> list[str]:
+    """Cross-check the scoreboard's condition against what each run itself recorded (item 2).
+
+    A committed scoreboard's `condition` describes what governed every row;
+    before this, nothing compared it against the batch trajectory or staged
+    manifest each row actually carries, so editing `condition` or copying in
+    run directories from a different experiment passed unnoticed. Only what a
+    record actually carries is checked here -- a batch trajectory names no
+    prompt hash and no per-check Lean timeout, so `condition.batch_prompt_set_sha256`
+    and `condition.limits["lean_timeout"]` cannot be cross-checked from it and
+    are not invented a check here.
+    """
+    issues: list[str] = []
+    if row.mode == "batch":
+        trajectory = _read(run_dir / "trajectory.json")
+        if trajectory.get("model") != condition.model:
+            issues.append(f"{where}: the run's model {trajectory.get('model')!r} is not the condition's {condition.model!r}")
+        backend = trajectory.get("backend")
+        if backend and backend != condition.backend:
+            issues.append(f"{where}: the run's backend {backend!r} is not the condition's {condition.backend!r}")
+        limits = trajectory.get("limits") or {}
+        turns_key, wall_key = ("max_turns", "wall_seconds") if condition.mode == "batch" else ("twin_max_turns", "twin_wall_seconds")
+        if limits.get("max_turns") != condition.limits.get(turns_key):
+            issues.append(f"{where}: the run's max_turns {limits.get('max_turns')!r} is not the condition's {turns_key} {condition.limits.get(turns_key)!r}")
+        if limits.get("wall_seconds") != condition.limits.get(wall_key):
+            issues.append(f"{where}: the run's wall_seconds {limits.get('wall_seconds')!r} is not the condition's {wall_key} {condition.limits.get(wall_key)!r}")
+    else:
+        nested = _nested_run(run_dir)
+        if nested is not None:
+            manifest = RunManifest.model_validate_json((nested / "manifest.json").read_text(encoding="utf-8"))
+            if manifest.model != condition.model:
+                issues.append(f"{where}: the run's model {manifest.model!r} is not the condition's {condition.model!r}")
+            if manifest.prompt_set_sha256 != condition.staged_prompt_set_sha256:
+                issues.append(f"{where}: the run's prompt_set_sha256 is not the condition's staged_prompt_set_sha256")
+            for field in ("active_seconds", "proof_seconds", "official_checks"):
+                if getattr(manifest.limits, field) != condition.limits.get(field):
+                    issues.append(f"{where}: the run's limits.{field} {getattr(manifest.limits, field)!r} is not the condition's {condition.limits.get(field)!r}")
+    return issues
 
 
 def _entry_issues(entry: Entry, row: Row, run_dir: Path) -> list[str]:
@@ -312,6 +374,12 @@ def _entry_issues(entry: Entry, row: Row, run_dir: Path) -> list[str]:
             issues.append(f"{row.run_dir}: the run's declaration is not the entry's canonical declaration")
         if request.get("informal_claim") != entry.input:
             issues.append(f"{row.run_dir}: the run's informal claim is not the entry's input")
+        # Extra imports can expose a previously proved theorem and let the
+        # model obtain a clean kernel-verified result unavailable under the
+        # entry's declared environment, while `hardy evals check` still
+        # credits the solve (item 7).
+        if tuple(request.get("imports", [])) != entry.imports:
+            issues.append(f"{row.run_dir}: the run's imports are not the entry's")
     else:
         nested = _nested_run(run_dir)
         if nested is not None and (nested / "request.md").exists() and (nested / "request.md").read_text(encoding="utf-8").strip() != entry.input.strip():
@@ -319,10 +387,21 @@ def _entry_issues(entry: Entry, row: Row, run_dir: Path) -> list[str]:
     return issues
 
 
-def _canonical_issues(row_dir: Path, where: str) -> list[str]:
+def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
+    """The staged branch of check 5, recomputed rather than trusted (item 1).
+
+    The prompt hash used to be checked only against the hash stored in the
+    same editable verdict, so a comparison of a different statement could
+    retain an agreeing review and still credit the run as `solved`. This
+    recomputes `entry_id`, `canonical_declaration`, `model_signature` and the
+    expected prompt from the entry and the nested run's frozen claim, rather
+    than reading them back from the verdict that names them.
+    """
     import hashlib
 
-    from .staged import CanonicalVerdict
+    from ..domain import FrozenClaim, schema_text
+    from ..prompts import canonical_prompt, claim_signature
+    from .staged import CanonicalReview, CanonicalVerdict
 
     path = row_dir / "canonical.json"
     if not path.exists():
@@ -332,17 +411,41 @@ def _canonical_issues(row_dir: Path, where: str) -> list[str]:
     except Exception as error:
         return [f"{where}: canonical.json does not validate: {type(error).__name__}"]
     issues = []
+    if verdict.entry_id != entry.id:
+        issues.append(f"{where}: canonical.json's entry_id {verdict.entry_id!r} is not the row's entry {entry.id!r}")
+    if verdict.canonical_declaration != entry.declaration():
+        issues.append(f"{where}: canonical.json's canonical_declaration is not the entry's declaration")
+    # The existing hash checks: the two files still have to hash to what the
+    # verdict itself recorded of them.
     for name, expected in (("canonical-prompt.md", verdict.prompt_sha256), ("canonical-schema.json", verdict.response_schema_sha256)):
         if expected is None:
             continue
         file = row_dir / name
         if not file.exists() or hashlib.sha256(file.read_bytes()).hexdigest() != expected:
             issues.append(f"{where}: {name} does not hash to the verdict's record of it")
+    schema_file = row_dir / "canonical-schema.json"
+    if schema_file.exists() and schema_file.read_bytes() != schema_text(CanonicalReview).encode("utf-8"):
+        issues.append(f"{where}: canonical-schema.json is not the schema rendered from CanonicalReview")
     nested = _nested_run(row_dir)
     if nested is not None and verdict.claim_sha256 is not None:
         manifest = RunManifest.model_validate_json((nested / "manifest.json").read_text(encoding="utf-8"))
         if manifest.claim_sha256 != verdict.claim_sha256:
             issues.append(f"{where}: canonical.json names a claim hash the manifest does not")
+        claim_path = nested / "formalization.json"
+        if claim_path.exists():
+            try:
+                claim = FrozenClaim.model_validate_json(claim_path.read_text(encoding="utf-8"))
+            except Exception as error:
+                issues.append(f"{where}: formalization.json does not validate: {type(error).__name__}")
+                claim = None
+            if claim is not None:
+                signature = claim_signature(claim)
+                if verdict.model_signature != signature:
+                    issues.append(f"{where}: canonical.json's model_signature is not the frozen claim's signature")
+                expected_prompt = canonical_prompt(entry.declaration(), signature).encode("utf-8")
+                prompt_file = row_dir / "canonical-prompt.md"
+                if not prompt_file.exists() or prompt_file.read_bytes() != expected_prompt:
+                    issues.append(f"{where}: canonical-prompt.md is not the prompt rendered from the entry and frozen claim")
     return issues
 
 

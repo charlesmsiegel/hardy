@@ -5,6 +5,8 @@ import argparse
 import json
 from datetime import UTC, datetime
 
+import pytest
+
 from hardy import cli
 from hardy.domain import EnvironmentIdentity
 from hardy.evals import commands, scoreboard
@@ -40,6 +42,31 @@ def test_the_parser_knows_evals_and_its_three_verbs():
     assert args.command == "evals" and args.evals_command == "baseline"
     assert parser.parse_args(["evals", "check", "some/dir"]).evals_command == "check"
     assert parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution"]).evals_command == "run"
+
+
+def test_repeats_below_one_is_refused_by_the_parser():
+    """A `--repeats 0` (or negative) run would write a finished, empty
+    scoreboard `hardy evals check` also accepts (item 5): refused before any
+    row runs, not after.
+    """
+    parser = cli.build_parser()
+    for bad in ("0", "-1"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution", "--repeats", bad])
+    assert parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution", "--repeats", "1"]).repeats == 1
+
+
+def test_model_is_accepted_on_the_run_subparser():
+    """`hardy evals run --model M`, the documented shape, used to be rejected
+    because only the root parser defined `--model` (item 6); the run
+    subparser's own copy is suppressed so it defers to the root default when
+    omitted (cli.py:1545 does the same for `prove`).
+    """
+    parser = cli.build_parser()
+    args = parser.parse_args(["evals", "run", "--label", "x", "--model", "m", "--acknowledge-unsafe-execution"])
+    assert args.model == "m"
+    without = parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution"])
+    assert getattr(without, "model", None) is None
 
 
 def test_baseline_writes_the_tier_file_and_exits_zero_when_the_list_is_clean(tmp_path):

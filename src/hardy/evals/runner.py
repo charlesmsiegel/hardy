@@ -99,7 +99,8 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
             now: Callable[[], datetime], report: Callable[[str], None]) -> Path:
     problems = load_problems(problems_path)
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
-    issues = staleness(baseline, problems_sha256=sha256_of(problems_path), environment=environment)
+    issues = staleness(baseline, problems_sha256=sha256_of(problems_path), environment=environment,
+                       problem_ids=[entry.id for entry in problems.entries])
     if issues:
         raise RefusedRun("; ".join(issues))
     out = scoreboards_root / label
@@ -208,16 +209,28 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
     if args.mode == "staged":
         # A staged run is bounded by the workflow's own budgets, not
         # --max-turns/--wall-seconds (refused above); a twin still runs
-        # batch under staged mode (#23), so its budget is recorded too.
+        # batch under staged mode (#23), so its budget -- and, since
+        # `_batch_runner` hands a twin's `LeanTools` the same
+        # `config.lean_timeout` a staged run's own checks use, its per-check
+        # Lean timeout too -- is recorded here. `lean_process_seconds`
+        # governs the toolchain-identity probe, not a proof check, but it is
+        # still one of the run's own budgets and belongs beside the others.
         limits: dict[str, float | int] = {
             "active_seconds": config.limits.active_seconds, "proof_seconds": config.limits.proof_seconds,
-            "official_checks": config.limits.official_checks,
+            "official_checks": config.limits.official_checks, "lean_process_seconds": config.limits.lean_process_seconds,
             "twin_max_turns": BATCH_DEFAULT_MAX_TURNS, "twin_wall_seconds": BATCH_DEFAULT_WALL_SECONDS,
+            "lean_timeout": float(config.lean_timeout),
         }
     else:
+        # `lean_timeout` here is condition provenance only: it is what
+        # `_batch_runner` hands `LeanTools` for every per-check Lean call
+        # this run makes, but the batch trajectory itself records no
+        # per-check timeout (item 3), so the validator has nothing to
+        # cross-check it against.
         limits = {
             "max_turns": args.max_turns if args.max_turns is not None else BATCH_DEFAULT_MAX_TURNS,
             "wall_seconds": args.wall_seconds if args.wall_seconds is not None else BATCH_DEFAULT_WALL_SECONDS,
+            "lean_timeout": float(config.lean_timeout),
         }
     condition = Condition(
         model=str(args.model or config.model), backend=args.backend, mode=args.mode,

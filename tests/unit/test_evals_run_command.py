@@ -72,7 +72,7 @@ def test_batch_mode_applies_the_default_limits_and_records_the_selection(monkeyp
     code = runner.run_set_command(_args(only="a,b", tiers="2,3", no_twins=True), _config())
     assert code == 0
     condition = seen["condition"]
-    assert condition.limits == {"max_turns": 60, "wall_seconds": 1800.0}
+    assert condition.limits == {"max_turns": 60, "wall_seconds": 1800.0, "lean_timeout": 60.0}
     assert condition.selection == {"only": ["a", "b"], "tiers": [2, 3], "twins": False}
 
 
@@ -99,10 +99,13 @@ def test_staged_mode_records_its_own_budgets_when_no_flag_is_given(monkeypatch):
     code = runner.run_set_command(_args(mode="staged"), _config())
     assert code == 0
     limits = seen["condition"].limits
-    assert set(limits) == {"active_seconds", "proof_seconds", "official_checks", "twin_max_turns", "twin_wall_seconds"}
+    assert set(limits) == {"active_seconds", "proof_seconds", "official_checks", "lean_process_seconds",
+                           "twin_max_turns", "twin_wall_seconds", "lean_timeout"}
     assert limits["active_seconds"] == RunLimits().active_seconds
     assert limits["proof_seconds"] == RunLimits().proof_seconds
     assert limits["official_checks"] == RunLimits().official_checks
+    assert limits["lean_process_seconds"] == RunLimits().lean_process_seconds
+    assert limits["lean_timeout"] == 60.0
 
 
 def test_a_refused_run_from_run_set_is_reported_and_exits_two(monkeypatch, capsys):
