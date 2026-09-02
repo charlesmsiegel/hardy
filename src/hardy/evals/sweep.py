@@ -6,7 +6,7 @@ in two stages so `exact?` cannot be credited with a neighbour's proof (§2.3).
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any, Literal
 
@@ -252,7 +252,29 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     )
 
 
-def staleness(baseline: Baseline, *, problems_sha256: str, environment: EnvironmentIdentity) -> tuple[str, ...]:
+def baseline_entries_mismatch(baseline: Baseline, problem_ids: Iterable[str]) -> str | None:
+    """One finding naming every id the baseline and the problem list disagree on, or `None`.
+
+    An extra entry would let `aggregate`'s `floor` count a ghost entry the
+    current list no longer names; a missing one raises `KeyError` the first
+    time `select` or `aggregate` looks it up (item 8). Shared by `staleness`
+    (a live run) and `validate_scoreboard` (a committed one), so both refuse
+    the same drift the same way.
+    """
+    ids = set(problem_ids)
+    extra = sorted(set(baseline.entries) - ids)
+    missing = sorted(ids - set(baseline.entries))
+    if not extra and not missing:
+        return None
+    parts = []
+    if extra:
+        parts.append("extra: " + ", ".join(extra))
+    if missing:
+        parts.append("missing: " + ", ".join(missing))
+    return "the baseline's entries do not match the problem list (" + "; ".join(parts) + ")"
+
+
+def staleness(baseline: Baseline, *, problems_sha256: str, environment: EnvironmentIdentity, problem_ids: Iterable[str]) -> tuple[str, ...]:
     """Why this baseline cannot tier a run today (spec §3.1). Empty means it can."""
     issues: list[str] = []
     if baseline.problems_sha256 != problems_sha256:
@@ -269,4 +291,7 @@ def staleness(baseline: Baseline, *, problems_sha256: str, environment: Environm
         )
     if baseline.problems:
         issues.append("the baseline records problems with the list: " + "; ".join(baseline.problems))
+    mismatch = baseline_entries_mismatch(baseline, problem_ids)
+    if mismatch is not None:
+        issues.append(mismatch)
     return tuple(issues)

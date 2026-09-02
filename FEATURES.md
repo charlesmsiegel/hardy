@@ -1146,9 +1146,10 @@ problem-list bug: the baseline is still written, `problems` names the
 finding, and the command exits 1 (0 clean). Negations are swept for twins
 only — a deviation from the spec, which also named true entries.
 
-`hardy evals run --label L [--mode batch|staged] [--backend] [--repeats N]
-[--only ids] [--tiers 2,3] [--no-twins] [--max-turns] [--wall-seconds]
---acknowledge-unsafe-execution` (`src/hardy/evals/runner.py`) runs the
+`hardy evals run --label L [--mode batch|staged] [--backend] [--model]
+[--repeats N] [--only ids] [--tiers 2,3] [--no-twins] [--max-turns]
+[--wall-seconds] --acknowledge-unsafe-execution` (`src/hardy/evals/runner.py`)
+runs the
 selection through `batch` or `staged` and writes
 `evals/scoreboards/<label>/scoreboard.json` plus one run directory per row.
 It refuses before anything runs (exit 2) on `--backend codex` (the batch
@@ -1157,19 +1158,27 @@ Claude-shaped, so a Codex condition would attribute Claude runs to Codex),
 a missing `evals/problems.json` or `evals/baseline.json` (not packaged: the
 set is repository evidence read from a source checkout, not from an
 installed wheel), a stale baseline digest, a drifted toolchain identity,
-`singles`/`chains` drift, a baseline that itself recorded problems, an
-existing label, `--only` naming an id outside the list, `--mode staged` with
-no staged runner, `--mode staged` combined with `--max-turns`/
-`--wall-seconds`, or a toolchain that cannot be identified;
+`singles`/`chains` drift, a baseline that itself recorded problems, a
+baseline whose entries no longer match the problem list's ids (extra or
+missing, named in the refusal), an existing label, `--only` naming an id
+outside the list, `--mode staged` with no staged runner, `--mode staged`
+combined with `--max-turns`/`--wall-seconds`, a toolchain that cannot be
+identified, or `--repeats` below `1` (refused by the parser itself, before
+any of the above). `--model` is accepted on the `run` subparser itself (not
+only before it), the same suppressed-default pattern `prove --model` uses,
+so it defers to the root `--model` when omitted.
 `--acknowledge-unsafe-execution` is the same contract the staged terminal
 enforces on a human, printed once since a set run has no one to say it to.
 `--max-turns`/`--wall-seconds` default to `60`/`1800.0` and govern `batch`
-mode's `condition.limits`; under `--mode staged` they are refused rather
-than silently ignored, because a staged run is bounded by
+mode's `condition.limits`, alongside `config.lean_timeout` (the per-check
+Lean timeout `_batch_runner` hands `LeanTools`); under `--mode staged` they
+are refused rather than silently ignored, because a staged run is bounded by
 `config.limits.active_seconds`, `proof_seconds`, and `official_checks`
 instead, which `condition.limits` records there — along with
-`twin_max_turns`/`twin_wall_seconds` (the same 60/1800.0 defaults), since a
-twin still runs `batch` under staged mode. Twins always run `batch`, even
+`lean_process_seconds`, `lean_timeout`, and `twin_max_turns`/
+`twin_wall_seconds` (the same 60/1800.0 defaults), since a twin still runs
+`batch` under staged mode and its `LeanTools` shares the same
+`config.lean_timeout`. Twins always run `batch`, even
 under `--mode staged`, because the staged loop grades every unverified run
 `partial` regardless of `expected` (issue #23). A staged row runs `hardy
 prove` behind an approving stand-in for the user (`approval: "automatic"`),
@@ -1216,15 +1225,23 @@ and the baseline's `environment` equals the scoreboard's; every row's
 `acceptance.validate_recorded_run` reports nothing on it (a `run_dir` that
 could escape the directory, or a row naming an unknown id, is itself a
 finding, never an exception); the run is the entry's own — batch's recorded
-declaration and informal claim match the assembled canonical ones, staged's
+declaration, informal claim, and imports match the entry's, staged's
 `request.md` matches `input`; every other field of the row is recomputed
 from the run directory by the same functions the runner used and must equal
-what is committed; a staged row's `canonical.json` validates, its prompt and
-schema files hash to what it recorded, and its `claim_sha256` matches the
-nested run's manifest; the scoreboard's `aggregates` recompute from its
-`rows`; and the selection implied by `condition` produces exactly the rows
-present, unless `interrupted`, in which case only rows outside the selection
-are still findings. `.gitattributes` marks `evals/scoreboards/** -text` for
+what is committed; every row is also cross-checked against `condition` —
+batch's recorded model, backend, and turn/wall limits, staged's manifest
+model, prompt-set hash, and `active_seconds`/`proof_seconds`/
+`official_checks` — against whatever the run itself carries (a batch
+trajectory names no prompt hash or per-check Lean timeout, so those two
+condition fields are not cross-checked); a staged row's `canonical.json`
+validates, its `entry_id`, `canonical_declaration`, `model_signature`, and
+prompt and schema files are recomputed from the entry and the nested run's
+frozen claim rather than trusted from the verdict, and its `claim_sha256`
+matches the nested run's manifest; the scoreboard's `aggregates` recompute
+from its `rows`; and the selection implied by `condition` produces exactly
+the rows present in order, unless `interrupted`, in which case the rows must
+still be an exact prefix of the order `run_set` would have completed (not
+merely a subset of it). `.gitattributes` marks `evals/scoreboards/** -text` for
 the same reason `acceptance/recorded/**` is, and
 `tests/integration/test_recorded_evals.py` fails, not skips, when
 `evals/baseline.json` is missing. No scoreboard is committed yet; running

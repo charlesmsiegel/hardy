@@ -364,24 +364,41 @@ walks every committed scoreboard and fails (not skips) on any finding, the way
 For each scoreboard:
 
 1. `problems_sha256` and `baseline_sha256` match the committed files;
-   the baseline's `environment` equals the scoreboard's.
+   the baseline's `environment` equals the scoreboard's, and the baseline's
+   entries match the current problem list's ids (no extra, none missing).
 2. Every row's `run_dir` exists and `validate_recorded_run` returns nothing.
    The existing dispatcher (`src/hardy/acceptance.py:938`) already handles a
    flat batch directory and a parent holding one staged run.
 3. The run is the entry's: batch `trajectory.request.declaration` equals the
-   assembled canonical declaration and `informal_claim` equals `input`;
-   staged `request.md` equals `input`. Its recorded toolchain equals the
-   scoreboard's `environment`.
+   assembled canonical declaration, `informal_claim` equals `input`, and
+   `imports` equals the entry's; staged `request.md` equals `input`. Its
+   recorded toolchain equals the scoreboard's `environment`. Once the audit
+   passes, the row is also cross-checked against `condition`: batch's
+   recorded model, backend, and turn/wall limits; staged's manifest model,
+   prompt-set hash, and `active_seconds`/`proof_seconds`/`official_checks`.
+   Only what each kind of record actually carries is checked -- a batch
+   trajectory names no prompt hash and no per-check Lean timeout, so
+   `condition.batch_prompt_set_sha256` and `condition.limits["lean_timeout"]`
+   are not cross-checked against it.
 4. Every derived field of the row (§3.4) is recomputed from the run directory
    and must be equal. The run 3 criterion moves from the live test into
    `acceptance.refusal_issues(run_dir)` so the validator and the test share
    one definition.
-5. Staged rows: `canonical.json` validates, its prompt and schema hashes match
-   the files beside it, its `claim_sha256` equals the run's
-   `manifest.claim_sha256`, and the row's `canonical` equals its outcome.
+5. Staged rows: `canonical.json` validates; its `entry_id`,
+   `canonical_declaration`, `model_signature`, and prompt are recomputed from
+   the entry and the nested run's frozen claim rather than read back from the
+   verdict that names them, and its schema hash matches
+   `schema_text(CanonicalReview)`; its prompt and schema files still hash to
+   what the verdict itself recorded of them; its `claim_sha256` equals the
+   run's `manifest.claim_sha256`; and the row's `canonical` equals its
+   outcome.
 6. `aggregates` recomputed from `rows` must be equal.
-7. Every entry in `selection` has `repeats` rows unless `interrupted`, and
-   there are no rows outside the selection.
+7. Every entry in `selection` has `repeats` rows, present in the same order
+   `run_set` would produce them, and there are no rows outside the selection.
+   When `interrupted`, the rows must instead be an exact prefix of that
+   order, not merely a subset of it -- otherwise a scoreboard could delete
+   only its failed rows, mark itself interrupted, and pass with an inflated
+   solve rate.
 
 The scoreboard is covered by no hash, the same way a manifest is not; the
 validator's job is that every figure in it is re-derivable from artifacts

@@ -255,12 +255,25 @@ def test_a_missing_canonical_file_leaves_the_row_solved_other(tmp_path):
     assert row.outcome == "solved_other" and row.canonical == "unavailable"
 
 
+def _deterministic_condition(**kw) -> runner.Condition:
+    """A condition whose provenance fields actually match `_audit_clean_deterministic_run`'s
+    manifest (item 2): `config.model="deterministic-no-model"` there, and its
+    `identities_factory` records the real `PROMPT_SET_SHA256`, not a fixture
+    stand-in -- so a "validates clean" fixture must use both, or the new
+    condition-provenance cross-check would name a mismatch of its own making.
+    """
+    base = dict(model="deterministic-no-model", backend="claude", mode="staged", staged_prompt_set_sha256=prompts.PROMPT_SET_SHA256,
+                batch_prompt_set_sha256="q" * 64, hardy_version="0.1.0",
+                limits={"active_seconds": 1800, "proof_seconds": 1200, "official_checks": 40, "twin_max_turns": 60, "twin_wall_seconds": 1800.0},
+                repeats=1, selection={"only": None, "tiers": None, "twins": True})
+    base.update(kw)
+    return runner.Condition(**base)
+
+
 def test_a_rewritten_request_md_is_named_by_validator_check_3(tmp_path):
     scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
     row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
-    condition = runner.Condition(model="reader@test", backend="claude", mode="staged", staged_prompt_set_sha256="p" * 64, batch_prompt_set_sha256="q" * 64, hardy_version="0.1.0",
-                                 limits={"active_seconds": 1800, "proof_seconds": 1200, "official_checks": 40, "twin_max_turns": 60, "twin_wall_seconds": 1800.0},
-                                 repeats=1, selection={"only": None, "tiers": None, "twins": True})
+    condition = _deterministic_condition()
     board = runner.Scoreboard(
         label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
         rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
@@ -276,17 +289,60 @@ def test_a_rewritten_request_md_is_named_by_validator_check_3(tmp_path):
 def test_a_tampered_canonical_prompt_is_a_canonical_issue(tmp_path):
     scoreboard_dir, row_dir, run_dir, entry, *_ = _solved_fixture(tmp_path)
     (row_dir / "canonical-prompt.md").write_text("tampered", encoding="utf-8")
-    issues = scoreboard._canonical_issues(row_dir, "where")
+    issues = scoreboard._canonical_issues(entry, row_dir, "where")
     assert any("canonical-prompt.md" in issue for issue in issues)
+
+
+def _edit_canonical(row_dir: Path, mutate) -> None:
+    path = row_dir / "canonical.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutate(payload)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def test_a_canonical_json_naming_a_different_entry_id_is_a_finding(tmp_path):
+    """The comparison inputs are recomputed from the entry and the frozen
+    claim, not read back from the editable verdict (item 1): a comparison of
+    a different statement could otherwise retain an agreeing review.
+    """
+    scoreboard_dir, row_dir, run_dir, entry, *_ = _solved_fixture(tmp_path)
+    _edit_canonical(row_dir, lambda c: c.__setitem__("entry_id", "some-other-entry"))
+    issues = scoreboard._canonical_issues(entry, row_dir, "where")
+    assert any("entry_id" in issue for issue in issues), issues
+
+
+def test_a_canonical_json_naming_a_different_canonical_declaration_is_a_finding(tmp_path):
+    scoreboard_dir, row_dir, run_dir, entry, *_ = _solved_fixture(tmp_path)
+    _edit_canonical(row_dir, lambda c: c.__setitem__("canonical_declaration", "theorem SomeOtherClaim : False"))
+    issues = scoreboard._canonical_issues(entry, row_dir, "where")
+    assert any("canonical_declaration" in issue for issue in issues), issues
+
+
+def test_a_canonical_json_naming_a_different_model_signature_is_a_finding(tmp_path):
+    scoreboard_dir, row_dir, run_dir, entry, *_ = _solved_fixture(tmp_path)
+    _edit_canonical(row_dir, lambda c: c.__setitem__("model_signature", "theorem SomeOtherModelClaim : False"))
+    issues = scoreboard._canonical_issues(entry, row_dir, "where")
+    assert any("model_signature" in issue for issue in issues), issues
+
+
+def test_a_canonical_prompt_rendered_for_a_different_statement_is_a_finding(tmp_path):
+    """`canonical-prompt.md` still hashes to whatever the verdict claims it
+    does (a self-consistent tamper), but is not the prompt `canonical_prompt`
+    actually renders from this entry and this row's frozen claim.
+    """
+    scoreboard_dir, row_dir, run_dir, entry, *_ = _solved_fixture(tmp_path)
+    different = prompts.canonical_prompt("theorem SomeOtherClaim : False", "theorem SomeOtherClaim : False")
+    _edit_canonical(row_dir, lambda c: c.__setitem__("prompt_sha256", hashlib.sha256(different.encode("utf-8")).hexdigest()))
+    (row_dir / "canonical-prompt.md").write_bytes(different.encode("utf-8"))
+    issues = scoreboard._canonical_issues(entry, row_dir, "where")
+    assert any("canonical-prompt.md is not the prompt rendered from the entry and frozen claim" in issue for issue in issues), issues
 
 
 def test_a_scoreboard_with_one_solved_staged_row_validates_clean(tmp_path):
     scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
     row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
     assert row.outcome == "solved"
-    condition = runner.Condition(model="reader@test", backend="claude", mode="staged", staged_prompt_set_sha256="p" * 64, batch_prompt_set_sha256="q" * 64, hardy_version="0.1.0",
-                                 limits={"active_seconds": 1800, "proof_seconds": 1200, "official_checks": 40, "twin_max_turns": 60, "twin_wall_seconds": 1800.0},
-                                 repeats=1, selection={"only": None, "tiers": None, "twins": True})
+    condition = _deterministic_condition()
     board = runner.Scoreboard(
         label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
         rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
@@ -295,3 +351,24 @@ def test_a_scoreboard_with_one_solved_staged_row_validates_clean(tmp_path):
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
 
     assert scoreboard.validate_scoreboard(scoreboard_dir, problems_path=problems_path, baseline_path=baseline_path) == ()
+
+
+def test_a_condition_model_mismatch_is_a_finding_for_a_staged_row(tmp_path):
+    """A committed scoreboard whose `condition.model` was edited (or whose
+    run directory was copied in from a different experiment) must not
+    validate clean (item 2): nothing before this compared `condition` against
+    the staged manifest each row actually carries.
+    """
+    scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
+    row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
+    assert row.outcome == "solved"
+    condition = _deterministic_condition(model="a-different-model")
+    board = runner.Scoreboard(
+        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
+    )
+    (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
+
+    issues = scoreboard.validate_scoreboard(scoreboard_dir, problems_path=problems_path, baseline_path=baseline_path)
+    assert any("model" in issue and "a-different-model" in issue for issue in issues), issues

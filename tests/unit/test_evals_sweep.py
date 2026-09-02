@@ -236,17 +236,40 @@ def test_an_unconfirmed_candidate_is_recorded_not_closed():
     assert result.attempts["simp"].status == "unconfirmed" and result.closed_by == () and result.tier == 3
 
 
+PROBLEM_IDS = [e.id for e in _problems().entries]
+
+
 def test_staleness_names_each_drift():
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
                            now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
-    assert sweep.staleness(baseline, problems_sha256="p" * 64, environment=IDENTITY) == ()
+    assert sweep.staleness(baseline, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=PROBLEM_IDS) == ()
     moved = IDENTITY.model_copy(update={"mathlib_revision": "v4.34.0"})
-    issues = sweep.staleness(baseline, problems_sha256="q" * 64, environment=moved)
+    issues = sweep.staleness(baseline, problems_sha256="q" * 64, environment=moved, problem_ids=PROBLEM_IDS)
     assert any("problems.json" in i for i in issues) and any("mathlib_revision" in i for i in issues)
     broken = baseline.model_copy(update={"problems": ("twin: closed by simp, so it is true",)})
-    assert any("problems" in i for i in sweep.staleness(broken, problems_sha256="p" * 64, environment=IDENTITY))
+    assert any("problems" in i for i in sweep.staleness(broken, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=PROBLEM_IDS))
     edited = baseline.model_copy(update={"chains": ("simp; simp",)})
-    assert any("chains" in i for i in sweep.staleness(edited, problems_sha256="p" * 64, environment=IDENTITY))
+    assert any("chains" in i for i in sweep.staleness(edited, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=PROBLEM_IDS))
     rebudgeted = baseline.model_copy(update={"heartbeat_budget": 1})
-    issues = sweep.staleness(rebudgeted, problems_sha256="p" * 64, environment=IDENTITY)
+    issues = sweep.staleness(rebudgeted, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=PROBLEM_IDS)
     assert any("heartbeat_budget" in i and "1" in i and str(sweep.HEARTBEAT_BUDGET) in i for i in issues)
+
+
+def test_staleness_names_an_extra_baseline_entry():
+    """An entry the baseline still tiers but the problem list no longer names
+    (item 8): `aggregate`'s `floor` would otherwise count a ghost entry.
+    """
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+    issues = sweep.staleness(baseline, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=[i for i in PROBLEM_IDS if i != "twin"])
+    assert any("extra" in i and "twin" in i for i in issues)
+
+
+def test_staleness_names_a_missing_baseline_entry():
+    """An id the problem list names but the baseline never tiered (item 8):
+    `select` would otherwise raise `KeyError` the first time it is looked up.
+    """
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+    issues = sweep.staleness(baseline, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=[*PROBLEM_IDS, "ghost"])
+    assert any("missing" in i and "ghost" in i for i in issues)

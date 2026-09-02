@@ -21,6 +21,17 @@ DEFAULT_BASELINE = Path("evals") / "baseline.json"
 DEFAULT_SCOREBOARDS = Path("evals") / "scoreboards"
 
 
+def _positive_repeats(value: str) -> int:
+    """A run with zero rows would still write a finished scoreboard and pass
+    `hardy evals check`: `range(0)` is empty, so the runner and the checker
+    would agree on nothing to compare. Refused here, before any row runs.
+    """
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("--repeats must be at least 1")
+    return parsed
+
+
 def add_parser(subparsers: Any) -> None:
     evals = subparsers.add_parser("evals", help="the fixed problem set: baseline sweep, set runs, scoreboard checks")
     verbs = evals.add_subparsers(dest="evals_command", required=True)
@@ -31,7 +42,11 @@ def add_parser(subparsers: Any) -> None:
     run.add_argument("--label", required=True)
     run.add_argument("--mode", choices=("batch", "staged"), default="batch")
     run.add_argument("--backend", choices=("claude", "codex"), default="claude")
-    run.add_argument("--repeats", type=int, default=1)
+    # SUPPRESS so that omitting it here leaves the global --model alone rather
+    # than overwriting it with this subparser's default (same reason as
+    # `prove`'s `--model`, cli.py:1545).
+    run.add_argument("--model", default=argparse.SUPPRESS)
+    run.add_argument("--repeats", type=_positive_repeats, default=1)
     run.add_argument("--only", default=None, help="comma-separated entry ids")
     run.add_argument("--tiers", default=None, help="comma-separated tiers, e.g. 2,3")
     run.add_argument("--no-twins", action="store_true")
