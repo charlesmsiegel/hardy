@@ -174,3 +174,123 @@ def aggregate(rows: list[Row], baseline: Baseline) -> Aggregates:
         floor[f"tier_{t}"] = sum(1 for e in baseline.entries.values() if e.tier == t)
     floor["single_tactic_closes"] = sum(1 for e in baseline.entries.values() if e.tier in (0, 1))
     return Aggregates(tiers=tiers, headline=headline, floor=floor)
+
+
+def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_path: Path) -> tuple[str, ...]:
+    """Every figure in a committed scoreboard, re-derived from artifacts the audit accepts (spec §5)."""
+    from .problems import load_problems, sha256_of
+    from .runner import RefusedRun, Scoreboard, select
+
+    board_path = scoreboard_dir / "scoreboard.json"
+    if not board_path.exists():
+        return (f"{scoreboard_dir} has no scoreboard.json",)
+    try:
+        board = Scoreboard.model_validate_json(board_path.read_text(encoding="utf-8"))
+    except Exception as error:  # pydantic.ValidationError, JSON errors
+        return (f"scoreboard.json does not validate: {type(error).__name__}",)
+    issues: list[str] = []
+    # 1. bound to the committed list and tier file
+    if board.problems_sha256 != sha256_of(problems_path):
+        issues.append("problems_sha256 does not match evals/problems.json")
+    if board.baseline_sha256 != sha256_of(baseline_path):
+        issues.append("baseline_sha256 does not match evals/baseline.json")
+    problems = load_problems(problems_path)
+    baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
+    if baseline.environment != board.environment:
+        issues.append("the scoreboard's environment is not the baseline's")
+    # 2-5. every row re-derived
+    for row in board.rows:
+        run_dir = scoreboard_dir / Path(*row.run_dir.split("/"))
+        where = row.run_dir
+        if not run_dir.exists():
+            issues.append(f"{where}: missing")
+            continue
+        entry = problems.by_id(row.id)
+        tier = baseline.entries[row.id].tier
+        derived = batch_row(entry, tier, run_dir, scoreboard_dir, repeat=row.repeat) if row.mode == "batch" else staged_row(entry, tier, run_dir, scoreboard_dir, repeat=row.repeat)
+        if derived.outcome == "invalid":
+            issues.append(f"{where}: the recorded-run audit reports findings: " + "; ".join(acceptance.validate_recorded_run(run_dir if row.mode == "batch" else (_nested_run(run_dir) or run_dir))[:3]))
+        issues.extend(_entry_issues(entry, row, run_dir))
+        for field in Row.model_fields:
+            if getattr(derived, field) != getattr(row, field):
+                issues.append(f"{where}: {field} is {getattr(row, field)!r} but the run says {getattr(derived, field)!r}")
+        if row.mode == "staged":
+            issues.extend(_canonical_issues(run_dir, where))
+    # 6. aggregates
+    if aggregate(list(board.rows), baseline) != board.aggregates:
+        # Not "...from the rows": that phrase's own plural would satisfy
+        # check 7's `not any("row" in i for i in ...)` for the wrong reason.
+        issues.append("the scoreboard's aggregates do not recompute")
+    # 7. selection complete unless interrupted
+    sel = board.condition.selection
+    try:
+        expected = {(e.id, k) for e in select(problems, baseline, only=sel.get("only"), tiers=sel.get("tiers"), twins=sel.get("twins", True)) for k in range(board.condition.repeats)}
+    except RefusedRun as refused:
+        issues.append(f"selection names entries not in the list: {refused}")
+        expected = set()
+    have = {(r.id, r.repeat) for r in board.rows}
+    for extra in sorted(have - expected):
+        issues.append(f"row {extra[0]} repeat {extra[1]} is outside the selection")
+    if not board.interrupted:
+        for missing in sorted(expected - have):
+            issues.append(f"row {missing[0]} repeat {missing[1]} is missing and the scoreboard is not marked interrupted")
+    return tuple(issues)
+
+
+def _entry_issues(entry: Entry, row: Row, run_dir: Path) -> list[str]:
+    issues = []
+    if row.mode == "batch":
+        trajectory = _read(run_dir / "trajectory.json")
+        request = trajectory.get("request") or {}
+        if request.get("declaration") != entry.declaration():
+            issues.append(f"{row.run_dir}: the run's declaration is not the entry's canonical declaration")
+        if request.get("informal_claim") != entry.input:
+            issues.append(f"{row.run_dir}: the run's informal claim is not the entry's input")
+    else:
+        nested = _nested_run(run_dir)
+        if nested is not None and (nested / "request.md").exists() and (nested / "request.md").read_text(encoding="utf-8").strip() != entry.input.strip():
+            issues.append(f"{row.run_dir}: request.md is not the entry's input")
+    return issues
+
+
+def _canonical_issues(row_dir: Path, where: str) -> list[str]:
+    import hashlib
+
+    from .staged import CanonicalVerdict
+
+    path = row_dir / "canonical.json"
+    if not path.exists():
+        return [f"{where}: no canonical.json"]
+    try:
+        verdict = CanonicalVerdict.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception as error:
+        return [f"{where}: canonical.json does not validate: {type(error).__name__}"]
+    issues = []
+    for name, expected in (("canonical-prompt.md", verdict.prompt_sha256), ("canonical-schema.json", verdict.response_schema_sha256)):
+        if expected is None:
+            continue
+        file = row_dir / name
+        if not file.exists() or hashlib.sha256(file.read_bytes()).hexdigest() != expected:
+            issues.append(f"{where}: {name} does not hash to the verdict's record of it")
+    nested = _nested_run(row_dir)
+    if nested is not None and verdict.claim_sha256 is not None:
+        manifest = RunManifest.model_validate_json((nested / "manifest.json").read_text(encoding="utf-8"))
+        if manifest.claim_sha256 != verdict.claim_sha256:
+            issues.append(f"{where}: canonical.json names a claim hash the manifest does not")
+    return issues
+
+
+def check_command(args: Any) -> int:
+    issues = validate_scoreboard(args.scoreboard, problems_path=args.problems, baseline_path=args.baseline)
+    print(f"Scoreboard: {args.scoreboard}")
+    for issue in issues:
+        print("CONSISTENCY ERROR: " + issue)
+    if not issues:
+        board = json.loads((args.scoreboard / "scoreboard.json").read_text(encoding="utf-8"))
+        agg = board["aggregates"]
+        h = agg["headline"]
+        print(f"headline (tiers 2-3): {h['solved']}/{h['n']} solved, 95% {h['interval'][0]:.2f}-{h['interval'][1]:.2f}; floor: {agg['floor']}")
+        for t in ("0", "1", "2", "3"):
+            a = agg["tiers"][t]
+            print(f"tier {t}: n={a['n']} solved={a['solved']} refused={a['refused']} exhausted={a['exhausted']} graded={a['graded']} medians={a['medians']}")
+    return 0 if not issues else 1
