@@ -1094,6 +1094,124 @@ rebuild-dependents refusal live only on the interactive surface, which neither
 `batch` nor `prove` offers. A recorded interactive run is a separate
 deliverable.
 
+## Evaluation set (evals/)
+
+**Now (implemented).** `evals/problems.json` is a committed list of twenty
+statements (`src/hardy/evals/problems.py`), each holding the natural-language
+`input`, a Lean `name`/`binders`/`conclusion` kept apart so every consumer
+assembles the canonical declaration, proposition, and negation the same way,
+and an `expected` verdict. Five are twins — `expected: "false"`, `twin_of`
+naming the true entry they are a plausible neighbour of. This is not
+`acceptance/problems.json`; that one-problem, four-run test is untouched,
+and this list grows independently of it.
+
+`hardy evals baseline [--problems] [--out]` (`src/hardy/evals/sweep.py`)
+sweeps a fixed tactic set — `SINGLES` and `CHAINS`, module constants copied
+verbatim into the baseline so an edit to the code shows up as a stale tier
+file — against every canonical statement and writes `evals/baseline.json`. A
+single tactic other than `exact?`, `apply?`, or `hint` closing the goal is
+tier 0; failing that, one of those three closing it is tier 1 (`hint` runs
+`exact?` internally, so it counts with the searchers, not the floor); failing
+that, one of eight short fixed chains is tier 2; nothing closing it is tier
+3. Tiers are decided by heartbeats, not wall time: every attempt runs under
+`#count_heartbeats in` with an inner `set_option maxHeartbeats 200000 in`
+(the outer wrapper sets no bound by itself; the inner `set_option` is what
+actually bounds the attempt), under `set_option Elab.async false` so a count
+is attributable to its own declaration, with a wall backstop of
+`max(config.lean_timeout, 600)` seconds for the kernel work `decide` can
+spend that heartbeats never count. The sweep runs in two stages so a searcher
+cannot cite a neighbour's proof the way `_assumption_probe` already showed it
+could: stage A runs every tactic as an anonymous `example` in one process,
+and a *candidate* is an attempt with no error, no unsolved goals, and no
+`sorry` warning; stage B re-elaborates each candidate alone as a named
+`theorem` plus `#print axioms`, and it is *closed* only if that succeeds with
+axioms inside `audit.STANDARD`. If every stage-A attempt times out, the
+sweep falls back to one process per attempt so a single runaway tactic
+cannot mark the whole entry unknown; `apply?` and `hint` often reach stage B
+as candidates and then fail there on `sorryAx`, since a sorry warning is not
+always attributable back to the right line in stage A. The first baseline,
+under Lean 4.33.1 / Mathlib v4.33.1 (commit `819816b2`), landed 4 entries in
+tier 0, 1 in tier 1, 0 in tier 2, 15 in tier 3, and took roughly an hour on
+the machine it ran on; no twin's negation closed (refuting `¬ ∀ …` needs a
+witness none of the tactics supplies), so `mechanically_false` is 0 for every
+twin. A twin a tactic closes, or a true entry whose negation closes, is a
+problem-list bug: the baseline is still written, `problems` names the
+finding, and the command exits 1 (0 clean). Negations are swept for twins
+only — a deviation from the spec, which also named true entries.
+
+`hardy evals run --label L [--mode batch|staged] [--backend] [--repeats N]
+[--only ids] [--tiers 2,3] [--no-twins] [--max-turns] [--wall-seconds]
+--acknowledge-unsafe-execution` (`src/hardy/evals/runner.py`) runs the
+selection through `batch` or `staged` and writes
+`evals/scoreboards/<label>/scoreboard.json` plus one run directory per row.
+It refuses before anything runs (exit 2) on a stale baseline digest, a
+drifted toolchain identity, `singles`/`chains` drift, a baseline that itself
+recorded problems, an existing label, `--only` naming an id outside the
+list, or `--mode staged` with no staged runner; `--acknowledge-unsafe-execution`
+is the same contract the staged terminal enforces on a human, printed once
+since a set run has no one to say it to. Twins always run `batch`, even
+under `--mode staged`, because the staged loop grades every unverified run
+`partial` regardless of `expected` (issue #23). A staged row runs `hardy
+prove` behind an approving stand-in for the user (`approval: "automatic"`),
+then hands the model's frozen Lean signature and the canonical declaration
+to a second, isolated reader session, which writes `canonical.json`,
+`canonical-prompt.md`, `canonical-schema.json` beside the nested run
+directory and answers `agreed`, `disputed`, or `unavailable`; a staged solve
+counts only when it says `agreed`. Per row, the outcome is:
+
+| expected | outcome | when |
+|---|---|---|
+| true | `solved` | batch: `terminal_reason == "verified"`, axioms clean. staged: phase `completed`, `kernel_verified`, **and** canonical comparison `agreed`. |
+| true | `solved_other` | staged `kernel_verified` but canonical comparison `disputed` or `unavailable`: the model proved something, and the record cannot say it was this. |
+| true | `unsolved` | anything else; `terminal_reason` beside it. |
+| false | `refused` | the run 3 criterion: terminal in `{no_proof_submitted, axioms_rejected}`, no `submit_proof` with `ok`, every `check_proof` Lean accepted carried a hole. |
+| false | `exhausted` | `turn_limit` or `wall_clock_limit`: Hardy stopped waiting, which is not a refusal. |
+| false | `graded` | anything else, including `verified`. A harness bug, reported in red. |
+| any | `invalid` | `validate_recorded_run` returned findings. |
+
+A row is written after each entry, not at the end; a run Ctrl-C cuts short
+writes `interrupted: true` with the rows it has.
+
+`aggregates` (`src/hardy/evals/scoreboard.py`) are counts and medians, and
+nothing else. Per tier and overall: `n`, `solved`, `solve_rate` with a 95%
+Wilson interval; for twins, `refused`/`exhausted`/`graded`/
+`mechanically_false` (baseline `negation.closed_by` non-empty) and
+`refusal_rate`; medians over *solved* rows of `exchanges`, `turns`,
+`cost_usd` (unreported costs counted beside it, never folded to zero),
+`wall_seconds`, `search_calls`, `lean_checks`. `headline` is the solve rate
+over tiers 2 and 3; `floor` states how many entries land in each tier and
+how many of the whole list a single tactic closes, printed alongside so a
+tier-0 solve is never mistaken for capability. Stage-B `seconds` include the
+Mathlib import — a fresh process per candidate — which is a second
+deviation from the spec; `import_seconds` is recorded once per baseline so
+the net can be derived rather than guessed at.
+
+`hardy evals check <scoreboard-dir> [--problems] [--baseline]` re-derives a
+committed scoreboard from nothing but the artifacts it points at, the way
+`hardy accept --recorded` does. Seven checks, any finding failing the run
+(exit 1; exit 0 with a headline and per-tier summary when clean): the
+scoreboard's `problems_sha256`/`baseline_sha256` match the committed files
+and the baseline's `environment` equals the scoreboard's; every row's
+`run_dir` exists inside the scoreboard directory and
+`acceptance.validate_recorded_run` reports nothing on it (a `run_dir` that
+could escape the directory, or a row naming an unknown id, is itself a
+finding, never an exception); the run is the entry's own — batch's recorded
+declaration and informal claim match the assembled canonical ones, staged's
+`request.md` matches `input`; every other field of the row is recomputed
+from the run directory by the same functions the runner used and must equal
+what is committed; a staged row's `canonical.json` validates, its prompt and
+schema files hash to what it recorded, and its `claim_sha256` matches the
+nested run's manifest; the scoreboard's `aggregates` recompute from its
+`rows`; and the selection implied by `condition` produces exactly the rows
+present, unless `interrupted`, in which case only rows outside the selection
+are still findings. `.gitattributes` marks `evals/scoreboards/** -text` for
+the same reason `acceptance/recorded/**` is, and
+`tests/integration/test_recorded_evals.py` fails, not skips, when
+`evals/baseline.json` is missing. No scoreboard is committed yet; running
+the set live is a separate, user-triggered step (`hardy evals run --label
+<date>-<model> --acknowledge-unsafe-execution`, then `hardy evals check`,
+then a commit of the scoreboard directory).
+
 ## Staged proving, verification, and acceptance
 
 - **Now (implemented) — Frozen claims:** an approved formalization is hashed with

@@ -128,6 +128,18 @@ they produce; with `--force-budget-exhaustion-test` it exercises the whole
 pipeline with no model, no network, and no toolchain. The earlier one-shot proof
 experiment remains available as `hardy batch`, but is secondary.
 
+`hardy evals` runs a fixed, tiered problem list (`evals/problems.json`, twenty
+statements plus five false "twins") rather than the three-problem acceptance
+set: `hardy evals baseline` sweeps a committed tactic set to measure, per
+statement, how much a plain tactic already closes before any model is asked;
+`hardy evals run --label L --acknowledge-unsafe-execution` scores a model
+against that floor and writes a scoreboard under `evals/scoreboards/<label>/`;
+`hardy evals check <scoreboard-dir>` re-derives every figure in a committed
+scoreboard from its run directories, the way `hardy accept --recorded` does
+for the acceptance runs. See "Evaluation set (evals/)" in `FEATURES.md` for
+the tiering rule, the outcome table, and what the aggregates do and do not
+report.
+
 While it proves, the model can ask `rank_premises` which declarations are worth
 looking at for a goal, fusing a declaration-name index read from the pinned
 Mathlib sources with Loogle. Retrieval spends a metered budget, and a ranking
