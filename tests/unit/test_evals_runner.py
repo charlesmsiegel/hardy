@@ -21,13 +21,28 @@ ENTRIES = (
 )
 
 
+# One representative closer per tier, so a fixture that only cares about
+# *which* tier an entry lands in can still build an `EntryBaseline` that
+# satisfies `tier_must_follow_its_closers` (item 7): `tier` must equal
+# `tier_of(closed_by)`, and every name in `closed_by` needs a `closed`
+# attempt to back it.
+_TIER_CLOSERS: dict[int, tuple[str, ...]] = {0: ("simp",), 1: ("exact?",), 2: ("intros; simp_all",), 3: ()}
+
+
+def _entry_baseline(tier: int, **kw) -> sweep.EntryBaseline:
+    closed_by = _TIER_CLOSERS[tier]
+    base = dict(tier=tier, elaborates=True, attempts={name: sweep.Attempt(status="closed") for name in closed_by}, closed_by=closed_by)
+    base.update(kw)
+    return sweep.EntryBaseline(**base)
+
+
 def _files(tmp_path: Path, tiers: dict[str, int] = None) -> tuple[Path, Path]:
     problems = tmp_path / "problems.json"
     problems.write_text(json.dumps(ProblemSet(entries=ENTRIES).model_dump(mode="json")), encoding="utf-8")
     tiers = tiers or {"t": 0, "u": 3, "f": 3}
     baseline = sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=sha256_of(problems), environment=IDENTITY,
                               heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(),
-                              entries={k: sweep.EntryBaseline(tier=v, elaborates=True, attempts={}, closed_by=()) for k, v in tiers.items()})
+                              entries={k: _entry_baseline(v) for k, v in tiers.items()})
     path = tmp_path / "baseline.json"
     path.write_text(json.dumps(baseline.model_dump(mode="json")), encoding="utf-8")
     return problems, path
@@ -45,14 +60,18 @@ def _condition(**kw) -> runner.Condition:
     return runner.Condition(**base)
 
 
-def _scripted_batch(output: Path, script, *, declaration: str, informal_claim: str, wall_seconds: float = 300.0) -> Path:
+def _scripted_batch(output: Path, script, *, declaration: str, informal_claim: str, imports: tuple[str, ...] | None = None, wall_seconds: float = 300.0) -> Path:
     """A batch run over the fake Lean, scripted, with the entry's own claim.
 
     Modelled on `test_recorded_runs._batch`, but the declaration and informal
     claim are the caller's rather than the hardcoded `HardyTarget`: a set run
     validates each row against its own entry, so three same-named theorems
     would collide both in `ProblemSet` (which refuses duplicate names) and at
-    that later check.
+    that later check. `imports`, when given, lets a caller build a run that is
+    self-consistent under a *different* import list than the entry's own --
+    the genuinely-inconsistent-with-the-entry case item 1/item 7's checks are
+    for, as opposed to a run merely edited after the fact (which the
+    recorded-run audit's own checks would catch first, per item 3).
     """
     import sys
 
@@ -60,7 +79,10 @@ def _scripted_batch(output: Path, script, *, declaration: str, informal_claim: s
     from hardy import runner as hardy_runner
     from hardy.lean import LeanTools
 
-    request = models.Request.from_dict({"declaration": declaration, "informal_claim": informal_claim})
+    payload = {"declaration": declaration, "informal_claim": informal_claim}
+    if imports is not None:
+        payload["imports"] = list(imports)
+    request = models.Request.from_dict(payload)
     lean = LeanTools(request, (sys.executable, str(FAKE_LEAN)))
     hardy_runner.run(
         request,
@@ -132,6 +154,70 @@ def test_the_gates_refuse_before_anything_runs(tmp_path, break_it, needle):
         runner.run_set(label="x", problems_path=problems, baseline_path=baseline, scoreboards_root=tmp_path / "sb", condition=_condition(),
                        environment=environment, batch_runner=lambda *a: ran.append(a), now=lambda: datetime(2026, 9, 1, tzinfo=UTC), report=lambda _: None)
     assert ran == []
+
+
+@pytest.mark.parametrize("label", ["../x", "a/b", "..", "/etc/passwd", "C:\\temp\\evil"])
+def test_a_label_that_is_not_a_single_path_component_is_refused(tmp_path, label):
+    """`scoreboards_root / label` would otherwise resolve outside
+    `evals/scoreboards` for a label like `../../new-eval` or an absolute
+    path, and the run tree would be written there despite the documented
+    output contract (item 4). Refused before the problem list is even read,
+    so nothing -- not even `scoreboards_root` itself -- is created.
+    """
+    problems, baseline = _files(tmp_path)
+    ran = []
+    with pytest.raises(runner.RefusedRun, match="path component"):
+        runner.run_set(label=label, problems_path=problems, baseline_path=baseline, scoreboards_root=tmp_path / "sb", condition=_condition(),
+                       environment=IDENTITY, batch_runner=lambda *a: ran.append(a), now=lambda: datetime(2026, 9, 1, tzinfo=UTC), report=lambda _: None)
+    assert ran == []
+    assert not (tmp_path / "sb").exists()
+
+
+class _FakeCompleted:
+    def __init__(self, returncode: int, stdout: str) -> None:
+        self.returncode, self.stdout = returncode, stdout
+
+
+def test_source_revision_reads_head_and_marks_a_dirty_working_tree(monkeypatch, tmp_path):
+    def fake_run(argv, **kw):
+        if argv[:2] == ["git", "rev-parse"]:
+            return _FakeCompleted(0, "abc123\n")
+        if argv[:2] == ["git", "status"]:
+            return _FakeCompleted(0, " M some/file\n")
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    assert runner.source_revision(tmp_path) == "abc123-dirty"
+
+
+def test_source_revision_is_bare_when_the_tree_is_clean(monkeypatch, tmp_path):
+    def fake_run(argv, **kw):
+        if argv[:2] == ["git", "rev-parse"]:
+            return _FakeCompleted(0, "abc123\n")
+        if argv[:2] == ["git", "status"]:
+            return _FakeCompleted(0, "")
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    assert runner.source_revision(tmp_path) == "abc123"
+
+
+def test_source_revision_is_none_when_git_is_not_on_path(monkeypatch, tmp_path):
+    def fake_run(argv, **kw):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    assert runner.source_revision(tmp_path) is None
+
+
+def test_source_revision_is_none_outside_a_git_repository(monkeypatch, tmp_path):
+    def fake_run(argv, **kw):
+        if argv[:2] == ["git", "rev-parse"]:
+            return _FakeCompleted(128, "")
+        raise AssertionError(argv)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    assert runner.source_revision(tmp_path) is None
 
 
 def test_the_gates_refuse_a_staged_run_with_no_staged_runner(tmp_path):

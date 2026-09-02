@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from .. import audit
 from ..domain import EnvironmentIdentity, FrozenModel
@@ -156,6 +156,28 @@ class EntryBaseline(FrozenModel):
     attempts: dict[str, Attempt]
     closed_by: tuple[str, ...]
     negation: NegationBaseline | None = None
+
+    @model_validator(mode="after")
+    def tier_must_follow_its_closers(self) -> EntryBaseline:
+        """Refuse a baseline whose `tier` was set independently of `closed_by`.
+
+        An edited or hand-supplied baseline can otherwise set `tier: 3` beside
+        `closed_by: ["simp"]`, and selection, the automation floor, and the
+        headline would all use the forged tier even though the same artifact
+        names a tier-0 tactic as having closed the statement. `tier_of` is the
+        one function every other reader of `closed_by` already trusts to
+        assign a tier, so `tier` must equal what it says, and `closed_by`
+        itself must name exactly the tactics this entry's own `attempts`
+        record as `closed` -- no fewer (a real closer omitted) and no more (a
+        closer named that never actually closed).
+        """
+        expected_tier = tier_of(self.closed_by)
+        if self.tier != expected_tier:
+            raise ValueError(f"tier {self.tier} does not follow from closed_by {self.closed_by!r} (tier_of gives {expected_tier})")
+        closed_attempts = {name for name, attempt in self.attempts.items() if attempt.status == "closed"}
+        if set(self.closed_by) != closed_attempts:
+            raise ValueError(f"closed_by {self.closed_by!r} does not match the attempts recorded closed {sorted(closed_attempts)!r}")
+        return self
 
 
 class Baseline(FrozenModel):
