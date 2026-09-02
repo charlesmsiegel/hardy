@@ -203,7 +203,7 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     return out
 
 
-def _batch_runner(config: Any) -> BatchRunner:
+def _batch_runner(config: Any, model: str) -> BatchRunner:
     from ..cli import runtime_factory
     from ..lean import LeanTools
     from ..models import Request
@@ -212,7 +212,12 @@ def _batch_runner(config: Any) -> BatchRunner:
     def run_one(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
         request = Request.from_dict({"declaration": entry.declaration(), "informal_claim": entry.input, "imports": list(entry.imports)})
         lean = LeanTools(request, config.lean_command, timeout=config.lean_timeout, project=config.lean_project)
-        run(request, runtime_factory(str(config.model)), lean, output, max_turns=max_turns, wall_seconds=wall_seconds)
+        # `model`, not `config.model`: the condition already recorded
+        # whichever model `--model` selected (run_set_command), and every row
+        # must actually be produced by that model -- not silently by
+        # whatever `config.model` happens to be, which under `--model
+        # override@test` would be a different one (item 1).
+        run(request, runtime_factory(model), lean, output, max_turns=max_turns, wall_seconds=wall_seconds)
 
     return run_one
 
@@ -303,7 +308,7 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         staged = staged_runner(config, backend=args.backend)
     try:
         out = run_set(label=args.label, problems_path=args.problems, baseline_path=args.baseline, scoreboards_root=args.scoreboards,
-                      condition=condition, environment=environment, batch_runner=_batch_runner(config), staged_runner=staged,
+                      condition=condition, environment=environment, batch_runner=_batch_runner(config, condition.model), staged_runner=staged,
                       now=lambda: datetime.now(UTC), report=lambda line: print(line, file=sys.stderr))
     except RefusedRun as refused:
         print(f"Refused: {refused}", file=sys.stderr)
