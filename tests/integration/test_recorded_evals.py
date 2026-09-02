@@ -36,3 +36,13 @@ def test_the_committed_baseline_describes_the_committed_list_with_no_problems():
 @pytest.mark.parametrize("scoreboard", SCOREBOARDS, ids=[p.name for p in SCOREBOARDS])
 def test_each_committed_scoreboard_recomputes_from_its_runs(scoreboard: Path) -> None:
     assert validate_scoreboard(scoreboard, problems_path=EVALS / "problems.json", baseline_path=EVALS / "baseline.json") == ()
+
+
+@pytest.mark.parametrize("name", ["problems.json", "baseline.json"])
+def test_the_hashed_evals_files_carry_no_carriage_return(name: str) -> None:
+    """`sha256_of` and every baseline/scoreboard digest are computed over raw
+    bytes. `.gitattributes` marks `evals/** -text` so no platform's checkout
+    may rewrite `\\n` to `\\r\\n`; if it did, the digest recorded on one
+    platform would never match a checkout of the same commit on another.
+    """
+    assert b"\r" not in (EVALS / name).read_bytes()
