@@ -1,7 +1,6 @@
 """The problem list: what an entry must carry, and how every consumer assembles Lean from it."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
