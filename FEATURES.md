@@ -1145,6 +1145,11 @@ closes the same statement in stage B). No twin's negation closed (refuting
 problem-list bug: the baseline is still written, `problems` names the
 finding, and the command exits 1 (0 clean). Negations are swept for twins
 only — a deviation from the spec, which also named true entries.
+`EntryBaseline.tier` is validated against its own `closed_by` on every load
+(`tier == tier_of(closed_by)`, and `closed_by` must name exactly the
+attempts recorded `closed`): a hand-edited or forged baseline cannot set
+`tier: 3` beside `closed_by: ["simp"]` and have selection, the automation
+floor, or the headline use the forged tier.
 
 `hardy evals run --label L [--mode batch|staged] [--backend] [--model]
 [--repeats N] [--only ids] [--tiers 2,3] [--no-twins] [--max-turns]
@@ -1163,10 +1168,19 @@ baseline whose entries no longer match the problem list's ids (extra or
 missing, named in the refusal), an existing label, `--only` naming an id
 outside the list, `--mode staged` with no staged runner, `--mode staged`
 combined with `--max-turns`/`--wall-seconds`, a toolchain that cannot be
-identified, or `--repeats` below `1` (refused by the parser itself, before
-any of the above). `--model` is accepted on the `run` subparser itself (not
+identified, `--label` naming anything but a single safe path component (no
+`/`, `\`, leading `.`/`-`, or absolute path -- `scoreboards_root / label`
+would otherwise resolve outside `evals/scoreboards`), or `--repeats` below
+`1`, `--max-turns` below `1`, or `--wall-seconds` at or below `0` (refused by
+the parser itself, before any of the above -- a zero wall-clock budget is
+falsy to `ClaudeAgentRuntime._within_budget` and would leave a batch run
+unbounded). `--model` is accepted on the `run` subparser itself (not
 only before it), the same suppressed-default pattern `prove --model` uses,
-so it defers to the root `--model` when omitted.
+so it defers to the root `--model` when omitted. `condition.source_revision`
+records the Git commit the run was made from (`-dirty` suffixed over an
+unclean working tree, `None` when it could not be identified), since
+`hardy_version` alone cannot tell apart two evals runs made from different
+commits of the same source checkout.
 `--acknowledge-unsafe-execution` is the same contract the staged terminal
 enforces on a human, printed once since a set run has no one to say it to.
 `--max-turns`/`--wall-seconds` default to `60`/`1800.0` and govern `batch`
@@ -1217,31 +1231,43 @@ the net can be derived rather than guessed at.
 
 `hardy evals check <scoreboard-dir> [--problems] [--baseline]` re-derives a
 committed scoreboard from nothing but the artifacts it points at, the way
-`hardy accept --recorded` does. Seven checks, any finding failing the run
-(exit 1; exit 0 with a headline and per-tier summary when clean): the
-scoreboard's `problems_sha256`/`baseline_sha256` match the committed files
-and the baseline's `environment` equals the scoreboard's; every row's
-`run_dir` exists inside the scoreboard directory and
-`acceptance.validate_recorded_run` reports nothing on it (a `run_dir` that
-could escape the directory, or a row naming an unknown id, is itself a
-finding, never an exception); the run is the entry's own — batch's recorded
-declaration, informal claim, and imports match the entry's, staged's
-`request.md` matches `input`; every other field of the row is recomputed
-from the run directory by the same functions the runner used and must equal
-what is committed; every row is also cross-checked against `condition` —
-batch's recorded model, backend, and turn/wall limits, staged's manifest
-model, prompt-set hash, and `active_seconds`/`proof_seconds`/
-`official_checks` — against whatever the run itself carries (a batch
+`hardy accept --recorded` does. Any finding fails the run (exit 1; exit 0
+with a headline and per-tier summary when clean): the scoreboard's
+`problems_sha256`/`baseline_sha256` match the committed files and the
+baseline's `environment` equals the scoreboard's; every row's `run_dir`
+exists inside the scoreboard directory and `acceptance.validate_recorded_run`
+reports nothing on it (a `run_dir` that could escape the directory, or a row
+naming an unknown id, is itself a finding, never an exception) — a row the
+audit already reports `invalid` skips every check below (nothing tries to
+re-read the artifacts the audit just said it could not make sense of); the
+run is the entry's own — batch's recorded declaration, informal claim, and
+imports match the entry's, staged's `request.md` matches `input`; every
+other field of the row is recomputed from the run directory by the same
+functions the runner used and must equal what is committed; every row is
+also cross-checked against `condition` and `environment` — batch's recorded
+model, backend, turn/wall limits, and toolchain identity, staged's manifest
+model, prompt-set hash, `active_seconds`/`proof_seconds`/`official_checks`,
+and environment — against whatever the run itself carries (a batch
 trajectory names no prompt hash or per-check Lean timeout, so those two
-condition fields are not cross-checked); a staged row's `canonical.json`
-validates, its `entry_id`, `canonical_declaration`, `model_signature`, and
-prompt and schema files are recomputed from the entry and the nested run's
-frozen claim rather than trusted from the verdict, and its `claim_sha256`
-matches the nested run's manifest; the scoreboard's `aggregates` recompute
-from its `rows`; and the selection implied by `condition` produces exactly
-the rows present in order, unless `interrupted`, in which case the rows must
-still be an exact prefix of the order `run_set` would have completed (not
-merely a subset of it). `.gitattributes` marks `evals/scoreboards/** -text` for
+condition fields are not cross-checked), so a run recorded under a different
+Lean or Mathlib revision, or copied in from a different backend's
+experiment, is named rather than silently credited to this board's
+toolchain; a staged row's provider events (`trajectory.jsonl`) must carry at
+least one event of the condition's own backend and none of the other known
+backend, so an existing Claude run cannot be certified as Codex or vice
+versa; a staged row's `canonical.json` validates, its `entry_id`,
+`canonical_declaration`, `model_signature`, and prompt and schema files are
+recomputed from the entry and the nested run's frozen claim rather than
+trusted from the verdict, its `claim_sha256` matches the nested run's
+manifest, and — when its `outcome` is `agreed` or `disputed` — its `review`
+must equal the reader's own last reply as recorded in
+`canonical-trajectory.jsonl`, so a disputing reader's canonical.json cannot
+be rewritten with a self-consistent agreeing review after the fact; the
+scoreboard's `aggregates` recompute from its `rows`; and the selection
+implied by `condition` produces exactly the rows present in order, unless
+`interrupted`, in which case the rows must still be an exact prefix of the
+order `run_set` would have completed (not merely a subset of it).
+`.gitattributes` marks `evals/scoreboards/** -text` for
 the same reason `acceptance/recorded/**` is, and
 `tests/integration/test_recorded_evals.py` fails, not skips, when
 `evals/baseline.json` is missing. No scoreboard is committed yet; running
