@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 from hardy import cli
 from hardy.domain import EnvironmentIdentity
-from hardy.evals import commands
+from hardy.evals import commands, scoreboard
 
 IDENTITY = EnvironmentIdentity(lean_version="4.33.1", lean_commit="819816b2", mathlib_revision="v4.33.1", lake_manifest_sha256="m" * 64)
 PROBLEMS = {"schema_version": 1, "entries": [
@@ -62,6 +62,25 @@ def test_baseline_exits_one_but_still_writes_when_the_list_has_problems(tmp_path
     code = commands.run_baseline(argparse.Namespace(problems=problems, out=out), config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
     assert code == 1 and out.exists()
     assert "f: a twin closed by" in capsys.readouterr().err
+
+
+def test_baseline_refuses_a_missing_problems_file_instead_of_a_traceback(tmp_path, capsys):
+    missing = tmp_path / "nope.json"
+    args = argparse.Namespace(problems=missing, out=tmp_path / "baseline.json")
+    code = commands.run_baseline(args, config=None)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "Refused:" in err and str(missing) in err
+    assert not (tmp_path / "baseline.json").exists()
+
+
+def test_check_refuses_missing_problems_or_baseline_instead_of_a_traceback(tmp_path, capsys):
+    missing_problems = tmp_path / "problems.json"
+    args = argparse.Namespace(scoreboard=tmp_path / "board", problems=missing_problems, baseline=tmp_path / "baseline.json")
+    code = scoreboard.check_command(args)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "Refused:" in err and str(missing_problems) in err
 
 
 def test_baseline_reports_a_toolchain_that_cannot_be_identified_instead_of_a_traceback(tmp_path, capsys, monkeypatch):

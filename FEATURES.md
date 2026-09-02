@@ -1121,8 +1121,11 @@ is attributable to its own declaration, with a wall backstop of
 `max(config.lean_timeout, 600)` seconds for the kernel work `decide` can
 spend that heartbeats never count. The sweep runs in two stages so a searcher
 cannot cite a neighbour's proof the way `_assumption_probe` already showed it
-could: stage A runs every tactic as an anonymous `example` in one process,
-and a *candidate* is an attempt with no error, no unsolved goals, and no
+could: stage A runs every tactic as an anonymous `example` carrying the
+entry's own binders as local hypotheses, in one process — the same context
+stage B's named `theorem` and the canonical declaration present, so a tactic
+that needs those hypotheses in scope is not asked to prove a leading
+universal instead — and a *candidate* is an attempt with no error, no unsolved goals, and no
 `sorry` warning; stage B re-elaborates each candidate alone as a named
 `theorem` plus `#print axioms`, and it is *closed* only if that succeeds with
 axioms inside `audit.STANDARD`. If every stage-A attempt times out, the
@@ -1144,11 +1147,16 @@ only — a deviation from the spec, which also named true entries.
 --acknowledge-unsafe-execution` (`src/hardy/evals/runner.py`) runs the
 selection through `batch` or `staged` and writes
 `evals/scoreboards/<label>/scoreboard.json` plus one run directory per row.
-It refuses before anything runs (exit 2) on a stale baseline digest, a
-drifted toolchain identity, `singles`/`chains` drift, a baseline that itself
-recorded problems, an existing label, `--only` naming an id outside the
-list, `--mode staged` with no staged runner, `--mode staged` combined with
-`--max-turns`/`--wall-seconds`, or a toolchain that cannot be identified;
+It refuses before anything runs (exit 2) on `--backend codex` (the batch
+runner, the canonical reader and staged tool-event counting are all
+Claude-shaped, so a Codex condition would attribute Claude runs to Codex),
+a missing `evals/problems.json` or `evals/baseline.json` (not packaged: the
+set is repository evidence read from a source checkout, not from an
+installed wheel), a stale baseline digest, a drifted toolchain identity,
+`singles`/`chains` drift, a baseline that itself recorded problems, an
+existing label, `--only` naming an id outside the list, `--mode staged` with
+no staged runner, `--mode staged` combined with `--max-turns`/
+`--wall-seconds`, or a toolchain that cannot be identified;
 `--acknowledge-unsafe-execution` is the same contract the staged terminal
 enforces on a human, printed once since a set run has no one to say it to.
 `--max-turns`/`--wall-seconds` default to `60`/`1800.0` and govern `batch`

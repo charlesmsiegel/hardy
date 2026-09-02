@@ -27,7 +27,11 @@ class Condition(FrozenModel):
     model: str
     backend: str
     mode: Literal["batch", "staged"]
-    prompt_set_sha256: str
+    # Both always recorded: a twin still runs batch under a staged condition
+    # (#23), so a staged scoreboard's rows can be governed by either prompt
+    # set, and each hash must cover only the templates that governed it.
+    staged_prompt_set_sha256: str
+    batch_prompt_set_sha256: str
     hardy_version: str
     limits: dict[str, float | int]
     repeats: int
@@ -162,9 +166,23 @@ BATCH_DEFAULT_WALL_SECONDS = 1800.0
 
 def run_set_command(args: argparse.Namespace, config: Any) -> int:
     from ..lean import environment_identity
-    from ..prompts import PROMPT_SET_SHA256
+    from ..prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
     from ..runner import WARNING
 
+    if args.backend != "claude":
+        print(
+            "Refused: the evals runner drives the Claude backend only: the batch runner, the "
+            "canonical reader and staged tool-event counting are Claude-shaped; a Codex condition "
+            "would attribute Claude runs to Codex",
+            file=sys.stderr,
+        )
+        return 2
+    from .commands import _refuse_missing
+
+    refusal = _refuse_missing(args.problems, args.baseline)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 2
     if not args.acknowledge_unsafe_execution:
         print(WARNING, file=sys.stderr)
         print("Re-run with --acknowledge-unsafe-execution to accept this for every run in the set.", file=sys.stderr)
@@ -197,7 +215,8 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
             "wall_seconds": args.wall_seconds if args.wall_seconds is not None else BATCH_DEFAULT_WALL_SECONDS,
         }
     condition = Condition(
-        model=str(args.model or config.model), backend=args.backend, mode=args.mode, prompt_set_sha256=PROMPT_SET_SHA256,
+        model=str(args.model or config.model), backend=args.backend, mode=args.mode,
+        staged_prompt_set_sha256=PROMPT_SET_SHA256, batch_prompt_set_sha256=BATCH_PROMPT_SET_SHA256,
         hardy_version=__version__, limits=limits, repeats=args.repeats,
         selection={"only": args.only.split(",") if args.only else None, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
                    "twins": not args.no_twins},

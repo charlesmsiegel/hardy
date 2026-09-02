@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import statistics
+import sys
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -92,6 +93,9 @@ def staged_row(entry: Entry, tier: int, row_dir: Path, scoreboard_dir: Path, *, 
                    wall_seconds=None, lean_checks=0, search_calls=0, canonical=None, **base)
     manifest = RunManifest.model_validate_json((run_dir / "manifest.json").read_text(encoding="utf-8"))
     events = [json.loads(line) for line in (run_dir / "trajectory.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    # Claude-shaped on purpose: `run_set_command` (runner.py) refuses
+    # `--backend codex` before any run starts, so a staged trajectory here is
+    # always a Claude one and `codex.<method>` event kinds never appear.
     uses = [e for e in events if e.get("kind") == "claude.tool_use"]
     names = [str((e.get("payload") or {}).get("name", "")).removeprefix("mcp__hardy__") for e in uses]
     canonical_path = row_dir / "canonical.json"
@@ -302,6 +306,12 @@ def _canonical_issues(row_dir: Path, where: str) -> list[str]:
 
 
 def check_command(args: Any) -> int:
+    from .commands import _refuse_missing
+
+    refusal = _refuse_missing(args.problems, args.baseline)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 2
     issues = validate_scoreboard(args.scoreboard, problems_path=args.problems, baseline_path=args.baseline)
     print(f"Scoreboard: {args.scoreboard}")
     for issue in issues:
