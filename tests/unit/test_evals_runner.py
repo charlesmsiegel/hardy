@@ -11,7 +11,7 @@ from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
 from hardy.domain import EnvironmentIdentity
 from hardy.evals import runner, sweep
-from hardy.evals.problems import Entry, ProblemSet, sha256_of
+from hardy.evals.problems import Entry, ProblemSet, load_problems, sha256_of
 
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
 ENTRIES = (
@@ -124,6 +124,32 @@ def test_the_gates_refuse_before_anything_runs(tmp_path, break_it, needle):
         runner.run_set(label="x", problems_path=problems, baseline_path=baseline, scoreboards_root=tmp_path / "sb", condition=_condition(),
                        environment=environment, batch_runner=lambda *a: ran.append(a), now=lambda: datetime(2026, 9, 1, tzinfo=UTC), report=lambda _: None)
     assert ran == []
+
+
+def test_the_gates_refuse_a_staged_run_with_no_staged_runner(tmp_path):
+    problems, baseline = _files(tmp_path)
+    ran = []
+    with pytest.raises(runner.RefusedRun, match="staged runner"):
+        runner.run_set(label="x", problems_path=problems, baseline_path=baseline, scoreboards_root=tmp_path / "sb",
+                       condition=_condition(mode="staged"), environment=IDENTITY, batch_runner=lambda *a: ran.append(a),
+                       now=lambda: datetime(2026, 9, 1, tzinfo=UTC), report=lambda _: None)
+    assert ran == []
+
+
+def test_select_dedupes_only_preserving_first_occurrence(tmp_path):
+    problems_path, baseline_path = _files(tmp_path)
+    problems = load_problems(problems_path)
+    baseline = sweep.Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
+    chosen = runner.select(problems, baseline, only=["u", "t", "u"], tiers=None, twins=True)
+    assert [entry.id for entry in chosen] == ["u", "t"]
+
+
+def test_select_refuses_an_only_naming_an_unknown_entry(tmp_path):
+    problems_path, baseline_path = _files(tmp_path)
+    problems = load_problems(problems_path)
+    baseline = sweep.Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
+    with pytest.raises(runner.RefusedRun, match="nope"):
+        runner.select(problems, baseline, only=["nope"], tiers=None, twins=True)
 
 
 def test_an_interrupted_run_keeps_its_rows_and_says_so(tmp_path):
