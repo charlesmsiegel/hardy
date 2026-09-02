@@ -161,6 +161,14 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
         raise RefusedRun("staged mode needs a staged runner")
     sel = condition.selection
     entries = select(problems, baseline, only=sel.get("only"), tiers=sel.get("tiers"), twins=sel.get("twins", True))
+    if not entries:
+        # Before `out` is created: `--tiers 2` against a baseline with no
+        # tier-2 entries, or `--only <twin> --no-twins`, would otherwise
+        # write a finished, zero-row scoreboard that `hardy evals check`
+        # accepts (the same empty selection derives the same empty expected
+        # order), presenting a nominally completed experiment with no
+        # samples (item 5).
+        raise RefusedRun("the selection matches no entries (tiers/only/twins filters left nothing to run)")
     out.mkdir(parents=True)
     rows: list[Row] = []
     board = Scoreboard(label=label, condition=condition, environment=environment, baseline_sha256=sha256_of(baseline_path),

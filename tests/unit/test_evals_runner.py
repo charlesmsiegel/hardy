@@ -173,6 +173,22 @@ def test_a_label_that_is_not_a_single_path_component_is_refused(tmp_path, label)
     assert not (tmp_path / "sb").exists()
 
 
+def test_an_empty_selection_is_refused_before_the_output_directory_is_created(tmp_path):
+    """`--tiers 2` against a baseline with no tier-2 entries (the test
+    baseline here has none) would otherwise write a finished, zero-row
+    scoreboard that `hardy evals check` also accepts -- the same empty
+    selection derives the same empty expected order (item 5).
+    """
+    problems, baseline = _files(tmp_path)
+    ran = []
+    with pytest.raises(runner.RefusedRun, match="selection matches no entries"):
+        runner.run_set(label="x", problems_path=problems, baseline_path=baseline, scoreboards_root=tmp_path / "sb",
+                       condition=_condition(selection={"only": None, "tiers": [2], "twins": True}), environment=IDENTITY,
+                       batch_runner=lambda *a: ran.append(a), now=lambda: datetime(2026, 9, 1, tzinfo=UTC), report=lambda _: None)
+    assert ran == []
+    assert not (tmp_path / "sb" / "x").exists()
+
+
 class _FakeCompleted:
     def __init__(self, returncode: int, stdout: str) -> None:
         self.returncode, self.stdout = returncode, stdout
