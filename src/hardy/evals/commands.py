@@ -32,6 +32,27 @@ def _positive_repeats(value: str) -> int:
     return parsed
 
 
+def _positive_wall_seconds(value: str) -> float:
+    """`ClaudeAgentRuntime._within_budget` treats a falsy `wall_seconds` (0)
+    as "no budget" and skips `asyncio.wait_for` entirely, so `--wall-seconds
+    0` would let a batch run spend through its turn budget unbounded, with
+    every proof it submits merely discarded as late. Refused here, before any
+    row runs, rather than silently recorded as a budget that never bound
+    anything.
+    """
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("--wall-seconds must be a positive number of seconds")
+    return parsed
+
+
+def _positive_max_turns(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("--max-turns must be at least 1")
+    return parsed
+
+
 def add_parser(subparsers: Any) -> None:
     evals = subparsers.add_parser("evals", help="the fixed problem set: baseline sweep, set runs, scoreboard checks")
     verbs = evals.add_subparsers(dest="evals_command", required=True)
@@ -50,8 +71,8 @@ def add_parser(subparsers: Any) -> None:
     run.add_argument("--only", default=None, help="comma-separated entry ids")
     run.add_argument("--tiers", default=None, help="comma-separated tiers, e.g. 2,3")
     run.add_argument("--no-twins", action="store_true")
-    run.add_argument("--max-turns", type=int, default=None, help="batch mode default: 60. Refused under --mode staged.")
-    run.add_argument("--wall-seconds", type=float, default=None, help="batch mode default: 1800.0. Refused under --mode staged.")
+    run.add_argument("--max-turns", type=_positive_max_turns, default=None, help="batch mode default: 60. Refused under --mode staged.")
+    run.add_argument("--wall-seconds", type=_positive_wall_seconds, default=None, help="batch mode default: 1800.0. Refused under --mode staged.")
     run.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
     run.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     run.add_argument("--scoreboards", type=Path, default=DEFAULT_SCOREBOARDS)

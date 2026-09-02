@@ -56,6 +56,27 @@ def test_repeats_below_one_is_refused_by_the_parser():
     assert parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution", "--repeats", "1"]).repeats == 1
 
 
+def test_wall_seconds_at_or_below_zero_is_refused_by_the_parser():
+    """`ClaudeAgentRuntime._within_budget` treats a falsy `wall_seconds` (0)
+    as no budget at all and skips `asyncio.wait_for` entirely, so `--wall-
+    seconds 0` would let a batch run spend through its turn budget unbounded
+    (item 6): refused before any row runs, not after.
+    """
+    parser = cli.build_parser()
+    for bad in ("0", "-1", "-0.5"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution", "--wall-seconds", bad])
+    assert parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution", "--wall-seconds", "10"]).wall_seconds == 10.0
+
+
+def test_max_turns_below_one_is_refused_by_the_parser():
+    parser = cli.build_parser()
+    for bad in ("0", "-1"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution", "--max-turns", bad])
+    assert parser.parse_args(["evals", "run", "--label", "x", "--acknowledge-unsafe-execution", "--max-turns", "1"]).max_turns == 1
+
+
 def test_model_is_accepted_on_the_run_subparser():
     """`hardy evals run --model M`, the documented shape, used to be rejected
     because only the root parser defined `--model` (item 6); the run
