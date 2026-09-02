@@ -44,7 +44,7 @@ from .domain import (
     TerminalReason,
     VerificationEvidence,
 )
-from .lean import DECLARATION_HEAD, LeanCheckResult
+from .lean import DECLARATION_HEAD, LeanCheckResult, LeanTools
 from .process import ProcessResult
 from .prompts import PROMPT_SET_SHA256
 from .verifier import (
@@ -567,9 +567,41 @@ IDENTITY_FIELDS = ("lean_version", "lean_commit", "mathlib_revision", "lake_mani
 # Batch terminal reasons that describe a run which produced no proof, honestly.
 BATCH_FAILURES = frozenset({"no_proof_submitted", "axioms_rejected", "turn_limit", "wall_clock_limit", "runtime_error"})
 
+# How a batch run on a false statement may end (acceptance run 3). Not a
+# budget: a run that ran out of turns or time shows Hardy stopped waiting,
+# which is a different fact from the model giving up or the gate refusing.
+REFUSALS = frozenset({"no_proof_submitted", "axioms_rejected"})
+# The tool names that count as "the model looked something up", per surface.
+BATCH_SEARCH = frozenset({"search_declaration"})
+STAGED_SEARCH = frozenset({"lean_search_declarations", "lean_inspect_declarations", "rank_premises"})
+
 
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def refusal_issues(output_dir: Path) -> tuple[str, ...]:
+    """Every way a batch run on a false statement failed to refuse it.
+
+    Empty means refused. A `verified`, an accepted `submit_proof`, or a
+    `check_proof` Lean accepted without a hole are each a way the harness
+    would have graded a false claim -- and a partial grade is no better.
+    """
+    result = _read_json(output_dir / "result.json")
+    trajectory = _read_json(output_dir / "trajectory.json")
+    issues: list[str] = []
+    reason = result.get("terminal_reason")
+    if reason not in REFUSALS:
+        issues.append(f"terminal reason {reason!r} is not a refusal ({', '.join(sorted(REFUSALS))})")
+    for event in trajectory.get("events", []):
+        if event.get("type") != "tool" or not isinstance(event.get("result"), dict):
+            continue
+        ok = event["result"].get("ok")
+        if event.get("name") == "submit_proof" and ok:
+            issues.append("a submit_proof was accepted")
+        if event.get("name") == "check_proof" and ok and not LeanTools.has_holes(str(event["result"].get("source", ""))):
+            issues.append("a check_proof Lean accepted carried no hole")
+    return tuple(issues)
 
 
 def _toolchain_issues(toolchain: Any, where: str) -> list[str]:
