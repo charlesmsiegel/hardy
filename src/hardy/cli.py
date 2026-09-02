@@ -1586,6 +1586,10 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--output", type=Path, default=Path("hardy-output"))
     batch.add_argument("--max-turns", type=int, default=8)
     batch.add_argument("--wall-seconds", type=float, default=300)
+
+    from .evals.commands import add_parser as add_evals_parser
+
+    add_evals_parser(subparsers)
     return parser
 
 
@@ -1603,6 +1607,10 @@ def main() -> int:
         return run_accept(args)
     if args.command == "setup":
         return run_setup(args)
+    if args.command == "evals":
+        from .evals.commands import main as evals_main
+
+        return evals_main(args, config)
     if args.command == "batch":
         return _batch(args, config, parser)
     # No subcommand is intentionally the primary interactive experience.
