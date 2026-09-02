@@ -34,8 +34,13 @@ def _files(tmp_path: Path, tiers: dict[str, int] = None) -> tuple[Path, Path]:
 
 
 def _condition(**kw) -> runner.Condition:
+    # Both key pairs, always: a batch-mode condition reads max_turns/
+    # wall_seconds and a staged-mode condition's twin batch rows read
+    # twin_max_turns/twin_wall_seconds (item 3) -- carrying both spares every
+    # caller of this helper from having to know which mode it is building.
     base = dict(model="fake-model@test", backend="claude", mode="batch", prompt_set_sha256="p" * 64, hardy_version="0.1.0",
-                limits={"max_turns": 3, "wall_seconds": 300.0}, repeats=1, selection={"only": None, "tiers": None, "twins": True})
+                limits={"max_turns": 3, "wall_seconds": 300.0, "twin_max_turns": 3, "twin_wall_seconds": 300.0},
+                repeats=1, selection={"only": None, "tiers": None, "twins": True})
     base.update(kw)
     return runner.Condition(**base)
 

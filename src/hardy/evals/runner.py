@@ -115,7 +115,17 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
                 report(f"{entry.id} [{mode} {repeat}]")
                 row_dir = out / "runs" / entry.id / f"{mode}-{repeat}"
                 if mode == "batch":
-                    batch_runner(entry, row_dir, int(condition.limits["max_turns"]), float(condition.limits["wall_seconds"]))
+                    # A batch-mode condition's own limits govern a batch row.
+                    # A twin under a staged condition still runs batch (the
+                    # loop grades every unverified staged run partial, #23),
+                    # but staged limits carry active_seconds/proof_seconds/
+                    # official_checks, not max_turns/wall_seconds -- so its
+                    # budget is the separately-recorded twin_* pair instead.
+                    if condition.mode == "batch":
+                        max_turns, wall_seconds = int(condition.limits["max_turns"]), float(condition.limits["wall_seconds"])
+                    else:
+                        max_turns, wall_seconds = int(condition.limits["twin_max_turns"]), float(condition.limits["twin_wall_seconds"])
+                    batch_runner(entry, row_dir, max_turns, wall_seconds)
                     row = batch_row(entry, tier, row_dir, out, repeat=repeat)
                 else:
                     row_dir.mkdir(parents=True, exist_ok=True)
@@ -146,6 +156,10 @@ def _batch_runner(config: Any) -> BatchRunner:
     return run_one
 
 
+BATCH_DEFAULT_MAX_TURNS = 60
+BATCH_DEFAULT_WALL_SECONDS = 1800.0
+
+
 def run_set_command(args: argparse.Namespace, config: Any) -> int:
     from ..lean import environment_identity
     from ..prompts import PROMPT_SET_SHA256
@@ -156,10 +170,31 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         print("Re-run with --acknowledge-unsafe-execution to accept this for every run in the set.", file=sys.stderr)
         return 2
     print(WARNING, file=sys.stderr)
+    if args.mode == "staged" and (args.max_turns is not None or args.wall_seconds is not None):
+        print(
+            "Refused: --max-turns/--wall-seconds do not govern a staged run; its budgets are "
+            "config.limits.active_seconds, proof_seconds and official_checks",
+            file=sys.stderr,
+        )
+        return 2
     environment = environment_identity(config.lean_project, lean_command=(str(config.lake), "env", "lean"), timeout_seconds=config.limits.lean_process_seconds)
+    if args.mode == "staged":
+        # A staged run is bounded by the workflow's own budgets, not
+        # --max-turns/--wall-seconds (refused above); a twin still runs
+        # batch under staged mode (#23), so its budget is recorded too.
+        limits: dict[str, float | int] = {
+            "active_seconds": config.limits.active_seconds, "proof_seconds": config.limits.proof_seconds,
+            "official_checks": config.limits.official_checks,
+            "twin_max_turns": BATCH_DEFAULT_MAX_TURNS, "twin_wall_seconds": BATCH_DEFAULT_WALL_SECONDS,
+        }
+    else:
+        limits = {
+            "max_turns": args.max_turns if args.max_turns is not None else BATCH_DEFAULT_MAX_TURNS,
+            "wall_seconds": args.wall_seconds if args.wall_seconds is not None else BATCH_DEFAULT_WALL_SECONDS,
+        }
     condition = Condition(
         model=str(args.model or config.model), backend=args.backend, mode=args.mode, prompt_set_sha256=PROMPT_SET_SHA256,
-        hardy_version=__version__, limits={"max_turns": args.max_turns, "wall_seconds": args.wall_seconds}, repeats=args.repeats,
+        hardy_version=__version__, limits=limits, repeats=args.repeats,
         selection={"only": args.only.split(",") if args.only else None, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
                    "twins": not args.no_twins},
     )
