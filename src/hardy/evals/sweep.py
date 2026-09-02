@@ -8,8 +8,6 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import Field
-
 from .. import audit
 from ..domain import FrozenModel
 from ..lean import Elaboration
