@@ -71,7 +71,13 @@ import pytest
 
 from hardy import audit
 from hardy import config as configuration
-from hardy.acceptance import validate_recorded_run
+from hardy.acceptance import (
+    BATCH_SEARCH,
+    REFUSALS,
+    STAGED_SEARCH,
+    refusal_issues,
+    validate_recorded_run,
+)
 from hardy.cli import _find_run_dir, build_prove_workflow, runtime_factory
 from hardy.domain import DocumentStatus, FaithfulnessStatus, FormalStatus, RunPhase
 from hardy.lean import LeanTools, elaborate, environment_identity
@@ -96,18 +102,14 @@ MAX_TURNS = 60
 # and far too short for the nontrivial proof: the point of run 4 is a
 # trajectory with something in it that the clock then cuts off.
 STARVED_SECONDS = 30.0
-# How a batch run on a false statement may end. Not a budget: a run that
-# merely ran out of turns or time shows that Hardy stopped waiting, which run
-# 4 already shows; this one has to show the model gave up or the gate refused.
-REFUSALS = {"no_proof_submitted", "axioms_rejected"}
+# REFUSALS, BATCH_SEARCH and STAGED_SEARCH come from hardy.acceptance, so this
+# live test and the recorded-run audit cannot drift apart on what a refusal
+# or a search is.
 # The names of the four recorded runs, as `acceptance/recorded/` keeps them.
 BATCH_VERIFIED = "batch-verified"
 PROVE_VERIFIED = "prove-verified"
 BATCH_FALSE = "batch-false-statement"
 BATCH_STARVED = "batch-starved"
-# Search tools a run may show it used, per surface.
-BATCH_SEARCH = {"search_declaration"}
-STAGED_SEARCH = {"lean_search_declarations", "lean_inspect_declarations", "rank_premises"}
 
 
 @pytest.fixture(scope="module")
@@ -414,14 +416,9 @@ def test_run_3_a_false_statement_is_refused_by_the_gate_not_graded(
     # nothing graded. And no hole-free check of the false statement ever
     # elaborated: an exploratory `check_proof` may pass with a `sorry` in it
     # (that is how a model derives the negation inside a scratch proof), so
-    # each one Lean accepted is required to have carried a hole.
-    for event in trajectory["events"]:
-        if event.get("type") != "tool":
-            continue
-        if event["name"] == "submit_proof":
-            assert not event["result"]["ok"], event["result"]["output"]
-        elif event["name"] == "check_proof" and event["result"]["ok"]:
-            assert LeanTools.has_holes(event["result"]["source"]), event["result"]["source"]
+    # each one Lean accepted is required to have carried a hole. The same
+    # criterion the recorded-run scoreboard uses, from hardy.acceptance.
+    assert refusal_issues(output) == ()
     writeup = (output / "writeup.md").read_text(encoding="utf-8")
     assert "No completed artifact" in writeup
     assert f"Terminal reason: `{result.terminal_reason}`" in writeup
