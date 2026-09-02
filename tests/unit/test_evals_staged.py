@@ -324,6 +324,35 @@ def test_a_missing_canonical_file_leaves_the_row_solved_other(tmp_path):
     assert row.outcome == "solved_other" and row.canonical == "unavailable"
 
 
+def test_a_canonical_json_that_is_a_json_array_leaves_the_row_unavailable_not_a_crash(tmp_path):
+    """Reading `canonical.json` as raw JSON and indexing `["outcome"]` used to
+    raise `JSONDecodeError`, `AttributeError`, or a pydantic `ValidationError`
+    for a corrupt file -- invalid JSON, a JSON array, or an unknown `outcome`
+    -- crashing `staged_row` (and, through it, `validate_scoreboard`) before
+    ever reaching `_canonical_issues`'s own report of the same file as a
+    finding (item 5). Parsed defensively instead: any failure to validate as
+    a `CanonicalVerdict` leaves the row's `canonical` simply `"unavailable"`.
+    """
+    scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
+    (row_dir / "canonical.json").write_text("[]", encoding="utf-8")
+    row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
+    assert row.outcome == "solved_other" and row.canonical == "unavailable"
+
+    condition = _deterministic_condition()
+    board = runner.Scoreboard(
+        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
+    )
+    (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
+
+    # `_canonical_issues` is what actually names the malformed file, since
+    # the row otherwise validates: `validate_scoreboard` must reach it rather
+    # than crash first.
+    issues = scoreboard.validate_scoreboard(scoreboard_dir, problems_path=problems_path, baseline_path=baseline_path)
+    assert any("canonical.json" in i for i in issues), issues
+
+
 def test_a_canonical_review_rewritten_to_agree_while_the_trajectory_disputes_is_a_finding(tmp_path):
     """The review is derived from the reader's own recorded reply, not read
     back from the editable verdict (item 2): `canonical.json` can otherwise be

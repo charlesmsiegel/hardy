@@ -124,8 +124,21 @@ def staged_row(entry: Entry, tier: int, row_dir: Path, scoreboard_dir: Path, *, 
     # always a Claude one and `codex.<method>` event kinds never appear.
     uses = [e for e in events if e.get("kind") == "claude.tool_use"]
     names = [str((e.get("payload") or {}).get("name", "")).removeprefix("mcp__hardy__") for e in uses]
+    # Parsed the same way `_canonical_issues` (below) validates it, not read
+    # as raw JSON and indexed: invalid JSON, a JSON array, or an unknown
+    # `outcome` used to raise `JSONDecodeError`, `AttributeError`, or a
+    # pydantic `ValidationError` here, so `validate_scoreboard` crashed
+    # before ever reaching `_canonical_issues`'s report of the same malformed
+    # file as a consistency finding (item 5). A row whose `canonical.json`
+    # cannot be parsed this way is simply `"unavailable"`; `_canonical_issues`
+    # is what names the file as the finding.
+    from .staged import CanonicalVerdict
+
     canonical_path = row_dir / "canonical.json"
-    canonical = _read(canonical_path).get("outcome") if canonical_path.exists() else "unavailable"
+    try:
+        canonical = CanonicalVerdict.model_validate_json(canonical_path.read_bytes()).outcome
+    except Exception:
+        canonical = "unavailable"
     common = dict(
         base, terminal_reason=manifest.terminal_reason.value if manifest.terminal_reason else manifest.phase.value,
         cost_usd=manifest.usage.get("cost_usd"), exchanges=manifest.usage.get("exchanges"), turns=None,
