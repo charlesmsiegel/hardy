@@ -16,6 +16,7 @@ from test_evals_runner import (
     _condition,
     _entry_baseline,
     _files,
+    _full_attempts,
     _scripted_batch,
 )
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
@@ -128,7 +129,7 @@ def _baseline(tiers: dict[str, int], twins_false: set[str] = frozenset()) -> swe
     # tactic's own attempt recorded `closed` (item 4's `_closed_by_must_match_
     # attempts`, shared with `EntryBaseline`).
     entries = {k: _entry_baseline(
-        t, negation=sweep.NegationBaseline(attempts={"nlinarith": sweep.Attempt(status="closed")} if k in twins_false else {},
+        t, negation=sweep.NegationBaseline(attempts=_full_attempts(("nlinarith",) if k in twins_false else ()),
                                            closed_by=("nlinarith",) if k in twins_false else ()) if k.startswith("f") else None)
                for k, t in tiers.items()}
     return sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256="p" * 64, environment=identity, heartbeat_budget=200000,

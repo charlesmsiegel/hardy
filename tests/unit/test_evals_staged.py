@@ -153,7 +153,12 @@ def test_validate_scoreboard_checks_the_canonical_hashes(tmp_path):
     baseline = sweep.Baseline(
         created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=sha256_of(problems_path), environment=IDENTITY,
         heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(),
-        entries={"odd-sum": sweep.EntryBaseline(tier=3, elaborates=True, attempts={}, closed_by=())},
+        # `elaborates=False`, not `True`: these fixtures never actually swept
+        # "odd-sum" against any tactic, and `sweep.Baseline`'s completeness
+        # check (item 4) now requires an `elaborates=True` entry's `attempts`
+        # to name every one of the baseline's own singles+chains -- honest
+        # only for an entry a real sweep produced.
+        entries={"odd-sum": sweep.EntryBaseline(tier=3, elaborates=False, attempts={}, closed_by=())},
     )
     baseline_path = tmp_path / "baseline.json"
     baseline_path.write_text(json.dumps(baseline.model_dump(mode="json")), encoding="utf-8")
@@ -286,7 +291,12 @@ def _solved_fixture(tmp_path: Path):
     baseline = sweep.Baseline(
         created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=sha256_of(problems_path), environment=DETERMINISTIC_IDENTITY,
         heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(),
-        entries={"odd-sum": sweep.EntryBaseline(tier=3, elaborates=True, attempts={}, closed_by=())},
+        # `elaborates=False`, not `True`: these fixtures never actually swept
+        # "odd-sum" against any tactic, and `sweep.Baseline`'s completeness
+        # check (item 4) now requires an `elaborates=True` entry's `attempts`
+        # to name every one of the baseline's own singles+chains -- honest
+        # only for an entry a real sweep produced.
+        entries={"odd-sum": sweep.EntryBaseline(tier=3, elaborates=False, attempts={}, closed_by=())},
     )
     baseline_path = tmp_path / "baseline.json"
     baseline_path.write_text(json.dumps(baseline.model_dump(mode="json")), encoding="utf-8")
