@@ -10,9 +10,15 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from .. import acceptance
-from ..domain import FormalStatus, FrozenModel, RunManifest, RunPhase
+from ..domain import EnvironmentIdentity, FormalStatus, FrozenModel, RunManifest, RunPhase
 from .problems import Entry
 from .sweep import Baseline, baseline_entries_mismatch
+
+# The two backends `_condition_issues` knows how to tell apart in a staged
+# trajectory's provider event kinds (item 5). Not open-ended: `run_set_command`
+# refuses every backend but `claude` before any run starts, so this is every
+# prefix a genuine record could ever carry, not a registry to extend lightly.
+KNOWN_BACKENDS = ("claude", "codex")
 
 Outcome = Literal["solved", "solved_other", "unsolved", "refused", "exhausted", "graded", "invalid"]
 EXHAUSTION = frozenset({"turn_limit", "wall_clock_limit"})
@@ -281,12 +287,18 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
         tier = baseline.entries[row.id].tier
         derived = batch_row(entry, tier, run_dir, scoreboard_dir, repeat=row.repeat) if row.mode == "batch" else staged_row(entry, tier, run_dir, scoreboard_dir, repeat=row.repeat)
         if derived.outcome == "invalid":
+            # A run the audit cannot make sense of has nothing trustworthy
+            # for anything below to read: `_entry_issues` and
+            # `_condition_issues` used to run unconditionally and raise
+            # `FileNotFoundError`/`JSONDecodeError` reading the very
+            # artifacts the audit had just reported missing or broken
+            # (item 3). The audit's own findings are reported instead, and
+            # nothing artifact-dependent runs for this row.
             issues.append(f"{where}: the recorded-run audit reports findings: " + "; ".join(acceptance.validate_recorded_run(run_dir if row.mode == "batch" else (_nested_run(run_dir) or run_dir))[:3]))
-        else:
-            # Cross-checked only once the audit passes: a run the audit
-            # cannot make sense of has nothing trustworthy for this to read
-            # (item 2).
-            issues.extend(_condition_issues(row, run_dir, board.condition, where))
+            continue
+        # Cross-checked only once the audit passes: a run the audit cannot
+        # make sense of has nothing trustworthy for this to read (item 2).
+        issues.extend(_condition_issues(row, run_dir, board.condition, board.environment, where))
         issues.extend(_entry_issues(entry, row, run_dir))
         for field in Row.model_fields:
             if getattr(derived, field) != getattr(row, field):
@@ -325,8 +337,8 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
     return tuple(issues)
 
 
-def _condition_issues(row: Row, run_dir: Path, condition: Any, where: str) -> list[str]:
-    """Cross-check the scoreboard's condition against what each run itself recorded (item 2).
+def _condition_issues(row: Row, run_dir: Path, condition: Any, environment: EnvironmentIdentity, where: str) -> list[str]:
+    """Cross-check the scoreboard's condition and environment against what each run itself recorded (items 2, 1, 5).
 
     A committed scoreboard's `condition` describes what governed every row;
     before this, nothing compared it against the batch trajectory or staged
@@ -336,8 +348,15 @@ def _condition_issues(row: Row, run_dir: Path, condition: Any, where: str) -> li
     prompt hash and no per-check Lean timeout, so `condition.batch_prompt_set_sha256`
     and `condition.limits["lean_timeout"]` cannot be cross-checked from it and
     are not invented a check here.
+
+    `environment` is `board.environment`, not the baseline's: a row copied in
+    from a run made under a different Lean or Mathlib revision has its own
+    internally consistent toolchain, so nothing about the audit that read
+    that run in isolation catches it -- only comparing it against what this
+    scoreboard claims does (item 1).
     """
     issues: list[str] = []
+    identity_fields = ("lean_version", "lean_commit", "mathlib_revision", "lake_manifest_sha256")
     if row.mode == "batch":
         trajectory = _read(run_dir / "trajectory.json")
         if trajectory.get("model") != condition.model:
@@ -351,6 +370,14 @@ def _condition_issues(row: Row, run_dir: Path, condition: Any, where: str) -> li
             issues.append(f"{where}: the run's max_turns {limits.get('max_turns')!r} is not the condition's {turns_key} {condition.limits.get(turns_key)!r}")
         if limits.get("wall_seconds") != condition.limits.get(wall_key):
             issues.append(f"{where}: the run's wall_seconds {limits.get('wall_seconds')!r} is not the condition's {wall_key} {condition.limits.get(wall_key)!r}")
+        toolchain = trajectory.get("toolchain") or {}
+        expected_environment = environment.model_dump(mode="json")
+        for field in identity_fields:
+            if toolchain.get(field) != expected_environment.get(field):
+                issues.append(
+                    f"{where}: the run's toolchain {field} {toolchain.get(field)!r} is not the scoreboard's "
+                    f"environment {field} {expected_environment.get(field)!r}"
+                )
     else:
         nested = _nested_run(run_dir)
         if nested is not None:
@@ -362,6 +389,21 @@ def _condition_issues(row: Row, run_dir: Path, condition: Any, where: str) -> li
             for field in ("active_seconds", "proof_seconds", "official_checks"):
                 if getattr(manifest.limits, field) != condition.limits.get(field):
                     issues.append(f"{where}: the run's limits.{field} {getattr(manifest.limits, field)!r} is not the condition's {condition.limits.get(field)!r}")
+            if manifest.environment != environment:
+                issues.append(f"{where}: the run's environment is not the scoreboard's")
+            # The offline checker must not be able to certify an existing
+            # Claude run as Codex, or vice versa: `run_set_command` refuses
+            # every backend but `claude` before any run starts, so a genuine
+            # staged trajectory's provider events always carry exactly one
+            # backend's prefix (item 5).
+            events = [json.loads(line) for line in (nested / "trajectory.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+            kinds = [str(e.get("kind", "")) for e in events]
+            expected_prefix = f"{condition.backend}."
+            other_prefixes = tuple(f"{backend_name}." for backend_name in KNOWN_BACKENDS if backend_name != condition.backend)
+            if not any(kind.startswith(expected_prefix) for kind in kinds):
+                issues.append(f"{where}: trajectory.jsonl records no {expected_prefix}* provider event, but the condition's backend is {condition.backend!r}")
+            if any(kind.startswith(other_prefixes) for kind in kinds):
+                issues.append(f"{where}: trajectory.jsonl records provider events from a backend other than the condition's {condition.backend!r}")
     return issues
 
 
@@ -446,6 +488,55 @@ def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
                 prompt_file = row_dir / "canonical-prompt.md"
                 if not prompt_file.exists() or prompt_file.read_bytes() != expected_prompt:
                     issues.append(f"{where}: canonical-prompt.md is not the prompt rendered from the entry and frozen claim")
+    # The review itself is derived from the reader's own recorded reply, not
+    # read back from the editable verdict (item 2): `canonical.json` can
+    # otherwise be rewritten with an agreeing `review` after a disputed
+    # comparison, and every check above still passes because none of them
+    # ever look at what the reader actually said. `_Store.append` (staged.py)
+    # writes every provider event `ClaudeStagedRuntime._observe` sees as
+    # `{"kind": "claude." + event["type"], "phase": ..., "payload": event}`,
+    # and a completed text block is observed as `{"type": "assistant",
+    # "message": {"role": "assistant", "content": <the reply text>}}`
+    # (`claude_runtime.py:_note`) -- so the reader's structured JSON reply is
+    # the `payload.message.content` of the trajectory's last `claude.assistant`
+    # line, exactly what `ClaudeStagedRuntime.run_structured` parsed to build
+    # `review` in the first place. `unavailable` verdicts carry no review and
+    # need no trajectory to check it against.
+    if verdict.outcome in ("agreed", "disputed"):
+        from pydantic import ValidationError
+
+        from ..staged import _json_object
+
+        trajectory_path = row_dir / "canonical-trajectory.jsonl"
+        if not trajectory_path.exists():
+            issues.append(f"{where}: no canonical-trajectory.jsonl to derive the review from")
+        else:
+            assistant_texts = []
+            for line in trajectory_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if record.get("kind") == "claude.assistant":
+                    content = ((record.get("payload") or {}).get("message") or {}).get("content")
+                    if isinstance(content, str):
+                        assistant_texts.append(content)
+            if not assistant_texts:
+                issues.append(f"{where}: canonical-trajectory.jsonl records no claude.assistant reply")
+            else:
+                payload_text = _json_object(assistant_texts[-1])
+                if payload_text is None:
+                    issues.append(f"{where}: the reader's last reply in canonical-trajectory.jsonl carries no JSON object")
+                else:
+                    try:
+                        derived_review = CanonicalReview.model_validate_json(payload_text)
+                    except (ValidationError, ValueError) as error:
+                        issues.append(f"{where}: the reader's last reply does not parse as a CanonicalReview: {type(error).__name__}")
+                    else:
+                        if derived_review != verdict.review:
+                            issues.append(f"{where}: canonical.json's review does not match the reader's reply in canonical-trajectory.jsonl")
     return issues
 
 
