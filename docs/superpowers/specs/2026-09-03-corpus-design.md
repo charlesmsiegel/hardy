@@ -356,9 +356,13 @@ Three things fall out:
    field's texts have actually been surveyed for occurrences, which is
    per-field work in phase 3, not a property of the first entry written.
 
-Corpus composition (phase 3) should where possible draw each field from **two
-texts at different levels**. The within-field difference between them is
-informative on its own and costs nothing beyond choosing the second book.
+Corpus composition (phase 3) should draw each field from **at least four texts
+spanning at least two levels**. Two levels is the minimum that makes the
+stratification of §7 C6 meaningful; four texts is about power. Since §8
+clusters intervals on the source text, a field's effective sample size is
+closer to its text count than its item count — so a fifth text buys more than
+another twenty exercises drawn from books already surveyed, and a single-text
+field yields no ranking at all.
 
 Semantic deduplication stays a human job: `corpus check` can flag entries whose
 `conclusion` normalises identically, but it cannot recognise that two
@@ -1337,10 +1341,19 @@ entries through a human gate without it is needlessly painful.
   so within-field model comparison is unaffected, but it contaminates
   cross-field claims and C6. Mitigated by stratifying C6 on `level` and by
   drawing each field from two texts at different levels — not eliminated.
-- **Contamination is mitigated, not solved.** Twins detect memorised proofs
-  applied to perturbed statements; they do not detect a model that genuinely
-  learned the field from solution manuals. The twin ratio (currently 5 of 20)
-  probably wants to rise, but the right number is unknown until C5 has data.
+- **Contamination is about prior *formalisation*, not prior solution.** The
+  artifact under evaluation is a Lean proof. A memorised informal proof supplies
+  the mathematical idea and almost nothing else — not the Mathlib lemma names,
+  the tactic sequence, the coercions, or the `simp` normal forms — and
+  formalisation is most of the work even when the proof is known. A model that
+  knows a field's standard techniques because it read the field is a model that
+  will help a mathematician working in it: that is the signal, not noise in it.
+  The risk that remains is an exact Lean artifact in training data, which is
+  why miniF2F and ProofNet solutions (published as Lean, on GitHub) are a worse
+  source than textbook exercises that were never formalised. B2's soundness
+  reading is unaffected — proving a false twin is unsound whatever the model
+  read — but C5's number should be read as soundness first and contamination
+  only second.
 - **Statistical power stays the binding constraint.** Most per-field pairs will
   not separate at first. The honest report is the deliverable; the temptation
   to relax the refusal gate is the thing to resist.
