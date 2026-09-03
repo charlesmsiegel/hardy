@@ -8,16 +8,18 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 import pytest
+from corpus_helpers import write_corpus
 from pydantic import ValidationError
 
 from hardy import acceptance, prompts
 from hardy.config import Config
 from hardy.domain import EnvironmentIdentity, FormalizationProposal, RunPhase, freeze_claim
 from hardy.evals import runner, scoreboard, staged, sweep
-from hardy.evals.problems import Entry, ProblemSet, sha256_of
+from hardy.evals.corpus import manifest_digest
+from hardy.evals.problems import Entry, sha256_of
 from hardy.storage import RunStore
 
-ENTRY = Entry(id="odd-sum", input="...", name="OddSum", binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", area="sums")
+ENTRY = Entry(id="odd-sum", input="...", name="OddSum", binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
 IDENTITY = EnvironmentIdentity(lean_version="4.33.1", lean_commit="8", mathlib_revision="v", lake_manifest_sha256="m" * 64)
 
 
@@ -148,10 +150,11 @@ def test_validate_scoreboard_checks_the_canonical_hashes(tmp_path):
     row = scoreboard.staged_row(ENTRY, 3, row_dir, scoreboard_dir, repeat=0)
     assert row.outcome == "invalid" and row.mode == "staged"
 
-    problems_path = tmp_path / "problems.json"
-    problems_path.write_text(json.dumps(ProblemSet(entries=(ENTRY,)).model_dump(mode="json")), encoding="utf-8")
+    problems_path = write_corpus(tmp_path / "corpus", (ENTRY,))
     baseline = sweep.Baseline(
-        created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=sha256_of(problems_path), environment=IDENTITY,
+        created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=manifest_digest(problems_path), environment=IDENTITY,
+        environment_digest=sweep.environment_digest_of(IDENTITY), procedure_digest=sweep.procedure_digest_of(),
+        statement_digests={ENTRY.id: ENTRY.statement_digest()},
         heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(),
         # `elaborates=False`, not `True`: these fixtures never actually swept
         # "odd-sum" against any tactic, and `sweep.Baseline`'s completeness
@@ -166,7 +169,7 @@ def test_validate_scoreboard_checks_the_canonical_hashes(tmp_path):
     condition = runner.Condition(model="reader@test", backend="claude", mode="staged", staged_prompt_set_sha256="p" * 64, batch_prompt_set_sha256="q" * 64, hardy_version="0.1.0",
                                  limits={"max_turns": 3, "wall_seconds": 300.0}, repeats=1, selection={"only": None, "tiers": None, "twins": True})
     board = runner.Scoreboard(
-        label="x", condition=condition, environment=IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        label="x", condition=condition, environment=IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
         rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
@@ -283,13 +286,14 @@ def _solved_fixture(tmp_path: Path):
     row_dir.mkdir(parents=True)
     run_dir = _audit_clean_deterministic_run(row_dir)
     entry = Entry(id="odd-sum", input=(run_dir / "request.md").read_text(encoding="utf-8").strip(), name="OddSum",
-                 binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", area="sums")
+                 binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
     staged.compare_canonical(entry, run_dir, row_dir, runtime_factory=lambda store: _CanonicalRuntime(AGREES, store), model="reader@test", wall_seconds=60.0)
 
-    problems_path = tmp_path / "problems.json"
-    problems_path.write_text(json.dumps(ProblemSet(entries=(entry,)).model_dump(mode="json")), encoding="utf-8")
+    problems_path = write_corpus(tmp_path / "corpus", (entry,))
     baseline = sweep.Baseline(
-        created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=sha256_of(problems_path), environment=DETERMINISTIC_IDENTITY,
+        created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=manifest_digest(problems_path), environment=DETERMINISTIC_IDENTITY,
+        environment_digest=sweep.environment_digest_of(DETERMINISTIC_IDENTITY), procedure_digest=sweep.procedure_digest_of(),
+        statement_digests={entry.id: entry.statement_digest()},
         heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(),
         # `elaborates=False`, not `True`: these fixtures never actually swept
         # "odd-sum" against any tactic, and `sweep.Baseline`'s completeness
@@ -340,7 +344,7 @@ def test_a_canonical_json_that_is_a_json_array_leaves_the_row_unavailable_not_a_
 
     condition = _deterministic_condition()
     board = runner.Scoreboard(
-        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
         rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
@@ -394,7 +398,7 @@ def test_a_rewritten_request_md_is_named_by_validator_check_3(tmp_path):
     row = scoreboard.staged_row(entry, 3, row_dir, scoreboard_dir, repeat=0)
     condition = _deterministic_condition()
     board = runner.Scoreboard(
-        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
         rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
@@ -473,7 +477,7 @@ def test_a_scoreboard_with_one_solved_staged_row_validates_clean(tmp_path):
     assert row.outcome == "solved"
     condition = _deterministic_condition()
     board = runner.Scoreboard(
-        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
         rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
@@ -493,7 +497,7 @@ def test_a_condition_model_mismatch_is_a_finding_for_a_staged_row(tmp_path):
     assert row.outcome == "solved"
     condition = _deterministic_condition(model="a-different-model")
     board = runner.Scoreboard(
-        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
         rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
@@ -514,7 +518,7 @@ def test_a_staged_environment_mismatch_is_a_finding(tmp_path):
     assert row.outcome == "solved"
     condition = _deterministic_condition()
     board = runner.Scoreboard(
-        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
         rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
@@ -540,7 +544,7 @@ def test_a_staged_condition_backend_mismatch_is_a_finding(tmp_path):
     assert row.outcome == "solved"
     condition = _deterministic_condition(backend="codex")
     board = runner.Scoreboard(
-        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=sha256_of(problems_path),
+        label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
         rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )

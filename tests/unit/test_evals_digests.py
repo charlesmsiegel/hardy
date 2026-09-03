@@ -1,6 +1,8 @@
 """Component digests: what each one covers, and what it deliberately does not."""
 from __future__ import annotations
 
+import inspect
+
 from hardy.evals.digests import (
     environment_digest,
     fixture_set_digest,
@@ -16,7 +18,6 @@ STATEMENT = {
     "imports": ("Mathlib",),
     "witness": "⟨1, 1⟩",
     "witness_note": None,
-    "fixture_digests": (),
 }
 
 
@@ -34,12 +35,18 @@ def test_editing_the_conclusion_or_the_witness_changes_the_statement_digest():
     assert statement_digest(**{**STATEMENT, "witness_note": "none available"}) != base
 
 
-def test_a_fixture_edit_reaches_the_statement_digest_through_its_content():
-    bare = statement_digest(**STATEMENT)
-    fixtured = statement_digest(**{**STATEMENT, "fixture_digests": ("c" * 64,)})
-    edited = statement_digest(**{**STATEMENT, "fixture_digests": ("d" * 64,)})
-    assert fixtured != bare
-    assert edited != fixtured
+def test_a_fixture_edit_stays_out_of_the_statement_and_prompt_digests():
+    """The component boundary the whole arrangement exists to draw (spec §3).
+
+    A4, A5 and B4 depend on `fixture_set_digest`; A1-A3, A6 and B1-B3 load no
+    fixture at all. Folding fixture contents into the statement digest would
+    reach every one of them through `prompt_digest` too, and editing a shared
+    fixture would force re-sweeps and model re-runs whose outcomes cannot
+    change.
+    """
+    assert "fixture" not in inspect.signature(statement_digest).parameters
+    assert "fixture" not in inspect.signature(prompt_digest).parameters
+    assert fixture_set_digest(("c" * 64,)) != fixture_set_digest(("d" * 64,))
 
 
 def test_editing_input_changes_the_prompt_digest_but_not_the_statement_digest():

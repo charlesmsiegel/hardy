@@ -9,7 +9,7 @@ import pytest
 from hardy import config as configuration
 from hardy.evals import sweep
 from hardy.evals.commands import make_elaborate
-from hardy.evals.problems import load_problems
+from hardy.evals.corpus import load_corpus
 
 pytestmark = pytest.mark.real_toolchain
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,7 +26,7 @@ def elaborate():
 
 
 def test_every_canonical_statement_elaborates(elaborate):
-    problems = load_problems(ROOT / "evals" / "problems.json")
+    problems = load_corpus(ROOT / "corpus")
     broken = []
     for entry in problems.entries:
         result = elaborate(sweep.sorry_source(entry.name, entry.binders, entry.conclusion, entry.imports))
@@ -36,7 +36,7 @@ def test_every_canonical_statement_elaborates(elaborate):
 
 
 def test_a_sanity_entry_is_tier_zero_and_the_acceptance_problem_is_not(elaborate):
-    problems = load_problems(ROOT / "evals" / "problems.json")
+    problems = load_corpus(ROOT / "corpus")
     easy = sweep.sweep_entry(problems.by_id("two-plus-two"), elaborate, confirm_name="TwoPlusTwo")
     assert easy.tier == 0 and easy.attempts["norm_num"].status == "closed"
     hard = sweep.sweep_entry(problems.by_id("sqrt-two-plus-sqrt-three"), elaborate, confirm_name="SqrtTwoPlusSqrtThree")

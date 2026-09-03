@@ -1,0 +1,72 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.1.0",
+  "entries": [
+    {
+      "id": "prime-order-cyclic",
+      "input": "A finite group of prime order is cyclic.",
+      "name": "PrimeOrderCyclic",
+      "binders": "{G : Type*} [Group G] [Finite G] {p : ℕ} (hp : p.Prime) (h : Nat.card G = p)",
+      "conclusion": "IsCyclic G",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "msc": [
+        "20D"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "exponent-two-abelian",
+      "input": "A group in which every element squares to the identity is abelian.",
+      "name": "ExponentTwoAbelian",
+      "binders": "{G : Type*} [Group G] (h : ∀ g : G, g * g = 1) (a b : G)",
+      "conclusion": "a * b = b * a",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "msc": [
+        "20A"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "order-four-cyclic",
+      "input": "Every group of order $4$ is cyclic.",
+      "name": "OrderFourCyclic",
+      "binders": "{G : Type*} [Group G] [Finite G] (h : Nat.card G = 4)",
+      "conclusion": "IsCyclic G",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "prime-order-cyclic",
+      "source": "textbook",
+      "msc": [
+        "20D"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    }
+  ]
+}

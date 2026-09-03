@@ -7,7 +7,6 @@ concatenation, one way, for every consumer.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections import Counter
 from functools import cached_property
@@ -167,6 +166,33 @@ class Entry(FrozenModel):
         return self
 
     @model_validator(mode="after")
+    def _an_active_entry_carries_a_current_faithful_review(self) -> Entry:
+        """Only `active` entries reach a headline (spec section 2.2).
+
+        Nothing mechanical distinguishes a faithful formalisation from a
+        plausible-looking wrong one, so a human read is the gate -- and a
+        reviewer approved a *specific* statement, prompt and filing. Binding
+        the review to all three means an edit or a re-tag drops the entry back
+        to `candidate` instead of leaving a stale approval standing.
+        """
+        if self.status != "active":
+            return self
+        if self.review is None:
+            raise ValueError("an active entry must carry a review: only active entries reach a headline")
+        if self.review.verdict != "faithful":
+            raise ValueError(f"an active entry needs a faithful review, not {self.review.verdict!r}")
+        if self.review.statement_digest != self.statement_digest():
+            raise ValueError("the review approved a different statement; re-review or set status to candidate")
+        if self.review.prompt_digest != self.prompt_digest():
+            raise ValueError("the review approved a different prompt; re-review or set status to candidate")
+        if self.review.msc != self.msc or self.review.group != taxonomy.group_of(self.msc[0]):
+            raise ValueError(
+                "the review approved a different classification; a wrong-but-valid code passes every "
+                "mechanical check, so re-review or set status to candidate"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _binders_never_carry_an_antecedent(self) -> Entry:
         """An antecedent in `binders` reaches the bare condition too (spec 9.1)."""
         for fixture in self.fixtures:
@@ -177,18 +203,30 @@ class Entry(FrozenModel):
                 )
         return self
 
-    def statement_digest(self, fixture_digests: tuple[str, ...] = ()) -> str:
+    def statement_digest(self) -> str:
+        """The A1/A2/A3/A6 component. Fixtures are a *separate* component --
+        see `fixture_set_digest` -- so an edit to a shared fixture cannot
+        stale the conditions that never load one (spec section 3)."""
         return digests.statement_digest(
             name=self.name, binders=self.binders, conclusion=self.conclusion,
             imports=self.imports, witness=self.witness, witness_note=self.witness_note,
-            fixture_digests=fixture_digests,
         )
 
-    def prompt_digest(self, fixture_digests: tuple[str, ...] = ()) -> str:
+    def prompt_digest(self) -> str:
+        """The B1/B2/B3 component: the statement plus everything else the
+        model sees or that shapes the run. Fixture-free, for the same reason."""
         return digests.prompt_digest(
-            statement=self.statement_digest(fixture_digests), input=self.input,
+            statement=self.statement_digest(), input=self.input,
             expected=self.expected, twin_of=self.twin_of,
         )
+
+    def fixture_set_digest(self, resolved: tuple[str, ...]) -> str:
+        """The A4/A5/B4 component, over the *resolved* fixture contents.
+
+        `resolved` comes from the fixture store, which phase 3 adds; until
+        then an entry carries no fixtures and this is the digest of nothing.
+        """
+        return digests.fixture_set_digest(resolved)
 
     @model_validator(mode="after")
     def _statement_only(self) -> Entry:
@@ -233,7 +271,7 @@ class Entry(FrozenModel):
 class ProblemSet(FrozenModel):
     model_config = ConfigDict(extra="forbid", frozen=True, ignored_types=(cached_property,))
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     entries: tuple[Entry, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -276,10 +314,6 @@ class ProblemSet(FrozenModel):
     @property
     def twins(self) -> tuple[Entry, ...]:
         return tuple(e for e in self.entries if e.expected == "false")
-
-
-def load_problems(path: Path) -> ProblemSet:
-    return ProblemSet.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
 
 def sha256_of(path: Path) -> str:

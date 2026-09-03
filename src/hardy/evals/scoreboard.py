@@ -222,7 +222,8 @@ def aggregate(rows: list[Row], baseline: Baseline) -> Aggregates:
 
 def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_path: Path) -> tuple[str, ...]:
     """Every figure in a committed scoreboard, re-derived from artifacts the audit accepts (spec §5)."""
-    from .problems import load_problems, sha256_of
+    from .corpus import load_corpus, manifest_digest
+    from .problems import sha256_of
     from .runner import RefusedRun, Scoreboard, select
 
     board_path = scoreboard_dir / "scoreboard.json"
@@ -234,11 +235,11 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
         return (f"scoreboard.json does not validate: {type(error).__name__}",)
     issues: list[str] = []
     # 1. bound to the committed list and tier file
-    if board.problems_sha256 != sha256_of(problems_path):
-        issues.append("problems_sha256 does not match evals/problems.json")
+    if board.problems_sha256 != manifest_digest(problems_path):
+        issues.append("problems_sha256 does not match the corpus manifest")
     if board.baseline_sha256 != sha256_of(baseline_path):
         issues.append("baseline_sha256 does not match evals/baseline.json")
-    problems = load_problems(problems_path)
+    problems = load_corpus(problems_path)
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
     if baseline.environment != board.environment:
         # Not redundant with `staleness` below: `EnvironmentIdentity` also
@@ -259,7 +260,7 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
     # aggregates were kept matching, and `hardy evals check` would accept
     # tiers measured under configuration the live runner would have refused
     # (item 2).
-    for issue in staleness(baseline, problems_sha256=sha256_of(problems_path), environment=board.environment,
+    for issue in staleness(baseline, statement_digests={e.id: e.statement_digest() for e in problems.entries}, environment=board.environment,
                            problem_ids=[e.id for e in problems.entries]):
         issues.append(f"baseline: {issue}")
     # Rows are samples: a duplicated (id, repeat) key or a run_dir reused

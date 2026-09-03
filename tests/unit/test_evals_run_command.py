@@ -26,7 +26,7 @@ def _config(**kw) -> SimpleNamespace:
 def _args(**kw) -> argparse.Namespace:
     base = dict(acknowledge_unsafe_execution=True, mode="batch", backend="claude", model=None, repeats=1,
                 only=None, tiers=None, no_twins=False, max_turns=None, wall_seconds=None,
-                label="x", problems=Path("evals/problems.json"), baseline=Path("evals/baseline.json"), scoreboards=Path("evals/scoreboards"))
+                label="x", problems=Path("corpus"), baseline=Path("evals/baseline.json"), scoreboards=Path("evals/scoreboards"))
     base.update(kw)
     return argparse.Namespace(**base)
 

@@ -15,9 +15,10 @@ from typing import Any
 from ..domain import EnvironmentIdentity
 from ..lean import Elaboration, elaborate, environment_identity
 from . import sweep
-from .problems import load_problems, sha256_of
+from .corpus import load_corpus, manifest_digest
 
-DEFAULT_PROBLEMS = Path("evals") / "problems.json"
+DEFAULT_CORPUS = Path("corpus")
+DEFAULT_PROBLEMS = DEFAULT_CORPUS
 DEFAULT_BASELINE = Path("evals") / "baseline.json"
 DEFAULT_SCOREBOARDS = Path("evals") / "scoreboards"
 
@@ -86,6 +87,12 @@ def add_parser(subparsers: Any) -> None:
     run.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     run.add_argument("--scoreboards", type=Path, default=DEFAULT_SCOREBOARDS)
     run.add_argument("--acknowledge-unsafe-execution", action="store_true")
+    corpus = verbs.add_parser("corpus", help="the corpus directory: mechanical checks and coverage")
+    corpus_verbs = corpus.add_subparsers(dest="corpus_verb", required=True)
+    for verb, helptext in (("check", "report every mechanical objection to the corpus on disk"),
+                           ("report", "coverage by group, status, difficulty and source")):
+        sub = corpus_verbs.add_parser(verb, help=helptext)
+        sub.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
     check = verbs.add_parser("check", help="re-derive a committed scoreboard from its run directories")
     check.add_argument("scoreboard", type=Path)
     check.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
@@ -93,17 +100,17 @@ def add_parser(subparsers: Any) -> None:
 
 
 def _refuse_missing(*paths: Path) -> str | None:
-    """Not packaged: the evaluation set, its tier file and every scoreboard are
-    repository evidence under `evals/`, read relative to the current working
-    directory. A released wheel does not carry `evals/`, so a default path
-    resolved outside a source checkout is a clear refusal here rather than a
-    bare `FileNotFoundError` from whatever reads it next.
+    """Not packaged: the corpus, the tier file and every scoreboard are
+    repository evidence under `corpus/` and `evals/`, read relative to the
+    current working directory. A released wheel carries neither, so a default
+    path resolved outside a source checkout is a clear refusal here rather than
+    a bare `FileNotFoundError` from whatever reads it next.
     """
     for path in paths:
         if not path.exists():
             return (
-                f"Refused: {path} is not here. The evaluation set, its tier file and every "
-                "scoreboard are repository evidence under evals/ and are read from the current "
+                f"Refused: {path} is not here. The corpus, its tier file and every scoreboard "
+                "are repository evidence under corpus/ and evals/ and are read from the current "
                 "directory; run from a source checkout's root or pass --problems/--baseline "
                 "explicitly."
             )
@@ -146,7 +153,7 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         )
         return 2
     print(WARNING, file=sys.stderr)
-    problems = load_problems(args.problems)
+    problems = load_corpus(args.problems)
     if identity is None:
         try:
             identity = _identity(config)
@@ -159,7 +166,7 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         probe = elaborate(sweep.header(("Mathlib",)) + "\nexample : True := trivial\n")
         import_seconds = probe.process.duration_ms / 1000.0 if probe.success else None
     baseline = sweep.sweep(
-        problems, problems_sha256=sha256_of(args.problems), environment=identity, elaborate=elaborate, now=now,
+        problems, problems_sha256=manifest_digest(args.problems), environment=identity, elaborate=elaborate, now=now,
         host=host_info(), import_seconds=import_seconds,
         wall_backstop_seconds=max(float(config.lean_timeout), sweep.WALL_BACKSTOP_FLOOR) if config is not None else sweep.WALL_BACKSTOP_FLOOR,
         report=lambda line: print(line, file=sys.stderr),
@@ -183,6 +190,16 @@ def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "run":
         from .runner import run_set_command
         return run_set_command(args, config)
+    if args.evals_command == "corpus":
+        from .corpus import check_issues, report
+        if args.corpus_verb == "check":
+            issues = check_issues(args.corpus)
+            for issue in issues:
+                print(issue, file=sys.stderr)
+            return 1 if issues else 0
+        for line in report(args.corpus):
+            print(line)
+        return 0
     if args.evals_command == "check":
         from .scoreboard import check_command
         return check_command(args)

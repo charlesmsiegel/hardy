@@ -26,8 +26,8 @@ from hardy.domain import EnvironmentIdentity
 from hardy.evals import runner, scoreboard, sweep
 from hardy.evals.problems import Entry
 
-TRUE = Entry(id="t", input="True.", name="HardyTarget", conclusion="True", expected="true", source="textbook", area="logic")
-TWIN = Entry(id="f", input="False.", name="HardyTarget", conclusion="True", expected="false", twin_of="t", source="textbook", area="logic")
+TRUE = Entry(id="t", input="True.", name="HardyTarget", conclusion="True", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
+TWIN = Entry(id="f", input="False.", name="HardyTarget", conclusion="True", expected="false", twin_of="t", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
 # ^ both name HardyTarget because the shared fixture in test_recorded_runs poses `theorem HardyTarget : True`.
 
 
@@ -133,6 +133,7 @@ def _baseline(tiers: dict[str, int], twins_false: set[str] = frozenset()) -> swe
                                            closed_by=("nlinarith",) if k in twins_false else ()) if k.startswith("f") else None)
                for k, t in tiers.items()}
     return sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256="p" * 64, environment=identity, heartbeat_budget=200000,
+                          environment_digest=sweep.environment_digest_of(identity), procedure_digest=sweep.procedure_digest_of(),
                           wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(), entries=entries)
 
 
@@ -183,9 +184,11 @@ def test_a_scoreboard_the_runner_wrote_validates(tmp_path):
 def test_each_check_breaks_one_at_a_time(tmp_path):
     out, problems, baseline = _board(tmp_path)
 
-    problems.write_text(problems.read_text(encoding="utf-8") + "\n", encoding="utf-8")                       # 1: digests
+    shard = next((problems / "problems").glob("*.json"))                                                     # 1: digests
+    original = shard.read_text(encoding="utf-8")
+    shard.write_text(original + "\n", encoding="utf-8")
     assert any("problems_sha256" in i for i in scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline))
-    problems.write_text(problems.read_text(encoding="utf-8")[:-1], encoding="utf-8")
+    shard.write_text(original, encoding="utf-8")
 
     (out / "runs" / "t" / "batch-0" / "proof.lean").write_text("tampered", encoding="utf-8")                  # 2: audit
     issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
@@ -228,6 +231,7 @@ def test_a_canonical_json_whose_outcome_does_not_follow_its_review_is_a_finding(
     """
     from test_evals_staged import DETERMINISTIC_IDENTITY, _solved_fixture
 
+    from hardy.evals.corpus import manifest_digest
     from hardy.evals.problems import sha256_of
 
     scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
@@ -236,7 +240,7 @@ def test_a_canonical_json_whose_outcome_does_not_follow_its_review_is_a_finding(
     condition = _condition(mode="staged", limits={"active_seconds": 1800, "proof_seconds": 1200, "official_checks": 40,
                                                    "twin_max_turns": 60, "twin_wall_seconds": 1800.0})
     board = runner.Scoreboard(label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path),
-                              problems_sha256=sha256_of(problems_path), rows=(row,), aggregates=scoreboard.aggregate([row], baseline),
+                              problems_sha256=manifest_digest(problems_path), rows=(row,), aggregates=scoreboard.aggregate([row], baseline),
                               started_at=datetime(2026, 9, 1, tzinfo=UTC), finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False)
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
 
