@@ -144,6 +144,8 @@ Added to `Entry`:
 | `status` | `Literal["candidate","active","retired"]` | lifecycle |
 | `retired_reason` | `str \| None` | required when retired |
 | `rationale` | `str \| None` | required when `occurrences` is empty; what an authored entry is meant to state and why |
+| `witness` | `str \| None` | Lean term instantiating the hypotheses (A6); `null` requires a justification |
+| `review` | `Review \| None` | reviewer, date, and the digests read; required for `status: "active"` |
 | `fixtures` | `tuple[str, ...]` | fixture ids; empty until phase 3, but digested from phase 1 |
 
 Removed: `area`. The twenty existing entries are hand-mapped to MSC codes as
@@ -161,6 +163,12 @@ New validators, in the spirit of `tier_must_follow_its_closers`
 - `status == "retired"` requires `retired_reason`;
 - an entry with empty `occurrences` requires `rationale` — otherwise it can
   never pass the §2.2 review gate and is silently unreportable forever;
+- **`status: "active"` requires a `review` record whose recorded digests match
+  the entry's current ones.** Prose describing the review is not a gate: with
+  only a bare `status`, a contributor can mark an unreviewed entry active, or
+  edit a reviewed one and leave the flag set, and §8 puts it straight into a
+  headline. Binding the record to the statement, `input` and origin digests
+  makes an edit demote the entry to `candidate` automatically;
 - `arxiv_override` requires `override_reason`, **and is validated against the
   mapping table's codomain** — an unconstrained string would let `"math.AC "`
   or an invented class through, where it becomes a distinct value for
@@ -180,9 +188,22 @@ New validators, in the spirit of `tier_must_follow_its_closers`
 | `title`, `author`, `edition` | citation |
 | `level` | `"first-course"` / `"advanced-undergraduate"` / `"graduate"` |
 | `msc` | the field(s) the text covers |
+| `surveyed` | per-field survey status: which MSC fields this text has been *exhaustively* read for, and at what corpus version |
 
-An `Occurrence` is `(source_id, locator)`, where `locator` is a tuple of
-integers — `(chapter, section, item)` — compared lexicographically.
+`surveyed` exists because the canonicity denominator is meaningless without it.
+Citation data and coverage claims cannot distinguish a text fully read for
+MSC 13 from one merely registered or skimmed, so "4 of 6 surveyed texts" would
+not be reproducible and adding a half-read book could move the core/peripheral
+split. Only fully-surveyed source/field pairs count toward the denominator.
+
+An `Occurrence` is `(source_id, locator)`, where `locator` is a **non-empty
+tuple of non-negative integers** — `(chapter, section, item)` — compared
+lexicographically. The constraints are load-bearing rather than tidiness: an
+empty tuple sorts before every non-empty one and `(-1,)` sorts before any real
+chapter, so an unconstrained tuple lets malformed provenance satisfy the
+"strictly earlier" antecedent gate (§9.0) without naming any earlier result,
+admitting an unjustified assumption into B4 and C6. Locators are validated
+before they are ever compared.
 
 **A result is one entry with many occurrences, not one entry per book.** The
 Nullstellensatz is in most algebraic geometry texts; storing a copy per book
@@ -271,8 +292,13 @@ shard with `status: "retired"` rather than being deleted, so an id can never be
 reused. But that is a *policy*, and validating uniqueness across the present
 shards cannot enforce it: delete a retired row and the check sees only the new
 claimant and accepts it, breaking every external citation. So ids are validated
-against a machine-checked **tombstone registry** — an append-only record of
-every id ever issued — not merely against the current corpus.
+against a machine-checked **tombstone registry** — a record of every id ever
+issued — not merely against the current corpus. "Append-only" is itself
+enforced, not asserted: CI compares the registry against the merge base and
+**rejects any removal or mutation of an issued id**. Without that, a
+contributor could delete a tombstone, bump the version, reuse the id, and pass
+every current-state uniqueness check — recreating precisely the broken external
+citation the registry exists to prevent.
 
 `difficulty` is the weakest part of this schema. Four levels is a guess, and
 the vocabulary should be revisited after roughly fifty real entries are tagged
@@ -296,8 +322,11 @@ Two version numbers, answering two questions:
 equals the changelog head does not detect an *unversioned* edit — a shard can
 change while both strings stay put and the test still passes, which makes a
 published version non-reproducible. So the changelog head binds a **corpus
-manifest digest** (a hash over every shard plus `sources.json` and the taxonomy
-tables), and CI additionally diffs the corpus against the merge base and
+manifest digest** (a hash over every shard plus `sources.json`, the taxonomy
+tables, **and every versioned fixture file** — once phase 3 edits a fixture's
+statement under a stable id the corpus contents and the assumptions of every
+dependent entry change, and a manifest that omitted them could establish
+neither reproducibility nor tampering), and CI additionally diffs the corpus against the merge base and
 requires the matching version and changelog entry when anything moved.
 
 **Version numbers cannot express measurement validity, and must not be asked
@@ -411,15 +440,26 @@ measured, because they are three different kinds of thing.
 | A3 | Negation sweep | ladder against `¬P`; catches sign errors and refutably-false statements | exists |
 | A4 | Fixture consistency sweep | ladder against `False` with fixtures in scope | phase 3+ |
 | A5 | Fixture strength sweep | ladder against the goal with fixtures in scope; closing means the fixture is too strong | phase 3+ |
-| A6 | Non-vacuity check | hypotheses are satisfiable — a witness instance elaborates | new |
+| A6 | Non-vacuity check | a stored witness term, kernel-checked, instantiates the hypotheses | new |
 
 **A3 does not detect vacuity, and an earlier draft of this design wrongly said
 it did.** If `P` is vacuously true because its hypotheses are impossible or
 overstrong, then `¬P` is false and the ladder finds no closer — the sweep comes
 back clean on exactly the broken entry it was supposed to catch. A3's real job
-is sign errors and statements that are refutably false. Vacuity needs A6: an
-explicit witness that the hypotheses are inhabited, or, where no witness can be
-mechanically produced, the human faithfulness review in §2.2.
+is sign errors and statements that are refutably false.
+
+Vacuity needs A6, and A6 needs an artifact — an earlier draft said "a witness
+instance elaborates" and specified neither an input nor anything persisted,
+which made it unimplementable. `Entry` holds only a raw `binders` string, and
+for dependent binders like `(n : Nat) (h : n > 0)` merely elaborating the
+binders proves nothing about whether compatible values exist. So an entry
+carries a **`witness`**: a Lean term instantiating its hypotheses, stored in
+the corpus, inside `statement_digest`, and checked by the kernel like any other
+proof. Where no witness can be produced mechanically — a genuine possibility
+for existence-heavy hypotheses — the entry records `witness: null` with a
+required justification, and that fact is reported rather than hidden, because
+an unwitnessed entry is one where nothing but the §2.2 human read stands
+between a vacuous statement and a field headline.
 
 A2 is also the headline dataset artifact — "N undergraduate problems Lean's
 automation cannot touch" — and is published as a measurement file carrying its
@@ -508,8 +548,14 @@ digest, so a bare run and a fixtured run over the same corpus would carry
 identical condition and prompt identity and be indistinguishable afterwards.
 And the condition-equality rule below, as first drafted, made C6 impossible —
 it demands every non-model condition match, while C6 exists precisely to
-compare two runs that differ in fixtures. So the flag is explicit, and **C6 is
-the one comparison required to differ in exactly this field and no other.**
+compare two runs that differ in fixtures. So the flag is explicit — and the exception is **scoped to one comparison
+kind, not blanket**. A blanket exception would let a bare scoreboard for model
+A be paired against a fixtured one for model B and emit a ranking that credits
+the fixture intervention to the model. `compare` therefore takes the comparison
+kind explicitly: a **C2** cross-model comparison requires `fixtures_enabled` to
+be *equal*, while a **C6** uplift comparison requires it to *differ* and
+requires model identity to be *equal*. Every other non-model condition must
+match in both.
 
 `hardy evals compare <scoreboard>... --by field`:
 
@@ -517,7 +563,13 @@ the one comparison required to differ in exactly this field and no other.**
    condition** other than the declared `fixtures_enabled` exception, and not
    merely in corpus and environment. `Condition` carries
    `backend`, `mode`, both prompt-set hashes, `hardy_version`,
-   `source_revision`, `limits`, `repeats` and `selection` (`runner.py:35-57`);
+   `source_revision`, `limits`, `repeats` and `selection` (`runner.py:35-57`).
+   Equality of `source_revision` is not enough when both sides record `None`,
+   which the runner does for a source tree without `.git`: two stripped
+   snapshots from different commits of the same unreleased `hardy_version`
+   would pass every check while the runner or grading logic differed. A
+   comparison requires a *known* revision on both sides, or a recorded
+   immutable build digest standing in for it;
    a staged Opus run at a larger budget against a batch GPT run would differ
    in most of them, and the whole difference would be attributed to the
    models. The paired item set must be identical too — same ids, same
@@ -536,9 +588,15 @@ the one comparison required to differ in exactly this field and no other.**
    every field, each gated independently at nominal 5%, makes at least one
    spurious ranking likely well before the four fields and a handful of models
    this design plans — which would defeat the honesty gate precisely where it
-   is supposed to bind. A primary comparison is predeclared; everything else
-   carries a family-wise or FDR adjustment applied to the intervals before the
-   gate reads them.
+   is supposed to bind. The family cannot be "whatever this invocation was
+   passed": the CLI takes an arbitrary subset of scoreboards, so running each
+   pair separately would make every family size one and license exactly the
+   unadjusted claims the gate exists to refuse. So the family and the primary
+   comparison live in a **versioned analysis plan** committed alongside the
+   corpus, naming the models and fields in advance; the adjustment is computed
+   against that plan however the runs are split across invocations, and a
+   comparison outside the plan is reported as exploratory and never as a
+   ranking.
 5. Attaches the formalization-standard caveat to any cross-*field* level
    comparison, which (unlike within-field model comparison) does not cancel
    out differences in how carefully each field was formalized.
@@ -614,15 +672,30 @@ is reported stratified by `level` rather than aggregated.
 
 ### 9.1 Mechanism
 
-Two gaps need two mechanisms:
+**An antecedent never goes in `Entry.binders`.** An earlier draft recommended
+exactly that — a missing lemma as a hypothesis binder, "sound by construction,
+needs no new machinery" — and it was wrong in a way that would have silently
+destroyed the measurement. `binders` are part of the canonical declaration and
+are injected into *every* run, B1 included. A hypothesis-encoded antecedent is
+therefore present in the supposedly bare condition: B1 stops testing the
+theorem against stock Mathlib, `B4 − B1` goes to zero for exactly the gaps that
+mechanism was meant to cover, and the entry silently states a stronger theorem
+than its source did. The soundness argument was correct and irrelevant; the
+harness, not the logic, is what decides this.
 
-- **Missing lemma → a hypothesis binder.** `Entry.binders` already exists and
-  is already injected. Sound by construction: a false hypothesis makes one
-  theorem vacuous, it does not make the system inconsistent. This covers the
-  majority of cases and needs no new machinery.
-- **Missing definition or structure → a real preamble**, possibly including
-  `axiom`. You cannot hypothesise a definition Mathlib lacks. This is the small
-  dangerous case, and it is what `corpus/fixtures/` is for.
+So both gaps route through `corpus/fixtures/`, and the difference is only in
+what a fixture contains:
+
+- **Missing lemma → a fixture stating it**, injected *only* under
+  `fixtures_enabled`. Sound in the same way a hypothesis would have been, and
+  now actually absent from B1.
+- **Missing definition or structure → a fixture carrying a real preamble**,
+  possibly including `axiom`. You cannot hypothesise a definition Mathlib
+  lacks. This is the small dangerous case.
+
+`binders` continues to hold what the source theorem itself stated, and nothing
+else. A validator enforces the separation: an entry's `binders` may not
+mention a fixture's declared name.
 
 The guards already exist and are strict. `verifier.py:43` sets
 `ALLOWED_AXIOMS = audit.STANDARD`; `sorryAx` and every non-standard axiom are
@@ -711,6 +784,22 @@ Hermetic except where Lean is genuinely required (already gated behind
   pair differing in `fixtures_enabled` *and* `mode` is refused
 - lifecycle: an authored entry with empty `occurrences` and a recorded
   `rationale` can be promoted; one without a `rationale` cannot
+- review binding: editing a reviewed entry's `conclusion` invalidates its
+  `review` record and demotes it out of reporting without anyone touching
+  `status`
+- A6: an entry whose `witness` fails the kernel is rejected; an entry with
+  `witness: null` and no justification is rejected; the deliberately vacuous
+  fixture is caught here, not by A3
+- binders: an entry whose `binders` mention a fixture's declared name is
+  rejected — an antecedent must never reach the bare condition
+- locators: `()` and `(-1,)` are rejected before any ordering comparison
+- tombstones: CI rejects a diff that removes or mutates an issued id
+- compare: a C2 pair differing in `fixtures_enabled` is refused; a C6 pair
+  differing in `fixtures_enabled` *and* model is refused; a C6 pair differing
+  only in `fixtures_enabled` is accepted
+- compare: two scoreboards both recording `source_revision: None` are refused
+- multiplicity: splitting one planned family across separate invocations
+  yields the same adjustment as running it in one
 - antecedent policy: a fixture at a locator *after* its entry's primary is
   rejected; a fixture occurring only in a non-primary text is rejected; a
   fixture whose *primary* is elsewhere but which occurs in the entry's primary
@@ -774,6 +863,9 @@ layout before 500 entries exist is what prevents a hand re-tag.
 - **The faithfulness review is the bottleneck and the weak link.** It is human,
   unaudited, and gates reportability for 500 entries. Nothing here measures
   reviewer agreement; a second reader on a sample would, and is not planned.
+- **Unwitnessed entries rest on the human read alone.** Where A6 has no
+  mechanical witness, nothing but §2.2 stands between a vacuous statement and a
+  field headline. The count of such entries is reported, not hidden.
 - **Fixtures widen the trust base.** Every gate in §9 is a mitigation, not a
   proof. A wrong fixture that is consistent and not too strong will silently
   mismeasure its entries, and only the spot-audit queue stands behind it.
