@@ -9,7 +9,8 @@ that. It cannot answer the question we now want, which is:
 > Is Opus better than GPT at commutative algebra? Is Qwen better at real
 > analysis? Which model should *I* use, for *my* field?
 
-Four things stand between the current set and that question.
+Four things stand between the current set and that question — and a fifth,
+larger than all of them, is the subject of the section that follows.
 
 **There is no field.** `Entry.area` is `str` with `min_length=1`
 (`problems.py:37`) and nothing aggregates on it. Its twenty values are
@@ -34,6 +35,42 @@ we cannot presently distinguish "models are weak here" from "Mathlib does not
 have the prerequisite" — and the second is a per-field bias that lands
 precisely on the axis we want to report.
 
+## Blocking prerequisite: the runner is single-backend
+
+`run_set_command` refuses any backend but `claude` outright
+(`runner.py:279-284`): *"the evals runner drives the Claude backend only: the
+batch runner, the canonical reader and staged tool-event counting are
+Claude-shaped."*
+
+**So no cross-provider comparison can be run today.** "Is Opus better than GPT
+at commutative algebra" needs two providers; the pipeline drives one. Phases
+1-4 of §11 do not reach that question without phase 0, however much corpus and
+reporting work they deliver.
+
+The limit is narrower than it first appears, and worth stating precisely:
+`--model` varies freely *within* the Claude backend. **Opus against Sonnet
+against Haiku is reachable today** — same backend, different models — and that
+is a genuine multi-model comparison exercising C2, C3 and C7 in full. What is
+blocked is specifically *cross-provider*: GPT, Qwen, and anything else needing
+a second backend.
+
+Two consequences:
+
+1. **`compare` requiring `backend` equality would forbid the motivating
+   comparison** even once the runner allows it. The compared intervention is
+   `(backend, model)` together, not `model` alone: a cross-provider comparison
+   necessarily varies runtime as well as weights, and that is an *inseparable
+   confound to record*, not a reason to refuse the pair. `compare` therefore
+   treats cross-backend comparisons as a declared mode that labels the
+   confound, while still requiring every other non-model condition to match.
+2. **Phase 0 in §11** is making the runner genuinely multi-backend: a second
+   canonical reader, backend-shaped tool-event counting, and a grading path
+   that is not Claude-specific. Its size is unknown and it is not scoped here.
+
+Until phase 0 lands, every eval in §7 is reachable across Anthropic models —
+the whole A-group, and C1 through C7 — but the roster stops at one provider.
+That is a real instrument, and it is narrower than the Goal describes.
+
 ## Goal
 
 A problem corpus that:
@@ -44,15 +81,19 @@ A problem corpus that:
 - separates *statements* (invariant) from *measurements* (provenance-bearing);
 - can say "these two models are not distinguishable at this corpus size"
   instead of printing a leaderboard that isn't there;
-- can eventually separate model weakness from Mathlib's coverage gaps.
+- can measure fixture-assisted uplift per field and level, which bounds how
+  much of a field's difficulty is Mathlib's rather than the model's — without
+  claiming to have separated the two (§7 C6).
 
 **This is an instrument with two outputs, not a benchmark with one.** It
 measures models, and it measures the formal library those models depend on.
-The second has its own constituency: stated precisely, it asks *does Mathlib
-cover the standard curriculum, field by field, level by level* — a claim a
-Mathlib maintainer can act on, unlike "coverage gaps" in the abstract. The
-schema below is shaped so the second output is a byproduct of collecting the
-first rather than a separate effort.
+The second has its own constituency. Stated at the strength the evidence
+supports, it asks *where does supplying the curriculum's own prior results
+change what a model can prove, field by field and level by level* — which is
+a bounded, actionable question for a Mathlib maintainer, and is weaker than
+"does Mathlib cover the standard curriculum" (§7 C6 says why). The schema
+below is shaped so the second output is a byproduct of collecting the first
+rather than a separate effort.
 
 This design does **not** deliver the corpus. It delivers the schema, the
 taxonomy, the scaling fixes, the selection and reporting machinery, and the
@@ -98,7 +139,9 @@ corpus/
   LICENSE                      # CC-BY-4.0
   SCHEMA.md                    # entry schema, id policy, taxonomy rules
   CHANGELOG.md                 # Keep-a-Changelog, entries cite ids
-  sources.json                 # texts: title, edition, level, fields
+  sources.json                 # texts: citation, level, fields, survey status
+  analysis-plan.json           # §8: hypothesis family and adjustment
+  tombstones.json              # §2.2: every id ever issued (append-only)
   problems/
     13.json                    # sharded by MSC 2-digit class
     15.json
@@ -113,10 +156,18 @@ corpus/
     baseline-<mathlib-rev>-<host>.json
 ```
 
+`analysis-plan.json` and `tombstones.json` are corpus data, not Hardy
+configuration: the plan decides whether a published ranking may be emitted
+(§8) and the registry decides whether an id may be issued (§2.2), so both are
+hashed into the manifest digest (§3) and both travel with the dataset. Model
+scoreboards do **not** live here — they are per-run Hardy artifacts under
+`DEFAULT_SCOREBOARDS`, and `measurements/` holds only the corpus-wide Lean
+measurements that a third party could recompute.
+
 `evals/problems.json` and `evals/baseline.json` move here; `DEFAULT_PROBLEMS`
 and `DEFAULT_BASELINE` re-point. Extracting the dataset for publication is
-`cp -r corpus/` from the first commit onward — the A→B migration (code into its
-own package) becomes a Python-only move with no data migration behind it.
+`cp -r corpus/` from the first commit onward — the A→B migration (code into
+its own package) becomes a Python-only move with no data behind it.
 
 **Sharding by MSC 2-digit class** is chosen now rather than later for three
 reasons: re-sharding an existing corpus is a migration; per-field authoring
@@ -151,6 +202,13 @@ Added to `Entry`:
 
 Removed: `area`. The twenty existing entries are hand-mapped to MSC codes as
 part of phase 1.
+
+`difficulty` is the weakest field here. Four levels is a guess, and the
+vocabulary should be revisited after roughly fifty real entries are tagged
+rather than defended. It is a *subjective per-problem* prior, deliberately
+distinct from the per-source `level` of §2.1 — an easy exercise can appear in a
+graduate text. Where the two disagree, `level` is what C6 reports on, because
+it is auditable.
 
 Never added: `tier`, `discrimination`, solve rates, or anything else measured.
 
@@ -223,7 +281,7 @@ against — reads the primary. The rest are citations.
 This matters because the alternative is worse than it looks. If the antecedent
 check were existential over all occurrences ("prior in *some* book that has
 both"), an author could reach for whichever text orders the material most
-favourably, and fixture sets — and therefore the measured coverage gap — would
+favourably, and fixture sets — and therefore the measured uplift — would
 inflate with every book added. Since the antecedent policy sets the scale of
 C6 (§9.0), the permissive reading would let corpus composition move the
 headline number. The primary occurrence pins it.
@@ -235,11 +293,12 @@ has to be free.
 
 Three things fall out:
 
-1. **`level` stratifies the coverage-gap report** (§7 C6). A graduate text
-   demands antecedents a first course never would; aggregating the two reads
-   as a Mathlib coverage gap when it is a level difference. Stratified, the
-   same data says something sharper and true: *"Mathlib covers first-course
-   commutative algebra well and graduate-level poorly."*
+1. **`level` stratifies the uplift report** (§7 C6). A graduate text demands
+   antecedents a first course never would; aggregating the two reads as a
+   difference in uplift when it is a difference in level. Stratified, the same
+   data says something sharper and defensible: *"supplying prior results
+   changes little at first-course level in commutative algebra, and a great
+   deal at graduate level."*
 2. **`locator` ordering makes the antecedent policy machine-checkable**
    (§9.0). A prose citation cannot be compared; `(3, 2, 12)` can.
 3. **Canonicity is a signal, free — counted over distinct `source_id`.** A
@@ -252,7 +311,7 @@ Three things fall out:
    knowing how many books were looked at.
    This is directly load-bearing for the claim in the Goal — *does Mathlib
    cover the **standard** curriculum* — so C6 reports core and peripheral
-   coverage separately rather than pooling them. It is only meaningful once a
+   uplift separately rather than pooling them. It is only meaningful once a
    field's texts have actually been surveyed for occurrences, which is
    per-field work in phase 3, not a property of the first entry written.
 
@@ -265,32 +324,33 @@ Semantic deduplication stays a human job: `corpus check` can flag entries whose
 differently-phrased statements are the same theorem. The `occurrences` list is
 the mechanism for recording the merge once a human makes it.
 
-### 2.2 Candidate to active is a human read
+### 2.2 Lifecycle: candidate, active, retired
 
-`status` distinguishes `candidate` from `active`, and only `active` entries
-reach a headline number (§8). What promotes one was left undefined in an
-earlier draft, which made the distinction decorative.
+`status` distinguishes `candidate` from `active` from `retired`, and only
+`active` entries reach a headline number (§8).
 
 **Promotion requires a human to read the canonical Lean statement against
-`input` and the entry's stated origin, and record that they did.** For a
-harvested entry the origin is the primary occurrence. For an **authored** entry
-`occurrences` is empty, so there is no primary to read against and the gate as
-first written could never be satisfied — such an entry would sit at `candidate`
-forever, silently excluded from every aggregate. An authored entry instead
-carries a required `rationale` recording what it is meant to state and why it
-was written, and the review reads the Lean against that. The gate applies to
-both paths; only the document it is read against differs. The mechanical
-gate establishes that a statement elaborates and how automation behaves; it
-establishes nothing about whether the Lean proposition faithfully represents
-the source problem. A mistranslated or silently weakened theorem passes every
-mechanical check, discriminates between models, and lands in a field headline.
-Auditing only the highest-discrimination items does not catch it, because a
-faithfully-wrong statement need not discriminate unusually.
+`input` and the entry's stated origin, and record that they did.** The
+mechanical gate establishes that a statement elaborates and how automation
+behaves; it establishes nothing about whether the Lean proposition faithfully
+represents the source problem. A mistranslated or silently weakened theorem
+passes every mechanical check, discriminates between models, and lands in a
+field headline — and auditing only the highest-discrimination items does not
+catch it, because a faithfully-wrong statement need not discriminate unusually.
 
-This is **not** the reference-proof gate that was considered and rejected — it
-is a read, not a proof, and it does not require the reviewer to be able to
-prove the theorem. Entries stay `candidate` and out of reporting until someone
-does it, which makes the backlog visible rather than silent.
+The origin the review reads against depends on the entry. For a harvested
+entry it is the primary occurrence. An **authored** entry has empty
+`occurrences` and so no primary to read against; it carries a required
+`rationale` recording what it is meant to state and why it was written, and the
+review reads the Lean against that. Without that path an authored entry could
+never satisfy the gate and would sit at `candidate` forever, silently excluded
+from every aggregate. The gate applies to both; only the document differs.
+
+This is **not** the reference-proof gate considered and rejected in "Decisions
+taken before design" — it is a read, not a proof, and does not require the
+reviewer to be able to prove the theorem. Entries stay `candidate` and out of
+reporting until someone does it, which makes the backlog visible rather than
+silent.
 
 **Id permanence** falls out of the lifecycle: a retired entry stays in its
 shard with `status: "retired"` rather than being deleted, so an id can never be
@@ -304,13 +364,6 @@ enforced, not asserted: CI compares the registry against the merge base and
 contributor could delete a tombstone, bump the version, reuse the id, and pass
 every current-state uniqueness check — recreating precisely the broken external
 citation the registry exists to prevent.
-
-`difficulty` is the weakest part of this schema. Four levels is a guess, and
-the vocabulary should be revisited after roughly fifty real entries are tagged
-rather than defended. It is a *subjective per-problem* prior, and is deliberately
-distinct from `level` below, which is an *objective per-source* fact — an easy
-exercise can appear in a graduate text. Where the two disagree, `level` is the
-one to report on, because it is auditable.
 
 ## 3. Versioning, digests, and what "stale" means
 
@@ -327,16 +380,30 @@ Two version numbers, answering two questions:
 equals the changelog head does not detect an *unversioned* edit — a shard can
 change while both strings stay put and the test still passes, which makes a
 published version non-reproducible. So the changelog head binds a **corpus
-manifest digest** (a hash over every shard plus `sources.json`, the taxonomy
-tables, the **versioned analysis plan** of §8 — which fixes the hypothesis
-family, the primary comparison and the multiplicity adjustment, and so decides
-whether a ranking may be emitted at all, meaning a change to it under an
-otherwise identical corpus identity yields different published conclusions —
-**and every versioned fixture file**: once phase 3 edits a fixture's
-statement under a stable id the corpus contents and the assumptions of every
-dependent entry change, and a manifest that omitted them could establish
-neither reproducibility nor tampering), and CI additionally diffs the corpus against the merge base and
-requires the matching version and changelog entry when anything moved.
+manifest digest**, a hash over every content file:
+
+- every problem shard;
+- `sources.json`, including the survey-completion record;
+- the taxonomy tables and reporting groups;
+- every versioned fixture file — once phase 3 edits a fixture's statement under
+  a stable id, the assumptions of every dependent entry change, and a manifest
+  omitting them could establish neither reproducibility nor tampering;
+- `analysis-plan.json`, which fixes the hypothesis family, the primary
+  comparison and the multiplicity adjustment, and so decides whether a ranking
+  may be emitted at all;
+- `tombstones.json`, without which a removed or altered id-history entry
+  verifies clean in a published copy of `corpus/`, defeating exactly the
+  portable citation guarantee §2.2 claims.
+
+CI additionally diffs these files against the merge base and requires the
+matching version and changelog entry when any of them moved.
+
+**`measurements/` is deliberately outside that list.** Re-sweeping a baseline
+against a new Mathlib revision or a different host changes no content and must
+not demand a corpus version bump — the separation between invariant statements
+and provenance-bearing measurements (§1) is the whole reason the two live in
+different files, and a version gate that fired on measurement refreshes would
+manufacture releases whose content never changed.
 
 **Version numbers cannot express measurement validity, and must not be asked
 to.** A patch that corrects one statement invalidates measurements for that one
@@ -366,11 +433,12 @@ a staged condition true entries run staged while twins run batch under separate
 limits (`runner.py:219-225`). Correcting an entry from a true problem to a
 false twin therefore changes the mode it executes in, and without those fields
 the pre-correction record would still match the digest and could be reused or
-compared as though it came from the new mode. `input` is not decoration: `_batch_runner` passes it to
-the model as `informal_claim` (`runner.py:252`), and staged runs use it as the
-request. Rewording or correcting it can materially change solve behaviour, so a
-model measurement taken against the old wording is stale even though the Lean
-statement is untouched. Baseline staleness stays statement-only, which is why
+compared as though it came from the new mode. `input` is not decoration
+either: `_batch_runner` passes it to the model as `informal_claim`
+(`runner.py:252`), and staged runs use it as the request. Rewording or
+correcting it can materially change solve behaviour, so a model measurement
+taken against the old wording is stale even though the Lean statement is
+untouched. Baseline staleness stays statement-only, which is why
 one digest cannot serve both.
 
 Every measurement record stores the digest that governs it. Staleness is a
@@ -458,15 +526,16 @@ measured, because they are three different kinds of thing.
 | A5 | Fixture strength sweep | ladder against the goal with fixtures in scope; closing means the fixture is too strong | phase 3+ |
 | A6 | Non-vacuity check | a stored witness term, kernel-checked, instantiates the hypotheses | new |
 
-**A3 does not detect vacuity, and an earlier draft of this design wrongly said
-it did.** If `P` is vacuously true because its hypotheses are impossible or
-overstrong, then `¬P` is false and the ladder finds no closer — the sweep comes
-back clean on exactly the broken entry it was supposed to catch. A3's real job
+**A3 does not detect vacuity, though it looks as if it should.** If `P` is
+vacuously true because its hypotheses are impossible or overstrong, then `¬P`
+is false and the ladder finds no closer — the sweep comes back clean on exactly
+the broken entry one would expect it to catch. A3's real job
 is sign errors and statements that are refutably false.
 
-Vacuity needs A6, and A6 needs an artifact — an earlier draft said "a witness
-instance elaborates" and specified neither an input nor anything persisted,
-which made it unimplementable. `Entry` holds only a raw `binders` string, and
+Vacuity needs A6, and A6 needs a persisted artifact. "A witness instance
+elaborates" is not a specification: it names neither an input nor anything
+stored, and cannot be implemented or tested. `Entry` holds only a raw
+`binders` string, and
 for dependent binders like `(n : Nat) (h : n > 0)` merely elaborating the
 binders proves nothing about whether compatible values exist. So an entry
 carries a **`witness`**: a Lean term instantiating its hypotheses, stored in
@@ -503,10 +572,10 @@ Mathlib. B4 is *"can the model do this mathematics"*.
 | C1 | Per-field solve rate | Wilson interval per field over **item-level** outcomes, restricted to tier ≥ 2 and `status == "active"` |
 | C2 | Paired model comparison | McNemar + CI per field; **refuses a ranking claim when the CI crosses zero** |
 | C3 | Item discrimination | variance across models; feeds the spot-audit queue and difficulty strata — **never a filter on the scored corpus** |
-| C7 | Ceiling and floor census | items no model solves and items all models solve, reported as strata rather than removed |
 | C4 | Tier profile per field | how much of a field Mathlib's automation already covers |
 | C5 | Contamination signal | twin **refusal** rate against true-statement solve rate; exhaustion reported separately |
 | C6 | Fixture-assisted uplift | `B4 − B1` per field, **stratified by primary-source `level`**, core and peripheral reported apart |
+| C7 | Ceiling and floor census | items no model solves and items all models solve, reported as strata rather than removed |
 
 C6 is the payoff of running both conditions, but it is named for what it
 measures rather than what we hope it means. **`B4 − B1` is uplift, not
@@ -521,12 +590,14 @@ until something does, the headline is uplift and the coverage reading is an
 interpretation stated as such. It is
 reported **stratified by source `level`, never aggregated** — a graduate text
 demands antecedents a first course would not, so an undifferentiated number
-reads a level difference as a coverage gap. Stratified, C6 states the claim a
-Mathlib maintainer can act on: which fields the library covers to first-course
-standard, and which it covers to graduate standard. Core results (present in
-most surveyed texts) and peripheral ones are reported apart for the same
-reason — pooling them lets a gap in specialised material read as a gap in the
-curriculum.
+reads a level difference as a difference in uplift. Stratified, C6 says where
+supplying the curriculum's own prior results changes what a model can prove,
+at first-course level and at graduate level. That is a bounded, actionable
+finding for a Mathlib maintainer; it is *not* the statement that Mathlib covers
+one level and not the other, and stratification does not license upgrading it
+into one. Core results (present in most surveyed texts) and peripheral ones are
+reported apart for the same reason — pooling them lets an uplift concentrated
+in specialised material read as one spanning the curriculum.
 
 C5 must use the **refusal** criterion, not "failed to prove". Hardy already
 distinguishes `refused` (terminal in `{no_proof_submitted, axioms_rejected}`)
@@ -572,16 +643,16 @@ scoring one run and `scoreboard.py` is already 622 lines.
 condition separates B1 from B4: fixture references live on the entry and in its
 digest, so a bare run and a fixtured run over the same corpus would carry
 identical condition and prompt identity and be indistinguishable afterwards.
-And the condition-equality rule below, as first drafted, made C6 impossible —
-it demands every non-model condition match, while C6 exists precisely to
-compare two runs that differ in fixtures. So the flag is explicit — and the exception is **scoped to one comparison
-kind, not blanket**. A blanket exception would let a bare scoreboard for model
-A be paired against a fixtured one for model B and emit a ranking that credits
-the fixture intervention to the model. `compare` therefore takes the comparison
-kind explicitly: a **C2** cross-model comparison requires `fixtures_enabled` to
-be *equal*, while a **C6** uplift comparison requires it to *differ* and
-requires model identity to be *equal*. Every other non-model condition must
-match in both.
+And a blanket condition-equality rule would make C6 impossible — it would
+demand every non-model condition match, while C6 exists precisely to compare
+two runs that differ in fixtures. So the flag is explicit — and the exception
+is **scoped to one comparison kind, not blanket**. A blanket exception would
+let a bare scoreboard for model A be paired against a fixtured one for model B
+and emit a ranking that credits the fixture intervention to the model.
+`compare` therefore takes the comparison kind explicitly: a **C2** cross-model
+comparison requires `fixtures_enabled` to be *equal*, while a **C6** uplift
+comparison requires it to *differ* and requires model identity to be *equal*.
+Every other non-model condition must match in both.
 
 `hardy evals compare <scoreboard>... --by field`:
 
@@ -643,8 +714,8 @@ rank; it does not quote a universal number.
 
 ### 9.0 The antecedent policy
 
-What counts as a reasonable antecedent sets the scale of the entire
-coverage-gap measurement. If the rule varies by field, the cross-field
+What counts as a reasonable antecedent sets the scale of the entire uplift
+measurement. If the rule varies by field, the cross-field
 comparison inherits the inconsistency — and unlike the other confounds in this
 design, this one is load-bearing for a headline result rather than a caveat on
 one. So the rule is fixed, stated once, and applies everywhere:
@@ -672,52 +743,55 @@ prove in chapter 2 something Mathlib derives much later, or vice versa. The
 policy follows the book, because the book is what defines the reader's
 competence at that point.
 
-**This is mechanically enforced, not merely documented.** Because `locator` is
-an ordered tuple (§2.1), `corpus check` verifies for every fixture attached to
-an entry that the fixture has an occurrence in the entry's **primary**
-`source_id` at a locator **strictly less than** the entry's primary locator.
-A fixture reaching forward in the text — assuming a later result to prove an
-earlier exercise — is rejected, as is one that only appears in some other book,
-and so is one sharing the entry's own locator.
+**What the mechanical check enforces.** Because `locator` is an ordered tuple
+(§2.1), `corpus check` verifies for every fixture attached to an entry that the
+fixture has an occurrence in the entry's **primary** `source_id` at a locator
+**strictly less than** the entry's primary locator. Rejected, therefore: a
+fixture reaching forward in the text (assuming a later result to prove an
+earlier exercise), one that appears only in some other book, and one sharing
+the entry's own locator.
 
-**What this does not enforce, stated plainly:** the check establishes only that
-a fixture occurs *somewhere earlier* in the primary text. It cannot enforce
-"prefer the same chapter, reach earlier only when needed." Two curators can
-attach very different amounts of distant background and both pass `corpus
-check`, moving B4 and C6 — which is the author judgement this section claimed
-the invariant removed. It narrows that judgement; it does not remove it. So a
-fixture from **outside the entry's own chapter** additionally requires a
-persisted justification, reviewed with the entry, recording why the nearer
-material was insufficient. Same-chapter antecedents need none. The ordering is strict because
-"prior result" means prior: a multi-part exercise's own sibling lemma shares
-its locator, is not earlier curriculum, and can materially shorten B4 while A5
-still passes — A5 only tests that the fixed ladder does not close the goal, not
-that the fixture is a legitimate antecedent. Where a text's parts genuinely
-need ordering, the locator gains a subitem component rather than the
-comparison being loosened. This is the invariant
-that keeps the antecedent policy uniform across fields without depending on an
-author's judgement or a reviewer's diligence.
+The ordering is strict because "prior result" means prior. A multi-part
+exercise's own sibling lemma shares its locator, is not earlier curriculum, and
+can materially shorten B4 while A5 still passes — A5 only tests that the fixed
+ladder does not close the goal, not that the fixture is a legitimate
+antecedent. Where a text's parts genuinely need ordering, the locator gains a
+subitem component rather than the comparison being loosened.
 
 The check runs against the primary occurrence specifically, not against any
 occurrence. Both the entry and the fixture may appear in several texts, and an
 existential over all of them would let the choice of books relax the policy
 (§2.1). The primary is what the entry was harvested from, so it is the reader
-whose competence is being modelled.
+whose competence is being modelled. An **authored** entry has no primary
+occurrence at all, and so cannot be subject to this check: authored entries are
+therefore ineligible to carry fixtures, and an entry with empty `occurrences`
+and a non-empty `fixtures` is rejected.
 
-Its limit, stated plainly: the rule cannot make the *books* uniform. Textbook
-difficulty varies and cannot be controlled for. That variance is a level
-effect, not a per-model one — both models face the same book — so within-field
-model comparison (the headline claim) is unaffected. It contaminates cross-field
+**What it does not enforce.** The check establishes only that a fixture occurs
+*somewhere earlier* in the primary text. It cannot enforce "prefer the same
+chapter, reach earlier only when needed," so two curators can attach very
+different amounts of distant background and both pass. That moves B4 and C6.
+The invariant **narrows** curator judgement to a checkable envelope; it does
+not remove it, and it should not be described as if it did.
+What closes the remaining gap is disclosure rather than mechanism: a fixture
+from **outside the entry's own chapter** requires a persisted justification,
+reviewed with the entry, recording why the nearer material was insufficient.
+Same-chapter antecedents need none.
+
+**What no rule here can fix**: the *books* are not uniform. Textbook difficulty
+varies and cannot be controlled for. That variance is a level effect, not a
+per-model one — both models face the same book — so within-field model
+comparison, the headline claim, is unaffected. It contaminates cross-field
 claims, already the weaker statement, and it contaminates C6, which is why C6
 is reported stratified by `level` rather than aggregated.
 
 ### 9.1 Mechanism
 
-**An antecedent never goes in `Entry.binders`.** An earlier draft recommended
-exactly that — a missing lemma as a hypothesis binder, "sound by construction,
-needs no new machinery" — and it was wrong in a way that would have silently
-destroyed the measurement. `binders` are part of the canonical declaration and
-are injected into *every* run, B1 included. A hypothesis-encoded antecedent is
+**An antecedent never goes in `Entry.binders`.** The tempting approach is
+exactly that — a missing lemma as a hypothesis binder, sound by construction
+and needing no new machinery — and it destroys the measurement silently.
+`binders` are part of the canonical declaration and are injected into *every*
+run, B1 included. A hypothesis-encoded antecedent is
 therefore present in the supposedly bare condition: B1 stops testing the
 theorem against stock Mathlib, `B4 − B1` goes to zero for exactly the gaps that
 mechanism was meant to cover, and the entry silently states a stronger theorem
@@ -746,7 +820,7 @@ the eval path deliberately passes no approved assumptions: "a staged run is
 nobody's place to widen the trust base."
 
 A fixture set is therefore an explicit, **per-entry, corpus-declared** widening
-of that allowlist. Three gates, all reusing the existing sweep:
+of that allowlist. Four gates, the first three reusing the existing sweep:
 
 1. Fixtures must not prove `False` (A4). Inconsistency is not decidable; this
    catches the ordinary blunder, which is the realistic failure.
@@ -790,87 +864,95 @@ before they may carry a headline claim. That is a handful of entries, not 500.
 Hermetic except where Lean is genuinely required (already gated behind
 `--acknowledge-unsafe-execution`).
 
-- taxonomy: every corpus MSC code maps; mapping table is well-formed
-- schema: unknown MSC rejected; retired-without-reason rejected; override
-  without reason rejected; **a twin whose MSC drifts from its target rejected**
-- digests: editing `conclusion` changes the digest; editing `fixtures` changes
-  the digest; editing `input` does not
-- versioning: `corpus_version` matches the changelog head
-- sharding: ids unique across shards; a duplicate across two shards is rejected
-- scaling: a generated 5,000-entry corpus loads within a time bound (guards the
-  quadratic regression)
-- aggregation: known counts against hand-computed Wilson bounds
-- `compare`: synthetic scoreboards with known discordance, asserting **both**
-  the refusal path (CI crosses zero) and the claim path (it does not);
-  mismatched-digest scoreboards refused
-- vacuity: a deliberately vacuous entry is **not** caught by A3 (the negation
-  sweep finds no closer, which is the point of §7's correction) and **is**
-  caught by A6's witness check
-- digests: editing `input` changes `prompt_digest` but not `statement_digest`,
-  so B-group measurements go stale while A-group ones stay fresh; editing a
-  referenced fixture's *statement* under a stable id changes both
+**Schema and taxonomy**
+
+- every corpus MSC code has a mapping; the mapping table is well-formed; a
+  reporting group covers every 2-digit class in use
+- rejected: an unknown MSC code, an empty `msc`, a retirement without a reason,
+  an override without a reason, `"math.AC "` and any invented arXiv class
+- a false twin whose MSC drifts from its target is rejected
+- every `source_id` in every occurrence exists in `sources.json`; every source
+  carries a `level`; the survey-completion record exists for any field whose
+  canonicity denominator is reported
+
+**Digests and staleness**
+
+- editing `conclusion`, `binders`, `imports`, or `witness` changes
+  `statement_digest`; editing a referenced fixture's *statement* under a stable
+  id changes it too, transitively
+- editing `input` changes `prompt_digest` but **not** `statement_digest`, so
+  B-group measurements go stale while A-group measurements stay fresh
+- flipping `expected` between `true` and `false` changes `prompt_digest`, since
+  it changes the mode the entry executes in
+- adding or reordering `occurrences` does not change either digest — but
+  reordering changes which occurrence is primary, and so can change the
+  antecedent verdict
+- a cyclic fixture dependency graph is rejected rather than recursed
+
+**Lifecycle and provenance**
+
+- a `candidate` entry never reaches a headline aggregate
+- `status: "active"` without a `review` record is rejected; editing a reviewed
+  entry's `conclusion` — or its `msc` — invalidates the record and demotes the
+  entry without anyone touching `status`
+- an authored entry (empty `occurrences`) with a `rationale` can be promoted;
+  one without cannot; one carrying fixtures is rejected outright
+- an entry whose `witness` fails the kernel is rejected; `witness: null`
+  without a `witness_note` is rejected
+- the deliberately vacuous entry is **not** caught by A3 — the negation sweep
+  finds no closer, which is the point of §7's correction — and **is** caught by
+  A6
+- ids: unique across shards; reusing an id recorded in `tombstones.json` is
+  rejected; CI rejects a diff that removes or mutates an issued id
+- a shard edited without a version bump fails CI's merge-base diff;
+  `corpus_version` matches the changelog head and the manifest digest
+
+**Antecedents and fixtures**
+
+- a fixture is rejected when it sits *after* its entry's primary locator, when
+  it shares that locator exactly, and when it occurs only in a non-primary text
+- a fixture whose own *primary* is elsewhere but which occurs in the entry's
+  primary at an earlier locator is **accepted**
+- a cross-chapter fixture without a persisted justification is rejected
+- `()` and `(-1,)` are rejected before any ordering comparison; tuples of
+  unequal length compare lexicographically as intended
+- an entry whose `binders` mention a fixture's declared name is rejected — an
+  antecedent must never reach the bare condition
 - axioms: a constructive proof reporting none of the standard three is
   accepted; a proof reporting an undeclared axiom is refused
-- lifecycle: a `candidate` entry never reaches a headline aggregate; promotion
-  requires a recorded faithfulness review
-- tombstones: reusing a deleted retired id is rejected against the registry
-- clustering: 125 items at 10 repeats produce an interval computed from 125
-  observations, not 1,250
-- multiplicity: with several models over four fields, the adjusted gate refuses
-  claims the unadjusted gate would emit
-- compare: scoreboards differing in `mode`, `limits`, `repeats` or either
-  prompt-set hash are refused even when corpus and environment agree
-- versioning: a shard edited without a version bump fails CI's merge-base diff
-- export: every emitted shell line runs as written — unique `--label`, and the
-  acknowledgement present
-- canonicity: a theorem at four locations in one book counts as one source, not
-  four; the surveyed-source denominator is recorded and reported alongside
-- digests: flipping `expected` from `true` to `false` changes `prompt_digest`,
-  so the pre-correction model record goes stale
-- overrides: `"math.AC "` and an invented arXiv class are both rejected
-- antecedent policy: a fixture sharing the entry's exact locator is rejected
-  (strictness), not merely one that follows it
-- compare: a B1/B4 pair differing only in `fixtures_enabled` is accepted; a
-  pair differing in `fixtures_enabled` *and* `mode` is refused
-- lifecycle: an authored entry with empty `occurrences` and a recorded
-  `rationale` can be promoted; one without a `rationale` cannot
-- review binding: editing a reviewed entry's `conclusion` invalidates its
-  `review` record and demotes it out of reporting without anyone touching
-  `status`
-- A6: an entry whose `witness` fails the kernel is rejected; an entry with
-  `witness: null` and no justification is rejected; the deliberately vacuous
-  fixture is caught here, not by A3
-- binders: an entry whose `binders` mention a fixture's declared name is
-  rejected — an antecedent must never reach the bare condition
-- locators: `()` and `(-1,)` are rejected before any ordering comparison
-- tombstones: CI rejects a diff that removes or mutates an issued id
-- compare: a C2 pair differing in `fixtures_enabled` is refused; a C6 pair
-  differing in `fixtures_enabled` *and* model is refused; a C6 pair differing
-  only in `fixtures_enabled` is accepted
-- compare: two scoreboards both recording `source_revision: None` are refused
-- multiplicity: splitting one planned family across separate invocations
-  yields the same adjustment as running it in one
-- antecedent policy: a fixture at a locator *after* its entry's primary is
-  rejected; a fixture occurring only in a non-primary text is rejected; a
-  fixture whose *primary* is elsewhere but which occurs in the entry's primary
-  at an earlier locator is **accepted**; locator tuples of unequal length
-  compare lexicographically as intended
-- occurrences: reordering `occurrences` changes which is primary and so can
-  change the antecedent verdict; adding a citation does **not** change
-  `statement_digest` and so does not invalidate measurements
-- sources: every `source_id` in every occurrence exists in `sources.json`;
-  every source carries a `level`; an entry with `occurrences` empty is treated
-  as authored and is exempt from the antecedent check but also ineligible to
-  carry fixtures
-- C6: aggregating across levels is not reachable through the reporting API —
-  the stratified form is the only one available
+
+**Aggregation and comparison**
+
+- known counts reproduce hand-computed Wilson bounds
+- 125 items at 10 repeats produce an interval computed from 125 observations,
+  not 1,250
+- `invalid` rows are reported as missing measurements, not as failures, and a
+  field over the declared invalid threshold carries no ranking claim
+- `compare` refuses scoreboards differing in `mode`, `limits`, `repeats`, or
+  either prompt-set hash even when corpus and environment agree; and refuses
+  two scoreboards that both record `source_revision: None`
+- a C2 pair differing in `fixtures_enabled` is refused; a C6 pair differing in
+  `fixtures_enabled` *and* model is refused; a C6 pair differing only in
+  `fixtures_enabled` is accepted
+- an interrupted scoreboard, even one whose item set matches exactly, yields a
+  partial report and never a ranking
+- synthetic discordance exercises both paths: refusal when the CI crosses zero,
+  a claim when it does not
+- splitting one planned family across separate invocations yields the same
+  multiplicity adjustment as running it in one
+- C6's level-aggregated form is not reachable through the reporting API
+
+**Scale**
+
+- a generated 5,000-entry corpus loads within a time bound, guarding the
+  quadratic regression
 
 ## 11. Phases
 
-0. **Multi-backend runner.** Named in "Blocking prerequisite" above and *not
-   scoped here*. Nothing in phases 1-3 is wasted without it — the corpus,
-   taxonomy and single-provider reports all stand — but the cross-model
-   comparison in the Goal is unreachable until it lands.
+0. **Multi-backend runner.** Specified in "Blocking prerequisite" above and
+   *not scoped here*. Nothing in phases 1-4 is wasted without it — the corpus,
+   the taxonomy, and the full report set across Anthropic models all stand —
+   but no *cross-provider* comparison is reachable until it lands.
 1. **Schema and scale.** Taxonomy module with reporting groups, vendored MSC
    list and mapping, `Entry` fields (including `fixtures`, reserved and
    digested), **both digests**, `corpus_version` with the manifest binding and
@@ -892,35 +974,6 @@ Hermetic except where Lean is genuinely required (already gated behind
 
 Phase 1 precedes phase 3 deliberately: settling the tagging, digest and shard
 layout before 500 entries exist is what prevents a hand re-tag.
-
-## Blocking prerequisite: the runner is single-backend
-
-`run_set_command` refuses any backend but `claude` outright
-(`runner.py:279-284`): *"the evals runner drives the Claude backend only: the
-batch runner, the canonical reader and staged tool-event counting are
-Claude-shaped."*
-
-**So the comparison this design exists to make cannot be run today.** "Is Opus
-better than GPT at commutative algebra" needs two providers; the pipeline
-supports one. Every phase below assumed otherwise, and no amount of corpus or
-reporting work reaches the goal without this. Two consequences:
-
-1. **`compare` requiring `backend` equality would forbid the motivating
-   comparison** even once the runner allows it. The compared intervention is
-   `(backend, model)` together, not `model` alone: a cross-provider comparison
-   necessarily varies runtime as well as weights, and that is an *inseparable
-   confound to record*, not a reason to refuse the pair. `compare` therefore
-   treats cross-backend comparisons as a declared mode that labels the
-   confound, while still requiring every other non-model condition to match.
-2. **A phase 0 exists that this design did not previously name**: making the
-   runner genuinely multi-backend — a second canonical reader, backend-shaped
-   tool-event counting, and a grading path that is not Claude-specific. Its
-   size is unknown and it is not scoped here.
-
-Until phase 0 lands, this corpus can measure one provider against itself
-across time, fields and fixtures — C1, C4, C5, C6 and the whole A-group are
-reachable — but not one provider against another. That is a real and useful
-instrument, and it is not the one the Goal describes.
 
 ## Risks
 
