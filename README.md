@@ -128,9 +128,13 @@ they produce; with `--force-budget-exhaustion-test` it exercises the whole
 pipeline with no model, no network, and no toolchain. The earlier one-shot proof
 experiment remains available as `hardy batch`, but is secondary.
 
-`hardy evals` runs a fixed, tiered problem list (`evals/problems.json`, twenty
-statements, five of them false "twins") rather than the three-problem acceptance
-set: `hardy evals baseline` sweeps a committed tactic set to measure, per
+`hardy evals` runs a tiered, classified corpus (`corpus/`, twenty statements so
+far, five of them false "twins") rather than the three-problem acceptance set.
+The corpus is a standalone CC-BY-4.0 dataset: entries are sharded by MSC2020
+2-digit class under `corpus/problems/<NN>.json`, hold statements only — nothing
+measured, nothing derived — and a release is gated by a manifest digest the
+changelog head binds. `hardy evals corpus check` reports every mechanical
+objection to it and `hardy evals corpus report` gives coverage by field. Then: `hardy evals baseline` sweeps a committed tactic set to measure, per
 statement, how much a plain tactic already closes before any model is asked;
 `hardy evals run --label L --acknowledge-unsafe-execution` scores a model
 against that floor and writes a scoreboard under `evals/scoreboards/<label>/`;

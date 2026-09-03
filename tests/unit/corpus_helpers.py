@@ -12,12 +12,21 @@ from collections import defaultdict
 from pathlib import Path
 
 from hardy.evals.problems import Entry
+from hardy.evals.taxonomy import CORPUS
 
 VERSION = "0.1.0"
 
 
+def copy_taxonomy(root: Path) -> None:
+    """A corpus carries its own MSC tables, so a fixture corpus must too."""
+    (root / "taxonomy").mkdir(parents=True, exist_ok=True)
+    for name in ("msc2020.json", "msc-to-arxiv.json"):
+        (root / "taxonomy" / name).write_bytes((CORPUS / "taxonomy" / name).read_bytes())
+
+
 def write_corpus(root: Path, entries: tuple[Entry, ...], *, version: str = VERSION) -> Path:
     """Write `entries` as a loadable corpus under `root`; return `root`."""
+    copy_taxonomy(root)
     shards: dict[str, list[dict]] = defaultdict(list)
     for entry in entries:
         shards[entry.shard].append(entry.model_dump(mode="json"))

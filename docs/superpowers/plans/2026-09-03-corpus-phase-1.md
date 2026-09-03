@@ -1603,6 +1603,43 @@ valid commutative algebra. They now verify the whole code first, which is what
 protects callers that are not an `Entry` — the editor, a report, a third
 party's script over the published corpus.
 
+**Taxonomy lookups resolve from the corpus being loaded.** The tables were
+read from a module-global path into Hardy's own checkout, so `--corpus`
+pointing at an extracted release validated its entries against the wrong map
+while `manifest_digest` bound the right one. `taxonomy.using(root)` scopes
+every lookup to the corpus `load_corpus` is reading, and a corpus without its
+own tables is refused rather than silently falling back.
+
+**The environment digest includes the host.** The spec's table always said it
+did; the implementation hashed only `EnvironmentIdentity`. Machine speed turns
+the sweep's process backstop into `timed_out` attempts, so a tactic that times
+out on a slow machine and closes on a fast one gives the same statement two
+different tiers. The refusal names the two machines, because "environment
+digest" alone reads as a mystery to whoever hits it.
+
+**The procedure digest includes the deciding source.** `__version__` is fixed
+at `0.1.0` across every checkout, so hashing it alone accepted measurements
+produced by different sweep logic, a different axiom parser, or a different
+notion of a successful elaboration. It now covers the bytes of `sweep.py`,
+`audit.py` and `lean.py`. Deliberately conservative — editing a comment in one
+of them stales the baseline — because the alternative error is the one the
+arrangement exists to prevent.
+
+**A missing statement digest is staleness, not agreement.** The per-entry gate
+read `baseline.statement_digests.get(id) not in (None, digest)`, so an entry
+with no recorded digest passed; the entry-set check compares `baseline.entries`,
+not the digest keys, so that entry still supplied its tier and the headline
+floor with nothing identifying what was measured.
+
+**`corpus check` normalises sidecar failures.** Only shard loading was inside
+the `try`, so a missing `tombstones.json`, an unparseable `sources.json` or a
+changelog with no heading exited with a traceback out of the command whose
+whole job is to report malformed corpus state.
+
+**The canonical docs name the corpus.** `README.md`, `FEATURES.md` and
+`ARCHITECTURE.html` still described `evals/problems.json` as the implemented
+evaluation set — a path this change deletes.
+
 ### Known gaps, deliberately left to their phase
 
 - **Candidate entries are not yet excluded from the headline.** All twenty

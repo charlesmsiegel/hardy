@@ -1,8 +1,11 @@
 """MSC lookups: names, roll-ups, reporting groups, and the arXiv derivation."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from hardy.evals import taxonomy
 from hardy.evals.taxonomy import (
     UnknownCode,
     arxiv_classes,
@@ -49,3 +52,28 @@ def test_an_invented_tail_is_not_rolled_up_as_if_it_were_its_class():
     for lookup in (field_of, group_of, arxiv_of, name_of):
         with pytest.raises(UnknownCode):
             lookup("13ZZZ")
+
+
+def test_lookups_resolve_from_the_corpus_being_loaded_not_hardys_own(tmp_path):
+    """`--corpus` may point at an extracted release or a newer checkout.
+
+    `manifest_digest` binds *that* corpus's taxonomy files, so validating its
+    entries against Hardy's own vendored tables would reject codes the
+    selected corpus carries, accept codes it removed, and report groups from
+    a different mapping.
+    """
+    taxonomy_dir = tmp_path / "taxonomy"
+    taxonomy_dir.mkdir(parents=True)
+    (taxonomy_dir / "msc2020.json").write_text(
+        json.dumps({"schema_version": 1, "codes": {"99Z99": "Invented studies"}}), encoding="utf-8")
+    (taxonomy_dir / "msc-to-arxiv.json").write_text(json.dumps({
+        "schema_version": 1, "arxiv": {"99": "math.XX"},
+        "fields": {"99": "Invented"}, "groups": {"99": "invented"},
+    }), encoding="utf-8")
+
+    assert not is_known("99Z99")
+    with taxonomy.using(tmp_path):
+        assert is_known("99Z99") and name_of("99Z99") == "Invented studies"
+        assert group_of("99Z99") == "invented" and arxiv_of("99Z99") == "math.XX"
+        assert not is_known("13A15"), "Hardy's own table must not leak into the selected corpus"
+    assert is_known("13A15"), "the default root is restored"

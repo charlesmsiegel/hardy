@@ -20,6 +20,7 @@ from hardy.evals.problems import Entry, sha256_of
 from hardy.storage import RunStore
 
 ENTRY = Entry(id="odd-sum", input="...", name="OddSum", binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
+HOST = sweep.host_info()
 IDENTITY = EnvironmentIdentity(lean_version="4.33.1", lean_commit="8", mathlib_revision="v", lake_manifest_sha256="m" * 64)
 
 
@@ -153,9 +154,9 @@ def test_validate_scoreboard_checks_the_canonical_hashes(tmp_path):
     problems_path = write_corpus(tmp_path / "corpus", (ENTRY,))
     baseline = sweep.Baseline(
         created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=manifest_digest(problems_path), environment=IDENTITY,
-        environment_digest=sweep.environment_digest_of(IDENTITY), procedure_digest=sweep.procedure_digest_of(),
+        environment_digest=sweep.environment_digest_of(IDENTITY, HOST), procedure_digest=sweep.procedure_digest_of(),
         statement_digests={ENTRY.id: ENTRY.statement_digest()},
-        heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(),
+        heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host=HOST, problems=(),
         # `elaborates=False`, not `True`: these fixtures never actually swept
         # "odd-sum" against any tactic, and `sweep.Baseline`'s completeness
         # check (item 4) now requires an `elaborates=True` entry's `attempts`
@@ -292,9 +293,9 @@ def _solved_fixture(tmp_path: Path):
     problems_path = write_corpus(tmp_path / "corpus", (entry,))
     baseline = sweep.Baseline(
         created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=manifest_digest(problems_path), environment=DETERMINISTIC_IDENTITY,
-        environment_digest=sweep.environment_digest_of(DETERMINISTIC_IDENTITY), procedure_digest=sweep.procedure_digest_of(),
+        environment_digest=sweep.environment_digest_of(DETERMINISTIC_IDENTITY, HOST), procedure_digest=sweep.procedure_digest_of(),
         statement_digests={entry.id: entry.statement_digest()},
-        heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(),
+        heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host=HOST, problems=(),
         # `elaborates=False`, not `True`: these fixtures never actually swept
         # "odd-sum" against any tactic, and `sweep.Baseline`'s completeness
         # check (item 4) now requires an `elaborates=True` entry's `attempts`

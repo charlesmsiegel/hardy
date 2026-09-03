@@ -7,24 +7,58 @@ configuration (spec §1).
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
 
 CORPUS = Path(__file__).resolve().parents[3] / "corpus"
+
+# Which corpus these lookups read. `--corpus` may name an extracted release or
+# a newer checkout, and `manifest_digest` binds *that* corpus's taxonomy files
+# -- so validating its entries against Hardy's own vendored tables would
+# reject codes it carries, accept codes it removed, and report groups from a
+# different mapping. `load_corpus` scopes every lookup to the root it reads.
+_active = CORPUS
 
 
 class UnknownCode(KeyError):
     """A code absent from the vendored MSC2020 table."""
 
 
+@contextmanager
+def using(root: Path) -> Iterator[None]:
+    """Resolve lookups against `root`'s tables for the duration of the block.
+
+    A module-level root rather than a parameter threaded through every call
+    because `Entry`'s own validators do the lookups, and a pydantic validator
+    has nowhere to take a corpus from. One corpus at a time per process is the
+    real constraint, so this states it rather than pretending otherwise.
+    """
+    global _active
+    previous, _active = _active, Path(root)
+    try:
+        yield
+    finally:
+        _active = previous
+
+
 @cache
+def _codes_at(root: Path) -> dict[str, str]:
+    return json.loads((root / "taxonomy" / "msc2020.json").read_text(encoding="utf-8"))["codes"]
+
+
+@cache
+def _mapping_at(root: Path) -> dict[str, dict[str, str]]:
+    return json.loads((root / "taxonomy" / "msc-to-arxiv.json").read_text(encoding="utf-8"))
+
+
 def _codes() -> dict[str, str]:
-    return json.loads((CORPUS / "taxonomy" / "msc2020.json").read_text(encoding="utf-8"))["codes"]
+    return _codes_at(_active)
 
 
-@cache
 def _mapping() -> dict[str, dict[str, str]]:
-    return json.loads((CORPUS / "taxonomy" / "msc-to-arxiv.json").read_text(encoding="utf-8"))
+    return _mapping_at(_active)
 
 
 def is_known(code: str) -> bool:
@@ -80,7 +114,6 @@ def arxiv_of(code: str) -> str:
     return _rollup(_mapping()["arxiv"], code)
 
 
-@cache
 def arxiv_classes() -> frozenset[str]:
     """The mapping's codomain -- what an `arxiv_override` may name."""
     return frozenset(_mapping()["arxiv"].values())
