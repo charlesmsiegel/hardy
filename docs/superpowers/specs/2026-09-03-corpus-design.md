@@ -144,8 +144,9 @@ Added to `Entry`:
 | `status` | `Literal["candidate","active","retired"]` | lifecycle |
 | `retired_reason` | `str \| None` | required when retired |
 | `rationale` | `str \| None` | required when `occurrences` is empty; what an authored entry is meant to state and why |
-| `witness` | `str \| None` | Lean term instantiating the hypotheses (A6); `null` requires a justification |
-| `review` | `Review \| None` | reviewer, date, and the digests read; required for `status: "active"` |
+| `witness` | `str \| None` | Lean term instantiating the hypotheses (A6) |
+| `witness_note` | `str \| None` | required when `witness` is null — why none can be produced; without a field to hold it the §7 validator cannot tell a justified unwitnessed entry from an unexplained one |
+| `review` | `Review \| None` | reviewer, date, and the digests read — **including `msc` and the reporting group**; required for `status: "active"` |
 | `fixtures` | `tuple[str, ...]` | fixture ids; empty until phase 3, but digested from phase 1 |
 
 Removed: `area`. The twenty existing entries are hand-mapped to MSC codes as
@@ -168,7 +169,11 @@ New validators, in the spirit of `tier_must_follow_its_closers`
   only a bare `status`, a contributor can mark an unreviewed entry active, or
   edit a reviewed one and leave the flag set, and §8 puts it straight into a
   headline. Binding the record to the statement, `input` and origin digests
-  makes an edit demote the entry to `candidate` automatically;
+  makes an edit demote the entry to `candidate` automatically. The record binds
+  the **classification** too: a wrong-but-syntactically-valid MSC code passes
+  every taxonomy validator, so without it a faithfully-reviewed entry could be
+  moved to an unrelated field and keep its approval while contributing to the
+  wrong field headline — and field attribution is the headline claim;
 - `arxiv_override` requires `override_reason`, **and is validated against the
   mapping table's codomain** — an unconstrained string would let `"math.AC "`
   or an invented class through, where it becomes a distinct value for
@@ -323,7 +328,11 @@ equals the changelog head does not detect an *unversioned* edit — a shard can
 change while both strings stay put and the test still passes, which makes a
 published version non-reproducible. So the changelog head binds a **corpus
 manifest digest** (a hash over every shard plus `sources.json`, the taxonomy
-tables, **and every versioned fixture file** — once phase 3 edits a fixture's
+tables, the **versioned analysis plan** of §8 — which fixes the hypothesis
+family, the primary comparison and the multiplicity adjustment, and so decides
+whether a ranking may be emitted at all, meaning a change to it under an
+otherwise identical corpus identity yields different published conclusions —
+**and every versioned fixture file**: once phase 3 edits a fixture's
 statement under a stable id the corpus contents and the assumptions of every
 dependent entry change, and a manifest that omitted them could establish
 neither reproducibility nor tampering), and CI additionally diffs the corpus against the merge base and
@@ -336,8 +345,15 @@ id and leaves the rest perfectly good. So:
 Each entry carries **two** digests, because Lean measurements and model
 measurements are invalidated by different edits.
 
-**`statement_digest`** — over `name`, `binders`, `conclusion`, `imports`, and
-the **resolved content digests of every fixture, transitively**. This governs
+**`statement_digest`** — over `name`, `binders`, `conclusion`, `imports`, the
+`witness` and its null-justification, and the **resolved content digests of
+every fixture, transitively**. The witness is in here because the digest
+governs incremental A-group reuse: editing a valid witness into one the kernel
+rejects would otherwise leave the cached A6 pass looking current and bypass the
+non-vacuity gate entirely. Transitive resolution requires the fixture
+dependency graph to be **acyclic** — a cycle either recurses forever or forces
+an order-dependent fallback that yields unstable identities — and `corpus
+check` rejects one. This governs
 the A-group (Lean-only) measurements. Digesting fixture *ids* would not be
 enough: an edit to a referenced fixture's statement under a stable id changes
 the assumptions of every dependent problem while leaving A4, A5 and B4
@@ -528,6 +544,16 @@ existing `wilson()` (`scoreboard.py:155`). Reporting is restricted to tier ≥ 2
 and `status == "active"`: automation-solvable, candidate and retired entries
 never reach a headline number.
 
+**`invalid` rows are excluded from ranking-capable reports, not counted as
+failures.** `_tier_aggregate` puts every true row in `n` but only `solved` rows
+in the numerator (`scoreboard.py:189-201`), so a row marked `invalid` — an
+unreadable or unauditable artifact, a harness fault — is scored exactly as a
+model that failed to prove the theorem. Reusing that machinery unchanged would
+let harness corruption depress C1 and manufacture C2 discordance that looks
+like a model difference. Invalid items are reported as missing measurements
+with their own count, and a field whose invalid rate exceeds a declared
+threshold cannot carry a ranking claim at all.
+
 **Repeats collapse to one item-level outcome before any interval or test.**
 Scoreboards store one row per repeat and the existing aggregator counts rows,
 so feeding rows straight into `wilson()` or McNemar treats correlated attempts
@@ -574,7 +600,12 @@ match in both.
    in most of them, and the whole difference would be attributed to the
    models. The paired item set must be identical too — same ids, same
    `prompt_digest` — since a comparison over different items is not a paired
-   comparison at all.
+   comparison at all. Identical is not sufficient: two runs interrupted at the
+   same prefix have identical item sets, and the existing validator accepts an
+   interrupted exact prefix. Because shards are ordered by MSC class, a prefix
+   is not a representative sample of a field. A ranking claim requires
+   *complete* scoreboards covering the analysis plan's full selected set;
+   anything short of that is labelled partial and reported as exploratory.
 2. Per field and model pair, computes the paired table (both / A-only / B-only
    / neither) and runs McNemar.
 3. Reports the difference with a CI, and **refuses to emit a ranking claim when
@@ -647,7 +678,17 @@ an entry that the fixture has an occurrence in the entry's **primary**
 `source_id` at a locator **strictly less than** the entry's primary locator.
 A fixture reaching forward in the text — assuming a later result to prove an
 earlier exercise — is rejected, as is one that only appears in some other book,
-and so is one sharing the entry's own locator. The ordering is strict because
+and so is one sharing the entry's own locator.
+
+**What this does not enforce, stated plainly:** the check establishes only that
+a fixture occurs *somewhere earlier* in the primary text. It cannot enforce
+"prefer the same chapter, reach earlier only when needed." Two curators can
+attach very different amounts of distant background and both pass `corpus
+check`, moving B4 and C6 — which is the author judgement this section claimed
+the invariant removed. It narrows that judgement; it does not remove it. So a
+fixture from **outside the entry's own chapter** additionally requires a
+persisted justification, reviewed with the entry, recording why the nearer
+material was insufficient. Same-chapter antecedents need none. The ordering is strict because
 "prior result" means prior: a multi-part exercise's own sibling lemma shares
 its locator, is not earlier curriculum, and can materially shorten B4 while A5
 still passes — A5 only tests that the fixed ladder does not close the goal, not
@@ -728,6 +769,15 @@ problems — and carry their own statements, checked as problems are. When
 Mathlib later gains a lemma, the fixture retires, and *that retirement is a
 datum*: the fixture library becomes a running record of what Mathlib lacks per
 field, harvested as a byproduct.
+
+That retirement needs a lifecycle the schema does not yet have: entries hold
+only fixture ids, so once Mathlib gains a replacement the fixtured condition
+would keep injecting the obsolete assumption indefinitely. Fixtures need their
+own `status`, a retirement reason, and the Mathlib revision that superseded
+them, plus a rule for whether dependent entries must drop the reference or
+skip it. **Deliberately left to phase 3** rather than specified now — it cannot
+be designed well before any fixture exists, and nothing in phases 1-2 depends
+on it. Recorded here so it is not rediscovered as a surprise.
 
 **High discrimination is not evidence of validity.** A degenerate statement is
 one a sharp model closes by exploiting the degeneracy while a careful model
@@ -817,6 +867,10 @@ Hermetic except where Lean is genuinely required (already gated behind
 
 ## 11. Phases
 
+0. **Multi-backend runner.** Named in "Blocking prerequisite" above and *not
+   scoped here*. Nothing in phases 1-3 is wasted without it — the corpus,
+   taxonomy and single-provider reports all stand — but the cross-model
+   comparison in the Goal is unreachable until it lands.
 1. **Schema and scale.** Taxonomy module with reporting groups, vendored MSC
    list and mapping, `Entry` fields (including `fixtures`, reserved and
    digested), **both digests**, `corpus_version` with the manifest binding and
@@ -838,6 +892,35 @@ Hermetic except where Lean is genuinely required (already gated behind
 
 Phase 1 precedes phase 3 deliberately: settling the tagging, digest and shard
 layout before 500 entries exist is what prevents a hand re-tag.
+
+## Blocking prerequisite: the runner is single-backend
+
+`run_set_command` refuses any backend but `claude` outright
+(`runner.py:279-284`): *"the evals runner drives the Claude backend only: the
+batch runner, the canonical reader and staged tool-event counting are
+Claude-shaped."*
+
+**So the comparison this design exists to make cannot be run today.** "Is Opus
+better than GPT at commutative algebra" needs two providers; the pipeline
+supports one. Every phase below assumed otherwise, and no amount of corpus or
+reporting work reaches the goal without this. Two consequences:
+
+1. **`compare` requiring `backend` equality would forbid the motivating
+   comparison** even once the runner allows it. The compared intervention is
+   `(backend, model)` together, not `model` alone: a cross-provider comparison
+   necessarily varies runtime as well as weights, and that is an *inseparable
+   confound to record*, not a reason to refuse the pair. `compare` therefore
+   treats cross-backend comparisons as a declared mode that labels the
+   confound, while still requiring every other non-model condition to match.
+2. **A phase 0 exists that this design did not previously name**: making the
+   runner genuinely multi-backend — a second canonical reader, backend-shaped
+   tool-event counting, and a grading path that is not Claude-specific. Its
+   size is unknown and it is not scoped here.
+
+Until phase 0 lands, this corpus can measure one provider against itself
+across time, fields and fixtures — C1, C4, C5, C6 and the whole A-group are
+reachable — but not one provider against another. That is a real and useful
+instrument, and it is not the one the Goal describes.
 
 ## Risks
 
@@ -866,6 +949,10 @@ layout before 500 entries exist is what prevents a hand re-tag.
 - **Unwitnessed entries rest on the human read alone.** Where A6 has no
   mechanical witness, nothing but §2.2 stands between a vacuous statement and a
   field headline. The count of such entries is reported, not hidden.
+- **The same-chapter rule narrows curator judgement but does not remove it.**
+  §9.0's mechanical gate enforces "earlier in the primary text," not "prefer
+  the same chapter." The cross-chapter justification requirement puts the
+  remaining discretion on the record rather than eliminating it.
 - **Fixtures widen the trust base.** Every gate in §9 is a mitigation, not a
   proof. A wrong fixture that is consistent and not too strong will silently
   mismeasure its entries, and only the spot-audit queue stands behind it.
