@@ -46,6 +46,14 @@ A problem corpus that:
   instead of printing a leaderboard that isn't there;
 - can eventually separate model weakness from Mathlib's coverage gaps.
 
+**This is an instrument with two outputs, not a benchmark with one.** It
+measures models, and it measures the formal library those models depend on.
+The second has its own constituency: stated precisely, it asks *does Mathlib
+cover the standard curriculum, field by field, level by level* — a claim a
+Mathlib maintainer can act on, unlike "coverage gaps" in the abstract. The
+schema below is shaped so the second output is a byproduct of collecting the
+first rather than a separate effort.
+
 This design does **not** deliver the corpus. It delivers the schema, the
 taxonomy, the scaling fixes, the selection and reporting machinery, and the
 reserved structure for fixtures. Authoring the problems is phase 3 and is
@@ -69,7 +77,8 @@ Recorded because each one closes off alternatives the reader will wonder about.
   and one every model proves both carry zero signal and drop out of reporting.
 - **Textbook exercises may be harvested.** The mathematics is not
   copyrightable; `input` must be our own restatement, not the book's prose, and
-  no solution-manual proofs are shipped. Provenance is recorded as a citation.
+  no solution-manual proofs are shipped. Provenance is recorded structurally
+  (§2.1), which the antecedent policy in §9.0 then depends on.
 
 ## 1. The corpus is a directory, not a file
 
@@ -78,6 +87,7 @@ corpus/
   LICENSE                      # CC-BY-4.0
   SCHEMA.md                    # entry schema, id policy, taxonomy rules
   CHANGELOG.md                 # Keep-a-Changelog, entries cite ids
+  sources.json                 # texts: title, edition, level, fields
   problems/
     13.json                    # sharded by MSC 2-digit class
     15.json
@@ -119,7 +129,8 @@ Added to `Entry`:
 | `arxiv_override` | `str \| None` | when the derived mapping is wrong (arithmetic geometry is MSC 14G but `math.NT`) |
 | `override_reason` | `str \| None` | required when `arxiv_override` is set |
 | `difficulty` | `Literal["routine","substantial","qualifying","research-adjacent"]` | human difficulty prior |
-| `provenance` | `str` | `"Atiyah–Macdonald Ex. 3.12"` or `"authored"` |
+| `source_id` | `str \| None` | key into `corpus/sources.json`; `None` when authored |
+| `locator` | `tuple[int, ...] \| None` | position within the source as `(chapter, section, item)`, lexicographically ordered |
 | `status` | `Literal["candidate","active","retired"]` | lifecycle |
 | `retired_reason` | `str \| None` | required when retired |
 | `fixtures` | `tuple[str, ...]` | fixture ids; empty until phase 3, but digested from phase 1 |
@@ -145,7 +156,36 @@ reused. External consumers can cite an id forever.
 
 `difficulty` is the weakest part of this schema. Four levels is a guess, and
 the vocabulary should be revisited after roughly fifty real entries are tagged
-rather than defended.
+rather than defended. It is a *subjective per-problem* prior, and is deliberately
+distinct from `level` below, which is an *objective per-source* fact — an easy
+exercise can appear in a graduate text. Where the two disagree, `level` is the
+one to report on, because it is auditable.
+
+### 2.1 Sources are first-class
+
+`corpus/sources.json` keys each text by `source_id`:
+
+| Field | Meaning |
+|---|---|
+| `title`, `author`, `edition` | citation |
+| `level` | `"first-course"` / `"advanced-undergraduate"` / `"graduate"` |
+| `msc` | the field(s) the text covers |
+
+Provenance becomes structured — `source_id` plus an ordered `locator` — rather
+than the prose string this design originally proposed. Two things depend on
+that structure and neither works with free text:
+
+1. **`level` stratifies the coverage-gap report** (§7 C6). A graduate text
+   demands antecedents a first course never would; aggregating the two reads
+   as a Mathlib coverage gap when it is a level difference. Stratified, the
+   same data says something sharper and true: *"Mathlib covers first-course
+   commutative algebra well and graduate-level poorly."*
+2. **`locator` ordering makes the antecedent policy machine-checkable**
+   (§9). A prose citation cannot be compared; `(3, 2, 12)` can.
+
+Corpus composition (phase 3) should where possible draw each field from **two
+texts at different levels**. The within-field difference between them is
+informative on its own and costs nothing beyond choosing the second book.
 
 ## 3. Versioning, digests, and what "stale" means
 
@@ -205,7 +245,9 @@ both are load-bearing at scale:
 
 Selection filters move into `select()` (`runner.py:129`) so every command
 shares them: `--msc 13` (prefix match, catching `13A15`), `--arxiv math.AC`,
-alongside existing tier/twin filters and new `--difficulty` and `--status`.
+alongside existing tier/twin filters and new `--difficulty`, `--status`,
+`--source` and `--level`. The last is what makes the stratified C6 report
+(§7) expressible as a selection rather than a special case.
 
 A shared `describe_selection()` prints the count and an honest upper bound on
 cost — `N × repeats × wall_seconds`, rendered as "up to 41 hours". `export`
@@ -259,11 +301,16 @@ Mathlib. B4 is *"can the model do this mathematics"*.
 | C3 | Item discrimination | variance across models; feeds retirement and the spot-audit queue |
 | C4 | Tier profile per field | how much of a field Mathlib's automation already covers |
 | C5 | Contamination signal | twin-failure rate against true-statement solve rate |
-| C6 | Mathlib coverage gap | `B4 − B1` per field |
+| C6 | Mathlib coverage gap | `B4 − B1` per field, **stratified by source `level`** |
 
 C6 is the payoff of running both conditions: it separates model weakness from
 Mathlib's coverage deficit, which is the confound that otherwise poisons every
-cross-field comparison. It is also a result the Mathlib community can use.
+cross-field comparison. It is also the project's second contribution, and it is
+reported **stratified by source `level`, never aggregated** — a graduate text
+demands antecedents a first course would not, so an undifferentiated number
+reads a level difference as a coverage gap. Stratified, C6 states the claim a
+Mathlib maintainer can act on: which fields the library covers to first-course
+standard, and which it covers to graduate standard.
 
 ## 8. Aggregation and comparison
 
@@ -295,6 +342,54 @@ the ~70 a significance claim needs; the tool must say so rather than rank.
 
 ## 9. Fixtures (structure phase 1, behaviour phase 3+)
 
+### 9.0 The antecedent policy
+
+What counts as a reasonable antecedent sets the scale of the entire
+coverage-gap measurement. If the rule varies by field, the cross-field
+comparison inherits the inconsistency — and unlike the other confounds in this
+design, this one is load-bearing for a headline result rather than a caveat on
+one. So the rule is fixed, stated once, and applies everywhere:
+
+> **An antecedent is a prior result from the same text — preferring the same
+> chapter, reaching earlier only when needed — that Mathlib does not have.**
+
+Three properties make this the right rule rather than merely a rule:
+
+- **It is objective and auditable.** Anyone with the book can check whether it
+  was applied. An abstract criterion ("standard background") could not be
+  checked by anyone.
+- **It mirrors how the problem was meant to be solved**, so what is measured is
+  what a competent reader of that chapter should be able to do. That is a
+  coherent target, and a more meaningful one than either extreme of "prove it
+  from the axioms" or "assume everything up to the answer."
+- **The Mathlib intersection keeps it small and makes it legible.** The
+  antecedent set is not every prior result; it is only the prior results
+  Mathlib lacks. So C6 measures exactly *how much of the standard curriculum up
+  to this point Mathlib is missing* — the form of the claim a maintainer can
+  act on.
+
+Note the intersection is with the *text's* order, not Mathlib's: a book may
+prove in chapter 2 something Mathlib derives much later, or vice versa. The
+policy follows the book, because the book is what defines the reader's
+competence at that point.
+
+**This is mechanically enforced, not merely documented.** Because `locator` is
+an ordered tuple (§2.1), `corpus check` verifies for every fixture attached to
+an entry that it comes from the same `source_id` at a locator ≤ the entry's.
+A fixture reaching forward in the text — assuming a later result to prove an
+earlier exercise — is rejected. This is the invariant that keeps the antecedent
+policy uniform across fields without depending on an author's judgement or a
+reviewer's diligence.
+
+Its limit, stated plainly: the rule cannot make the *books* uniform. Textbook
+difficulty varies and cannot be controlled for. That variance is a level
+effect, not a per-model one — both models face the same book — so within-field
+model comparison (the headline claim) is unaffected. It contaminates cross-field
+claims, already the weaker statement, and it contaminates C6, which is why C6
+is reported stratified by `level` rather than aggregated.
+
+### 9.1 Mechanism
+
 Two gaps need two mechanisms:
 
 - **Missing lemma → a hypothesis binder.** `Entry.binders` already exists and
@@ -322,6 +417,9 @@ of that allowlist. Three gates, all reusing the existing sweep:
 3. An accepted proof's `#print axioms` must show exactly the standard three
    plus that entry's declared fixtures. Any other axiom means the model widened
    its own trust base; refuse.
+4. Every fixture shares its entry's `source_id` and sits at a locator ≤ the
+   entry's (§9.0). A fixture from another text, or from later in the same text,
+   is rejected.
 
 Fixtures are shared and referenced by id — the same missing lemma blocks many
 problems — and carry their own statements, checked as problems are. When
@@ -354,6 +452,13 @@ Hermetic except where Lean is genuinely required (already gated behind
   the refusal path (CI crosses zero) and the claim path (it does not);
   mismatched-digest scoreboards refused
 - corpus check: a deliberately vacuous fixture entry is caught by A3
+- antecedent policy: a fixture at a locator *after* its entry's is rejected; a
+  fixture from a different `source_id` is rejected; locator tuples of unequal
+  length compare lexicographically as intended
+- sources: every `source_id` referenced by an entry exists in `sources.json`;
+  every source carries a `level`
+- C6: aggregating across levels is not reachable through the reporting API —
+  the stratified form is the only one available
 
 ## 11. Phases
 
@@ -377,6 +482,12 @@ layout before 500 entries exist is what prevents a hand re-tag.
 
 - **`difficulty` is a guess.** Expect to revise the vocabulary after ~50 tagged
   entries. Cheap to change while the corpus is small; a migration afterwards.
+  `level` is the auditable fallback and is what C6 reports on.
+- **Textbook difficulty cannot be controlled for.** The antecedent policy makes
+  the *rule* uniform; it cannot make the books uniform. This is a level effect,
+  so within-field model comparison is unaffected, but it contaminates
+  cross-field claims and C6. Mitigated by stratifying C6 on `level` and by
+  drawing each field from two texts at different levels — not eliminated.
 - **Contamination is mitigated, not solved.** Twins detect memorised proofs
   applied to perturbed statements; they do not detect a model that genuinely
   learned the field from solution manuals. The twin ratio (currently 5 of 20)
