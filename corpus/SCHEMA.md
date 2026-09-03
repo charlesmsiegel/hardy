@@ -56,9 +56,12 @@ the antecedent rule.
 
 ## Writing a witness
 
-`witness` is checked as `example : ∃ <binders>, True := <witness>` against the
-entry's own imports, so it is written against that goal, not against the
-theorem. For `binders: "(n : ℕ) (h : n > 0)"` the term is
+`witness` is checked as `theorem <Name>Witness : ∃ <binders>, True := <witness>`
+against the entry's own imports, with `#print axioms` appended, so it is
+written against that goal rather than against the theorem. Elaborating is not
+enough: `sorry` is a *warning*, so the axiom report is what separates a witness
+from a hole. A witness naming anything beyond `propext`, `Classical.choice` and
+`Quot.sound` is recorded `broken`. For `binders: "(n : ℕ) (h : n > 0)"` the term is
 `⟨1, by norm_num, trivial⟩`: a value for `n`, a proof of `n > 0`, and
 `trivial` for the `True`. An entry with no binders needs no witness of this
 shape and records `trivial`.

@@ -379,11 +379,40 @@ def _witness_entry(**overrides) -> Entry:
     return Entry(**base)
 
 
-def test_a_witness_is_checked_as_an_example_against_the_binders():
+def test_a_witness_is_checked_as_a_named_theorem_whose_axioms_are_printed():
     source = sweep.witness_source(_witness_entry())
     assert "import Mathlib" in source
-    assert "example : ∃ (n : ℕ) (h : n > 0), True := ⟨1, by norm_num, trivial⟩" in source
+    assert "theorem OddSumWitness : ∃ (n : ℕ) (h : n > 0), True := ⟨1, by norm_num, trivial⟩" in source
     assert "∃" in source, "the binders must be existentially closed, or nothing is proved"
+    assert "#print axioms OddSumWitness" in source, "success alone does not mean the kernel was convinced"
+
+
+def test_a_witness_proved_by_sorry_is_broken_not_witnessed():
+    """`sorry` is a *warning*, so the elaboration succeeds. Without the axiom
+    report A6 would record `witnessed` for a hole wearing a term's clothes --
+    which is exactly the vacuity the check exists to rule out.
+    """
+    def sorried(source: str) -> Elaboration:
+        return _elaboration([
+            _msg(3, "warning", "declaration uses 'sorry'"),
+            _msg(4, "information", "'OddSumWitness' depends on axioms: [propext, sorryAx]"),
+        ])
+
+    assert sweep.witness_verdict(_witness_entry(witness="⟨0, sorry, trivial⟩"), elaborate=sorried) == "broken"
+
+
+def test_a_witness_resting_on_an_unapproved_axiom_is_broken():
+    def axiomatic(source: str) -> Elaboration:
+        return _elaboration([
+            _msg(4, "information", "'OddSumWitness' depends on axioms: [propext, Nat.mystery]"),
+        ])
+
+    assert sweep.witness_verdict(_witness_entry(), elaborate=axiomatic) == "broken"
+
+
+def test_a_witness_whose_axioms_were_never_reported_is_broken():
+    """No report at all is a rejection, not a clean sweep."""
+    assert sweep.witness_verdict(_witness_entry(), elaborate=lambda _: _elaboration([])) == "broken"
 
 
 def test_a_witness_for_a_hypothesis_free_entry_still_compiles_to_something():
@@ -398,8 +427,13 @@ def test_an_entry_with_no_witness_reports_unwitnessed_rather_than_failing():
     assert sweep.witness_verdict(entry, elaborate=_never_called) == "unwitnessed"
 
 
-def test_a_witness_the_kernel_accepts_is_witnessed():
-    assert sweep.witness_verdict(_witness_entry(), elaborate=lambda _: _elaboration([])) == "witnessed"
+def test_a_witness_the_kernel_accepts_on_the_standard_axioms_is_witnessed():
+    def clean(source: str) -> Elaboration:
+        return _elaboration([
+            _msg(4, "information", "'OddSumWitness' depends on axioms: [propext, Classical.choice]"),
+        ])
+
+    assert sweep.witness_verdict(_witness_entry(), elaborate=clean) == "witnessed"
 
 
 def test_a_witness_the_kernel_rejects_is_reported_as_broken():

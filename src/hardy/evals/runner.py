@@ -15,7 +15,7 @@ from .. import __version__
 from ..domain import EnvironmentIdentity, FrozenModel
 from .corpus import load_corpus, manifest_digest
 from .problems import Entry, ProblemSet, sha256_of
-from .scoreboard import Aggregates, Row, aggregate, batch_row, staged_row
+from .scoreboard import Aggregates, Row, active_ids, aggregate, batch_row, staged_row
 from .sweep import Baseline, host_info, staleness
 
 BatchRunner = Callable[[Entry, Path, int, float], None]
@@ -202,7 +202,7 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     out.mkdir(parents=True)
     rows: list[Row] = []
     board = Scoreboard(label=label, condition=condition, environment=environment, baseline_sha256=sha256_of(baseline_path),
-                       problems_sha256=manifest_digest(problems_path), rows=(), aggregates=aggregate([], baseline),
+                       problems_sha256=manifest_digest(problems_path), rows=(), aggregates=aggregate([], baseline, active_ids=active_ids(problems)),
                        started_at=now(), finished_at=None, interrupted=False)
     _write(out / "scoreboard.json", board)
     try:
@@ -232,7 +232,7 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
                     row = staged_row(entry, tier, row_dir, out, repeat=repeat)
                 rows.append(row)
                 report(f"  -> {row.outcome} ({row.terminal_reason})")
-                board = board.model_copy(update={"rows": tuple(rows), "aggregates": aggregate(rows, baseline)})
+                board = board.model_copy(update={"rows": tuple(rows), "aggregates": aggregate(rows, baseline, active_ids=active_ids(problems))})
                 _write(out / "scoreboard.json", board)
     except BaseException:
         _write(out / "scoreboard.json", board.model_copy(update={"interrupted": True}))

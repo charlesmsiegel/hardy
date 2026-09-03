@@ -144,7 +144,7 @@ def test_aggregates_are_counts_and_medians_per_tier():
             _row(id="b", tier=3, outcome="solved", cost_usd=1.5, exchanges=10),
             _row(id="c", tier=0), _row(id="f1", tier=3, expected="false", twin_of="b", outcome="refused", terminal_reason="no_proof_submitted"),
             _row(id="f2", tier=3, expected="false", twin_of="b", outcome="exhausted", terminal_reason="turn_limit")]
-    agg = scoreboard.aggregate(rows, _baseline({"a": 2, "b": 3, "c": 0, "f1": 3, "f2": 3}, twins_false={"f1"}))
+    agg = scoreboard.aggregate(rows, _baseline({"a": 2, "b": 3, "c": 0, "f1": 3, "f2": 3}, twins_false={"f1"}), active_ids={"a", "b", "c", "f1", "f2"})
     t2 = agg.tiers["2"]
     assert t2.n == 2 and t2.solved == 1 and t2.solve_rate == 0.5 and t2.unreported_costs == 0
     assert t2.medians["cost_usd"] == 0.5 and t2.medians["exchanges"] == 4
@@ -154,12 +154,13 @@ def test_aggregates_are_counts_and_medians_per_tier():
     assert t3.refusal_rate == 0.5
     assert agg.headline.n == 3 and agg.headline.solved == 2      # tiers 2 and 3 true rows
     assert agg.headline.interval[0] < agg.headline.solve_rate < agg.headline.interval[1]
-    assert agg.floor == {"entries": 5, "tier_0": 1, "tier_1": 0, "tier_2": 1, "tier_3": 3, "single_tactic_closes": 1}
+    assert agg.floor == {"entries": 5, "tier_0": 1, "tier_1": 0, "tier_2": 1, "tier_3": 3,
+                         "single_tactic_closes": 1, "active": 5}
 
 
 def test_medians_over_solved_rows_only_and_unreported_costs_are_counted_not_zeroed():
     rows = [_row(id="a", cost_usd=None), _row(id="a", repeat=1, cost_usd=2.0)]
-    t = scoreboard.aggregate(rows, _baseline({"a": 2})).tiers["2"]
+    t = scoreboard.aggregate(rows, _baseline({"a": 2}), active_ids={"a"}).tiers["2"]
     assert t.medians["cost_usd"] == 2.0 and t.unreported_costs == 1
 
 
@@ -233,7 +234,7 @@ def test_a_canonical_json_whose_outcome_does_not_follow_its_review_is_a_finding(
     """
     from test_evals_staged import DETERMINISTIC_IDENTITY, _solved_fixture
 
-    from hardy.evals.corpus import manifest_digest
+    from hardy.evals.corpus import load_corpus, manifest_digest
     from hardy.evals.problems import sha256_of
 
     scoreboard_dir, row_dir, run_dir, entry, problems_path, baseline_path, baseline = _solved_fixture(tmp_path)
@@ -242,7 +243,7 @@ def test_a_canonical_json_whose_outcome_does_not_follow_its_review_is_a_finding(
     condition = _condition(mode="staged", limits={"active_seconds": 1800, "proof_seconds": 1200, "official_checks": 40,
                                                    "twin_max_turns": 60, "twin_wall_seconds": 1800.0})
     board = runner.Scoreboard(label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path),
-                              problems_sha256=manifest_digest(problems_path), rows=(row,), aggregates=scoreboard.aggregate([row], baseline),
+                              problems_sha256=manifest_digest(problems_path), rows=(row,), aggregates=scoreboard.aggregate([row], baseline, active_ids=scoreboard.active_ids(load_corpus(problems_path))),
                               started_at=datetime(2026, 9, 1, tzinfo=UTC), finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False)
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
 
@@ -474,7 +475,7 @@ def test_a_selection_matching_no_entries_is_a_finding(tmp_path):
     """
     out, problems, baseline = _board(tmp_path)
     baseline_obj = sweep.Baseline.model_validate_json(baseline.read_text(encoding="utf-8"))
-    empty_aggregates = scoreboard.aggregate([], baseline_obj).model_dump(mode="json")
+    empty_aggregates = scoreboard.aggregate([], baseline_obj, active_ids=set()).model_dump(mode="json")
 
     def empty_it(s):
         s["condition"]["selection"]["tiers"] = [2]
@@ -525,3 +526,35 @@ def test_a_baseline_missing_a_problem_entry_is_a_finding(tmp_path):
     _edit(baseline, lambda b: b["entries"].pop("f"))
     issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
     assert any("baseline's entries do not match" in i and "missing" in i and "f" in i for i in issues), issues
+
+
+def test_the_headline_counts_only_reviewed_entries(tmp_path):
+    """Spec section 2.2: only `active` entries reach a headline.
+
+    Nothing mechanical separates a faithful formalisation from a
+    plausible-looking wrong one, so a headline computed over `candidate`
+    entries is a number about statements nobody has read. Every row still runs
+    and every tier count still reports -- the withholding is of the headline
+    claim, not of the measurement.
+    """
+    out, problems, baseline = _board(tmp_path)
+    board = json.loads((out / "scoreboard.json").read_text(encoding="utf-8"))
+    assert board["rows"], "candidates still run"
+    assert board["aggregates"]["tiers"]["3"]["n"] == 1, "and still report per tier"
+    assert board["aggregates"]["headline"]["n"] == 0, "but reach no headline"
+    assert board["aggregates"]["floor"]["active"] == 0
+    assert scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline) == ()
+
+
+def test_an_active_entry_does_reach_the_headline():
+    from hardy.evals import taxonomy
+
+    reviewed = TRUE.model_copy(update={"status": "active", "review": {
+        "reviewer": "cms", "reviewed_at": "2026-09-03",
+        "statement_digest": TRUE.statement_digest(), "prompt_digest": TRUE.prompt_digest(),
+        "msc": list(TRUE.msc), "group": taxonomy.group_of(TRUE.msc[0]), "verdict": "faithful",
+    }})
+    rows = [_row(id="t", tier=3, expected="true", outcome="solved")]
+    baseline = _baseline({"t": 3})
+    assert scoreboard.aggregate(rows, baseline, active_ids=set()).headline.n == 0
+    assert scoreboard.aggregate(rows, baseline, active_ids={reviewed.id}).headline.n == 1

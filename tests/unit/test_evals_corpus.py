@@ -10,6 +10,7 @@ from corpus_helpers import copy_taxonomy
 from hardy.evals.corpus import (
     CorpusError,
     check_issues,
+    corpus_version,
     load_corpus,
     load_tombstones,
     manifest_digest,
@@ -231,6 +232,20 @@ def test_an_occurrence_citing_an_unregistered_source_is_reported(tmp_path):
     assert check_issues(tmp_path) == []
 
 
+def test_a_corpus_whose_taxonomy_lacks_a_rollup_is_reported_not_crashed(tmp_path):
+    """`corpus check` verifying only that the full code exists lets a corpus
+    pass with a manifest-bound but incomplete mapping, and `corpus report`
+    then raises `UnknownCode` on the very corpus just declared clean.
+    """
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
+    _registry(tmp_path, {"a": "2026-09-03"})
+    mapping = json.loads((tmp_path / "taxonomy" / "msc-to-arxiv.json").read_text(encoding="utf-8"))
+    del mapping["groups"]["13"]
+    (tmp_path / "taxonomy" / "msc-to-arxiv.json").write_text(json.dumps(mapping), encoding="utf-8")
+    _changelog(tmp_path)
+    assert any("13A15" in i and "groups" in i for i in check_issues(tmp_path)), check_issues(tmp_path)
+
+
 # --- check and report ---
 
 
@@ -259,6 +274,31 @@ def test_a_missing_or_malformed_sidecar_is_listed_not_raised(tmp_path):
     (tmp_path / "sources.json").unlink()
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\nno heading\n", encoding="utf-8")
     assert any("CHANGELOG.md" in i for i in check_issues(tmp_path))
+
+
+def test_the_version_gate_reads_the_selected_corpus_taxonomy(tmp_path):
+    """`corpus_version` re-parses every shard, and a `Shard` carries `Entry`
+    objects that validate their own codes -- outside the taxonomy scope that
+    would have made a valid external corpus valid."""
+    taxonomy_dir = tmp_path / "taxonomy"
+    taxonomy_dir.mkdir(parents=True)
+    (taxonomy_dir / "msc2020.json").write_text(
+        json.dumps({"schema_version": 1, "codes": {"99Z99": "Invented studies"}}), encoding="utf-8")
+    (taxonomy_dir / "msc-to-arxiv.json").write_text(json.dumps({
+        "schema_version": 1, "arxiv": {"99": "math.XX"},
+        "fields": {"99": "Invented"}, "groups": {"99": "invented"},
+    }), encoding="utf-8")
+    (tmp_path / "problems").mkdir(parents=True)
+    (tmp_path / "problems" / "99.json").write_text(json.dumps({
+        "schema_version": 2, "corpus_version": "0.1.0",
+        "entries": [_entry(id="a", name="A", msc=["99Z99"])],
+    }), encoding="utf-8")
+    _registry(tmp_path, {"a": "2026-09-03"})
+    _changelog(tmp_path)
+
+    assert corpus_version(tmp_path) == "0.1.0"
+    assert check_issues(tmp_path) == []
+    assert any("invented" in line for line in report(tmp_path))
 
 
 def test_the_shipped_corpus_is_clean_and_internally_consistent():

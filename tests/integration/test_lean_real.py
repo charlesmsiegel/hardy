@@ -154,3 +154,6 @@ def test_a_true_witness_passes_the_real_kernel_and_a_false_one_does_not() -> Non
 
     assert witness_verdict(_entry('⟨1, by norm_num, trivial⟩'), elaborate=elaborate) == 'witnessed'
     assert witness_verdict(_entry('⟨0, by norm_num, trivial⟩'), elaborate=elaborate) == 'broken'
+    # `sorry` is a warning, so the elaboration succeeds; only the axiom report
+    # separates a witness from a hole wearing a term's clothes.
+    assert witness_verdict(_entry('⟨0, sorry, trivial⟩'), elaborate=elaborate) == 'broken'

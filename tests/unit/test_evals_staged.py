@@ -15,7 +15,7 @@ from hardy import acceptance, prompts
 from hardy.config import Config
 from hardy.domain import EnvironmentIdentity, FormalizationProposal, RunPhase, freeze_claim
 from hardy.evals import runner, scoreboard, staged, sweep
-from hardy.evals.corpus import manifest_digest
+from hardy.evals.corpus import load_corpus, manifest_digest
 from hardy.evals.problems import Entry, sha256_of
 from hardy.storage import RunStore
 
@@ -171,7 +171,7 @@ def test_validate_scoreboard_checks_the_canonical_hashes(tmp_path):
                                  limits={"max_turns": 3, "wall_seconds": 300.0}, repeats=1, selection={"only": None, "tiers": None, "twins": True})
     board = runner.Scoreboard(
         label="x", condition=condition, environment=IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
-        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline, active_ids=scoreboard.active_ids(load_corpus(problems_path))), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
@@ -346,7 +346,7 @@ def test_a_canonical_json_that_is_a_json_array_leaves_the_row_unavailable_not_a_
     condition = _deterministic_condition()
     board = runner.Scoreboard(
         label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
-        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline, active_ids=scoreboard.active_ids(load_corpus(problems_path))), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
@@ -400,7 +400,7 @@ def test_a_rewritten_request_md_is_named_by_validator_check_3(tmp_path):
     condition = _deterministic_condition()
     board = runner.Scoreboard(
         label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
-        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline, active_ids=scoreboard.active_ids(load_corpus(problems_path))), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
@@ -479,7 +479,7 @@ def test_a_scoreboard_with_one_solved_staged_row_validates_clean(tmp_path):
     condition = _deterministic_condition()
     board = runner.Scoreboard(
         label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
-        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline, active_ids=scoreboard.active_ids(load_corpus(problems_path))), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
@@ -499,7 +499,7 @@ def test_a_condition_model_mismatch_is_a_finding_for_a_staged_row(tmp_path):
     condition = _deterministic_condition(model="a-different-model")
     board = runner.Scoreboard(
         label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
-        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline, active_ids=scoreboard.active_ids(load_corpus(problems_path))), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
@@ -520,7 +520,7 @@ def test_a_staged_environment_mismatch_is_a_finding(tmp_path):
     condition = _deterministic_condition()
     board = runner.Scoreboard(
         label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
-        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline, active_ids=scoreboard.active_ids(load_corpus(problems_path))), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")
@@ -546,7 +546,7 @@ def test_a_staged_condition_backend_mismatch_is_a_finding(tmp_path):
     condition = _deterministic_condition(backend="codex")
     board = runner.Scoreboard(
         label="x", condition=condition, environment=DETERMINISTIC_IDENTITY, baseline_sha256=sha256_of(baseline_path), problems_sha256=manifest_digest(problems_path),
-        rows=(row,), aggregates=scoreboard.aggregate([row], baseline), started_at=datetime(2026, 9, 1, tzinfo=UTC),
+        rows=(row,), aggregates=scoreboard.aggregate([row], baseline, active_ids=scoreboard.active_ids(load_corpus(problems_path))), started_at=datetime(2026, 9, 1, tzinfo=UTC),
         finished_at=datetime(2026, 9, 1, tzinfo=UTC), interrupted=False,
     )
     (scoreboard_dir / "scoreboard.json").write_text(json.dumps(board.model_dump(mode="json"), indent=2), encoding="utf-8")

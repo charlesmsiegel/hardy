@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "created_at": "2026-09-02T07:46:41.931558Z",
-  "problems_sha256": "0556793f3926a5395553fcaad369a864ebc51209880ba5f12a8523eae77e8dbd",
+  "problems_sha256": "eff83575a64948834b698725c9e84a8b3e67f032b54901b8510cbdd9ae76bbc3",
   "environment": {
     "lean_version": "4.33.1",
     "lean_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
@@ -4745,5 +4745,5 @@
     "sq-sum-le-two-mul": "4ad5454617b516d4837c3faddee1f32f2995ec76efe0dda788741056e44180c4"
   },
   "environment_digest": "fde4bebf110a1f91b3235c9c2e209d0be35220bf141467a28dcd0a1b9b012e8f",
-  "procedure_digest": "74f3f2d7b99f74aeff734c67cd8cf4dd39e459e006a9a2e688f78d828d3be9b5"
+  "procedure_digest": "227b17c5f461d7406b54994bcd2bb887fb78a76256c18cfa97ae1c803d8ee624"
 }
