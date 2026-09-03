@@ -5,9 +5,12 @@ in two stages so `exact?` cannot be credited with a neighbour's proof (§2.3).
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable, Iterable
 from datetime import datetime
+from functools import cache
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -186,22 +189,57 @@ def read_stage_b(elaboration: Elaboration, name: str, tactic: str) -> Attempt:
 Elaborate = Callable[[str], Elaboration]
 
 
-def environment_digest_of(environment: EnvironmentIdentity) -> str:
-    return digests.environment_digest(environment.model_dump(mode="json"))
+def host_info() -> dict[str, Any]:
+    """Coarse machine identity. Lives here rather than in `commands` because
+    `staleness` needs the current host to compare against the recorded one."""
+    import os
+    import platform
+
+    return {"platform": platform.platform(), "machine": platform.machine(), "cpu_count": os.cpu_count()}
+
+
+def environment_digest_of(environment: EnvironmentIdentity, host: dict[str, Any]) -> str:
+    """Lean version, Mathlib revision, lake manifest, and the host (spec §3).
+
+    The host is in here rather than merely recorded beside the measurement:
+    machine speed turns the sweep's process backstop into `timed_out`
+    attempts, and a tactic that times out on a slow machine and closes on a
+    fast one gives the same statement two different tiers.
+    """
+    return digests.environment_digest({"identity": environment.model_dump(mode="json"), "host": host})
+
+
+# The modules whose logic decides what a measurement *means*: the sweep and its
+# ladder, the axiom parser that turns a `#print axioms` report into a verdict,
+# and the elaboration wrapper that decides what counts as success.
+DECIDING_SOURCES = (
+    str(Path(__file__).resolve()),
+    str(Path(__file__).resolve().parents[1] / "audit.py"),
+    str(Path(__file__).resolve().parents[1] / "lean.py"),
+)
+
+
+@cache
+def _source_digests() -> tuple[str, ...]:
+    return tuple(hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in DECIDING_SOURCES)
 
 
 def procedure_digest_of() -> str:
-    """Hardy's own identity plus the ladder and the budgets (spec §3).
+    """Hardy's identity, the ladder, the budgets -- and the deciding source.
 
-    `__version__` stands in for the source revision: a released build that
-    changes the sweep logic, the axiom parser or the witness checker bumps it,
-    and the tactic lists and budget below catch a configuration change within
-    one version.
+    `__version__` alone is not a source revision: it is fixed at 0.1.0 across
+    every checkout, so a change to the sweep logic, the axiom parser or the
+    elaboration wrapper would leave the digest identical and `staleness` would
+    accept measurements produced by different code. Hashing those modules'
+    bytes is deliberately conservative -- editing a comment in one of them
+    stales the baseline -- because the alternative error is the one this whole
+    arrangement exists to prevent.
     """
     from .. import __version__
 
     return digests.procedure_digest({
         "hardy_version": __version__,
+        "source": list(_source_digests()),
         "singles": list(SINGLES),
         "chains": list(CHAINS),
         "heartbeat_budget": HEARTBEAT_BUDGET,
@@ -394,7 +432,7 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     return Baseline(
         created_at=now(), problems_sha256=problems_sha256,
         statement_digests={e.id: e.statement_digest() for e in problems.entries},
-        environment_digest=environment_digest_of(environment),
+        environment_digest=environment_digest_of(environment, host),
         procedure_digest=procedure_digest_of(),
         environment=environment,
         heartbeat_budget=HEARTBEAT_BUDGET, wall_backstop_seconds=wall_backstop_seconds, import_seconds=import_seconds,
@@ -424,7 +462,8 @@ def baseline_entries_mismatch(baseline: Baseline, problem_ids: Iterable[str]) ->
     return "the baseline's entries do not match the problem list (" + "; ".join(parts) + ")"
 
 
-def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environment: EnvironmentIdentity, problem_ids: Iterable[str]) -> tuple[str, ...]:
+def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environment: EnvironmentIdentity,
+              problem_ids: Iterable[str], host: dict[str, Any] | None = None) -> tuple[str, ...]:
     """Why this baseline cannot tier a run today (spec §3.1). Empty means it can.
 
     Staleness is per entry, not per file. A whole-corpus hash would call every
@@ -433,12 +472,23 @@ def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environm
     between a re-sweep of one entry and a re-sweep of thousands (spec §3).
     """
     issues: list[str] = []
+    current_host = host if host is not None else host_info()
     if not baseline.statement_digests:
         issues.append("the baseline records no statement digests; re-run `hardy evals baseline`")
     else:
+        # A missing key is staleness, not agreement: the entry-set check below
+        # compares `baseline.entries`, not the digest keys, so an entry with no
+        # recorded digest would otherwise supply its tier and the headline
+        # floor with nothing identifying the statement it was measured on.
+        unidentified = sorted(set(statement_digests) - set(baseline.statement_digests))
+        if unidentified:
+            issues.append(
+                "the baseline records no statement digest for: " + ", ".join(unidentified)
+                + "; re-run `hardy evals baseline`"
+            )
         drifted = sorted(
             id for id, digest in statement_digests.items()
-            if baseline.statement_digests.get(id) not in (None, digest)
+            if id in baseline.statement_digests and baseline.statement_digests[id] != digest
         )
         if drifted:
             issues.append(
@@ -452,8 +502,23 @@ def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environm
     # build, and treating a blank as agreement makes the gate decorative.
     if not baseline.environment_digest:
         issues.append("the baseline records no environment digest; re-run `hardy evals baseline`")
-    elif baseline.environment_digest != environment_digest_of(environment):
-        issues.append("the baseline's environment digest is not this project's; re-run `hardy evals baseline`")
+    elif baseline.environment_digest != environment_digest_of(environment, current_host):
+        # The field-by-field identity check below names a Lean or Mathlib
+        # difference on its own, so say plainly when the machine is what moved:
+        # "environment digest" alone reads as a mystery to whoever hits it.
+        detail = (
+            f"it was swept on {baseline.host.get('platform', 'another machine')!r} "
+            f"({baseline.host.get('machine')}, {baseline.host.get('cpu_count')} cpus) and this is "
+            f"{current_host.get('platform')!r} ({current_host.get('machine')}, "
+            f"{current_host.get('cpu_count')} cpus); machine speed decides which tactics time out, "
+            "so it decides tiers"
+            if baseline.host != current_host
+            else "the Lean toolchain identity differs"
+        )
+        issues.append(
+            f"the baseline's environment digest is not this project's: {detail}; "
+            "re-run `hardy evals baseline`"
+        )
     if not baseline.procedure_digest:
         issues.append("the baseline records no procedure digest; re-run `hardy evals baseline`")
     elif baseline.procedure_digest != procedure_digest_of():

@@ -4,8 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
-import platform
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -123,8 +121,9 @@ def make_elaborate(config: Any) -> Callable[[str], Elaboration]:
     return lambda source: elaborate(source, argv=argv, cwd=config.lean_project, timeout_seconds=timeout)
 
 
-def host_info() -> dict[str, Any]:
-    return {"platform": platform.platform(), "machine": platform.machine(), "cpu_count": os.cpu_count()}
+# Re-exported: `staleness` needs the current host to compare against the one a
+# baseline recorded, so the function itself lives in `sweep`.
+host_info = sweep.host_info
 
 
 def _identity(config: Any) -> EnvironmentIdentity:

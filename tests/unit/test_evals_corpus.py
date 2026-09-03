@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from corpus_helpers import copy_taxonomy
 
 from hardy.evals.corpus import (
     CorpusError,
@@ -33,6 +34,7 @@ def _entry(**overrides) -> dict:
 
 
 def _write(root: Path, shard: str, entries: list[dict], version: str = "0.1.0", schema: int = 2) -> None:
+    copy_taxonomy(root)
     (root / "problems").mkdir(parents=True, exist_ok=True)
     (root / "problems" / f"{shard}.json").write_text(
         json.dumps({"schema_version": schema, "corpus_version": version, "entries": entries}),
@@ -83,8 +85,18 @@ def test_an_entry_filed_in_the_wrong_shard_is_rejected(tmp_path):
 
 
 def test_an_empty_corpus_is_refused_rather_than_returning_nothing(tmp_path):
+    copy_taxonomy(tmp_path)
     (tmp_path / "problems").mkdir()
     with pytest.raises(CorpusError, match="no problem shards"):
+        load_corpus(tmp_path)
+
+
+def test_a_corpus_without_its_own_taxonomy_is_refused(tmp_path):
+    """Falling back to Hardy's tables would classify a third party's corpus by
+    the wrong map -- silently, and against a manifest that binds theirs."""
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
+    (tmp_path / "taxonomy" / "msc2020.json").unlink()
+    with pytest.raises(CorpusError, match="missing taxonomy table"):
         load_corpus(tmp_path)
 
 
@@ -98,6 +110,7 @@ def test_a_shard_declaring_an_unreadable_schema_is_refused(tmp_path):
 def test_a_malformed_shard_is_a_corpus_error_not_a_raw_parse_failure(tmp_path):
     """`corpus check` gathers issues; a bare KeyError or ValidationError
     escaping the loader would crash it instead of being reported."""
+    copy_taxonomy(tmp_path)
     (tmp_path / "problems").mkdir(parents=True)
     (tmp_path / "problems" / "13.json").write_text("{not json", encoding="utf-8")
     with pytest.raises(CorpusError, match="13.json"):
@@ -228,6 +241,24 @@ def test_check_gathers_every_class_of_issue(tmp_path):
     issues = check_issues(tmp_path)
     assert any("not registered" in i for i in issues)
     assert any("changelog head" in i for i in issues)
+
+
+def test_a_missing_or_malformed_sidecar_is_listed_not_raised(tmp_path):
+    """`corpus check` reports malformed corpus state; exiting with a traceback
+    out of the very command asked about it reports nothing.
+    """
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
+    assert any("tombstones.json" in i for i in check_issues(tmp_path))   # absent entirely
+    assert any("CHANGELOG.md" in i for i in check_issues(tmp_path))      # absent entirely
+
+    _registry(tmp_path, {"a": "2026-09-03"})
+    _changelog(tmp_path)
+    (tmp_path / "sources.json").write_text("{not json", encoding="utf-8")
+    assert any("sources.json" in i for i in check_issues(tmp_path))
+
+    (tmp_path / "sources.json").unlink()
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\nno heading\n", encoding="utf-8")
+    assert any("CHANGELOG.md" in i for i in check_issues(tmp_path))
 
 
 def test_the_shipped_corpus_is_clean_and_internally_consistent():

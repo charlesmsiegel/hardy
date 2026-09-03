@@ -69,8 +69,10 @@ def load_corpus(root: Path) -> ProblemSet:
     """
     entries: list[Entry] = []
     seen: dict[str, Path] = {}
+    # Entries validate their own codes, so the taxonomy they validate against
+    # must be this corpus's -- not Hardy's own checkout's (see taxonomy.using).
     for path in _shards(root):
-        for entry in _load_shard(path).entries:
+        for entry in _load_shard_scoped(path, root).entries:
             if entry.id in seen:
                 raise CorpusError(
                     f"duplicate id {entry.id!r} in {path.name} and {seen[entry.id].name}"
@@ -84,11 +86,29 @@ def load_corpus(root: Path) -> ProblemSet:
     return ProblemSet(entries=tuple(entries))
 
 
+TAXONOMY_FILES = ("msc2020.json", "msc-to-arxiv.json")
+
+
 def _shards(root: Path) -> list[Path]:
+    # The taxonomy is corpus data, not Hardy configuration, and entries are
+    # validated against *this* corpus's tables. Falling back to Hardy's own
+    # would silently classify a third party's corpus by the wrong map, so a
+    # corpus without its tables is not loadable at all.
+    for name in TAXONOMY_FILES:
+        if not (root / "taxonomy" / name).exists():
+            raise CorpusError(
+                f"missing taxonomy table: {root / 'taxonomy' / name}. The MSC tables are corpus "
+                "data covered by the manifest; entries cannot be classified without them"
+            )
     shards = sorted((root / "problems").glob("*.json"))
     if not shards:
         raise CorpusError(f"no problem shards under {root / 'problems'}")
     return shards
+
+
+def _load_shard_scoped(path: Path, root: Path) -> Shard:
+    with taxonomy.using(root):
+        return _load_shard(path)
 
 
 def _load_shard(path: Path) -> Shard:
@@ -206,26 +226,42 @@ def version_issues(root: Path) -> list[str]:
     return issues
 
 
+def _gathered(issues: list[str], label: str, produce):
+    """Run one check, turning any failure to *read* what it needs into an issue.
+
+    `corpus check` exists to report malformed corpus state, so a missing
+    tombstones.json or an unparseable changelog must be listed, not raised as
+    a traceback out of the command that was asked about them.
+    """
+    try:
+        issues.extend(produce())
+    except (CorpusError, OSError, ValueError, KeyError) as error:
+        issues.append(f"{label}: {error}")
+
+
 def check_issues(root: Path) -> list[str]:
     """Every mechanical objection to the corpus on disk, gathered not raised."""
     try:
         problems = load_corpus(root)
     except CorpusError as exc:
         return [str(exc)]
-    issues = tombstone_issues(problems, load_tombstones(root))
-    issues.extend(source_issues(problems, load_sources(root)))
-    issues.extend(version_issues(root))
-    for entry in problems.entries:
-        for code in entry.msc:
-            if not taxonomy.is_known(code):
-                issues.append(f"{entry.id!r}: unknown MSC code {code!r}")
+    issues: list[str] = []
+    _gathered(issues, "tombstones.json", lambda: tombstone_issues(problems, load_tombstones(root)))
+    _gathered(issues, "sources.json", lambda: source_issues(problems, load_sources(root)))
+    _gathered(issues, "CHANGELOG.md", lambda: version_issues(root))
+    with taxonomy.using(root):
+        for entry in problems.entries:
+            for code in entry.msc:
+                if not taxonomy.is_known(code):
+                    issues.append(f"{entry.id!r}: unknown MSC code {code!r}")
     return sorted(issues)
 
 
 def report(root: Path) -> list[str]:
     """Coverage: where the corpus actually is, by group, status and difficulty."""
     problems = load_corpus(root)
-    groups = Counter(taxonomy.group_of(e.msc[0]) for e in problems.entries)
+    with taxonomy.using(root):
+        groups = Counter(taxonomy.group_of(e.msc[0]) for e in problems.entries)
     statuses = Counter(e.status for e in problems.entries)
     difficulties = Counter(e.difficulty for e in problems.entries)
     twins = sum(1 for e in problems.entries if e.expected == "false")

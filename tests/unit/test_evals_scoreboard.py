@@ -26,6 +26,8 @@ from hardy.domain import EnvironmentIdentity
 from hardy.evals import runner, scoreboard, sweep
 from hardy.evals.problems import Entry
 
+HOST = sweep.host_info()
+
 TRUE = Entry(id="t", input="True.", name="HardyTarget", conclusion="True", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
 TWIN = Entry(id="f", input="False.", name="HardyTarget", conclusion="True", expected="false", twin_of="t", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
 # ^ both name HardyTarget because the shared fixture in test_recorded_runs poses `theorem HardyTarget : True`.
@@ -133,8 +135,8 @@ def _baseline(tiers: dict[str, int], twins_false: set[str] = frozenset()) -> swe
                                            closed_by=("nlinarith",) if k in twins_false else ()) if k.startswith("f") else None)
                for k, t in tiers.items()}
     return sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256="p" * 64, environment=identity, heartbeat_budget=200000,
-                          environment_digest=sweep.environment_digest_of(identity), procedure_digest=sweep.procedure_digest_of(),
-                          wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(), entries=entries)
+                          environment_digest=sweep.environment_digest_of(identity, HOST), procedure_digest=sweep.procedure_digest_of(),
+                          wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host=HOST, problems=(), entries=entries)
 
 
 def test_aggregates_are_counts_and_medians_per_tier():

@@ -209,7 +209,7 @@ def test_stage_b_runs_once_per_candidate_and_alone():
 def test_a_twin_the_sweep_closes_and_a_true_entry_whose_negation_closes_are_problems():
     elaborate = _scripted({"¬ S": {"simp"}, "¬ (S)": {"decide"}})
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=elaborate,
-                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
     assert any("twin" in p and "true" in p for p in baseline.problems)
     # a true entry's negation is only swept for twins; a *twin* whose statement closes is the finding here
     assert baseline.entries["twin"].closed_by == ("simp",)
@@ -241,26 +241,27 @@ def test_an_unconfirmed_candidate_is_recorded_not_closed():
 
 PROBLEM_IDS = [e.id for e in _problems().entries]
 DIGESTS = {e.id: e.statement_digest() for e in _problems().entries}
+HOST = {"platform": "Linux-6.1", "machine": "x86_64", "cpu_count": 8}
 
 
 def test_staleness_names_each_drift():
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
-                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
-    assert sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS) == ()
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    assert sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS, host=HOST) == ()
     moved = IDENTITY.model_copy(update={"mathlib_revision": "v4.34.0"})
     # Per entry, not per file: one corrected statement must name *that* id
     # rather than calling every measurement in the corpus stale.
     drifted = {**DIGESTS, "easy": "e" * 64}
-    issues = sweep.staleness(baseline, statement_digests=drifted, environment=moved, problem_ids=PROBLEM_IDS)
+    issues = sweep.staleness(baseline, statement_digests=drifted, environment=moved, problem_ids=PROBLEM_IDS, host=HOST)
     assert any("easy" in i and "changed since the baseline" in i for i in issues)
     assert not any("twin" in i and "changed since the baseline" in i for i in issues)
     assert any("mathlib_revision" in i for i in issues)
     broken = baseline.model_copy(update={"problems": ("twin: closed by simp, so it is true",)})
-    assert any("problems" in i for i in sweep.staleness(broken, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS))
+    assert any("problems" in i for i in sweep.staleness(broken, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS, host=HOST))
     edited = baseline.model_copy(update={"chains": ("simp; simp",)})
-    assert any("chains" in i for i in sweep.staleness(edited, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS))
+    assert any("chains" in i for i in sweep.staleness(edited, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS, host=HOST))
     rebudgeted = baseline.model_copy(update={"heartbeat_budget": 1})
-    issues = sweep.staleness(rebudgeted, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS)
+    issues = sweep.staleness(rebudgeted, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS, host=HOST)
     assert any("heartbeat_budget" in i and "1" in i and str(sweep.HEARTBEAT_BUDGET) in i for i in issues)
 
 
@@ -319,8 +320,8 @@ def test_staleness_names_an_extra_baseline_entry():
     (item 8): `aggregate`'s `floor` would otherwise count a ghost entry.
     """
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
-                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
-    issues = sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=[i for i in PROBLEM_IDS if i != "twin"])
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    issues = sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=[i for i in PROBLEM_IDS if i != "twin"], host=HOST)
     assert any("extra" in i and "twin" in i for i in issues)
 
 
@@ -361,8 +362,8 @@ def test_staleness_names_a_missing_baseline_entry():
     `select` would otherwise raise `KeyError` the first time it is looked up.
     """
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
-                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
-    issues = sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=[*PROBLEM_IDS, "ghost"])
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    issues = sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=[*PROBLEM_IDS, "ghost"], host=HOST)
     assert any("missing" in i and "ghost" in i for i in issues)
 
 
@@ -416,7 +417,7 @@ def _never_called(source: str) -> Elaboration:
 def test_the_sweep_records_a_witness_verdict_for_every_entry():
     """A checker nothing calls enforces nothing (spec section 7)."""
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
-                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
     assert set(baseline.entries) and all(e.witness == "unwitnessed" for e in baseline.entries.values())
 
 
@@ -430,7 +431,7 @@ def test_a_kernel_rejected_witness_is_a_baseline_problem():
         return _elaboration([])
 
     baseline = sweep.sweep(ProblemSet(entries=(entry,)), problems_sha256="p" * 64, environment=IDENTITY,
-                           elaborate=elaborate, now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+                           elaborate=elaborate, now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
     assert baseline.entries["easy"].witness == "broken"
     assert any("easy" in p and "witness" in p for p in baseline.problems), baseline.problems
 
@@ -441,14 +442,14 @@ def test_the_baseline_records_the_environment_and_procedure_it_ran_under():
     what a measurement means even when the tactic constants did not.
     """
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
-                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
     assert len(baseline.environment_digest) == 64 and len(baseline.procedure_digest) == 64
-    assert sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS) == ()
+    assert sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS, host=HOST) == ()
 
     moved = baseline.model_copy(update={"environment_digest": "e" * 64})
-    assert any("environment" in i for i in sweep.staleness(moved, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS))
+    assert any("environment" in i for i in sweep.staleness(moved, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS, host=HOST))
     rebuilt = baseline.model_copy(update={"procedure_digest": "p" * 64})
-    assert any("procedure" in i for i in sweep.staleness(rebuilt, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS))
+    assert any("procedure" in i for i in sweep.staleness(rebuilt, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS, host=HOST))
 
 
 def test_a_baseline_recording_no_environment_or_procedure_digest_is_stale():
@@ -458,8 +459,50 @@ def test_a_baseline_recording_no_environment_or_procedure_digest_is_stale():
     stale rather than fresh.
     """
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
-                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
     for field in ("environment_digest", "procedure_digest"):
         blanked = baseline.model_copy(update={field: ""})
-        issues = sweep.staleness(blanked, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS)
+        issues = sweep.staleness(blanked, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS, host=HOST)
         assert any("records no" in i and field.split("_")[0] in i for i in issues), issues
+
+
+def test_an_entry_with_no_recorded_statement_digest_is_stale_not_fresh():
+    """A `.get` returning None used to read as "no drift". The entry-set check
+    compares `baseline.entries`, not the digest keys, so an unidentified
+    measurement could still supply that entry's tier and the headline floor.
+    """
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    forgotten = {k: v for k, v in baseline.statement_digests.items() if k != "easy"}
+    stripped = baseline.model_copy(update={"statement_digests": forgotten})
+    issues = sweep.staleness(stripped, statement_digests=DIGESTS, environment=IDENTITY,
+                             problem_ids=PROBLEM_IDS, host=HOST)
+    assert any("easy" in i and "no statement digest" in i for i in issues), issues
+
+
+def test_the_same_lean_on_a_different_machine_is_stale():
+    """Machine speed turns the sweep's process backstop into `timed_out`
+    attempts, which changes tiers -- so the host is in the environment digest
+    (spec section 3) rather than merely recorded beside it.
+    """
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    assert sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY,
+                           problem_ids=PROBLEM_IDS, host=HOST) == ()
+    elsewhere = {**HOST, "machine": "aarch64", "cpu_count": 96}
+    issues = sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY,
+                             problem_ids=PROBLEM_IDS, host=elsewhere)
+    assert any("environment" in i for i in issues), issues
+
+
+def test_the_procedure_digest_moves_when_the_deciding_source_does():
+    """`__version__` is fixed at 0.1.0 across every checkout, so hashing it
+    alone accepts measurements produced by different sweep logic, a different
+    axiom parser, or a different notion of a successful elaboration.
+    """
+    import hardy.evals.sweep as sweep_module
+
+    assert len(sweep.procedure_digest_of()) == 64
+    assert sweep_module.__file__ in sweep.DECIDING_SOURCES
+    for path in sweep.DECIDING_SOURCES:
+        assert Path(path).exists(), path

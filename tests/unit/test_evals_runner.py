@@ -15,6 +15,7 @@ from hardy.evals import runner, sweep
 from hardy.evals.corpus import load_corpus, manifest_digest
 from hardy.evals.problems import Entry, sha256_of
 
+HOST = sweep.host_info()
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
 ENTRIES = (
     Entry(id="t", input="True.", name="T", conclusion="True", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
@@ -50,9 +51,9 @@ def _files(tmp_path: Path, tiers: dict[str, int] = None) -> tuple[Path, Path]:
     problems = write_corpus(tmp_path / "corpus", ENTRIES)
     tiers = tiers or {"t": 0, "u": 3, "f": 3}
     baseline = sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=manifest_digest(problems), environment=IDENTITY,
-                              environment_digest=sweep.environment_digest_of(IDENTITY), procedure_digest=sweep.procedure_digest_of(),
+                              environment_digest=sweep.environment_digest_of(IDENTITY, HOST), procedure_digest=sweep.procedure_digest_of(),
                               statement_digests={e.id: e.statement_digest() for e in ENTRIES},
-                              heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(),
+                              heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host=HOST, problems=(),
                               entries={k: _entry_baseline(v) for k, v in tiers.items()})
     path = tmp_path / "baseline.json"
     path.write_text(json.dumps(baseline.model_dump(mode="json")), encoding="utf-8")

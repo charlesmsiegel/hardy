@@ -1096,8 +1096,12 @@ deliverable.
 
 ## Evaluation set (evals/)
 
-**Now (implemented).** `evals/problems.json` is a committed list of twenty
-statements (`src/hardy/evals/problems.py`), each holding the natural-language
+**Now (implemented).** `corpus/` is a committed, classified corpus of twenty
+statements (`src/hardy/evals/corpus.py`, `problems.py`), sharded by MSC2020
+2-digit class under `corpus/problems/<NN>.json` and loaded by `load_corpus`
+as one `ProblemSet`. The shard is *derived* from the entry's primary code and
+never stored, so the loader refuses an entry filed under a name that disagrees
+with it. Each entry holds the natural-language
 `input`, a Lean `name`/`binders`/`conclusion` kept apart so every consumer
 assembles the canonical declaration, proposition, and negation the same way,
 and an `expected` verdict. Five are twins — `expected: "false"`, `twin_of`
@@ -1176,9 +1180,12 @@ selection through `batch` or `staged` and writes
 It refuses before anything runs (exit 2) on `--backend codex` (the batch
 runner, the canonical reader and staged tool-event counting are all
 Claude-shaped, so a Codex condition would attribute Claude runs to Codex),
-a missing `evals/problems.json` or `evals/baseline.json` (not packaged: the
-set is repository evidence read from a source checkout, not from an
-installed wheel), a stale baseline digest, a drifted toolchain identity,
+a missing `corpus/` or `evals/baseline.json` (not packaged: both are
+repository evidence read from a source checkout, not from an installed
+wheel), a statement digest that drifted or was never recorded for an entry,
+an environment digest naming a different Lean, Mathlib or *machine* than
+this one, a procedure digest naming different sweep source, a drifted
+toolchain identity,
 `singles`/`chains` drift, a baseline that itself recorded problems, a
 baseline whose entries no longer match the problem list's ids (extra or
 missing, named in the refusal), an existing label, `--only` naming an id
