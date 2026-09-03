@@ -210,14 +210,34 @@ def _tier_aggregate(rows: list[Row], baseline: Baseline) -> TierAggregate:
     )
 
 
-def aggregate(rows: list[Row], baseline: Baseline) -> Aggregates:
+def aggregate(rows: list[Row], baseline: Baseline, *, active_ids: set[str]) -> Aggregates:
+    """Per-tier counts over every row; the headline over reviewed rows only.
+
+    Only `active` entries reach a headline (spec §2.2). Nothing mechanical
+    separates a faithful formalisation from a plausible-looking wrong one, so
+    a headline computed over `candidate` entries is a number about statements
+    nobody has read. Every row still runs and every tier still reports -- what
+    is withheld is the headline claim, not the measurement -- and
+    `floor["active"]` names the denominator so an `n` of zero reads as "none
+    of this is reviewed yet" rather than "nothing ran".
+
+    `active_ids` is required rather than defaulted: a default would silently
+    restore the very hole this closes.
+    """
     tiers = {str(t): _tier_aggregate([r for r in rows if r.tier == t], baseline) for t in range(4)}
-    headline = _tier_aggregate([r for r in rows if r.tier in (2, 3)], baseline)
+    headline = _tier_aggregate(
+        [r for r in rows if r.tier in (2, 3) and r.id in active_ids], baseline)
     floor = {"entries": len(baseline.entries)}
     for t in range(4):
         floor[f"tier_{t}"] = sum(1 for e in baseline.entries.values() if e.tier == t)
     floor["single_tactic_closes"] = sum(1 for e in baseline.entries.values() if e.tier in (0, 1))
+    floor["active"] = len(active_ids)
     return Aggregates(tiers=tiers, headline=headline, floor=floor)
+
+
+def active_ids(problems) -> set[str]:
+    """The entries a headline may speak for."""
+    return {e.id for e in problems.entries if e.status == "active"}
 
 
 def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_path: Path) -> tuple[str, ...]:
@@ -337,7 +357,7 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
         if row.mode == "staged":
             issues.extend(_canonical_issues(entry, run_dir, where))
     # 6. aggregates
-    if aggregate(list(board.rows), baseline) != board.aggregates:
+    if aggregate(list(board.rows), baseline, active_ids=active_ids(problems)) != board.aggregates:
         # Not "...from the rows": that phrase's own plural would satisfy
         # check 7's `not any("row" in i for i in ...)` for the wrong reason.
         issues.append("the scoreboard's aggregates do not recompute")

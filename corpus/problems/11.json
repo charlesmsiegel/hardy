@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "corpus_version": "0.1.0",
+  "corpus_version": "0.1.1",
   "entries": [
     {
       "id": "two-plus-two",
@@ -202,7 +202,7 @@
     },
     {
       "id": "pigeonhole-residues",
-      "input": "Among any $n+1$ integers, two are congruent modulo $n$.",
+      "input": "For $n > 0$: among any $n+1$ integers, two are congruent modulo $n$.",
       "name": "PigeonholeResidues",
       "binders": "(n : ℕ) (hn : 0 < n) (f : Fin (n + 1) → ℤ)",
       "conclusion": "∃ i j, i ≠ j ∧ f i % n = f j % n",

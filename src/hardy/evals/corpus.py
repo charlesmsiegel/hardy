@@ -69,21 +69,24 @@ def load_corpus(root: Path) -> ProblemSet:
     """
     entries: list[Entry] = []
     seen: dict[str, Path] = {}
-    # Entries validate their own codes, so the taxonomy they validate against
-    # must be this corpus's -- not Hardy's own checkout's (see taxonomy.using).
-    for path in _shards(root):
-        for entry in _load_shard_scoped(path, root).entries:
-            if entry.id in seen:
-                raise CorpusError(
-                    f"duplicate id {entry.id!r} in {path.name} and {seen[entry.id].name}"
-                )
-            if entry.shard != path.stem:
-                raise CorpusError(
-                    f"{entry.id!r} is filed in {path.name} but belongs in shard {entry.shard}"
-                )
-            seen[entry.id] = path
-            entries.append(entry)
-    return ProblemSet(entries=tuple(entries))
+    # The whole load is scoped, `ProblemSet` construction included: entries
+    # validate their own codes and pydantic revalidates them on the way into
+    # the set, so anything outside this block would check a third party's
+    # corpus against Hardy's own bundled tables (see `taxonomy.using`).
+    with taxonomy.using(root):
+        for path in _shards(root):
+            for entry in _load_shard(path).entries:
+                if entry.id in seen:
+                    raise CorpusError(
+                        f"duplicate id {entry.id!r} in {path.name} and {seen[entry.id].name}"
+                    )
+                if entry.shard != path.stem:
+                    raise CorpusError(
+                        f"{entry.id!r} is filed in {path.name} but belongs in shard {entry.shard}"
+                    )
+                seen[entry.id] = path
+                entries.append(entry)
+        return ProblemSet(entries=tuple(entries))
 
 
 TAXONOMY_FILES = ("msc2020.json", "msc-to-arxiv.json")
@@ -198,7 +201,10 @@ def changelog_head(root: Path) -> tuple[str, str, str | None]:
 
 
 def corpus_version(root: Path) -> str:
-    versions = {_load_shard(p).corpus_version for p in _shards(root)}
+    # Scoped: a `Shard` carries `Entry` objects that validate their own codes,
+    # so re-parsing outside the corpus's own taxonomy would call a valid
+    # external corpus invalid against Hardy's bundled tables.
+    versions = {_load_shard_scoped(p, root).corpus_version for p in _shards(root)}
     if len(versions) != 1:
         raise CorpusError(f"shards disagree on corpus_version: {sorted(versions)}")
     return versions.pop()
@@ -254,6 +260,21 @@ def check_issues(root: Path) -> list[str]:
             for code in entry.msc:
                 if not taxonomy.is_known(code):
                     issues.append(f"{entry.id!r}: unknown MSC code {code!r}")
+                    continue
+                # Every roll-up the corpus actually needs. Checking only that
+                # the full code exists lets a manifest-bound but incomplete
+                # mapping pass, and `corpus report` then raises `UnknownCode`
+                # on the very corpus this call just declared clean.
+                for table, lookup in (("fields", taxonomy.field_of),
+                                      ("groups", taxonomy.group_of),
+                                      ("arxiv", taxonomy.arxiv_of)):
+                    try:
+                        lookup(code)
+                    except taxonomy.UnknownCode:
+                        issues.append(
+                            f"{entry.id!r}: {code!r} has no {table} entry for its class "
+                            f"{code[:2]!r} in taxonomy/msc-to-arxiv.json"
+                        )
     return sorted(issues)
 
 

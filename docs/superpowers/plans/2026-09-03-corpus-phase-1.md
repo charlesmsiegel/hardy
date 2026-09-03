@@ -1640,13 +1640,47 @@ whole job is to report malformed corpus state.
 `ARCHITECTURE.html` still described `evals/problems.json` as the implemented
 evaluation set — a path this change deletes.
 
+**A6 reads the witness's axiom report, not just its elaboration.** `sorry` is
+a *warning*, so `Elaboration.success` is true for `⟨0, sorry, trivial⟩` and the
+check recorded `witnessed` for a hole wearing a term's clothes — the exact
+vacuity A6 exists to rule out. The witness is now a named theorem with
+`#print axioms` appended, held to the same standard as the theorem sweep:
+elaborates, reports, and names nothing beyond the standard three. No report at
+all is a rejection, not a clean sweep.
+
+**Only reviewed entries reach a headline.** `aggregate` counted every tier-2/3
+row, so a run against this corpus — every entry `candidate` — produced a
+headline over statements nobody has read, which spec §2.2 forbids. The
+headline now counts `active` entries only, while every row still runs and
+every tier still reports: what is withheld is the claim, not the measurement.
+`floor["active"]` names the denominator so an `n` of zero reads as "none of
+this is reviewed yet" rather than "nothing ran". `active_ids` is a required
+keyword rather than a defaulted one, because a default would silently restore
+the hole.
+
+**The version gate parses shards inside the taxonomy scope.** `corpus_version`
+re-parsed every shard through `_load_shard` after `load_corpus`'s scope had
+ended, and a `Shard` carries `Entry` objects that validate their own codes — so
+a valid external corpus using a code Hardy's tables lack was reported invalid.
+`load_corpus` now scopes its whole body, `ProblemSet` construction included,
+because pydantic revalidates entries on the way into the set.
+
+**`corpus check` exercises the roll-ups, not just the code list.** It verified
+only that each full code existed in `msc2020.json`, so a corpus with a
+manifest-bound but incomplete `msc-to-arxiv.json` passed the check and then
+raised `UnknownCode` out of `corpus report` — on the corpus that check had
+just declared clean.
+
+**`pigeonhole-residues` regains its positivity premise** (corpus 0.1.1). The
+prose read "among any $n+1$ integers" while the Lean carries `hn : 0 < n`; at
+$n = 0$ there is one indexed integer, so no two distinct indices exist and the
+prompt asserted something false about a guarded statement. Only `input`
+changed, so `prompt_digest` moved and `statement_digest` did not — the entry's
+A-group measurements survive the correction, which is the component split
+doing its job.
+
 ### Known gaps, deliberately left to their phase
 
-- **Candidate entries are not yet excluded from the headline.** All twenty
-  migrated entries are `candidate`, and `select`/`aggregate` still include
-  every selected entry by tier alone. Reporting is phase 2 (spec §11) and the
-  `status` filter belongs with it; until then a headline computed from this
-  corpus is a headline over unreviewed candidates.
 - **`Review` does not bind the origin it was read against.** `occurrences` and
   `rationale` are in no component digest, so changing an entry's primary
   citation leaves an approval current although the reviewer no longer attests

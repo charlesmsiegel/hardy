@@ -126,7 +126,12 @@ def test_a_batch_set_run_writes_rows_a_scoreboard_and_aggregates(tmp_path):
     board = json.loads((out / "scoreboard.json").read_text(encoding="utf-8"))
     assert out == tmp_path / "sb" / "first"
     assert [(r["id"], r["outcome"], r["tier"]) for r in board["rows"]] == [("t", "solved", 0), ("u", "unsolved", 3), ("f", "refused", 3)]
-    assert board["aggregates"]["headline"]["n"] == 1 and board["aggregates"]["headline"]["solved"] == 0
+    # The headline is 0 because every fixture entry is `candidate`: only
+    # reviewed entries reach a headline (spec §2.2), while every row still
+    # runs and every tier still reports. `floor.active` names the denominator
+    # so this reads as "none of it is reviewed", not "nothing ran".
+    assert board["aggregates"]["headline"]["n"] == 0 and board["aggregates"]["floor"]["active"] == 0
+    assert board["aggregates"]["tiers"]["3"]["n"] == 1, "the measurement is not withheld, only the claim"
     assert board["aggregates"]["tiers"]["3"]["refused"] == 1
     assert board["interrupted"] is False and board["finished_at"] is not None
     assert board["baseline_sha256"] == sha256_of(baseline) and board["problems_sha256"] == manifest_digest(problems)

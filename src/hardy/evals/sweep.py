@@ -112,11 +112,33 @@ def witness_source(entry: Entry) -> str | None:
         return None
     binders = entry.binders.strip()
     body = f"∃ {binders}, True" if binders else "True"
-    return header(entry.imports) + f"\nexample : {body} := {entry.witness.strip()}\n"
+    name = witness_name(entry)
+    return (
+        header(entry.imports)
+        + f"\ntheorem {name} : {body} := {entry.witness.strip()}\n"
+        + f"\n#print axioms {name}\n"
+    )
+
+
+def witness_name(entry: Entry) -> str:
+    """The declaration A6 names, so its axioms can be printed and read.
+
+    Named rather than an anonymous `example` because `#print axioms` needs a
+    name: elaborating successfully is not the same as the kernel being
+    convinced, and `sorry` is a *warning*, so a hole passes `Elaboration
+    .success` untouched.
+    """
+    return f"{entry.name}Witness"
 
 
 def witness_verdict(entry: Entry, elaborate: Elaborate) -> str:
     """`witnessed`, `broken`, or `unwitnessed` -- never silently absent.
+
+    Held to the same standard as the theorem sweep: the declaration must
+    elaborate *and* its `#print axioms` report must name nothing beyond the
+    standard three. Without that, `⟨0, sorry, trivial⟩` records `witnessed`
+    for a hole wearing a term's clothes -- exactly the vacuity A6 exists to
+    rule out. No report at all is a rejection, not a clean sweep.
 
     An unwitnessed entry is one where nothing but the human read stands
     between a vacuous statement and a field headline, so the fact is recorded
@@ -125,7 +147,13 @@ def witness_verdict(entry: Entry, elaborate: Elaborate) -> str:
     source = witness_source(entry)
     if source is None:
         return "unwitnessed"
-    return "witnessed" if elaborate(source).success else "broken"
+    elaboration = elaborate(source)
+    if not elaboration.success:
+        return "broken"
+    reports = audit.parse("\n".join(d.message for d in elaboration.diagnostics), (witness_name(entry),))
+    if reports is None:
+        return "broken"
+    return "witnessed" if set(reports[0].axioms) <= audit.STANDARD else "broken"
 
 
 def stage_b_source(name: str, binders: str, conclusion: str, tactic: str, imports: tuple[str, ...]) -> str:
