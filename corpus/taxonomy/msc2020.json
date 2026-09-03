@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "codes": {
+    "05A": "Enumerative combinatorics",
+    "05C": "Graph theory",
+    "11A": "Elementary number theory",
+    "11J": "Diophantine approximation and transcendental number theory",
+    "12F": "Field extensions",
+    "13A": "General commutative ring theory",
+    "13A15": "Ideals and multiplicative ideal theory",
+    "13C": "Theory of modules and ideals in commutative rings",
+    "13E": "Chain conditions, finiteness conditions in commutative ring theory",
+    "13H": "Local rings and semilocal rings",
+    "15A": "Basic linear algebra",
+    "20A": "Foundations of group theory",
+    "20B": "Permutation groups",
+    "20D": "Abstract finite groups",
+    "20E": "Structure and classification of infinite or finite groups",
+    "26A": "Functions of one real variable",
+    "26B": "Functions of several variables",
+    "26D": "Inequalities for real functions",
+    "28A": "Classical measure theory",
+    "54A": "Generalities in general topology"
+  }
+}
