@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "arxiv": {
+    "05": "math.CO", "11": "math.NT", "12": "math.AC", "13": "math.AC",
+    "15": "math.RA", "20": "math.GR", "26": "math.CA", "28": "math.CA",
+    "54": "math.GN"
+  },
+  "fields": {
+    "05": "Combinatorics", "11": "Number theory", "12": "Field theory",
+    "13": "Commutative algebra", "15": "Linear algebra",
+    "20": "Group theory", "26": "Real analysis", "28": "Measure theory",
+    "54": "General topology"
+  },
+  "groups": {
+    "05": "combinatorics", "11": "number-theory", "12": "algebra",
+    "13": "commutative-algebra", "15": "linear-algebra",
+    "20": "group-theory", "26": "analysis", "28": "analysis",
+    "54": "topology"
+  }
+}
