@@ -6,17 +6,27 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from hardy.evals.problems import Entry, ProblemSet, load_problems, sha256_of
+from hardy.evals.problems import (
+    Audit,
+    Entry,
+    Occurrence,
+    ProblemSet,
+    Review,
+    load_problems,
+    sha256_of,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def _entry(**overrides) -> dict:
     base = {
-        "id": "odd-squares", "input": "If a and b are odd, a^2+b^2 is not a square.",
+        "id": "odd-squares", "input": "If $a$ and $b$ are odd, $a^2+b^2$ is not a square.",
         "name": "OddSquares", "binders": "(a b : ℤ) (ha : Odd a) (hb : Odd b)",
         "conclusion": "¬ IsSquare (a ^ 2 + b ^ 2)", "expected": "true",
-        "source": "classical", "area": "number theory",
+        "source": "classical", "msc": ("11A",), "difficulty": "substantial",
+        "occurrences": ({"source_id": "hardy-wright", "locator": (6, 1, 3)},),
+        "status": "candidate", "witness": "⟨1, 1⟩",
     }
     base.update(overrides)
     return base
@@ -100,3 +110,146 @@ def test_sha256_is_over_the_bytes(tmp_path):
     path.write_bytes(b'{"schema_version": 1, "entries": [] }')
     assert sha256_of(path) != first
     assert len(first) == 64
+
+
+# --- Occurrences and locators (spec §2.1) ---
+
+
+def test_a_locator_must_be_nonempty_and_nonnegative():
+    assert Occurrence(source_id="am", locator=(3, 2, 12)).locator == (3, 2, 12)
+    for bad in ((), (-1,), (1, -2)):
+        with pytest.raises(ValidationError):
+            Occurrence(source_id="am", locator=bad)
+
+
+def test_occurrences_order_lexicographically_including_unequal_lengths():
+    a = Occurrence(source_id="am", locator=(3,))
+    b = Occurrence(source_id="am", locator=(3, 1))
+    c = Occurrence(source_id="am", locator=(4,))
+    assert a < b < c
+    assert not (b < a)
+
+
+# --- Review and audit records (spec §2.2, §9.2) ---
+
+
+def _review(**overrides) -> dict:
+    base = {
+        "reviewer": "cms", "reviewed_at": "2026-09-03T00:00:00Z",
+        "statement_digest": "a" * 64, "prompt_digest": "b" * 64,
+        "msc": ("13A15",), "group": "commutative-algebra", "verdict": "faithful",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_a_review_records_the_classification_it_approved():
+    review = Review(**_review())
+    assert review.verdict == "faithful"
+    assert review.msc == ("13A15",) and review.group == "commutative-algebra"
+
+
+def test_an_unfaithful_review_requires_a_reason():
+    with pytest.raises(ValidationError):
+        Review(**_review(verdict="unfaithful"))
+    assert Review(**_review(verdict="unfaithful", reason="binders drop a hypothesis")).reason
+
+
+def test_a_pending_audit_names_the_panel_that_raised_it():
+    audit = Audit(panel="opus-vs-sonnet@0.2.0", raised_at="2026-09-03T00:00:00Z", verdict="pending")
+    assert audit.verdict == "pending" and audit.panel == "opus-vs-sonnet@0.2.0"
+    with pytest.raises(ValidationError):
+        Audit(panel="p", raised_at="2026-09-03T00:00:00Z", verdict="broken")
+
+
+# --- Classification (spec §2) ---
+
+
+def test_an_msc_code_must_be_finer_than_its_own_two_digit_class():
+    # `13` is itself a valid MSC2020 entry, so a vendored-list check alone
+    # would accept it -- and the precision would be gone permanently.
+    with pytest.raises(ValidationError):
+        Entry(**_entry(msc=("13",)))
+    assert Entry(**_entry(msc=("13A15",))).msc == ("13A15",)
+
+
+def test_the_shard_is_derived_and_not_stored():
+    assert Entry(**_entry(msc=("13A15",))).shard == "13"
+    with pytest.raises(ValidationError):
+        Entry(**_entry(shard="13"))
+
+
+def test_an_unknown_or_empty_msc_is_rejected():
+    with pytest.raises(ValidationError):
+        Entry(**_entry(msc=("99Z99",)))
+    with pytest.raises(ValidationError):
+        Entry(**_entry(msc=()))
+
+
+def test_an_arxiv_override_needs_a_reason_and_must_name_a_real_class():
+    with pytest.raises(ValidationError):
+        Entry(**_entry(arxiv_override="math.NT"))
+    with pytest.raises(ValidationError):
+        Entry(**_entry(arxiv_override="math.AC ", override_reason="typo guard"))
+    assert Entry(**_entry(arxiv_override="math.NT", override_reason="arithmetic geometry")).arxiv_override
+
+
+# --- Lifecycle (spec §2.2) ---
+
+
+def test_a_retired_entry_needs_a_reason():
+    with pytest.raises(ValidationError):
+        Entry(**_entry(status="retired"))
+    assert Entry(**_entry(status="retired", retired_reason="mistranslated")).status == "retired"
+
+
+def test_an_authored_entry_needs_a_rationale_and_cannot_carry_fixtures():
+    with pytest.raises(ValidationError):
+        Entry(**_entry(occurrences=()))
+    assert Entry(**_entry(occurrences=(), rationale="states the pigeonhole bound")).rationale
+    with pytest.raises(ValidationError):
+        Entry(**_entry(occurrences=(), rationale="x", fixtures=("nakayama",)))
+
+
+def test_a_null_witness_needs_a_note():
+    with pytest.raises(ValidationError):
+        Entry(**_entry(witness=None))
+    assert Entry(**_entry(witness=None, witness_note="existence-heavy")).witness is None
+
+
+def test_binders_may_not_mention_a_fixture():
+    """An antecedent in binders reaches the bare condition too (spec §9.1)."""
+    with pytest.raises(ValidationError):
+        Entry(**_entry(binders="(nakayama : True)", fixtures=("nakayama",)))
+
+
+def test_title_is_optional_and_never_reaches_the_declaration():
+    entry = Entry(**_entry(title="Hilbert's Nullstellensatz"))
+    assert entry.title == "Hilbert's Nullstellensatz"
+    assert entry.name == "OddSquares"
+    assert "Nullstellensatz" not in entry.declaration()
+
+
+# --- ProblemSet (spec §4) ---
+
+
+def test_duplicate_detection_and_lookup_are_linear():
+    import time
+
+    entries = tuple(Entry(**_entry(id=f"e-{i}", name=f"E{i}")) for i in range(5000))
+    start = time.perf_counter()
+    problems = ProblemSet(entries=entries)
+    for i in range(0, 5000, 250):
+        problems.by_id(f"e-{i}")
+    assert time.perf_counter() - start < 5.0
+    assert problems.by_id("e-4999").name == "E4999"
+
+
+def test_a_false_twin_inherits_its_targets_primary_msc():
+    target = Entry(**_entry(id="sq-ge", name="SqGe", msc=("26D",)))
+    drifted = Entry(**_entry(id="sq-le", name="SqLe", msc=("11A",), expected="false", twin_of="sq-ge"))
+    with pytest.raises(ValidationError):
+        ProblemSet(entries=(target, drifted))
+
+    ok = Entry(**_entry(id="sq-le", name="SqLe", msc=("26D",), expected="false", twin_of="sq-ge"))
+    assert len(ProblemSet(entries=(target, ok)).entries) == 2
