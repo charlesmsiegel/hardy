@@ -6,13 +6,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from hardy.evals import taxonomy
 from hardy.evals.problems import (
     Audit,
     Entry,
     Occurrence,
     ProblemSet,
     Review,
-    load_problems,
     sha256_of,
 )
 
@@ -96,8 +96,10 @@ def test_ids_and_names_are_unique():
         ProblemSet(entries=(Entry(**_entry()), Entry(**_entry(id="other"))))
 
 
-def test_the_committed_list_loads_and_has_fifteen_true_entries_and_five_twins():
-    problems = load_problems(ROOT / "evals" / "problems.json")
+def test_the_committed_corpus_loads_and_has_fifteen_true_entries_and_five_twins():
+    from hardy.evals.corpus import load_corpus
+
+    problems = load_corpus(ROOT / "corpus")
     assert len(problems.true_entries) == 15 and len(problems.twins) == 5
     assert {t.twin_of for t in problems.twins} <= {e.id for e in problems.true_entries}
     assert problems.by_id("sqrt-two-plus-sqrt-three").expected == "true"
@@ -110,6 +112,48 @@ def test_sha256_is_over_the_bytes(tmp_path):
     path.write_bytes(b'{"schema_version": 1, "entries": [] }')
     assert sha256_of(path) != first
     assert len(first) == 64
+
+
+# --- The active gate (spec §2.2) ---
+
+
+def _approval(entry: Entry, **overrides) -> dict:
+    base = {
+        "reviewer": "cms", "reviewed_at": "2026-09-03",
+        "statement_digest": entry.statement_digest(), "prompt_digest": entry.prompt_digest(),
+        "msc": list(entry.msc), "group": taxonomy.group_of(entry.msc[0]), "verdict": "faithful",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_an_active_entry_must_carry_a_faithful_review():
+    """Only active entries reach a headline, and nothing mechanical can tell a
+    faithful formalisation from a plausible-looking wrong one."""
+    candidate = Entry(**_entry())
+    with pytest.raises(ValidationError, match="active"):
+        Entry(**_entry(status="active"))
+    with pytest.raises(ValidationError, match="faithful"):
+        Entry(**_entry(status="active", review=_approval(candidate, verdict="unfaithful", reason="binders wrong")))
+    assert Entry(**_entry(status="active", review=_approval(candidate))).status == "active"
+
+
+def test_editing_a_reviewed_statement_or_prompt_revokes_its_active_status():
+    """A reviewer approved a specific thing; an edit is a different thing."""
+    reviewed = _approval(Entry(**_entry()))
+    with pytest.raises(ValidationError, match="statement"):
+        Entry(**_entry(status="active", conclusion="True", review=reviewed))
+    with pytest.raises(ValidationError, match="prompt"):
+        Entry(**_entry(status="active", input="reworded", review=reviewed))
+
+
+def test_refiling_a_reviewed_entry_under_a_new_code_revokes_its_active_status():
+    """A wrong-but-valid MSC code passes every mechanical check, so this
+    review is the only gate between a misclassification and a field headline.
+    """
+    reviewed = _approval(Entry(**_entry()))
+    with pytest.raises(ValidationError, match="classification"):
+        Entry(**_entry(status="active", msc=("20D",), review=reviewed))
 
 
 # --- Occurrences and locators (spec §2.1) ---

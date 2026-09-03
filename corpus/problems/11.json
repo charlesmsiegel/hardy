@@ -1,0 +1,270 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.1.0",
+  "entries": [
+    {
+      "id": "two-plus-two",
+      "input": "$2 + 2 = 4$.",
+      "name": "TwoPlusTwo",
+      "binders": "",
+      "conclusion": "(2 : ℕ) + 2 = 4",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "msc": [
+        "11A"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "euler-polynomial-small",
+      "input": "For every natural number $n < 10$, $n^2 + n + 41$ is prime.",
+      "name": "EulerPolynomialSmall",
+      "binders": "",
+      "conclusion": "∀ n < 10, Nat.Prime (n ^ 2 + n + 41)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "classical",
+      "msc": [
+        "11A"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "sqrt-two-irrational",
+      "input": "$\\sqrt{2}$ is irrational.",
+      "name": "SqrtTwoIrrational",
+      "binders": "",
+      "conclusion": "Irrational (Real.sqrt 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "classical",
+      "msc": [
+        "11J"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "sqrt-six-irrational",
+      "input": "$\\sqrt{6}$ is irrational.",
+      "name": "SqrtSixIrrational",
+      "binders": "",
+      "conclusion": "Irrational (Real.sqrt 6)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "classical",
+      "msc": [
+        "11J"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "odd-sum",
+      "input": "For every natural number $n$, $\\sum_{i<n}(2i+1) = n^2$.",
+      "name": "OddSum",
+      "binders": "(n : ℕ)",
+      "conclusion": "∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "msc": [
+        "11A"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "six-divides-consecutive",
+      "input": "For every natural number $n$, $6 \\mid n(n+1)(n+2)$.",
+      "name": "SixDividesConsecutive",
+      "binders": "(n : ℕ)",
+      "conclusion": "6 ∣ n * (n + 1) * (n + 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "msc": [
+        "11A"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "cube-root-two-irrational",
+      "input": "$\\sqrt[3]{2}$ is irrational.",
+      "name": "CubeRootTwoIrrational",
+      "binders": "(x : ℝ) (hx : x ^ 3 = 2)",
+      "conclusion": "Irrational x",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "classical",
+      "msc": [
+        "11J"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "odd-squares-sum-not-square",
+      "input": "If $a$ and $b$ are odd, then $a^2 + b^2$ is not a perfect square.",
+      "name": "OddSquaresSumNotSquare",
+      "binders": "(a b : ℤ) (ha : Odd a) (hb : Odd b)",
+      "conclusion": "¬ IsSquare (a ^ 2 + b ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "classical",
+      "msc": [
+        "11A"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "sum-cubes-square",
+      "input": "For every natural number $n$, $\\sum_{i\\le n} i^3 = \\left(\\sum_{i\\le n} i\\right)^2$.",
+      "name": "SumCubesSquare",
+      "binders": "(n : ℕ)",
+      "conclusion": "∑ i ∈ Finset.range (n + 1), i ^ 3 = (∑ i ∈ Finset.range (n + 1), i) ^ 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "classical",
+      "msc": [
+        "11A"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "pigeonhole-residues",
+      "input": "Among any $n+1$ integers, two are congruent modulo $n$.",
+      "name": "PigeonholeResidues",
+      "binders": "(n : ℕ) (hn : 0 < n) (f : Fin (n + 1) → ℤ)",
+      "conclusion": "∃ i j, i ≠ j ∧ f i % n = f j % n",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "msc": [
+        "11A"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "euler-polynomial-all",
+      "input": "For every natural number $n$, $n^2 + n + 41$ is prime.",
+      "name": "EulerPolynomialAll",
+      "binders": "(n : ℕ)",
+      "conclusion": "Nat.Prime (n ^ 2 + n + 41)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "euler-polynomial-small",
+      "source": "classical",
+      "msc": [
+        "11A"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "squares-sum-not-square",
+      "input": "For all integers $a$ and $b$, $a^2 + b^2$ is not a perfect square.",
+      "name": "SquaresSumNotSquare",
+      "binders": "(a b : ℤ)",
+      "conclusion": "¬ IsSquare (a ^ 2 + b ^ 2)",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "odd-squares-sum-not-square",
+      "source": "classical",
+      "msc": [
+        "11A"
+      ],
+      "difficulty": "substantial",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    }
+  ]
+}

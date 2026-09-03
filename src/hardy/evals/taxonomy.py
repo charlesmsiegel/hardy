@@ -38,6 +38,20 @@ def _lookup(table: dict[str, str], key: str, code: str) -> str:
         raise UnknownCode(code) from exc
 
 
+def _rollup(table: dict[str, str], code: str) -> str:
+    """A 2-digit roll-up, but only for a code that exists.
+
+    Rolling up on the prefix alone would report `13ZZZ` as valid commutative
+    algebra: the prefix resolves and the invented tail is never looked at.
+    `Entry` already rejects unknown codes, so this is what protects every
+    caller that is not an `Entry` -- the editor, a report, a third party's
+    script over the published corpus.
+    """
+    if not is_known(code):
+        raise UnknownCode(code)
+    return _lookup(table, code[:2], code)
+
+
 def name_of(code: str) -> str:
     """The MSC2020 name of the full code -- what §12.1's reviewer actually reads.
 
@@ -50,7 +64,7 @@ def name_of(code: str) -> str:
 
 def field_of(code: str) -> str:
     """The 2-digit class's human label."""
-    return _lookup(_mapping()["fields"], code[:2], code)
+    return _rollup(_mapping()["fields"], code)
 
 
 def group_of(code: str) -> str:
@@ -59,11 +73,11 @@ def group_of(code: str) -> str:
     Exists apart from `field_of` because the planned fields are not the 2-digit
     classes -- "real analysis and measure" is MSC 26 *and* 28 (spec §5).
     """
-    return _lookup(_mapping()["groups"], code[:2], code)
+    return _rollup(_mapping()["groups"], code)
 
 
 def arxiv_of(code: str) -> str:
-    return _lookup(_mapping()["arxiv"], code[:2], code)
+    return _rollup(_mapping()["arxiv"], code)
 
 
 @cache

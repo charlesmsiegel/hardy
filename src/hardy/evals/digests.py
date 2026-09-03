@@ -25,18 +25,22 @@ def statement_digest(
     imports: tuple[str, ...],
     witness: str | None,
     witness_note: str | None,
-    fixture_digests: tuple[str, ...] = (),
 ) -> str:
-    """Governs the A-group.
+    """Governs A1, A2, A3 and A6 -- the conditions that load no fixtures.
 
     The witness is in here because the digest decides incremental reuse:
     editing a valid witness into one the kernel rejects would otherwise leave a
     cached A6 pass looking current and bypass the non-vacuity gate.
+
+    Fixtures are deliberately *not* in here. A4, A5 and B4 depend on
+    `fixture_set_digest` as a separate component precisely so that editing a
+    shared fixture stales those and nothing else; folding fixtures in here
+    would reach A1-A3, A6 and -- through `prompt_digest` -- B1-B3, none of
+    which has a fixture in scope, and collapse the component boundary the
+    whole arrangement exists to draw (spec section 3).
     """
     return _digest(
-        "statement",
-        [name, binders, conclusion, list(imports), witness, witness_note, sorted(fixture_digests)],
-    )
+        "statement", [name, binders, conclusion, list(imports), witness, witness_note])
 
 
 def fixture_set_digest(resolved: tuple[str, ...]) -> str:

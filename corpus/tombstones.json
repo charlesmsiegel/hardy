@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "issued": {
+    "am-gm-two": "2026-09-03",
+    "cube-root-two-irrational": "2026-09-03",
+    "euler-polynomial-all": "2026-09-03",
+    "euler-polynomial-small": "2026-09-03",
+    "exponent-two-abelian": "2026-09-03",
+    "odd-squares-sum-not-square": "2026-09-03",
+    "odd-sum": "2026-09-03",
+    "order-four-cyclic": "2026-09-03",
+    "pigeonhole-residues": "2026-09-03",
+    "prime-order-cyclic": "2026-09-03",
+    "six-divides-consecutive": "2026-09-03",
+    "sq-sum-ge-two-mul": "2026-09-03",
+    "sq-sum-le-two-mul": "2026-09-03",
+    "sqrt-six-irrational": "2026-09-03",
+    "sqrt-two-irrational": "2026-09-03",
+    "sqrt-two-plus-sqrt-three": "2026-09-03",
+    "sqrt-two-plus-sqrt-three-rational": "2026-09-03",
+    "squares-sum-not-square": "2026-09-03",
+    "sum-cubes-square": "2026-09-03",
+    "two-plus-two": "2026-09-03"
+  }
+}

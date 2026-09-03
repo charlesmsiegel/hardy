@@ -6,18 +6,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from corpus_helpers import write_corpus
 from test_recorded_runs import FAKE_LEAN, _Runtime
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
 from hardy.domain import EnvironmentIdentity
 from hardy.evals import runner, sweep
-from hardy.evals.problems import Entry, ProblemSet, load_problems, sha256_of
+from hardy.evals.corpus import load_corpus, manifest_digest
+from hardy.evals.problems import Entry, sha256_of
 
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
 ENTRIES = (
-    Entry(id="t", input="True.", name="T", conclusion="True", expected="true", source="textbook", area="logic"),
-    Entry(id="u", input="True again.", name="U", conclusion="True", expected="true", source="classical", area="logic"),
-    Entry(id="f", input="False.", name="F", conclusion="True", expected="false", twin_of="t", source="textbook", area="logic"),
+    Entry(id="t", input="True.", name="T", conclusion="True", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+    Entry(id="u", input="True again.", name="U", conclusion="True", expected="true", source="classical", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+    Entry(id="f", input="False.", name="F", conclusion="True", expected="false", twin_of="t", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
 )
 
 
@@ -45,10 +47,11 @@ def _entry_baseline(tier: int, **kw) -> sweep.EntryBaseline:
 
 
 def _files(tmp_path: Path, tiers: dict[str, int] = None) -> tuple[Path, Path]:
-    problems = tmp_path / "problems.json"
-    problems.write_text(json.dumps(ProblemSet(entries=ENTRIES).model_dump(mode="json")), encoding="utf-8")
+    problems = write_corpus(tmp_path / "corpus", ENTRIES)
     tiers = tiers or {"t": 0, "u": 3, "f": 3}
-    baseline = sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=sha256_of(problems), environment=IDENTITY,
+    baseline = sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=manifest_digest(problems), environment=IDENTITY,
+                              environment_digest=sweep.environment_digest_of(IDENTITY), procedure_digest=sweep.procedure_digest_of(),
+                              statement_digests={e.id: e.statement_digest() for e in ENTRIES},
                               heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host={}, problems=(),
                               entries={k: _entry_baseline(v) for k, v in tiers.items()})
     path = tmp_path / "baseline.json"
@@ -125,7 +128,7 @@ def test_a_batch_set_run_writes_rows_a_scoreboard_and_aggregates(tmp_path):
     assert board["aggregates"]["headline"]["n"] == 1 and board["aggregates"]["headline"]["solved"] == 0
     assert board["aggregates"]["tiers"]["3"]["refused"] == 1
     assert board["interrupted"] is False and board["finished_at"] is not None
-    assert board["baseline_sha256"] == sha256_of(baseline) and board["problems_sha256"] == sha256_of(problems)
+    assert board["baseline_sha256"] == sha256_of(baseline) and board["problems_sha256"] == manifest_digest(problems)
     assert (out / "runs" / "t" / "batch-0" / "result.json").exists()
     # A committed scoreboard is repository evidence too; a platform-
     # translated write would checkin CRLF on Windows.
@@ -142,13 +145,17 @@ def test_repeats_and_selection(tmp_path):
 
 
 @pytest.mark.parametrize("break_it,needle", [
-    ("problems", "different problems.json"), ("identity", "mathlib_revision"), ("problems_list", "records problems"), ("label", "already exists"),
+    ("statement", "changed since the baseline"), ("identity", "mathlib_revision"), ("problems_list", "records problems"), ("label", "already exists"),
 ])
 def test_the_gates_refuse_before_anything_runs(tmp_path, break_it, needle):
     problems, baseline = _files(tmp_path)
     environment = IDENTITY
-    if break_it == "problems":
-        problems.write_text(problems.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    if break_it == "statement":
+        # An edit to one entry's Lean, not to the file's bytes: staleness is
+        # per entry now, so a reworded prose line must *not* trip this gate
+        # while a changed conclusion must.
+        edited = tuple(e.model_copy(update={"conclusion": "True ∧ True"}) if e.id == "t" else e for e in ENTRIES)
+        write_corpus(problems, edited)
     if break_it == "identity":
         environment = IDENTITY.model_copy(update={"mathlib_revision": "v9"})
     if break_it == "problems_list":
@@ -281,7 +288,7 @@ def test_the_gates_refuse_a_staged_run_with_no_staged_runner(tmp_path):
 
 def test_select_dedupes_only_preserving_first_occurrence(tmp_path):
     problems_path, baseline_path = _files(tmp_path)
-    problems = load_problems(problems_path)
+    problems = load_corpus(problems_path)
     baseline = sweep.Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
     chosen = runner.select(problems, baseline, only=["u", "t", "u"], tiers=None, twins=True)
     assert [entry.id for entry in chosen] == ["u", "t"]
@@ -289,7 +296,7 @@ def test_select_dedupes_only_preserving_first_occurrence(tmp_path):
 
 def test_select_refuses_an_only_naming_an_unknown_entry(tmp_path):
     problems_path, baseline_path = _files(tmp_path)
-    problems = load_problems(problems_path)
+    problems = load_corpus(problems_path)
     baseline = sweep.Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
     with pytest.raises(runner.RefusedRun, match="nope"):
         runner.select(problems, baseline, only=["nope"], tiers=None, twins=True)

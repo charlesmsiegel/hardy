@@ -1,0 +1,72 @@
+{
+  "schema_version": 2,
+  "corpus_version": "0.1.0",
+  "entries": [
+    {
+      "id": "sq-sum-ge-two-mul",
+      "input": "For real $x$ and $y$, $2xy \\le x^2 + y^2$.",
+      "name": "SqSumGeTwoMul",
+      "binders": "(x y : ℝ)",
+      "conclusion": "2 * x * y ≤ x ^ 2 + y ^ 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "msc": [
+        "26D"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "am-gm-two",
+      "input": "For non-negative reals $a$ and $b$, $\\sqrt{ab} \\le \\frac{a+b}{2}$.",
+      "name": "AmGmTwo",
+      "binders": "(x y : ℝ) (hx : 0 ≤ x) (hy : 0 ≤ y)",
+      "conclusion": "Real.sqrt (x * y) ≤ (x + y) / 2",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "true",
+      "twin_of": null,
+      "source": "textbook",
+      "msc": [
+        "26D"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    },
+    {
+      "id": "sq-sum-le-two-mul",
+      "input": "For real $x$ and $y$, $x^2 + y^2 \\le 2xy$.",
+      "name": "SqSumLeTwoMul",
+      "binders": "(x y : ℝ)",
+      "conclusion": "x ^ 2 + y ^ 2 ≤ 2 * x * y",
+      "imports": [
+        "Mathlib"
+      ],
+      "expected": "false",
+      "twin_of": "sq-sum-ge-two-mul",
+      "source": "textbook",
+      "msc": [
+        "26D"
+      ],
+      "difficulty": "routine",
+      "occurrences": [],
+      "rationale": "Authored for the harness slice rather than harvested from a text; kept as a smoke set. Phase 3 supersedes these with sourced entries.",
+      "status": "candidate",
+      "witness": null,
+      "witness_note": "Migrated before A6 existed; needs a witness or a justified null."
+    }
+  ]
+}

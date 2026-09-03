@@ -1544,3 +1544,81 @@ git commit -m "Add A6: a kernel-checked non-vacuity witness"
 **Deliberately out of scope**, each belonging to a later phase per spec §11: selection filters, `export`, `describe_selection`, `FieldAggregate` and `compare` (phase 2); `sources.json` content, fixtures behaviour, the review editor (phase 3); the multi-backend runner (phase 4); discrimination and the audit queue (phase 5). `corpus/analysis-plan.json` and `corpus/fixtures/` are referenced by `manifest_digest` but created empty or absent until their phase.
 
 **Known gap carried forward.** The migrated twenty get `witness: null` with a note, because they predate A6 and inventing witnesses during a mechanical migration would be worse than recording the debt. Phase 3 clears it.
+
+---
+
+## Deviations from the plan, as built
+
+Recorded here because the plan is what a reviewer reads first, and each of
+these is a place the shipped code deliberately does not match it.
+
+**`statement_digest` sheds `fixture_digests`.** Task 4 gave it a
+`fixture_digests` parameter, which contradicts the spec's own dependency table
+(§3): A1–A3 and A6 depend on statement + environment + procedure, and only A4,
+A5 and B4 depend on the fixture set. Because `prompt_digest` wraps the
+statement digest, folding fixtures in would have staled B1–B3 too — every
+condition that never loads a fixture. `Entry` now exposes `statement_digest()`,
+`prompt_digest()` and `fixture_set_digest(resolved)` as three separate
+components.
+
+**The version gate binds the manifest digest.** Task 9 compared only the
+declared `corpus_version` with the changelog head, which cannot see an
+*unversioned* edit — the spec's stated reason for having a manifest at all. The
+changelog head now reads `## <version> - <date> - manifest <digest>`, and
+`version_issues` recomputes and compares it.
+
+**`schema_version` is 2, not 1.** The entry format changed incompatibly (`area`
+removed, several required fields added) and the container changed from one
+`ProblemSet` file to shard envelopes. A schema-1 consumer would otherwise get
+no signal. Shards are validated against a frozen `Shard` envelope model, and
+every parse or validation failure becomes a `CorpusError` rather than escaping
+as a raw `KeyError` into `corpus check`.
+
+**`status: "active"` is gated on a current faithful review.** The spec makes
+the review required for an active entry; the plan's validators did not enforce
+it. An active entry now needs a `faithful` review whose statement digest,
+prompt digest, `msc` and reporting group all match the entry as it stands, so
+an edit or a re-tag drops it back to `candidate` rather than leaving a stale
+approval standing.
+
+**A6 is wired into the sweep.** Task 12 defined `witness_source` and
+`witness_verdict` but nothing called them, so a kernel-rejected witness would
+have completed a baseline unchanged. `EntryBaseline` now records
+`witness: witnessed | broken | unwitnessed`, and a broken witness is a baseline
+problem that makes `hardy evals baseline` exit non-zero.
+
+**`environment_digest` and `procedure_digest` are persisted and enforced.**
+Task 4 defined them as free helpers nothing stored. `Baseline` now records
+both and `staleness` checks them, so a change to the sweep logic, the axiom
+parser or the witness checker stales A-group measurements even when the tactic
+constants did not move.
+
+**Occurrence sources are validated.** `check_issues` loads `sources.json` and
+reports every occurrence citing a text it does not carry — primary provenance
+decides the field, the level C6 reports on, and the antecedent rule.
+
+**Taxonomy roll-ups reject unknown full codes.** `field_of`, `group_of` and
+`arxiv_of` resolved on the two-digit prefix alone, so `13ZZZ` came back as
+valid commutative algebra. They now verify the whole code first, which is what
+protects callers that are not an `Entry` — the editor, a report, a third
+party's script over the published corpus.
+
+### Known gaps, deliberately left to their phase
+
+- **Candidate entries are not yet excluded from the headline.** All twenty
+  migrated entries are `candidate`, and `select`/`aggregate` still include
+  every selected entry by tier alone. Reporting is phase 2 (spec §11) and the
+  `status` filter belongs with it; until then a headline computed from this
+  corpus is a headline over unreviewed candidates.
+- **`Review` does not bind the origin it was read against.** `occurrences` and
+  `rationale` are in no component digest, so changing an entry's primary
+  citation leaves an approval current although the reviewer no longer attests
+  the stated origin. No review records exist yet; adding an origin digest is a
+  spec change (§2.2) rather than an implementation fix.
+- **A delete-and-reintroduce of one id inside a single commit is invisible** to
+  a file-level check. The registry catches the deletion whenever it lands
+  alone; catching both at once needs the merge-base diff the spec assigns to
+  CI.
+- **Scoreboard rows carry no prompt digest.** Nothing reuses a model run yet —
+  every run is fresh — so there is no reuse decision for it to govern. It
+  belongs with phase 2's reporting.

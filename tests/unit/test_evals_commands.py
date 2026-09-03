@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 
 import pytest
+from corpus_helpers import write_corpus
 
 from hardy import cli
 from hardy.domain import EnvironmentIdentity
@@ -13,8 +14,16 @@ from hardy.evals import commands, scoreboard
 
 IDENTITY = EnvironmentIdentity(lean_version="4.33.1", lean_commit="819816b2", mathlib_revision="v4.33.1", lake_manifest_sha256="m" * 64)
 PROBLEMS = {"schema_version": 1, "entries": [
-    {"id": "t", "input": "True.", "name": "T", "binders": "", "conclusion": "True", "imports": ["Mathlib"], "expected": "true", "twin_of": None, "source": "textbook", "area": "logic"},
+    {"id": "t", "input": "True.", "name": "T", "binders": "", "conclusion": "True", "imports": ["Mathlib"], "expected": "true", "twin_of": None, "source": "textbook", "msc": ["11A"], "difficulty": "routine", "rationale": "test fixture", "witness": None, "witness_note": "test fixture"},
 ]}
+
+
+def _corpus(tmp_path, entries: list[dict] | None = None):
+    """`load_corpus` reads a directory, so a fixture writes one."""
+    from hardy.evals.problems import Entry
+
+    rows = entries if entries is not None else PROBLEMS["entries"]
+    return write_corpus(tmp_path / "corpus", tuple(Entry.model_validate(row) for row in rows))
 
 
 def _always_closes(source: str):
@@ -105,8 +114,7 @@ def test_model_is_accepted_on_the_run_subparser():
 
 
 def test_baseline_writes_the_tier_file_and_exits_zero_when_the_list_is_clean(tmp_path):
-    problems = tmp_path / "problems.json"
-    problems.write_text(json.dumps(PROBLEMS), encoding="utf-8")
+    problems = _corpus(tmp_path)
     out = tmp_path / "baseline.json"
     args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
     code = commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
@@ -123,8 +131,7 @@ def test_baseline_writes_the_tier_file_and_exits_zero_when_the_list_is_clean(tmp
 
 def test_baseline_exits_one_but_still_writes_when_the_list_has_problems(tmp_path, capsys):
     twin = dict(PROBLEMS["entries"][0], id="f", name="F", conclusion="True", expected="false", twin_of="t")
-    problems = tmp_path / "problems.json"
-    problems.write_text(json.dumps({"schema_version": 1, "entries": [PROBLEMS["entries"][0], twin]}), encoding="utf-8")
+    problems = _corpus(tmp_path, [PROBLEMS["entries"][0], twin])
     out = tmp_path / "baseline.json"
     args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
     code = commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
@@ -151,8 +158,7 @@ def test_baseline_refuses_unacknowledged_unsafe_execution(tmp_path, capsys):
     """
     from hardy.runner import WARNING
 
-    problems = tmp_path / "problems.json"
-    problems.write_text(json.dumps(PROBLEMS), encoding="utf-8")
+    problems = _corpus(tmp_path)
     out = tmp_path / "baseline.json"
     args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=False)
     code = commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
@@ -179,8 +185,7 @@ def test_baseline_reports_a_toolchain_that_cannot_be_identified_instead_of_a_tra
     # runner.py's per-call local import, so the patch target is the commands
     # module's own binding, not hardy.lean's.
     monkeypatch.setattr(commands, "environment_identity", boom)
-    problems = tmp_path / "problems.json"
-    problems.write_text(json.dumps(PROBLEMS), encoding="utf-8")
+    problems = _corpus(tmp_path)
     out = tmp_path / "baseline.json"
     args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
     config = argparse.Namespace(lean_project=None, lake="lake", limits=argparse.Namespace(lean_process_seconds=60))

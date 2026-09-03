@@ -13,7 +13,8 @@ from typing import Any, Literal
 
 from .. import __version__
 from ..domain import EnvironmentIdentity, FrozenModel
-from .problems import Entry, ProblemSet, load_problems, sha256_of
+from .corpus import load_corpus, manifest_digest
+from .problems import Entry, ProblemSet, sha256_of
 from .scoreboard import Aggregates, Row, aggregate, batch_row, staged_row
 from .sweep import Baseline, staleness
 
@@ -177,9 +178,9 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
         # like `../../new-eval` or an absolute path, and the run tree would
         # be written there despite the documented output contract (item 4).
         raise RefusedRun(f"--label must be a single path component matching {LABEL_RE.pattern!r}, not {label!r}")
-    problems = load_problems(problems_path)
+    problems = load_corpus(problems_path)
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
-    issues = staleness(baseline, problems_sha256=sha256_of(problems_path), environment=environment,
+    issues = staleness(baseline, statement_digests={e.id: e.statement_digest() for e in problems.entries}, environment=environment,
                        problem_ids=[entry.id for entry in problems.entries])
     if issues:
         raise RefusedRun("; ".join(issues))
@@ -201,7 +202,7 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     out.mkdir(parents=True)
     rows: list[Row] = []
     board = Scoreboard(label=label, condition=condition, environment=environment, baseline_sha256=sha256_of(baseline_path),
-                       problems_sha256=sha256_of(problems_path), rows=(), aggregates=aggregate([], baseline),
+                       problems_sha256=manifest_digest(problems_path), rows=(), aggregates=aggregate([], baseline),
                        started_at=now(), finished_at=None, interrupted=False)
     _write(out / "scoreboard.json", board)
     try:

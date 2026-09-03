@@ -161,11 +161,11 @@ def _scripted(closers: dict[str, set[str]], *, timeout_first: bool = False, unco
 
 def _problems() -> ProblemSet:
     return ProblemSet(entries=(
-        Entry(id="easy", input="P", name="Easy", conclusion="P", expected="true", source="textbook", area="a"),
-        Entry(id="lib", input="Q", name="Lib", conclusion="Q", expected="true", source="classical", area="a"),
-        Entry(id="chain", input="R", name="Chain", conclusion="R", expected="true", source="classical", area="a"),
-        Entry(id="hard", input="S", name="Hard", conclusion="S", expected="true", source="classical", area="a"),
-        Entry(id="twin", input="not S", name="Twin", conclusion="¬ S", expected="false", twin_of="hard", source="classical", area="a"),
+        Entry(id="easy", input="P", name="Easy", conclusion="P", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+        Entry(id="lib", input="Q", name="Lib", conclusion="Q", expected="true", source="classical", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+        Entry(id="chain", input="R", name="Chain", conclusion="R", expected="true", source="classical", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+        Entry(id="hard", input="S", name="Hard", conclusion="S", expected="true", source="classical", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+        Entry(id="twin", input="not S", name="Twin", conclusion="¬ S", expected="false", twin_of="hard", source="classical", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
     ))
 
 
@@ -220,7 +220,7 @@ def test_a_statement_that_does_not_elaborate_is_a_problem_and_is_not_swept():
         if "sorry" in source:
             return _elaboration([_msg(3, "error", "unknown identifier 'Frob'")], returncode=1)
         raise AssertionError("swept a statement that does not elaborate")
-    entry = Entry(id="broken", input="x", name="Broken", conclusion="Frob 1", expected="true", source="textbook", area="a")
+    entry = Entry(id="broken", input="x", name="Broken", conclusion="Frob 1", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
     result = sweep.sweep_entry(entry, elaborate, confirm_name="Broken")
     assert result.elaborates is False and result.tier == 3 and result.attempts == {}
 
@@ -240,21 +240,27 @@ def test_an_unconfirmed_candidate_is_recorded_not_closed():
 
 
 PROBLEM_IDS = [e.id for e in _problems().entries]
+DIGESTS = {e.id: e.statement_digest() for e in _problems().entries}
 
 
 def test_staleness_names_each_drift():
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
                            now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
-    assert sweep.staleness(baseline, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=PROBLEM_IDS) == ()
+    assert sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS) == ()
     moved = IDENTITY.model_copy(update={"mathlib_revision": "v4.34.0"})
-    issues = sweep.staleness(baseline, problems_sha256="q" * 64, environment=moved, problem_ids=PROBLEM_IDS)
-    assert any("problems.json" in i for i in issues) and any("mathlib_revision" in i for i in issues)
+    # Per entry, not per file: one corrected statement must name *that* id
+    # rather than calling every measurement in the corpus stale.
+    drifted = {**DIGESTS, "easy": "e" * 64}
+    issues = sweep.staleness(baseline, statement_digests=drifted, environment=moved, problem_ids=PROBLEM_IDS)
+    assert any("easy" in i and "changed since the baseline" in i for i in issues)
+    assert not any("twin" in i and "changed since the baseline" in i for i in issues)
+    assert any("mathlib_revision" in i for i in issues)
     broken = baseline.model_copy(update={"problems": ("twin: closed by simp, so it is true",)})
-    assert any("problems" in i for i in sweep.staleness(broken, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=PROBLEM_IDS))
+    assert any("problems" in i for i in sweep.staleness(broken, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS))
     edited = baseline.model_copy(update={"chains": ("simp; simp",)})
-    assert any("chains" in i for i in sweep.staleness(edited, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=PROBLEM_IDS))
+    assert any("chains" in i for i in sweep.staleness(edited, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS))
     rebudgeted = baseline.model_copy(update={"heartbeat_budget": 1})
-    issues = sweep.staleness(rebudgeted, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=PROBLEM_IDS)
+    issues = sweep.staleness(rebudgeted, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS)
     assert any("heartbeat_budget" in i and "1" in i and str(sweep.HEARTBEAT_BUDGET) in i for i in issues)
 
 
@@ -314,7 +320,7 @@ def test_staleness_names_an_extra_baseline_entry():
     """
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
                            now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
-    issues = sweep.staleness(baseline, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=[i for i in PROBLEM_IDS if i != "twin"])
+    issues = sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=[i for i in PROBLEM_IDS if i != "twin"])
     assert any("extra" in i and "twin" in i for i in issues)
 
 
@@ -356,5 +362,104 @@ def test_staleness_names_a_missing_baseline_entry():
     """
     baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
                            now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
-    issues = sweep.staleness(baseline, problems_sha256="p" * 64, environment=IDENTITY, problem_ids=[*PROBLEM_IDS, "ghost"])
+    issues = sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=[*PROBLEM_IDS, "ghost"])
     assert any("missing" in i and "ghost" in i for i in issues)
+
+
+# --- A6: the non-vacuity witness (spec section 7) ---
+
+
+def _witness_entry(**overrides) -> Entry:
+    base = dict(id="odd-sum", input="...", name="OddSum", binders="(n : ℕ) (h : n > 0)",
+                conclusion="n ≥ 1", expected="true", source="textbook", msc=("11A",),
+                difficulty="routine", rationale="test fixture",
+                witness="⟨1, by norm_num, trivial⟩", witness_note=None)
+    base.update(overrides)
+    return Entry(**base)
+
+
+def test_a_witness_is_checked_as_an_example_against_the_binders():
+    source = sweep.witness_source(_witness_entry())
+    assert "import Mathlib" in source
+    assert "example : ∃ (n : ℕ) (h : n > 0), True := ⟨1, by norm_num, trivial⟩" in source
+    assert "∃" in source, "the binders must be existentially closed, or nothing is proved"
+
+
+def test_a_witness_for_a_hypothesis_free_entry_still_compiles_to_something():
+    """Nothing to instantiate, so there is nothing A6 can be lied to about."""
+    source = sweep.witness_source(_witness_entry(binders="", witness="trivial"))
+    assert "∃" not in source and "True" in source
+
+
+def test_an_entry_with_no_witness_reports_unwitnessed_rather_than_failing():
+    entry = _witness_entry(witness=None, witness_note="existence-heavy hypotheses")
+    assert sweep.witness_source(entry) is None
+    assert sweep.witness_verdict(entry, elaborate=_never_called) == "unwitnessed"
+
+
+def test_a_witness_the_kernel_accepts_is_witnessed():
+    assert sweep.witness_verdict(_witness_entry(), elaborate=lambda _: _elaboration([])) == "witnessed"
+
+
+def test_a_witness_the_kernel_rejects_is_reported_as_broken():
+    def failing(source: str) -> Elaboration:
+        return _elaboration([_msg(3, "error", "norm_num failed")], returncode=1)
+
+    entry = _witness_entry(witness="⟨0, by norm_num, trivial⟩")
+    assert sweep.witness_verdict(entry, elaborate=failing) == "broken"
+
+
+def _never_called(source: str) -> Elaboration:
+    raise AssertionError("an unwitnessed entry must not reach the elaborator")
+
+
+def test_the_sweep_records_a_witness_verdict_for_every_entry():
+    """A checker nothing calls enforces nothing (spec section 7)."""
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+    assert set(baseline.entries) and all(e.witness == "unwitnessed" for e in baseline.entries.values())
+
+
+def test_a_kernel_rejected_witness_is_a_baseline_problem():
+    """`hardy evals baseline` exits non-zero on it, like a twin a tactic closes."""
+    entry = _witness_entry(id="easy", name="Easy", witness="⟨0, by norm_num, trivial⟩")
+
+    def elaborate(source: str) -> Elaboration:
+        if "example : ∃" in source:
+            return _elaboration([_msg(3, "error", "norm_num failed")], returncode=1)
+        return _elaboration([])
+
+    baseline = sweep.sweep(ProblemSet(entries=(entry,)), problems_sha256="p" * 64, environment=IDENTITY,
+                           elaborate=elaborate, now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+    assert baseline.entries["easy"].witness == "broken"
+    assert any("easy" in p and "witness" in p for p in baseline.problems), baseline.problems
+
+
+def test_the_baseline_records_the_environment_and_procedure_it_ran_under():
+    """Storing the Lean version is not the same as letting it govern reuse
+    (spec section 3): a fix to the sweep logic or the witness checker changes
+    what a measurement means even when the tactic constants did not.
+    """
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+    assert len(baseline.environment_digest) == 64 and len(baseline.procedure_digest) == 64
+    assert sweep.staleness(baseline, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS) == ()
+
+    moved = baseline.model_copy(update={"environment_digest": "e" * 64})
+    assert any("environment" in i for i in sweep.staleness(moved, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS))
+    rebuilt = baseline.model_copy(update={"procedure_digest": "p" * 64})
+    assert any("procedure" in i for i in sweep.staleness(rebuilt, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS))
+
+
+def test_a_baseline_recording_no_environment_or_procedure_digest_is_stale():
+    """Absence is staleness, not a pass: a blank establishes nothing about
+    what the sweep ran under, and treating it as agreement makes the gate
+    decorative -- the same reason a baseline with no statement digests is
+    stale rather than fresh.
+    """
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host={})
+    for field in ("environment_digest", "procedure_digest"):
+        blanked = baseline.model_copy(update={field: ""})
+        issues = sweep.staleness(blanked, statement_digests=DIGESTS, environment=IDENTITY, problem_ids=PROBLEM_IDS)
+        assert any("records no" in i and field.split("_")[0] in i for i in issues), issues

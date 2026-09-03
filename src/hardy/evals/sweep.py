@@ -15,6 +15,7 @@ from pydantic import Field, model_validator
 from .. import audit
 from ..domain import EnvironmentIdentity, FrozenModel
 from ..lean import Elaboration
+from . import digests
 from .problems import Entry, ProblemSet
 
 SINGLES: tuple[str, ...] = (
@@ -84,6 +85,46 @@ def stage_a_source(binders: str, conclusion: str, tactics: tuple[str, ...], impo
     return text, spans
 
 
+def witness_source(entry: Entry) -> str | None:
+    """The Lean A6 compiles: the entry's binders existentially closed, proved
+    by its stored witness. `None` when the entry carries no witness.
+
+    A3 cannot see vacuity: if `P` is vacuously true because its hypotheses are
+    impossible, `¬P` is false and the ladder finds no closer, so the sweep
+    comes back clean on exactly the broken entry (spec section 7). What is
+    missing is evidence that the hypotheses are satisfiable at all -- and a
+    bare term establishes nothing without a stated expected type. For
+    `(n : ℕ) (h : n > 0)` merely elaborating the binders says only that the
+    types are well-formed, not that a compatible `n` exists; closing them
+    under `∃` and asking the kernel for a term does.
+
+    The `∃` shape is the authoring contract: a witness is written against
+    `∃ <binders>, True`, so the term for the example above is
+    `⟨1, by norm_num, trivial⟩`. Binders that `∃` cannot bind -- implicit or
+    instance binders -- have no A6 in this form; such an entry records
+    `witness: null` with a note, and is reported unwitnessed rather than
+    silently passed.
+    """
+    if entry.witness is None:
+        return None
+    binders = entry.binders.strip()
+    body = f"∃ {binders}, True" if binders else "True"
+    return header(entry.imports) + f"\nexample : {body} := {entry.witness.strip()}\n"
+
+
+def witness_verdict(entry: Entry, elaborate: Elaborate) -> str:
+    """`witnessed`, `broken`, or `unwitnessed` -- never silently absent.
+
+    An unwitnessed entry is one where nothing but the human read stands
+    between a vacuous statement and a field headline, so the fact is recorded
+    rather than defaulted to a pass.
+    """
+    source = witness_source(entry)
+    if source is None:
+        return "unwitnessed"
+    return "witnessed" if elaborate(source).success else "broken"
+
+
 def stage_b_source(name: str, binders: str, conclusion: str, tactic: str, imports: tuple[str, ...]) -> str:
     return header(imports) + "\n" + _block("theorem", name, binders, conclusion, tactic) + f"\n#print axioms {name}\n"
 
@@ -145,6 +186,28 @@ def read_stage_b(elaboration: Elaboration, name: str, tactic: str) -> Attempt:
 Elaborate = Callable[[str], Elaboration]
 
 
+def environment_digest_of(environment: EnvironmentIdentity) -> str:
+    return digests.environment_digest(environment.model_dump(mode="json"))
+
+
+def procedure_digest_of() -> str:
+    """Hardy's own identity plus the ladder and the budgets (spec §3).
+
+    `__version__` stands in for the source revision: a released build that
+    changes the sweep logic, the axiom parser or the witness checker bumps it,
+    and the tactic lists and budget below catch a configuration change within
+    one version.
+    """
+    from .. import __version__
+
+    return digests.procedure_digest({
+        "hardy_version": __version__,
+        "singles": list(SINGLES),
+        "chains": list(CHAINS),
+        "heartbeat_budget": HEARTBEAT_BUDGET,
+    })
+
+
 def _closed_by_must_match_attempts(closed_by: tuple[str, ...], attempts: dict[str, Attempt]) -> None:
     """Shared by `EntryBaseline` and `NegationBaseline` (item 4): `closed_by`
     must name exactly the tactics `attempts` records as `closed` -- no fewer
@@ -175,6 +238,10 @@ class EntryBaseline(FrozenModel):
     attempts: dict[str, Attempt]
     closed_by: tuple[str, ...]
     negation: NegationBaseline | None = None
+    # A6 (spec §7). `unwitnessed` is recorded rather than defaulted to a pass:
+    # A3 cannot see vacuity, so an entry with no witness is one where nothing
+    # but the human read stands between a vacuous statement and a headline.
+    witness: Literal["witnessed", "broken", "unwitnessed"] = "unwitnessed"
 
     @model_validator(mode="after")
     def tier_must_follow_its_closers(self) -> EntryBaseline:
@@ -201,6 +268,17 @@ class Baseline(FrozenModel):
     schema_version: Literal[1] = 1
     created_at: datetime
     problems_sha256: str
+    # Per-entry statement digests (spec §3). The whole-corpus hash above binds
+    # the measurement to a corpus *state*; these bind it per statement, so a
+    # correction to one entry -- or to prose the A-group never reads -- leaves
+    # every other entry's measurement demonstrably fresh.
+    statement_digests: dict[str, str] = {}
+    # Recording the Lean version is not the same as letting it govern reuse
+    # (spec §3). These two are what govern it: a Mathlib upgrade changes
+    # elaboration and witness acceptance, and a fix to the sweep logic or the
+    # axiom parser changes what a measurement means with the library untouched.
+    environment_digest: str = ""
+    procedure_digest: str = ""
     environment: EnvironmentIdentity
     heartbeat_budget: int
     wall_backstop_seconds: float
@@ -291,7 +369,8 @@ def sweep_entry(entry: Entry, elaborate: Elaborate, *, confirm_name: str) -> Ent
         # statement with nothing left to bind.
         n_attempts, n_closed = sweep_proposition("", entry.negation(), entry.imports, elaborate, confirm=confirm_negation)
         negation = NegationBaseline(attempts=n_attempts, closed_by=n_closed)
-    return EntryBaseline(tier=tier_of(closed), elaborates=True, attempts=attempts, closed_by=closed, negation=negation)
+    return EntryBaseline(tier=tier_of(closed), elaborates=True, attempts=attempts, closed_by=closed,
+                         negation=negation, witness=witness_verdict(entry, elaborate))
 
 
 def sweep(problems: ProblemSet, *, problems_sha256: str, environment: EnvironmentIdentity, elaborate: Elaborate,
@@ -307,11 +386,17 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
             findings.append(f"{entry.id}: the canonical statement does not elaborate")
         if entry.expected == "false" and result.closed_by:
             findings.append(f"{entry.id}: a twin closed by {', '.join(result.closed_by)}, so it is true")
+        if result.witness == "broken":
+            findings.append(f"{entry.id}: the stored witness does not typecheck, so A6 cannot rule out vacuity")
         for tactic, attempt in result.attempts.items():
             if attempt.status == "unconfirmed":
                 report(f"  {entry.id}: {tactic} was a candidate but did not confirm: {attempt.message}")
     return Baseline(
-        created_at=now(), problems_sha256=problems_sha256, environment=environment,
+        created_at=now(), problems_sha256=problems_sha256,
+        statement_digests={e.id: e.statement_digest() for e in problems.entries},
+        environment_digest=environment_digest_of(environment),
+        procedure_digest=procedure_digest_of(),
+        environment=environment,
         heartbeat_budget=HEARTBEAT_BUDGET, wall_backstop_seconds=wall_backstop_seconds, import_seconds=import_seconds,
         singles=SINGLES, chains=CHAINS, host=host, problems=tuple(findings), entries=entries,
     )
@@ -339,11 +424,43 @@ def baseline_entries_mismatch(baseline: Baseline, problem_ids: Iterable[str]) ->
     return "the baseline's entries do not match the problem list (" + "; ".join(parts) + ")"
 
 
-def staleness(baseline: Baseline, *, problems_sha256: str, environment: EnvironmentIdentity, problem_ids: Iterable[str]) -> tuple[str, ...]:
-    """Why this baseline cannot tier a run today (spec §3.1). Empty means it can."""
+def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environment: EnvironmentIdentity, problem_ids: Iterable[str]) -> tuple[str, ...]:
+    """Why this baseline cannot tier a run today (spec §3.1). Empty means it can.
+
+    Staleness is per entry, not per file. A whole-corpus hash would call every
+    measurement stale when one statement is corrected -- or when only prose the
+    A-group never reads was reworded -- which at corpus scale is the difference
+    between a re-sweep of one entry and a re-sweep of thousands (spec §3).
+    """
     issues: list[str] = []
-    if baseline.problems_sha256 != problems_sha256:
-        issues.append("the baseline was swept over a different problems.json; re-run `hardy evals baseline`")
+    if not baseline.statement_digests:
+        issues.append("the baseline records no statement digests; re-run `hardy evals baseline`")
+    else:
+        drifted = sorted(
+            id for id, digest in statement_digests.items()
+            if baseline.statement_digests.get(id) not in (None, digest)
+        )
+        if drifted:
+            issues.append(
+                "these statements changed since the baseline was swept: "
+                + ", ".join(drifted)
+                + "; re-run `hardy evals baseline`"
+            )
+    # Absence is staleness, not a pass. A baseline that records no digest is
+    # one swept before the gate existed or one edited to remove it; either way
+    # nothing establishes that it was measured under this environment and this
+    # build, and treating a blank as agreement makes the gate decorative.
+    if not baseline.environment_digest:
+        issues.append("the baseline records no environment digest; re-run `hardy evals baseline`")
+    elif baseline.environment_digest != environment_digest_of(environment):
+        issues.append("the baseline's environment digest is not this project's; re-run `hardy evals baseline`")
+    if not baseline.procedure_digest:
+        issues.append("the baseline records no procedure digest; re-run `hardy evals baseline`")
+    elif baseline.procedure_digest != procedure_digest_of():
+        issues.append(
+            "the baseline's procedure digest is not this build's: the ladder, the budgets or Hardy "
+            "itself changed since the sweep; re-run `hardy evals baseline`"
+        )
     for field in ("lean_version", "lean_commit", "mathlib_revision", "lake_manifest_sha256"):
         if getattr(baseline.environment, field) != getattr(environment, field):
             issues.append(f"the baseline's {field} is {getattr(baseline.environment, field)!r}, this project's is {getattr(environment, field)!r}")

@@ -11,3 +11,7 @@ acceptance/recorded/** -text
 # point at run directories whose bytes its own record hashes. No line-ending
 # conversion may touch any of it on any platform.
 evals/** -text
+# The corpus is bound the same way: `manifest_digest` hashes every content
+# file's raw bytes and the changelog head binds that digest, so a CRLF
+# checkout would make a published version verify clean nowhere.
+corpus/** -text
