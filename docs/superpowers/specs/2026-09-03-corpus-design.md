@@ -9,8 +9,8 @@ that. It cannot answer the question we now want, which is:
 > Is Opus better than GPT at commutative algebra? Is Qwen better at real
 > analysis? Which model should *I* use, for *my* field?
 
-Four things stand between the current set and that question — and a fifth,
-larger than all of them, is the subject of the section that follows.
+Four things stand between the current set and that question. A fifth, which
+the section that follows describes, bounds how far the answer can reach.
 
 **There is no field.** `Entry.area` is `str` with `min_length=1`
 (`problems.py:37`) and nothing aggregates on it. Its twenty values are
@@ -35,7 +35,7 @@ we cannot presently distinguish "models are weak here" from "Mathlib does not
 have the prerequisite" — and the second is a per-field bias that lands
 precisely on the axis we want to report.
 
-## Blocking prerequisite: the runner is single-backend
+## A gap the dataset does not depend on: the runner is single-backend
 
 `run_set_command` refuses any backend but `claude` outright
 (`runner.py:279-284`): *"the evals runner drives the Claude backend only: the
@@ -43,9 +43,14 @@ batch runner, the canonical reader and staged tool-event counting are
 Claude-shaped."*
 
 **So no cross-provider comparison can be run today.** "Is Opus better than GPT
-at commutative algebra" needs two providers; the pipeline drives one. Phases
-1-4 of §11 do not reach that question without phase 0, however much corpus and
-reporting work they deliver.
+at commutative algebra" needs two providers; the pipeline drives one.
+
+This does not block the work below, and is deliberately **not** sequenced
+first. Building the corpus is the priority — evaluation is what the project is
+for, and the dataset is what makes evaluation possible — so the multi-backend
+runner is phase 4 in §11, scheduled to move up once the corpus exists. Naming
+it here rather than in the phase list is a matter of honesty about what the
+Goal promises versus what the pipeline currently delivers.
 
 The limit is narrower than it first appears, and worth stating precisely:
 `--model` varies freely *within* the Claude backend. **Opus against Sonnet
@@ -63,11 +68,11 @@ Two consequences:
    confound to record*, not a reason to refuse the pair. `compare` therefore
    treats cross-backend comparisons as a declared mode that labels the
    confound, while still requiring every other non-model condition to match.
-2. **Phase 0 in §11** is making the runner genuinely multi-backend: a second
+2. **Phase 4 in §11** is making the runner genuinely multi-backend: a second
    canonical reader, backend-shaped tool-event counting, and a grading path
    that is not Claude-specific. Its size is unknown and it is not scoped here.
 
-Until phase 0 lands, every eval in §7 is reachable across Anthropic models —
+Until it lands, every eval in §7 is reachable across Anthropic models —
 the whole A-group, and C1 through C7 — but the roster stops at one provider.
 That is a real instrument, and it is narrower than the Goal describes.
 
@@ -198,7 +203,7 @@ Added to `Entry`:
 | `witness` | `str \| None` | Lean term instantiating the hypotheses (A6) |
 | `witness_note` | `str \| None` | required when `witness` is null — why none can be produced; without a field to hold it the §7 validator cannot tell a justified unwitnessed entry from an unexplained one |
 | `review` | `Review \| None` | reviewer, date, and what was read — statement, `input`, origin, `msc` and reporting group, **`expected` and `twin_of`**; required for `status: "active"` |
-| `audit` | `Audit \| None` | a spot-audit verdict bound to the measurement panel that triggered it (§9.2); required before a queued entry may carry a ranking claim |
+| `audit` | `Audit \| None` | a spot-audit verdict bound to the measurement panel that triggered it (§9.2); while pending, its field emits no ranking claim |
 | `fixtures` | `tuple[str, ...]` | fixture ids; empty until phase 3, but digested from phase 1 |
 
 Removed: `area`. The twenty existing entries are hand-mapped to MSC codes as
@@ -294,7 +299,15 @@ C6 (§9.0), the permissive reading would let corpus composition move the
 headline number. The primary occurrence pins it.
 
 **Occurrences are outside every digest.** Adding a citation does not change
-what the theorem says, so it must not invalidate any measurement.
+what the theorem says, so it must not invalidate any measurement. But an
+occurrence that counts toward canonicity is not inert either: it moves an entry
+between peripheral and core and so changes the separated C6 result. Since
+promotion (§2.2) reads only the primary origin, an erroneous secondary citation
+would keep the entry's approval while shifting its classification. So each
+occurrence counted toward canonicity carries its own lightweight **citation
+check** — a recorded confirmation that this result really does appear at that
+locator in that text — separate from the promotion review and cheap enough to
+do at survey time. Uncounted occurrences (unsurveyed texts) need none.
 Expect this list to be edited often as more texts are surveyed; that editing
 has to be free.
 
@@ -432,16 +445,17 @@ re-runs whose outcomes cannot change.
 | `statement_digest` | `name`, `binders`, `conclusion`, `imports`, `witness`, `witness_note` |
 | `fixture_set_digest` | the resolved contents of this entry's fixtures, transitively |
 | `prompt_digest` | `statement_digest` plus `input`, `expected`, `twin_of` |
+| `environment_digest` | Lean version, Mathlib revision, lake manifest, host |
 | `procedure_digest` | Hardy's source revision or build id, the tactic ladder, and the sweep budgets |
 
 Which measurement depends on which:
 
 | Measurement | Depends on |
 |---|---|
-| A1, A2, A3, A6 | statement + procedure |
-| A4, A5 | statement + fixture-set + procedure |
-| B1, B2, B3 | prompt + procedure (and its `Condition`) |
-| B4 | prompt + fixture-set + procedure |
+| A1, A2, A3, A6 | statement + environment + procedure |
+| A4, A5 | statement + fixture-set + environment + procedure |
+| B1, B2, B3 | prompt + environment + procedure (and its `Condition`) |
+| B4 | prompt + fixture-set + environment + procedure |
 
 Four things this arrangement decides, each for its own reason:
 
@@ -465,8 +479,18 @@ for the same class of reason — `_batch_runner` passes it to the model as
 `informal_claim` (`runner.py:252`) and staged runs use it as the request, so
 rewording it can change solve behaviour while the Lean statement is untouched.
 
-**`procedure_digest` exists because the corpus is not the only thing that can
-change.** `Baseline` today records the Lean environment, the ladder, the
+**`environment_digest` exists because recording provenance is not the same as
+governing reuse.** `Baseline` already stores the Lean version, Mathlib
+revision, lake manifest and host — but storing them does not make them decide
+staleness. A Mathlib upgrade changes elaboration, automation tiers, fixture
+checks and witness acceptance; if only the statement and Hardy's identity are
+compared, every cached A-group result matches and the incremental sweep serves
+results measured against a library that no longer exists. §1 already says a
+tier is "a fact about one tactic ladder against one Mathlib revision on one
+machine"; the dependency set has to say the same thing.
+
+**`procedure_digest` exists because the corpus and the library are not the only
+things that can change.** `Baseline` records the Lean environment, the ladder, the
 budgets and the host — but nothing identifying Hardy itself, while `Condition`
 carries `hardy_version` and `source_revision` for model runs. A fix to the
 elaboration wrapper, the sweep logic, the axiom parser or the witness checker
@@ -620,7 +644,7 @@ Mathlib. B4 is *"can the model do this mathematics"*.
 | C2 | Paired model comparison | McNemar + CI per field; **refuses a ranking claim when the CI crosses zero** |
 | C3 | Item discrimination | variance across models; writes the spot-audit queue (§9.2) and difficulty strata — **never a filter on the scored corpus** |
 | C4 | Tier profile per field | how much of a field Mathlib's automation already covers |
-| C5 | Contamination signal | twin **refusal** rate against true-statement solve rate; exhaustion reported separately |
+| C5 | Contamination signal | twin **semantic-refusal** rate against true-statement solve rate; exhaustion and rejected attempts reported separately |
 | C6 | Fixture-assisted uplift | `B4 − B1` per field, **stratified by primary-source `level`**, core and peripheral reported apart |
 | C7 | Ceiling and floor census | items no model solves and items all models solve, reported as strata rather than removed |
 
@@ -646,23 +670,31 @@ into one. Core results (present in most surveyed texts) and peripheral ones are
 reported apart for the same reason — pooling them lets an uplift concentrated
 in specialised material read as one spanning the curriculum.
 
-C5 must use the **refusal** criterion, not "failed to prove". Hardy already
-distinguishes `refused` (terminal in `{no_proof_submitted, axioms_rejected}`)
-from `exhausted` (`turn_limit` or `wall_clock_limit`), and records that a
-timeout "is not a refusal" (`FEATURES.md:1237`). Since the kernel prevents any
-clean proof of a genuinely false twin, collapsing the two would score a model
-that blindly retries until timeout the same as one that recognises the claim is
-false — which is precisely the signal C5 exists to read. Exhaustion is reported
-beside it, never folded in.
+C5 must not read "failed to prove" as "recognised the claim is false", and
+Hardy's existing `refused` is not yet narrow enough to carry that reading.
+`refused` covers terminal in `{no_proof_submitted, axioms_rejected}`, and a run
+that attempts `by sorry` lands there too
+(`tests/unit/test_evals_scoreboard.py:49-51`). Such a row establishes only that
+no clean proof was accepted — which the kernel guarantees for any genuinely
+false twin regardless of what the model believed — so counting it as
+contamination evidence would score an abandoned or invalid proof attempt the
+same as a model that saw through the statement.
+
+C5 therefore needs an explicit **semantic refusal**: the model asserting the
+statement is false or unprovable, not merely failing to land a proof. Until the
+harness emits that signal, the three terminal classes are reported side by side
+— semantic refusal, rejected attempt (`axioms_rejected`, holes), and exhaustion
+(`turn_limit`, `wall_clock_limit`, which `FEATURES.md:1237` already says is not
+a refusal) — and only the first carries the contamination reading.
 
 ## 8. Aggregation and comparison
 
 `scoreboard.py` gains a `FieldAggregate` beside `TierAggregate`, reusing the
 existing `wilson()` (`scoreboard.py:155`). Reporting is restricted to tier ≥ 2
 and `status == "active"`: automation-solvable, candidate and retired entries
-never reach a headline number. An entry with a **pending spot-audit** (§9.2)
-stays in descriptive reports but is excluded from ranking claims until the
-audit resolves.
+never reach a headline number. A **pending spot-audit** (§9.2) withholds the
+affected field's ranking claim entirely rather than dropping the flagged entry
+from the sample — dropping it would filter on the outcome being measured.
 
 **`invalid` rows are excluded from ranking-capable reports, not counted as
 failures.** `_tier_aggregate` puts every true row in `n` but only `solved` rows
@@ -681,9 +713,21 @@ at the same theorem as independent samples: 125 problems at 10 repeats would
 present as 1,250 observations, narrowing every interval by roughly a factor of
 three and manufacturing ranking claims that the data does not support. Each
 `(model, entry)` pair yields exactly one declared outcome — the rule for
-declaring it is fixed per report and recorded — and the unit of analysis is the
-item. Where repeat-level variation is itself the question (B3), it is reported
-as a separate per-item statistic, not as extra sample size.
+declaring it is fixed in the analysis plan and recorded — and the unit of
+analysis is the item. Where repeat-level variation is itself the question (B3),
+it is reported as a separate per-item statistic, not as extra sample size.
+
+**Items are not independent either, and the intervals must say so.** Phase 3
+draws a field's ~125 entries from as few as two texts, so exercises sharing a
+chapter, a prerequisite chain, or an author's habits succeed and fail together.
+Collapsing repeats removes one source of dependence and leaves this one
+untouched: a plain Wilson interval or McNemar test over 125 correlated items is
+narrower than the effective sample size supports, and can emit a field ranking
+the data does not carry. Intervals and tests are therefore **clustered on the
+source text**, and every field report states its effective sample size beside
+its item count. Where a field's entries come from a single text, no ranking
+claim is available from it at all — one cluster is one observation, however
+many exercises it contains.
 
 `evals/compare.py` is new, because comparison is a different concern from
 scoring one run and `scoreboard.py` is already 622 lines.
@@ -709,7 +753,15 @@ Every other non-model condition must match in both.
    condition** other than the declared `fixtures_enabled` exception, and not
    merely in corpus and environment. `Condition` carries
    `backend`, `mode`, both prompt-set hashes, `hardy_version`,
-   `source_revision`, `limits`, `repeats` and `selection` (`runner.py:35-57`).
+   `source_revision`, `limits`, `repeats` and `selection` (`runner.py:35-57`),
+   and must additionally carry the **canonical reader**. That reader is chosen
+   outside `Condition` today — `staged.py:191` takes
+   `config.faithfulness_model` — while `scoreboard.py:152` turns its verdict
+   into `solved` versus `solved_other`. Two scoreboards with identical
+   conditions can therefore have been graded by different readers, and the
+   disagreement lands in the very outcome C2 compares. The reader's model,
+   backend and procedure identity join the condition, or the equality gate is
+   decorative for staged runs.
    Equality of `source_revision` is not enough when both sides record `None`,
    which the runner does for a source tree without `.git`: two stripped
    snapshots from different commits of the same unreleased `hardy_version`
@@ -748,6 +800,16 @@ Every other non-model condition must match in both.
    against that plan however the runs are split across invocations, and a
    comparison outside the plan is reported as exploratory and never as a
    ranking.
+
+   Naming models and fields is not enough. The plan must also bind **mode,
+   limits, repeats, fixture condition, selection, and the repeat-to-item
+   outcome rule**. Pairwise condition equality only guarantees that the two
+   scoreboards in one comparison match each other: an analyst can run the same
+   planned pair under several internally-consistent budgets, or under two
+   collapse rules, and publish whichever crosses the threshold, while the
+   multiplicity denominator still counts one model/field hypothesis. Either the
+   full analysis condition is fixed in advance, or every configuration tried
+   enters the family.
 5. Attaches the formalization-standard caveat to any cross-*field* level
    comparison, which (unlike within-field model comparison) does not cancel
    out differences in how carefully each field was formalized.
@@ -918,10 +980,13 @@ visible afterwards, and no validator can retract an entry that is already
 - C3 places an entry in the queue by writing a **pending** `audit` record
   naming the measurement panel — the models, conditions and corpus version —
   whose discrimination triggered it.
-- A pending audit makes the entry **ineligible to carry a ranking claim**,
-  though it stays `active` and keeps contributing to descriptive reports. This
-  is the part prose could not do: without it the first report contains exactly
-  the degenerate items the gate exists to withhold.
+- A pending audit **withholds the whole ranking for that field**, and does not
+  drop the entry from the sample. Excluding the flagged entries individually
+  would be exactly the outcome-dependent filtering rejected in "Decisions taken
+  before design": C3 selects them *because* they discriminate most, so removing
+  them changes the paired table, can suppress a real difference, and can
+  reverse which model is favoured — before any human has found anything wrong
+  with them. Descriptive reports continue; ranking claims wait.
 - A human resolves it to `sound`, in which case the entry returns to full
   eligibility, or to `broken`, in which case it is retired with a reason.
 - The record binds the panel it was raised against. A later panel that flags
@@ -955,8 +1020,9 @@ Hermetic except where Lean is genuinely required (already gated behind
   `fixture_set_digest` transitively but **not** `statement_digest`, so A4/A5/B4
   go stale while A1–A3, A6 and B1 stay fresh
 - changing Hardy's source revision or the tactic ladder changes
-  `procedure_digest` and invalidates every A-group measurement, including ones
-  whose statement never moved
+  `procedure_digest`, and bumping the Mathlib revision changes
+  `environment_digest`; either invalidates every A-group measurement, including
+  ones whose statement never moved
 - editing `input` changes `prompt_digest` but **not** `statement_digest`, so
   B-group measurements go stale while A-group measurements stay fresh
 - flipping `expected` between `true` and `false` changes `prompt_digest`, since
@@ -976,13 +1042,20 @@ Hermetic except where Lean is genuinely required (already gated behind
   one without cannot; one carrying fixtures is rejected outright
 - an entry whose `witness` fails the kernel is rejected; `witness: null`
   without a `witness_note` is rejected
+- an occurrence counted toward canonicity requires a citation check; adding an
+  unchecked one to a surveyed text is rejected rather than silently moving the
+  entry from peripheral to core
+- C5 counts only semantic refusals: a run terminating in `axioms_rejected`, or
+  one whose proof carried a hole, is reported as a rejected attempt and never
+  as contamination evidence
 - flipping `expected` or `twin_of` on a reviewed entry invalidates its `review`
   and demotes it, so a stale approval cannot let C5 score a correct proof of a
   true statement as a failure to refuse
-- an entry with a pending `audit` is absent from ranking claims but present in
-  descriptive reports; resolving it `sound` restores eligibility, `broken`
-  retires it; a fresh panel flagging the same entry raises a new audit rather
-  than inheriting the old verdict
+- a pending `audit` withholds its field's ranking claim while the flagged entry
+  stays in the sample — the paired table is unchanged, so no filtering on the
+  outcome occurs; resolving `sound` releases the ranking, `broken` retires the
+  entry; a fresh panel raises a new audit rather than inheriting a verdict
+  reached about different models
 - the deliberately vacuous entry is **not** caught by A3 — the negation sweep
   finds no closer, which is the point of §7's correction — and **is** caught by
   A6
@@ -1017,13 +1090,20 @@ Hermetic except where Lean is genuinely required (already gated behind
 **Aggregation and comparison**
 
 - known counts reproduce hand-computed Wilson bounds
+- intervals cluster on the source text: a field whose entries come from one
+  text yields no ranking claim, and a two-text field reports an effective
+  sample size below its item count
 - 125 items at 10 repeats produce an interval computed from 125 observations,
   not 1,250
 - `invalid` rows are reported as missing measurements, not as failures, and a
   field over the declared invalid threshold carries no ranking claim
 - `compare` refuses scoreboards differing in `mode`, `limits`, `repeats`, or
-  either prompt-set hash even when corpus and environment agree; and refuses
-  two scoreboards that both record `source_revision: None`
+  either prompt-set hash even when corpus and environment agree; refuses two
+  scoreboards that both record `source_revision: None`; and refuses two that
+  were graded by different canonical readers
+- a plan naming only models and fields is rejected: mode, limits, repeats,
+  fixture condition, selection and the outcome rule must all be bound, or every
+  configuration tried counts in the family
 - a C2 pair differing in `fixtures_enabled` is refused; a C6 pair differing in
   `fixtures_enabled` *and* model is refused; a C6 pair differing only in
   `fixtures_enabled` is accepted
@@ -1042,18 +1122,14 @@ Hermetic except where Lean is genuinely required (already gated behind
 
 ## 11. Phases
 
-0. **Multi-backend runner.** Specified in "Blocking prerequisite" above and
-   *not scoped here*. Nothing in phases 1-4 is wasted without it — the corpus,
-   the taxonomy, and the full report set across Anthropic models all stand —
-   but no *cross-provider* comparison is reachable until it lands.
 1. **Schema and scale.** Taxonomy module with reporting groups, vendored MSC
    list and mapping, `Entry` fields (including `fixtures`, reserved and
    digested), the **component digests** of §3, `corpus_version` with the
    manifest binding and changelog, tombstone registry, sharded layout,
-   `Counter`/index fixes,
-   migration of the existing twenty, `corpus check` and `corpus report`,
-   A6's non-vacuity check, `procedure_digest` in the A-group record, and the
-   candidate→active review workflow (§2.2). No new problems.
+   `Counter`/index fixes, migration of the existing twenty, `corpus check` and
+   `corpus report`, A6's non-vacuity check, `environment_digest` and
+   `procedure_digest` in the A-group record, and the candidate→active review
+   workflow (§2.2). No new problems.
 2. **Reporting.** `FieldAggregate` over item-level outcomes, selection filters,
    mode-aware `describe_selection()`, `export` including the runnable wrapper,
    and `compare` with the refusal contract, condition equality and the
@@ -1062,8 +1138,13 @@ Hermetic except where Lean is genuinely required (already gated behind
    each entry through the faithfulness review before it is reportable. Fixture
    behaviour (A4, A5, B4, C6) lands here, on the schema slot reserved in
    phase 1.
-4. **Feedback.** Discrimination, difficulty strata, ceiling/floor census, and
-   the persisted spot-audit queue (§9.2) with its ranking-eligibility gate.
+4. **Multi-backend runner.** The work described under "A gap the dataset does
+   not depend on", above. Deliberately *after* the corpus rather than before
+   it: evaluation is the priority, the dataset is what makes evaluation
+   possible, and every eval in §7 runs across Anthropic models without it.
+   Scheduled to move up once phase 3 has delivered the corpus.
+5. **Feedback.** Discrimination, difficulty strata, ceiling/floor census, and
+   the persisted spot-audit queue (§9.2) with its ranking-withholding gate.
    Requires at least three model runs before it means anything — and feeds
    audit, never a filter on the scored corpus.
 
@@ -1106,6 +1187,16 @@ layout before 500 entries exist is what prevents a hand re-tag.
   immutable per-run artifact under one `Condition`, so corrected rows cannot be
   spliced back. At corpus scale this makes statement corrections expensive in a
   way baseline re-sweeps are not.
+- **Clustering costs more power than it looks.** Drawing a field from two texts
+  means roughly two clusters, not 125 independent items. Honest clustered
+  intervals will be much wider than the item count suggests, and single-text
+  fields yield no ranking at all — this is the right answer statistically and a
+  real constraint on corpus composition, arguing for more texts per field than
+  the two phase 3 currently plans.
+- **Semantic refusal is not yet emitted.** C5's contamination reading needs a
+  signal the harness does not produce; until it does, C5 reports three terminal
+  classes side by side and the contamination number is unavailable rather than
+  approximated.
 - **No spend gate exists.** `describe_selection()` bounds runtime, not money;
   the runner records neither token ceilings nor pricing. A long, expensive run
   can pass any threshold derived from the current limits.
