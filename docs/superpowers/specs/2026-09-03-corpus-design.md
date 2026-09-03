@@ -155,7 +155,7 @@ corpus/
   fixtures/
     fixtures.json              # phase 3+; schema present from phase 1
   taxonomy/
-    msc2020.json               # vendored official code list
+    msc2020.json               # vendored official codes, with names
     msc-to-arxiv.json          # versioned mapping table
   measurements/
     baseline-<mathlib-rev>-<host>.json
@@ -549,6 +549,11 @@ to any digest in phase 3 would re-invalidate every measurement in the project.
 - `arxiv_of(msc) -> str` via the versioned mapping table.
 - `field_of(msc) -> str` — 2-digit roll-up with a human label
   (`"13"` → `"Commutative algebra"`).
+- `name_of(msc) -> str` — the MSC2020 name of the *full* code
+  (`"13A15"` → `"Ideals and multiplicative ideal theory"`). The review editor's
+  classification pane (§12.1) depends on this: a reviewer cannot check `13A15`
+  but can check its name, and the `review` record binds the classification.
+  So the vendored `msc2020.json` stores code→name, not a bare code list.
 - `group_of(msc) -> str` — the **reporting group**, a versioned many-to-one map
   over 2-digit classes. This exists because the four planned fields are not
   four 2-digit classes: "real analysis and measure" is MSC 26 *and* 28. A bare
@@ -1016,8 +1021,8 @@ Hermetic except where Lean is genuinely required (already gated behind
 
 **Schema and taxonomy**
 
-- every corpus MSC code has a mapping; the mapping table is well-formed; a
-  reporting group covers every 2-digit class in use
+- every corpus MSC code has a mapping and a name; the mapping table is
+  well-formed; a reporting group covers every 2-digit class in use
 - rejected: an unknown MSC code, an empty `msc`, a retirement without a reason,
   an override without a reason, `"math.AC "` and any invented arXiv class
 - `msc: ["13"]` is rejected and `msc: ["13A15"]` accepted — a code must be
@@ -1136,6 +1141,9 @@ Hermetic except where Lean is genuinely required (already gated behind
 
 **Review editor**
 
+- the classification pane shows every `msc` code with its MSC2020 name, the
+  reporting group and the arXiv class; a `faithful` verdict recorded without
+  the classification having been displayed is a bug the test catches
 - `title` appears in the editor and in dedup, and is absent from the assembled
   request — the model never receives it, though `name`, the Lean identifier,
   necessarily does
@@ -1207,12 +1215,24 @@ One entry at a time:
 | Statement | `input`, rendered — see §12.2 |
 | Lean | the assembled declaration, exactly as `declaration()` builds it |
 | Provenance | primary occurrence rendered as a citation, plus the other occurrences |
+| Classification | every `msc` code **with its MSC2020 name** — `13A15` "Ideals and multiplicative ideal theory" — plus the derived reporting group and arXiv class |
 | Fixtures | each resolved fixture's statement and locator, with its A4/A5 verdicts |
 | Witness | the `witness` term and its kernel verdict, or the `witness_note` |
 
-The question the reviewer answers is narrow and answerable: *does the Lean say
-what the statement says, as the source stated it?* Not *is it true*, and not
-*can I prove it* — §2.2 is a read, not a proof.
+**The classification pane is not optional decoration.** §2's validator binds
+`msc` and the reporting group into the `review` record, so a `faithful` verdict
+is a digest-bound approval of the classification as well as the mathematics. A
+pane that omitted it would have reviewers approving metadata they never saw —
+and since a wrong-but-syntactically-valid MSC code passes every mechanical
+check, that review is the only gate standing between a misclassified entry and
+the wrong field's headline. Codes are shown **with their names** because
+`13A15` is not something a reader can check and "Ideals and multiplicative
+ideal theory" is.
+
+The reviewer therefore answers two questions, both narrow and both answerable:
+*does the Lean say what the statement says, as the source stated it?* and *is
+this the right field?* Not *is it true*, and not *can I prove it* — §2.2 is a
+read, not a proof.
 
 ### 12.2 `title` must never reach the model
 
