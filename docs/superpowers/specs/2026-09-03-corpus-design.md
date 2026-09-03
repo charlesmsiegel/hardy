@@ -197,7 +197,8 @@ Added to `Entry`:
 | `rationale` | `str \| None` | required when `occurrences` is empty; what an authored entry is meant to state and why |
 | `witness` | `str \| None` | Lean term instantiating the hypotheses (A6) |
 | `witness_note` | `str \| None` | required when `witness` is null — why none can be produced; without a field to hold it the §7 validator cannot tell a justified unwitnessed entry from an unexplained one |
-| `review` | `Review \| None` | reviewer, date, and the digests read — **including `msc` and the reporting group**; required for `status: "active"` |
+| `review` | `Review \| None` | reviewer, date, and what was read — statement, `input`, origin, `msc` and reporting group, **`expected` and `twin_of`**; required for `status: "active"` |
+| `audit` | `Audit \| None` | a spot-audit verdict bound to the measurement panel that triggered it (§9.2); required before a queued entry may carry a ranking claim |
 | `fixtures` | `tuple[str, ...]` | fixture ids; empty until phase 3, but digested from phase 1 |
 
 Removed: `area`. The twenty existing entries are hand-mapped to MSC codes as
@@ -231,7 +232,13 @@ New validators, in the spirit of `tier_must_follow_its_closers`
   the **classification** too: a wrong-but-syntactically-valid MSC code passes
   every taxonomy validator, so without it a faithfully-reviewed entry could be
   moved to an unrelated field and keep its approval while contributing to the
-  wrong field headline — and field attribution is the headline claim;
+  wrong field headline — and field attribution is the headline claim. It binds
+  `expected` and `twin_of` for a sharper version of the same problem: flipping
+  an entry between a true theorem and a false twin changes what a correct model
+  response *is*. `prompt_digest` forces the run to be repeated, but a stale
+  approval would let C5 score a correct proof of a genuinely true statement as
+  a failure to refuse. The review must attest the twin relationship, not just
+  the mathematics;
 - `arxiv_override` requires `override_reason`, **and is validated against the
   mapping table's codomain** — an unconstrained string would let `"math.AC "`
   or an invented class through, where it becomes a distinct value for
@@ -286,8 +293,8 @@ inflate with every book added. Since the antecedent policy sets the scale of
 C6 (§9.0), the permissive reading would let corpus composition move the
 headline number. The primary occurrence pins it.
 
-**Occurrences are deliberately outside `statement_digest`.** Adding a citation
-does not change what the theorem says, so it must not invalidate measurements.
+**Occurrences are outside every digest.** Adding a citation does not change
+what the theorem says, so it must not invalidate any measurement.
 Expect this list to be edited often as more texts are surveyed; that editing
 has to be free.
 
@@ -308,7 +315,12 @@ Three things fall out:
    which would read as core on a single source. The signal is the count of
    distinct sources, against a recorded **surveyed-source denominator** — "4 of
    6 texts surveyed for MSC 13" — because a bare count is meaningless without
-   knowing how many books were looked at.
+   knowing how many books were looked at. Numerator and denominator must range
+   over the *same* population: only occurrences in source/field pairs marked
+   fully `surveyed` for this entry's field count toward the numerator. Counting
+   every citation against a surveyed-only denominator mixes populations and can
+   put the numerator above it, misclassifying entries as core and shifting the
+   C6 core/peripheral split.
    This is directly load-bearing for the claim in the Goal — *does Mathlib
    cover the **standard** curriculum* — so C6 reports core and peripheral
    uplift separately rather than pooling them. It is only meaningful once a
@@ -409,51 +421,79 @@ manufacture releases whose content never changed.
 to.** A patch that corrects one statement invalidates measurements for that one
 id and leaves the rest perfectly good. So:
 
-Each entry carries **two** digests, because Lean measurements and model
-measurements are invalidated by different edits.
+Staleness is decided by **component digests**, and each measurement records
+the subset it actually depends on. One monolithic digest per entry cannot work:
+editing a shared fixture would invalidate A1–A3, A6 and B1 for every dependent
+entry, none of which loads fixtures at all, forcing large re-sweeps and model
+re-runs whose outcomes cannot change.
 
-**`statement_digest`** — over `name`, `binders`, `conclusion`, `imports`, the
-`witness` and its null-justification, and the **resolved content digests of
-every fixture, transitively**. The witness is in here because the digest
-governs incremental A-group reuse: editing a valid witness into one the kernel
-rejects would otherwise leave the cached A6 pass looking current and bypass the
-non-vacuity gate entirely. Transitive resolution requires the fixture
-dependency graph to be **acyclic** — a cycle either recurses forever or forces
-an order-dependent fallback that yields unstable identities — and `corpus
-check` rejects one. This governs
-the A-group (Lean-only) measurements. Digesting fixture *ids* would not be
-enough: an edit to a referenced fixture's statement under a stable id changes
-the assumptions of every dependent problem while leaving A4, A5 and B4
-measurements apparently fresh. The id is a pointer; the digest must follow it.
+| Component | Covers |
+|---|---|
+| `statement_digest` | `name`, `binders`, `conclusion`, `imports`, `witness`, `witness_note` |
+| `fixture_set_digest` | the resolved contents of this entry's fixtures, transitively |
+| `prompt_digest` | `statement_digest` plus `input`, `expected`, `twin_of` |
+| `procedure_digest` | Hardy's source revision or build id, the tactic ladder, and the sweep budgets |
 
-**`prompt_digest`** — `statement_digest` plus `input`, `expected` and
-`twin_of`. This governs the B-group (model) measurements. `expected` and
-`twin_of` are in it because they *shape the run*, not merely describe it: under
-a staged condition true entries run staged while twins run batch under separate
-limits (`runner.py:219-225`). Correcting an entry from a true problem to a
-false twin therefore changes the mode it executes in, and without those fields
-the pre-correction record would still match the digest and could be reused or
-compared as though it came from the new mode. `input` is not decoration
-either: `_batch_runner` passes it to the model as `informal_claim`
-(`runner.py:252`), and staged runs use it as the request. Rewording or
-correcting it can materially change solve behaviour, so a model measurement
-taken against the old wording is stale even though the Lean statement is
-untouched. Baseline staleness stays statement-only, which is why
-one digest cannot serve both.
+Which measurement depends on which:
 
-Every measurement record stores the digest that governs it. Staleness is a
-per-entry comparison, not a per-file one — this replaces `baseline.json`'s
-`problems_sha256`.
+| Measurement | Depends on |
+|---|---|
+| A1, A2, A3, A6 | statement + procedure |
+| A4, A5 | statement + fixture-set + procedure |
+| B1, B2, B3 | prompt + procedure (and its `Condition`) |
+| B4 | prompt + fixture-set + procedure |
 
-Two consequences, both load-bearing at scale:
+Four things this arrangement decides, each for its own reason:
 
-1. **Sweeps become incremental.** Sweep only entries whose digest has no
-   measurement or whose digest has changed. At 5,000 entries and ~24 tactic
-   attempts of ~17s each, a full sweep is roughly 570 hours serially;
-   incremental sweeping plus parallelism across entries is the difference
-   between tractable and not.
-2. **`fixtures` must be inside `statement_digest` from phase 1.** Adding it in
-   phase 3 would re-invalidate every measurement in the project.
+**The witness is in `statement_digest`.** Editing a valid witness into one the
+kernel rejects would otherwise leave the cached A6 pass looking current and
+bypass the non-vacuity gate entirely.
+
+**`fixture_set_digest` follows the pointer, not the id.** An edit to a
+referenced fixture's statement under a stable id changes the assumptions of
+every dependent problem; digesting ids alone would leave A4, A5 and B4
+apparently fresh. Transitive resolution requires the fixture dependency graph
+to be **acyclic** — a cycle either recurses forever or forces an
+order-dependent fallback yielding unstable identities — and `corpus check`
+rejects one.
+
+**`expected` and `twin_of` are in `prompt_digest`** because they *shape the
+run* rather than describe it: under a staged condition true entries run staged
+while twins run batch under separate limits (`runner.py:219-225`). Correcting
+an entry between the two changes the mode it executes in. `input` is in there
+for the same class of reason — `_batch_runner` passes it to the model as
+`informal_claim` (`runner.py:252`) and staged runs use it as the request, so
+rewording it can change solve behaviour while the Lean statement is untouched.
+
+**`procedure_digest` exists because the corpus is not the only thing that can
+change.** `Baseline` today records the Lean environment, the ladder, the
+budgets and the host — but nothing identifying Hardy itself, while `Condition`
+carries `hardy_version` and `source_revision` for model runs. A fix to the
+elaboration wrapper, the sweep logic, the axiom parser or the witness checker
+would therefore leave every cached A-group result looking current although the
+code that produced and interpreted it has changed. Recording Hardy's identity
+in the A-group closes an asymmetry the B-group never had.
+
+Every measurement stores the components that govern it, so staleness is a
+per-entry, per-component comparison rather than a per-file one. This replaces
+`baseline.json`'s `problems_sha256`.
+
+**Incremental *sweeping* follows; incremental *model reuse* does not.** Sweep
+only entries whose governing components changed or have no measurement: at
+5,000 entries and ~24 tactic attempts of ~17s each a full sweep is roughly 570
+hours serially, so this is the difference between tractable and not. The
+B-group has no equivalent. A scoreboard is an immutable per-run artifact
+carrying one `Condition`, so a corrected entry cannot be re-run and spliced
+back: the fresh row and the untouched rows would belong to different runs, and
+no single condition would truthfully describe the result. Digests still tell
+you *which* B-group rows went stale — that is worth having — but acting on it
+means re-running the whole condition. A condition-preserving cache with a
+materialization step that re-verifies every reused row's code, environment and
+prompt identity would change this; it is not designed here, and nothing below
+assumes it.
+
+**`fixtures` must be digested from phase 1.** Reserving the field but adding it
+to any digest in phase 3 would re-invalidate every measurement in the project.
 
 ## 4. Scaling fixes (phase 1, not deferred)
 
@@ -479,7 +519,7 @@ Two consequences, both load-bearing at scale:
 - A test asserts every MSC code appearing in the corpus has a mapping, so the
   table cannot silently fall behind the corpus.
 
-## 6. Selection, export, and the cost warning
+## 6. Selection, export, and the runtime warning
 
 Selection filters move into `select()` (`runner.py:129`) so every command
 shares them: `--msc 13` (prefix match, catching `13A15`), `--arxiv math.AC`,
@@ -491,14 +531,21 @@ on. The asymmetry is deliberate and is the one place a reader will expect these
 two flags to behave alike.
 
 A shared `describe_selection()` prints the count and an honest upper bound on
-cost. The bound is **derived per row from the mode's own limits**, not from
+**runtime** — deliberately not on spend. The mode limits bound elapsed time,
+turns and Lean checks; none of them bounds money. A monetary ceiling would need
+per-provider token limits and current pricing, neither of which the runner
+records, so an expensive run could sit under any threshold derived from these
+values. The bound is labelled as runtime everywhere it appears, and a real
+spend gate is left unbuilt rather than faked.
+
+The runtime bound is **derived per row from the mode's own limits**, not from
 `wall_seconds` alone: batch rows are governed by `max_turns`/`wall_seconds`,
 but staged runs reject `--wall-seconds` outright and are governed by
 `active_seconds`, `proof_seconds` and `official_checks`, while a twin inside a
 staged condition runs batch under `twin_wall_seconds` (`runner.py:225`,
 `runner.py:320-322`). A single-formula estimate has no valid value for a mixed
 staged selection. `export` prints the bound; `run` additionally requires
-`--yes` above a threshold, because that is where the money is spent.
+`--yes` above a threshold — a coarse guard on a long run, not a spend cap.
 
 `hardy evals export --msc 13 --format jsonl|shell|markdown` emits one prove
 task per selected entry: `jsonl` for programmatic use, `markdown` for reading,
@@ -539,10 +586,10 @@ stored, and cannot be implemented or tested. `Entry` holds only a raw
 for dependent binders like `(n : Nat) (h : n > 0)` merely elaborating the
 binders proves nothing about whether compatible values exist. So an entry
 carries a **`witness`**: a Lean term instantiating its hypotheses, stored in
-the corpus, inside `statement_digest`, and checked by the kernel like any other
-proof. Where no witness can be produced mechanically — a genuine possibility
-for existence-heavy hypotheses — the entry records `witness: null` with a
-required justification, and that fact is reported rather than hidden, because
+the corpus, inside `statement_digest` (§3), and checked by the kernel like any
+other proof. Where no witness can be produced mechanically — a genuine
+possibility for existence-heavy hypotheses — the entry records `witness: null`
+with a required `witness_note`, and that fact is reported rather than hidden:
 an unwitnessed entry is one where nothing but the §2.2 human read stands
 between a vacuous statement and a field headline.
 
@@ -571,7 +618,7 @@ Mathlib. B4 is *"can the model do this mathematics"*.
 |---|---|---|
 | C1 | Per-field solve rate | Wilson interval per field over **item-level** outcomes, restricted to tier ≥ 2 and `status == "active"` |
 | C2 | Paired model comparison | McNemar + CI per field; **refuses a ranking claim when the CI crosses zero** |
-| C3 | Item discrimination | variance across models; feeds the spot-audit queue and difficulty strata — **never a filter on the scored corpus** |
+| C3 | Item discrimination | variance across models; writes the spot-audit queue (§9.2) and difficulty strata — **never a filter on the scored corpus** |
 | C4 | Tier profile per field | how much of a field Mathlib's automation already covers |
 | C5 | Contamination signal | twin **refusal** rate against true-statement solve rate; exhaustion reported separately |
 | C6 | Fixture-assisted uplift | `B4 − B1` per field, **stratified by primary-source `level`**, core and peripheral reported apart |
@@ -613,7 +660,9 @@ beside it, never folded in.
 `scoreboard.py` gains a `FieldAggregate` beside `TierAggregate`, reusing the
 existing `wilson()` (`scoreboard.py:155`). Reporting is restricted to tier ≥ 2
 and `status == "active"`: automation-solvable, candidate and retired entries
-never reach a headline number.
+never reach a headline number. An entry with a **pending spot-audit** (§9.2)
+stays in descriptive reports but is excluded from ranking claims until the
+audit resolves.
 
 **`invalid` rows are excluded from ranking-capable reports, not counted as
 failures.** `_tier_aggregate` puts every true row in `n` but only `solved` rows
@@ -853,11 +902,31 @@ skip it. **Deliberately left to phase 3** rather than specified now — it canno
 be designed well before any fixture exists, and nothing in phases 1-2 depends
 on it. Recorded here so it is not rediscovered as a surprise.
 
+### 9.2 The spot-audit queue
+
 **High discrimination is not evidence of validity.** A degenerate statement is
 one a sharp model closes by exploiting the degeneracy while a careful model
-grinds at the mathematics — it discriminates strongly and measures nothing.
-So the top-discrimination items feed a **spot-audit queue** for human review
-before they may carry a headline claim. That is a handful of entries, not 500.
+grinds at the mathematics — it discriminates strongly and measures nothing. So
+the top-discrimination items feed a **spot-audit queue** for human review. That
+is a handful of entries, not 500.
+
+A queue that only exists in prose withholds nothing. The promotion `review`
+(§2.2) happens before any model has run and cannot speak to a pattern only
+visible afterwards, and no validator can retract an entry that is already
+`active` when C3 later flags it. So the queue is persisted:
+
+- C3 places an entry in the queue by writing a **pending** `audit` record
+  naming the measurement panel — the models, conditions and corpus version —
+  whose discrimination triggered it.
+- A pending audit makes the entry **ineligible to carry a ranking claim**,
+  though it stays `active` and keeps contributing to descriptive reports. This
+  is the part prose could not do: without it the first report contains exactly
+  the degenerate items the gate exists to withhold.
+- A human resolves it to `sound`, in which case the entry returns to full
+  eligibility, or to `broken`, in which case it is retired with a reason.
+- The record binds the panel it was raised against. A later panel that flags
+  the same entry raises a fresh audit rather than inheriting a verdict reached
+  about different models.
 
 ## 10. Testing
 
@@ -874,12 +943,20 @@ Hermetic except where Lean is genuinely required (already gated behind
 - every `source_id` in every occurrence exists in `sources.json`; every source
   carries a `level`; the survey-completion record exists for any field whose
   canonicity denominator is reported
+- canonicity: a theorem at four locations in one book counts as one source; an
+  occurrence in a registered-but-unsurveyed text counts toward neither
+  numerator nor denominator, so the numerator can never exceed it
 
 **Digests and staleness**
 
 - editing `conclusion`, `binders`, `imports`, or `witness` changes
-  `statement_digest`; editing a referenced fixture's *statement* under a stable
-  id changes it too, transitively
+  `statement_digest`
+- editing a referenced fixture's *statement* under a stable id changes
+  `fixture_set_digest` transitively but **not** `statement_digest`, so A4/A5/B4
+  go stale while A1–A3, A6 and B1 stay fresh
+- changing Hardy's source revision or the tactic ladder changes
+  `procedure_digest` and invalidates every A-group measurement, including ones
+  whose statement never moved
 - editing `input` changes `prompt_digest` but **not** `statement_digest`, so
   B-group measurements go stale while A-group measurements stay fresh
 - flipping `expected` between `true` and `false` changes `prompt_digest`, since
@@ -899,6 +976,13 @@ Hermetic except where Lean is genuinely required (already gated behind
   one without cannot; one carrying fixtures is rejected outright
 - an entry whose `witness` fails the kernel is rejected; `witness: null`
   without a `witness_note` is rejected
+- flipping `expected` or `twin_of` on a reviewed entry invalidates its `review`
+  and demotes it, so a stale approval cannot let C5 score a correct proof of a
+  true statement as a failure to refuse
+- an entry with a pending `audit` is absent from ranking claims but present in
+  descriptive reports; resolving it `sound` restores eligibility, `broken`
+  retires it; a fresh panel flagging the same entry raises a new audit rather
+  than inheriting the old verdict
 - the deliberately vacuous entry is **not** caught by A3 — the negation sweep
   finds no closer, which is the point of §7's correction — and **is** caught by
   A6
@@ -920,6 +1004,15 @@ Hermetic except where Lean is genuinely required (already gated behind
   antecedent must never reach the bare condition
 - axioms: a constructive proof reporting none of the standard three is
   accepted; a proof reporting an undeclared axiom is refused
+
+**Selection and export**
+
+- every emitted shell line runs as written — a unique `--label` per row and the
+  acknowledgement present, since bare `run --only` lines are refused
+- `describe_selection()` labels its bound as runtime, never spend, and derives
+  a staged selection's bound from `active_seconds`/`proof_seconds`/
+  `official_checks` rather than a `wall_seconds` that does not exist for it
+- `--source` matches any occurrence while `--level` reads the primary
 
 **Aggregation and comparison**
 
@@ -955,11 +1048,12 @@ Hermetic except where Lean is genuinely required (already gated behind
    but no *cross-provider* comparison is reachable until it lands.
 1. **Schema and scale.** Taxonomy module with reporting groups, vendored MSC
    list and mapping, `Entry` fields (including `fixtures`, reserved and
-   digested), **both digests**, `corpus_version` with the manifest binding and
-   changelog, tombstone registry, sharded layout, `Counter`/index fixes,
+   digested), the **component digests** of §3, `corpus_version` with the
+   manifest binding and changelog, tombstone registry, sharded layout,
+   `Counter`/index fixes,
    migration of the existing twenty, `corpus check` and `corpus report`,
-   A6's non-vacuity check, and the candidate→active review workflow (§2.2).
-   No new problems.
+   A6's non-vacuity check, `procedure_digest` in the A-group record, and the
+   candidate→active review workflow (§2.2). No new problems.
 2. **Reporting.** `FieldAggregate` over item-level outcomes, selection filters,
    mode-aware `describe_selection()`, `export` including the runnable wrapper,
    and `compare` with the refusal contract, condition equality and the
@@ -969,8 +1063,9 @@ Hermetic except where Lean is genuinely required (already gated behind
    behaviour (A4, A5, B4, C6) lands here, on the schema slot reserved in
    phase 1.
 4. **Feedback.** Discrimination, difficulty strata, ceiling/floor census, and
-   the spot-audit queue. Requires at least three model runs before it means
-   anything — and feeds audit, never a filter on the scored corpus.
+   the persisted spot-audit queue (§9.2) with its ranking-eligibility gate.
+   Requires at least three model runs before it means anything — and feeds
+   audit, never a filter on the scored corpus.
 
 Phase 1 precedes phase 3 deliberately: settling the tagging, digest and shard
 layout before 500 entries exist is what prevents a hand re-tag.
@@ -1006,6 +1101,14 @@ layout before 500 entries exist is what prevents a hand re-tag.
   §9.0's mechanical gate enforces "earlier in the primary text," not "prefer
   the same chapter." The cross-chapter justification requirement puts the
   remaining discretion on the record rather than eliminating it.
+- **A one-entry correction still costs a full model re-run.** Component digests
+  detect B-group staleness per entry but cannot repair it: a scoreboard is an
+  immutable per-run artifact under one `Condition`, so corrected rows cannot be
+  spliced back. At corpus scale this makes statement corrections expensive in a
+  way baseline re-sweeps are not.
+- **No spend gate exists.** `describe_selection()` bounds runtime, not money;
+  the runner records neither token ceilings nor pricing. A long, expensive run
+  can pass any threshold derived from the current limits.
 - **Fixtures widen the trust base.** Every gate in §9 is a mitigation, not a
   proof. A wrong fixture that is consistent and not too strong will silently
   mismeasure its entries, and only the spot-audit queue stands behind it.
