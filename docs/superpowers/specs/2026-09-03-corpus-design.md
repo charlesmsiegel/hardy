@@ -180,6 +180,13 @@ phases become independent working files rather than one contended file; and it
 is the shape a published dataset wants anyway. The loader concatenates shards
 and validates globally, so nothing downstream sees the split.
 
+**The shard is derived, never stored.** `13.json` holds the entries whose
+primary code begins `13`; there is no `shard` field on `Entry`, because a
+stored shard is a derived value living in the corpus, against the rule below.
+Sharding at 2-digit granularity is a filing decision and says nothing about how
+precisely an entry is classified — which is why §2's validator requires the
+stored code to be finer than the shard it lands in.
+
 **The corpus holds statements only.** No tier, no discrimination, no solve
 rate. Anything measured lives in `measurements/` keyed by entry id. This is the
 single rule that keeps the dataset portable: a tier is a fact about one tactic
@@ -192,7 +199,8 @@ Added to `Entry`:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `msc` | `tuple[str, ...]`, **non-empty** | MSC2020 codes, primary first, validated against the vendored list |
+| `title` | `str \| None` | the result's common name ("Hilbert's Nullstellensatz"), when it has one. Display and dedup only — see §12. Distinct from `name`, which is the Lean identifier |
+| `msc` | `tuple[str, ...]`, **non-empty** | MSC2020 codes, primary first, **each strictly finer than its 2-digit class** |
 | `arxiv_override` | `str \| None`, **validated** | when the derived mapping is wrong (arithmetic geometry is MSC 14G but `math.NT`) |
 | `override_reason` | `str \| None` | required when `arxiv_override` is set |
 | `difficulty` | `Literal["routine","substantial","qualifying","research-adjacent"]` | human difficulty prior |
@@ -225,6 +233,14 @@ New validators, in the spirit of `tier_must_follow_its_closers`
   which would leave an entry with no primary code, no shard, and no value for
   `field_of`;
 - unknown MSC codes are rejected against the vendored list;
+- **every code is strictly finer than its own 2-digit class.** `13` is *itself*
+  a valid MSC2020 entry (13-XX), so a vendored-list check alone accepts
+  `msc: ["13"]` — and everything downstream still works: `field_of` resolves,
+  `--msc 13` matches, the shard is found. The precision is simply gone, and
+  recovering it means re-tagging every entry by hand, which is the cost phase
+  1's ordering exists to avoid. A code must therefore carry at least its
+  division (`13A`), with the leaf preferred (`13A15`). A bare class is what a
+  tagger writes when they did not look;
 - `status == "retired"` requires `retired_reason`;
 - an entry with empty `occurrences` requires `rationale` — otherwise it can
   never pass the §2.2 review gate and is silently unreportable forever;
@@ -1004,6 +1020,9 @@ Hermetic except where Lean is genuinely required (already gated behind
   reporting group covers every 2-digit class in use
 - rejected: an unknown MSC code, an empty `msc`, a retirement without a reason,
   an override without a reason, `"math.AC "` and any invented arXiv class
+- `msc: ["13"]` is rejected and `msc: ["13A15"]` accepted — a code must be
+  finer than its own 2-digit class; the shard an entry lands in is computed
+  from `msc[0][:2]` and no `shard` field exists to disagree with it
 - a false twin whose MSC drifts from its target is rejected
 - every `source_id` in every occurrence exists in `sources.json`; every source
   carries a `level`; the survey-completion record exists for any field whose
@@ -1115,6 +1134,20 @@ Hermetic except where Lean is genuinely required (already gated behind
   multiplicity adjustment as running it in one
 - C6's level-aggregated form is not reachable through the reporting API
 
+**Review editor**
+
+- `title` appears in the editor and in dedup, and is absent from the assembled
+  request — the model never receives it, though `name`, the Lean identifier,
+  necessarily does
+- a `faithful` verdict promotes `candidate` → `active`; an `unfaithful` verdict
+  demotes and records a reason; neither retires the entry
+- a write that would fail `corpus check` is refused by the editor with the same
+  message the CLI gives
+- editing `conclusion` reports the demotion and stale-measurement count before
+  saving, and saving without confirmation does nothing
+- an edit through the editor requires a `corpus_version` bump and changelog
+  entry exactly as a hand edit does
+
 **Scale**
 
 - a generated 5,000-entry corpus loads within a time bound, guarding the
@@ -1126,7 +1159,8 @@ Hermetic except where Lean is genuinely required (already gated behind
    list and mapping, `Entry` fields (including `fixtures`, reserved and
    digested), the **component digests** of §3, `corpus_version` with the
    manifest binding and changelog, tombstone registry, sharded layout,
-   `Counter`/index fixes, migration of the existing twenty, `corpus check` and
+   `Counter`/index fixes, migration of the existing twenty — including
+   rewriting their `input` with inline LaTeX (§12.3) — `corpus check` and
    `corpus report`, A6's non-vacuity check, `environment_digest` and
    `procedure_digest` in the A-group record, and the candidate→active review
    workflow (§2.2). No new problems.
@@ -1134,8 +1168,9 @@ Hermetic except where Lean is genuinely required (already gated behind
    mode-aware `describe_selection()`, `export` including the runnable wrapper,
    and `compare` with the refusal contract, condition equality and the
    multiplicity adjustment.
-3. **Authoring.** The corpus itself, field by field: MSC 13, 26/28, 20, 15 —
-   each entry through the faithfulness review before it is reportable. Fixture
+3. **Authoring.** The review editor of §12 first, then the corpus itself, field
+   by field: MSC 13, 26/28, 20, 15 — each entry through the faithfulness review
+   before it is reportable. Fixture
    behaviour (A4, A5, B4, C6) lands here, on the schema slot reserved in
    phase 1.
 4. **Multi-backend runner.** The work described under "A gap the dataset does
@@ -1150,6 +1185,127 @@ Hermetic except where Lean is genuinely required (already gated behind
 
 Phase 1 precedes phase 3 deliberately: settling the tagging, digest and shard
 layout before 500 entries exist is what prevents a hand re-tag.
+
+## 12. The review editor
+
+Phase 3 puts ~500 entries through a human faithfulness read (§2.2), and the
+Risks section calls that review the project's bottleneck and weak link. §12 is
+the interface to it.
+
+**This is not new machinery.** "Mark as checked" writes the `review` record the
+schema already defines; the queue that feeds it is the set of `candidate`
+entries §8 already excludes from reporting. What is missing is a surface where
+a mathematician can see a theorem and judge it, rather than reading raw JSON.
+
+### 12.1 What a reviewer sees
+
+One entry at a time:
+
+| Pane | Content |
+|---|---|
+| Title | `title`, when the result has one — "Hilbert's Nullstellensatz" |
+| Statement | `input`, rendered — see §12.2 |
+| Lean | the assembled declaration, exactly as `declaration()` builds it |
+| Provenance | primary occurrence rendered as a citation, plus the other occurrences |
+| Fixtures | each resolved fixture's statement and locator, with its A4/A5 verdicts |
+| Witness | the `witness` term and its kernel verdict, or the `witness_note` |
+
+The question the reviewer answers is narrow and answerable: *does the Lean say
+what the statement says, as the source stated it?* Not *is it true*, and not
+*can I prove it* — §2.2 is a read, not a proof.
+
+### 12.2 `title` must never reach the model
+
+`title` earns its place twice over. It removes ambiguity for the reviewer,
+which is what motivated it. And two entries sharing a title is a merge signal,
+which partly mechanises the semantic deduplication §2.1 otherwise leaves
+entirely to human judgement.
+
+It is deliberately **not** `Entry.name`. That field is the Lean identifier —
+`SqrtTwoIrrational` — which `declaration()` assembles into the theorem the
+model is asked to prove, and which sits inside `statement_digest`. `title` is a
+different thing with a different lifetime: prose, optional, display-only.
+
+**`title` never enters `input`, the prompt, or any digest.** "Prove Hilbert's
+Nullstellensatz" is a retrieval cue: it converts the task from doing
+mathematics into recalling a named theorem, and would inflate scores for
+exactly the memorisation the twins in B2 exist to detect. Note the asymmetry
+with `name`, which the model *does* see — a Lean identifier is a label the
+declaration cannot omit, while a prose title is a hint the problem never
+needed. This is the kind of constraint that erodes quietly, so it is a stated
+rule and a test asserts `title` is absent from the assembled request.
+
+### 12.3 Rendered mathematics lives in `input`
+
+A reviewer needs to see
+
+> For any ideal $I \subseteq k[x_1,\dots,x_n]$, the ideal of the zero locus is
+> the radical: $I(V(I)) = \sqrt{I}$.
+
+not a Lean expression and not ASCII prose. The rendering **is `input`**:
+`input` carries LaTeX inline and the editor renders it with KaTeX.
+
+The alternative — a separate `latex` field beside `input` — would create a
+second stored representation of one theorem, free to drift from both the prose
+and the Lean. Drift between representations is precisely what the faithfulness
+review exists to catch, so the design should not manufacture a third place for
+it. Models read LaTeX at least as well as ASCII mathematics, so nothing is lost
+on the prompt side.
+
+The twenty existing entries are rewritten this way during phase 1's migration.
+That is the cheap moment: `input` sits inside `prompt_digest`, so rewording it
+once entries carry measurements costs a re-run of the whole condition (§3).
+
+### 12.4 Flagging reuses the review verdict
+
+A reviewer who spots a broken statement may not be certain enough to retire it.
+Rather than a fourth lifecycle state, the `review` record carries a verdict:
+
+- `faithful` — promotes `candidate` → `active`.
+- `unfaithful` — demotes to `candidate` with the reason recorded, and the entry
+  leaves every headline until someone fixes and re-reviews it.
+
+Retirement stays what §2.2 makes it: a deliberate act with a
+`retired_reason`, not a side effect of one reviewer's doubt.
+
+### 12.5 It is a server, and that is a departure
+
+`ARCHITECTURE.html` and `docs/codemap.html` are static generated artifacts. An
+*editor* writes back, and a static file cannot. So `hardy evals corpus browse`
+starts a **localhost** server that reads the shards and writes edits to them —
+a local development tool, bound to loopback, with no authentication and no
+deployment story. Saying so here prevents someone later treating it as a
+service.
+
+Two rules on the write path:
+
+1. **Every write passes the same validators as `corpus check`.** The editor
+   must not be able to produce a corpus the CLI would reject — including the
+   MSC granularity rule of §2 and the antecedent checks of §9.0.
+2. **Consequences are shown before saving.** Editing `conclusion` invalidates
+   that entry's review and stales its A-group measurements; editing `input`
+   stales the B-group, which §3 notes cannot be repaired incrementally. The
+   editor states *"this edit demotes 1 entry and stales 4 measurements"* and
+   requires confirmation. That turns the digest design from an invisible
+   constraint into a visible one at the moment it bites.
+
+Edits are ordinary corpus changes: they bump `corpus_version` and require a
+changelog entry like any other, per §3.
+
+### 12.6 Scope
+
+The MVP is the **review queue** and nothing else: one entry, the panes of
+§12.1, two verdicts, a reason box, next. That is what the phase 3 bottleneck
+actually needs.
+
+Coverage dashboards, arbitrary field editing, filtering, the audit queue view
+and the effective-sample-size display are all useful and all deferred. They are
+how a tool becomes a project. Ship the queue, review a hundred entries through
+it, and let that say what else is worth building.
+
+**Placed at the start of phase 3**, not phase 1: its value scales with corpus
+size, so building it before entries exist is premature, while authoring 500
+entries through a human gate without it is needlessly painful.
 
 ## Risks
 
@@ -1173,8 +1329,12 @@ layout before 500 entries exist is what prevents a hand re-tag.
   no eval here performs, and the spec labels it accordingly rather than
   quietly making the stronger claim.
 - **The faithfulness review is the bottleneck and the weak link.** It is human,
-  unaudited, and gates reportability for 500 entries. Nothing here measures
-  reviewer agreement; a second reader on a sample would, and is not planned.
+  unaudited, and gates reportability for 500 entries. §12 makes it faster, not
+  more reliable: nothing here measures reviewer agreement, and a second reader
+  on a sample would, and is not planned.
+- **The editor can corrupt the corpus faster than hand-editing could.** Its
+  validators and its consequence preview are what stand between a fast review
+  loop and a fast damage loop. Both are load-bearing, neither is optional.
 - **Unwitnessed entries rest on the human read alone.** Where A6 has no
   mechanical witness, nothing but §2.2 stands between a vacuous statement and a
   field headline. The count of such entries is reported, not hidden.
