@@ -137,12 +137,13 @@ Added to `Entry`:
 | Field | Type | Meaning |
 |---|---|---|
 | `msc` | `tuple[str, ...]`, **non-empty** | MSC2020 codes, primary first, validated against the vendored list |
-| `arxiv_override` | `str \| None` | when the derived mapping is wrong (arithmetic geometry is MSC 14G but `math.NT`) |
+| `arxiv_override` | `str \| None`, **validated** | when the derived mapping is wrong (arithmetic geometry is MSC 14G but `math.NT`) |
 | `override_reason` | `str \| None` | required when `arxiv_override` is set |
 | `difficulty` | `Literal["routine","substantial","qualifying","research-adjacent"]` | human difficulty prior |
 | `occurrences` | `tuple[Occurrence, ...]` | where this result appears; **first is primary**. Empty when authored |
 | `status` | `Literal["candidate","active","retired"]` | lifecycle |
 | `retired_reason` | `str \| None` | required when retired |
+| `rationale` | `str \| None` | required when `occurrences` is empty; what an authored entry is meant to state and why |
 | `fixtures` | `tuple[str, ...]` | fixture ids; empty until phase 3, but digested from phase 1 |
 
 Removed: `area`. The twenty existing entries are hand-mapped to MSC codes as
@@ -158,7 +159,14 @@ New validators, in the spirit of `tier_must_follow_its_closers`
   `field_of`;
 - unknown MSC codes are rejected against the vendored list;
 - `status == "retired"` requires `retired_reason`;
-- `arxiv_override` requires `override_reason`;
+- an entry with empty `occurrences` requires `rationale` — otherwise it can
+  never pass the §2.2 review gate and is silently unreportable forever;
+- `arxiv_override` requires `override_reason`, **and is validated against the
+  mapping table's codomain** — an unconstrained string would let `"math.AC "`
+  or an invented class through, where it becomes a distinct value for
+  `--arxiv` selection and reporting. That is precisely the free-form
+  classification failure this taxonomy exists to remove, reintroduced through
+  the escape hatch;
 - **a false twin inherits its target's primary MSC.** A twin is by construction
   in the same field as the statement it perturbs; letting the two drift is a
   bug that would silently move a result between fields.
@@ -208,8 +216,14 @@ Three things fall out:
    commutative algebra well and graduate-level poorly."*
 2. **`locator` ordering makes the antecedent policy machine-checkable**
    (§9.0). A prose citation cannot be compared; `(3, 2, 12)` can.
-3. **`len(occurrences)` is a canonicity signal, free.** A theorem in five of
-   six standard texts is core curriculum; one in a single text is specialised.
+3. **Canonicity is a signal, free — counted over distinct `source_id`.** A
+   theorem in five of six standard texts is core curriculum; one in a single
+   text is specialised. It is *not* `len(occurrences)`: a result stated in a
+   chapter and reused in three later ones yields four occurrences in one book,
+   which would read as core on a single source. The signal is the count of
+   distinct sources, against a recorded **surveyed-source denominator** — "4 of
+   6 texts surveyed for MSC 13" — because a bare count is meaningless without
+   knowing how many books were looked at.
    This is directly load-bearing for the claim in the Goal — *does Mathlib
    cover the **standard** curriculum* — so C6 reports core and peripheral
    coverage separately rather than pooling them. It is only meaningful once a
@@ -232,7 +246,14 @@ reach a headline number (§8). What promotes one was left undefined in an
 earlier draft, which made the distinction decorative.
 
 **Promotion requires a human to read the canonical Lean statement against
-`input` and the primary occurrence, and record that they did.** The mechanical
+`input` and the entry's stated origin, and record that they did.** For a
+harvested entry the origin is the primary occurrence. For an **authored** entry
+`occurrences` is empty, so there is no primary to read against and the gate as
+first written could never be satisfied — such an entry would sit at `candidate`
+forever, silently excluded from every aggregate. An authored entry instead
+carries a required `rationale` recording what it is meant to state and why it
+was written, and the review reads the Lean against that. The gate applies to
+both paths; only the document it is read against differs. The mechanical
 gate establishes that a statement elaborates and how automation behaves; it
 establishes nothing about whether the Lean proposition faithfully represents
 the source problem. A mistranslated or silently weakened theorem passes every
@@ -293,8 +314,14 @@ enough: an edit to a referenced fixture's statement under a stable id changes
 the assumptions of every dependent problem while leaving A4, A5 and B4
 measurements apparently fresh. The id is a pointer; the digest must follow it.
 
-**`prompt_digest`** — `statement_digest` plus `input`. This governs the B-group
-(model) measurements. `input` is not decoration: `_batch_runner` passes it to
+**`prompt_digest`** — `statement_digest` plus `input`, `expected` and
+`twin_of`. This governs the B-group (model) measurements. `expected` and
+`twin_of` are in it because they *shape the run*, not merely describe it: under
+a staged condition true entries run staged while twins run batch under separate
+limits (`runner.py:219-225`). Correcting an entry from a true problem to a
+false twin therefore changes the mode it executes in, and without those fields
+the pre-correction record would still match the digest and could be reused or
+compared as though it came from the new mode. `input` is not decoration: `_batch_runner` passes it to
 the model as `informal_claim` (`runner.py:252`), and staged runs use it as the
 request. Rewording or correcting it can materially change solve behaviour, so a
 model measurement taken against the old wording is stale even though the Lean
@@ -475,10 +502,20 @@ as a separate per-item statistic, not as extra sample size.
 `evals/compare.py` is new, because comparison is a different concern from
 scoring one run and `scoreboard.py` is already 622 lines.
 
+**`Condition` gains `fixtures_enabled` first.** Nothing in the recorded
+condition separates B1 from B4: fixture references live on the entry and in its
+digest, so a bare run and a fixtured run over the same corpus would carry
+identical condition and prompt identity and be indistinguishable afterwards.
+And the condition-equality rule below, as first drafted, made C6 impossible —
+it demands every non-model condition match, while C6 exists precisely to
+compare two runs that differ in fixtures. So the flag is explicit, and **C6 is
+the one comparison required to differ in exactly this field and no other.**
+
 `hardy evals compare <scoreboard>... --by field`:
 
 1. Refuses scoreboards that differ in **any non-model experimental
-   condition**, not merely in corpus and environment. `Condition` carries
+   condition** other than the declared `fixtures_enabled` exception, and not
+   merely in corpus and environment. `Condition` carries
    `backend`, `mode`, both prompt-set hashes, `hardy_version`,
    `source_revision`, `limits`, `repeats` and `selection` (`runner.py:35-57`);
    a staged Opus run at a larger budget against a batch GPT run would differ
@@ -549,9 +586,16 @@ competence at that point.
 **This is mechanically enforced, not merely documented.** Because `locator` is
 an ordered tuple (§2.1), `corpus check` verifies for every fixture attached to
 an entry that the fixture has an occurrence in the entry's **primary**
-`source_id` at a locator ≤ the entry's primary locator. A fixture reaching
-forward in the text — assuming a later result to prove an earlier exercise — is
-rejected, as is one that only appears in some other book. This is the invariant
+`source_id` at a locator **strictly less than** the entry's primary locator.
+A fixture reaching forward in the text — assuming a later result to prove an
+earlier exercise — is rejected, as is one that only appears in some other book,
+and so is one sharing the entry's own locator. The ordering is strict because
+"prior result" means prior: a multi-part exercise's own sibling lemma shares
+its locator, is not earlier curriculum, and can materially shorten B4 while A5
+still passes — A5 only tests that the fixed ladder does not close the goal, not
+that the fixture is a legitimate antecedent. Where a text's parts genuinely
+need ordering, the locator gains a subitem component rather than the
+comparison being loosened. This is the invariant
 that keeps the antecedent policy uniform across fields without depending on an
 author's judgement or a reviewer's diligence.
 
@@ -602,8 +646,9 @@ of that allowlist. Three gates, all reusing the existing sweep:
    *outside* that set means the model widened its own trust base; refuse, and
    record the dependencies actually used.
 4. Every fixture has an occurrence in the entry's **primary** `source_id` at a
-   locator ≤ the entry's primary locator (§9.0). A fixture from later in that
-   text, or absent from it entirely, is rejected.
+   locator **strictly before** the entry's primary locator (§9.0). A fixture
+   from later in that text, sharing the entry's locator, or absent from it
+   entirely, is rejected.
 
 Fixtures are shared and referenced by id — the same missing lemma blocks many
 problems — and carry their own statements, checked as problems are. When
@@ -655,6 +700,17 @@ Hermetic except where Lean is genuinely required (already gated behind
 - versioning: a shard edited without a version bump fails CI's merge-base diff
 - export: every emitted shell line runs as written — unique `--label`, and the
   acknowledgement present
+- canonicity: a theorem at four locations in one book counts as one source, not
+  four; the surveyed-source denominator is recorded and reported alongside
+- digests: flipping `expected` from `true` to `false` changes `prompt_digest`,
+  so the pre-correction model record goes stale
+- overrides: `"math.AC "` and an invented arXiv class are both rejected
+- antecedent policy: a fixture sharing the entry's exact locator is rejected
+  (strictness), not merely one that follows it
+- compare: a B1/B4 pair differing only in `fixtures_enabled` is accepted; a
+  pair differing in `fixtures_enabled` *and* `mode` is refused
+- lifecycle: an authored entry with empty `occurrences` and a recorded
+  `rationale` can be promoted; one without a `rationale` cannot
 - antecedent policy: a fixture at a locator *after* its entry's primary is
   rejected; a fixture occurring only in a non-primary text is rejected; a
   fixture whose *primary* is elsewhere but which occurs in the entry's primary
