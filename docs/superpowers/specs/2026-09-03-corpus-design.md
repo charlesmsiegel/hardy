@@ -129,8 +129,7 @@ Added to `Entry`:
 | `arxiv_override` | `str \| None` | when the derived mapping is wrong (arithmetic geometry is MSC 14G but `math.NT`) |
 | `override_reason` | `str \| None` | required when `arxiv_override` is set |
 | `difficulty` | `Literal["routine","substantial","qualifying","research-adjacent"]` | human difficulty prior |
-| `source_id` | `str \| None` | key into `corpus/sources.json`; `None` when authored |
-| `locator` | `tuple[int, ...] \| None` | position within the source as `(chapter, section, item)`, lexicographically ordered |
+| `occurrences` | `tuple[Occurrence, ...]` | where this result appears; **first is primary**. Empty when authored |
 | `status` | `Literal["candidate","active","retired"]` | lifecycle |
 | `retired_reason` | `str \| None` | required when retired |
 | `fixtures` | `tuple[str, ...]` | fixture ids; empty until phase 3, but digested from phase 1 |
@@ -161,7 +160,7 @@ distinct from `level` below, which is an *objective per-source* fact — an easy
 exercise can appear in a graduate text. Where the two disagree, `level` is the
 one to report on, because it is auditable.
 
-### 2.1 Sources are first-class
+### 2.1 Sources are first-class, and a result occurs in many of them
 
 `corpus/sources.json` keys each text by `source_id`:
 
@@ -171,9 +170,33 @@ one to report on, because it is auditable.
 | `level` | `"first-course"` / `"advanced-undergraduate"` / `"graduate"` |
 | `msc` | the field(s) the text covers |
 
-Provenance becomes structured — `source_id` plus an ordered `locator` — rather
-than the prose string this design originally proposed. Two things depend on
-that structure and neither works with free text:
+An `Occurrence` is `(source_id, locator)`, where `locator` is a tuple of
+integers — `(chapter, section, item)` — compared lexicographically.
+
+**A result is one entry with many occurrences, not one entry per book.** The
+Nullstellensatz is in most algebraic geometry texts; storing a copy per book
+would duplicate the statement, split its measurements across ids, and make the
+same theorem look like several problems in every aggregate. So `occurrences`
+is a list, and the entry is the theorem.
+
+**The first occurrence is primary and governs.** Everything that needs a single
+answer — the `level` C6 stratifies on, the source the antecedent check runs
+against — reads the primary. The rest are citations.
+
+This matters because the alternative is worse than it looks. If the antecedent
+check were existential over all occurrences ("prior in *some* book that has
+both"), an author could reach for whichever text orders the material most
+favourably, and fixture sets — and therefore the measured coverage gap — would
+inflate with every book added. Since the antecedent policy sets the scale of
+C6 (§9.0), the permissive reading would let corpus composition move the
+headline number. The primary occurrence pins it.
+
+**Occurrences are deliberately outside `statement_digest`.** Adding a citation
+does not change what the theorem says, so it must not invalidate measurements.
+Expect this list to be edited often as more texts are surveyed; that editing
+has to be free.
+
+Three things fall out:
 
 1. **`level` stratifies the coverage-gap report** (§7 C6). A graduate text
    demands antecedents a first course never would; aggregating the two reads
@@ -181,11 +204,23 @@ that structure and neither works with free text:
    same data says something sharper and true: *"Mathlib covers first-course
    commutative algebra well and graduate-level poorly."*
 2. **`locator` ordering makes the antecedent policy machine-checkable**
-   (§9). A prose citation cannot be compared; `(3, 2, 12)` can.
+   (§9.0). A prose citation cannot be compared; `(3, 2, 12)` can.
+3. **`len(occurrences)` is a canonicity signal, free.** A theorem in five of
+   six standard texts is core curriculum; one in a single text is specialised.
+   This is directly load-bearing for the claim in the Goal — *does Mathlib
+   cover the **standard** curriculum* — so C6 reports core and peripheral
+   coverage separately rather than pooling them. It is only meaningful once a
+   field's texts have actually been surveyed for occurrences, which is
+   per-field work in phase 3, not a property of the first entry written.
 
 Corpus composition (phase 3) should where possible draw each field from **two
 texts at different levels**. The within-field difference between them is
 informative on its own and costs nothing beyond choosing the second book.
+
+Semantic deduplication stays a human job: `corpus check` can flag entries whose
+`conclusion` normalises identically, but it cannot recognise that two
+differently-phrased statements are the same theorem. The `occurrences` list is
+the mechanism for recording the merge once a human makes it.
 
 ## 3. Versioning, digests, and what "stale" means
 
@@ -246,8 +281,11 @@ both are load-bearing at scale:
 Selection filters move into `select()` (`runner.py:129`) so every command
 shares them: `--msc 13` (prefix match, catching `13A15`), `--arxiv math.AC`,
 alongside existing tier/twin filters and new `--difficulty`, `--status`,
-`--source` and `--level`. The last is what makes the stratified C6 report
-(§7) expressible as a selection rather than a special case.
+`--source` and `--level`. `--source` matches **any** occurrence, so "every
+problem in Atiyah–Macdonald" works regardless of which text was primary;
+`--level` reads the **primary** occurrence, because that is what C6 stratifies
+on. The asymmetry is deliberate and is the one place a reader will expect these
+two flags to behave alike.
 
 A shared `describe_selection()` prints the count and an honest upper bound on
 cost — `N × repeats × wall_seconds`, rendered as "up to 41 hours". `export`
@@ -301,7 +339,7 @@ Mathlib. B4 is *"can the model do this mathematics"*.
 | C3 | Item discrimination | variance across models; feeds retirement and the spot-audit queue |
 | C4 | Tier profile per field | how much of a field Mathlib's automation already covers |
 | C5 | Contamination signal | twin-failure rate against true-statement solve rate |
-| C6 | Mathlib coverage gap | `B4 − B1` per field, **stratified by source `level`** |
+| C6 | Mathlib coverage gap | `B4 − B1` per field, **stratified by primary-source `level`**, core and peripheral reported apart |
 
 C6 is the payoff of running both conditions: it separates model weakness from
 Mathlib's coverage deficit, which is the confound that otherwise poisons every
@@ -310,7 +348,10 @@ reported **stratified by source `level`, never aggregated** — a graduate text
 demands antecedents a first course would not, so an undifferentiated number
 reads a level difference as a coverage gap. Stratified, C6 states the claim a
 Mathlib maintainer can act on: which fields the library covers to first-course
-standard, and which it covers to graduate standard.
+standard, and which it covers to graduate standard. Core results (present in
+most surveyed texts) and peripheral ones are reported apart for the same
+reason — pooling them lets a gap in specialised material read as a gap in the
+curriculum.
 
 ## 8. Aggregation and comparison
 
@@ -375,11 +416,18 @@ competence at that point.
 
 **This is mechanically enforced, not merely documented.** Because `locator` is
 an ordered tuple (§2.1), `corpus check` verifies for every fixture attached to
-an entry that it comes from the same `source_id` at a locator ≤ the entry's.
-A fixture reaching forward in the text — assuming a later result to prove an
-earlier exercise — is rejected. This is the invariant that keeps the antecedent
-policy uniform across fields without depending on an author's judgement or a
-reviewer's diligence.
+an entry that the fixture has an occurrence in the entry's **primary**
+`source_id` at a locator ≤ the entry's primary locator. A fixture reaching
+forward in the text — assuming a later result to prove an earlier exercise — is
+rejected, as is one that only appears in some other book. This is the invariant
+that keeps the antecedent policy uniform across fields without depending on an
+author's judgement or a reviewer's diligence.
+
+The check runs against the primary occurrence specifically, not against any
+occurrence. Both the entry and the fixture may appear in several texts, and an
+existential over all of them would let the choice of books relax the policy
+(§2.1). The primary is what the entry was harvested from, so it is the reader
+whose competence is being modelled.
 
 Its limit, stated plainly: the rule cannot make the *books* uniform. Textbook
 difficulty varies and cannot be controlled for. That variance is a level
@@ -417,9 +465,9 @@ of that allowlist. Three gates, all reusing the existing sweep:
 3. An accepted proof's `#print axioms` must show exactly the standard three
    plus that entry's declared fixtures. Any other axiom means the model widened
    its own trust base; refuse.
-4. Every fixture shares its entry's `source_id` and sits at a locator ≤ the
-   entry's (§9.0). A fixture from another text, or from later in the same text,
-   is rejected.
+4. Every fixture has an occurrence in the entry's **primary** `source_id` at a
+   locator ≤ the entry's primary locator (§9.0). A fixture from later in that
+   text, or absent from it entirely, is rejected.
 
 Fixtures are shared and referenced by id — the same missing lemma blocks many
 problems — and carry their own statements, checked as problems are. When
@@ -452,11 +500,18 @@ Hermetic except where Lean is genuinely required (already gated behind
   the refusal path (CI crosses zero) and the claim path (it does not);
   mismatched-digest scoreboards refused
 - corpus check: a deliberately vacuous fixture entry is caught by A3
-- antecedent policy: a fixture at a locator *after* its entry's is rejected; a
-  fixture from a different `source_id` is rejected; locator tuples of unequal
-  length compare lexicographically as intended
-- sources: every `source_id` referenced by an entry exists in `sources.json`;
-  every source carries a `level`
+- antecedent policy: a fixture at a locator *after* its entry's primary is
+  rejected; a fixture occurring only in a non-primary text is rejected; a
+  fixture whose *primary* is elsewhere but which occurs in the entry's primary
+  at an earlier locator is **accepted**; locator tuples of unequal length
+  compare lexicographically as intended
+- occurrences: reordering `occurrences` changes which is primary and so can
+  change the antecedent verdict; adding a citation does **not** change
+  `statement_digest` and so does not invalidate measurements
+- sources: every `source_id` in every occurrence exists in `sources.json`;
+  every source carries a `level`; an entry with `occurrences` empty is treated
+  as authored and is exempt from the antecedent check but also ineligible to
+  carry fixtures
 - C6: aggregating across levels is not reachable through the reporting API —
   the stratified form is the only one available
 
