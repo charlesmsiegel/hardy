@@ -609,3 +609,44 @@ def test_a_successful_write_replaces_the_previous_export(tmp_path):
     assert landed == destination.parent.resolve() / destination.name
     assert "<!doctype html>" in destination.read_text(encoding="utf-8")
     assert list(tmp_path.iterdir()) == [destination]
+
+
+def test_two_exports_in_one_second_do_not_overwrite_each_other(tmp_path):
+    """`write` replaces its destination deliberately, so a name Hardy chose
+    that lands on one already taken destroys the account it was meant to keep."""
+    from datetime import datetime as clock
+
+    when = clock(2026, 9, 4, 12, 0, 0)
+    first = export.default_path(tmp_path, "sylow", now=when)
+    first.write_text("<html>first</html>", encoding="utf-8")
+
+    second = export.default_path(tmp_path, "sylow", now=when)
+
+    assert second != first
+    assert not second.exists()
+
+
+def test_an_export_is_not_forced_world_readable(tmp_path, monkeypatch):
+    """The page holds the whole conversation and every source, and says in its
+    own header that redaction is a filter rather than a proof."""
+    import os
+    import stat
+
+    monkeypatch.setattr(os, "umask", lambda mask: 0o077)
+    destination = tmp_path / "report.html"
+
+    export.write(material(), destination)
+
+    assert not stat.S_IMODE(destination.stat().st_mode) & 0o077
+
+
+def test_replacing_an_export_keeps_the_mode_it_had(tmp_path):
+    import stat
+
+    destination = tmp_path / "report.html"
+    destination.write_text("<html>old</html>", encoding="utf-8")
+    destination.chmod(0o600)
+
+    export.write(material(), destination)
+
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o600

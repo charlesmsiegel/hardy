@@ -33,6 +33,7 @@ import html
 import json
 import os
 import re
+import stat
 import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -695,13 +696,23 @@ def write(material: Mapping[str, Any], path: Path, *, now: datetime | None = Non
     # it lands in the destination's own directory so the move never crosses a
     # filesystem. `replace` does not follow a link at the destination either,
     # which is the same guarantee `O_NOFOLLOW` was giving above.
+    previous = None
+    with contextlib.suppress(OSError):
+        previous = stat.S_IMODE(os.lstat(path).st_mode)
     descriptor, temporary = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".part"
     )
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(page)
-        os.chmod(temporary, 0o644)
+        # `mkstemp` creates at 0600, which is not what a file the user asked
+        # for should keep -- but 0644 unconditionally is worse: this page holds
+        # the whole conversation and every source, and forcing it
+        # world-readable on a shared machine hands it to every local account,
+        # against both the user's umask and the mode an existing export
+        # already had. So: the mode that is already there when replacing one,
+        # and otherwise what an ordinary file would get under this umask.
+        os.chmod(temporary, previous if previous is not None else _default_mode())
         os.replace(temporary, path)
     except BaseException:
         # Including a cancellation: a half-written temporary left in the
@@ -713,6 +724,33 @@ def write(material: Mapping[str, Any], path: Path, *, now: datetime | None = Non
     return landed
 
 
+def _default_mode() -> int:
+    """0644 as the process umask would have made it.
+
+    Read by setting and restoring: there is no way to ask for the umask, and
+    the two calls are not atomic -- but a thread changing the umask underneath
+    an export is not a thing Hardy does, and the alternative is a fixed mode
+    that ignores the user's setting entirely.
+    """
+    current = os.umask(0o077)
+    os.umask(current)
+    return 0o666 & ~current
+
+
 def default_path(workspace: Path, project: str, *, now: datetime | None = None) -> Path:
+    """A name of Hardy's choosing, which must not land on one already taken.
+
+    The timestamp is to the second, and two exports inside one second is an
+    ordinary thing to do -- export, change the goal, export again, or a script
+    doing both. `write` replaces its destination deliberately, so the second
+    call silently destroyed the first account rather than keeping both, which
+    is the opposite of what a timestamped name is for. A path the user typed is
+    left alone: naming the file is saying which file to write.
+    """
     stamp = (now or datetime.now()).strftime("%Y%m%dT%H%M%S")
-    return workspace / f"{project}-{stamp}.html"
+    chosen = workspace / f"{project}-{stamp}.html"
+    for suffix in range(1, 1000):
+        if not chosen.exists():
+            return chosen
+        chosen = workspace / f"{project}-{stamp}-{suffix}.html"
+    return chosen

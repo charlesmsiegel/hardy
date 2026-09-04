@@ -379,3 +379,45 @@ def test_abandoning_the_acknowledgement_still_refuses_rather_than_raising(ui):
     """Only the revision prompt is flagged: a refused acknowledgement and a
     cancelled run are different facts, and the manifest records them so."""
     assert UiTerminal(ui.from_thread).acknowledge_unsafe_execution() is False
+
+
+async def test_ctrl_c_reaches_an_inline_plain_run(settings, monkeypatch):
+    """`asyncio.run` installs its own SIGINT handler: the first Ctrl+C cancels
+    the main task rather than raising, and a task blocked in synchronous code
+    does not learn it was cancelled until that code returns -- so the press did
+    nothing while the run went on spending."""
+    import os
+    import signal
+
+    from hardy.tui import prove
+    from hardy.tui.plain import PlainUi
+
+    recorder = Recorder()
+    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
+    refused: list[int] = []
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        ready(recorder)
+        # What the terminal's user does: one Ctrl+C, delivered for real.
+        os.kill(os.getpid(), signal.SIGINT)
+        refused.append(recorder.abandoned)
+        return SimpleNamespace(phase=SimpleNamespace(value="cancelled"))
+
+    monkeypatch.setattr(prove, "run", run)
+    ui = PlainUi(lambda line: None, lambda prompt: "")
+
+    with pytest.raises(KeyboardInterrupt):
+        await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+
+    assert refused == [], "the press did not interrupt the synchronous run"
+
+
+def test_the_press_guard_restores_the_previous_handler():
+    import signal
+
+    from hardy.tui.handlers import _pressing
+
+    before = signal.getsignal(signal.SIGINT)
+    with _pressing(lambda: True):
+        assert signal.getsignal(signal.SIGINT) is not before
+    assert signal.getsignal(signal.SIGINT) is before

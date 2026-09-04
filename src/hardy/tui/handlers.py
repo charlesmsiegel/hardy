@@ -8,10 +8,12 @@ in `/doctor`'s case -- goes to a thread so the input box stays responsive.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import shlex
+import signal
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -113,15 +115,29 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
     # Asked of the artifacts, not of the model. `/status` is where a user finds
     # out whether what they have been told is backed by anything, so it must be
     # able to disagree with the conversation.
+    #
+    # With `--full`, both come out of one gathering. The summary reads the same
+    # workspace this line does, and `/status` is safe in flight, so a
+    # `save_lean` landing between two reads had one command print "Nothing
+    # outstanding" and then list the new debt under `Next steps` a few lines
+    # below -- the same page contradicting itself about the same workspace.
+    summarised = await _gather_summary(ui, state) if full else None
     owed = getattr(state.session, "obligations", None)
-    if owed is not None:
-        try:
-            outstanding = owed()
-        except Exception as error:  # noqa: BLE001 - a status line must not end the session
-            ui.write(f"  Obligations could not be read: {error}", style="error")
-            return state
+    if summarised is not None or owed is not None:
+        if summarised is not None:
+            outstanding = summarised.obligations
+        else:
+            try:
+                outstanding = owed()
+            except Exception as error:  # noqa: BLE001 - a status line must not end the session
+                ui.write(f"  Obligations could not be read: {error}", style="error")
+                return state
         ui.write("Work", style="normal")
-        if not getattr(state.session, "has_theorems", bool)():
+        if not (
+            summarised.has_theorems
+            if summarised is not None
+            else getattr(state.session, "has_theorems", bool)()
+        ):
             # An empty tuple means two different things, and the wrong one here
             # presented prose-only work as finished.
             ui.write("  No theorem is saved: nothing here is reportable.")
@@ -146,13 +162,15 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
             ui.write("  its name or prose suggests):")
             for name, tactic in sorted(closed.items()):
                 ui.write(f"    - {name} (by {tactic})")
-    if full:
-        await _full_summary(ui, state)
+    if summarised is not None:
+        ui.write("")
+        for line in summarised.lines():
+            ui.write(line, style="normal" if not line.startswith(" ") else "system")
     return state
 
 
-async def _full_summary(ui: Ui, state: State) -> None:
-    """The workspace summary, or the reason there is none.
+async def _gather_summary(ui: Ui, state: State) -> Any:
+    """The workspace summary, or None and a line saying why there is none.
 
     Guarded whole, for the reason every other line in `/status` is: reading the
     Lean tree and the transcript can be refused by the filesystem, and the
@@ -161,20 +179,17 @@ async def _full_summary(ui: Ui, state: State) -> None:
     assemble = getattr(state.session, "summary", None)
     if assemble is None:
         ui.write("  No workspace summary is available in this session.", style="error")
-        return
+        return None
     try:
         # On a thread for `/doctor`'s reason: it reads every Lean file, the
         # writeup tree and the whole transcript, and the input box must not
         # freeze while it does.
-        summarised = await asyncio.to_thread(assemble)
+        return await asyncio.to_thread(assemble)
     except asyncio.CancelledError:
         raise
     except Exception as error:  # noqa: BLE001 - a summary must not end the session
         ui.write(f"  The workspace summary could not be read: {error}", style="error")
-        return
-    ui.write("")
-    for line in summarised.lines():
-        ui.write(line, style="normal" if not line.startswith(" ") else "system")
+        return None
 
 
 async def handle_clear(ui: Ui, argument: str, state: State) -> State:
@@ -490,6 +505,33 @@ async def handle_import(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
+@contextlib.contextmanager
+def _pressing(stop: Callable[[], bool]) -> Iterator[None]:
+    """Give Ctrl+C its ordinary meaning again for the duration.
+
+    Only on the main thread, and only where the platform has SIGINT: anywhere
+    else `signal.signal` refuses, and the caller is no worse off than before.
+    The previous handler is restored whichever way the block leaves.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def pressed(number: int, frame: Any) -> None:
+        stop()
+        raise KeyboardInterrupt
+
+    try:
+        previous = signal.signal(signal.SIGINT, pressed)
+    except (OSError, ValueError):  # no SIGINT here, or not this thread
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
 async def handle_prove(ui: Ui, argument: str, state: State) -> State:
     """Stage one claim from statement to document, without leaving (#85).
 
@@ -594,10 +636,21 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
             # worker's `input()` cannot be unblocked by a Ctrl+C delivered to
             # the main thread: the handler was cancelled, the read stayed
             # pending, and `asyncio.run` then waited on the executor -- so the
-            # session hung until somebody typed something. Run inline, and
-            # Ctrl+C raises inside `workflow.run`, which has handled exactly
-            # that since long before `/prove` existed.
-            manifest = staged.run(state.config, claim, terminal, ready=ready)
+            # session hung until somebody typed something.
+            #
+            # Inline, but that is not enough on its own, and an earlier version
+            # of this comment claimed it was. `asyncio.run` installs its own
+            # SIGINT handler: the first Ctrl+C CANCELS THE MAIN TASK rather
+            # than raising, and a task blocked in synchronous code does not
+            # learn it was cancelled until that code returns -- so the press
+            # did nothing at all while the run went on spending. Hardy's own
+            # handler for the duration puts the press back where the console
+            # path has always had it: `stop()` first, so no further stage
+            # begins even if the raise lands somewhere the workflow re-enters,
+            # then `KeyboardInterrupt` into the workflow, which has handled it
+            # since long before `/prove` existed.
+            with _pressing(stop):
+                manifest = staged.run(state.config, claim, terminal, ready=ready)
     except asyncio.CancelledError:
         # Ctrl+C and `/exit`, which cancel the task rather than pressing Esc.
         # Same stop, so the two keys cannot diverge.

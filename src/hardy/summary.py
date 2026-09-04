@@ -173,6 +173,14 @@ class Summary:
     """The assembled sections, and how to render them."""
 
     sections: tuple[Section, ...] = field(default_factory=tuple)
+    #: What the workspace owed at the moment this was gathered, and whether it
+    #: had a theorem at all. Carried rather than left to the caller to ask
+    #: again: `/status --full` prints an obligations line above these sections,
+    #: and a second read of the workspace can answer a different question. One
+    #: command saying "nothing outstanding" and then listing the debt under
+    #: `Next steps` is the same page contradicting itself.
+    obligations: tuple[str, ...] = field(default_factory=tuple)
+    has_theorems: bool = False
 
     def lines(self) -> list[str]:
         out: list[str] = []
@@ -272,5 +280,7 @@ def assemble(
                 tuple(str(item) for item in obligations),
                 empty="nothing outstanding.",
             ),
-        )
+        ),
+        obligations=tuple(str(item) for item in obligations),
+        has_theorems=bool(theorems),
     )

@@ -231,3 +231,41 @@ def test_the_obligations_describe_the_same_tree_the_results_do(tmp_path: Path):
 
     assert material["theorems"], "the fixture saved no theorem"
     assert material["obligations"], "the page shows a result and owes nothing for it"
+
+
+def test_a_private_helper_in_two_modules_is_not_an_ambiguous_name(tmp_path: Path):
+    """Lean mangles a private name, so two modules spelling a helper
+    `private lemma step` do not collide -- and the obligation asking the model
+    to namespace one of them could not be satisfied."""
+    chat = built(tmp_path)
+    read = chat.lean_workspace.sources
+
+    def two_modules():
+        found = dict(read())
+        helper = "import Mathlib\nprivate lemma step : True := by exact True.intro\n"
+        found["First"] = helper
+        found["Second"] = helper
+        return found
+
+    chat.lean_workspace.sources = two_modules
+
+    assert "step" not in chat.export_material()["shared"]
+
+
+def test_the_shared_identity_is_refreshed_before_a_verdict_is_graded(tmp_path: Path):
+    """A shared source edited in the user's own editor has already invalidated
+    every stored verdict; an identity fixed at startup lets the signature go on
+    matching a dependency that has moved."""
+    chat = built(tmp_path)
+    refreshed: list[int] = []
+    original = chat._refresh_shared_identity
+
+    def counting():
+        refreshed.append(1)
+        return original()
+
+    chat._refresh_shared_identity = counting
+    chat.summary()
+    chat.export_material()
+
+    assert len(refreshed) == 2, "a gatherer graded verdicts against a stale identity"

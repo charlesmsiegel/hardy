@@ -2693,7 +2693,16 @@ class MathematicsSession:
             # statement as kernel-verified on the strength of the first. What
             # collides is the name, so what is counted is every declaration
             # that can carry one.
+            # `private` is a subset of the two above rather than a fourth
+            # kind, and Lean mangles a private name so it cannot collide with
+            # anything outside its own module. Counting one made two modules
+            # that both spell a helper `private lemma step` look ambiguous, and
+            # the obligation asking the model to namespace one of them could
+            # not be satisfied -- there was nothing wrong to fix.
+            hidden = set(found["private"])
             for name in (*found["theorem"], *found["lemma"]):
+                if name in hidden:
+                    continue
                 modules = holders.setdefault(name, [])
                 # Once per module: Lean will not let one module declare a name
                 # twice, and counting a repeat as a collision would report a
@@ -3045,6 +3054,13 @@ class MathematicsSession:
         an edit and pair a still-current verdict with a statement that verdict
         was never about.
         """
+        # Before any signature is computed, exactly as `list_lean` does it: a
+        # shared source under `.hardy/lean` edited in the user's own editor has
+        # already invalidated every stored verdict, and an identity fixed at
+        # startup would let `_still_current` go on matching the signature of a
+        # dependency that has moved -- so the page would print
+        # "kernel-verified" for a theorem whose imports changed underneath it.
+        self._refresh_shared_identity()
         sources = self.lean_workspace.sources()
         tex = self._tex_sources()
         return summary_module.assemble(
@@ -3093,6 +3109,13 @@ class MathematicsSession:
         from the same moment, and a file edited behind Hardy between two reads
         is a supported thing for a user to do.
         """
+        # Before any signature is computed, exactly as `list_lean` does it: a
+        # shared source under `.hardy/lean` edited in the user's own editor has
+        # already invalidated every stored verdict, and an identity fixed at
+        # startup would let `_still_current` go on matching the signature of a
+        # dependency that has moved -- so the page would print
+        # "kernel-verified" for a theorem whose imports changed underneath it.
+        self._refresh_shared_identity()
         sources = self.lean_workspace.sources()
         tex = self._tex_sources()
         document = self.workspace / "writeup.pdf"
