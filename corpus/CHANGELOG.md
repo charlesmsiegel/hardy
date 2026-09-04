@@ -6,6 +6,20 @@ Each head line binds the **manifest digest** — a hash over every content file 
 so an edit that leaves both version strings in place still fails
 `hardy evals corpus check`.
 
+## 0.2.1 - 2026-09-04 - manifest bdf6ef50656e358b3261838d6a62866b6480cc02a6513884041f5dd27f2417d0
+
+- All five irrationality entries are now `11J72` ("Irrationality; linear
+  independence over a field"). `sqrt-two-plus-sqrt-three` and its twin were
+  `12Fxx` while `sqrt-two-irrational`, `sqrt-six-irrational` and
+  `cube-root-two-irrational` were `11Jxx` — the same kind of statement filed
+  under two different fields, which is exactly the error the classification is
+  supposed to be trusted about. `11J72` names the result rather than the proof
+  technique, and its "linear independence over a field" covers the
+  field-theoretic flavour of $\sqrt{2} + \sqrt{3}$.
+- `problems/12.json` is gone: the two entries move to shard 11 with their
+  code, and MSC 12 leaves the corpus. The `field-theory` reporting group
+  existed only for them.
+
 ## 0.2.0 - 2026-09-04 - manifest a062377273b798e7b3dfd092ed32ce04095b43de6cdf8dc84716185704ac48d6
 
 - **The MSC2020 table is complete**: all 6603 codes from
