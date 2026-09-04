@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -261,3 +262,18 @@ def test_the_codex_backend_gets_its_own_checks(tmp_path: Path, project: Path) ->
     names = [check.name for check in checks]
     assert "codex sdk" in names
     assert "claude cli" not in names and "anthropic key" not in names
+
+
+def test_the_codex_backend_is_asked_whether_it_is_signed_in(tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An installed SDK is not a signed-in one, and the staged workflow reads
+    authentication off a check whose name carries "login"."""
+    from hardy import doctor as doctor_module
+
+    monkeypatch.setattr(doctor_module, "_codex_checks", doctor_module._codex_checks)
+    monkeypatch.setitem(sys.modules, "openai_codex", types.ModuleType("openai_codex"))
+    monkeypatch.setattr("hardy.setup.probe_codex", lambda: (False, "openai-codex 1.0"))
+
+    checks = doctor.run_checks(configuration(tmp_path, lean_project=project), backend="codex")
+
+    login = named(checks, "codex login")
+    assert not login.ok and "not signed in" in login.detail

@@ -693,6 +693,14 @@ def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]], rea
         issues.append("a closer attempt is not an object with a tactic")
     elif ladder.get("tactics") != tried:
         issues.append("the closers block lists tactics its attempts do not account for")
+    else:
+        # Every attempt against the submission it made, in order, not just the
+        # one that closed it. Compared against the block and its duplicated
+        # event alone, the tactic names and their failure output could all be
+        # rewritten together while the proofs the run actually submitted stayed
+        # where they were -- certifying a different experimental condition from
+        # the one that ran.
+        issues.extend(_attempt_issues(attempts, events))
     if closed_by is not None:
         if not any(item.get("tactic") == closed_by and item.get("ok") is True for item in attempts if isinstance(item, dict)):
             issues.append(f"closers claim `{closed_by}` closed the statement with no attempt saying so")
@@ -742,6 +750,33 @@ def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]], rea
     return issues
 
 
+def _attempt_issues(attempts: list[Any], events: list[dict[str, Any]]) -> list[str]:
+    """Each recorded closer attempt against the `submit_proof` it produced.
+
+    The ladder submits `by <tactic>` for each tactic in turn and stops at the
+    first the run keeps, so the attempts are the opening run of submissions in
+    the trajectory -- matched by position, because that is the only thing an
+    editor cannot rewrite without also rewriting what Lean was asked.
+    """
+    submissions = [
+        event for event in events
+        if event.get("type") == "tool" and event.get("name") == "submit_proof"
+    ]
+    issues: list[str] = []
+    for index, attempt in enumerate(attempts):
+        if index >= len(submissions):
+            issues.append(f"closer attempt {index + 1} has no submit_proof behind it")
+            continue
+        event = submissions[index]
+        expected = f"by {attempt.get('tactic')}"
+        if str((event.get("arguments") or {}).get("proof", "")) != expected:
+            issues.append(f"closer attempt {index + 1} does not match the proof submitted for it")
+        result = event.get("result")
+        if not isinstance(result, dict) or result.get("ok") is not attempt.get("ok"):
+            issues.append(f"closer attempt {index + 1} disagrees with how its submission came out")
+    return issues
+
+
 def _sketch_source(trajectory: dict[str, Any], proof: str) -> str | None:
     """The file a `sketch_proof` on `proof` would have handed Lean.
 
@@ -778,18 +813,7 @@ def _sketch_issues(
 
     Absent from both records means a run from before sketches existed.
     """
-    if "sketch" not in trajectory and "sketch" not in result:
-        return []
-    issues: list[str] = []
-    if result.get("sketch") != trajectory.get("sketch"):
-        issues.append("the kept sketch differs between result.json and trajectory.json")
-    sketch = result.get("sketch")
-    # `_discarded` for the same reason submission validation uses it: a
-    # skeleton that elaborated after the deadline carries the runner's discard
-    # marker and is not part of the run's result. Counted as accepted, an
-    # honest timeout was refused for "accepting a sketch no record carries" --
-    # the record was right and the audit was wrong.
-    accepted = [
+    accepted_events = [
         event for index, event in enumerate(events)
         if event.get("type") == "tool"
         and event.get("name") == "sketch_proof"
@@ -797,6 +821,25 @@ def _sketch_issues(
         and event["result"].get("ok") is True
         and not _discarded(events, index)
     ]
+    if "sketch" not in trajectory and "sketch" not in result:
+        # The legacy-record exception, and only where it is genuinely one. A
+        # trajectory holding an accepted sketch is a record from this code
+        # whose fields have been removed -- and taking the exception there let
+        # the human-facing artifact drop every remaining hole while the
+        # trajectory still proved an unfinished skeleton had been produced.
+        if accepted_events:
+            return ["the run accepted a sketch but the record carries no sketch fields"]
+        return []
+    issues: list[str] = []
+    if result.get("sketch") != trajectory.get("sketch"):
+        issues.append("the kept sketch differs between result.json and trajectory.json")
+    sketch = result.get("sketch")
+    # `_discarded` was applied above for the same reason submission validation
+    # uses it: a skeleton that elaborated after the deadline carries the
+    # runner's discard marker and is not part of the run's result. Counted as
+    # accepted, an honest timeout was refused for "accepting a sketch no record
+    # carries" -- the record was right and the audit was wrong.
+    accepted = accepted_events
     from .runner import SKETCH_HEADING, sketch_section
 
     carried = SKETCH_HEADING in writeup
