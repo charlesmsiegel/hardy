@@ -223,8 +223,11 @@ The initial path invokes Lean directly in a temporary directory. Persistent sess
 incremental state, and proof-state snapshots are optimizations to add when measured
 latency warrants them. Each run begins from a known environment, preserves the
 original statement, rejects `sorry` in completed proofs, and audits dependencies.
-`prove` and `batch` reject a hole outright, having nobody to hold a partial
-result for; an interactive session keeps it and says so.
+`prove` and `batch` reject a hole in a *submission* and keep one in a sketch:
+`sketch_proof` elaborates a skeleton whose holes are deliberate, reports which
+are left, and is never graded; an interactive session keeps a hole in an
+ordinary save and says so. On both surfaces only the final grade requires a
+hole-free proof.
 
 That condition is now measurable rather than rhetorical. `hardy latency` times the
 **prelude** — process start plus `import Mathlib`, elaborated with no proof body, so

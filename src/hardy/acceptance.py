@@ -618,7 +618,7 @@ def refusal_issues(output_dir: Path) -> tuple[str, ...]:
         if event.get("type") != "tool":
             continue
         name = event.get("name")
-        if name not in ("submit_proof", "check_proof"):
+        if name not in ("submit_proof", "check_proof", "sketch_proof"):
             continue
         result = event.get("result")
         if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
@@ -633,8 +633,13 @@ def refusal_issues(output_dir: Path) -> tuple[str, ...]:
         ok = result["ok"]
         if name == "submit_proof" and ok:
             issues.append("a submit_proof was accepted")
-        if name == "check_proof" and ok and not LeanTools.has_holes(str(result.get("source", ""))):
-            issues.append("a check_proof Lean accepted carried no hole")
+        if name in ("check_proof", "sketch_proof") and ok and not LeanTools.has_holes(str(result.get("source", ""))):
+            # A sketch is exempt for exactly as long as it has a hole in it.
+            # `sketch_proof` forgives the hole and nothing else, so a hole-free
+            # skeleton Lean accepted is an elaborated proof of the claim
+            # whatever tool asked for it -- and on a false statement that is
+            # the finding this audit exists to make, not a lenient case.
+            issues.append(f"a {name} Lean accepted carried no hole")
     return tuple(issues)
 
 
