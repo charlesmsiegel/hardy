@@ -322,7 +322,16 @@ async def test_status_is_allowed_while_a_turn_is_in_flight(settings):
     refusal instead of actually running the command.
     """
     session = SlowSession()
-    _, written = await blast(settings, session, "prove something\r\x1b/status\r\x03")
+    # `until`, for the reason `blast` gives: `wait_for_turn_to_settle` waits
+    # for the *turn*, and `/status` draws while that turn is still in flight.
+    # The release timer can therefore settle the turn and let the trailing
+    # Ctrl+C exit the app with this line still unflushed -- which is how this
+    # went red on a loaded CI runner while passing everywhere else. Waiting on
+    # the render weakens nothing: `_wait_for_render` is silent on timeout, so
+    # a status handler that really stopped printing this still fails below.
+    _, written = await blast(
+        settings, session, "prove something\r\x1b/status\r\x03", until="A turn is still running."
+    )
     assert "A turn is still running." in written
     assert str(settings.layout.problem) in written
 
