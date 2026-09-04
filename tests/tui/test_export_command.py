@@ -50,11 +50,22 @@ async def test_export_with_no_path_writes_into_the_problem_directory(ui, setting
     assert written[0].name.startswith(f"{settings.project}-")
 
 
-async def test_export_into_a_directory_names_the_file_itself(ui, settings, tmp_path):
+async def test_export_into_a_directory_names_the_file_itself(ui, settings, tmp_path, monkeypatch):
+    """And names it *there*.
+
+    The name comes from `default_path`, which reserves what it returns by
+    creating it. Asking it for a name in one directory and then writing the
+    file in another leaves an empty file in the first -- and the first was the
+    process's current directory, which is the user's shell, not the workspace.
+    """
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
     somewhere = tmp_path / "out"
     somewhere.mkdir()
     await handlers.handle_export(ui, str(somewhere), State(config=settings, session=session()))
     assert len(list(somewhere.glob("*.html"))) == 1
+    assert list(elsewhere.iterdir()) == []
 
 
 async def test_export_says_what_the_reader_must_not_assume(ui, settings, tmp_path):

@@ -199,8 +199,12 @@ class ProveWorkflow:
         finalizes the run as a cancellation rather than as a runtime failure,
         and no further stage begins.
 
-        The boundary is the documented one: no further tool call runs, and one
-        already inside a subprocess is left to finish rather than torn out.
+        The boundary is the documented one: no further tool call runs, and a
+        subprocess already running is asked to stop -- `interrupt_children`
+        signals it -- rather than killed. Asked, not left alone: the press does
+        reach into a running Lean check. What Hardy does not do is walk away
+        from it, so the call is waited for and the manifest still describes the
+        directory it names.
 
         `abandon` is the half of this that a caller on an event loop can afford
         to run inline. Keep them together in that order: the flag is what the

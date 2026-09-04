@@ -415,6 +415,36 @@ def test_ordinary_prose_about_a_bearer_survives():
     assert redact("the bearer of bad news") == "the bearer of bad news"
 
 
+def test_a_bearer_token_is_removed_whole_and_not_up_to_its_first_base64_character():
+    """The alphabet is base64's, not an identifier's.
+
+    `+`, `/` and `=` are ordinary characters in an encoded credential and in
+    the padding of a JWT. A class that stopped at the first of them redacted
+    the head of the token and left the rest of it on the page, which reads as
+    a redaction having happened and is worse than none.
+    """
+    from hardy.export import redact
+
+    for token in ("abc+123/==", "eyJhbGci.eyJzdWIi.dBjftJeZ4-x_A~9s"):
+        # No `Authorization:` in front of it: that key would be redacted by the
+        # pair rule and the test would pass without the shape rule doing
+        # anything. A bare header value is what this is about.
+        cleaned = redact(f"sent Bearer {token} upstream")
+        assert token not in cleaned
+        for piece in token.replace("+", " ").replace("/", " ").replace(".", " ").split():
+            assert piece not in cleaned
+        assert "[REDACTED-KEY]" in cleaned
+
+
+def test_the_wider_alphabet_does_not_start_eating_prose():
+    """`+`, `/` and `=` do not appear in the middle of an English word, so the
+    words after "bearer" are still words and still have no digit in them."""
+    from hardy.export import redact
+
+    assert redact("the bearer bond matured") == "the bearer bond matured"
+    assert redact("the bearer of bad news") == "the bearer of bad news"
+
+
 def test_a_name_two_modules_declare_is_not_graded():
     """A workspace permits it, and everything downstream addresses a theorem by
     name: the statement shown is whichever module was read last, while the
@@ -549,8 +579,13 @@ def test_imported_work_is_not_presented_as_work_authored_here():
     assert "b" * 64 in page
 
 
-def test_a_session_that_imported_nothing_says_so():
-    assert "Nothing was imported" in build()
+def test_no_recorded_import_is_not_a_claim_that_hardy_wrote_everything():
+    """Editing the Lean and TeX directly is supported and untracked, and a
+    workspace from before import tracking records nothing either -- so absence
+    of provenance is not evidence of authorship."""
+    page = build()
+    assert "No import was recorded" in page
+    assert "everything below was written in this session" not in page
 
 
 def test_an_import_is_visible_at_the_point_it_happened():
@@ -624,7 +659,9 @@ def test_two_exports_in_one_second_do_not_overwrite_each_other(tmp_path):
     second = export.default_path(tmp_path, "sylow", now=when)
 
     assert second != first
-    assert not second.exists()
+    # Reserved rather than merely unused: two sessions exporting in the same
+    # second both passed a bare existence test and picked the same name.
+    assert second.exists() and second.stat().st_size == 0
 
 
 def test_an_export_is_not_forced_world_readable(tmp_path, monkeypatch):

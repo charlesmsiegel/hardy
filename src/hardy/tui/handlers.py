@@ -622,7 +622,8 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
             give_up()
         # The children next, also inline: `interrupt_children` only signals, so
         # it is instantaneous, and it is what reaches the Lean or Tectonic call
-        # already out. A call already inside Lean is still left to finish.
+        # already out. It ASKS: the child is signalled, not killed, and the
+        # call is waited for. The second press is what kills.
         process.interrupt_children()
         # And only then the part that blocks -- the tool gate and the provider
         # worker settling, which is minutes for a Lean call.
@@ -741,9 +742,11 @@ async def handle_export(ui: Ui, argument: str, state: State) -> State:
         else export_module.default_path(state.config.layout.problem, state.config.project)
     )
     if destination.is_dir():
-        destination = destination / export_module.default_path(
-            Path("."), state.config.project
-        ).name
+        # Named inside the directory the user pointed at, not named in the
+        # current directory and then moved: `default_path` reserves the name it
+        # returns, and reserving it here would leave an empty file in whatever
+        # directory Hardy happened to be started from.
+        destination = export_module.default_path(destination, state.config.project)
     try:
         # On a thread for `/doctor`'s reason: it reads the Lean tree, the
         # writeup tree and the whole transcript, then writes a file.
