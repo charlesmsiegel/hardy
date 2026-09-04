@@ -666,7 +666,15 @@ Priority labels are sequencing hints:
   publish, and never omitted, because they are sent and the compaction digests
   cover them: a hash a reader cannot recompute is not an audit trail.
   `--wall-seconds` is refused when it is not finite *or* is longer than the
-  platform can wait for, since a bound nothing can wait for is not a bound. The output
+  platform can wait for, since a bound nothing can wait for is not a bound.
+  A discarded reply is recorded whole — the calls it asked for as well as what
+  it said — because a response that asked only for tools has no text, and one
+  recorded as an empty assistant message says nothing about what was produced
+  and billed for. The assistant turn is recorded before the first event of the
+  response, so a consumer that stops at the first one cannot leave a turn in
+  the provider's history and in no record. Hardy's two kinds of decline name
+  the stage they belong to — the ladder's, before any model turn, and the
+  loop's, mid-exchange — since only the first is evidence about the closers. The output
   cap each reply is generated under is recorded in the run's provenance
   alongside model, backend and endpoint: change it and the same model gets a
   different amount of room to reach a submission, which is a different

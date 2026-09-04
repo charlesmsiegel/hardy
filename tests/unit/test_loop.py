@@ -931,3 +931,62 @@ def test_a_reasoning_block_records_the_digest_it_contributes() -> None:
     # A digest, not the block: nothing here writes down what Hardy declines to
     # publish.
     assert repr(block) not in json.dumps(observed)
+
+
+def test_a_discarded_reply_records_the_calls_it_asked_for() -> None:
+    """A tool-only response has no text, so text alone was not the whole of it.
+
+    Recorded as an empty assistant message -- no call ids, no names, no
+    arguments -- the record said nothing about what the provider had actually
+    produced and been billed for.
+    """
+    def slow() -> ProviderTurn:
+        time.sleep(0.05)
+        return ProviderTurn(
+            tool_calls=(ToolCall("c1", "check_proof", {"proof": "by rfl"}),),
+            stop_reason="tool_use",
+        )
+
+    loop, _, observed = _loop([slow], wall_seconds=0.01)
+
+    with pytest.raises(TimeoutError):
+        list(loop.run("asked"))
+
+    discarded = [event for event in observed if event["type"] == "discarded"][0]
+    assert discarded["message"]["tool_calls"] == [
+        {"id": "c1", "name": "check_proof", "input": {"proof": "by rfl"}}
+    ]
+    assert discarded["message"]["stop_reason"] == "tool_use"
+
+
+def test_the_assistant_turn_is_recorded_before_the_first_event() -> None:
+    """A consumer that closes on `thinking` never resumes.
+
+    The assistant turn is kept in `self.messages` and sent on every later
+    request, so recorded after that yield it was in the provider's history and
+    in no record -- with the thinking event and the abandoned calls left
+    describing a turn the transcript never named.
+    """
+    loop, _, observed = _loop([
+        ProviderTurn(
+            text="thinking out loud",
+            tool_calls=(ToolCall("c1", "check_proof", {"proof": "by rfl"}),),
+            thinking=True,
+            reasoning=(object(),),
+        ),
+    ])
+
+    stream = loop.run("asked")
+    assert next(stream).kind == "thinking"
+    stream.close()
+
+    assistant = [event for event in observed if event["type"] == "assistant"]
+    assert assistant == [{
+        "type": "assistant",
+        "message": {"role": "assistant", "content": "thinking out loud"},
+        "tool_calls": ["c1"],
+    }]
+    # And it is recorded before the thinking event, so a reader walking the
+    # transcript meets the turn before anything that belongs to it.
+    kinds = [event["type"] for event in observed]
+    assert kinds.index("assistant") < kinds.index("thinking")
