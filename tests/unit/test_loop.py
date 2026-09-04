@@ -536,3 +536,40 @@ def test_a_compactor_that_raises_is_reported_the_same_way() -> None:
     report = next(item for item in observed if item["type"] == "result")
     assert report["is_error"] is True
     assert "transcript.jsonl disappeared" in report["error"]
+
+
+def test_a_cancel_during_a_hook_stops_the_turn_it_was_meant_to_stop() -> None:
+    """The cancel is read at the top of the loop, before the hooks run.
+
+    A summary that scans the workspace or a ladder that elaborates Lean is
+    exactly long enough for the user to press Escape during one, and this
+    transport cannot abort a request once it is open -- so without a second
+    read the stopped turn still opened one, and the user waited out a whole
+    model call for a reply that was then discarded, having been billed for.
+    """
+    loop, provider, observed = _loop([ProviderTurn(text="should never be asked")])
+
+    def compact(messages):
+        loop.cancel()
+        return None
+
+    loop.attach_compactor(compact)
+    _drain(loop, "prove it")
+
+    assert provider.calls == 0
+    report = next(item for item in observed if item["type"] == "result")
+    assert report["turns"] == 0
+    assert report["is_error"] is False
+
+
+def test_a_cancel_during_the_before_turn_hook_is_read_too() -> None:
+    def hook(messages):
+        loop.cancel()
+        return None
+
+    loop, provider, _ = _loop([ProviderTurn(text="should never be asked")], before_turn=hook)
+
+    _drain(loop, "prove it")
+
+    assert provider.calls == 0
+    assert loop.turns == 0
