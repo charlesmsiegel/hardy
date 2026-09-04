@@ -869,15 +869,41 @@ Priority labels are sequencing hints:
 
 - **Now (implemented):** generate a plain human-readable writeup and label its verification
   status clearly.
-- **Next:** compile-check LaTeX and fail on missing references.
-- **Next:** fetch arXiv metadata and content politely with rate limiting and query
-  caching; resolve and store immutable versioned records with content digests.
+- **Now (implemented):** compile-check LaTeX and fail on a reference that does not
+  resolve. `check_latex` and `save_latex` run the compiler until it stops asking
+  for another pass — one pass can resolve no `\ref` at all — and then read the log:
+  an undefined `\ref`, an undefined `\cite`, or a label defined twice refuses the
+  compile and names the reference, and the refusal takes the save and the published
+  PDF with it. A `\label` nothing points at is reported rather than refused, because
+  the completion gate requires a label for every registered name and requires
+  nothing to reference it. A fragment compiled through a probe root is exempt: it
+  cannot see its siblings' labels, and judging it on them would make the
+  fragment-first order impossible.
+- **Now (implemented):** fetch arXiv metadata and abstracts politely — one request
+  every three seconds, throttled through a timestamp on disk so two Hardy processes
+  share the budget, with every query cached for a day and a paper already held never
+  fetched again. Records are stored under the exact versioned identifier arXiv
+  reported, with the digest of what they hold; admission is atomic, a stored record
+  is never rewritten, a new version is a new record beside the old one, and a record
+  whose content no longer matches its digest is refused rather than served. The
+  library lives under `.hardy/papers/` and is not committed.
 - **Next:** treat downloaded archives as hostile: normalized extraction, symlink
-  defense, file/byte quotas, temporary staging, and atomic admission.
-- **Next:** maintain one canonical bibliography, deduplicated by versioned arXiv ID
-  or DOI, with stable collision-safe cite keys and one controlled write path.
-- **Next:** tools to search, fetch, read, and cite papers; citations flow through
-  the compiled writeup.
+  defense, file/byte quotas, temporary staging, and atomic admission. Until that
+  exists Hardy fetches metadata and abstracts only, and never a source bundle.
+- **Now (implemented):** one canonical bibliography per problem in
+  `bibliography.json`, deduplicated by versioned arXiv ID and DOI together, with
+  cite keys derived from the paper itself — author, year, first real title word —
+  so they are the same in every run; a collision leaves the base key with whoever
+  claimed it first and gives the newcomer a suffix drawn from its own identity
+  rather than from arrival order. `Bibliography.cite` is the only code path that
+  writes it, and it regenerates `tex/references.tex` whole from the store, so a
+  hand edit to the generated file is undone rather than merged.
+- **Now (implemented):** `search_papers`, `fetch_paper`, `read_paper` and
+  `cite_paper` on the interactive surface. A citation is possible only for a paper
+  `fetch_paper` actually stored: the tool takes an identifier and nothing else, so
+  there is no argument that puts a hand-written entry in the bibliography. The
+  writeup `\input{references}` once and cites by the returned key, and a citation
+  that does not resolve fails the compile.
 
 ## Assumed-paper libraries
 

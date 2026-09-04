@@ -74,6 +74,31 @@ assumptions were approved, how many of the document's own theorem environments
 are backed by neither, and which saved statements a single automation call
 closes outright.
 
+The session can also read the literature, and can only cite what it read.
+`search_papers` searches arXiv, `fetch_paper` stores one paper under the exact
+version arXiv reported with a digest of what it holds, `read_paper` serves a
+bounded window of that, and `cite_paper` records it in the problem's one
+canonical bibliography and hands back a cite key. Nothing else may write that
+bibliography, and `cite_paper` takes an identifier and nothing else — no title,
+no author, no year — so a reference Hardy never fetched has no way in. Fetching
+is polite: one request every three seconds, throttled through a timestamp on
+disk so two Hardy processes share the budget, every query cached for a day, and
+a paper already held never fetched again. What is stored is arXiv's metadata and
+abstract rather than a source bundle, because unpacking an arbitrary archive
+safely is work that has not been done yet and Hardy has no isolation to fall
+back on; the tool says so, so an abstract's claim is not written up as a proof.
+
+The document side closes the same loop. LaTeX resolves a missing `\ref` to `??`
+and a missing `\cite` to `[?]` and exits successfully either way, so a document
+full of `??` used to compile, look finished, and be saved. Hardy now runs the
+compiler until it stops asking for another pass — one pass can resolve no
+cross-reference at all — and reads the log: an undefined reference, an undefined
+citation, or a label defined twice refuses the compile and names what did not
+resolve, and the refusal takes the save and the published PDF with it. A label
+nothing points at is reported rather than refused, since Hardy's own completion
+gate requires a label for every registered name and requires nothing to
+reference it.
+
 A persistent computer algebra session sits alongside them, so the question of
 what is worth proving can be answered by computing rather than by guessing.
 State carries between cells, `/cas` lets you drive the same kernel yourself, and
@@ -540,6 +565,16 @@ is live (or why none is) and extends the unsandboxed-execution warning to name
 computer algebra cells whenever one is. What to do about that warning —
 containing the whole of Hardy in a container or VM until isolation is restored
 — is [docs/security.md](docs/security.md).
+
+A problem's bibliography lives beside its record in `bibliography.json`, and the
+`\bibitem` list LaTeX reads is generated from it into `tex/references.tex` on
+every citation — regenerated whole, so a hand edit there is undone by the next
+`cite_paper` rather than merged. Put `\input{references}` in the writeup once
+and cite by the key `cite_paper` returned. The papers themselves are a cache of
+third-party bytes shared by every problem in the root, kept in `.hardy/papers/`
+and not committed: what travels with a clone is the bibliography, and each entry
+carries the digest of what was read, so a clone holding no papers can still say
+which bytes a citation was made against.
 
 ### The interactive session
 

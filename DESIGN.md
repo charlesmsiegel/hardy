@@ -362,6 +362,24 @@ and compile citations into writeups. For results beyond Mathlib, an explicit
 Assume workflow may translate selected paper statements into independently
 reviewed Lean axioms. Downstream artifacts list the exact assumptions used.
 
+A citation is worth something only if the paper cannot move underneath it, so a
+record is stored under the exact versioned identifier arXiv reported and carries
+the digest of what was read; a new version is a new record rather than an
+overwrite, and the digest travels into the bibliography, which is versioned even
+though the downloaded library is not. What is fetched is metadata and the
+abstract: a source bundle is an arbitrary third-party archive, unpacking one
+safely is a separate piece of work, and Hardy has no process isolation to fall
+back on — so the model is told, in the tool itself, that an abstract's claim is a
+claim rather than a proof.
+
+The reason citation is a tool rather than an instruction is that a model asked to
+cite from memory fabricates references. `cite_paper` takes an identifier and
+nothing else, and refuses one the library does not hold, so the bibliography
+cannot contain a paper Hardy did not go and get. The document side closes the
+same loop from the other end: a `\cite` with no entry, like a `\ref` with no
+label, fails the compile instead of resolving to `[?]` in a PDF that looks
+finished.
+
 ### 7. Critique, repair, retrieval, and memory
 
 Critique combines kernel errors, attempts to formalize informal steps, and

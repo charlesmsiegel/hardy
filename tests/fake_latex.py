@@ -14,6 +14,9 @@ import time
 
 INPUT = re.compile(r"\\input\{([^}]*)\}")
 LABEL = re.compile(r"\\label\{([^}]*)\}")
+REF = re.compile(r"\\(?:page|eq)?ref\{([^}]*)\}")
+CITE = re.compile(r"\\cite\{([^}]*)\}")
+BIBITEM = re.compile(r"\\bibitem\{([^}]*)\}")
 VERB = re.compile(r"\\verb(.)(.*?)\1", re.DOTALL)
 
 
@@ -87,10 +90,43 @@ if "\\begin{document}" in source and "\\end{document}" in source:
     # tell a label the compiler made from one that only appears in the text --
     # inside a comment, or inside \verb.
     body = "".join(text for _, text in [(None, source)] + [(t, t.read_text()) for t in sorted(seen)])
-    labels = []
-    for name in LABEL.findall(_uncommented(body)):
-        labels.append(f"\\newlabel{{{name}}}{{{{1}}{{1}}}}")
-    pathlib.Path("writeup.aux").write_text("\n".join(labels) + "\n", encoding="utf-8")
+    executed = _uncommented(body)
+    aux = pathlib.Path("writeup.aux")
+    # What the PREVIOUS pass wrote down. Cross-references resolve out of the
+    # .aux and not out of the text, which is why one pass can never resolve
+    # one: that is the behaviour Hardy's multi-pass compile exists to handle,
+    # so the stand-in has to have it too.
+    previous = aux.read_text(encoding="utf-8") if aux.is_file() else ""
+    known = set(re.findall(r"\\newlabel\{([^}]*)\}", previous))
+    cited = set(re.findall(r"\\bibcite\{([^}]*)\}", previous))
+    written = [f"\\newlabel{{{name}}}{{{{1}}{{1}}}}" for name in LABEL.findall(executed)]
+    written += [f"\\bibcite{{{name}}}{{1}}" for name in BIBITEM.findall(executed)]
+    record = "\n".join(written) + "\n"
+    aux.write_text(record, encoding="utf-8")
+
+    undefined = False
+    for name in dict.fromkeys(REF.findall(executed)):
+        if name not in known:
+            undefined = True
+            print(f"LaTeX Warning: Reference `{name}' on page 1 undefined on input line 1.")
+    for group in dict.fromkeys(CITE.findall(executed)):
+        for name in dict.fromkeys(part.strip() for part in group.split(",") if part.strip()):
+            if name not in cited:
+                undefined = True
+                print(f"LaTeX Warning: Citation `{name}' on page 1 undefined on input line 1.")
+    seen_labels = set()
+    for name in LABEL.findall(executed):
+        if name in seen_labels:
+            print(f"LaTeX Warning: Label `{name}' multiply defined.")
+        seen_labels.add(name)
+    if undefined:
+        print("LaTeX Warning: There were undefined references.")
+    # A further pass is asked for only while the record is still moving. A
+    # reference nothing defines never resolves, so a stand-in that asked
+    # forever would make every missing label look like a compile that merely
+    # needed one more go.
+    if record != previous:
+        print("LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.")
     print("Output written on writeup.pdf")
     raise SystemExit(0)
 print("! Emergency stop.")

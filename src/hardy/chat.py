@@ -41,6 +41,8 @@ from .layout import (
 from .lean import DECLARATION_NAME, LeanTools
 from .models import Request, ToolResult, TurnEvent
 from .modules import ModuleIndex
+from .paper_tools import PAPER_TOOL_NAMES, PAPER_TOOLS, PaperToolRuntime
+from .paper_tools import build_runtime as build_paper_runtime
 from .project_context import (
     PROJECT_CONTEXT_EVENT,
     PROJECT_CONTEXT_KEY,
@@ -161,6 +163,10 @@ CHAT_TOOLS: list[dict[str, Any]] = [
 # there is no Lake project. See `search_tools` for why absence is reported
 # rather than hidden.
 CHAT_TOOLS += SEARCH_TOOLS
+# Always offered for a second reason: they need no discovery at all. There is
+# no binary to find and no version to probe, and everything already fetched
+# can be read and cited with no network. See `paper_tools`.
+CHAT_TOOLS += PAPER_TOOLS
 
 
 def _reportability(owed: Sequence[completion.Obligation]) -> str:
@@ -697,6 +703,12 @@ class MathematicsSession:
         # The Lean tree and the writeup tree. Both are directories now: a
         # development outgrows one file, and so does the document about it.
         self.tex_root = workspace / TEX_DIR
+        # The literature. Built here rather than handed in like `cas` and
+        # `search` because there is nothing to discover: the paper library is
+        # a directory under the root and the bibliography is a file beside the
+        # record, so a caller cannot get this wrong and none of them is asked
+        # to.
+        self.papers: PaperToolRuntime = build_paper_runtime(workspace, self.root)
         self._lean_command = lean_command
         self._lean_project = lean_project
         # Resolved lazily and once: it costs a subprocess, and a session that
@@ -4386,6 +4398,8 @@ class MathematicsSession:
             return self._cas_tool(name, arguments)
         if name in SEARCH_TOOL_NAMES:
             return self._search_tool(name, arguments)
+        if name in PAPER_TOOL_NAMES:
+            return self.papers.call(name, arguments)
         if name == "read_workspace":
             return ToolResult(True, json.dumps(self._workspace_listing(), ensure_ascii=False))
         if name == "read_file":
