@@ -948,10 +948,32 @@ class Shell:
         # Lean and Tectonic processes and leaves the run itself going. Asked
         # before the session for the same reason the reopen is -- the work in
         # front of the user is the work they meant to stop.
+        # A command that publishes a stopper owns BOTH presses. The second one
+        # used to be swallowed: this returned as soon as the stopper answered
+        # true, so `/prove` never reached the escalation below and the
+        # documented second-Esc kill never happened -- the user could press it
+        # all day while a Lean child that ignores interrupts ran out its
+        # timeout. It is not the session's escalation to do either: that would
+        # take the interactive CAS kernel with it, whose state belongs to the
+        # user and is not what they are waiting on.
         stopper = self._command_cancel
-        if stopper is not None and stopper():
-            self.write("stopping the staged run; it will finalize and say how it ended")
-            return
+        if stopper is not None:
+            if self._command_stopping:
+                stopped = stopper()
+                self.write(
+                    "stopped waiting; killed what had not stopped"
+                    if stopped
+                    else "nothing left to stop",
+                    style="warning",
+                )
+                return
+            if stopper():
+                self._command_stopping = True
+                self.write(
+                    "stopping the staged run; it will finalize and say how it ended "
+                    "-- esc again to stop waiting and kill what is still running"
+                )
+                return
         if self._commands_running:
             # A command is running and has published nothing yet. Remembered
             # rather than dropped, so `stopping` can honour it the moment the

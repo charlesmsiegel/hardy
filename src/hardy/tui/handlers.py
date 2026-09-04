@@ -573,6 +573,8 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
     running: dict[str, Any] = {}
     abandoned = threading.Event()
 
+    presses: list[int] = []
+
     def stop() -> bool:
         """Esc, and it must return at once.
 
@@ -590,6 +592,15 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
         loop's executor: this is reachable from the `CancelledError` path too,
         where the loop may already be closing.
         """
+        presses.append(1)
+        if len(presses) > 1:
+            # The second press. `interrupt_children` asks; a child sitting in a
+            # loop that never checks for signals will not be asked, and this is
+            # the way out of waiting on it. Deliberately only this process's
+            # tracked children -- the staged run's Lean and Tectonic -- and not
+            # the session's own escalation, which would take the interactive
+            # CAS kernel and its state with it for no reason.
+            return bool(process.stop_children())
         abandoned.set()
         workflow = running.get("workflow")
         # The workflow's own flag first, inline: it is an `Event`, so it costs

@@ -80,6 +80,19 @@ def _clip(text: str, limit: int = DETAIL) -> str:
     return flattened if len(flattened) <= limit else flattened[: limit - 1] + "…"
 
 
+def _why(text: str, limit: int = DETAIL) -> str:
+    """Why a call failed, kept from the END like the export keeps a result.
+
+    Lean and Tectonic print their setup and imports first and the diagnostic
+    that actually failed the call last, so a head slice of a long refusal is
+    the one part of it carrying no information -- the summary listed the
+    attempt without the error that explains it, which is the opposite of what
+    it is for. The cut is stated, as everywhere else.
+    """
+    flattened = " ".join(str(text).split())
+    return flattened if len(flattened) <= limit else "…" + flattened[-(limit - 1) :]
+
+
 def _subject(name: str, arguments: Mapping[str, Any]) -> str:
     """What a failed call was about, in the caller's own vocabulary.
 
@@ -119,7 +132,7 @@ def attempts(events: Iterable[Mapping[str, Any]], *, limit: int = ATTEMPTS) -> t
         arguments = event.get("arguments")
         tool = str(event.get("name", "tool"))
         subject = _subject(tool, arguments if isinstance(arguments, Mapping) else {})
-        detail = _clip(result.get("output") or result.get("detail") or "refused")
+        detail = _why(result.get("output") or result.get("detail") or "refused")
         key = (tool, subject)
         seen = folded.pop(key, None)
         folded[key] = Attempt(tool, subject, detail, count=(seen.count + 1) if seen else 1)
