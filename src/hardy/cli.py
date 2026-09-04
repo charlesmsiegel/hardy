@@ -843,10 +843,42 @@ def _batch(args: argparse.Namespace, config: configuration.Config, parser: argpa
     # costs a whole billable model run to reach a conclusion available now.
     if lean.target_name is None:
         parser.error(f"batch needs a named theorem or lemma to audit, not: {request.declaration!r}")
-    closers = tuple(item.strip() for item in str(args.closers).split(",") if item.strip()) if args.closers else None
+    closers = _closer_ladder(args.closers)
     result = run(request, runtime_factory(str(config.model), config.backend), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds, closers=closers)
     print(json.dumps(result.as_dict(), indent=2))
     return 0 if result.terminal_reason == "verified" else 1
+
+
+#: What a bare `--closers` stands for. A sentinel rather than the tactic list
+#: itself, so `--closers` and `--closers rfl` can be told apart by a value
+#: nobody would type as a tactic.
+DEFAULT_LADDER = "\x00default"
+
+
+def _closer_ladder(requested: list[str | None] | None) -> tuple[str, ...] | None:
+    """The tactics `--closers` asked for, in order, without splitting any of them.
+
+    One tactic per flag. Commas used to separate them, which is wrong for the
+    language: `simp [Nat.add_comm, Nat.add_left_comm]` is a single tactic, and
+    splitting on the comma inside its bracket submitted two invalid ones --
+    recording spurious failures and then spending the model turn the ladder was
+    there to save. Nothing here parses Lean, so nothing here decides which
+    commas are separators.
+
+    A bare `--closers` expands to the standard ladder wherever it appears, so
+    `--closers --closers omega` is the standard ladder followed by `omega`.
+    """
+    if not requested:
+        return None
+    tactics: list[str] = []
+    for item in requested:
+        if item is None or item == DEFAULT_LADDER:
+            tactics.extend(CLOSERS)
+            continue
+        tactic = item.strip()
+        if tactic:
+            tactics.append(tactic)
+    return tuple(tactics) or None
 
 
 class ConsoleTerminal:
@@ -1684,15 +1716,18 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--wall-seconds", type=float, default=300)
     batch.add_argument(
         "--closers",
+        action="append",
         nargs="?",
-        const=",".join(CLOSERS),
+        const=DEFAULT_LADDER,
         default=None,
-        metavar="TACTIC,TACTIC",
+        metavar="TACTIC",
         help=(
-            "try these Lean tactics against the statement before spending a model turn "
-            f"(bare flag means {', '.join(CLOSERS)}). Off by default: a result a tactic "
-            "ladder reached and a result a model reached are not the same experiment, and "
-            "the trajectory records which it was either way."
+            "try this Lean tactic against the statement before spending a model turn; "
+            f"repeat the flag for more (bare flag means {', '.join(CLOSERS)}). One tactic "
+            "per flag, never a comma-separated list: `simp [Nat.add_comm, Nat.add_left_comm]` "
+            "is one tactic and splitting it would submit two invalid ones. Off by default: "
+            "a result a tactic ladder reached and a result a model reached are not the same "
+            "experiment, and the trajectory records which it was either way."
         ),
     )
 

@@ -462,15 +462,20 @@ class AgentLoop:
         provider needs an answer for every `tool_use` it issued, whatever the
         answer is.
         """
+        # Every call in the batch answered before the first event is offered,
+        # not each one as its turn comes. A consumer that stops iterating --
+        # closes the generator, breaks out of the loop, dies -- suspends this
+        # function at whichever `yield` it reached, and the `finally` that
+        # would run then cannot append anything, because a closed generator
+        # may not yield. Answering per call left every *later* call of the
+        # same batch unanswered, and the API refuses a batch that is
+        # incomplete just as firmly as one that is empty: the assistant
+        # message already carries all of them.
+        # Indexed by position rather than by call id: a provider that issued
+        # the same id twice would otherwise leave one of them holding an
+        # abandonment result nothing replaced.
+        placeholders: list[int] = []
         for call in calls:
-            self._observe({"type": "tool_use", "name": call.name, "input": call.arguments})
-            # Answered before the event is offered, never after. A consumer
-            # that stops iterating here -- closes the generator, breaks out of
-            # the loop, dies -- suspends this function at the `yield` forever,
-            # and the `finally` that would run then cannot append anything
-            # because a closed generator may not yield. The conversation would
-            # keep the assistant's `tool_use` with nothing answering it, and
-            # every later request built from it is one the API refuses.
             self.messages.append(
                 Message(
                     "tool_result",
@@ -480,7 +485,9 @@ class AgentLoop:
                     ok=False,
                 )
             )
-            placeholder = len(self.messages) - 1
+            placeholders.append(len(self.messages) - 1)
+        for placeholder, call in zip(placeholders, calls, strict=True):
+            self._observe({"type": "tool_use", "name": call.name, "input": call.arguments})
             yield TurnEvent("tool_use", name=call.name, call_id=call.id)
             if self._cancelled:
                 # The model asked and Hardy declined; the provider still needs
