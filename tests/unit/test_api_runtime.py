@@ -99,6 +99,29 @@ def test_consecutive_tool_results_arrive_as_one_user_message() -> None:
     assert [block["is_error"] for block in sent[2]["content"]] == [False, True]
 
 
+def test_consecutive_user_entries_are_joined() -> None:
+    # Hardy puts its own words in the user role -- a compaction summary, a
+    # declined turn -- so two can land in a row with nothing said in between,
+    # and the API expects the two sides to alternate.
+    sent = as_messages([Message("user", text="summary"), Message("user", text="prove it")])
+
+    assert len(sent) == 1
+    assert [block["text"] for block in sent[0]["content"]] == ["summary", "prove it"]
+
+
+def test_text_after_a_tool_result_joins_it_behind_the_results() -> None:
+    # A tool result has to come first in the message that carries it, which
+    # appending leaves true.
+    sent = as_messages([
+        Message("assistant", tool_calls=(ToolCall("c1", "check_proof", {}),)),
+        Message("tool_result", call_id="c1", ok=True, text="accepted"),
+        Message("user", text="carry on"),
+    ])
+
+    assert len(sent) == 2
+    assert [block["type"] for block in sent[1]["content"]] == ["tool_result", "text"]
+
+
 def test_an_empty_assistant_turn_is_dropped() -> None:
     # The API refuses empty content, and a turn that said nothing and called
     # nothing has nothing in it to preserve.
