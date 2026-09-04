@@ -298,6 +298,13 @@ class ProveWorkflow:
             wait_started = self._monotonic()
             acknowledged = terminal.acknowledge_unsafe_execution()
             user_wait += self._monotonic() - wait_started
+            # A press can land while the warning is printing, before the
+            # nested prompt exists to consume it: the flag is set, the key is
+            # gone, and the prompt then waits for an answer nobody is there to
+            # give -- or gets one, and the run walks on into the doctor probes
+            # with cancellation already set. The rule at the top of this
+            # function: after a call that blocks, before its answer is read.
+            self._refuse_if_cancelled()
             if not acknowledged:
                 return self._finalize(
                     request,

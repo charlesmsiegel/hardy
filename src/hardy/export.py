@@ -44,6 +44,7 @@ from typing import Any
 # The key-name rule a trajectory is already written under. Imported rather than
 # restated so one list decides what counts as a credential for both.
 from .audit import DeclarationStatus, declaration_status
+from .storage import SECRET_KEY
 from .storage import _redact as redact_payload
 from .truncation import truncate
 
@@ -623,7 +624,10 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
                 + (f", resting on {_escape(rested)}" if rested else "")
                 + ". This is the statement as it was at the time of the report."
                 "</p>"
-                + (_block(body) if body else "")
+                # Verbatim: this is a formal statement the kernel graded, and
+                # it is the only durable copy of what was reported once the
+                # source moves on.
+                + (_source_block(body) if body else "")
                 + "</div>"
             )
         elif kind == "assumption_prompt":
@@ -823,13 +827,24 @@ opened.</footer>
 """
 
 
-#: Material whose dictionaries are keyed by DECLARATION or PATH rather than by
-#: field name, and whose values are the audited artifacts themselves. The
-#: key-name rule must not run over these: `theorems["secret"]` is a theorem
-#: called `secret`, not a credential under a key called `secret`, and replacing
-#: its statement makes the page disagree with what the kernel checked. The
-#: text-level pass still sees them, minus the key/value rules -- see `redact`.
-VERBATIM = frozenset({"theorems", "lean"})
+#: Material keyed by a name the WORKSPACE chose -- a declaration, a module --
+#: rather than by a field name. `storage.SECRET_KEY` matches a key exactly, so
+#: a theorem called `secret` or a module called `Password` collides with it,
+#: and the structural pass then replaces the thing itself. That has been found
+#: three times now at three different maps: the statement was replaced, then
+#: the automation tactic, then the whole audit RECORD -- which is a string
+#: where a mapping is expected, so `/export` raised instead of writing a page.
+#: Listed by the property they share rather than one at a time, because the
+#: next map keyed by a workspace name will have it too.
+#:
+#: Not `tex`: its keys are paths, which the anchored rule cannot match, and
+#: keeping it out keeps this list about key naming rather than about content.
+#: What is rendered verbatim is a separate decision -- see `redact`.
+NAMED_BY_WORKSPACE = frozenset({"theorems", "lean", "audit", "automation", "shared"})
+
+#: The same problem one level down: a report event carries `statements`, keyed
+#: by theorem name, and it is the only durable copy of what was reported.
+NESTED_BY_WORKSPACE = frozenset({"statements"})
 
 
 def prepare(material: Mapping[str, Any]) -> dict[str, Any]:
@@ -839,18 +854,47 @@ def prepare(material: Mapping[str, Any]) -> dict[str, Any]:
     trajectory (`storage._redact`) governs an export too. The text-level pass
     is `redact`, applied by every escaper on the way out.
 
-    `VERBATIM` is exempt, for the reason stated there: those maps are keyed by
-    the names of the things they carry, so a theorem or a file that happens to
-    be called `secret` is not a secret.
+    `NAMED_BY_WORKSPACE` is exempt, for the reason stated there: those maps are
+    keyed by the names of the things they carry, so a theorem or a module that
+    happens to be called `secret` is not a secret.
     """
     return {
         key: (
-            redact_payload(value)
-            if isinstance(value, (dict, list, tuple)) and key not in VERBATIM
+            _redact_around_names(value)
+            if isinstance(value, (dict, list, tuple)) and key not in NAMED_BY_WORKSPACE
             else value
         )
         for key, value in material.items()
     }
+
+
+def _redact_around_names(value: Any) -> Any:
+    """`storage._redact`, stepping over the name-keyed maps nested inside.
+
+    A walker of its own rather than a flag on the shared one: the trajectory
+    that `storage` redacts has no such maps, and teaching the rule Hardy's
+    whole record depends on about an exception it does not need would be the
+    wrong place to carry this. What it does between those maps is the shared
+    rule, called directly.
+    """
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                item
+                if str(key) in NESTED_BY_WORKSPACE
+                # `SECRET_KEY` itself, imported rather than restated: the rule
+                # for what counts as a credential key has one definition, and
+                # this walker exists to make an exception to WHERE it runs, not
+                # to what it says.
+                else "[REDACTED]"
+                if SECRET_KEY.match(str(key))
+                else _redact_around_names(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_around_names(item) for item in value]
+    return redact_payload(value)
 
 
 def write(material: Mapping[str, Any], path: Path, *, now: datetime | None = None) -> Path:
