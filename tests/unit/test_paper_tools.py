@@ -484,3 +484,18 @@ def test_a_window_that_cannot_fit_is_refused_not_returned_oversized(tmp_path: Pa
     result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1"})
     assert not result.ok
     assert "observation budget" in result.output
+
+
+def test_a_refusal_is_measured_like_an_answer(tmp_path: Path):
+    """A refusal quotes what it refused, and nothing bounds a tool argument.
+
+    `parse_id` puts the whole identifier in its message deliberately, so a
+    model can see what it typed -- but a 10 KB `paper_id` then came back as a
+    10 KB observation under a 128-byte budget. Every success path measured
+    and the failure paths not, which is the wrong way round.
+    """
+    runtime = _runtime(tmp_path, observation_bytes=128)
+    for tool in ("fetch_paper", "read_paper", "cite_paper"):
+        result = runtime.call(tool, {"paper_id": "not-an-id-" * 1_000})
+        assert not result.ok, tool
+        assert len(result.output.encode("utf-8")) <= 128, tool

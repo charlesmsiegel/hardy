@@ -406,3 +406,35 @@ def test_the_output_cap_counts_bytes_not_characters(tmp_path: Path):
     assert not result.ok
     assert len(result.output.encode("utf-8")) <= 4_000 + 64
     assert result.output.startswith("exit=")
+
+
+def test_a_citation_nothing_defined_is_refused_from_the_aux_not_the_log(tmp_path: Path):
+    r"""A package can silence the undefined-citation warning; the record stands.
+
+    Citing a key `cite_paper` recorded, without `\input{references}`, writes a
+    `\citation` and no `\bibcite` -- and merging the two record types meant
+    the vouching saw a known key and the document was accepted with `[?]` on
+    the page.
+    """
+    seen: list[tuple[str, ...]] = []
+    result = LatexTools(COMMAND).check(
+        PREAMBLE + "As shown in \\cite{vouched2020}.\n" + END,
+        tree=_tree(tmp_path),
+        vouched=lambda keys: seen.append(keys) or "",
+    )
+    assert not result.ok
+    assert "vouched2020" in result.output
+
+
+def test_a_citation_its_own_reference_list_defines_is_accepted(tmp_path: Path):
+    """The other half: defined and cited is exactly the ordinary case."""
+    result = LatexTools(COMMAND).check(
+        PREAMBLE
+        + "As shown in \\cite{nobody2020}.\n"
+        + "\\begin{thebibliography}{9}\n\\bibitem{nobody2020} Nobody.\n"
+        "\\end{thebibliography}\n"
+        + END,
+        tree=_tree(tmp_path),
+        vouched=lambda keys: "",
+    )
+    assert result.ok, result.output

@@ -208,9 +208,9 @@ class PaperToolRuntime:
             if name == "cite_paper":
                 return self.cite(str(arguments["paper_id"]))
         except (ArxivError, BibliographyError) as error:
-            return ToolResult(False, str(error))
+            return ToolResult(False, self._bounded(str(error)))
         except (KeyError, TypeError, ValueError) as error:
-            return ToolResult(False, f"{type(error).__name__}: {error}")
+            return ToolResult(False, self._bounded(f"{type(error).__name__}: {error}"))
         except (OSError, LockTimeout) as error:
             # A full disk, a read-only filesystem, a directory that vanished,
             # a lock nobody released. Every one of these can come out of the
@@ -219,8 +219,27 @@ class PaperToolRuntime:
             # write ended the turn with a traceback and no tool result and no
             # trajectory event -- which is the one shape of failure Hardy's
             # own record cannot describe afterwards.
-            return ToolResult(False, f"the paper library could not be written: {error}")
-        return ToolResult(False, f"unknown tool: {name}")
+            return ToolResult(
+                False, self._bounded(f"the paper library could not be written: {error}")
+            )
+        return ToolResult(False, self._bounded(f"unknown tool: {name}"))
+
+    def _bounded(self, message: str) -> str:
+        """A refusal, measured like an answer.
+
+        A refusal quotes what it refused -- `parse_id` puts the whole
+        identifier in its message, deliberately, so a model can see what it
+        typed. Nothing bounds a tool argument, though, so a 10 KB `paper_id`
+        came back as a 10 KB observation under a 128-byte budget: every
+        success path measured and the failure paths not, which is the wrong
+        way round, since a refusal is what a confused caller produces most of.
+        """
+        encoded = message.encode("utf-8")
+        if len(encoded) <= self.observation_bytes:
+            return message
+        marker = "... [refusal shortened]"
+        room = max(0, self.observation_bytes - len(marker.encode("utf-8")))
+        return encoded[:room].decode("utf-8", errors="ignore") + marker
 
     def search(self, query: str, limit: int = 10) -> ToolResult:
         bounded = max(1, min(limit, MAX_SEARCH_RESULTS))
