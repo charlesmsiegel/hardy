@@ -124,6 +124,22 @@ def attempts(events: Iterable[Mapping[str, Any]], *, limit: int = ATTEMPTS) -> t
     """
     folded: dict[tuple[str, str], Attempt] = {}
     for event in events:
+        if event.get("type") == "refused_tool":
+            # A request for `Read` or `Bash`: the SDK asked for a tool Hardy
+            # does not serve, so there is no result to grade. Counted here
+            # because "the transcript records no refused tool call" over a run
+            # in which the model reached for the host is the most misleading
+            # sentence this section can print.
+            name = str(event.get("name", "tool"))
+            key = (name, "")
+            seen = folded.pop(key, None)
+            folded[key] = Attempt(
+                name,
+                "",
+                "not a Hardy tool; the request never ran",
+                count=(seen.count + 1) if seen else 1,
+            )
+            continue
         if event.get("type") != "tool":
             continue
         result = event.get("result")
