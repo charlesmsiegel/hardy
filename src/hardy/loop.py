@@ -127,6 +127,27 @@ class ProviderTurn:
     stop_reason: str | None = None
 
 
+def _discarded_message(turn: ProviderTurn) -> dict[str, Any]:
+    """The whole of a reply that was produced, billed for, and not published.
+
+    Text alone was not the whole of it. A response that asked only for tools
+    has none, so a discarded tool-only turn was recorded as an empty assistant
+    message -- no call ids, no names, no arguments -- and the record said
+    nothing about what the provider had actually produced. The reasoning goes
+    in by digest, for the reason `reasoning_digest` gives.
+    """
+    return {
+        "role": "assistant",
+        "content": turn.text,
+        "tool_calls": [
+            {"id": call.id, "name": call.name, "input": dict(call.arguments)}
+            for call in turn.tool_calls
+        ],
+        "reasoning": [reasoning_digest(block) for block in turn.reasoning],
+        "stop_reason": turn.stop_reason,
+    }
+
+
 def reasoning_digest(block: Any) -> str:
     """The digest contribution of one opaque reasoning block.
 
@@ -353,7 +374,11 @@ class AgentLoop:
             if declined is not None:
                 # Hardy declining to spend a turn is a fact about the run, not
                 # an absence of one, so it is recorded and said out loud.
-                self._observe({"type": "declined_turn", "why": declined})
+                # Always `exchange`: this hook is asked from inside `_turns`,
+                # so a decline here is never the pre-model one a closer ladder
+                # makes. The two are told apart by the stage rather than by
+                # their prose, which a record could rewrite.
+                self._observe({"type": "declined_turn", "stage": "exchange", "why": declined})
                 spoken.append(declined)
                 # In the `user` role, not the assistant's. Hardy is the party
                 # on this side of the wire -- the steering block travels the
@@ -421,7 +446,7 @@ class AgentLoop:
                 self._observe({
                     "type": "discarded",
                     "why": "the wall-clock budget expired while this reply was in flight",
-                    "message": {"role": "assistant", "content": turn.text},
+                    "message": _discarded_message(turn),
                 })
             self._deadline(budget)
             if self._cancelled:
@@ -434,7 +459,7 @@ class AgentLoop:
                 self._observe({
                     "type": "discarded",
                     "why": "the turn was cancelled while this reply was in flight",
-                    "message": {"role": "assistant", "content": turn.text},
+                    "message": _discarded_message(turn),
                 })
                 return
             # The conversation is brought up to date before anything at all is
@@ -450,6 +475,26 @@ class AgentLoop:
                 "assistant", text=turn.text, tool_calls=turn.tool_calls, reasoning=turn.reasoning
             ))
             placeholders = self._preanswer(turn.tool_calls)
+            # Recorded for every assistant turn, including one that said
+            # nothing and only asked for tools. Without it the transcript is a
+            # flat run of `tool_use` events, and which of them the model asked
+            # for together is unrecoverable: `a,b` then `c` and `a` then `b,c`
+            # leave identical events and the same turn count while being two
+            # different provider histories -- and two different compaction
+            # digests, which is what made the omission matter.
+            #
+            # And before the first yield, for the same reason the append above
+            # is: a consumer that closes the iterator on the `thinking` event
+            # never resumes, and the assistant turn -- kept in `self.messages`
+            # and sent on every later request -- would then be in the
+            # provider's history and in no record, with the `thinking` event
+            # and the abandoned calls left describing a turn the transcript
+            # never named.
+            self._observe({
+                "type": "assistant",
+                "message": {"role": "assistant", "content": turn.text},
+                "tool_calls": [call.id for call in turn.tool_calls],
+            })
             if turn.thinking or turn.reasoning:
                 # The blocks by digest, not by content. They are opaque
                 # provider state Hardy does not publish -- but they are *sent*,
@@ -463,18 +508,6 @@ class AgentLoop:
                     "blocks": [reasoning_digest(block) for block in turn.reasoning],
                 })
                 yield TurnEvent("thinking")
-            # Recorded for every assistant turn, including one that said
-            # nothing and only asked for tools. Without it the transcript is a
-            # flat run of `tool_use` events, and which of them the model asked
-            # for together is unrecoverable: `a,b` then `c` and `a` then `b,c`
-            # leave identical events and the same turn count while being two
-            # different provider histories -- and two different compaction
-            # digests, which is what made the omission matter.
-            self._observe({
-                "type": "assistant",
-                "message": {"role": "assistant", "content": turn.text},
-                "tool_calls": [call.id for call in turn.tool_calls],
-            })
             if turn.text:
                 spoken.append(turn.text)
                 yield TurnEvent("text", text=turn.text)

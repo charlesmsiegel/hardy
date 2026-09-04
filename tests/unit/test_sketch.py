@@ -736,3 +736,84 @@ def test_a_request_that_is_not_an_object_is_a_finding_not_a_crash(tmp_path: Path
 
     issues = acceptance.validate_batch_consistency(tmp_path)
     assert any("request is not an object" in issue for issue in issues)
+
+
+def test_events_that_are_not_a_list_of_objects_are_a_finding_not_a_crash(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """Every traversal calls `.get` on each entry.
+
+    A trajectory whose `events` is a string -- iterating one yields characters
+    -- or holds a bare number took the validator down with an `AttributeError`
+    rather than reporting the run invalid.
+    """
+    import importlib
+
+    acceptance = importlib.import_module("hardy.acceptance")
+    run(
+        proof_request,
+        factory([call("submit_proof", {"proof": "by exact True.intro"})]),
+        lean,
+        tmp_path,
+        toolchain={
+            "lean_version": "4.32.0",
+            "lean_commit": "a" * 40,
+            "mathlib_revision": "b" * 40,
+            "lake_manifest_sha256": "c" * 64,
+        },
+    )
+    path = tmp_path / "trajectory.json"
+    good = json.loads(path.read_text(encoding="utf-8"))
+
+    for broken in ("submit_proof", {"type": "tool"}, [{"type": "tool"}, 7]):
+        path.write_text(json.dumps({**good, "events": broken}), encoding="utf-8")
+        issues = acceptance.validate_batch_consistency(tmp_path)
+        assert any("events are not a list of objects" in issue for issue in issues)
+
+
+def test_a_mid_exchange_decline_is_not_read_as_a_closer(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """A run that submits and then declines the next turn has closers disabled.
+
+    Counting every `declined_turn` as a closer event made the audit refuse an
+    otherwise verified record -- either as a decline on a run whose closers are
+    recorded as disabled, or as one for a ladder that closed nothing. The two
+    are told apart by the stage they belong to rather than by their prose.
+    """
+    import importlib
+
+    acceptance = importlib.import_module("hardy.acceptance")
+    toolchain = {
+        "lean_version": "4.32.0",
+        "lean_commit": "a" * 40,
+        "mathlib_revision": "b" * 40,
+        "lake_manifest_sha256": "c" * 64,
+    }
+    run(
+        proof_request,
+        factory([call("submit_proof", {"proof": "by exact True.intro"})]),
+        lean,
+        tmp_path,
+        toolchain=toolchain,
+    )
+    path = tmp_path / "trajectory.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["closers"]["enabled"] is False
+    record["events"].append({
+        "type": "declined_turn",
+        "stage": "exchange",
+        "why": "a submission was accepted and audited; the run has its result and needs no further turn",
+    })
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    assert acceptance.validate_batch_consistency(tmp_path) == ()
+
+    # And a decline that *does* claim the ladder is still refused there, so the
+    # rule is narrower rather than weaker -- including one with no stage at all,
+    # which is what every decline in a record from before the gate existed was.
+    for decline in ({"stage": "closers"}, {}):
+        record["events"][-1] = {
+            "type": "declined_turn",
+            **decline,
+            "why": "closed by `rfl` before a model turn was spent",
+        }
+        path.write_text(json.dumps(record), encoding="utf-8")
+        issues = acceptance.validate_batch_consistency(tmp_path)
+        assert any("closers are recorded as disabled" in issue for issue in issues)
