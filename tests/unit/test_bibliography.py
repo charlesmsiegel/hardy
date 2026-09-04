@@ -12,11 +12,13 @@ import re
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from hardy.arxiv import PaperRecord, digest
 from hardy.bibliography import (
     Bibliography,
     BibliographyError,
+    Entry,
     base_key,
     cite_key,
     hand_written_bibliography,
@@ -730,3 +732,54 @@ def test_an_ordinary_comment_still_joins_its_line_to_the_next():
     says the join is TeX's rule rather than a special case for `\bibitem`.
     """
     assert typeset("Text. % note\nMore.\n") == "Text. More."
+
+
+def test_a_gdef_body_cannot_open_a_verbatim_region():
+    r"""`\gdef` is `\def` for this purpose, and so are `\xdef` and `\edef`.
+
+    All four store a body and run none of it where it is written, but only
+    `\def` was recognised -- so `\gdef\x{\begin{verbatim}}` put the scan into
+    verbatim mode and hid a real `thebibliography` after it until a commented
+    closer. The prefixed forms need no clause of their own: `\global\def` is
+    two control sequences and the scan meets the second at its own backslash.
+    """
+    for definition in (
+        "\\gdef\\x",
+        "\\xdef\\x",
+        "\\edef\\x",
+        "\\global\\def\\x",
+        "\\long\\gdef\\x",
+    ):
+        refusal = hand_written_bibliography(
+            "writeup.tex",
+            f"{definition}{{\\begin{{verbatim}}}}\n"
+            "\\begin{thebibliography}{1}\n\\bibitem{known2020} Fake.\n"
+            "\\end{thebibliography}\n% \\end{verbatim}\n",
+        )
+        assert refusal, definition
+        assert "writes its own bibliography" in refusal
+
+
+def test_an_entry_with_no_digest_is_not_a_citation():
+    r"""The digest is the whole reason the entry travels.
+
+    The paper library is machine-local and `bibliography.json` is not, so an
+    entry with no `content_sha256` names bytes nobody can check -- and it
+    defaulted to the empty string, so `regenerate` still published the
+    `\bibitem` and `_vouched_references` still accepted its key as a paper
+    somebody had read.
+    """
+    fields = {
+        "key": "nobody2020-0123456789",
+        "identities": ("arxiv:2401.00001v1",),
+        "title": "A paper",
+        "authors": ("Nobody",),
+    }
+    with pytest.raises(ValidationError):
+        Entry(**fields)
+    with pytest.raises(ValidationError):
+        Entry(**fields, content_sha256="")
+    with pytest.raises(ValidationError):
+        Entry(**fields, content_sha256="not-a-digest")
+    # And a real one still loads.
+    assert Entry(**fields, content_sha256="a" * 64).content_sha256 == "a" * 64

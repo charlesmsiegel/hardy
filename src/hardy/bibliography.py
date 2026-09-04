@@ -45,6 +45,8 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
+from pydantic import field_validator
+
 from .arxiv import PaperRecord
 from .domain import FrozenModel
 from .latex import typeset
@@ -54,6 +56,10 @@ from .storage import FileLock, LockTimeout, LockUnavailable
 #: The canonical store, beside the session record: versioned, hand-readable,
 #: and never the file LaTeX reads.
 STORE = "bibliography.json"
+#: What a content digest looks like. Lower-case hex, because that is what
+#: `hashlib.sha256().hexdigest()` produces and an entry claiming a digest in
+#: some other shape is not one this store wrote.
+DIGEST = re.compile(r"[0-9a-f]{64}")
 #: What `\input{references}` pulls in. Generated whole from the store on every
 #: write, so an edit to it is undone by the next citation rather than merged.
 GENERATED = "references.tex"
@@ -126,7 +132,14 @@ class Entry(FrozenModel):
     doi: str | None = None
     journal_ref: str | None = None
     url: str = ""
-    content_sha256: str = ""
+    #: Required, and required to be a digest. This is the whole reason the
+    #: entry travels: the paper library is machine-local and this file is
+    #: not, so an entry without a digest names bytes nobody can check and a
+    #: clone cannot tell a real citation from an invented one. Defaulting it
+    #: to the empty string turned a missing claim into a blank one -- and
+    #: `regenerate` still published the entry, and `_vouched_references`
+    #: still accepted its key as a paper somebody had read.
+    content_sha256: str
     #: Digests of the same paper read again and found different -- a clone
     #: refetching what its library no longer holds, after arXiv's metadata or
     #: this parser moved. Kept rather than resolved: neither read is false,
@@ -134,6 +147,34 @@ class Entry(FrozenModel):
     #: reader did not see.
     also_read: tuple[str, ...] = ()
     cited_at: str = ""
+
+    @field_validator("content_sha256")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        """A digest, or an entry this store will not load.
+
+        Refused rather than repaired: there is nothing to repair it FROM.
+        The bytes the citation was made against are exactly what is missing,
+        and a store that cannot be read stops the writeup being published --
+        which is the direction to fail in, because the alternative is a
+        `\bibitem` in front of a reader with no way to check what it says.
+        """
+        if not DIGEST.fullmatch(value):
+            raise ValueError(
+                f"content_sha256 must be a sha256 digest; got {value[:80]!r}. "
+                "An entry with no digest names no bytes, and a clone carrying "
+                "this file cannot check the citation it makes."
+            )
+        return value
+
+    @field_validator("also_read")
+    @classmethod
+    def _digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """The same rule for the same reason, one field over."""
+        for digest in value:
+            if not DIGEST.fullmatch(digest):
+                raise ValueError(f"also_read must hold sha256 digests; got {digest[:80]!r}")
+        return value
 
     def rendered(self) -> str:
         r"""The `\bibitem` a reader sees.
