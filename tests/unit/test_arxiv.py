@@ -935,41 +935,50 @@ def test_a_bad_cache_entry_is_dropped_by_the_process_that_read_it(tmp_path: Path
     assert library.cached_query(key, now=1_000_000.0) is None
 
 
-def test_losing_the_race_three_times_still_spaces_the_request(tmp_path: Path):
-    """Giving way is a reason to be late, not a reason to stop waiting.
+def test_losing_the_race_three_times_still_claims_a_slot(tmp_path: Path):
+    """Giving way is a reason to stop insisting on being next, not to stop waiting.
 
     The reservation loop is bounded at three attempts so a busy machine
     cannot starve one process forever -- but falling out of it used to
-    transport immediately, which is the one thing the whole dance exists to
-    prevent: the request that lost three races went out right behind the one
-    that won it, closer together than the interval either had waited.
+    transport with no claim at all, which is the one thing the whole dance
+    exists to prevent: the request that lost three races went out right
+    behind the one that won it.
+
+    An intermediate version slept the remaining interval here without the
+    lock, which was worse than what it replaced -- the sleep is seconds long
+    and anybody may reserve and fire inside it. So the fallback takes the
+    claim the ordinary way, under the lock, after waiting: what it gives up
+    is the re-check, not the spacing.
     """
     clock = Clock()
     transport = Recorder(_feed())
     client, library, _ = _client(tmp_path, transport, clock)
-    fired: list[float] = []
+    ours: list[float] = []
+    slept_at_transport: list[float] = []
     original = library.note_request
 
     def _stolen(when: float) -> None:
+        ours.append(when)
         original(when)
         # A neighbour reserves and fires a moment later, every single time,
-        # so all three attempts are lost and the give-way path is the one
-        # that runs.
+        # so all three attempts are lost and the fallback is what runs.
         clock.now += 0.5
         original(clock.now)
 
     def _watched(url: str, timeout: float) -> bytes:
-        fired.append(clock.now - library.last_request())
+        slept_at_transport.extend(clock.slept)
         return transport(url, timeout)
 
     library.note_request = _stolen
     client._transport = _watched
     client.search("ricci flow")
-    assert fired, "no request was made"
-    # Measured at the moment it went out, against whoever held the slot then.
-    assert fired[0] >= arxiv.MIN_INTERVAL_SECONDS, (
-        "the request fired without waiting out the interval it had lost"
-    )
+    assert slept_at_transport, "no request was made"
+    # Three lost races and then a claim, rather than three lost races and a
+    # request on nobody's slot.
+    assert len(ours) == 4, ours
+    # And the claim was taken after waiting out the interval, not on top of
+    # the neighbour that had just gone.
+    assert slept_at_transport[-1] == arxiv.MIN_INTERVAL_SECONDS, slept_at_transport
 
 
 def _consistent(record: arxiv.PaperRecord) -> dict[str, object]:

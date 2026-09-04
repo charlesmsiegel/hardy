@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path, PurePosixPath
 
 from . import references
-from .layout import WriteGuard, files_under, guard_for, read_bytes
+from .layout import LayoutError, WriteGuard, files_under, guard_for, read_bytes
 from .models import ToolResult
 from .process import GuardedResult, run_guarded
 
@@ -31,6 +31,15 @@ MAX_PASSES = 3
 #: it -- the compiler's own output is already bounded by the subprocess guard,
 #: and this is the file that was not.
 MAX_LOG_BYTES = 8 * 1024 * 1024
+#: How large an auxiliary file may be and still be read. Unlike the log, which
+#: is bounded and TRUNCATED, an oversized `.aux` refuses the compile: the log
+#: is prose about the run and its tail is the useful part, while the `.aux` is
+#: the record of what the document cited, and reading part of one would be
+#: vouching for citations without having seen them all -- which is the
+#: direction this whole check exists to rule out. Generous: the auxiliary file
+#: of a book-length document with thousands of labels is a few megabytes, and
+#: nothing but a `\@auxout` written in a loop reaches this.
+MAX_AUX_BYTES = 16 * 1024 * 1024
 BEGIN_DOCUMENT = re.compile(r"\\begin\{document\}")
 
 
@@ -723,11 +732,18 @@ def _diagnostics(work: Path, outcome: GuardedResult) -> str:
         # is kept because a compile's own account of itself ends with what it
         # concluded, and the terminal output is appended after, so a run that
         # said something the log lost still has it.
-        with log.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            size = handle.tell()
-            handle.seek(max(0, size - MAX_LOG_BYTES))
-            text = handle.read().decode("utf-8", errors="replace")
+        # Through the guard like every other read of a project tree: the seek
+        # is what makes this an `open` rather than a `read_bytes`, and that is
+        # no reason to leave the one proof that the path is the file it names.
+        guard, name = guard_for(work, "writeup.log")
+        try:
+            with guard.open(name, "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - MAX_LOG_BYTES))
+                text = handle.read().decode("utf-8", errors="replace")
+        except (OSError, LayoutError):
+            text = ""
     return text + outcome.stdout + outcome.stderr
 
 
@@ -957,7 +973,26 @@ class LatexTools:
         defined: list[str] = []
         cited: list[str] = []
         for relative in files_under(work, ".aux"):
-            text = read_bytes(work, relative).decode("utf-8", errors="replace")
+            # Bounded, like the log and for a different reason. Nothing else
+            # constrains an auxiliary file: the subprocess guard bounds the
+            # terminal and `output_limit` bounds the answer, and this is
+            # written by the document -- `\@auxout` in a loop produces a file
+            # as large as the disk allows, read whole on every pass.
+            #
+            # Refused rather than truncated. Half an `.aux` is not a shorter
+            # answer to "what did this document cite"; it is an answer with
+            # the citations after the cut missing, and vouching for that is
+            # exactly what this check exists to prevent.
+            guard, name = guard_for(work, relative)
+            with guard.open(name, "rb") as handle:
+                raw = handle.read(MAX_AUX_BYTES + 1)
+            if len(raw) > MAX_AUX_BYTES:
+                return (
+                    f"the compiler wrote an auxiliary file larger than "
+                    f"{MAX_AUX_BYTES} bytes ({relative}); Hardy cannot establish what "
+                    "the document cited, so it will not vouch for it."
+                )
+            text = raw.decode("utf-8", errors="replace")
             defined.extend(references.bibcites(text))
             cited.extend(references.citations(text))
         # A key the text cited and the reference list never defined renders as

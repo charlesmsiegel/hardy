@@ -486,3 +486,34 @@ def test_a_timeout_is_measured_in_the_bytes_it_costs(tmp_path: Path):
     assert not result.ok
     assert result.output.startswith("timeout after")
     assert len(result.output.encode("utf-8")) <= 200
+
+
+def test_an_auxiliary_file_larger_than_the_bound_refuses_rather_than_truncates(
+    tmp_path: Path, monkeypatch
+):
+    r"""The other file nothing was measuring, and the opposite treatment.
+
+    `writeup.log` is prose about the run, so it is truncated to its tail. An
+    `.aux` is the record of what the document cited, and half of one is not a
+    shorter answer to that question -- it is an answer with the citations
+    after the cut missing. `\@auxout` written in a loop makes a file as large
+    as the disk allows, read whole on every pass, and vouching for part of it
+    is the fabricated-citation failure this check exists to prevent.
+    """
+    monkeypatch.setattr(latex, "MAX_AUX_BYTES", 512)
+    tree = _tree(tmp_path)
+    (tree / "part.tex").write_text(
+        "\\begin{thebibliography}{9}\n"
+        + "".join(f"\\bibitem{{key{n}}} Nobody.\n" for n in range(200))
+        + "\\end{thebibliography}\n",
+        encoding="utf-8",
+    )
+    seen: list[tuple[str, ...]] = []
+    result = LatexTools(COMMAND).check(
+        PREAMBLE + "\\include{part}\n" + END,
+        tree=tree,
+        vouched=lambda keys: seen.append(keys) or "",
+    )
+    assert not result.ok
+    assert "auxiliary file larger than" in result.output
+    assert seen == [], "vouched for citations it had not finished reading"

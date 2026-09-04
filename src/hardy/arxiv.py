@@ -848,8 +848,18 @@ class ArxivClient:
         # claim is checked at the moment it is used: if somebody else has
         # reserved since, this one queues again rather than firing on a slot
         # that is no longer its own. Bounded, because losing the race three
-        # times is a reason to be late -- see below -- rather than to keep
-        # giving way until nobody else wants a slot.
+        # times is a reason to stop insisting on being next -- see below --
+        # rather than to keep giving way until nobody else wants a slot.
+        #
+        # WHERE THIS STOPS. The check is immediately before the transport and
+        # cannot be joined to it: a process descheduled between the two still
+        # fires on a slot that moved while it was off the CPU. Closing that
+        # needs the lock held across the request itself, and the lock is
+        # `required=False` with a timeout, so a process holding it for the
+        # length of a network call pushes every other Hardy on the machine
+        # into firing UNSYNCHRONISED once its wait expires. That trades a
+        # window of a few instructions for a failure mode with no spacing at
+        # all, which is the wrong way round.
         held = False
         for _ in range(3):
             reserved = self._throttle(_already_answered)
@@ -859,24 +869,22 @@ class ArxivClient:
                 held = True
                 break
         if not held:
-            # Giving way three times is a reason to be late, not a reason to
-            # stop waiting. The loop used to fall through here and transport
-            # immediately, which is the one thing the whole reservation dance
-            # exists to prevent: three lost races ended in the request that
-            # lost them firing right behind the one that won, closer together
-            # than the interval either had waited out.
+            # Giving way three times is a reason to stop insisting on being
+            # next, not a reason to stop waiting. So the claim is made one
+            # more time and NOT checked again: `_throttle` waits out the
+            # interval under the lock and stamps on the way out, so this
+            # request is still spaced from whoever went last by the same
+            # mechanism as every other one. What is given up is only the
+            # guarantee of being next, which is what was starving it.
             #
-            # So the spacing is honoured on the way out too, measured against
-            # whoever holds the slot now rather than waiting a fixed interval:
-            # this process has already waited three of them, and the winner
-            # may be most of the way through its own. Unlocked, because this
-            # is the give-way path -- another process may reserve during the
-            # sleep, and the answer to that is to be later still, not to hold
-            # the lock across a network request.
-            since = self._clock() - self.library.last_request()
-            remaining = self._interval if since < 0 else self._interval - since
-            if remaining > 0:
-                self._sleep(remaining)
+            # An earlier version slept the remaining interval here without
+            # the lock and then transported. That was worse than what it
+            # replaced: the sleep is seconds long, and anybody could reserve
+            # and fire inside it, so the request that had waited longest went
+            # out with no claim on the slot at all.
+            reserved = self._throttle(_already_answered)
+            if reserved is None:
+                return served[0]
         body = self._transport(url, self._timeout)
         now = self._clock()
         # Parsed before it is cached, so the refusal below leaves nothing

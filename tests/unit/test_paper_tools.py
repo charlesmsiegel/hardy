@@ -513,3 +513,27 @@ def test_a_refusal_is_measured_like_an_answer(tmp_path: Path):
         result = runtime.call(tool, {"paper_id": "not-an-id-" * 1_000})
         assert not result.ok, tool
         assert len(result.output.encode("utf-8")) <= 128, tool
+
+
+def test_a_long_cite_key_sheds_the_json_around_it(tmp_path: Path):
+    r"""A budget a key fits does not necessarily fit the JSON around it.
+
+    `base_key` allows a sixty-character stem and `cite_key` appends eleven
+    more, so the smallest JSON rung -- `{"cite_key": "..."}` -- is about
+    eighty-seven bytes for a paper whose first author has a long surname, and
+    it was returned unconditionally under budgets the tests already exercise.
+    The key on its own is the answer; the field name is packaging.
+    """
+    surname = "Vandenberghe" * 6
+    feed = _feed().decode("utf-8").replace("Grigori Perelman", surname)
+    # Between the two: a 71-byte key fits, and the 87 bytes of the smallest
+    # JSON carrying it does not.
+    runtime = _runtime(tmp_path, feed.encode("utf-8"), observation_bytes=80)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("cite_paper", {"paper_id": "math.DG/0211159v1"})
+    assert result.ok, result.output
+    assert len(result.output.encode("utf-8")) <= 80
+    # The key survives whole -- it is the whole answer, and a truncated cite
+    # key is a different key that no `\bibitem` defines.
+    entry = runtime.bibliography.entries()[0]
+    assert entry.key in result.output

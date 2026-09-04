@@ -515,7 +515,26 @@ class PaperToolRuntime:
             payload = json.dumps(answer, ensure_ascii=False)
             if len(payload.encode("utf-8")) <= self.observation_bytes:
                 return ToolResult(True, payload)
-        return ToolResult(True, payload)
+        # Below the smallest JSON, the key on its own -- no braces, no field
+        # name, no quotes. `base_key` allows a sixty-character stem and
+        # `cite_key` appends eleven more, so `{"cite_key": "..."}` is about
+        # eighty-seven bytes for a paper whose first author has a long
+        # surname: a budget that a valid key fits does not necessarily fit
+        # the JSON around it, and this rung is that difference.
+        if len(entry.key.encode("utf-8")) <= self.observation_bytes:
+            return ToolResult(True, entry.key)
+        # And below THAT, the key anyway. This is the one overrun in the
+        # file, and it is deliberate: every other budget failure here has a
+        # shorter true answer to fall back to, and this one does not. A
+        # truncated cite key is not a shorter answer, it is a DIFFERENT key
+        # -- one no `\bibitem` defines, so the writeup it is pasted into
+        # compiles to `[?]` or is refused, which is the fabricated-citation
+        # failure this whole path exists to prevent. The citation is already
+        # in the store by the time this is rendered, so refusing does not
+        # undo it either; it only leaves the caller unable to name what it
+        # just recorded. An observation budget smaller than a cite key is a
+        # misconfiguration, and the honest response to it is the key.
+        return ToolResult(True, entry.key)
 
     def _held(self, paper_id: str) -> PaperRecord:
         """The stored record for `paper_id`, or the reason there is none.
