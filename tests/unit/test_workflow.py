@@ -1298,3 +1298,44 @@ def test_a_press_during_the_unsafe_warning_does_not_reach_the_doctor(tmp_path) -
 
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
     assert probed == [], 'an abandoned run still probed the toolchain'
+
+
+def test_a_press_while_the_disagreement_is_being_shown_still_records_the_dispute(
+    tmp_path,
+) -> None:
+    """Esc during `show_faithfulness` must not relabel the run.
+
+    The cancellation check sits *before* the display, deliberately, and is not
+    repeated after it. A press while the verdict is on screen does not
+    un-dispute the verdict: the reader answered before the display began. If
+    the run finalized as USER_CANCELLATION here, the manifest would lose the
+    fact that the faithfulness gate fired -- the safety-relevant half, and the
+    half automation reads `terminal_reason` for. A user who walks away while
+    being told the translation was refused has still had it refused.
+
+    The window the check above does close is the other one: a press landing in
+    the reader's own provider turn completes the exchange with an empty reply,
+    which parses as UNAVAILABLE and would blame the reader for the press.
+    """
+    domain = importlib.import_module('hardy.domain')
+    workflow, _, controller, _ = _scripted_controller(
+        tmp_path,
+        reviews=[_review(domain, agrees=False, divergences=('the quantifier moved',))],
+    )
+
+    pressed = []
+
+    class PressingTerminal(Terminal):
+        def show_faithfulness(self, verdict):
+            pressed.append(verdict)
+            controller.cancel()
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'),
+        PressingTerminal(),
+    )
+
+    assert len(pressed) == 1
+    assert manifest.terminal_reason is domain.TerminalReason.FAITHFULNESS_DISPUTED
+    assert manifest.grades.faithfulness_review is not None
+    assert not manifest.grades.faithfulness_review.agreed

@@ -149,7 +149,30 @@ SECRETS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
             # `{"api_key": "he\\"re"}` ended the value at the escaped quote,
             # so the redaction replaced the prefix and left the rest of the
             # credential standing in the page.
-            r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\S+)"
+            #
+            # Unquoted, the value runs to the END OF THE LINE rather than to
+            # the first space. A passphrase is allowed spaces and an unquoted
+            # YAML scalar keeps them, so `password: correct horse battery
+            # staple` lost one word and published the other three -- under a
+            # `[REDACTED]` that told the reader it had been handled.
+            #
+            # The cost is real and is accepted deliberately: `the password:
+            # hunter2 was rotated on Tuesday` now loses the rest of that line
+            # too. Over-redaction announces itself -- `[REDACTED]` is right
+            # there on the page and the reader knows something was removed --
+            # while a surviving credential is invisible and cannot be undone
+            # once the file is sent. Quoted values are matched first, so JSON
+            # and a quoted YAML scalar still stop at their closing quote and
+            # keep whatever follows on the line.
+            # The unquoted value may not START with a space, which is what
+            # keeps the scheme guard above working. `\s*[:=]\s*` can give back
+            # its trailing space, and a value allowed to begin with one then
+            # matched " Basic <token>" from a separator of just ":" -- sliding
+            # past the `(?!basic\s)` lookahead and eating the scheme word the
+            # authorization rule deliberately kept. `\S+` could not begin with
+            # a space, so this only became reachable when the value was
+            # widened; the class below restores the property explicitly.
+            r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s\r\n][^\r\n]*)"
         ),
         r"\1\2[REDACTED]",
         True,
@@ -740,9 +763,16 @@ def _owed(item: Any) -> str:
 def _withheld(material: Mapping[str, Any]) -> str:
     """What the model is never shown, and a human reader does want.
 
-    Spend, the model switches this workspace has been through, and every tool
-    call Hardy refused. None of it reaches a prompt (`chat.WITHHELD`); all of it
-    bears on how far to trust the rest of the page.
+    Spend and the model switches this workspace has been through. Neither
+    reaches a prompt (`chat.WITHHELD`), and both bear on how far to trust the
+    rest of the page.
+
+    The refused tool calls used to sit here and do not any more: the dispatcher
+    hands a failed `ToolResult` straight back to the provider, so the model read
+    every one of those diagnostics and could act on it. Listing them under this
+    heading told the reader the opposite -- that a failed proof attempt had
+    carried on with no feedback -- which is a claim about the experiment, not a
+    layout detail. They have their own section now.
     """
     switches = [
         f"{event.get('reason', 'changed')}: "
@@ -750,6 +780,22 @@ def _withheld(material: Mapping[str, Any]) -> str:
         for event in material.get("transcript", ())
         if event.get("type") == "model"
     ]
+    return (
+        "<h3>Spend</h3>"
+        + _list(material.get("usage", ()), "Nothing spent, or nothing reported.")
+        + "<h3>Model switches</h3>"
+        + _list(switches, "This workspace has run on one model identity.")
+    )
+
+
+def _refusals(material: Mapping[str, Any]) -> str:
+    """Every tool call that did not run, or ran and failed.
+
+    NOT withheld from the model: a failed Hardy call returns its diagnostic to
+    the provider, and that is the point -- the model is meant to read Lean's
+    complaint and try again. This section is here because a human reader wants
+    the same list, not because the model was denied it.
+    """
     # Both kinds in ONE pass, in transcript order. The SDK never got to call
     # the second kind at all: a request for `Read` or `Bash` is recorded as
     # `refused_tool` rather than as a failed `tool`, so a filter looking only at
@@ -771,14 +817,7 @@ def _withheld(material: Mapping[str, Any]) -> str:
                 )
         elif kind == "refused_tool":
             refused.append(f"{event.get('name')}: not a Hardy tool; the request never ran")
-    return (
-        "<h3>Spend</h3>"
-        + _list(material.get("usage", ()), "Nothing spent, or nothing reported.")
-        + "<h3>Model switches</h3>"
-        + _list(switches, "This workspace has run on one model identity.")
-        + "<h3>Refused tool calls</h3>"
-        + _list(refused[-50:], "Nothing was refused.")
-    )
+    return _list(refused[-50:], "Nothing was refused.")
 
 
 def build(material: Mapping[str, Any], *, now: datetime | None = None) -> str:
@@ -806,12 +845,15 @@ nothing in it has been checked by anything.</p>
 <p>Credentials matching known token shapes and values under credential-shaped
 key names were removed before this file was written. That is a filter, not a
 proof: read the conversation below before sharing it.</p>
-<p><strong>The Lean and TeX sources under the results above are exempt from that
-filter</strong> and are printed exactly as they were checked. Altering the text
-of a source a verdict grades would produce a page whose Lean no longer matches
-what the kernel saw, which is the one thing this page may not do. So a
-credential written into a formal source reaches this file intact. Read those
-sources before sharing, whatever the paragraph above says.</p>
+<p><strong>The Lean modules, the approved axiom declarations and the reported
+statements are exempt from that filter</strong> and are printed exactly as they
+were checked. Altering the text of a source a verdict grades would produce a
+page whose Lean no longer matches what the kernel saw, which is the one thing
+this page may not do. So a credential written into one of those reaches this
+file intact. The writeup <code>.tex</code> is <em>not</em> exempt -- it is prose
+the user wrote rather than something the kernel graded, so the filter runs over
+it like any other text. Read the formal sources before sharing, whatever the
+paragraph above says.</p>
 </div>
 
 <h2>Goal</h2>
@@ -854,6 +896,9 @@ sources before sharing, whatever the paragraph above says.</p>
 
 <h2>Withheld from the model</h2>
 {_withheld(material)}
+
+<h2>Tool calls Hardy refused</h2>
+{_refusals(material)}
 
 <h2>Identity</h2>
 {_rows(

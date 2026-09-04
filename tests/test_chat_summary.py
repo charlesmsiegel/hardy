@@ -374,3 +374,28 @@ def test_a_private_theorem_owes_no_audit_it_cannot_have(tmp_path: Path):
     owed = " ".join(chat.export_material()["obligations"])
 
     assert "hidden" not in owed
+
+
+def test_a_writeup_hardy_never_compiled_is_not_credited_to_hardy(tmp_path: Path):
+    """A regular file is not evidence that Hardy made it.
+
+    A clone carries whatever `writeup.pdf` was committed and a user may drop
+    one in. "was compiled" then credited Hardy with a document it never
+    produced -- beside an outstanding section that may still be asking for the
+    compile. `tex_signature` is stamped only after a compile Hardy ran.
+    """
+    chat = built(tmp_path)
+    (Path(chat.workspace) / "writeup.pdf").write_bytes(b"%PDF-someone-elses")
+
+    said = chat.export_material()["document"]
+    assert "was compiled by Hardy" not in said
+    assert "no record of compiling it" in said
+
+
+def test_a_writeup_hardy_did_compile_is_reported_as_compiled(tmp_path: Path):
+    """The other half: the claim is available when the record supports it."""
+    chat = built(tmp_path)
+    (Path(chat.workspace) / "writeup.pdf").write_bytes(b"%PDF-hardys")
+    chat.state["tex_signature"] = "whatever this compile was made against"
+
+    assert "was compiled by Hardy" in chat.export_material()["document"]

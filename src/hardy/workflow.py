@@ -564,6 +564,17 @@ class ProveWorkflow:
                 # and a manifest recording none beside it is the inconsistency
                 # the release audit exists to report.
                 self._refuse_if_cancelled()
+                # And deliberately NOT again after the display below. A press
+                # while the verdict is being shown does not un-dispute it: the
+                # reader answered before the display began, so `verdict` is
+                # already final and truthful either way. Re-checking there
+                # would finalize a disputed translation as USER_CANCELLATION
+                # and lose the fact that the faithfulness gate fired -- which
+                # is the safety-relevant half, and the half automation reads
+                # `terminal_reason` for. The check belongs above, where a press
+                # DOES change the answer: it lands in the reader's own provider
+                # turn, the runtime completes an interrupted exchange with an
+                # empty reply, and that parses as UNAVAILABLE.
                 terminal.show_faithfulness(verdict)
                 if not verdict.agreed:
                     # Fail-closed, and terminal. Proceeding past a disputed

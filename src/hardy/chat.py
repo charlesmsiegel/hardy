@@ -3197,8 +3197,19 @@ class MathematicsSession:
             # instead, because a document Hardy never embeds is not worth
             # losing the whole page over.
             "document": (
-                f"{document.name} was compiled ({document.stat().st_size} bytes). "
+                f"{document.name} was compiled by Hardy ({document.stat().st_size} bytes). "
                 "It is not embedded here: this file carries no external assets."
+                if compiled and self.state.get("tex_signature")
+                # A regular file is not evidence that Hardy made it. A clone
+                # carries whatever `writeup.pdf` was committed, and a user may
+                # drop one in; "was compiled" then credited Hardy with a
+                # document it never produced, beside an outstanding section
+                # that may be asking for the compile. `tex_signature` is
+                # stamped only by `_stamp_writeup`, after a compile Hardy ran,
+                # so its absence settles the question.
+                else f"{document.name} is present ({document.stat().st_size} bytes), but "
+                "Hardy has no record of compiling it: it came with the workspace or was "
+                "put there by hand. It is not embedded here either."
                 if compiled
                 else f"{document.name} is a symlink; Hardy did not read it, so nothing "
                 "here reports on a compiled document. That is a refusal, not a finding "
