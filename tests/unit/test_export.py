@@ -381,3 +381,49 @@ def test_a_short_tool_result_is_shown_whole_and_unannotated():
     )
     assert "saved" in page
     assert "Showing the end" not in page
+
+
+def test_a_pasted_authorization_header_loses_its_credential_not_its_scheme():
+    """The generic rule had this exactly backwards: its unquoted alternative
+    matched the SCHEME, so `Basic` was redacted and the base64 stood."""
+    page = build(
+        transcript=[
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+                },
+            }
+        ]
+    )
+    assert "dXNlcjpwYXNzd29yZA" not in page
+    assert "Authorization: Basic [REDACTED-KEY]" in page
+
+
+def test_a_short_bearer_token_is_removed_too():
+    from hardy.export import redact
+
+    assert "abc12345" not in redact("Authorization: Bearer abc12345")
+
+
+def test_ordinary_prose_about_a_bearer_survives():
+    from hardy.export import redact
+
+    assert redact("the bearer of bad news") == "the bearer of bad news"
+
+
+def test_a_name_two_modules_declare_is_not_graded():
+    """A workspace permits it, and everything downstream addresses a theorem by
+    name: the statement shown is whichever module was read last, while the
+    verdict is drawn from both."""
+    shown = results(
+        build(
+            theorems={"result": "theorem result : True"},
+            audit={"A": audit_record("result", ["propext"])},
+            shared={"result": ["A", "B"]},
+        )
+    )
+    assert "not graded" in shown
+    assert 'class="badge verified"' not in shown
+    assert "A, B" in shown

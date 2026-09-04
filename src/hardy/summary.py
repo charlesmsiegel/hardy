@@ -137,7 +137,11 @@ def export_openable() -> frozenset[str]:
     return OPENABLE
 
 
-def _status_of(name: str, records: Mapping[str, Mapping[str, Any]]) -> str:
+def _status_of(
+    name: str,
+    records: Mapping[str, Mapping[str, Any]],
+    shared: Mapping[str, Sequence[str]] | None = None,
+) -> str:
     """What the stored audit verdicts say about one declaration.
 
     Through `audit.declaration_status`, which the export uses too: a theorem's
@@ -146,7 +150,7 @@ def _status_of(name: str, records: Mapping[str, Mapping[str, Any]]) -> str:
     grades a module rather than a declaration, and a record the session has
     marked stale is not evidence of anything.
     """
-    return str(audit_module.declaration_status(name, records))
+    return str(audit_module.declaration_status(name, records, shared=shared))
 
 
 def _assumption_line(record: Mapping[str, Any]) -> str:
@@ -196,6 +200,7 @@ def assemble(
     obligations: Sequence[Any],
     failed: Sequence[Attempt] = (),
     modules: Sequence[str] = (),
+    shared: Mapping[str, Sequence[str]] | None = None,
 ) -> Summary:
     """The summary, in the order a reader needs it.
 
@@ -212,11 +217,22 @@ def assemble(
     opened = set(open_theorems)
     proved: list[str] = []
     still_open: list[str] = []
+    unestablished: list[str] = []
     for name in sorted(theorems):
-        status = audit_module.declaration_status(name, audit)
+        status = audit_module.declaration_status(name, audit, shared=shared)
         if name in opened and status.kind in export_openable():
             status = audit_module.DeclarationStatus("open", status.assumed, status.unapproved)
-        (still_open if status.kind == "open" else proved).append(f"{name}: {status}")
+        line = f"{name}: {status}"
+        # Three headings, because two of them would be a claim. A theorem whose
+        # audit never ran, has expired, or cannot be told from a namesake is
+        # not proved and is not open either -- and printing it under `Proved`
+        # put the heading in contradiction with the line beneath it.
+        if status.kind in audit_module.UNESTABLISHED:
+            unestablished.append(line)
+        elif status.kind == "open":
+            still_open.append(line)
+        else:
+            proved.append(line)
     return Summary(
         (
             Section("Goal", (goal,) if goal.strip() else (), empty="not set (/goal)"),
@@ -236,6 +252,7 @@ def assemble(
                 empty="no closed theorem is saved: nothing here is reportable.",
             ),
             Section("Open", tuple(still_open)),
+            Section("Not established", tuple(unestablished)),
             Section(
                 "Failed attempts",
                 tuple(str(item) for item in failed),

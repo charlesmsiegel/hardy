@@ -54,7 +54,22 @@ SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}"), "[REDACTED-KEY]"),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED-KEY]"),
     (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}"), "[REDACTED-KEY]"),
-    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{16,}"), "Bearer [REDACTED-KEY]"),
+    # A short token is still a token. 16 was an arbitrary floor that let
+    # `Bearer abc123` through, and nothing in a mathematical conversation is
+    # spelled `Bearer <word>` by accident.
+    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}"), "Bearer [REDACTED-KEY]"),
+    # `Authorization: Basic dXNlcjpwYXNz` -- a pasted header, and the shape the
+    # generic rule below gets exactly backwards: its unquoted alternative
+    # matches `\S+`, which is the SCHEME, so it redacted the word "Basic" and
+    # left the base64 credential standing. The scheme is kept (it is not a
+    # secret and it tells a reader what was there) and what follows it goes.
+    (
+        re.compile(
+            r"(?i)\b(proxy-authorization|authorization)([\"\']?\s*[:=]\s*[\"\']?)"
+            r"(basic|bearer|digest|negotiate|token|apikey)\s+[^\s\"\']+"
+        ),
+        r"\1\2\3 [REDACTED-KEY]",
+    ),
     # `api_key = "..."`, `password: ...`, `authorization=...` in prose or in a
     # pasted config. The key names are `storage.SECRET_KEY`'s, so one list
     # decides what counts as a credential for both the trajectory and this.
@@ -68,7 +83,15 @@ SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             r"(?i)\b(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)"
-            r"([\"']?\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|\S+)"
+            # Not a value some earlier pattern has already replaced: the
+            # scheme rule above leaves `Authorization: Basic [REDACTED-KEY]`,
+            # and without this the generic rule matched it again and ate the
+            # scheme the earlier rule had deliberately kept.
+            r"([\"']?\s*[:=]\s*)(?!\[REDACTED)"
+            # Nor the scheme word the rule above deliberately kept, which is
+            # followed by its own redaction and is not itself a secret.
+            r"(?!(?:basic|bearer|digest|negotiate|token|apikey)\s)"
+            r"(\"[^\"]*\"|'[^']*'|\S+)"
         ),
         r"\1\2[REDACTED]",
     ),
@@ -88,6 +111,9 @@ STATUS_STYLES = {
     # toolchain, the source or a dependency moved. Neither is evidence.
     "stale": ("unaudited", "audit no longer established"),
     "unaudited": ("unaudited", "not audited"),
+    # Several modules declare this name, so neither the statement shown nor the
+    # verdict over it can be attributed. Not a grade; a refusal to grade.
+    "ambiguous": ("unaudited", "not graded — the name is not unique"),
 }
 
 #: The page's whole appearance, as a package resource rather than a string
@@ -131,7 +157,11 @@ def _badge(kind: str) -> str:
 
 
 def classify(
-    name: str, audit: Mapping[str, Mapping[str, Any]], *, open_names: Sequence[str] = ()
+    name: str,
+    audit: Mapping[str, Mapping[str, Any]],
+    *,
+    open_names: Sequence[str] = (),
+    shared: Mapping[str, Sequence[str]] | None = None,
 ) -> DeclarationStatus:
     """One theorem's status, from the stored verdicts, as `summary` reads it too.
 
@@ -144,7 +174,7 @@ def classify(
     overrides `unapproved` or `stale`, which each carry a warning a reader
     must not lose to a coarser one.
     """
-    status = declaration_status(name, audit)
+    status = declaration_status(name, audit, shared=shared)
     if name in open_names and status.kind in OPENABLE:
         return DeclarationStatus("open", status.assumed, status.unapproved)
     return status
@@ -154,6 +184,7 @@ def _results(material: Mapping[str, Any]) -> str:
     theorems: Mapping[str, str] = material.get("theorems", {})
     audit: Mapping[str, Mapping[str, Any]] = material.get("audit", {})
     open_names = tuple(material.get("open", ()))
+    shared = material.get("shared") or {}
     approvals = {
         str(item.get("formal_name")): item for item in material.get("assumptions", ())
     }
@@ -164,13 +195,19 @@ def _results(material: Mapping[str, Any]) -> str:
         )
     parts = []
     for name in sorted(theorems):
-        status = classify(name, audit, open_names=open_names)
+        status = classify(name, audit, open_names=open_names, shared=shared)
         # Named whatever the grade: a proof that is both unfinished and resting
         # on an approved axiom has two limitations, and printing only the badge
         # for the worse one leaves a reader believing the rest is Lean's own.
         detail = "".join(
             _assumption_note(approvals.get(axiom), axiom) for axiom in status.assumed
         )
+        if status.kind == "ambiguous":
+            detail += (
+                f"<p class='fail'>{_escape(', '.join(status.modules))} each declare this "
+                "name. The statement above is whichever one was read last, and no "
+                "verdict here can be attributed to it.</p>"
+            )
         if status.kind == "stale":
             detail += (
                 f"<p class='fail'>{_escape(status.detail or 'The verdict has expired.')} "

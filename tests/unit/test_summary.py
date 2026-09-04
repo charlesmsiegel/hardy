@@ -217,3 +217,43 @@ def test_an_open_theorem_still_discloses_the_axiom_it_also_rests_on():
     }
     text = assemble(theorems={"both_": "theorem both_ : True"}, audit={"Work": record}).text()
     assert "both_: open -- rests on a hole; approved assumptions ['big']" in text
+
+
+def test_an_unaudited_theorem_is_not_printed_under_proved():
+    """The heading would contradict the line beneath it."""
+    text = assemble(theorems={"sylow": "theorem sylow : True"}, audit={}).text()
+    proved = text.split("Proved\n", 1)[1].split("\nNot established", 1)[0]
+    assert "sylow" not in proved
+    assert "Not established" in text
+    assert "sylow: not audited" in text
+
+
+def test_a_stale_verdict_is_not_printed_under_proved():
+    stale = {
+        **audit_record("sylow", ["propext"]),
+        "status": "not established",
+        "reason": "the toolchain moved",
+        "stale": True,
+    }
+    text = assemble(theorems={"sylow": "theorem sylow : True"}, audit={"Work": stale}).text()
+    proved = text.split("Proved\n", 1)[1].split("\nNot established", 1)[0]
+    assert "sylow" not in proved
+
+
+def test_a_verified_theorem_is_still_printed_under_proved():
+    text = assemble(
+        theorems={"sylow": "theorem sylow : True"},
+        audit={"Work": audit_record("sylow", ["propext"])},
+    ).text()
+    proved = text.split("Proved\n", 1)[1].split("\nOpen", 1)[0].split("\nNot established", 1)[0]
+    assert "sylow: kernel-verified" in proved
+
+
+def test_a_name_two_modules_declare_is_not_graded():
+    text = assemble(
+        theorems={"result": "theorem result : True"},
+        audit={"A": audit_record("result", ["propext"])},
+        shared={"result": ["A", "B"]},
+    ).text()
+    assert "not graded" in text
+    assert "kernel-verified" not in text

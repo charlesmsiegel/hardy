@@ -374,6 +374,17 @@ class ClaudeStagedRuntime:
     def run_structured(
         self, thread: StagedThread, stage: str, prompt: str, output_type: type[T]
     ) -> T:
+        # Refused before it is sent. `_cancelled` used to gate tool DISPATCH
+        # only, which stops a cancelled run from doing more work and does not
+        # stop it from starting a new billable exchange -- and the workflow has
+        # stages that open one without any tool call at all. A run cancelled
+        # while the verifier was working would go on to open the writeup turn.
+        #
+        # Here rather than only in the workflow because this is where a turn is
+        # actually opened: a check in the caller narrows the window, and a
+        # check at the door closes it for every caller there will ever be.
+        if self._cancelled.is_set():
+            raise RuntimeError(f"the run was cancelled before the {stage} turn was sent")
         # Counted before it is sent, not after it is answered: the answer is
         # exactly what a cancelled or timed-out stage never has.
         with self._records:

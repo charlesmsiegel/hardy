@@ -176,8 +176,18 @@ class DeclarationStatus:
     unapproved: tuple[str, ...] = ()
     #: Why, where the kind alone does not say it: a stale record's reason.
     detail: str = ""
+    #: The modules that declare this name, when more than one does. A workspace
+    #: permits it (nothing makes them import each other) and everything
+    #: downstream addresses a theorem BY NAME, so the statement a reader is
+    #: shown and the verdict printed over it can come from different modules.
+    modules: tuple[str, ...] = ()
 
     def __str__(self) -> str:
+        if self.kind == "ambiguous":
+            return (
+                f"not graded -- {list(self.modules)} each declare this name, so no "
+                "one statement or verdict answers for it"
+            )
         if self.kind == "unaudited":
             return "not audited -- no stored verdict names it"
         if self.kind == "stale":
@@ -195,11 +205,17 @@ class DeclarationStatus:
 #: The kinds, worst first. `unapproved` outranks `open` for `classify`'s own
 #: reason: it is the half a reader can act on, and a result carrying both must
 #: be described by that one.
-GRADES = ("unaudited", "stale", "unapproved", "open", "assumed", "verified")
+GRADES = ("ambiguous", "unaudited", "stale", "unapproved", "open", "assumed", "verified")
+#: The kinds that are not a verdict about anything, so a surface must not file
+#: them under a heading that claims one.
+UNESTABLISHED = frozenset({"ambiguous", "unaudited", "stale"})
 
 
 def declaration_status(
-    name: str, records: Mapping[str, Mapping[str, Any]]
+    name: str,
+    records: Mapping[str, Mapping[str, Any]],
+    *,
+    shared: Mapping[str, Sequence[str]] | None = None,
 ) -> DeclarationStatus:
     """How one declaration stands, across every stored verdict that names it.
 
@@ -213,7 +229,18 @@ def declaration_status(
 
     The weakest current reading wins where several modules name one
     declaration: `GRADES` is the order.
+
+    `shared` names the declarations more than one saved module declares, which
+    a workspace permits while nothing makes those modules import each other.
+    Such a name cannot be graded at all: everything downstream addresses a
+    theorem BY NAME, so the statement a reader is shown comes from whichever
+    module was read last while the verdict over it is drawn from both -- and a
+    stale module's statement could be printed under the other's clean audit.
+    The workspace already reports this as an obligation; here it is a refusal
+    to grade rather than a grade nobody can check.
     """
+    if shared and name in shared:
+        return DeclarationStatus("ambiguous", modules=tuple(shared[name]))
     mentions = [
         record
         for record in records.values()
