@@ -1281,3 +1281,26 @@ def test_a_default_name_is_refused_rather_than_handed_back_unreserved(tmp_path):
 
     with pytest.raises(ValueError, match="Name the file to write instead"):
         export.default_path(tmp_path, "sylow", now=when)
+
+
+def test_shared_lean_a_verdict_rests_on_travels_with_the_page():
+    """`.hardy/lean` modules are elaborated with the sources they support.
+
+    A verdict on a theorem that imports one rests on that text as much as on
+    its own module, and the recipient of a "standalone" page has no other copy
+    of a locally authored library to compare against.
+    """
+    page = build(shared_sources={"Shared.Basic": "theorem helper : True := trivial"})
+    assert "Shared.Basic" in page
+    assert "theorem helper : True := trivial" in page
+
+
+def test_a_workspace_with_no_shared_library_says_so():
+    assert "imports no locally authored shared module" in build()
+
+
+def test_shared_lean_is_printed_verbatim_like_the_audited_sources():
+    """Its bytes are hashed into the identity that stamps every verdict, so
+    rewriting them makes the page's own identity claim uncheckable."""
+    page = build(shared_sources={"Shared.Keys": 'def k : String := "Bearer abc123"'})
+    assert "Bearer abc123" in page

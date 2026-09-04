@@ -153,7 +153,59 @@ def test_only_the_most_recent_attempts_are_kept():
         for index in range(40)
     ]
     found = summary.attempts(events, limit=5)
-    assert [item.subject for item in found] == [f"M{index}.lean" for index in range(35, 40)]
+    kept = [item for item in found if item.tool != "(clipped)"]
+    assert [item.subject for item in kept] == [f"M{index}.lean" for index in range(35, 40)]
+
+
+def test_a_clipped_attempt_list_says_it_was_clipped():
+    """A section a reader takes for the whole record has to admit when it is
+    not: "twelve attempts" otherwise reads as "twelve attempts happened"."""
+    events = [
+        {"type": "tool", "name": "save_lean", "arguments": {"path": f"M{index}.lean"},
+         "result": {"ok": False, "output": "no"}}
+        for index in range(40)
+    ]
+    notice = [item for item in summary.attempts(events, limit=5) if item.tool == "(clipped)"]
+    assert len(notice) == 1
+    assert "35 older folded attempts are not listed" in notice[0].detail
+
+
+def test_an_unclipped_attempt_list_claims_no_omission():
+    events = [
+        {"type": "tool", "name": "save_lean", "arguments": {"path": "M.lean"},
+         "result": {"ok": False, "output": "no"}}
+    ]
+    assert [item.tool for item in summary.attempts(events, limit=5)] == ["save_lean"]
+
+
+def test_an_sdk_denial_survives_a_clip_that_drops_newer_failures():
+    """The most misleading sentence this section can print is that nothing was
+    refused over a run in which the model reached for the host."""
+    events = [{"type": "refused_tool", "name": "Bash"}] + [
+        {"type": "tool", "name": "save_lean", "arguments": {"path": f"M{index}.lean"},
+         "result": {"ok": False, "output": "no"}}
+        for index in range(40)
+    ]
+    found = summary.attempts(events, limit=5)
+    assert "Bash" in [item.tool for item in found]
+
+
+def test_a_failed_inspection_is_named_by_the_declarations_it_searched():
+    """`inspect_declarations` carries its subject in `names`. Ignoring it
+    folded every failed inspection into one anonymous attempt keeping only the
+    newest diagnostic, so the summary could not say what was searched before an
+    assumption request."""
+    events = [
+        {"type": "tool", "name": "inspect_declarations",
+         "arguments": {"names": ["Nat.succ_le", "Nat.lt_irrefl"]},
+         "result": {"ok": False, "output": "no such declaration"}},
+        {"type": "tool", "name": "inspect_declarations",
+         "arguments": {"names": ["Finset.card_pos"]},
+         "result": {"ok": False, "output": "timed out"}},
+    ]
+    subjects = [item.subject for item in summary.attempts(events)]
+    assert "Nat.succ_le, Nat.lt_irrefl" in subjects
+    assert "Finset.card_pos" in subjects
 
 
 def test_the_registry_and_the_outstanding_work_are_both_shown():

@@ -539,3 +539,51 @@ async def test_a_cancelled_run_does_not_leave_later_commands_stopped(
     await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
 
     assert lifted == ["lifted"], "the stop outlived the command it belonged to"
+
+
+async def test_a_second_press_does_not_interrupt_the_finalization_the_first_one_started(
+    settings, monkeypatch
+):
+    """The first press raises into the inline workflow; the second must not.
+
+    By the second press the workflow is already unwinding through its
+    cancellation path and finalizing -- writing the terminal event and hashing
+    the run directory. Raising again from inside that handler abandons
+    `_finalize` half done and `handle_prove` catches it as though the press had
+    landed before the run started, leaving a run directory on disk with no
+    manifest describing it. `stop` still escalates on every press; only the
+    raise is once.
+    """
+    from hardy.tui import prove
+    from hardy.tui.plain import PlainUi
+
+    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: 1)
+    monkeypatch.setattr("hardy.tui.handlers.process.stop_children", lambda: 1)
+    monkeypatch.setattr("hardy.tui.handlers.process.resume_children", lambda: None)
+
+    finalized: list[str] = []
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        import os
+        import signal
+
+        try:
+            os.kill(os.getpid(), signal.SIGINT)      # the first press
+        except KeyboardInterrupt:
+            # Standing in for the workflow's own cancellation path, which
+            # finalizes the run from inside this handler.
+            os.kill(os.getpid(), signal.SIGINT)      # the second, mid-teardown
+            finalized.append("manifest written")
+            return None
+        finalized.append("never interrupted at all")
+        return None
+
+    monkeypatch.setattr(prove, "run", run)
+
+    await handlers.handle_prove(
+        PlainUi(lambda line: None, lambda prompt: ""),
+        "a claim",
+        State(config=settings, session=None),
+    )
+
+    assert finalized == ["manifest written"]
