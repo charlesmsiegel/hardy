@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -153,6 +154,17 @@ class Entry(FrozenModel):
             parts.append(f"doi:{_escaped(self.doi)}")
         body = ". ".join(part for part in parts if part)
         return f"\\bibitem{{{self.key}}} {body}."
+
+    def folded(self) -> str:
+        r"""`rendered`, as physical lines a TeX input buffer can hold.
+
+        The `\bibitem` and its key stay whole on the first line. A key is
+        bounded by construction, so it never has to be cut, and cutting one
+        anyway would hide from every reader of the file -- a person, a grep,
+        Hardy's own tests -- the one string the document `\cite`s.
+        """
+        head, _, body = self.rendered().partition(" ")
+        return f"{head}\n{_folded(body)}"
 
 
 class Store(FrozenModel):
@@ -392,7 +404,7 @@ class Bibliography:
             return head + "% No paper has been cited yet.\n"
         widest = str(len(entries))
         lines = [head, f"\\begin{{thebibliography}}{{{widest}}}"]
-        lines.extend(entry.rendered() for entry in entries)
+        lines.extend(entry.folded() for entry in entries)
         lines.append("\\end{thebibliography}")
         return "\n".join(lines) + "\n"
 
@@ -462,6 +474,54 @@ class Bibliography:
         WriteGuard(self.problem, create=True).write_bytes(
             STORE, (store.model_dump_json(indent=2) + "\n").encode("utf-8")
         )
+
+#: A generated `\bibitem` is folded to physical lines no wider than this.
+#: arXiv metadata is third-party text of no bounded length -- a collaboration
+#: author list runs to three thousand names -- and TeX reads a line into a
+#: finite buffer. A citation `cite_paper` accepted happily and a
+#: `references.tex` no compiler will read is the worst of the two failures,
+#: because the model may not repair the file.
+ENTRY_COLUMNS = 79
+
+#: Combining marks that have a LaTeX accent command, so a name keeps its
+#: letters instead of being spelled out in codepoints.
+ACCENTS = {
+    "\u0300": "`",
+    "\u0301": "'",
+    "\u0302": "^",
+    "\u0303": "~",
+    "\u0304": "=",
+    "\u0306": "u",
+    "\u0307": ".",
+    "\u0308": '"',
+    "\u030a": "r",
+    "\u030b": "H",
+    "\u030c": "v",
+    "\u0327": "c",
+    "\u0328": "k",
+}
+#: Latin letters that no decomposition reaches and that have a command of
+#: their own. Without these a Scandinavian or Polish surname loses a letter to
+#: a codepoint even though pdfLaTeX can set it perfectly well.
+LETTERS = {
+    "\u00df": "\\ss{}",
+    "\u00e6": "\\ae{}",
+    "\u00c6": "\\AE{}",
+    "\u0152": "\\OE{}",
+    "\u0153": "\\oe{}",
+    "\u00d8": "\\O{}",
+    "\u00f8": "\\o{}",
+    "\u0141": "\\L{}",
+    "\u0142": "\\l{}",
+    "\u0131": "\\i{}",
+}
+#: The smallest run of characters a line break may not fall inside. Only a
+#: control sequence needs protecting: a cut carries a `%`, which removes the
+#: line ending altogether, so the pieces meet with nothing between them --
+#: `\H%` and `{o}` is still `\H{o}`. What that does not survive is a cut
+#: among a command's own letters, where `\textbackslash` becomes
+#: `\textback` followed by the word `slash`.
+ATOM = re.compile(r"\\[a-zA-Z]+|\\.|.", re.DOTALL)
 
 #: Every character that means something to TeX, and what it becomes. Applied
 #: in ONE pass: replacing the backslash first and the braces afterwards turns
@@ -534,4 +594,87 @@ def _escaped(text: str) -> str:
     author's title, arriving from arXiv -- so there is no one to ask to fix
     it, and it has to be safe on arrival.
     """
-    return "".join(TEX_ESCAPES.get(character, character) for character in text)
+    return _ascii("".join(TEX_ESCAPES.get(character, character) for character in text))
+
+
+def _ascii(text: str) -> str:
+    r"""Escaped TeX, reduced to characters pdfLaTeX can set.
+
+    The default interactive compiler is `pdflatex`, which stops on a
+    character it has no mapping for -- and `chat.py` already reduces the text
+    it injects into a writeup for exactly that reason. Here the consequence is
+    worse: a Cyrillic or CJK author name left verbatim makes every later
+    compile fail, in a generated file the model is forbidden to repair, so
+    one `cite_paper` would wedge the writeup with no way out from the inside.
+
+    An accent is kept as an accent rather than spelled out, because a
+    bibliography is read by a person: `Erd\H{o}s` is the name and
+    `Erd[U+0151]s` is a puzzle. What no accent and no command reaches falls
+    back to the codepoint, which is `_tex_ascii`'s bargain and the same one --
+    a reader must still be able to tell two entries apart, and a character
+    silently dropped would trade a compile error for a wrong name.
+    """
+    pieces: list[str] = []
+    # Whether `pieces[-1]` is something an accent may be put on: a bare ASCII
+    # letter, or a letter this loop has already accented once. Vietnamese
+    # stacks two marks on one vowel, and the second belongs on the first's
+    # result rather than beside it.
+    accentable = False
+    for character in unicodedata.normalize("NFD", text):
+        if accentable and character in ACCENTS:
+            pieces.append(f"\\{ACCENTS[character]}{{{pieces.pop()}}}")
+            continue
+        if character.isascii():
+            pieces.append(character)
+            accentable = character.isalpha()
+        elif character in LETTERS:
+            pieces.append(LETTERS[character])
+            accentable = False
+        else:
+            pieces.append(f"[U+{ord(character):04X}]")
+            accentable = False
+    return "".join(pieces)
+
+
+def _chopped(word: str) -> list[str]:
+    r"""One space-free run, cut into pieces no wider than a line.
+
+    Cut between atoms, never inside one. The pieces are rejoined with a `%`
+    at each break, which is how TeX is told that a line ending is not a
+    space -- without it `Weierstrass` chopped in two would be read as two
+    words. An atom wider than the limit on its own is left whole -- a
+    control sequence is bounded by construction -- because nothing is gained
+    by emitting a line that no longer compiles.
+    """
+    pieces: list[str] = []
+    current = ""
+    for atom in ATOM.findall(word):
+        if current and len(current) + len(atom) > ENTRY_COLUMNS:
+            pieces.append(current)
+            current = ""
+        current += atom
+    return pieces + [current] if current else pieces or [""]
+
+
+def _folded(text: str) -> str:
+    """`text` as physical lines a TeX input buffer can hold."""
+    lines: list[str] = []
+    current = ""
+    for word in text.split():
+        pieces = _chopped(word)
+        if len(pieces) > 1:
+            if current:
+                lines.append(current)
+            lines.extend(piece + "%" for piece in pieces[:-1])
+            current = pieces[-1]
+            continue
+        if not current:
+            current = pieces[0]
+        elif len(current) + 1 + len(pieces[0]) <= ENTRY_COLUMNS:
+            current = f"{current} {pieces[0]}"
+        else:
+            lines.append(current)
+            current = pieces[0]
+    if current:
+        lines.append(current)
+    return "\n".join(lines)

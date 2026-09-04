@@ -106,6 +106,44 @@ def test_the_generated_bibliography_makes_a_citation_compile(session) -> None:
     assert with_input.ok, with_input.output
 
 
+def test_a_paper_tex_cannot_hold_verbatim_still_compiles(session) -> None:
+    r"""The generated file is the one file the model may not repair.
+
+    So it has to arrive compilable. A collaboration author list is one
+    physical line longer than a TeX input buffer, and a Cyrillic name stops
+    pdfLaTeX outright -- and either one would make every writeup in the
+    workspace fail from the moment of a successful `cite_paper`, with no move
+    left from inside the session.
+    """
+    authors = "".join(
+        f"<author><name>Author {n}</name></author>" for n in range(2_000)
+    )
+    session.papers.client = arxiv.ArxivClient(
+        session.papers.library,
+        transport=lambda url, timeout: FEED.replace(
+            b"<author><name>Grigori Perelman</name></author>",
+            (authors + "<author><name>Григорий</name></author>").encode(),
+        ),
+        clock=lambda: 1_000_000.0,
+        sleep=lambda seconds: None,
+    )
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    key = json.loads(
+        session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"}).output
+    )["cite_key"]
+    generated = (session.workspace / "tex" / "references.tex").read_text(encoding="utf-8")
+    assert generated.isascii()
+    assert max(len(line) for line in generated.splitlines()) <= 96
+    result = session._tool(
+        "check_latex",
+        {
+            "source": "\\documentclass{article}\n\\begin{document}\n"
+            f"As shown in \\cite{{{key}}}.\n\\input{{references}}\n\\end{{document}}\n"
+        },
+    )
+    assert result.ok, result.output
+
+
 def test_a_hand_written_bibliography_is_refused_at_the_save(session) -> None:
     r"""The claim is about what a reader sees, not about `bibliography.json`.
 

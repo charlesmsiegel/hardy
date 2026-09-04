@@ -568,7 +568,9 @@ containing the whole of Hardy in a container or VM until isolation is restored
 A problem's bibliography lives beside its record in `bibliography.json`, and the
 `\bibitem` list LaTeX reads is generated from it into `tex/references.tex` on
 every citation — regenerated whole, so a hand edit there is undone by the next
-`cite_paper` rather than merged. Put `\input{references}` in the writeup once
+`cite_paper` rather than merged. It is generated to compile: escaped, folded to
+lines a TeX buffer can hold, and reduced to characters pdfLaTeX can set, because
+it is the one file in the tree a model may not repair. Put `\input{references}` in the writeup once
 and cite by the key `cite_paper` returned. The papers themselves are a cache of
 third-party bytes shared by every problem in the root, kept in `.hardy/papers/`
 and not committed: what travels with a clone is the bibliography, and each entry

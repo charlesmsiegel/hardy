@@ -8,6 +8,7 @@ builds, it just points somewhere else. So the properties are asserted directly
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -348,3 +349,92 @@ def test_a_key_stays_short_enough_for_tex(tmp_path: Path):
     )
     assert other != key
     assert len(other) < 100
+
+
+def test_a_cite_key_is_never_cut_across_two_lines(tmp_path: Path):
+    r"""The one string the document `\cite`s has to be findable in the file."""
+    bibliography = Bibliography(tmp_path)
+    entry, _ = bibliography.cite(_record(authors=("A" * 300,), title="B" * 300))
+    generated = (tmp_path / "tex" / "references.tex").read_text(encoding="utf-8")
+    assert f"\\bibitem{{{entry.key}}}\n" in generated
+
+
+def test_a_generated_entry_is_folded_to_lines_tex_can_read(tmp_path: Path):
+    """arXiv metadata has no bounded length; a TeX input buffer does.
+
+    A paper with three thousand authors renders as one physical line of tens
+    of thousands of characters, and `cite_paper` reports success on a
+    `references.tex` no compiler will read -- in a file the model is
+    forbidden to repair.
+    """
+    bibliography = Bibliography(tmp_path)
+    bibliography.cite(_record(authors=tuple(f"Author {n}" for n in range(3_000))))
+    generated = (tmp_path / "tex" / "references.tex").read_text(encoding="utf-8")
+    assert len(generated) > 30_000
+    assert max(len(line) for line in generated.splitlines()) <= 96
+
+
+def test_folding_a_long_run_reassembles_to_exactly_what_it_was(tmp_path: Path):
+    r"""A line ending is a space to TeX, and `Weier strass` is a wrong name.
+
+    A run with nothing to break at is still cut -- it is the run that
+    overruns the buffer -- so each cut carries the `%` that says this line
+    ending is not a space, and what TeX reads back is the run itself.
+    """
+    bibliography = Bibliography(tmp_path)
+    entry, _ = bibliography.cite(_record(title="W" * 400))
+    lines = (tmp_path / "tex" / "references.tex").read_text(encoding="utf-8").splitlines()
+    body = lines[lines.index("\\begin{thebibliography}{1}") + 2 : -1]
+    # What TeX makes of it: a `%` eats its line ending, any other ending is a
+    # space.
+    read_back = ""
+    for line in body:
+        read_back += line[:-1] if line.endswith("%") else line + " "
+    assert read_back.split() == entry.rendered().split()[1:]
+    assert "W" * 400 in read_back
+
+
+def test_a_line_break_never_falls_among_a_command_s_letters(tmp_path: Path):
+    r"""`\textbackslash` cut in half is an undefined control sequence.
+
+    The `%` that makes a cut invisible cannot help here: it ends the control
+    word early, and the letters after it are read as text.
+    """
+    bibliography = Bibliography(tmp_path)
+    bibliography.cite(_record(title="\\" * 200, authors=("A" * 300,)))
+    lines = (tmp_path / "tex" / "references.tex").read_text(encoding="utf-8").splitlines()
+    for line, following in zip(lines, lines[1:], strict=False):
+        if not line.endswith("%"):
+            continue
+        trailing = re.search(r"\\[a-zA-Z]*$", line[:-1])
+        assert not (trailing and following[:1].isalpha()), (line, following)
+
+
+def test_an_author_pdflatex_cannot_set_does_not_wedge_every_later_compile(
+    tmp_path: Path,
+):
+    """The default interactive compiler stops on a character it has no map for.
+
+    Left verbatim, one `cite_paper` makes every writeup fail to compile, and
+    the generated file is the one file the model may not edit -- so there is
+    no way out of it from inside the session.
+    """
+    bibliography = Bibliography(tmp_path)
+    bibliography.cite(_record(authors=("Григорий",)))
+    generated = (tmp_path / "tex" / "references.tex").read_text(encoding="utf-8")
+    assert generated.isascii(), generated
+    assert "[U+0413]" in generated
+
+
+def test_an_accented_name_keeps_its_letters(tmp_path: Path):
+    r"""A bibliography is read by a person: `Erd\H{o}s` is a name.
+
+    Spelling every accent as a codepoint would be safe and unreadable, and
+    pdfLaTeX sets the accent commands perfectly well.
+    """
+    bibliography = Bibliography(tmp_path)
+    bibliography.cite(_record(authors=("Paul Erdős", "Kurt Gödel", "Lars Hørmander")))
+    generated = (tmp_path / "tex" / "references.tex").read_text(encoding="utf-8")
+    assert "Erd\\H{o}s" in generated
+    assert 'G\\"{o}del' in generated
+    assert "H\\o{}rmander" in generated

@@ -911,7 +911,12 @@ Priority labels are sequencing hints:
   is the same key in every run, in every workspace, whatever order it was cited
   in. `Bibliography.cite` is the only code path that writes it, and it
   regenerates `tex/references.tex` whole from the store, so a hand edit to the
-  generated file is undone rather than merged.
+  generated file is undone rather than merged. Titles and author lists are
+  authors' text arriving from arXiv with nobody to ask to fix them, so the
+  generated file escapes them, folds each entry to physical lines a TeX input
+  buffer can hold — a collaboration author list runs to three thousand names —
+  and reduces what is left to characters pdfLaTeX can set, keeping an accent as
+  an accent and spelling out only what no command reaches.
 - **Now (implemented):** `search_papers`, `fetch_paper`, `read_paper` and
   `cite_paper` on the interactive surface. A citation is possible only for a paper
   `fetch_paper` actually stored: the tool takes an identifier and nothing else, so

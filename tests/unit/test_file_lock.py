@@ -104,3 +104,47 @@ def test_a_break_marker_left_by_a_dead_process_is_cleaned_up(tmp_path: Path):
     with FileLock(path, timeout=1.0, stale_after=60.0) as lock:
         assert lock.held
     assert not marker.exists()
+
+
+def test_a_slow_holder_does_not_delete_the_lock_that_replaced_its_own(tmp_path: Path):
+    """The release has to be of what was taken, not of whatever has the name.
+
+    A holder slower than `stale_after` has its lock broken and a new holder
+    claims a fresh one at the same path. Releasing by name then deletes the
+    new holder's lock -- and the next process claims immediately, which puts
+    two writers inside the section this class exists to keep to one.
+    """
+    path = tmp_path / "x.lock"
+    slow = FileLock(path, stale_after=0.01)
+    slow.__enter__()
+    path.unlink()  # as a breaker that judged it stale would
+    successor = FileLock(path)
+    successor.__enter__()
+    slow.__exit__()
+    assert path.exists(), "the successor's lock was deleted by the lock it replaced"
+    with pytest.raises(LockTimeout):
+        FileLock(path, timeout=0.05).__enter__()
+    successor.__exit__()
+    assert not path.exists()
+
+
+def test_two_locks_at_one_path_are_told_apart_by_more_than_their_inode(
+    tmp_path: Path,
+):
+    """A filesystem hands a freed inode number straight to the next file.
+
+    So a lock that recognised its own by device and inode recognised its
+    successor as itself, which is precisely the case identity is checked for.
+    """
+    path = tmp_path / "x.lock"
+    first = FileLock(path)
+    first.__enter__()
+    before = path.stat().st_ino
+    path.unlink()
+    second = FileLock(path)
+    second.__enter__()
+    if path.stat().st_ino != before:
+        pytest.skip("this filesystem did not reuse the inode; nothing to tell apart")
+    first.__exit__()
+    assert path.exists()
+    second.__exit__()
