@@ -101,3 +101,44 @@ def test_a_bare_flag_is_still_the_standard_ladder_and_no_flag_is_still_off() -> 
     # And the sentinel is never mistaken for a tactic somebody asked for.
     mixed = parser.parse_args(['batch', 'request.json', '--closers', '--closers', 'omega'])
     assert cli._closer_ladder(mixed.closers) == (*closers.CLOSERS, 'omega')
+
+
+def test_an_infinite_wall_clock_is_refused_rather_than_waited_for(tmp_path, monkeypatch) -> None:
+    """`argparse` accepts `inf` as a float, and an infinite `Thread.join`
+    raises `OverflowError` while the daemon provider request carries on in the
+    background -- the run written as a `runtime_error` at once, for a request
+    that may yet finish and be billed for. A bound nothing can wait for is not
+    a bound."""
+    cli = importlib.import_module('hardy.cli')
+    config_module = importlib.import_module('hardy.config')
+    parser = cli.build_parser()
+
+    for value in ('inf', '-inf', 'nan'):
+        # `--wall-seconds=-inf` rather than two arguments: argparse reads a
+        # leading `-` as the start of another flag.
+        args = parser.parse_args([
+            'batch', str(_request(tmp_path, 'theorem T : True')), f'--wall-seconds={value}'
+        ])
+        with pytest.raises(SystemExit):
+            cli._batch(args, _config(config_module, tmp_path), parser)
+
+    # And a finite one still reaches the run, carrying the configured window
+    # with it -- which is the other half of this: a batch aimed at a smaller
+    # gateway used to keep appending messages until the endpoint refused.
+    models = importlib.import_module('hardy.models')
+    seen = {}
+
+    def fake_run(request, *_args, **kwargs):
+        seen.update(kwargs)
+        return models.RunResult(
+            'verified', 'kernel verified', 'not assessed', 'by trivial', '', {'status': 'clean'}, 1,
+            importlib.import_module('hardy.usage').Usage().summary(),
+        )
+
+    monkeypatch.setattr(cli, 'run', fake_run)
+    args = parser.parse_args([
+        'batch', str(_request(tmp_path, 'theorem T : True')), '--wall-seconds', '30'
+    ])
+    cli._batch(args, _config(config_module, tmp_path), parser)
+    assert seen['wall_seconds'] == 30.0
+    assert seen['context_window'] == config_module.DEFAULT_CONTEXT_WINDOW
