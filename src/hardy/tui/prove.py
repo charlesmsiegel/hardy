@@ -44,6 +44,8 @@ class UiTerminal(ConsoleTerminal):
 
     def __init__(self, ui: BlockingUi) -> None:
         self._ui = ui
+        # Set only around the revision prompt. See `revision_text`.
+        self._abandoning_cancels = False
         super().__init__(input_fn=self._read, output=self._write)
 
     def _write(self, text: str) -> None:
@@ -56,7 +58,29 @@ class UiTerminal(ConsoleTerminal):
         # "" rather than None, because every caller of this in the staged
         # workflow calls `.strip()` on it. An Esc at the acknowledgement prompt
         # therefore reads as "not I UNDERSTAND", which is the refusal it means.
-        return self._ui.ask_line(prompt) or ""
+        answer = self._ui.ask_line(prompt)
+        if answer is None and self._abandoning_cancels:
+            raise KeyboardInterrupt
+        return answer or ""
+
+    def revision_text(self) -> str:
+        """The one prompt where an abandoned read is not an empty answer.
+
+        An empty revision is a revision: the workflow loops and opens another
+        billable formalization turn with nothing new to say. On the console
+        this prompt is a bare `input()`, so Ctrl+C in it raises and the run
+        finalizes as a cancellation; swallowing Esc into "" here made the two
+        surfaces disagree about what abandoning the prompt means.
+
+        The wording stays in `ConsoleTerminal`. Every sentence the workflow
+        says has to be the same sentence on both surfaces, so this flags the
+        read rather than asking the question a second time.
+        """
+        self._abandoning_cancels = True
+        try:
+            return super().revision_text()
+        finally:
+            self._abandoning_cancels = False
 
     def choose_approval(self) -> str:
         picked = self._ui.choose(

@@ -29,6 +29,7 @@ Two further rules:
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
@@ -362,6 +363,35 @@ def _output(text: str) -> str:
     )
 
 
+def _arguments(arguments: Any) -> str:
+    """What the model actually asked the tool to do.
+
+    Without it a successful `check_lean` reads as the single word "ok" and a
+    refused `save_lean` shows Lean's diagnostic with no sight of the proof that
+    drew it -- and the source of a REFUSED save is nowhere else on the page,
+    because it was never saved. The whole point of a self-contained account is
+    that the reader can see what was attempted, not only how it went.
+
+    Cut from the head, unlike a result: an argument is what was sent, so it
+    begins where the model began. A cut is stated, as everywhere else here.
+    """
+    if not isinstance(arguments, Mapping) or not arguments:
+        return ""
+    parts = []
+    for key, value in arguments.items():
+        shown = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
+        cut = truncate(str(shown), keep="head", line_limit=OUTPUT_LINES, byte_limit=OUTPUT)
+        parts.append(
+            f'<p class="tool">{_escape(key)}</p>{_block(cut.text)}'
+            + (
+                f'<p class="tool">Showing the beginning of this argument: {_escape(cut.summary)}.</p>'
+                if cut.truncated
+                else ""
+            )
+        )
+    return "".join(parts)
+
+
 def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
     parts = []
     for event in events:
@@ -407,7 +437,8 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
             parts.append(
                 f'<div class="turn"><div class="who">Tool</div>'
                 f'<p class="{style}"><code>{_escape(event.get("name", "?"))}</code>'
-                f" — {'ok' if ok else 'refused'}</p>{_output(str(output))}</div>"
+                f" — {'ok' if ok else 'refused'}</p>"
+                f"{_arguments(event.get('arguments'))}{_output(str(output))}</div>"
             )
         elif kind == "project_context":
             # The user's own instructions, which are part of the system prompt

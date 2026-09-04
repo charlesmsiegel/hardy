@@ -341,3 +341,25 @@ def test_abandon_is_the_instantaneous_half_of_cancel():
     again._thread_in_flight = None
     again.cancel()
     assert again._cancelled.is_set(), "cancel stopped refusing stages"
+
+
+def test_an_abandoned_revision_prompt_cancels_rather_than_revising_with_nothing(ui):
+    """An empty revision is a revision: the workflow loops and opens another
+    billable formalization turn with nothing new to say. On the console this
+    prompt is a bare `input()`, so Ctrl+C in it raises and the run finalizes as
+    a cancellation; the two surfaces have to agree about abandoning it."""
+    import pytest as _pytest
+
+    with _pytest.raises(KeyboardInterrupt):
+        UiTerminal(ui.from_thread).revision_text()
+
+
+def test_a_typed_revision_is_still_a_revision(ui):
+    ui.lines = ["Use an explicit Nat domain."]
+    assert UiTerminal(ui.from_thread).revision_text() == "Use an explicit Nat domain."
+
+
+def test_abandoning_the_acknowledgement_still_refuses_rather_than_raising(ui):
+    """Only the revision prompt is flagged: a refused acknowledgement and a
+    cancelled run are different facts, and the manifest records them so."""
+    assert UiTerminal(ui.from_thread).acknowledge_unsafe_execution() is False
