@@ -1113,6 +1113,44 @@ since every consumer string-concatenates them straight into real Lean source
 a process elaborates, and a newline would let a crafted entry smuggle a
 second Lean command onto the line it lands on.
 
+The corpus is a standalone dataset (`corpus/LICENSE`, CC BY 4.0) and is
+maintained by its own commands, none of which need a model, a network, or a
+toolchain. `hardy evals corpus check [--corpus] [--since <CHANGELOG.md>]
+[--since-registry <tombstones.json>]` prints every mechanical objection to
+stderr and exits 1 if there is one: a shard whose name disagrees with the
+primary code derived from it, an unknown MSC2020 code, an arXiv override with
+no reason, a twin whose primary code differs from its target's, an active
+entry with no current faithful review, a cited source absent from
+`sources.json`, a version that does not match the changelog head, or a
+manifest digest the head does not bind. The two `--since` options anchor the
+check to a merge base rather than to the working tree, which is how CI runs
+it: `--since` refuses a release whose corpus content changed without the
+version going up, and `--since-registry` refuses a tombstone registry that
+dropped or rewrote an id it had already issued. Both are *gathered* — a
+malformed previous registry is reported as an objection, not raised, since
+aborting would suppress the very finding the option exists to make.
+`hardy evals corpus report [--corpus]` prints coverage by reporting group,
+status, and difficulty. `hardy evals corpus release --version <x.y.z> --note
+<line>` stamps every shard with the new version and writes the changelog
+section that binds the manifest digest of the tree it stamped, refusing a
+version that does not follow the current head, then re-runs the check.
+
+`hardy evals corpus serve [--corpus] [--host] [--port]`
+(`src/hardy/evals/viewer.py`, `viewer.html`) is the authoring view of that
+corpus: a local page listing every entry with its statement rendered by
+KaTeX, its MSC codes resolved to names, its arXiv class, its provenance, its
+A6 witness, and its review, filterable by reporting group, status, difficulty
+and expected verdict, with `corpus check`'s objections across the top. It
+holds no state: both routes (`/` and `/api/corpus`) re-read the corpus from
+disk on every request and the taxonomy caches are dropped first, so an entry
+or an MSC code added in an editor appears on the next refresh without a
+restart; everything else 404s. The page derives nothing — the server hands it
+each entry already classified, so the page and `corpus check` can never
+disagree about what an entry is. The three KaTeX files it loads from a CDN
+carry subresource-integrity digests, and its content-security policy allows
+connections only to the server itself, since the tree behind `--corpus` may
+be unpublished work.
+
 `hardy evals baseline [--problems] [--out] --acknowledge-unsafe-execution`
 (`src/hardy/evals/sweep.py`) refuses (exit 2, printing `runner.WARNING`) to
 sweep an unacknowledged problem file, the same unsafe-execution contract

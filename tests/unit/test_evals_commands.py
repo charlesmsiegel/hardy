@@ -193,3 +193,43 @@ def test_baseline_reports_a_toolchain_that_cannot_be_identified_instead_of_a_tra
     assert code == 2
     assert "Refused: the Lean toolchain could not be identified" in capsys.readouterr().err
     assert not out.exists()
+
+
+def _corpus_check(corpus, **kw):
+    args = argparse.Namespace(evals_command="corpus", corpus_verb="check", corpus=corpus,
+                              since=None, since_registry=None)
+    for key, value in kw.items():
+        setattr(args, key, value)
+    return args
+
+
+def test_a_malformed_previous_registry_is_reported_rather_than_raised(tmp_path, capsys):
+    """CI always passes `--since-registry`, so this path runs on every push.
+
+    A registry the check cannot parse is the exact state the option exists to
+    catch. Letting it raise would abort before a single objection was printed
+    -- the check would fail loudest by saying nothing.
+    """
+    corpus = _corpus(tmp_path)
+    prior = tmp_path / "prior.json"
+    prior.write_text('{"issued": ["not", "a", "mapping"]}', encoding="utf-8")
+    assert commands.main(_corpus_check(corpus, since_registry=prior), config=None) == 1
+    err = capsys.readouterr().err
+    assert "tombstones.json" in err and "mapping" in err
+
+
+def test_an_unreadable_previous_registry_is_reported_rather_than_raised(tmp_path, capsys):
+    corpus = _corpus(tmp_path)
+    prior = tmp_path / "prior.json"
+    prior.write_text("{ not json", encoding="utf-8")
+    assert commands.main(_corpus_check(corpus, since_registry=prior), config=None) == 1
+    assert "tombstones.json" in capsys.readouterr().err
+
+
+def test_a_registry_that_issued_nothing_yet_leaves_the_check_clean(tmp_path, capsys):
+    """The guard must not turn every first-release run into a false objection."""
+    corpus = _corpus(tmp_path)
+    prior = tmp_path / "prior.json"
+    prior.write_text('{"issued": {}}', encoding="utf-8")
+    assert commands.main(_corpus_check(corpus, since_registry=prior), config=None) == 0
+    assert capsys.readouterr().err == ""

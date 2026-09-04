@@ -365,6 +365,15 @@ feedback, timings, token usage, identities, and terminal status. Evaluation uses
 fixed benchmark statements, strict anti-cheat checks, immutable provenance, and
 contemporaneous comparisons at equal budgets.
 
+Those statements live in a corpus that is a dataset in its own right, released
+under its own licence and version, holding statements only — no tier, no solve
+rate, nothing a measurement produced. Every entry is classified by MSC2020 and
+crosswalked to an arXiv class, because the question worth answering is not
+which model is best but which model is best at *what*: a ranking per field is
+only possible if the field is recorded with the statement rather than inferred
+afterwards. Ids are permanent and retirement is a tombstone, so a figure
+published against one version can still be traced when the corpus has moved on.
+
 ### 9. Installation and configuration
 
 Hardy is only useful when Lean, LaTeX, and a model are all reachable, so getting

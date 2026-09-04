@@ -4,9 +4,29 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hardy corpus</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<!-- The page holds a working corpus, which may be unpublished: `--corpus` can
+     point at any authoring tree. So the three files it fetches from a CDN are
+     pinned by digest, and the policy below denies everything the page does not
+     need -- above all `connect-src 'self'`, so a script that arrived here
+     anyway has nowhere to send `/api/corpus`. -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;
+  style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;
+  font-src https://cdn.jsdelivr.net;
+  img-src 'self' data:;
+  connect-src 'self';
+  base-uri 'none';
+  form-action 'none'">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css"
+      integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV"
+      crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"
+        integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8"
+        crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+        integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05"
+        crossorigin="anonymous"></script>
 <style>
   :root {
     --bg: #fbfbfa; --panel: #fff; --ink: #1a1a19; --dim: #6b6b66; --line: #e3e3df;
@@ -184,7 +204,15 @@ function renderDetail() {
   const id = location.hash.slice(1);
   const e = DATA.entries.find((x) => x.id === id);
   const box = $("detail");
-  if (!e) { box.innerHTML = '<p class="none">Select an entry.</p>'; return; }
+  // The list is redrawn on both paths: it carries the selection highlight, so
+  // it is out of date whenever the detail pane is, and on first load -- no
+  // hash, so no entry -- returning early here left the page showing nothing
+  // at all until something happened to redraw it.
+  if (!e) {
+    box.innerHTML = '<p class="none">Select an entry.</p>';
+    renderList();
+    return;
+  }
 
   const codes = e.msc.map((m) =>
     `<div><code>${esc(m.code)}</code> &nbsp;${esc(m.name)}</div>`).join("");
@@ -192,7 +220,7 @@ function renderDetail() {
     ? e.occurrences.map((o, i) => {
         const src = DATA.sources[o.source_id];
         const cite = src ? esc(src.title || o.source_id) : `<span class="warnline">${esc(o.source_id)} (not in sources.json)</span>`;
-        return `<div>${i === 0 ? "<b>primary</b> · " : ""}${cite} &nbsp;<span class="mono">${o.locator.join(".")}</span></div>`;
+        return `<div>${i === 0 ? "<b>primary</b> · " : ""}${cite} &nbsp;<span class="mono">${esc(o.locator.join("."))}</span></div>`;
       }).join("")
     : `<p class="none">No occurrences. Authored entry — rationale: ${esc(e.rationale) || '<span class="warnline">missing</span>'}</p>`;
   const witness = e.witness

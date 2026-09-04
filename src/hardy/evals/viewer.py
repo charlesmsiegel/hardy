@@ -24,6 +24,7 @@ from typing import Any
 
 from . import taxonomy
 from .corpus import CorpusError, check_issues, corpus_version, load_corpus, load_sources
+from .sweep import witness_source
 
 PAGE = Path(__file__).resolve().parent / "viewer.html"
 
@@ -57,6 +58,7 @@ def _classified(entry: Any, root: Path) -> dict[str, Any]:
         "witness_note": entry.witness_note, "retired_reason": entry.retired_reason,
         "fixtures": list(entry.fixtures),
         "review": entry.review.model_dump(mode="json") if entry.review else None,
+        "unwitnessed": witness_source(entry) is None,
         "statement_digest": entry.statement_digest(),
     }
 
@@ -69,6 +71,9 @@ def payload(root: Path) -> dict[str, Any]:
     says what is wrong.
     """
     generated = datetime.now(UTC).isoformat(timespec="seconds")
+    # The tables are cached per root and this process outlives many edits, so
+    # without this a code added to the taxonomy stays rejected until restart.
+    taxonomy.forget()
     try:
         problems = load_corpus(root)
     except CorpusError as error:
@@ -79,16 +84,27 @@ def payload(root: Path) -> dict[str, Any]:
         "entries": len(entries),
         "twins": sum(1 for e in entries if e["expected"] == "false"),
         "active": sum(1 for e in entries if e["status"] == "active"),
-        "unwitnessed": sum(1 for e in entries if e["witness"] is None),
+        # A6's own rule, not `witness is None`: an entry with no binders has
+        # nothing to existentially close, so `witness_source` returns nothing
+        # and the sweep records it unwitnessed however the field is filled.
+        "unwitnessed": sum(1 for e in entries if e["unwitnessed"]),
         "unsourced": sum(1 for e in entries if not e["occurrences"]),
     }
     try:
         version = corpus_version(root)
     except CorpusError:
         version = None
+    try:
+        sources = load_sources(root)
+        if not isinstance(sources, dict):
+            sources = {}
+    except (OSError, ValueError, KeyError, TypeError):
+        # `check_issues` already recorded it. Raising here would abort the
+        # response, so the page could not show the objection it exists to show.
+        sources = {}
     return {
         "generated_at": generated, "issues": check_issues(root), "entries": entries,
-        "corpus_version": version, "counts": counts, "sources": load_sources(root),
+        "corpus_version": version, "counts": counts, "sources": sources,
     }
 
 

@@ -155,7 +155,8 @@ def test_aggregates_are_counts_and_medians_per_tier():
     assert agg.headline.n == 3 and agg.headline.solved == 2      # tiers 2 and 3 true rows
     assert agg.headline.interval[0] < agg.headline.solve_rate < agg.headline.interval[1]
     assert agg.floor == {"entries": 5, "tier_0": 1, "tier_1": 0, "tier_2": 1, "tier_3": 3,
-                         "single_tactic_closes": 1, "active": 5, "active_unwitnessed": 5}
+                         "single_tactic_closes": 1, "active": 5, "active_unwitnessed": 4}
+    #                                                  `c` is tier 0: below the headline, so not its caveat.
 
 
 def test_medians_over_solved_rows_only_and_unreported_costs_are_counted_not_zeroed():
@@ -571,3 +572,17 @@ def test_the_headline_discloses_how_many_of_its_statements_lack_a_witness():
     }})
     floor = scoreboard.aggregate([], witnessed, active_ids={"a", "b"}).floor
     assert floor["active"] == 2 and floor["active_unwitnessed"] == 1
+
+
+def test_the_disclosure_counts_only_statements_the_headline_can_reach():
+    """The caveat qualifies the headline, and the headline is tiers 2 and 3.
+
+    A tier-0 or tier-1 entry never enters that number, so counting it here
+    would inflate a warning about a figure it says nothing about -- and the
+    warning would be loudest exactly where the corpus is most automatable.
+    """
+    baseline = _baseline({"low": 0, "searcher": 1, "chain": 2, "open": 3})
+    active = {"low", "searcher", "chain", "open"}
+    floor = scoreboard.aggregate([], baseline, active_ids=active).floor
+    assert floor["active"] == 4, "every active entry is still counted as active"
+    assert floor["active_unwitnessed"] == 2, "only the two the headline measures"
