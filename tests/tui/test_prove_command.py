@@ -406,8 +406,10 @@ async def test_ctrl_c_reaches_an_inline_plain_run(settings, monkeypatch):
     monkeypatch.setattr(prove, "run", run)
     ui = PlainUi(lambda line: None, lambda prompt: "")
 
-    with pytest.raises(KeyboardInterrupt):
-        await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+    # It does not escape: the press is meant to stop the command, not the
+    # session. What it must do is raise INTO the synchronous run, which is what
+    # the unreached line below records.
+    await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
 
     assert refused == [], "the press did not interrupt the synchronous run"
 
@@ -452,3 +454,31 @@ async def test_a_second_press_kills_what_the_first_only_asked(ui, settings, monk
     # The second press escalates rather than abandoning a second time: the run
     # is already refusing stages, and what is left is the child that will not.
     assert recorder.abandoned == 1
+
+
+async def test_a_press_before_the_workflow_exists_does_not_end_the_session(
+    settings, monkeypatch
+):
+    """`_pressing` raises into the plain-mode run, and the workflow handles it
+    once there IS one. Before `ready` publishes a workflow -- Lean and Tectonic
+    still being identified -- there is nothing to finalize, and
+    `KeyboardInterrupt` is not an `Exception`, so it went on to end the whole
+    session: a press meant to stop one command took the conversation with it."""
+    from hardy.tui import prove
+    from hardy.tui.plain import PlainUi
+
+    said: list[str] = []
+    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        raise KeyboardInterrupt          # the press, while the build is going
+
+    monkeypatch.setattr(prove, "run", run)
+    ui = PlainUi(said.append, lambda prompt: "")
+
+    state = await handlers.handle_prove(
+        ui, "a claim", State(config=settings, session=None)
+    )
+
+    assert state is not None, "the handler let the interrupt end the session"
+    assert any("cancelled before it started" in line for line in said)

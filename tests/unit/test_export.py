@@ -701,3 +701,29 @@ def test_a_destination_that_is_not_an_ordinary_file_is_refused(tmp_path):
         export.write(material(), destination)
 
     assert destination.is_fifo(), "the fifo was destroyed anyway"
+
+
+def test_a_quoted_credential_with_an_escaped_quote_is_redacted_whole():
+    """The value ended at the escaped quote, so the redaction replaced the
+    prefix and left the rest of the credential standing."""
+    cleaned = export.redact('{"api_key": "he\\"re"}')
+    assert "he" not in cleaned.replace("[REDACTED]", "")
+    assert cleaned == '{"api_key": [REDACTED]}'
+
+
+def test_a_report_carries_the_statement_it_was_about():
+    """The Results section shows the statement the tree has now, so a source
+    edited afterwards makes the old call look like it reported that."""
+    page = build(transcript=[
+        {
+            "type": "report",
+            "theorems": ["sylow"],
+            "statements": {"sylow": "theorem sylow : True"},
+            "assumptions": ["big"],
+            "status": "modulo",
+            "open": [],
+        },
+    ])
+    assert "theorem sylow : True" in page
+    assert "resting on big" in page
+    assert "as it was at the time of the report" in page

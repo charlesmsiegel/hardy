@@ -132,7 +132,11 @@ SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
             # Nor the scheme word the rule above deliberately kept, which is
             # followed by its own redaction and is not itself a secret.
             r"(?!(?:basic|bearer|digest|negotiate|token|apikey)\s)"
-            r"(\"[^\"]*\"|'[^']*'|\S+)"
+            # Escapes consumed whole, as the authorization rule above does:
+            # `{"api_key": "he\\"re"}` ended the value at the escaped quote,
+            # so the redaction replaced the prefix and left the rest of the
+            # credential standing in the page.
+            r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\S+)"
         ),
         r"\1\2[REDACTED]",
     ),
@@ -508,6 +512,32 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
                 '<p class="fail">The provider conversation was discarded here '
                 f"({_escape(event.get('reason', 'reset'))}); nothing above this point "
                 "was in the model's context afterwards.</p>"
+            )
+        elif kind == "report":
+            # What was reported, as it stood when it was reported. The Results
+            # section shows the statement the tree has NOW, and a source edited
+            # afterwards makes the old call appear to be about a statement it
+            # never saw -- so the snapshot travels with the call rather than
+            # being reconstructed from a tree that has moved since.
+            named = ", ".join(str(name) for name in event.get("theorems", ()) or ())
+            rested = ", ".join(str(name) for name in event.get("assumptions", ()) or ())
+            statements = event.get("statements")
+            body = (
+                "\n\n".join(
+                    f"{name}\n{text}" for name, text in sorted(dict(statements).items())
+                )
+                if isinstance(statements, Mapping) and statements
+                else ""
+            )
+            parts.append(
+                '<div class="turn"><div class="who">Reported</div>'
+                f'<p class="tool">{_escape(named or "nothing")} — reported as '
+                f'{_escape(event.get("status", "?"))}'
+                + (f", resting on {_escape(rested)}" if rested else "")
+                + ". This is the statement as it was at the time of the report."
+                "</p>"
+                + (_block(body) if body else "")
+                + "</div>"
             )
         elif kind == "assumption_prompt":
             # What the human was actually shown before approving an axiom.

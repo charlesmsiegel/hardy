@@ -673,6 +673,17 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
         # Same stop, so the two keys cannot diverge.
         stop()
         raise
+    except KeyboardInterrupt:
+        # `_pressing` raises this into the plain-mode run, and the workflow
+        # handles it once there IS a workflow: before `ready` publishes one --
+        # while Lean and Tectonic are still being identified -- there is
+        # nothing to finalize and it lands here instead. `KeyboardInterrupt` is
+        # not an `Exception`, so the clause below does not see it and it went
+        # on to end the whole session: a press meant to stop one command took
+        # the conversation with it, and left no manifest saying why.
+        stop()
+        ui.write("The staged run was cancelled before it started.", style="warning")
+        return state
     except Exception as error:  # noqa: BLE001 - a failed run is not a lost session
         ui.write(f"The staged run could not finish: {error}", style="error")
         return state
