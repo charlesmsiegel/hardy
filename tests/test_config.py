@@ -618,3 +618,35 @@ def test_a_committed_project_config_may_not_switch_the_context_off(tmp_path: Pat
     (tmp_path / layout.HARDY_DIR).mkdir()
     write(tmp_path / layout.HARDY_DIR / "config.toml", "project_context = false\n")
     assert config.load(tmp_path / "missing.toml").project_context is True
+
+
+def test_the_context_window_defaults_to_the_planners_own_figure(tmp_path: Path, monkeypatch):
+    """One number, in one place. A default that drifted from the constant the
+    compactor plans against would cut sessions to a window nothing used."""
+    from hardy import compaction
+
+    monkeypatch.chdir(tmp_path)
+    assert config.load(tmp_path / "missing.toml").context_window == compaction.CONTEXT_WINDOW
+
+
+def test_the_context_window_can_be_stated_for_the_endpoint_in_use(tmp_path: Path, monkeypatch):
+    """The window is a property of the endpoint, not of Hardy: a gateway
+    answering `claude-opus-5` may offer a smaller one than Anthropic does, and
+    a user who knows that needs somewhere to say so."""
+    path = write(tmp_path / "config.toml", "context_window = 32000\n")
+    assert config.load(path).context_window == 32000
+
+    monkeypatch.setenv("HARDY_CONTEXT_WINDOW", "16000")
+    assert config.load(path).context_window == 16000
+
+
+def test_a_context_window_that_could_hold_nothing_is_refused(tmp_path: Path):
+    """A compactor told to plan against it would cut every conversation to
+    nothing and still overflow, so it is a typo rather than a preference."""
+    path = write(tmp_path / "config.toml", "context_window = 0\n")
+    with pytest.raises(ValueError, match="context_window must be a positive"):
+        config.load(path)
+
+    text = write(tmp_path / "text.toml", 'context_window = "large"\n')
+    with pytest.raises(ValueError, match="context_window must be a number"):
+        config.load(text)

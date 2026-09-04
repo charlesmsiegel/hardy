@@ -934,6 +934,16 @@ def _attempt_issues(attempts: list[Any], events: list[dict[str, Any]]) -> list[s
         result = event.get("result")
         if not isinstance(result, dict) or result.get("ok") is not attempt.get("ok"):
             issues.append(f"closer attempt {index + 1} disagrees with how its submission came out")
+        # And in Lean's words, not only in its verdict. `ok` alone left the
+        # diagnostic free: the `output` of a failed attempt could be rewritten
+        # in the block and in its duplicated event together while the
+        # `submit_proof` that produced it kept the real one, so a record could
+        # say a tactic failed for a reason Lean never gave. The attempt's
+        # `output` is that submission's `output` -- the ladder returns the
+        # dispatch's own result text -- so they are compared as the one string
+        # they are.
+        elif result.get("output") != attempt.get("output"):
+            issues.append(f"closer attempt {index + 1} reports output its submission did not produce")
     return issues
 
 
