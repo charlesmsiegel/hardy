@@ -482,8 +482,12 @@ Priority labels are sequencing hints:
   process-death recovery, timeouts, and proof-state snapshot/pickling. Deferred
   until the measurement above says the recovered share is worth the machinery;
   see issue #54.
-- **Later:** hybrid cheap closers such as `simp`, `omega`, `aesop`, `exact?`, and
-  `duper` before spending model tokens.
+- **Now (implemented) — hybrid cheap closers:** `simp`, `omega`, `aesop`,
+  `exact?` and their neighbours are tried before a model turn is spent. See
+  "cheap Lean closers" under **Agent runtime and context** for the ladder, what
+  it costs, and why it is off unless asked for. `duper` is not in the default
+  ladder: it is not in Mathlib, so a machine without it would spend an
+  elaboration to discover as much on every run.
 
 ## Agent runtime and context
 
@@ -546,7 +550,14 @@ Priority labels are sequencing hints:
   become the client's own timeout, and the deadline is re-checked after every
   call — and a provider error is reported as the failed turn it was, counted
   against the bound and recorded with `is_error` rather than as a successful
-  exchange that happened to report nothing. A tool that raises is answered
+  exchange that happened to report nothing. The transport's own timeout is
+  translated into the one the harness reads, so a request that ran out of the
+  wall clock Hardy handed it is graded `wall_clock_limit` rather than
+  `runtime_error` — the SDK raises `APITimeoutError`, which is not a
+  `TimeoutError`, and the two vocabularies meet in one place. The client itself
+  is built on the first call that needs one, so a run whose cheap closers close
+  the statement never needs a key at all: nothing that never happens should be
+  able to fail after Lean has already accepted a proof. A tool that raises is answered
   rather than propagated: an unanswered `tool_use` is not a bad turn but a dead
   conversation, since every later request built from it is one the API refuses.
   The wall clock is read again before *each* call of a batch, not once for the

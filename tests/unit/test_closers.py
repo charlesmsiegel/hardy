@@ -267,3 +267,27 @@ def test_a_closer_whose_proof_lands_after_the_deadline_closes_nothing(tmp_path: 
     assert result.terminal_reason != "verified"
     assert trajectory["closers"]["closed_by"] is None
     assert not any(event.get("type") == "declined_turn" for event in trajectory["events"])
+
+
+def test_a_run_the_ladder_finishes_never_needs_the_providers_credentials(
+    tmp_path: Path, proof_request: Request, lean: LeanTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lean has already accepted the proof by the time the runtime is built.
+    Building the API client there turned a missing key into a crash, with none
+    of the artifacts the run had earned. The runtime is still constructed --
+    the record names the backend a run was configured for even when it spoke
+    to nobody -- but nothing that never happens may fail."""
+    from hardy.api_runtime import ApiRuntime
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    def make(model=None, **context):
+        return ApiRuntime(model or "claude-test", **context)
+
+    result = run(proof_request, make, lean, tmp_path, closers=("exact True.intro",))
+
+    assert result.terminal_reason == "verified"
+    assert (tmp_path / "proof.lean").exists()
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text(encoding="utf-8"))
+    # And the record still says which backend this run was configured for.
+    assert trajectory["backend"] == "anthropic-api"
