@@ -739,6 +739,10 @@ class MathematicsSession:
         self._shared_observed: dict[str, Any] = {"shadowed": {}, "unbuildable": []}
         self._shared_failures: tuple[str, ...] = ()
         self._make_runtime = make_runtime
+        # The system prompt the current runtime was built with. Set by
+        # `_build`; empty only in the window before the first one exists, which
+        # nothing that reads it can reach.
+        self._system_prompt = ""
         # What a compaction is trying to fit inside. A default rather than a
         # measurement: no transport here will count a conversation before it is
         # sent, so a caller that knows its model's real window is the one that
@@ -849,9 +853,16 @@ class MathematicsSession:
         prompt = SYSTEM_PROMPT
         if self.cas is not None:
             prompt += "\n\n" + chat_cas_prompt(self.cas.session.backend.name)
+        # Kept, because the runtime is handed it once and keeps it for the
+        # life of the conversation. `_request_overhead` used to rebuild it from
+        # the state as it stands now, so a goal shortened mid-session made the
+        # estimate describe a prompt nobody was sending -- undercounting the
+        # long one the runtime still holds, and letting `plan` conclude that a
+        # request the provider then refuses needed no compaction.
+        self._system_prompt = prompt + self._context()
         runtime = self._make_runtime(
             model=model,
-            system_prompt=prompt + self._context(),
+            system_prompt=self._system_prompt,
             specs=CHAT_TOOLS + (CAS_TOOLS if self.cas is not None else []),
             dispatch=self._dispatch,
             cwd=self.workspace,
@@ -3120,11 +3131,12 @@ class MathematicsSession:
         could be told no compaction was needed for a request the provider then
         refuses.
         """
-        prompt = SYSTEM_PROMPT
-        if self.cas is not None:
-            prompt += "\n\n" + chat_cas_prompt(self.cas.session.backend.name)
         specs = CHAT_TOOLS + (CAS_TOOLS if self.cas is not None else [])
-        return compaction.overhead(prompt + self._context(), specs)
+        # The prompt the runtime was actually built with, not the one the
+        # current state would produce. They differ the moment anything in
+        # `_context()` changes -- a goal, an assumption, a registered name --
+        # and the provider charges for the one it was sent.
+        return compaction.overhead(self._system_prompt, specs)
 
     def obligations(self) -> tuple[completion.Obligation, ...]:
         """What the workspace owes, for the human rather than the model.

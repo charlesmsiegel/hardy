@@ -83,6 +83,11 @@ class Message:
     call_id: str = ""
     name: str = ""
     ok: bool | None = None
+    #: What the provider sent that only the provider understands, carried so a
+    #: transport can send it back. Opaque here on purpose: the loop neither
+    #: reads it nor records it, and `as_dict` leaves it out because a
+    #: transcript is a human-facing record of what was said.
+    reasoning: tuple[Any, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         value: dict[str, Any] = {"role": self.role, "text": self.text}
@@ -103,6 +108,13 @@ class ProviderTurn:
     text: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     thinking: bool = False
+    #: The provider's own reasoning blocks, verbatim and opaque. Kept because
+    #: a transport may be required to hand them back unchanged on the next
+    #: request of the same exchange -- Anthropic's extended thinking is, on a
+    #: tool continuation -- and a boolean cannot be handed back. Never
+    #: transcribed and never shown: `thinking` above is what the record and the
+    #: terminal get, which is that it happened.
+    reasoning: tuple[Any, ...] = ()
     #: The provider's token report, verbatim, or None when it stated nothing.
     #: Never `{}`: a spend meter that cannot tell silence from zero is worse
     #: than one that says nothing.
@@ -367,9 +379,17 @@ class AgentLoop:
                 spoken.append(turn.text)
                 self._observe({"type": "assistant", "message": {"role": "assistant", "content": turn.text}})
                 yield TurnEvent("text", text=turn.text)
-            self.messages.append(Message("assistant", text=turn.text, tool_calls=turn.tool_calls))
+            self.messages.append(Message(
+                "assistant", text=turn.text, tool_calls=turn.tool_calls, reasoning=turn.reasoning
+            ))
+            # Said before the tools run, not only when there are none. A reply
+            # that ended on `max_tokens` *with* a tool call in it is the case
+            # where the disclosure matters most and was the case that lost it:
+            # the calls dispatch, the exchange carries on, and nothing in the
+            # trajectory says the model was cut off partway through deciding
+            # what to ask for.
+            yield from self._settle(turn)
             if not turn.tool_calls:
-                yield from self._settle(turn)
                 return
             yield from self._call_tools(turn.tool_calls, budget)
 
@@ -444,6 +464,23 @@ class AgentLoop:
         """
         for call in calls:
             self._observe({"type": "tool_use", "name": call.name, "input": call.arguments})
+            # Answered before the event is offered, never after. A consumer
+            # that stops iterating here -- closes the generator, breaks out of
+            # the loop, dies -- suspends this function at the `yield` forever,
+            # and the `finally` that would run then cannot append anything
+            # because a closed generator may not yield. The conversation would
+            # keep the assistant's `tool_use` with nothing answering it, and
+            # every later request built from it is one the API refuses.
+            self.messages.append(
+                Message(
+                    "tool_result",
+                    text="the turn was abandoned before this tool call was made",
+                    call_id=call.id,
+                    name=call.name,
+                    ok=False,
+                )
+            )
+            placeholder = len(self.messages) - 1
             yield TurnEvent("tool_use", name=call.name, call_id=call.id)
             if self._cancelled:
                 # The model asked and Hardy declined; the provider still needs
@@ -466,7 +503,7 @@ class AgentLoop:
                     # is also what the model needs to see.
                     result = ToolResult(False, f"the tool failed: {type(error).__name__}: {error}")
                     self._observe({"type": "tool_error", "name": call.name, "error": f"{type(error).__name__}: {error}"})
-            self.messages.append(
+            self.messages[placeholder] = (
                 Message("tool_result", text=result.output, call_id=call.id, name=call.name, ok=result.ok)
             )
             yield TurnEvent("tool_result", name=call.name, ok=result.ok, call_id=call.id)

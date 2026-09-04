@@ -391,7 +391,13 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     # to be flattened to 0, which reads as a measurement: a real 5-second run
     # recorded `"turns": 0` beside a trajectory holding the tool call the model
     # had already made.
-    turns = getattr(runtime, "turns", None)
+    # A run where nobody was asked has a count, and it is zero. `None` means
+    # "nobody said", which is the honest answer only when a provider was asked
+    # and did not report -- and a never-built loop reports nothing whether it
+    # ran or not, so reading the runtime here turned a measurement Hardy made
+    # into an unknown. The ledger already recorded it as zero exchanges; this
+    # is the same fact in the field a turn-based comparison reads.
+    turns = getattr(runtime, "turns", None) if asked else 0
 
     # Hardy sent one exchange. A provider that never reported on it -- which is
     # what a run the wall clock cut short looks like, since the report rides on

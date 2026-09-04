@@ -907,6 +907,17 @@ def _sketch_issues(
     expected = [item.model_dump(mode="json") for item in LeanTools.holes(str(sketch.get("proof", "")))]
     if sketch.get("holes") != expected:
         issues.append("the kept sketch's holes are not the ones its own skeleton contains")
+    # And the shape before anything renders it. `sketch_section` indexes
+    # `proof` and reads `keyword` and `line` off every hole, so a truncated or
+    # hand-edited record -- `holes` a string, or a list of strings, or `proof`
+    # missing entirely -- took the audit down with a `TypeError` or a
+    # `KeyError` two comparisons later. "This artifact is invalid" is the
+    # finding; a crash is the one answer a validator may not give. Returned on
+    # rather than carried past, because every check below this point either
+    # renders the sketch or compares something already known to be wrong.
+    if not _renderable(sketch):
+        issues.append("the kept sketch is not shaped like one: it cannot be rendered or compared")
+        return issues
     if not accepted:
         issues.append("a sketch is recorded that no accepted sketch_proof produced")
     else:
@@ -947,6 +958,20 @@ def _sketch_issues(
         # result would most usefully conceal its remaining work.
         issues.append("writeup.md's sketch section is not the one the record implies")
     return issues
+
+
+def _renderable(sketch: dict[str, Any]) -> bool:
+    """Whether a recorded sketch is shaped like one.
+
+    Asked before anything renders it. `runner.sketch_section` is required
+    verbatim by the writeup check, and it indexes `proof` and reads `keyword`
+    and `line` off every hole -- so a malformed record has to become a finding
+    here rather than an exception out of the audit.
+    """
+    holes = sketch.get("holes")
+    return isinstance(sketch.get("proof"), str) and isinstance(holes, list) and all(
+        isinstance(item, dict) and "keyword" in item and "line" in item for item in holes
+    )
 
 
 def _toolchain_issues(toolchain: Any, where: str) -> list[str]:
@@ -1077,7 +1102,30 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     if "turns" not in result:
         issues.append("result states no turn count (absent is not null)")
     limits = trajectory.get("limits") or {}
-    if (
+    # A run that asked no provider anything -- the ladder closed the statement,
+    # or it used the whole budget first -- has a turn count, and it is zero.
+    # The runner says which of the two happened in an event of its own, and
+    # neither can be true of a run that reached a provider: an exchange that
+    # happened leaves a `result` event whatever it reported. Both are required,
+    # so a `declined_turn` from a mid-exchange decline on a loop Hardy owns --
+    # where turns really were spent -- does not reach this.
+    recorded_events = trajectory.get("events") or []
+    unasked = not any(event.get("type") == "result" for event in recorded_events) and any(
+        (
+            event.get("type") == "limit"
+            and event.get("limit") == "wall_seconds"
+            and "no model turn was spent" in str(event.get("detail", ""))
+        )
+        or (
+            event.get("type") == "declined_turn"
+            and "before a model turn was spent" in str(event.get("why", ""))
+        )
+        for event in recorded_events
+    )
+    if unasked:
+        if result.get("turns") != 0:
+            issues.append("a run that asked no provider anything reports a turn count other than zero")
+    elif (
         "turns" in result
         and reason == "wall_clock_limit"
         and result["turns"] is not None
