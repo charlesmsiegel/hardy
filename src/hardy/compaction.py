@@ -202,6 +202,23 @@ def _name(item: Mapping[str, Any]) -> str:
     return f"`{item.get('formal_name')}` = {item.get('latex_name')} — {item.get('description')}"
 
 
+def estimate_text(text: str) -> int:
+    """About how large one piece of text is, by `CHARACTERS_PER_TOKEN`."""
+    return int(len(text) / CHARACTERS_PER_TOKEN)
+
+
+def overhead(system_prompt: str, specs: Sequence[Mapping[str, Any]]) -> int:
+    """What every request carries before a single message is added.
+
+    The system prompt and the tool schemas are charged against the same window
+    the conversation is, and a plan that counted only messages could decide a
+    request fits while the provider refuses it -- most easily on a workspace
+    with a 50 KB `AGENTS.md` in its prompt, which is exactly the case Hardy
+    supports.
+    """
+    return estimate_text(system_prompt) + sum(estimate_text(repr(spec)) for spec in specs)
+
+
 def estimate_tokens(messages: Sequence[Message]) -> int:
     """About how large this conversation is, by `CHARACTERS_PER_TOKEN`.
 
@@ -224,7 +241,8 @@ class Plan:
     needed: bool
     cut: int = 0
     before: int = 0
-    #: What the compacted request will cost: the summary plus the kept tail.
+    #: What the compacted request will cost: the static overhead, the summary,
+    #: and the kept tail -- everything the provider will be sent.
     #: It can still exceed the window when the summary alone does -- a
     #: workspace can genuinely have more standing assumptions than fit -- and
     #: the entry recorded in `transcript.jsonl` says so rather than a
@@ -260,6 +278,7 @@ def plan(
     reserve_tokens: int,
     keep_tokens: int,
     summary_tokens: int = 0,
+    overhead_tokens: int = 0,
 ) -> Plan:
     """Decide whether this conversation needs compacting, and where to cut.
 
@@ -278,11 +297,17 @@ def plan(
     caller renders the summary first and says what it costs; `after` is the
     whole of what will be sent.
 
+    `overhead_tokens` is what the request carries whatever the conversation
+    holds -- the system prompt and the tool schemas -- which the provider
+    charges against the same window. Counted here rather than assumed away: a
+    workspace whose `AGENTS.md` is in the prompt can spend a substantial part
+    of the window before the first message.
+
     A cut of 0 means nothing above the tail could be dropped legally, and the
     plan says it is not needed rather than performing a compaction that
     summarises nothing and keeps everything.
     """
-    before = estimate_tokens(messages)
+    before = overhead_tokens + estimate_tokens(messages)
     available = max(context_window - reserve_tokens, 0)
     if before <= available:
         return Plan(False, before=before, after=before, available=available)
@@ -290,7 +315,7 @@ def plan(
     # than the summary leaves. Asking to keep twenty thousand tokens of tail
     # inside a budget of five is not a smaller context, it is the same
     # overflow with a summary bolted on top.
-    budget = min(keep_tokens, max(available - summary_tokens, 0))
+    budget = min(keep_tokens, max(available - summary_tokens - overhead_tokens, 0))
     keep = 0
     running = 0
     for message in reversed(messages):
@@ -308,7 +333,7 @@ def plan(
         True,
         cut=cut,
         before=before,
-        after=summary_tokens + estimate_tokens(messages[cut:]),
+        after=overhead_tokens + summary_tokens + estimate_tokens(messages[cut:]),
         available=available,
     )
 
