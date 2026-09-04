@@ -643,3 +643,35 @@ def test_an_escaped_backslash_does_not_open_a_verbatim_region():
     )
     assert refusal
     assert "writes its own bibliography" in refusal
+
+
+def test_a_macro_body_cannot_open_a_verbatim_region():
+    r"""A definition that merely stores an opener does not open anything.
+
+    `\newcommand{\x}{\begin{verbatim}}` runs nothing until `\x` is expanded,
+    but the scan is stateful -- so meeting one put it into verbatim mode and
+    suppressed every line until a closer, which a commented `\end{verbatim}`
+    supplies quite happily. A real `thebibliography` in between was never
+    inspected.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "\\newcommand{\\x}{\\begin{verbatim}}\n"
+        "\\begin{thebibliography}{1}\n\\bibitem{known2020} Fake.\n"
+        "\\end{thebibliography}\n% \\end{verbatim}\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal
+
+
+def test_a_bibitem_written_into_a_macro_body_is_still_caught():
+    r"""Only the delimiters are defused; the body is still read.
+
+    A `\bibitem` in a macro body is one this check means to catch -- the same
+    reason `\csname` is refused by rule rather than chased through expansion.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex", "\\newcommand{\\y}{\\bibitem{z2020} Nobody.}\n\\y\n"
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal

@@ -191,66 +191,100 @@ def _drop_iffalse(text: str) -> str:
     return "".join(out)
 
 
-def _drop_macro_bodies(text: str) -> str:
-    r"""`text` with the body argument of every `\newcommand`, `\renewcommand`,
-    `\providecommand` and `\def` removed.
+def _macro_bodies(text: str) -> list[tuple[int, int]]:
+    r"""The span of every `\newcommand`/`\renewcommand`/`\providecommand`/`\def`
+    body in `text`, as `(start, end)` over its braces.
 
-    An `\input` written only inside a macro's own body runs when the macro
-    is *expanded*, and nothing here expands macros -- reading it as reached
-    the moment it is merely defined is the same mistake as reading one
-    inside `\iffalse ... \fi` as reached because the branch text is merely
-    present. The name argument (`{\foo}`, or a bare `\foo` for `\def`) and
-    any `[n]`/`[default]` argument-count brackets are kept, since none of
-    those can themselves contain an `\input`; only the balanced `{...}`
-    body that follows is dropped, whole.
+    One walk, two questions. What is inside a macro body is not executed until
+    the macro is expanded, and nothing here expands macros -- so the body is
+    dropped for the reachability walk, and it is stopped from opening a
+    verbatim region for the bibliography scan. Those want different treatment
+    of the same span, which is why this returns the spans rather than the
+    edited text.
+
+    The name argument (`{\foo}`, or a bare `\foo` for `\def`) and any
+    `[n]`/`[default]` brackets are not part of the body; only the balanced
+    `{...}` that follows is.
     """
-    out = []
+    spans: list[tuple[int, int]] = []
     index = 0
     length = len(text)
     while index < length:
         keyword = _MACRO_DEF.search(text, index)
         if keyword is None:
-            out.append(text[index:])
             break
-        out.append(text[index:keyword.end()])
         pos = keyword.end()
         while pos < length and text[pos].isspace():
             pos += 1
         if pos < length and text[pos] == "{":
-            # `\newcommand{\foo}...`: the braced name, not the body.
-            end = _skip_balanced(text, pos, "{", "}")
-            out.append(text[pos:end])
-            pos = end
+            pos = _skip_balanced(text, pos, "{", "}")
         elif pos < length and text[pos] == "\\":
-            # `\newcommand\foo...` or `\def\foo...`: a bare control sequence,
-            # either a run of letters or one non-letter control symbol.
             start = pos
             pos += 1
             while pos < length and text[pos].isalpha():
                 pos += 1
             if pos == start + 1 and pos < length:
                 pos += 1
-            out.append(text[start:pos])
         while pos < length and text[pos].isspace():
             pos += 1
         while pos < length and text[pos] == "[":
-            # `\newcommand`'s optional arg-count and default-value brackets.
-            end = _skip_balanced(text, pos, "[", "]")
-            out.append(text[pos:end])
-            pos = end
+            pos = _skip_balanced(text, pos, "[", "]")
             while pos < length and text[pos].isspace():
                 pos += 1
-        # `\def`'s parameter text (`#1#2`, delimiters) is neither a name nor
-        # a bracket; it never contains an `\input`, so it is kept verbatim
-        # rather than parsed, up to the body's opening brace.
-        start = pos
+        # `\def`'s parameter text (`#1#2`, delimiters) is neither a name nor a
+        # bracket, so it is skipped over rather than parsed.
         while pos < length and text[pos] != "{":
             pos += 1
-        out.append(text[start:pos])
         if pos < length and text[pos] == "{":
-            pos = _skip_balanced(text, pos, "{", "}")
-        index = pos
-    return "".join(out)
+            body = _skip_balanced(text, pos, "{", "}")
+            spans.append((pos, body))
+            pos = body
+        index = max(pos, keyword.end())
+    return spans
+
+
+def _drop_macro_bodies(text: str) -> str:
+    r"""`text` with the body of every macro definition removed.
+
+    An `\input` written only inside a macro's own body runs when the macro is
+    *expanded*, and nothing here expands macros -- reading it as reached the
+    moment it is merely defined is the same mistake as reading one inside
+    `\iffalse ... \fi` as reached because the branch text is merely present.
+    """
+    kept = []
+    last = 0
+    for opening, closing in _macro_bodies(text):
+        kept.append(text[last:opening])
+        last = closing
+    kept.append(text[last:])
+    return "".join(kept)
+
+
+def _defused(text: str) -> str:
+    r"""`text` with verbatim delimiters inside macro bodies made inert.
+
+    A definition that merely *stores* an opener -- `\newcommand{\x}{\begin
+    {verbatim}}` -- does not open anything: TeX runs nothing until `\x` is
+    expanded. The scan is stateful, though, so meeting one put it into
+    verbatim mode and every following line was suppressed until a closer,
+    which a commented `\end{verbatim}` supplies quite happily. A real
+    `thebibliography` in between was then never inspected.
+
+    Only the delimiters go. The rest of the body is left exactly where it is,
+    because a `\bibitem` written into a macro body is still a `\bibitem` this
+    check means to catch -- the same reason `\csname` is refused by rule
+    rather than chased through expansion.
+    """
+    spans = _macro_bodies(text)
+    if not spans:
+        return text
+    characters = list(text)
+    for opening, closing in spans:
+        body = text[opening:closing]
+        for found in VERBATIM_DELIMITER.finditer(body):
+            for offset in range(opening + found.start(), opening + found.end()):
+                characters[offset] = " "
+    return "".join(characters)
 
 
 VERBATIM_ENVIRONMENT = re.compile(
@@ -260,6 +294,12 @@ VERBATIM_ENVIRONMENT = re.compile(
 #: letter, a star or a space -- `%` very much included, which is the whole
 #: reason this is matched during the comment scan rather than after it.
 INLINE_VERBATIM = re.compile(r"\\verb\*?(?P<mark>[^*\sa-zA-Z])")
+#: Either end of a verbatim environment, for `_defused` to blank inside a
+#: macro body -- the closer as well as the opener, so a definition storing one
+#: cannot end a region either.
+VERBATIM_DELIMITER = re.compile(
+    r"\\(?:begin|end)\s*\{(?:verbatim\*?|Verbatim|lstlisting|minted)\}"
+)
 
 
 def _executed_line(line: str) -> tuple[str, str | None, str]:
@@ -335,7 +375,7 @@ def typeset(source: str) -> str:
     """
     kept: list[str] = []
     closing: str | None = None
-    for raw in source.splitlines():
+    for raw in _defused(source).splitlines():
         line = raw
         if closing is not None:
             _, marker, rest = line.partition(closing)
