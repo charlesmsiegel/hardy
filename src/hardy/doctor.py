@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -97,6 +98,39 @@ def _toolchain_pin_check(config: Config) -> Check:
     if drift:
         return Check("toolchain pin", False, "; ".join(drift) + " (results record what actually ran)", required=False)
     return Check("toolchain pin", True, f"{LEAN_TOOLCHAIN} with Mathlib {MATHLIB_REVISION}", required=False)
+
+
+def _backend_checks(backend: str) -> list[Check]:
+    """What the *configured* transport needs, and nothing else.
+
+    Asked of the setting rather than assumed. Reporting a correctly configured
+    API-only machine as unusable is the obvious failure; the quieter one runs
+    the other way, and is worse -- a machine with no key at all would be called
+    ready because the checks it passed were for a backend it is not using.
+    """
+    if backend == "api":
+        return _api_checks()
+    return _subscription_checks()
+
+
+def _api_checks() -> list[Check]:
+    """The API backend: an SDK and a key, both of them here rather than in a CLI."""
+    checks = []
+    try:
+        import anthropic
+    except ImportError:
+        checks.append(Check("anthropic sdk", False, "not installed; pip install 'hardy-prover[api]'"))
+    else:
+        checks.append(Check("anthropic sdk", True, f"anthropic {getattr(anthropic, '__version__', 'unknown')}"))
+    # Whether one is set, never what it is. A doctor report is pasted into
+    # issues, and a key printed there is a key that has been disclosed.
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    checks.append(Check(
+        "anthropic key",
+        bool(key),
+        "ANTHROPIC_API_KEY is set" if key else "ANTHROPIC_API_KEY is unset; the api backend cannot start without it",
+    ))
+    return checks
 
 
 def _subscription_checks() -> list[Check]:
@@ -200,7 +234,8 @@ def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
 
     checks.append(_cas_check(config))
     checks.append(Check("model", bool(config.model), config.model or "unset; set model in the config file or HARDY_MODEL"))
-    checks.extend(_subscription_checks())
+    checks.append(Check("backend", True, config.backend, required=False))
+    checks.extend(_backend_checks(config.backend))
 
     if deep:
         checks.append(_mathlib_check(config))

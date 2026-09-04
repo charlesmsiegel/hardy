@@ -103,12 +103,25 @@ class ProviderTurn:
 
 
 class Provider(Protocol):
-    """One model call. Everything else about a turn belongs to the loop."""
+    """One model call. Everything else about a turn belongs to the loop.
+
+    `timeout` is the wall clock the loop has left, in seconds, or None when it
+    is unbounded. A transport that can bound its request must, because the
+    loop's own deadline check happens between calls and a request that hangs
+    happens inside one -- which is precisely the case the wall clock exists
+    for. The loop re-checks the deadline afterwards either way; the timeout is
+    what keeps a stalled request from making that check arbitrarily late.
+    """
 
     model: str
 
     def complete(
-        self, *, system: str, messages: Sequence[Message], specs: Sequence[dict[str, Any]]
+        self,
+        *,
+        system: str,
+        messages: Sequence[Message],
+        specs: Sequence[dict[str, Any]],
+        timeout: float | None = None,
     ) -> ProviderTurn: ...
 
 
@@ -200,6 +213,12 @@ class AgentLoop:
         #: per-exchange report climbing past its predecessor would be counted
         #: as the difference and undercount every exchange after the first.
         self._totals: dict[str, int] = {}
+        #: Whether *this* exchange reported any counter, so a report can tell
+        #: silence from a repeat of the running total.
+        self._counted = False
+        #: What ended this exchange badly, if anything. Read by `_report`,
+        #: which runs from a `finally` and cannot otherwise tell.
+        self._failure: str | None = None
         self._cancelled = False
 
     def attach_compactor(
@@ -229,6 +248,7 @@ class AgentLoop:
         sequenced the turn, not on whichever thread first iterates it.
         """
         self._cancelled = False
+        self._counted, self._failure = False, None
         self.turns = None
         self.messages.append(Message("user", text=text))
         budget = Budget(self.max_turns, self.wall_seconds)
@@ -273,11 +293,35 @@ class AgentLoop:
                 compacted = self._compact(self.messages)
                 if compacted is not None:
                     self.messages = compacted
-            turn = self._provider.complete(
-                system=self._system_prompt, messages=list(self.messages), specs=self._specs
-            )
+            # Counted before the call, not after. A request that raised was
+            # still a provider call: it may have been billed for, it consumed
+            # a turn of the bound, and a trajectory that showed zero turns
+            # beside a provider error would be describing a run that never
+            # happened.
             budget.spent += 1
+            try:
+                turn = self._provider.complete(
+                    system=self._system_prompt,
+                    messages=list(self.messages),
+                    specs=self._specs,
+                    timeout=budget.remaining_seconds(),
+                )
+            except BaseException as error:  # noqa: BLE001 - re-raised, recorded on the way past
+                # Recorded here because `_report` runs from a `finally` and
+                # would otherwise emit `is_error: false` for an exchange that
+                # ended on an authentication failure, a rate limit, or a
+                # dropped connection.
+                self._failure = f"{type(error).__name__}: {error}"
+                raise
             self._fold(turn.usage)
+            # The deadline is checked between calls, and this call happened
+            # *inside* one. Without this a request that overran the budget and
+            # came back with no tool calls would return normally, and the run
+            # would be recorded as having finished rather than as having run
+            # out of time.
+            if budget.expired():
+                self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds})
+                raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget")
             if turn.thinking:
                 self._observe({"type": "thinking"})
                 yield TurnEvent("thinking")
@@ -312,6 +356,7 @@ class AgentLoop:
         for key, value in usage.items():
             if isinstance(value, int) and not isinstance(value, bool):
                 self._totals[str(key)] = self._totals.get(str(key), 0) + value
+                self._counted = True
 
     def _report(self, budget: Budget) -> None:
         self._observe({
@@ -322,8 +367,14 @@ class AgentLoop:
             # from a token count and a published rate would be Hardy's
             # arithmetic wearing the provider's authority.
             "cost_usd": None,
-            "usage": dict(self._totals) if self._totals else None,
-            "is_error": False,
+            # The running total, but only when this exchange contributed to
+            # it. An exchange that reported nothing -- one that ended on a
+            # provider error before any answer arrived -- would otherwise hand
+            # back the previous exchange's cumulative figures as though it had
+            # stated them itself.
+            "usage": dict(self._totals) if self._counted else None,
+            "is_error": self._failure is not None,
+            **({"error": self._failure} if self._failure else {}),
             # Who kept the bounds this exchange ran under. Recorded beside the
             # numbers because the whole point of owning the loop is that the
             # limits a trajectory states are the limits that applied.

@@ -76,7 +76,7 @@ class Outcome:
 #: What the trajectory says when nobody asked for the ladder. Explicit rather
 #: than absent: a missing key reads as a harness that has no closers, and this
 #: one has them and was told not to use them.
-DISABLED: dict[str, Any] = {"enabled": False, "tactics": [], "attempts": [], "closed_by": None}
+DISABLED: dict[str, Any] = {"enabled": False, "tactics": [], "attempts": [], "closed_by": None, "seconds": 0.0}
 
 
 def close(

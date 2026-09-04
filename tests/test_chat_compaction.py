@@ -168,3 +168,53 @@ def test_the_summary_survives_a_workspace_lean_cannot_order(tmp_path: Path) -> N
     rendered = chat.compaction_summary()
 
     assert "## Goal" in rendered
+
+
+def test_switching_model_keeps_a_conversation_the_backend_carries(tmp_path: Path) -> None:
+    # A backend with no provider thread carries the conversation itself, so
+    # the switch has to hand it over -- otherwise the same act would mean two
+    # different things depending on the transport.
+    class Carrying(FakeChatRuntime):
+        def __init__(self, script, **context):
+            super().__init__(script, **context)
+            self.conversation: list[Message] = []
+
+        def adopt_conversation(self, messages):
+            self.conversation = list(messages)
+
+    chat = session(tmp_path, Carrying([]))
+    chat.runtime.conversation = [Message("user", text="earlier"), Message("assistant", text="answer")]
+
+    chat.switch_model("another-model@test")
+
+    assert [item.text for item in chat.runtime.conversation] == ["earlier", "answer"]
+
+
+def test_switching_model_on_a_thread_carrying_backend_is_unchanged(tmp_path: Path) -> None:
+    chat = session(tmp_path, FakeChatRuntime([]))
+
+    chat.switch_model("another-model@test")
+
+    assert chat.runtime.model == "another-model@test"
+
+
+def test_the_summary_is_counted_against_the_window_it_will_be_sent_in(tmp_path: Path) -> None:
+    # `compacted()` prepends the summary, so a plan that counted only the tail
+    # could report an `after` smaller than the request it actually built.
+    chat = session(tmp_path, FakeChatRuntime([]))
+    chat.set_goal("Show that True is true.")
+    chat.context_window = 60_000
+    messages = [
+        Message("user", text="x" * 100_000),
+        Message("assistant", text="y" * 100_000),
+        Message("assistant", text="the recent part"),
+    ]
+
+    rebuilt = chat.compact(messages)
+
+    assert rebuilt is not None
+    entry = [item for item in events(tmp_path) if item.get("type") == "compaction"][-1]
+    counted = entry["estimated_tokens"]["after"]
+    actual = compaction.estimate_tokens(rebuilt)
+    assert counted == actual
+    assert entry["estimated_tokens"]["fits"] is True

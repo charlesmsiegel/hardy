@@ -713,6 +713,9 @@ BATCH_FAILURES = frozenset({"no_proof_submitted", "axioms_rejected", "turn_limit
 # which is a different fact from the model giving up or the gate refusing.
 REFUSALS = frozenset({"no_proof_submitted", "axioms_rejected"})
 # The tool names that count as "the model looked something up", per surface.
+#: The heading `runner.run` writes a kept sketch under. Named once, because
+#: the audit and the writer must mean the same section.
+SKETCH_HEADING = "## Sketch (not a proof)"
 BATCH_SEARCH = frozenset({"search_declaration"})
 STAGED_SEARCH = frozenset({"lean_search_declarations", "lean_inspect_declarations", "rank_premises"})
 
@@ -782,6 +785,136 @@ def refusal_issues(output_dir: Path) -> tuple[str, ...]:
             # the finding this audit exists to make, not a lenient case.
             issues.append(f"a {name} Lean accepted carried no hole")
     return tuple(issues)
+
+
+def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]]) -> list[str]:
+    """Re-derive the closer ladder from the events, and refuse a block that differs.
+
+    The `closers` block exists to say which experimental condition a run was:
+    a result a tactic ladder reached and a result a model reached are not the
+    same thing, and a scoreboard reads that field. A field nothing cross-checks
+    is a field a record can simply assert, so it is checked against the event
+    the runner wrote when the ladder actually ran.
+
+    Absent means a record from before the field existed. Those are kept runs
+    from paid experiments; the cross-check that cannot be made on them is
+    skipped rather than faked, and every run that carries the block is checked
+    in full.
+    """
+    ladder = trajectory.get("closers")
+    if ladder is None:
+        return []
+    if not isinstance(ladder, dict):
+        return ["trajectory closers is not an object"]
+    issues: list[str] = []
+    recorded = [event for event in events if event.get("type") == "closers"]
+    attempts = ladder.get("attempts")
+    if not isinstance(attempts, list):
+        return ["trajectory closers states no attempts list"]
+    enabled, closed_by = ladder.get("enabled"), ladder.get("closed_by")
+    if enabled is False:
+        # Nothing ran, so nothing may be recorded as having run.
+        if recorded:
+            issues.append("closers are recorded as disabled beside a closers event")
+        if attempts or ladder.get("tactics") or closed_by is not None:
+            issues.append("closers are recorded as disabled beside a ladder that ran")
+        return issues
+    if enabled is not True:
+        return [f"trajectory closers state an unreadable enabled flag: {enabled!r}"]
+    if len(recorded) != 1:
+        issues.append(f"an enabled ladder recorded {len(recorded)} closers events, not one")
+    elif {key: recorded[0].get(key) for key in ladder} != ladder:
+        issues.append("the closers block differs from the event the runner recorded")
+    tried = [item.get("tactic") for item in attempts if isinstance(item, dict)]
+    if len(tried) != len(attempts):
+        issues.append("a closer attempt is not an object with a tactic")
+    elif ladder.get("tactics") != tried:
+        issues.append("the closers block lists tactics its attempts do not account for")
+    if closed_by is not None:
+        if not any(item.get("tactic") == closed_by and item.get("ok") is True for item in attempts if isinstance(item, dict)):
+            issues.append(f"closers claim `{closed_by}` closed the statement with no attempt saying so")
+        # And the proof went in by the ordinary door, or it is not a proof.
+        submitted = [
+            event for event in events
+            if event.get("type") == "tool"
+            and event.get("name") == "submit_proof"
+            and str((event.get("arguments") or {}).get("proof", "")) == f"by {closed_by}"
+        ]
+        if not submitted:
+            issues.append(f"closers claim `{closed_by}` closed the statement with no matching submit_proof")
+    elif any(item.get("ok") is True for item in attempts if isinstance(item, dict)):
+        issues.append("a closer attempt was accepted but the block names no tactic that closed it")
+    # The claim that no model was needed is the one the field exists to make,
+    # so it is the one worth checking against the rest of the record.
+    declined = [event for event in events if event.get("type") == "declined_turn"]
+    if declined:
+        if closed_by is None:
+            issues.append("a turn was declined for a ladder that closed nothing")
+        if any(event.get("type") == "result" for event in events):
+            issues.append("a run that declined its model turn records a provider exchange")
+    return issues
+
+
+def _sketch_issues(
+    result: dict[str, Any],
+    trajectory: dict[str, Any],
+    events: list[dict[str, Any]],
+    writeup: str,
+    reason: Any,
+) -> list[str]:
+    """The kept sketch, in all three places it appears, or in none of them.
+
+    A partial result is valid only when its remaining holes are explicit, so
+    the three representations -- `result.json`, `trajectory.json`, and the
+    `writeup.md` section a human reads -- have to agree with each other and
+    with the `sketch_proof` event that produced them. Otherwise a recorded run
+    could have its holes edited out of whichever copy a reader opens.
+
+    Absent from both records means a run from before sketches existed.
+    """
+    if "sketch" not in trajectory and "sketch" not in result:
+        return []
+    issues: list[str] = []
+    if result.get("sketch") != trajectory.get("sketch"):
+        issues.append("the kept sketch differs between result.json and trajectory.json")
+    sketch = result.get("sketch")
+    accepted = [
+        event for event in events
+        if event.get("type") == "tool"
+        and event.get("name") == "sketch_proof"
+        and isinstance(event.get("result"), dict)
+        and event["result"].get("ok") is True
+    ]
+    carried = SKETCH_HEADING in writeup
+    if reason == "verified":
+        # A verified run has the proof to show. A skeleton recorded beside it
+        # invites a reader to weigh the two against each other.
+        if sketch is not None:
+            issues.append("a verified run records a sketch beside its proof")
+        if carried:
+            issues.append("a verified run's writeup carries a sketch section")
+        return issues
+    if sketch is None:
+        if accepted:
+            issues.append("the run accepted a sketch that no record carries")
+        if carried:
+            issues.append("writeup.md carries a sketch the record does not")
+        return issues
+    if not isinstance(sketch, dict):
+        return [*issues, "the kept sketch is not an object"]
+    if not accepted:
+        issues.append("a sketch is recorded that no accepted sketch_proof produced")
+    else:
+        last = accepted[-1]
+        if str((last.get("arguments") or {}).get("proof", "")) != str(sketch.get("proof", "")):
+            issues.append("the kept sketch is not the last skeleton Lean accepted")
+        if last["result"].get("holes") != sketch.get("holes"):
+            issues.append("the kept sketch's holes are not the ones Lean reported")
+    if not carried:
+        issues.append("writeup.md does not carry the sketch the record kept")
+    elif str(sketch.get("proof", "")) not in writeup:
+        issues.append("writeup.md's sketch section is not the skeleton the record kept")
+    return issues
 
 
 def _toolchain_issues(toolchain: Any, where: str) -> list[str]:
@@ -922,6 +1055,8 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     if not trajectory.get("model") or not trajectory.get("backend"):
         issues.append("trajectory does not name the model and backend that ran")
     events = trajectory.get("events") or []
+    issues.extend(_closer_issues(trajectory, events))
+    issues.extend(_sketch_issues(result, trajectory, events, writeup, reason))
 
     if reason == "verified":
         issues.extend(_verified_batch_issues(result, events, name, declaration, request, proof_path, writeup))
@@ -932,8 +1067,13 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
         # happened; a record relabelled after the fact has no such event.
         errors = [str(event.get("error", "")) for event in events if event.get("type") == "error"]
         limits_hit = [event.get("limit") for event in events if event.get("type") == "limit"]
-        if reason == "wall_clock_limit" and not any(text.startswith("TimeoutError") for text in errors):
-            issues.append("a wall_clock_limit run records no TimeoutError event")
+        if reason == "wall_clock_limit" and not any(text.startswith("TimeoutError") for text in errors) and "wall_seconds" not in limits_hit:
+            # Either the exchange timed out, which raises, or the closers used
+            # the budget before a model turn was spent, which does not raise
+            # and records the limit as its own event. Both are the wall clock
+            # ending the run; requiring the exception would have made the
+            # second look like a relabelled record.
+            issues.append("a wall_clock_limit run records no TimeoutError event or wall_seconds limit")
         if reason == "turn_limit" and "max_turns" not in limits_hit:
             issues.append("a turn_limit run records no max_turns limit event")
         if reason == "runtime_error" and not any(not text.startswith("TimeoutError") for text in errors):

@@ -177,15 +177,29 @@ class AnthropicProvider:
         return f"messages api ({base})" if base else "messages api"
 
     def complete(
-        self, *, system: str, messages: Sequence[Message], specs: Sequence[dict[str, Any]]
+        self,
+        *,
+        system: str,
+        messages: Sequence[Message],
+        specs: Sequence[dict[str, Any]],
+        timeout: float | None = None,
     ) -> ProviderTurn:
-        reply = self._client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=system,
-            messages=as_messages(messages),
-            tools=tool_schema(specs),
-        )
+        request: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "system": system,
+            "messages": as_messages(messages),
+            "tools": tool_schema(specs),
+        }
+        # The loop's remaining wall clock, handed to the client as its own
+        # request timeout. Without it a stalled request runs until the SDK's
+        # unrelated default gives up, and the loop's deadline -- which is
+        # checked between calls -- is not reached until then. Not passed at all
+        # when the loop is unbounded, so the client keeps its own default
+        # rather than being given `None` as an instruction to wait forever.
+        if timeout is not None:
+            request["timeout"] = max(timeout, 0.0)
+        reply = self._client.messages.create(**request)
         text: list[str] = []
         calls: list[ToolCall] = []
         thinking = False
@@ -303,6 +317,19 @@ class ApiRuntime:
 
     def cancel(self) -> None:
         self._loop.cancel()
+
+    def adopt_conversation(self, messages: Sequence[Message]) -> None:
+        """Continue somebody else's conversation on this runtime.
+
+        `/model` builds a replacement runtime rather than mutating the one in
+        flight, and on this transport the conversation is the runtime's own
+        list rather than a thread the provider resumes -- so without this the
+        switch would silently discard every turn the session had taken. The
+        SDK backends carry their thread id across the same switch; this is the
+        equivalent, and offered as a capability for the same reason
+        `attach_compactor` is.
+        """
+        self._loop.messages = list(messages)
 
     def attach_compactor(
         self, compact: Callable[[list[Message]], list[Message] | None]

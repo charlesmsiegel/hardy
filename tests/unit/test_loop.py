@@ -27,14 +27,21 @@ class ScriptedProvider:
     def __init__(self, script: list[ProviderTurn]) -> None:
         self.script = list(script)
         self.seen: list[list[Message]] = []
+        self.timeouts: list[float | None] = []
         self.calls = 0
 
-    def complete(self, *, system, messages, specs) -> ProviderTurn:
+    def complete(self, *, system, messages, specs, timeout=None) -> ProviderTurn:
         self.calls += 1
         self.seen.append(list(messages))
+        self.timeouts.append(timeout)
         if not self.script:
             return ProviderTurn(text="nothing left to say")
-        return self.script.pop(0)
+        step = self.script.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        if callable(step):
+            return step()
+        return step
 
 
 def _loop(script, dispatch=None, **kwargs) -> tuple[AgentLoop, ScriptedProvider, list]:
@@ -270,3 +277,69 @@ def test_a_cut_that_already_lands_legally_is_left_alone() -> None:
 def test_asking_to_keep_everything_keeps_everything() -> None:
     assert first_legal_cut(_conversation(), 99) == 0
     assert first_legal_cut(_conversation(), 4) == 0
+
+
+# -- the deadline, across a provider call rather than only between them ------
+
+
+def test_the_provider_is_handed_the_wall_clock_it_has_left() -> None:
+    loop, provider, _ = _loop([ProviderTurn(text="done")], wall_seconds=30)
+
+    _drain(loop, "prove it")
+
+    assert provider.timeouts[0] is not None
+    assert 0 < provider.timeouts[0] <= 30
+
+
+def test_an_unbounded_loop_hands_the_provider_no_deadline() -> None:
+    loop, provider, _ = _loop([ProviderTurn(text="done")])
+
+    _drain(loop, "prove it")
+
+    assert provider.timeouts == [None]
+
+
+def test_a_call_that_overruns_the_budget_is_a_timeout_not_a_finished_run() -> None:
+    # The deadline is checked between calls, and the overrun happens *inside*
+    # one. Without the check afterwards, a slow reply carrying no tool call
+    # returned normally and the run was recorded as having finished.
+    def slow() -> ProviderTurn:
+        time.sleep(0.15)
+        return ProviderTurn(text="took too long")
+
+    loop, _, observed = _loop([slow], wall_seconds=0.05)
+
+    with pytest.raises(TimeoutError, match="wall-clock budget"):
+        _drain(loop, "prove it")
+
+    assert any(item["type"] == "wall_clock_limit" for item in observed)
+
+
+def test_a_provider_error_is_reported_as_a_failed_turn() -> None:
+    loop, _, observed = _loop([RuntimeError("rate limited")])
+
+    with pytest.raises(RuntimeError, match="rate limited"):
+        _drain(loop, "prove it")
+
+    report = next(item for item in observed if item["type"] == "result")
+    assert report["is_error"] is True
+    assert "rate limited" in report["error"]
+    # The attempt was a provider call: it may have been billed for, and it
+    # spent a turn of the bound.
+    assert report["turns"] == 1
+    assert loop.turns == 1
+
+
+def test_a_failed_exchange_does_not_restate_the_previous_totals() -> None:
+    # The running total is session-to-date, so an exchange that reported
+    # nothing would otherwise hand back its predecessor's figures as though it
+    # had stated them itself.
+    loop, _, observed = _loop([ProviderTurn(text="one", usage={"input_tokens": 10})])
+    _drain(loop, "first")
+    loop._provider.script = [RuntimeError("connection reset")]
+    with pytest.raises(RuntimeError):
+        _drain(loop, "second")
+
+    reports = [item for item in observed if item["type"] == "result"]
+    assert reports[0]["usage"] == {"input_tokens": 10}
+    assert reports[1]["usage"] is None
