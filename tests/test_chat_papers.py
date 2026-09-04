@@ -572,13 +572,55 @@ def test_a_publish_that_fails_partway_through_a_deletion_unstamps_the_writeup(
     stamped = session.state["tex_signature"]
     assert stamped
 
+    filled: list[bool] = []
+
     def _explode(work, output_dir, aux_dir):
+        # The disk fills partway through publishing.
+        filled.append(True)
         raise OSError("no space left on device")
 
+    # ...and stays full, so no state write is available AFTERWARDS either.
+    # Recovery cannot depend on a write taken after the thing it is
+    # recovering from, so the claim has to be gone from disk already by the
+    # time `_publish` is reached.
+    original = session._save_state
+
+    def _save_state() -> None:
+        if filled:
+            raise OSError("no space left on device")
+        original()
+
     monkeypatch.setattr("hardy.latex._publish", _explode)
+    monkeypatch.setattr(session, "_save_state", _save_state)
     with pytest.raises(OSError):
         session._tool("delete_file", {"path": "spare.tex"})
     # The fragment came back...
     assert (tex / "spare.tex").is_file()
-    # ...and the stamp did not, so nothing claims the published PDF is current.
-    assert session.state["tex_signature"] == ""
+    # ...and nothing on disk claims the published PDF is current.
+    assert json.loads((session.workspace / "session.json").read_text())["tex_signature"] == ""
+
+
+def test_a_refused_deletion_leaves_the_writeup_stamped_as_it_was(session) -> None:
+    """Dropping the claim early must not cost a good writeup its currency.
+
+    `check` publishes only once the compile resolves, so a deletion the
+    checker refuses has published nothing and `_restore` puts the tree back
+    byte for byte. The signature stamped before the deletion describes it
+    again, and leaving it cleared would make a refused deletion demand a save
+    that changes nothing.
+    """
+    tex = session.workspace / "tex"
+    tex.mkdir(parents=True, exist_ok=True)
+    (tex / "writeup.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\n\\input{spare}\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    (tex / "spare.tex").write_text("See \\ref{thm:gone}.\n", encoding="utf-8")
+    session._stamp_writeup()
+    stamped = session.state["tex_signature"]
+    assert stamped
+
+    result = session._tool("delete_file", {"path": "spare.tex"})
+    assert not result.ok, result.output
+    assert (tex / "spare.tex").is_file()
+    assert session.state["tex_signature"] == stamped

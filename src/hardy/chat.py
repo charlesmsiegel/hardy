@@ -3996,7 +3996,35 @@ class MathematicsSession:
         compiled_against = self._bibliography_identity()
         guard, name = guard_for(self.tex_root, relative)
         kept = read_text(self.tex_root, relative)
+        # BEFORE the unlink, not after the failure. Everything below can
+        # publish `writeup.pdf`, and clearing the stamp afterwards is itself
+        # a write to `session.json` -- one that can fail for the same reason
+        # the publish did. A disk that filled between the PDF and the
+        # auxiliary file left the old signature on disk beside the new PDF,
+        # and a restart read it back and accepted the mismatch. Recovery
+        # cannot depend on a write taken after the thing it is recovering
+        # from.
+        #
+        # So the claim is dropped while there is still room to drop it, and
+        # put back only on the paths that establish it again. The window is
+        # the other way round now: an interruption anywhere in here leaves
+        # the writeup reading stale, which is what it is.
+        stamped = self.state.get("tex_signature", "")
+        self._unstamp_writeup()
         guard.unlink(name)
+
+        def _restamp() -> None:
+            """Put the claim back, for a path that changed nothing after all.
+
+            A compile the checker refused published nothing -- `check`
+            publishes only once the compile resolves -- and `_restore` has
+            put the tree back byte for byte, so the signature stamped before
+            the deletion describes it again. Without this a refused deletion
+            would leave a perfectly good writeup reading stale, and the only
+            way out is a save that changes nothing.
+            """
+            self.state["tex_signature"] = stamped
+            self._save_state()
 
         def _restore() -> None:
             """Put the fragment back exactly as it was.
@@ -4035,29 +4063,29 @@ class MathematicsSession:
                     vouched=self._vouched_references,
                 )
             except BaseException:
-                _restore()
-                # And the stamp goes with it. `check` publishes `writeup.pdf`
-                # and `writeup.aux` once the compile resolves, and an
-                # exception raised part of the way through that leaves a
-                # PUBLISHED document built without this fragment while
-                # `_restore` puts the fragment back -- so the tree on disk
-                # matches the signature stamped before the deletion again,
-                # and `report_result` would accept a PDF that does not
-                # describe it. A root using `\IfFileExists` compiles happily
-                # either way, which is what makes the mismatch reachable
-                # rather than theoretical.
+                # The stamp is already gone -- dropped before the unlink, for
+                # exactly this. `check` publishes `writeup.pdf` and
+                # `writeup.aux` once the compile resolves, and an exception
+                # raised part of the way through that leaves a PUBLISHED
+                # document built without this fragment while `_restore` puts
+                # the fragment back. The tree would then match the signature
+                # stamped before the deletion again, and `report_result`
+                # would accept a PDF that does not describe it. A root using
+                # `\IfFileExists` compiles happily either way, which is what
+                # makes the mismatch reachable rather than theoretical.
                 #
-                # Clearing the stamp rather than rolling the outputs back:
-                # restoring a PDF is itself a publish that can fail the same
-                # way, and there is nothing to gain from a rollback that
-                # needs a rollback. The writeup reads stale, which is what it
-                # is, and the next compile settles it -- the same direction
-                # `_stamp_writeup` already takes when the bibliography moves
-                # underneath a compile.
-                self._unstamp_writeup()
+                # Clearing rather than rolling the outputs back: restoring a
+                # PDF is itself a publish that can fail the same way, and
+                # there is nothing to gain from a rollback that needs a
+                # rollback. Nothing is written here at all, which is the
+                # point -- a disk with no room left still recovers.
+                _restore()
                 raise
             if not checked.ok:
                 _restore()
+                # Nothing was published and the tree is back as it was, so
+                # the claim dropped above is true again.
+                _restamp()
                 return ToolResult(False, f"the writeup no longer compiles without {path}, so it was kept:\n{checked.output}")
             # This compile is as good as a save's, and the tree it compiled is
             # the tree on disk -- so it is stamped like one. Without this a

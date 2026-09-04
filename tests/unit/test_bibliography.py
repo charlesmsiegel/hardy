@@ -22,6 +22,7 @@ from hardy.bibliography import (
     hand_written_bibliography,
     is_generated,
 )
+from hardy.latex import typeset
 from hardy.storage import FileLock
 
 
@@ -701,3 +702,31 @@ def test_a_bibitem_written_into_a_macro_body_is_still_caught():
     )
     assert refusal
     assert "writes its own bibliography" in refusal
+
+
+def test_a_comment_swallows_its_own_line_ending():
+    r"""TeX discards a comment AND the line ending it sits on.
+
+    So `\begin{thebibliogr%` followed by `aphy}` is one
+    `\begin{thebibliography}` that the compiler runs. The scan stopped at the
+    `%` and rejoined the pieces with a newline, putting a break where TeX has
+    none -- and a bibliography command split across a comment executed while
+    this check saw two innocent fragments and refused nothing. Reusing a
+    vouched key then carries fabricated metadata past the auxiliary check too.
+    """
+    for source in (
+        "\\begin{thebibliogr%hidden\naphy}{9}\n\\bibitem{a} A.\n\\end{thebibliography}\n",
+        "\\bib%hidden\nitem{known2020} Nobody.\n",
+    ):
+        refusal = hand_written_bibliography("writeup.tex", source)
+        assert refusal, source
+        assert "writes its own bibliography" in refusal
+
+
+def test_an_ordinary_comment_still_joins_its_line_to_the_next():
+    r"""The same rule, where it is not hiding anything.
+
+    `Text. % note` then `More text.` is one line to TeX, and this is what
+    says the join is TeX's rule rather than a special case for `\bibitem`.
+    """
+    assert typeset("Text. % note\nMore.\n") == "Text. More."

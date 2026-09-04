@@ -394,11 +394,17 @@ class _MacroState:
                     self.phase = "args" if self.bodies > 0 else "idle"
 
 
-def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str]:
+def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str, bool]:
     r"""One line as TeX reads it, up to any verbatim environment it opens.
 
-    Returns the text TeX would run, the environment opened (or None), and
-    what follows the opener on that line.
+    Returns the text TeX would run, the environment opened (or None), what
+    follows the opener on that line, and whether a comment ended the line.
+
+    That last one is not bookkeeping. TeX discards a comment AND THE LINE
+    ENDING IT SITS ON, so `\begin{thebibliogr%` followed by `aphy}` is one
+    `\begin{thebibliography}` to the compiler. Rejoining the pieces with a
+    newline put a break where TeX has none, and a bibliography command split
+    across a comment executed while this check saw neither half of it.
 
     Comments, `\verb` spans and environment openers are found in ONE
     left-to-right pass, because they are the same decision and each of them
@@ -443,7 +449,7 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str]
                     kept.append(" ")
                     index = opener.end()
                     continue
-                return "".join(kept), opener.group("env"), line[opener.end() :]
+                return "".join(kept), opener.group("env"), line[opener.end() :], False
             definition = _MACRO_DEF.match(line, index)
             if definition is not None:
                 kept.append(definition.group(0))
@@ -464,11 +470,11 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str]
             index += 2
             continue
         if character == "%":
-            break
+            return "".join(kept), None, "", True
         kept.append(character)
         state.step(character)
         index += 1
-    return "".join(kept), None, ""
+    return "".join(kept), None, "", False
 
 
 def typeset(source: str) -> str:
@@ -493,6 +499,11 @@ def typeset(source: str) -> str:
     kept: list[str] = []
     closing: str | None = None
     state = _MacroState()
+    # What goes in front of the next piece. A newline everywhere except after
+    # a line a comment ended, where TeX joins the two halves with nothing at
+    # all: `\bib%` and then `item{key}` is a `\bibitem` it runs and this
+    # scan used to see as two innocent fragments.
+    gap = ""
     for raw in source.splitlines():
         line = raw
         if closing is not None:
@@ -501,9 +512,13 @@ def typeset(source: str) -> str:
                 continue
             line, closing = rest, None
         while True:
-            text, environment, rest = _executed_line(line, state)
+            text, environment, rest, commented = _executed_line(line, state)
+            kept.append(gap)
             kept.append(text)
+            gap = "\n"
             if environment is None:
+                if commented:
+                    gap = ""
                 break
             closer = f"\\end{{{environment}}}"
             _, marker, after = rest.partition(closer)
@@ -511,7 +526,7 @@ def typeset(source: str) -> str:
                 closing = closer
                 break
             line = after
-    return "\n".join(kept)
+    return "".join(kept)
 
 
 def _executed(source: str) -> str:

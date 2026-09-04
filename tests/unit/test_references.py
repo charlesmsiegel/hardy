@@ -189,3 +189,30 @@ def test_the_keys_a_document_cited_are_read_from_the_aux():
     aux = "\\citation{perelman2002}\n\\citation{a,b}\n\\bibcite{perelman2002}{1}\n"
     assert references.citations(aux) == ("perelman2002", "a", "b")
     assert references.bibcites(aux) == ("perelman2002",)
+
+
+def test_the_duplicate_label_summary_is_a_finding_of_its_own():
+    r"""The named warning is not the only place a duplicate label is reported.
+
+    `unwrapped` joins TeX's wrapped output back together so a long label name
+    can be read out of the warning -- but the join is by width, and the width
+    is `max_print_line`. An installation configured with anything but the
+    default 79 wraps at a boundary the join does not know, so `DUPLICATE`
+    matches nothing. LaTeX's own summary is a different sentence from the
+    undefined-reference one, so it fell through that backstop too, and the
+    compile published a PDF whose `\ref`s point at whichever duplicate came
+    last.
+    """
+    found = references.unresolved("LaTeX Warning: There were multiply-defined labels.\n")
+    assert [item.kind for item in found] == ["unnamed"]
+    assert "multiply-defined labels" in found[0].sentence()
+
+
+def test_the_duplicate_summary_does_not_ask_for_another_pass():
+    """A duplicate label is permanent: running again cannot unmake it.
+
+    Which is why it is a constant of its own rather than another branch of
+    `SUMMARY` -- `rerun_requested` reads that one, and a pass that cannot
+    change the verdict is a pass spent on a verdict already in hand.
+    """
+    assert not references.rerun_requested("LaTeX Warning: There were multiply-defined labels.\n")
