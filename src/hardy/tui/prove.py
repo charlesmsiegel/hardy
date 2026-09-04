@@ -97,9 +97,21 @@ class UiTerminal(ConsoleTerminal):
             raise KeyboardInterrupt
         self._abandoning_cancels = True
         try:
-            return super().revision_text()
+            answer = super().revision_text()
         finally:
             self._abandoning_cancels = False
+        # And again on the way out. The check above and the posting of the
+        # prompt are two operations, so an Esc can still land between them: the
+        # outer shell consumes it, and the prompt opens on a run that is
+        # already abandoned. What must not follow is the run acting on the
+        # answer -- a revision restarts the loop and opens another billable
+        # formalization turn. The residual cost is that the user is asked a
+        # question they had already walked away from and has to dismiss it;
+        # closing that would need the stopper to cancel a prompt already posted
+        # to the loop, which is machinery this does not have.
+        if self._abandoned():
+            raise KeyboardInterrupt
+        return answer
 
     def choose_approval(self) -> str:
         picked = self._ui.choose(

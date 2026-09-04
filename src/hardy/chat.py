@@ -4918,39 +4918,61 @@ class MathematicsSession:
         own copy against. An unreadable file is left out rather than taking the
         export down.
         """
-        offered: dict[str, Path] = {}
-        roots: dict[str, Path] = {}
-        for source, _build in self.shared_roots:
-            for name, path in self._modules_under(source):
-                # `setdefault` semantics: the project tree comes first in
-                # `shared_roots` and Lean resolves to the first match, so a name
-                # the personal tree also defines must not overwrite it.
-                if name not in offered:
-                    offered[name] = path
-                    roots[name] = source
-        if not offered:
+        # Resolved the way the COMPILER resolves, not by a second rule
+        # invented here. `_shared_listing` already states the shadowing half --
+        # a name the problem's own tree declares is the problem's module, and
+        # offering the shared one would advertise an import that silently means
+        # something else -- and `_compile_path` states the nesting half: a
+        # shared library sees only the libraries further out than itself, which
+        # is why `shared_roots` is in resolution order. A page that resolved
+        # differently from the build would show source the kernel never saw,
+        # which is the one thing carrying these at all is for.
+        trees = [
+            (index, source, dict(self._modules_under(source)))
+            for index, (source, _build) in enumerate(self.shared_roots)
+        ]
+        if not trees:
             return {}
+        shadowed = set(self.shadowed_modules())
+
+        def resolve(name: str, depth: int) -> tuple[int, Path, Path] | None:
+            """Where an import from a module in tree `depth` actually lands."""
+            if name in shadowed:
+                # The workspace's own module wins, and it is already carried in
+                # `lean`. Following the shared copy here would publish an
+                # unrelated file under the name of one the page already has.
+                return None
+            for index, source, modules in trees:
+                if index < depth:
+                    continue
+                if name in modules:
+                    return index, source, modules[name]
+            return None
+
         mine = self.lean_workspace.sources() if sources is None else sources
         found: dict[str, str] = {}
-        seen: set[str] = set()
-        # One worklist, seeded from the saved sources and extended by each
-        # shared module's own imports: a shared module may import another, and
-        # a page that stopped at the first level would still be missing source
-        # the verdict rests on.
-        pending = [name for text in mine.values() for name in parse_imports(text)]
+        seen: set[tuple[str, int]] = set()
+        # The saved sources import at depth 0: they see every shared tree.
+        pending: list[tuple[str, int]] = [
+            (name, 0) for text in mine.values() for name in parse_imports(text)
+        ]
         while pending:
-            name = pending.pop()
-            if name in seen or name not in offered:
+            name, depth = pending.pop()
+            if (name, depth) in seen:
                 continue
-            seen.add(name)
+            seen.add((name, depth))
+            landed = resolve(name, depth)
+            if landed is None:
+                continue
+            index, source, path = landed
             try:
-                text = read_text(
-                    roots[name], offered[name].relative_to(roots[name]), errors="replace"
-                )
+                text = read_text(source, path.relative_to(source), errors="replace")
             except OSError:
                 continue
             found[name] = text
-            pending.extend(parse_imports(text))
+            # Transitively, and from THIS module's depth: a personal library
+            # importing `B` gets the personal `B`, not the project's.
+            pending.extend((further, index) for further in parse_imports(text))
         return found
 
     def _effective_settings(self) -> dict[str, str]:
@@ -4966,13 +4988,38 @@ class MathematicsSession:
         and not for a machine to compare. The digests that automation compares
         are the toolchain and environment identities beside it.
         """
-        return {
+        settings = {
             "Lean timeout": f"{self.lean.timeout:.0f}s per call",
             "Computer algebra": self.cas_detail
             or ("available" if self.cas is not None else "none: no kernel was configured"),
             "Literature search": self.search_detail
             or ("available" if self.search is not None else "none: no backend was configured"),
         }
+        # Read off the runtimes that ENFORCE them rather than from a config
+        # file read separately: what the page reports is what was actually in
+        # force, and a setting overridden after startup would otherwise be
+        # reported as whatever the file still says. A cell that times out, a
+        # session budget that runs out, and an observation the model saw only a
+        # summary of are three different reasons a computation is missing from
+        # the record -- and a reader comparing two exports needs to be able to
+        # tell a different question from a different budget.
+        limits = getattr(getattr(self.cas, "session", None), "limits", None)
+        if limits is not None:
+            settings["Computer algebra limits"] = (
+                f"{limits.cas_cell_seconds}s per cell, "
+                f"{limits.cas_session_seconds}s per session, "
+                f"{limits.cas_output_bytes} bytes captured"
+            )
+        observation = getattr(self.cas, "observation_bytes", None)
+        if observation is not None:
+            settings["Observed by the model"] = (
+                f"{observation} bytes per tool result; more than that was summarised"
+            )
+        if limits is not None:
+            settings["Literature search budget"] = (
+                f"{limits.retrieval_seconds}s of wall clock across the session"
+            )
+        return settings
 
     def _document_is_hardys(self, document: Path) -> bool:
         """Whether the PDF on disk is the one Hardy's last compile produced.

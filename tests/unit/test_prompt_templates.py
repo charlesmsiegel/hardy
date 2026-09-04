@@ -209,3 +209,31 @@ def test_a_positional_index_too_long_to_convert_is_refused_rather_than_raised(tm
 def test_an_ordinary_two_digit_placeholder_still_works():
     parsed = templates.parse("tenth", "$10 came last")
     assert templates.expand(parsed, " ".join(str(n) for n in range(1, 12))) == "10 came last"
+
+
+def test_a_link_is_refused_by_the_open_itself_not_by_a_check_before_it(tmp_path, monkeypatch):
+    """The pre-check and the read looked at the name separately.
+
+    A process that swaps the file between them -- a checkout landing, a sync
+    client -- got Hardy to follow a link it had just refused, and a template's
+    body is SENT, so the link could name a host credential file. Simulated by
+    making the pre-check lie: with `O_NOFOLLOW` the refusal is atomic with the
+    open, so the link is still refused when nothing before it says so.
+    """
+    from pathlib import Path
+
+    from hardy.prompts import user
+
+    secret = tmp_path / "id_rsa"
+    secret.write_text("PRIVATE KEY MATERIAL\n", encoding="utf-8")
+    prompts = tmp_path / ".hardy" / "prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "notes.md").symlink_to(secret)
+
+    monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+
+    found, problems = user.load(tmp_path)
+
+    assert found == []
+    assert any("symlink" in problem for problem in problems)
+    assert not any("PRIVATE KEY MATERIAL" in str(item) for item in found)

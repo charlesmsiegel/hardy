@@ -626,3 +626,35 @@ def test_the_revision_prompt_refuses_before_it_asks_when_the_run_is_abandoned():
     with pytest.raises(KeyboardInterrupt):
         terminal.revision_text()
     assert len(asked) == 1, "the prompt was posted to a run that had been abandoned"
+
+
+def test_a_revision_answered_after_the_run_was_abandoned_is_not_acted_on():
+    """The check and the posting are two operations, so an Esc can still land
+    between them: the outer shell consumes it and the prompt opens anyway. What
+    must not follow is the run acting on the answer -- a revision restarts the
+    loop and opens another billable formalization turn."""
+    import threading
+
+    import pytest
+
+    from hardy.tui import prove
+
+    flag = threading.Event()
+
+    class Racing:
+        def write(self, line, style=None):
+            pass
+
+        def ask_line(self, prompt):
+            # Standing in for the press landing while the prompt is open.
+            flag.set()
+            return "revise it"
+
+    class Workflow:
+        _cancelled = flag
+
+    terminal = prove.UiTerminal(Racing())
+    terminal.watch(Workflow())
+
+    with pytest.raises(KeyboardInterrupt):
+        terminal.revision_text()

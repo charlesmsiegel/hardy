@@ -25,8 +25,11 @@ Two rules make a shared record readable, and both are the point:
 
 from __future__ import annotations
 
+import errno
+import os
 import re
 import shlex
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -248,24 +251,45 @@ def load(root: Path, *, reserved: frozenset[str] | set[str] = frozenset()) -> tu
             continue
         name = item.stem.lower()
         try:
-            if item.is_symlink():
-                problems.append(
-                    f"{item.name} is a symlink, so it was not loaded. A template's "
-                    "body is sent to the model; Hardy reads one only where it lies."
-                )
-                continue
-            # A regular file and nothing else: a directory named `x.md`, a
-            # fifo, or a device would each get past a bare existence test, and
-            # two of those never finish being read.
-            if not item.is_file():
-                continue
-            if item.stat().st_size > LIMIT:
-                problems.append(
-                    f"{item.name} is larger than {LIMIT} bytes, so it was not loaded. "
-                    "A prompt template is prose."
-                )
-                continue
-            text = item.read_text(encoding="utf-8")
+            # Opened ONCE, with no-follow, and judged through the descriptor
+            # rather than through the path. Checking `is_symlink`, `is_file`
+            # and `stat` and then calling `read_text` looks at the name four
+            # times: a process that swaps the file in between -- a checkout
+            # landing, a sync client -- gets Hardy to follow a link it just
+            # refused, and a template's body is SENT, so the link could name a
+            # host credential file. `O_NOFOLLOW` makes the refusal atomic with
+            # the open, and `fstat` then judges the thing actually opened, so
+            # neither the type nor the size can change under the check.
+            #
+            # `O_NONBLOCK` so a fifo cannot hang the open itself; the type
+            # check below refuses it a moment later either way.
+            try:
+                flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+                descriptor = os.open(item, flags)
+            except OSError as error:
+                if error.errno in (errno.ELOOP, errno.EMLINK):
+                    problems.append(
+                        f"{item.name} is a symlink, so it was not loaded. A template's "
+                        "body is sent to the model; Hardy reads one only where it lies."
+                    )
+                    continue
+                raise
+            with os.fdopen(descriptor, "rb") as handle:
+                stated = os.fstat(handle.fileno())
+                # A regular file and nothing else: a directory named `x.md`, a
+                # fifo, or a device would each get past a bare existence test,
+                # and two of those never finish being read.
+                if not stat.S_ISREG(stated.st_mode):
+                    continue
+                if stated.st_size > LIMIT:
+                    problems.append(
+                        f"{item.name} is larger than {LIMIT} bytes, so it was not loaded. "
+                        "A prompt template is prose."
+                    )
+                    continue
+                # Bounded by the size just measured on this descriptor, so a
+                # file growing under the read cannot exceed the limit either.
+                text = handle.read(LIMIT + 1).decode("utf-8")
         except (OSError, UnicodeDecodeError) as error:
             problems.append(f"Could not read {item.name}: {error}")
             continue
