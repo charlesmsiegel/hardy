@@ -549,11 +549,22 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
         where the loop may already be closing.
         """
         abandoned.set()
-        # The children first and inline: `interrupt_children` only signals, so
+        workflow = running.get("workflow")
+        # The workflow's own flag first, inline: it is an `Event`, so it costs
+        # nothing, and it is what the stage loops read. Deferring it with the
+        # teardown below let the worker pass its next check and open one more
+        # billable stage after the terminal had said the run was stopping --
+        # `abandoned` above is this handler's own flag and answers only for
+        # `ready`, not for a workflow already running.
+        give_up = getattr(workflow, "abandon", None)
+        if give_up is not None:
+            give_up()
+        # The children next, also inline: `interrupt_children` only signals, so
         # it is instantaneous, and it is what reaches the Lean or Tectonic call
         # already out. A call already inside Lean is still left to finish.
         process.interrupt_children()
-        workflow = running.get("workflow")
+        # And only then the part that blocks -- the tool gate and the provider
+        # worker settling, which is minutes for a Lean call.
         cancel = getattr(workflow, "cancel", None)
         if cancel is not None:
             threading.Thread(target=cancel, daemon=True, name="prove-cancel").start()
