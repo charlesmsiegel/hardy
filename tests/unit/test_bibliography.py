@@ -941,3 +941,43 @@ def test_a_blank_string_inside_a_required_tuple_is_not_metadata():
     ):
         with pytest.raises(ValidationError):
             Entry(**{**whole, field: blank})
+
+
+def test_changing_what_a_character_means_is_refused():
+    r"""`\catcode64=0` makes `@bibitem{key}` a `\bibitem`.
+
+    The same problem as `\csname`, from underneath: a command spelled without
+    a backslash is one no pattern over backslashes can see, and one no reader
+    of the source sees either. Refused by rule, because the alternative is a
+    lexical arms race against a language designed to defeat lexical analysis.
+    """
+    for source in ("\\catcode64=0\n@bibitem{known2020} Fake.\n", "\\catcode`\\@=11\n"):
+        refusal = hand_written_bibliography("writeup.tex", source)
+        assert refusal, source
+        assert "what a character means" in refusal
+    # `\makeatletter` moves `@` to a LETTER and creates no escape character.
+    # It is ordinary in real LaTeX, and refusing it would refuse working
+    # documents.
+    assert not hand_written_bibliography(
+        "writeup.tex", "\\makeatletter\n\\def\\foo@bar{x}\n\\makeatother\n"
+    )
+
+
+def test_a_persisted_key_latex_reads_differently_is_refused():
+    r"""`a,b` is one `\bibitem` and two keys inside `\cite{a,b}`.
+
+    `cite_key` mints from a safe alphabet and caps the stem, so nothing this
+    code writes can carry a comma, a brace or a backslash -- but a clone or a
+    merge can, and every citation of such an entry is then refused as
+    unresolved while `references.tex` defines it perfectly well.
+    """
+    whole = {
+        "identities": ("arxiv:2401.00001v1",),
+        "title": "A paper",
+        "authors": ("Nobody",),
+        "content_sha256": "a" * 64,
+    }
+    assert Entry(key="nobody2020-0123456789", **whole).key
+    for bad in ("a,b", "a{b", "a}b", "a\\b", "a b", "", "x" * 200):
+        with pytest.raises(ValidationError):
+            Entry(key=bad, **whole)

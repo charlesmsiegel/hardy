@@ -274,6 +274,11 @@ class PaperToolRuntime:
                 },
                 {"query": echoed, "results": [], "note": "arXiv matched nothing."},
                 {"results": [], "note": "arXiv matched nothing."},
+                # The sentence goes too. What a caller must not lose here is
+                # that the search RAN and found nothing -- an empty list says
+                # exactly that, and the note only says it in words. Fifteen
+                # bytes, so this is the rung that actually always fits.
+                {"results": []},
             ):
                 payload = json.dumps(empty, ensure_ascii=False)
                 if len(payload.encode("utf-8")) <= self.observation_bytes:

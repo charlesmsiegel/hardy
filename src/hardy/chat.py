@@ -3592,6 +3592,10 @@ class MathematicsSession:
         if compiles_document(self._tex_sources(), relative) and self._tex_tree_digest(
             relative
         ) == compiled_tree:
+            # Taken here, with the candidate now written: what the signature
+            # about to be hashed should describe. `_stamp_writeup` checks it
+            # again on the far side of that hash.
+            settled = self._tex_tree_digest()
             # And only when the tree the compiler READ is still the tree on
             # disk. `check` copies the writeup into a scratch directory and
             # compiles that; the signature stamped below is taken from the
@@ -3604,7 +3608,7 @@ class MathematicsSession:
             # Not stamping is the failure mode, which is the safe one: the
             # writeup reads stale, which is what it is, and the next compile
             # settles it.
-            self._stamp_writeup(compiled_against)
+            self._stamp_writeup(compiled_against, settled)
         # Advisory rather than a refusal. With the save_lean ratchet in place a
         # hard gate here would deadlock: Lean blocked for want of a writeup,
         # and the writeup blocked for not yet covering everything registered.
@@ -5422,7 +5426,9 @@ class MathematicsSession:
             # Unreadable is not evidence of authorship either.
             return False
 
-    def _stamp_writeup(self, compiled_against: str | None = None) -> None:
+    def _stamp_writeup(
+        self, compiled_against: str | None = None, compiled_tree: str | None = None
+    ) -> None:
         """Record what this compile was made against.
 
         The open set is stored beside the signature rather than only folded
@@ -5457,6 +5463,17 @@ class MathematicsSession:
         signature = self._tex_signature()
         open_now = sorted(self._open_theorems())
         if compiled_against is not None and self._bibliography_identity() != compiled_against:
+            return
+        # And the tree, checked in the same place and for the same reason.
+        # The caller compares before handing the compiler the tree; that
+        # closes the window up to the compile and not the one across this
+        # hash, which reads every file again. A neighbour landing in there --
+        # including one overwriting the candidate this save just committed --
+        # left the stamp describing their source rather than the compiled
+        # document. `compiled_tree` is the WHOLE tree, candidate included,
+        # because by now the candidate is written and is part of what the
+        # signature above just hashed.
+        if compiled_tree is not None and self._tex_tree_digest() != compiled_tree:
             return
         self.state["tex_signature"] = signature
         self.state["tex_open"] = open_now
