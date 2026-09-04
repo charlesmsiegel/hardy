@@ -1050,3 +1050,17 @@ def test_a_cancelled_run_starts_no_further_stage(tmp_path) -> None:
     )
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
     assert 'proof' not in [stage for stage, _ in state.prompts]
+
+
+def test_a_cancellation_arriving_before_the_run_starts_is_not_lost(tmp_path) -> None:
+    """`/prove` publishes the workflow as soon as it is built, which is before
+    `run` is called -- and building it identifies the Lean environment, so that
+    window is a likely moment to press Esc. A `clear()` at the top of `run`
+    threw that press away and started the provider run anyway."""
+    workflow, domain, controller, state = _scripted_controller(tmp_path)
+    controller.cancel()                       # as the terminal does, before `run`
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert state.starts == [], 'a provider thread was opened for an abandoned run'

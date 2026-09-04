@@ -677,10 +677,18 @@ the audit, the theorem reads "audit no longer established" rather than
 "kernel-verified", the same way `/status` already reports it. A proof that is
 both unfinished *and* resting on an approved axiom names both.
 
+The conversation keeps its own limitations too: a reply the model was cut off
+mid-sentence is labelled as an interrupted fragment rather than shown as a
+finished answer, and a turn that was cancelled, abandoned, or stopped by
+Hardy's wall clock says so where it ended.
+
 Credentials matching known token shapes, and values under credential-shaped key
 names, are removed before the file is written. That is a filter and not a proof,
 and the page says so where a reader will see it: an export is made to leave the
-machine, so read it before sharing it.
+machine, so read it before sharing it. The destination may be anywhere — moving
+the file off the machine is the point — but it may not be a symlink: a checkout
+shipping `report.html -> ~/.bashrc` would otherwise have an `/export
+report.html` that looks entirely local overwrite the host file.
 
 Use `hardy chat --root path --project slug` to open a particular problem; either
 flag alone still narrows the choice, and both default to the current directory

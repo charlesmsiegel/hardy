@@ -29,6 +29,7 @@ Two further rules:
 from __future__ import annotations
 
 import html
+import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -268,10 +269,36 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
         if kind in SPEAKERS:
             text = _message(event).strip()
             if text:
+                # A block the provider never finished, kept because the user
+                # watched the words arrive. Saying so is the point: rendered as
+                # an ordinary turn, an interrupted fragment reads as a completed
+                # answer, and the reader cannot tell that the model was cut off
+                # mid-sentence.
+                who = SPEAKERS[kind]
+                if event.get("partial"):
+                    who = f"{who} — interrupted, not a completed answer"
                 parts.append(
-                    f'<div class="turn"><div class="who">{html.escape(SPEAKERS[kind])}</div>'
+                    f'<div class="turn"><div class="who">{html.escape(who)}</div>'
                     f"{_block(text)}</div>"
                 )
+        elif kind == "turn":
+            # How the turn ended, when it did not end by itself. The transcript
+            # records this precisely so an abandoned turn is distinguishable
+            # from one somebody waited for; an export that dropped it would put
+            # the distinction back.
+            status = str(event.get("status", "ended"))
+            reason = str(event.get("reason", "")).strip()
+            parts.append(
+                f'<p class="fail">This turn was {_escape(status)}'
+                + (f" ({_escape(reason)})" if reason else "")
+                + ". Anything above it stopped here.</p>"
+            )
+        elif kind == "wall_clock_limit":
+            parts.append(
+                f'<p class="fail">Hardy\'s wall-clock limit fired after '
+                f"{_escape(event.get('seconds', '?'))}s; the turn ended here "
+                "rather than finishing.</p>"
+            )
         elif kind == "tool":
             result = event.get("result")
             ok = bool(result.get("ok")) if isinstance(result, Mapping) else True
@@ -428,10 +455,29 @@ def prepare(material: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def write(material: Mapping[str, Any], path: Path, *, now: datetime | None = None) -> Path:
-    """Write the page. Nothing here escapes the redaction: `build` is the only writer."""
+    """Write the page. Nothing here escapes the redaction: `build` is the only writer.
+
+    The destination is deliberately allowed to be anywhere -- an export is made
+    to be moved off the machine, so refusing paths outside the workspace would
+    be refusing the feature. What is not allowed is a *link*: a checkout can
+    ship `report.html -> ~/.bashrc`, and `write_text` would follow it and
+    overwrite the host file on an `/export report.html` that looks entirely
+    local. Refused by name first, so the message says what happened, and then
+    opened with `O_NOFOLLOW` where the platform has it, which closes the window
+    between the two -- the same two-part rule `layout.WriteGuard` states for
+    every file inside a project.
+    """
     page = build(prepare(material), now=now)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(page, encoding="utf-8")
+    if path.is_symlink():
+        raise ValueError(
+            f"{path} is a symlink; refusing to write an export through it. "
+            "Name the file itself."
+        )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o644)
+    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+        stream.write(page)
     return path
 
 
