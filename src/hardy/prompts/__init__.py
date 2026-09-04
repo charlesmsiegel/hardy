@@ -105,6 +105,11 @@ ASSUME_REVIEW_PROMPT = render("assume_review")
 # batch, and about a `search_modules` query that named a concept rather than a
 # module. Model-facing text, so it lives here rather than as a string constant
 # in `search_tools.py` -- the same reason every other prompt in this file does.
+# What a compacted conversation is told the summary above it is. Model-facing
+# text, so it lives here for the same reason `SPELLINGS_HINT` does -- and it
+# earns its keep: without it a model reads a summary as something one of the
+# parties said and carries on from inside it.
+COMPACTION_PREAMBLE = render("compaction_preamble")
 SPELLINGS_HINT = render("spellings_hint") + "\n"
 CONCEPT_HINT = "\n" + render("concept_hint")
 # Appended only when a CAS backend was actually discovered, so a session with
