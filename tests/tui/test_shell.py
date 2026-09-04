@@ -664,3 +664,30 @@ def test_a_published_stop_that_finds_nothing_leaves_the_press_to_the_session(set
     built._stop_command()
 
     assert asked == [True]
+
+
+def test_escape_before_a_command_publishes_its_stop_is_not_lost(settings):
+    """`_submit_key` SCHEDULES a command and returns, so an Escape typed behind
+    the same Enter is resolved before the handler has run a line. The press must
+    survive until the handler gets there."""
+    stopped = []
+    session = SimpleNamespace(interrupt_work=lambda: 1)
+    built = shell.Shell(settings, session, handlers.build_registry())
+    built._commands_running = 1               # as `_submit_key` sets it
+    built._stop_command()                     # the press, before publication
+    assert stopped == []
+
+    built.stopping(lambda: stopped.append(True) or True)
+    assert stopped == [True], "the earlier press never reached the command"
+
+
+def test_a_remembered_press_is_spent_once(settings):
+    stopped = []
+    session = SimpleNamespace(interrupt_work=lambda: 1)
+    built = shell.Shell(settings, session, handlers.build_registry())
+    built._commands_running = 1
+    built._stop_command()
+    built.stopping(lambda: stopped.append(True) or True)
+    built.stopping(None)
+    built.stopping(lambda: stopped.append(True) or True)
+    assert stopped == [True], "a spent press fired against the next command"

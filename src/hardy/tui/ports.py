@@ -89,6 +89,12 @@ class Ui(Protocol):
 
     async def confirm(self, question: str) -> bool: ...
 
+    #: Whether this Ui is drawn by an event loop that must not be blocked.
+    #: False for the line-based session, which has one thread and handles a
+    #: Ctrl+C on it directly -- so work that would go to a worker to keep a
+    #: terminal live belongs inline there instead. See `handle_prove`.
+    runs_on_event_loop: bool
+
     def stopping(self, cancel: Any) -> None:
         """Publish what Esc should reach while this command runs, or None.
 

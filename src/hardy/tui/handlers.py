@@ -532,15 +532,31 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
     abandoned = threading.Event()
 
     def stop() -> bool:
+        """Esc, and it must return at once.
+
+        `ClaudeStagedRuntime.cancel` takes the tool gate and then waits for the
+        provider worker to settle -- bounded by the tools' own timeouts, which
+        is minutes for a Lean run. This is called from `_stop_command`, on the
+        event loop, so doing that here froze the terminal for the whole of it:
+        no redraw, no second Esc, no way to leave. That is the opposite of what
+        pressing Esc is for, and it was introduced by the fix that first routed
+        Esc here at all.
+
+        So the flag is set on this thread, where it is instantaneous and where
+        it is what `ready` and the workflow's stage loops actually read, and the
+        blocking teardown goes to a thread of its own. A daemon rather than the
+        loop's executor: this is reachable from the `CancelledError` path too,
+        where the loop may already be closing.
+        """
         abandoned.set()
+        # The children first and inline: `interrupt_children` only signals, so
+        # it is instantaneous, and it is what reaches the Lean or Tectonic call
+        # already out. A call already inside Lean is still left to finish.
+        process.interrupt_children()
         workflow = running.get("workflow")
         cancel = getattr(workflow, "cancel", None)
         if cancel is not None:
-            cancel()
-        # The children as well, for the Lean or Tectonic call already running:
-        # the workflow stops asking for new work, and this reaches what is
-        # already out. A call already inside Lean is still left to finish.
-        process.interrupt_children()
+            threading.Thread(target=cancel, daemon=True, name="prove-cancel").start()
         return True
 
     def ready(workflow: Any) -> None:
@@ -557,9 +573,20 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
         # Lean, LaTeX and several provider threads, and asks the user questions
         # in between. Run inline it would block the loop that has to deliver
         # those answers, which is the deadlock the `Ui` port exists to rule out.
-        manifest = await asyncio.to_thread(
-            staged.run, state.config, claim, terminal, ready=ready
-        )
+        if getattr(ui, "runs_on_event_loop", True):
+            manifest = await asyncio.to_thread(
+                staged.run, state.config, claim, terminal, ready=ready
+            )
+        else:
+            # The line-based session, where a worker is not merely unnecessary
+            # but harmful. Its terminal facade reads with `input()`, and a
+            # worker's `input()` cannot be unblocked by a Ctrl+C delivered to
+            # the main thread: the handler was cancelled, the read stayed
+            # pending, and `asyncio.run` then waited on the executor -- so the
+            # session hung until somebody typed something. Run inline, and
+            # Ctrl+C raises inside `workflow.run`, which has handled exactly
+            # that since long before `/prove` existed.
+            manifest = staged.run(state.config, claim, terminal, ready=ready)
     except asyncio.CancelledError:
         # Ctrl+C and `/exit`, which cancel the task rather than pressing Esc.
         # Same stop, so the two keys cannot diverge.

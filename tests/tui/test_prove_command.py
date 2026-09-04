@@ -225,3 +225,42 @@ async def test_the_stopper_is_cleared_even_when_the_run_fails(ui, settings, monk
     monkeypatch.setattr(prove, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no")))
     await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
     assert ui.stopper is None
+
+
+async def test_the_plain_session_runs_the_workflow_inline(settings, monkeypatch):
+    """A worker's `input()` cannot be unblocked by a Ctrl+C delivered to the
+    main thread, and the plain terminal facade reads with `input()`: the
+    handler was cancelled, the read stayed pending, and `asyncio.run` waited on
+    the executor. Inline, Ctrl+C raises inside `workflow.run`, which has
+    handled it since long before `/prove`."""
+    import threading
+
+    from hardy.tui import prove
+    from hardy.tui.plain import PlainUi
+
+    where: list[str] = []
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        where.append(threading.current_thread().name)
+        return SimpleNamespace(phase=SimpleNamespace(value="completed"))
+
+    monkeypatch.setattr(prove, "run", run)
+    ui = PlainUi(lambda text: None, lambda prompt: "")
+    await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+    assert where == [threading.current_thread().name], "the plain session used a worker"
+
+
+async def test_the_real_shell_still_uses_a_worker(ui, settings, monkeypatch):
+    import threading
+
+    from hardy.tui import prove
+
+    where: list[str] = []
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        where.append(threading.current_thread().name)
+        return SimpleNamespace(phase=SimpleNamespace(value="completed"))
+
+    monkeypatch.setattr(prove, "run", run)
+    await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+    assert where != [threading.current_thread().name], "the terminal ran it inline"

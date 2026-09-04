@@ -548,11 +548,19 @@ def write(material: Mapping[str, Any], path: Path, *, now: datetime | None = Non
             f"{path} is a symlink; refusing to write an export through it. "
             "Name the file itself."
         )
+    # `O_NOFOLLOW` guards the leaf and nothing above it, so a checked-out
+    # `exports -> ~/.config/app` would still redirect the write while the path
+    # typed looks entirely local. The destination is deliberately allowed to
+    # leave the tree -- that is what an export is for -- so this reports where
+    # the write actually lands rather than refusing a layout that may be the
+    # user's own. `written` is what the caller shows, so the line a user reads
+    # names the real file.
+    landed = path.parent.resolve() / path.name
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags, 0o644)
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
         stream.write(page)
-    return path
+    return landed
 
 
 def default_path(workspace: Path, project: str, *, now: datetime | None = None) -> Path:

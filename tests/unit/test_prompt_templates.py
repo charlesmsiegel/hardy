@@ -157,3 +157,16 @@ def test_a_directory_that_cannot_be_listed_is_reported_rather_than_raised(tmp_pa
     found, problems = templates.load(tmp_path)
     assert found == []
     assert "Could not read" in problems[0]
+
+
+def test_dollar_at_with_nothing_to_fill_it_is_a_refusal():
+    """`/formalize` with no argument was sending and recording "Formalize ."."""
+    parsed = templates.parse("formalize", "Formalize $@. Do not prove it.")
+    with pytest.raises(templates.TemplateError) as error:
+        templates.expand(parsed, "   ")
+    assert "$@" in str(error.value)
+
+
+def test_dollar_at_with_an_argument_still_expands():
+    parsed = templates.parse("formalize", "Formalize $@.")
+    assert templates.expand(parsed, "Sylow") == "Formalize Sylow."
