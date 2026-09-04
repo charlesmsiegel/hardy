@@ -33,6 +33,7 @@ one), and every field is read as text with no markup meaning.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -303,7 +304,7 @@ class PaperLibrary:
         held = f"records/{identifier.storage_name}"
         try:
             record = PaperRecord.model_validate_json(self._read(f"{held}/record.json"))
-            content = self._read(f"{held}/content.txt")
+            stored = read_bytes(self.root, f"{held}/content.txt")
         except (OSError, ValueError) as error:
             raise ArxivError(f"the stored record for {identifier} could not be read: {error}") from error
         # BOTH have to match the digest, and checking only the first was a
@@ -313,7 +314,16 @@ class PaperLibrary:
         # went on matching its digest untouched. The digest is a claim about
         # what Hardy will hand back, so it is checked against what Hardy will
         # hand back.
-        if digest(content) != record.content_sha256 or digest(record.content()) != record.content_sha256:
+        #
+        # Against the file's bytes, not against text decoded from it. A
+        # text-mode read turns `\r\n` back into `\n`, so a `content.txt`
+        # whose line endings had been rewritten -- by a Windows text-mode
+        # write, by a checkout, by an editor -- passed a comparison that was
+        # supposed to establish the file had not moved.
+        if (
+            hashlib.sha256(stored).hexdigest() != record.content_sha256
+            or digest(record.content()) != record.content_sha256
+        ):
             raise ArxivError(
                 f"the stored record for {identifier} does not match its recorded digest; "
                 "the library has been edited and this record can no longer be read or cited"
@@ -397,10 +407,17 @@ class PaperLibrary:
         target = guard.reserve(name)
         staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=guard.directory))
         try:
-            (staging / "content.txt").write_text(record.content(), encoding="utf-8")
+            # Bytes, not text. `write_text` opens in text mode, which on
+            # Windows turns every `\n` into `\r\n` -- so the file on disk
+            # would not be the bytes `content_sha256` was taken over, and a
+            # digest that does not identify what is stored is not a digest.
+            # The text-mode read translated it back, so nothing complained:
+            # the record was consistent with itself and wrong about the file,
+            # which is the failure this store exists to make impossible.
+            (staging / "content.txt").write_bytes(record.content().encode("utf-8"))
             (staging / "response.xml").write_bytes(response)
-            (staging / "record.json").write_text(
-                record.model_dump_json(indent=2) + "\n", encoding="utf-8"
+            (staging / "record.json").write_bytes(
+                (record.model_dump_json(indent=2) + "\n").encode("utf-8")
             )
             try:
                 os.replace(staging, target)
@@ -501,14 +518,20 @@ def _http(url: str, timeout: float) -> bytes:
         opened = urllib.request.urlopen(request, timeout=timeout)  # noqa: S310 - fixed https endpoint
     except urllib.error.HTTPError as error:
         raise ArxivError(f"arXiv answered HTTP {error.code} {error.reason}") from error
-    except OSError as error:
+    except (OSError, http.client.HTTPException) as error:
         raise ArxivError(f"arXiv could not be reached: {error}") from error
     # The read loop needs its own handler, not only `urlopen`'s. A connection
     # that times out, resets, or is closed mid-body raises after the response
-    # object exists, and that `OSError` escaped every caller: the tool
-    # dispatcher catches `ArxivError` and argument errors, so an ordinary
-    # network failure halfway through a response ended the turn instead of
-    # coming back as a failed tool call.
+    # object exists, and that escaped every caller: the tool dispatcher
+    # catches `ArxivError` and argument errors, so an ordinary network
+    # failure halfway through a response ended the turn instead of coming
+    # back as a failed tool call.
+    #
+    # `HTTPException` beside `OSError`, because the commonest way for that to
+    # happen is not a socket error at all: arXiv answers chunked, and a
+    # connection closed mid-chunk raises `http.client.IncompleteRead`, which
+    # descends from `HTTPException` and would have walked straight through an
+    # `OSError` handler.
     with opened as response:
         chunks: list[bytes] = []
         received = 0
@@ -534,7 +557,7 @@ def _http(url: str, timeout: float) -> bytes:
                     break
                 chunks.append(chunk)
                 received += len(chunk)
-        except OSError as error:
+        except (OSError, http.client.HTTPException) as error:
             raise ArxivError(
                 f"the arXiv response failed after {received} bytes: {error}"
             ) from error

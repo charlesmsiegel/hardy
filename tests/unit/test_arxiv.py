@@ -8,6 +8,7 @@ the rules that keep a stored record from ever moving. The live service is
 
 from __future__ import annotations
 
+import http.client
 import os
 import shutil
 import time
@@ -395,6 +396,30 @@ def test_a_response_that_fails_mid_body_is_an_arxiv_error(monkeypatch):
         arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
 
 
+def test_a_chunked_response_cut_short_is_an_arxiv_error(monkeypatch):
+    """The commonest mid-body failure is not a socket error at all.
+
+    arXiv answers chunked, and a connection closed mid-chunk raises
+    `http.client.IncompleteRead`, which descends from `HTTPException` rather
+    than `OSError` -- so it walked straight through the handler written for
+    exactly this case and ended the turn as a traceback.
+    """
+
+    class Truncated:
+        def read(self, size: int) -> bytes:
+            raise http.client.IncompleteRead(b"<feed", 400)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    monkeypatch.setattr(arxiv.urllib.request, "urlopen", lambda *a, **k: Truncated())
+    with pytest.raises(arxiv.ArxivError, match="failed after 0 bytes"):
+        arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
+
+
 def test_a_connection_that_never_opens_is_an_arxiv_error(monkeypatch):
     def refuse(*args, **kwargs):
         raise OSError("network unreachable")
@@ -597,3 +622,36 @@ def test_a_stored_abstract_is_wrapped_so_every_line_can_be_read(tmp_path: Path):
     client, _, _ = _client(tmp_path, Recorder(_feed(abstract="word " * 2_000)))
     record, _ = client.fetch("math.DG/0211159v1")
     assert max(len(line) for line in record.content().splitlines()) <= arxiv.ABSTRACT_COLUMNS
+
+
+def test_a_stored_record_is_the_bytes_its_digest_names(tmp_path: Path):
+    r"""Written as bytes, not as text.
+
+    `write_text` opens in text mode, which on Windows turns every `\n` into
+    `\r\n` -- so the file on disk was not what `content_sha256` was taken
+    over, and the text-mode read translated it back so that nothing
+    complained. A record consistent with itself and wrong about its own file
+    is the one thing this store exists to rule out.
+    """
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    stored = (library.path_for(record.identifier) / "content.txt").read_bytes()
+    assert b"\r\n" not in stored
+    assert arxiv.digest(stored.decode("utf-8")) == record.content_sha256
+    assert stored == record.content().encode("utf-8")
+
+
+def test_a_record_whose_line_endings_were_rewritten_is_refused(tmp_path: Path):
+    r"""The digest has to identify the file, not text decoded from it.
+
+    A text-mode read turns `\r\n` back into `\n`, so a `content.txt` written
+    or rewritten with Windows line endings compared equal to a digest taken
+    over the `\n` bytes -- a record that passed the check while not being the
+    bytes the check was about.
+    """
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    stored = library.path_for(record.identifier) / "content.txt"
+    stored.write_bytes(stored.read_bytes().replace(b"\n", b"\r\n"))
+    with pytest.raises(arxiv.ArxivError, match="does not match its recorded digest"):
+        library.read(record.identifier)

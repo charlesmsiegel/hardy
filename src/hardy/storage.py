@@ -7,6 +7,7 @@ reads back as a consistent prefix rather than a truncated record.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -62,8 +63,34 @@ def atomic_write_bytes(target: Path, content: bytes) -> None:
             Path(temporary_name).unlink(missing_ok=True)
 
 
+#: What the platform says when the lock is simply somebody else's. Anything
+#: else out of the locking call is a fault rather than a queue.
+BUSY = frozenset(
+    code
+    for code in (
+        getattr(errno, "EWOULDBLOCK", None),
+        getattr(errno, "EAGAIN", None),
+        getattr(errno, "EACCES", None),
+        getattr(errno, "EDEADLK", None),
+    )
+    if code is not None
+)
+
+
 class LockTimeout(RuntimeError):
     """A lock somebody else was holding for longer than the caller would wait."""
+
+
+class LockUnavailable(LockTimeout):
+    """A lock that could not be taken for a reason that is not contention.
+
+    A read-only checkout, a directory the user cannot write, a symlink where
+    the lock file should be, no descriptors left, a filesystem that does not
+    lock. A subclass so that a caller which only wants to know it did not get
+    the lock still catches it, and one that reports *why* can tell this from
+    "somebody else is writing" -- which is the difference between a fault a
+    person can fix and a wait that will end on its own.
+    """
 
 
 class FileLock:
@@ -137,7 +164,17 @@ class FileLock:
     def __enter__(self) -> FileLock:
         deadline = time.monotonic() + self.timeout
         while True:
-            if self._claim():
+            try:
+                taken = self._claim()
+            except OSError as error:
+                # Not contention, so not waited out. A caller that can do
+                # without the lock does; one that cannot is told what actually
+                # went wrong, rather than that somebody else is writing.
+                self._close()
+                if self.required:
+                    raise LockUnavailable(f"{self.path} could not be locked: {error}") from error
+                return self
+            if taken:
                 self.held = True
                 return self
             if time.monotonic() >= deadline:
@@ -169,20 +206,29 @@ class FileLock:
             self._handle = None
 
     def _claim(self) -> bool:
-        """Take the lock, or say why not."""
+        """Whether the lock was taken. `False` means somebody else holds it.
+
+        Only that. A lock file that cannot be opened at all -- a read-only
+        checkout, a directory the user cannot write, no descriptors left, a
+        filesystem with no locking -- is not contention, and reporting it as
+        contention is how a citation came to wait out its whole timeout and
+        then blame a session that does not exist. Those raise, and
+        `__enter__` decides what the caller loses.
+        """
         if self._handle is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-            try:
-                # `O_NOFOLLOW` fails on a symlink rather than opening what it
-                # points at, so a lock file shipped in a repository as a link
-                # is never written through and never taken.
-                self._handle = os.open(self.path, flags, 0o600)
-            except OSError:
-                return False
+            # `O_NOFOLLOW` fails on a symlink rather than opening what it
+            # points at, so a lock file shipped in a repository as a link is
+            # never written through and never taken. That refusal reaches the
+            # caller as itself now, rather than as a wait for a holder that
+            # was never there.
+            self._handle = os.open(self.path, flags, 0o600)
         try:
             _lock(self._handle)
-        except OSError:
+        except OSError as error:
+            if getattr(error, "errno", None) not in BUSY:
+                raise
             return False
         # Whose it is, for a person looking at a stuck workspace. Written
         # under the lock, so it is never a partial read, and it is not what
