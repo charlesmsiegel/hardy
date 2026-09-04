@@ -376,6 +376,13 @@ class ProveWorkflow:
                 # A statement that does not elaborate is not a statement, so it
                 # is never put in front of the user for approval.
                 elaboration = self._lean.check_proof(temporary_claim, "by sorry")
+                # Elaboration runs Lean, so a press lands inside it and the
+                # child is interrupted. Without this the run either walked on
+                # into the approval selector and waited for an answer nobody
+                # was there to give, or -- on the last proposal, where the
+                # interrupted elaboration fails -- was graded as malformed
+                # model output, blaming the model for the interruption.
+                self._refuse_if_cancelled()
                 terminal.show_formalization(proposal, elaboration)
                 if not elaboration.success:
                     store.append(
@@ -504,6 +511,17 @@ class ProveWorkflow:
                         faithfulness_review=verdict,
                     )
                 )
+                # After the verdict is in `grades` and before it is read. The
+                # reader is a provider turn, so a press lands in it, and the
+                # runtime completes an interrupted exchange with an empty
+                # reply -- which parses as UNAVAILABLE. Read without this
+                # check, that finalized the run as "nobody could read the
+                # translation", which is a claim about the reader rather than
+                # what happened. Placed after the assignment above for the
+                # reason that assignment gives: the review is already on disk,
+                # and a manifest recording none beside it is the inconsistency
+                # the release audit exists to report.
+                self._refuse_if_cancelled()
                 terminal.show_faithfulness(verdict)
                 if not verdict.agreed:
                     # Fail-closed, and terminal. Proceeding past a disputed

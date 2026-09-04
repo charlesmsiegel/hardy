@@ -502,3 +502,27 @@ def test_a_discarded_provider_thread_is_a_visible_boundary():
     ])
     assert "discarded" in page
     assert "fresh" in page
+
+
+def test_a_refused_tool_call_shows_what_it_was_asked_to_do():
+    """The source of a refused save is nowhere else on the page -- it was never
+    saved -- so without the arguments the reader sees Lean's complaint and not
+    the proof that drew it."""
+    page = build(transcript=[
+        {
+            "type": "tool",
+            "name": "save_lean",
+            "arguments": {"path": "Basic.lean", "source": "theorem t : True := by exact"},
+            "result": {"ok": False, "output": "unexpected end of input"},
+        },
+    ])
+    assert "theorem t : True := by exact" in page
+    assert "Basic.lean" in page
+
+
+def test_a_tool_call_with_no_arguments_renders_without_an_empty_block():
+    page = build(transcript=[
+        {"type": "tool", "name": "list_lean", "arguments": {}, "result": {"ok": True, "output": "Basic"}},
+    ])
+    assert "list_lean" in page
+    assert "<p class=\"tool\"></p>" not in page

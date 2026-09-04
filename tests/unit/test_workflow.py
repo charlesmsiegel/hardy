@@ -1175,3 +1175,45 @@ def test_a_run_cancelled_while_the_doctor_probed_is_not_a_setup_failure(tmp_path
     )
 
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+
+
+def test_a_run_cancelled_while_lean_elaborated_never_asks_for_approval(tmp_path) -> None:
+    """Elaboration runs Lean, so a press lands inside it. The run then walked
+    on into the approval selector and waited for an answer nobody was there to
+    give -- or, on the last proposal, was graded as malformed model output."""
+    workflow, domain, controller, state = _scripted_controller(tmp_path)
+    elaborate = controller._lean.check_proof
+
+    def cancelling(claim, body):
+        controller.cancel()               # the press, mid-elaboration
+        return elaborate(claim, body)
+
+    controller._lean.check_proof = cancelling
+    terminal = Terminal()
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), terminal
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert terminal.shown == [], 'an abandoned run put a formalization up for approval'
+
+
+def test_a_run_cancelled_during_the_read_is_not_an_unreachable_reader(tmp_path) -> None:
+    """The runtime completes an interrupted exchange with an empty reply, which
+    parses as UNAVAILABLE -- so the manifest said nobody could read the
+    translation, which is a claim about the reader rather than what happened."""
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path,
+        cancel_quietly_at='faithfulness',
+        reviews=[ValueError('faithfulness turn returned no structured final response')],
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    # The review is already on disk by then, so the manifest keeps it: a record
+    # claiming no review beside a directory holding one is the inconsistency
+    # the release audit exists to report.
+    assert manifest.grades.faithfulness_review is not None
