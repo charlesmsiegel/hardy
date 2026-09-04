@@ -581,11 +581,20 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
             }.get(reason, f"{name}: {reason}.")
             if event.get("truncated"):
                 said += " Hardy carried only the beginning of it."
+            # In full, NOT through `_output`. That clipper exists for tool
+            # results and keeps the last 4,000 bytes; `project_context` already
+            # bounds itself at 50,000 from the HEAD, so routing it through the
+            # clipper showed the reader the middle of the file under a line
+            # saying "showing the end of this result". This text is the
+            # experimental condition, not a result, and an export that cannot
+            # reproduce the instructions the model was given cannot be used to
+            # judge the replies made under them. `said` already reports the
+            # ingestion's own truncation when there was one.
             body = str(event.get("text", ""))
             parts.append(
                 '<div class="turn"><div class="who">Project instructions</div>'
                 f'<p class="tool">{_escape(said)}</p>'
-                + (_output(body) if body else "")
+                + (_block(body) if body else "")
                 + "</div>"
             )
         elif kind == "thread":
@@ -695,7 +704,12 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
             elif not owed:
                 said = "Nothing outstanding."
             else:
-                said = "\n".join(f"- {item}" for item in owed)
+                # Mappings, not strings: the event carries `Obligation.as_dict`.
+                # Interpolating one directly printed a Python dict repr where
+                # the warning Hardy actually showed the user should be, so the
+                # page misrepresented the notice in exactly the place a reader
+                # goes to check whether a claim above was contradicted.
+                said = "\n".join(f"- {_owed(item)}" for item in owed)
             parts.append(
                 '<div class="turn"><div class="who">Hardy (what the workspace still owed)'
                 f"</div>{_block(said)}</div>"
@@ -703,6 +717,24 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
     if not parts:
         return "<p>This workspace has no recorded conversation.</p>"
     return "".join(parts)
+
+
+def _owed(item: Any) -> str:
+    """One outstanding obligation, as the sentence the user was shown.
+
+    `Obligation.__str__` is `subject: detail`, and the transcript stores
+    `as_dict()` rather than that string -- so the page has to rebuild it.
+    Tolerant of a plain string because an older transcript may hold one, and of
+    a mapping missing a field, because a page that raises here loses the whole
+    conversation over a malformed record.
+    """
+    if isinstance(item, Mapping):
+        subject = str(item.get("subject") or "")
+        detail = str(item.get("detail") or "")
+        if subject and detail:
+            return f"{subject}: {detail}"
+        return detail or subject or str(dict(item))
+    return str(item)
 
 
 def _withheld(material: Mapping[str, Any]) -> str:
@@ -718,23 +750,27 @@ def _withheld(material: Mapping[str, Any]) -> str:
         for event in material.get("transcript", ())
         if event.get("type") == "model"
     ]
-    refused = [
-        f"{event.get('name')}: {_tail(str((event.get('result') or {}).get('output', '')))}"
-        for event in material.get("transcript", ())
-        if event.get("type") == "tool"
-        and isinstance(event.get("result"), Mapping)
-        and not event["result"].get("ok")
-    ]
-    # And the ones the SDK never got to call. A request for `Read` or `Bash` is
-    # recorded as `refused_tool` rather than as a failed `tool`, so a filter
-    # looking only at results printed "Nothing was refused" over a run in which
-    # the model had reached for the host -- the single most interesting thing
-    # this section can report.
-    refused += [
-        f"{event.get('name')}: not a Hardy tool; the request never ran"
-        for event in material.get("transcript", ())
-        if event.get("type") == "refused_tool"
-    ]
+    # Both kinds in ONE pass, in transcript order. The SDK never got to call
+    # the second kind at all: a request for `Read` or `Bash` is recorded as
+    # `refused_tool` rather than as a failed `tool`, so a filter looking only at
+    # results printed "Nothing was refused" over a run in which the model had
+    # reached for the host -- the single most interesting thing this section can
+    # report. Gathering them in two passes and concatenating put every
+    # `refused_tool` after every failed tool call regardless of when it
+    # happened, so the `[-50:]` below kept the fifty most recent entries of a
+    # list that was no longer in time order: a run whose newest refusal was a
+    # failed `save_lean` dropped it and showed fifty older SDK denials instead.
+    refused = []
+    for event in material.get("transcript", ()):
+        kind = event.get("type")
+        if kind == "tool":
+            result = event.get("result")
+            if isinstance(result, Mapping) and not result.get("ok"):
+                refused.append(
+                    f"{event.get('name')}: {_tail(str(result.get('output', '')))}"
+                )
+        elif kind == "refused_tool":
+            refused.append(f"{event.get('name')}: not a Hardy tool; the request never ran")
     return (
         "<h3>Spend</h3>"
         + _list(material.get("usage", ()), "Nothing spent, or nothing reported.")
@@ -770,6 +806,12 @@ nothing in it has been checked by anything.</p>
 <p>Credentials matching known token shapes and values under credential-shaped
 key names were removed before this file was written. That is a filter, not a
 proof: read the conversation below before sharing it.</p>
+<p><strong>The Lean and TeX sources under the results above are exempt from that
+filter</strong> and are printed exactly as they were checked. Altering the text
+of a source a verdict grades would produce a page whose Lean no longer matches
+what the kernel saw, which is the one thing this page may not do. So a
+credential written into a formal source reaches this file intact. Read those
+sources before sharing, whatever the paragraph above says.</p>
 </div>
 
 <h2>Goal</h2>
