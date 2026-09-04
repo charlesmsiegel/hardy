@@ -189,7 +189,9 @@ async def test_escape_says_it_cancelled_without_overclaiming(settings):
     notice falls back to the older, weaker promise: a file a tool call has
     already written stays written, and the wording says only what is true."""
     session = SlowSession()
-    _, written = await blast(settings, session, "prove something\r\x1b \x03")
+    _, written = await blast(
+        settings, session, "prove something\r\x1b \x03", until="may still finish"
+    )
     assert "cancelled" in written.lower()
     assert "may still finish" in written
 
@@ -217,7 +219,9 @@ class InterruptibleSession(SlowSession):
 
 async def test_escape_says_it_interrupted_the_work_in_flight(settings):
     session = InterruptibleSession()
-    _, written = await blast(settings, session, "prove something\r\x1b \x03")
+    _, written = await blast(
+        settings, session, "prove something\r\x1b \x03", until="esc again"
+    )
     assert session.cancelled == ["user_pressed_escape"]
     assert "interrupted" in written
     # And that a second press is the way out, because an interrupt a child
@@ -240,7 +244,9 @@ async def test_a_second_escape_escalates_from_interrupt_to_kill(settings):
 
 async def test_a_second_escape_with_nothing_left_running_says_so(settings):
     session = InterruptibleSession(running=0)
-    _, written = await blast(settings, session, "prove something\r\x1b \x1b \x03")
+    _, written = await blast(
+        settings, session, "prove something\r\x1b \x1b \x03", until="nothing left to stop"
+    )
     assert session.escalated == 1
     assert "nothing left to stop" in written
 
@@ -249,7 +255,9 @@ async def test_escape_does_not_escalate_a_session_that_cannot(settings):
     """A session with no `escalate` is not an error and not a crash -- the
     press simply reports that there is nothing more to do."""
     session = SlowSession()
-    _, written = await blast(settings, session, "prove something\r\x1b \x1b \x03")
+    _, written = await blast(
+        settings, session, "prove something\r\x1b \x1b \x03", until="nothing left to stop"
+    )
     assert "nothing left to stop" in written
 
 
