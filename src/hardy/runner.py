@@ -119,6 +119,15 @@ def describe_toolchain(toolchain: dict[str, Any] | None) -> str:
 SKETCH_HEADING = "## Sketch (not a proof)"
 
 
+def longest_run(text: str, character: str) -> int:
+    """The longest unbroken run of `character` in `text`, or 0."""
+    longest = run = 0
+    for item in text:
+        run = run + 1 if item == character else 0
+        longest = max(longest, run)
+    return longest
+
+
 def sketch_section(sketch: dict[str, Any]) -> str:
     """The `writeup.md` section a kept sketch is reported in.
 
@@ -155,7 +164,16 @@ def sketch_section(sketch: dict[str, Any]) -> str:
             + "Nothing has audited what it rests on -- only `submit_proof` runs the "
             "axiom report -- so this is not verified and is not a result."
         )
-    return f"\n{SKETCH_HEADING}\n\n{body}\n\n```lean\n{sketch['proof']}\n```\n"
+    # A fence longer than any run of backticks the proof contains. Three
+    # backticks inside a Lean block comment are legal Lean, and with a fixed
+    # fence they closed this block early -- after which the rest of a
+    # model-written proof is rendered as ordinary writeup prose, free to forge
+    # a heading or a grade under Hardy's own name. The recorded proof and the
+    # generated section still agreed byte for byte, so the audit saw nothing
+    # wrong; what was wrong was the rendering, and the fence is where that is
+    # fixed.
+    fence = "`" * max(3, longest_run(sketch["proof"], "`") + 1)
+    return f"\n{SKETCH_HEADING}\n\n{body}\n\n{fence}lean\n{sketch['proof']}\n{fence}\n"
 
 
 def _limits(runtime: Any, max_turns: int, wall_seconds: float, elapsed: float) -> dict[str, Any]:

@@ -308,3 +308,23 @@ def test_a_window_large_enough_keeps_the_flat_reserve() -> None:
     )
 
     assert outcome.available == 200_000 - compaction.RESERVE_TOKENS
+
+
+def test_each_tool_call_is_charged_its_own_framing() -> None:
+    """A turn asking for six tools is seven content blocks, not one.
+
+    Each `tool_use` is a separate structured block with its own field names and
+    JSON punctuation, so charging the framing once per message understated a
+    tool-heavy conversation -- and the shortfall grew with every call, which is
+    the shape of conversation Hardy has.
+    """
+    quiet = [Message("assistant", text="thinking")]
+    busy = [Message(
+        "assistant",
+        text="thinking",
+        tool_calls=tuple(ToolCall(f"c{index}", "x", {}) for index in range(6)),
+    )]
+
+    extra = compaction.estimate_tokens(busy) - compaction.estimate_tokens(quiet)
+    # Six blocks of framing, plus whatever the ids and names themselves cost.
+    assert extra >= 6 * compaction.FRAMING_PER_BLOCK

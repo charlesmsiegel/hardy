@@ -670,6 +670,16 @@ def _digest(messages: Sequence[Message]) -> str:
     running = hashlib.sha256()
     for message in messages:
         running.update(json.dumps(message.as_dict(), sort_keys=True, ensure_ascii=False).encode("utf-8"))
+        # And the reasoning blocks, which `as_dict` deliberately leaves out --
+        # a transcript is a record of what was said, and these are opaque
+        # provider state. They are still *sent*, though: `as_messages` puts
+        # them back in the turn they belong to, so two contexts differing only
+        # in them are two different requests, and a digest that could not tell
+        # them apart could not answer the question it exists for. Hashed
+        # through `repr` so nothing here transcribes what it will not publish.
+        for block in message.reasoning:
+            running.update(repr(block).encode("utf-8"))
+            running.update(b"\x1f")
         running.update(b"\x1e")
     return running.hexdigest()
 

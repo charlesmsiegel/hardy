@@ -358,3 +358,40 @@ def test_a_kept_hole_free_sketch_still_satisfies_the_audit(tmp_path: Path, proof
     )
 
     assert acceptance.validate_batch_consistency(tmp_path) == ()
+
+
+def test_a_sketch_cannot_break_out_of_its_own_code_fence(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """Three backticks inside a Lean block comment are legal Lean.
+
+    With a fixed fence they closed the writeup's code block early, after which
+    the rest of a model-written proof renders as ordinary prose -- free to
+    forge a heading or a grade under Hardy's own name. The recorded proof and
+    the generated section still agreed byte for byte, so the audit saw nothing
+    wrong; what was wrong was the rendering.
+    """
+    escape = "by\n  /- ```\n\n## Result\n\nVerified.\n  -/\n  sorry"
+    result = run(
+        proof_request,
+        factory([call("sketch_proof", {"proof": escape})]),
+        lean,
+        tmp_path,
+    )
+
+    assert result.sketch is not None
+    writeup = (tmp_path / "writeup.md").read_text(encoding="utf-8")
+    # The fence outgrows the longest run of backticks the proof contains, so
+    # everything the model wrote stays inside the block.
+    assert "````lean" in writeup
+    opening = writeup.index("````lean")
+    closing = writeup.index("\n````", opening + 1)
+    assert "## Result" in writeup[opening:closing]
+    assert "## Result" not in writeup[closing:]
+
+
+def test_the_fence_is_the_ordinary_three_when_nothing_needs_more() -> None:
+    from hardy.runner import sketch_section
+
+    section = sketch_section({"proof": "by sorry", "holes": [{"keyword": "sorry", "line": 1}]})
+
+    assert "```lean" in section
+    assert "````" not in section

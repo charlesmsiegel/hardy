@@ -360,3 +360,17 @@ def test_the_overhead_is_the_prompt_the_runtime_actually_holds(tmp_path: Path) -
     # pass whatever the implementation did.
     assert chat._context() != frozen[len(frozen) - len(chat._context()):]
     assert "the same long statement" in chat._context()
+
+
+def test_the_compaction_digest_notices_reasoning_the_transcript_omits(tmp_path: Path) -> None:
+    """`Message.as_dict` deliberately leaves reasoning blocks out -- a
+    transcript records what was said, and these are opaque provider state. They
+    are still *sent*, though, so two contexts differing only in them are two
+    different requests, and a digest that could not tell them apart could not
+    answer the question it exists for."""
+    plain = [Message("assistant", text="checking")]
+    thinking = [Message("assistant", text="checking", reasoning=({"type": "thinking", "signature": "s"},))]
+
+    assert _digest(plain) != _digest(thinking)
+    # And nothing about the block is transcribed by the digest itself.
+    assert len(_digest(thinking)) == 64
