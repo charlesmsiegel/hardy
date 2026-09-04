@@ -1411,3 +1411,56 @@ def test_escalating_a_run_with_no_runtime_in_flight_is_quiet(tmp_path) -> None:
     run._runtime_in_flight = None
 
     assert run.escalate() == 0
+
+
+def test_a_press_between_the_approval_and_the_reader_buys_no_faithfulness_turn(
+    tmp_path,
+) -> None:
+    """The reader is a billable provider turn, so it is a stage.
+
+    Freezing and persisting the approved claim happens between the approval
+    check and the read. A press landing there arms the workflow's flag inline
+    while the runtime is armed on a teardown thread, so without a check here
+    this thread could open and bill the read before that thread caught up --
+    and "cancellation starts no further stage" is a documented guarantee.
+
+    Pressed through the clock, which is the only lever that reaches inside that
+    window: the check after `choose_approval` catches anything the terminal
+    does, so a terminal-driven press proves nothing about this guard. The
+    budget computation just before the read asks `_monotonic` again, and that
+    is where this presses.
+    """
+    domain = importlib.import_module('hardy.domain')
+
+    ticks = {"count": 0, "approved": False, "controller": None}
+
+    def clock():
+        ticks["count"] += 1
+        # After the approval has been answered and its own check has passed:
+        # the next reading is the budget computation immediately before the
+        # reader is opened.
+        if ticks["approved"] and ticks["count"] >= ticks["approved"] + 2:
+            controller = ticks["controller"]
+            if controller is not None:
+                controller.cancel()
+        return float(ticks["count"])
+
+    workflow, _, controller, state = _scripted_controller(tmp_path, monotonic=clock)
+    ticks["controller"] = controller
+
+    class ApprovingTerminal(Terminal):
+        def choose_approval(self):
+            ticks["approved"] = ticks["count"]
+            return 'approve'
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'),
+        ApprovingTerminal(),
+    )
+
+    # The stage was never OPENED, which is the claim. Asserting that the
+    # verdict was never displayed would also pass if the read had run and been
+    # refused afterwards -- and the point of this guard is that the provider is
+    # never asked, so nothing is billed.
+    assert [stage for stage, _prompt in state.prompts if stage == 'faithfulness'] == []
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION

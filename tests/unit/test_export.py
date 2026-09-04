@@ -1178,7 +1178,11 @@ def test_an_approval_made_with_no_goal_says_that_rather_than_nothing():
         ],
     )
     assert "no goal was set when this was approved" in page
-    assert "predates the field" not in page
+    # Scoped to the assumptions: other sections have their own "predates the
+    # field" fallbacks, and asserting over the whole page would pass or fail
+    # for reasons that have nothing to do with this record.
+    block = page.split("<h2>Standing assumptions</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "predates the field" not in block
 
 
 def test_a_clipped_refusal_list_says_it_was_clipped():
@@ -1211,3 +1215,69 @@ def test_an_unclipped_refusal_list_claims_no_omission():
     )
     listed = page.split("<h2>Tool calls Hardy refused</h2>", 1)[1].split("<h2>", 1)[0]
     assert "not listed here" not in listed
+
+
+def test_a_partial_report_names_which_theorems_were_still_open():
+    """`partial` says some had holes; the event says which.
+
+    The tool result below repeats the names, but it keeps only its last 4,000
+    bytes -- so a run with enough unrelated obligations pushed them off the
+    page, leaving a reader who can see a report was partial unable to see what
+    it was partial about.
+    """
+    page = build(
+        transcript=[
+            {
+                "type": "report",
+                "theorems": ["sylow_one", "sylow_two"],
+                "status": "partial",
+                "open": ["sylow_two"],
+                "statements": {"sylow_one": "theorem sylow_one : True"},
+            }
+        ]
+    )
+    assert "still open: sylow_two" in page
+
+
+def test_the_page_records_what_the_session_was_allowed_to_do():
+    """Model and toolchain say who ran; these say what they could reach.
+
+    Two sessions on the same model and the same Lean are different experiments
+    if one gave Lean thirty seconds and the other three minutes, or if one had
+    a computer algebra kernel and the other had none.
+    """
+    page = build(
+        settings={
+            "Lean timeout": "30s per call",
+            "Computer algebra": "sympy",
+            "Literature search": "none: no backend was configured",
+        }
+    )
+    identity = page.split("<h2>Identity</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "Lean timeout" in identity and "30s per call" in identity
+    assert "sympy" in identity
+    assert "no backend was configured" in identity
+
+
+def test_an_export_with_no_recorded_settings_says_so():
+    """Rather than showing nothing, which reads as "there was nothing to say"."""
+    identity = build().split("<h2>Identity</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "not recorded" in identity
+    assert "predates the field" in identity
+
+
+def test_a_default_name_is_refused_rather_than_handed_back_unreserved(tmp_path):
+    """Exhausting the range must not return a path the function never took.
+
+    Two exporters could pick it together and `write` replaces its destination,
+    which recreates exactly the loss the reservation exists to prevent.
+    """
+    from datetime import datetime
+
+    when = datetime(2026, 1, 1, 12, 0, 0)
+    (tmp_path / "sylow-20260101T120000.html").write_text("taken", encoding="utf-8")
+    for suffix in range(1, 1000):
+        (tmp_path / f"sylow-20260101T120000-{suffix}.html").write_text("taken", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Name the file to write instead"):
+        export.default_path(tmp_path, "sylow", now=when)

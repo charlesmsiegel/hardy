@@ -3222,6 +3222,14 @@ class MathematicsSession:
             "provenance": provenance(self.runtime),
             "toolchain": self._toolchain,
             "environment": self._environment,
+            # The settings that decide what the model could find out. Two
+            # sessions on the same model and the same toolchain are still
+            # different experiments if one gave Lean thirty seconds and the
+            # other three minutes, or if one had a computer algebra kernel and
+            # a literature search and the other had neither: the same prompt
+            # then reaches a different set of finished audits and observed
+            # computations. Identity without them cannot tell those apart.
+            "settings": self._effective_settings(),
             "transcript": list(self._recorded()),
         }
 
@@ -4875,6 +4883,27 @@ class MathematicsSession:
             "open": (
                 sorted(self._open_theorems(sources)) if open_names is None else sorted(open_names)
             ),
+        }
+
+    def _effective_settings(self) -> dict[str, str]:
+        """What this session was actually configured with, as the reader needs it.
+
+        Only the settings that can change what the model was able to establish
+        -- not every field of the file. A path or a project name says where the
+        work happened; the Lean timeout says whether an audit had time to come
+        back, and the presence of a kernel or a search backend says whether a
+        whole class of observation was available at all.
+
+        Strings rather than numbers, because this is for a human reading a page
+        and not for a machine to compare. The digests that automation compares
+        are the toolchain and environment identities beside it.
+        """
+        return {
+            "Lean timeout": f"{self.lean.timeout:.0f}s per call",
+            "Computer algebra": self.cas_detail
+            or ("available" if self.cas is not None else "none: no kernel was configured"),
+            "Literature search": self.search_detail
+            or ("available" if self.search is not None else "none: no backend was configured"),
         }
 
     def _document_is_hardys(self, document: Path) -> bool:

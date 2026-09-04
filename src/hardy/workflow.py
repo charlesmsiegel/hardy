@@ -549,6 +549,14 @@ class ProveWorkflow:
                     nonlocal active_thread
                     active_thread = self._track(thread)
 
+                # The reader is a billable provider turn, so it is a stage, and
+                # "cancellation starts no further stage" has to cover this
+                # window too. The approval check above is not enough: freezing
+                # and persisting the claim happens between the two, and a press
+                # landing there arms the workflow's flag inline while the
+                # runtime is armed on a teardown thread -- so this thread could
+                # open and bill the read before that thread caught up.
+                self._refuse_if_cancelled()
                 verdict = review_translation(
                     approved_claim,
                     runtime=runtime,

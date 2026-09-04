@@ -436,3 +436,28 @@ def test_a_workspace_stamped_before_digests_does_not_claim_authorship(tmp_path: 
     chat.state["tex_signature"] = "stamped before the digest existed"
 
     assert "was compiled by Hardy" not in chat.export_material()["document"]
+
+
+def test_the_export_carries_the_settings_that_shaped_what_was_found(tmp_path: Path):
+    """Gathered from the live session, not from a config file read separately.
+
+    The Lean timeout decides whether an audit came back at all, and a missing
+    kernel or search backend removes a whole class of observation. Two runs
+    that differ only in these are different experiments, and an artifact that
+    cannot show it cannot be used to compare them.
+    """
+    chat = built(tmp_path)
+
+    settings = chat.export_material()["settings"]
+
+    assert "s per call" in settings["Lean timeout"]
+    assert settings["Computer algebra"]
+    assert settings["Literature search"]
+
+
+def test_a_session_with_no_kernel_says_none_rather_than_staying_silent(tmp_path: Path):
+    chat = built(tmp_path)
+    chat.cas = None
+    chat.cas_detail = ""
+
+    assert "none" in chat.export_material()["settings"]["Computer algebra"]
