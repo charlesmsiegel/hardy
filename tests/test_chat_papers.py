@@ -157,3 +157,46 @@ def test_a_comment_mentioning_bibitem_is_not_a_bibliography(session) -> None:
         "% never write \\bibitem by hand; use cite_paper\nText.\n\\end{document}\n"
     )
     assert session._tool("check_latex", {"source": source}).ok
+
+
+def test_a_bibliography_in_a_saved_fragment_refuses_the_root_too(session) -> None:
+    r"""The compile reads the whole tree, so the rule must too.
+
+    Checking only the candidate was half a rule: `LatexTools.check` compiles
+    the candidate against every saved file, so a `\bibitem` in a fragment
+    written before this gate existed, or edited outside Hardy, would be
+    pulled into a clean root and published with it.
+    """
+    sections = session.workspace / "tex" / "sections"
+    sections.mkdir(parents=True)
+    (sections / "one.tex").write_text(
+        "\\begin{thebibliography}{9}\n\\bibitem{invented2020} Nobody.\n"
+        "\\end{thebibliography}\n",
+        encoding="utf-8",
+    )
+    result = session._tool(
+        "save_latex",
+        {
+            "source": "\\documentclass{article}\n\\begin{document}\n"
+            "\\input{sections/one}\n\\end{document}\n"
+        },
+    )
+    assert not result.ok
+    assert "sections/one.tex" in result.output
+    assert "cite_paper" in result.output
+
+
+def test_the_generated_file_does_not_refuse_the_document_it_is_part_of(session) -> None:
+    """Hardy's own reference list is the one exemption from that sweep."""
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    key = json.loads(
+        session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"}).output
+    )["cite_key"]
+    result = session._tool(
+        "save_latex",
+        {
+            "source": "\\documentclass{article}\n\\begin{document}\n"
+            f"As shown in \\cite{{{key}}}.\n\\input{{references}}\n\\end{{document}}\n"
+        },
+    )
+    assert result.ok, result.output

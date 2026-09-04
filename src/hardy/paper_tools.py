@@ -35,6 +35,7 @@ from .arxiv import ArxivClient, ArxivError, PaperLibrary, PaperRecord, parse_id
 from .bibliography import Bibliography, BibliographyError
 from .layout import HARDY_DIR
 from .models import ToolResult
+from .storage import LockTimeout
 
 #: Where a machine keeps the papers it has fetched. Under the tooling
 #: directory because it is a cache of third-party bytes shared by every
@@ -129,6 +130,10 @@ PAPER_TOOL_NAMES = tuple(spec["function"]["name"] for spec in PAPER_TOOLS)
 
 #: What one `search_papers` call may ask for.
 MAX_SEARCH_RESULTS = 25
+#: How much of an abstract a search result carries. Enough to tell whether a
+#: paper is the one being looked for, which is all a lead has to do;
+#: `read_paper` serves the rest of whichever one is.
+ABSTRACT_CHARACTERS = 600
 
 
 class PaperToolRuntime:
@@ -173,11 +178,25 @@ class PaperToolRuntime:
             return ToolResult(False, str(error))
         except (KeyError, TypeError, ValueError) as error:
             return ToolResult(False, f"{type(error).__name__}: {error}")
+        except (OSError, LockTimeout) as error:
+            # A full disk, a read-only filesystem, a directory that vanished,
+            # a lock nobody released. Every one of these can come out of the
+            # cache, the library, or the store, and none of them was caught:
+            # the session dispatcher catches argument errors, so a failing
+            # write ended the turn with a traceback and no tool result and no
+            # trajectory event -- which is the one shape of failure Hardy's
+            # own record cannot describe afterwards.
+            return ToolResult(False, f"the paper library could not be written: {error}")
         return ToolResult(False, f"unknown tool: {name}")
 
     def search(self, query: str, limit: int = 10) -> ToolResult:
         bounded = max(1, min(limit, MAX_SEARCH_RESULTS))
         found = self.client.search(query, bounded)
+        # Bounded like every other observation. `read_paper` was bounded and
+        # this was not, so twenty-five abstracts -- a feed may approach the
+        # response cap on its own -- went into the model's context and the
+        # transcript whole, from a tool whose answer is meant to be a list of
+        # leads.
         if not found:
             return ToolResult(
                 True,
@@ -194,30 +213,48 @@ class PaperToolRuntime:
                     ensure_ascii=False,
                 ),
             )
-        return ToolResult(
-            True,
-            json.dumps(
-                {
-                    "query": query,
-                    "results": [
-                        {
-                            "paper_id": record.arxiv_id,
-                            "title": record.title,
-                            "authors": list(record.authors),
-                            "categories": list(record.categories),
-                            "published": record.published,
-                            "abstract": record.abstract,
-                            "held": self.library.holds(record.identifier),
-                        }
-                        for record in found
-                    ],
-                    "note": (
-                        "Nothing here is recorded yet. fetch_paper pins one of these "
-                        "versions before it can be read or cited."
-                    ),
-                },
-                ensure_ascii=False,
-            ),
+        note = (
+            "Nothing here is recorded yet. fetch_paper pins one of these versions "
+            "before it can be read or cited."
+        )
+        payload = self._results(found, query, note, ABSTRACT_CHARACTERS)
+        if len(payload.encode("utf-8")) > self.observation_bytes:
+            # Still too large with every abstract clipped: the abstracts go
+            # entirely rather than the list being cut, because a truncated
+            # LIST silently hides papers a search did find, and a model cannot
+            # tell that from a search that found fewer.
+            payload = self._results(
+                found,
+                query,
+                note + " Abstracts omitted to fit; read_paper serves one in full.",
+                0,
+            )
+        return ToolResult(True, payload)
+
+    def _results(self, found: Any, query: str, note: str, abstract: int) -> str:
+        """One search answer, with each abstract clipped to `abstract` chars."""
+        return json.dumps(
+            {
+                "query": query,
+                "results": [
+                    {
+                        "paper_id": record.arxiv_id,
+                        "title": record.title,
+                        "authors": list(record.authors),
+                        "categories": list(record.categories),
+                        "published": record.published,
+                        **(
+                            {"abstract": _clipped(record.abstract, abstract)}
+                            if abstract
+                            else {}
+                        ),
+                        "held": self.library.holds(record.identifier),
+                    }
+                    for record in found
+                ],
+                "note": note,
+            },
+            ensure_ascii=False,
         )
 
     def fetch(self, paper_id: str) -> ToolResult:
@@ -312,6 +349,12 @@ class PaperToolRuntime:
                 "it. Call fetch_paper first."
             )
         return self.library.read(identifier)
+
+
+def _clipped(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + f"... [{len(text) - limit} more characters; read_paper]"
 
 
 def build_runtime(

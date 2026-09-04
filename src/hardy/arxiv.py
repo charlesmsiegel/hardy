@@ -47,7 +47,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from .domain import FrozenModel
 from .layout import LayoutError, guard_for, read_text
@@ -238,6 +238,19 @@ class PaperLibrary:
         """Read one library file through the same proof a write gets."""
         return read_text(self.root, relative)
 
+    def lock_target(self) -> Path:
+        """The throttle lock's path, with the directory holding it proven.
+
+        The lock was the one library file reached without a guard, and it is
+        the worst one to reach without a guard: `FileLock` creates the parent
+        directory if it is missing and, on a stale lock, DELETES the file it
+        finds. Pointed through `.hardy/papers -> somewhere`, that is Hardy
+        removing a stranger's file before any guarded call had a chance to
+        refuse the symlink. Proven first, so there is nothing to point at.
+        """
+        guard, name = self._guard("state.lock")
+        return guard.path(name)
+
     def holds(self, identifier: ArxivId) -> bool:
         return identifier.versioned and (self.path_for(identifier) / "record.json").is_file()
 
@@ -269,6 +282,18 @@ class PaperLibrary:
             raise ArxivError(
                 f"the stored record for {identifier} does not match its recorded digest; "
                 "the library has been edited and this record can no longer be read or cited"
+            )
+        # The digests say the record is internally consistent. They say nothing
+        # about it being THIS record: a directory holding another paper's
+        # `record.json` and `content.txt` -- an interrupted move, a hand-copied
+        # cache, a restored backup -- passes both comparisons, and then
+        # `read_paper(A)` serves B and `cite_paper(A)` records B under A's
+        # name. The identifier a record is filed under has to be the
+        # identifier it claims.
+        if str(record.identifier) != str(identifier):
+            raise ArxivError(
+                f"the record stored under {identifier} says it is {record.arxiv_id}; "
+                "refusing to serve one paper under another's identifier"
             )
         return record
 
@@ -414,10 +439,20 @@ def _http(url: str, timeout: float) -> bytes:
         wanted = MAX_RESPONSE_BYTES + 1
         try:
             while received < wanted:
-                if time.monotonic() >= deadline:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
                     raise ArxivError(
                         f"arXiv exceeded its {timeout:g}s deadline with {received} bytes read"
                     )
+                # The socket keeps whatever timeout `urlopen` was given, so a
+                # read begun just under the deadline could block for another
+                # full timeout -- a 30s request occupying the tool for nearly
+                # 60. Narrowing it to what is left of the deadline before each
+                # read makes the bound the one this function advertises.
+                # Best-effort: it reaches through the response's internals, so
+                # a runtime that does not expose them falls back to the old
+                # one-read overshoot rather than failing the transfer.
+                _narrow(response, remaining)
                 chunk = response.read(min(READ_CHUNK_BYTES, wanted - received))
                 if not chunk:
                     break
@@ -508,7 +543,15 @@ class ArxivClient:
             raise ArxivError(f"arXiv returned no paper for {identifier}")
         record = found[0]
         resolved = record.identifier
-        if identifier.versioned and str(resolved) != str(identifier):
+        # An unversioned request is a request to be told which version is
+        # current -- so the version may differ, and the STEM may not. Checking
+        # only the versioned case left `fetch_paper 2401.00001` willing to
+        # accept `2401.99999v1` from a proxy, a poisoned cache, or a service
+        # having a bad day, and to hand it back as the paper that was asked
+        # for.
+        if resolved.stem != identifier.stem or (
+            identifier.versioned and str(resolved) != str(identifier)
+        ):
             # Not an answer to this question, so not an answer worth keeping
             # for a day: dropped from the cache before the refusal, or every
             # retry would reuse the same wrong response.
@@ -576,7 +619,7 @@ class ArxivClient:
         sleeping until a timestamp in the future.
         """
         with FileLock(
-            self.library.lock_path,
+            self.library.lock_target(),
             timeout=self._lock_timeout,
             stale_after=max(60.0, self._interval * 20),
             required=False,
@@ -590,6 +633,18 @@ class ArxivClient:
             if wait > 0:
                 self._sleep(wait)
             self.library.note_request(self._clock())
+
+
+def _narrow(response: Any, seconds: float) -> None:
+    """Give the response's socket `seconds` for its next read, if it has one."""
+    for attribute in ("fp", "raw", "_sock"):
+        response = getattr(response, attribute, None)
+        if response is None:
+            return
+    try:
+        response.settimeout(max(0.001, seconds))
+    except (OSError, AttributeError, ValueError):
+        return
 
 
 def _key(url: str) -> str:
@@ -635,7 +690,12 @@ def _parsed(text: str) -> ElementTree.Element:
     bomb needs and what an arXiv feed never has, so the presence of one is
     grounds to refuse the whole response rather than to start parsing it.
     """
-    if re.search(r"<!DOCTYPE", text[:4096], re.IGNORECASE):
+    # The WHOLE response, not its first few kilobytes: a document may put any
+    # amount of legal whitespace and comment before its DOCTYPE, and a prefix
+    # search is defeated by padding. The response is already size-bounded, so
+    # scanning all of it is bounded too -- unlike the expanded tree, which the
+    # network limit says nothing about.
+    if re.search(r"<!DOCTYPE", text, re.IGNORECASE):
         raise ArxivError("the arXiv response carries a DOCTYPE declaration; refusing to parse it")
     try:
         return ElementTree.fromstring(text)

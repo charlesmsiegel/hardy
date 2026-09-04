@@ -3490,7 +3490,7 @@ class MathematicsSession:
         # hand-written bibliography and a save that refused it would teach the
         # model that the document is sound and then refuse to keep it, which
         # is a worse conversation than one refusal in the right place.
-        refusal = hand_written_bibliography(relative, source)
+        refusal = self._bibliography_refusal(relative, source)
         if refusal:
             return ToolResult(False, refusal, source)
         return self.latex.check(source, path=relative, tree=self.tex_root, stamp=self._stamp())
@@ -3509,7 +3509,7 @@ class MathematicsSession:
         # resolves perfectly well, so the reference check would pass it and
         # the document would be published carrying a reference nothing
         # fetched. `cite_paper` is the only way a reference reaches a reader.
-        refusal = hand_written_bibliography(relative, source)
+        refusal = self._bibliography_refusal(relative, source)
         if refusal:
             return ToolResult(False, refusal, source)
 
@@ -3608,6 +3608,36 @@ class MathematicsSession:
         if not root.is_file():
             return ""
         return read_text(self.tex_root, ROOT_DOCUMENT)
+
+    def _bibliography_refusal(self, relative: str, source: str) -> str:
+        r"""Why this compile may not proceed on bibliography grounds, or "".
+
+        The candidate AND the tree it is compiled with. Checking the candidate
+        alone was half a rule: `LatexTools.check` compiles the whole saved
+        `tex/` tree, so a `ibitem{invented}` in a fragment saved before this
+        gate existed, edited outside Hardy, or brought in from somewhere else
+        would be pulled into a clean root and published with it -- the
+        refusal has to cover every file the compiler will read, not only the
+        one being handed over now.
+
+        Hardy's own generated file is the one exemption, and a file that
+        cannot be read is skipped rather than guessed at: one unreadable
+        fragment must not stop every save in a workspace.
+        """
+        refusal = hand_written_bibliography(relative, source)
+        if refusal:
+            return refusal
+        for path in self._tex_paths():
+            if path == relative or PurePosixPath(path).name == GENERATED_BIBLIOGRAPHY:
+                continue
+            try:
+                text = read_text(self.tex_root, path, errors="replace")
+            except (OSError, ValueError):
+                continue
+            found = hand_written_bibliography(path, text)
+            if found:
+                return f"{path} is part of this document, and {found}"
+        return ""
 
     def _tex_path(self, path: str) -> tuple[str, Path] | ToolResult:
         """The workspace-relative writeup path, and where it lives on disk."""

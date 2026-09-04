@@ -266,3 +266,19 @@ def test_the_lock_is_released_when_a_citation_finishes(tmp_path: Path):
     bibliography.cite(_record())
     assert not (tmp_path / "bibliography.lock").exists()
     assert bibliography.cite(_record(arxiv_id="2401.00002v1"))[1]
+
+
+def test_a_symlinked_store_is_refused_rather_than_followed(tmp_path: Path):
+    """A store read from outside would make the record machine-dependent.
+
+    The next citation merges whatever it found into the project's own
+    reference list, so the bibliography -- and the source identities in it --
+    would differ by whoever opened the clone.
+    """
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"schema_version": 1, "entries": []}', encoding="utf-8")
+    problem = tmp_path / "problem"
+    problem.mkdir()
+    (problem / "bibliography.json").symlink_to(outside)
+    with pytest.raises(BibliographyError):
+        Bibliography(problem).read()
