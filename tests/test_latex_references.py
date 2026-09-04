@@ -391,3 +391,18 @@ def test_a_stale_table_of_contents_is_not_read_as_this_compile_s(tmp_path: Path)
     # And an ordinary input of the same shape is still handed over: a `.pdf`
     # figure is a document's own file, not the compiler's leavings.
     assert "figure.pdf" in handed
+
+
+def test_the_output_cap_counts_bytes_not_characters(tmp_path: Path):
+    """A budget in bytes was being enforced by slicing characters.
+
+    A report naming many multibyte labels came back several times the limit
+    it had just been cut to -- the same mismatch the record wrapping had.
+    """
+    missing = "".join(f"See \\ref{{数式{n}}}.\n" for n in range(2_000))
+    result = LatexTools(COMMAND, output_limit=4_000).check(
+        PREAMBLE + missing + END, tree=_tree(tmp_path)
+    )
+    assert not result.ok
+    assert len(result.output.encode("utf-8")) <= 4_000 + 64
+    assert result.output.startswith("exit=")

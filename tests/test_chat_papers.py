@@ -516,3 +516,30 @@ def test_the_compilers_own_output_is_not_part_of_that_signature(session) -> None
     (session.workspace / "tex" / "writeup.pdf").write_bytes(b"%PDF-stale")
     (session.workspace / "tex" / "old.aux").write_text("\\citation{x}\n", encoding="utf-8")
     assert session._tex_signature() == before
+
+
+def test_a_citation_landing_mid_compile_does_not_stamp_the_old_pdf(session) -> None:
+    """The compile reads a snapshot and the stamp read the live files.
+
+    Another session's `cite_paper` landing between the two meant the PDF was
+    built from the old reference list while the stamp recorded the new store
+    -- and the vouching does not catch it, since the old keys are a subset of
+    the new ones.
+    """
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"})
+    body = (
+        "\\documentclass{article}\n\\begin{document}\nText.\n"
+        "\\input{references}\n\\end{document}\n"
+    )
+    assert session._tool("save_latex", {"source": body}).ok
+    stamped = session.state["tex_signature"]
+    # A neighbour cites while this session is between snapshot and stamp.
+    moved = session._bibliography_identity()
+    session._stamp_writeup(compiled_against="a-store-that-has-since-moved")
+    assert session.state["tex_signature"] == stamped, (
+        "a compile was stamped against a bibliography it was not built from"
+    )
+    # And the ordinary case still stamps.
+    session._stamp_writeup(compiled_against=moved)
+    assert session.state["tex_signature"] == session._tex_signature()

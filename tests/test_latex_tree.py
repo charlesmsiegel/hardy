@@ -517,3 +517,25 @@ def test_an_input_shown_inside_verbatim_does_not_make_a_fragment_reachable():
     reached = reached_fragments(sources)
     assert "a.tex" in reached
     assert "b.tex" not in reached
+
+
+def test_an_escaped_backslash_does_not_make_an_inclusion_edge():
+    r"""TeX reads `\\input{appendix}` as a line break and then a word.
+
+    The regex matched from the second backslash, so a nested fragment nothing
+    includes looked part of the real document -- and that is the dangerous
+    direction: saving it compiles the UNCHANGED root, which never reads the
+    candidate, so even malformed text is committed and the tree stamped.
+    """
+    sources = {
+        "writeup.tex": "\\documentclass{article}\n\\begin{document}\n"
+        "\\input{a}\n\\end{document}\n",
+        "a.tex": "Literal: \\\\input{appendix} is a line break then a word.\n",
+        "appendix.tex": "Text.\n",
+    }
+    reached = reached_fragments(sources)
+    assert "a.tex" in reached
+    assert "appendix.tex" not in reached
+    # And a real one still does.
+    genuine = dict(sources, **{"a.tex": "\\input{appendix}\n"})
+    assert "appendix.tex" in reached_fragments(genuine)

@@ -436,23 +436,36 @@ class PaperToolRuntime:
     def cite(self, paper_id: str) -> ToolResult:
         record = self._held(paper_id)
         entry, added = self.bibliography.cite(record)
-        return ToolResult(
-            True,
-            json.dumps(
-                {
-                    "cite_key": entry.key,
-                    "paper_id": record.arxiv_id,
-                    "added": added,
-                    "entries": len(self.bibliography.entries()),
-                    "note": (
-                        f"Cite it as \\cite{{{entry.key}}}. The writeup must \\input"
-                        "{references} once, before \\end{document}, or every citation in "
-                        "it resolves to `[?]` and the compile is refused."
-                    ),
-                },
-                ensure_ascii=False,
-            ),
-        )
+        # Measured like the other three. The citation is already made by the
+        # time this is rendered, so there is nothing to refuse -- what is
+        # shed is the advice and then the counts, never the key, because the
+        # key is the whole answer and a caller that does not get it cannot
+        # cite the paper it just recorded.
+        for answer in (
+            {
+                "cite_key": entry.key,
+                "paper_id": record.arxiv_id,
+                "added": added,
+                "entries": len(self.bibliography.entries()),
+                "note": (
+                    f"Cite it as \\cite{{{entry.key}}}. The writeup must \\input"
+                    "{references} once, before \\end{document}, or every citation in "
+                    "it resolves to `[?]` and the compile is refused."
+                ),
+            },
+            {
+                "cite_key": entry.key,
+                "paper_id": record.arxiv_id,
+                "added": added,
+                "note": "\\input{references} once, or citations resolve to `[?]`.",
+            },
+            {"cite_key": entry.key, "added": added},
+            {"cite_key": entry.key},
+        ):
+            payload = json.dumps(answer, ensure_ascii=False)
+            if len(payload.encode("utf-8")) <= self.observation_bytes:
+                return ToolResult(True, payload)
+        return ToolResult(True, payload)
 
     def _held(self, paper_id: str) -> PaperRecord:
         """The stored record for `paper_id`, or the reason there is none.

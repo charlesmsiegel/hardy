@@ -3530,6 +3530,9 @@ class MathematicsSession:
         refusal = self._bibliography_refusal(relative, source)
         if refusal:
             return ToolResult(False, refusal, source)
+        # Read before the compiler is handed the tree, and checked again at
+        # the stamp: see `_stamp_writeup`.
+        compiled_against = self._bibliography_identity()
 
         def _write() -> None:
             # `guard_for`, not a bare write to `target`. `_tex_path` proves the
@@ -3583,7 +3586,7 @@ class MathematicsSession:
         # would mark the tree established on the strength of a document nobody
         # will read.
         if compiles_document(self._tex_sources(), relative):
-            self._stamp_writeup()
+            self._stamp_writeup(compiled_against)
         # Advisory rather than a refusal. With the save_lean ratchet in place a
         # hard gate here would deadlock: Lean blocked for want of a writeup,
         # and the writeup blocked for not yet covering everything registered.
@@ -3990,6 +3993,7 @@ class MathematicsSession:
             return ToolResult(
                 False, f"the writeup cannot be published as it stands, so {path} was kept: {refusal}"
             )
+        compiled_against = self._bibliography_identity()
         guard, name = guard_for(self.tex_root, relative)
         kept = read_text(self.tex_root, relative)
         guard.unlink(name)
@@ -4040,7 +4044,7 @@ class MathematicsSession:
             # the tree on disk -- so it is stamped like one. Without this a
             # deletion left a freshly compiled writeup reading as stale, and
             # the only way out was a save that changed nothing.
-            self._stamp_writeup()
+            self._stamp_writeup(compiled_against)
         # After the point of no return: a deletion the compile above refused
         # was restored, and its provenance must survive with it.
         self._forget_import(f"{TEX_DIR}/{relative}")
@@ -5330,7 +5334,7 @@ class MathematicsSession:
             # Unreadable is not evidence of authorship either.
             return False
 
-    def _stamp_writeup(self) -> None:
+    def _stamp_writeup(self, compiled_against: str | None = None) -> None:
         """Record what this compile was made against.
 
         The open set is stored beside the signature rather than only folded
@@ -5338,7 +5342,19 @@ class MathematicsSession:
         whether the compiled document still describes this workspace, and --
         by `_documentation_gate` -- whether the open set is the only reason it
         does not.
+
+        `compiled_against` is the bibliography identity as it stood when the
+        compiler was handed its copy of the tree. The compile reads a snapshot
+        and this reads the live files, so another session's `cite_paper`
+        landing in between meant the PDF was built from the old reference list
+        while the stamp recorded the new store -- and the vouching does not
+        catch it, since the old keys are a subset of the new ones. When it has
+        moved, nothing is stamped: the writeup reads stale, which is what it
+        is, and the next compile settles it. Erring the other way would mark a
+        PDF current against a bibliography it was not built from.
         """
+        if compiled_against is not None and self._bibliography_identity() != compiled_against:
+            return
         self.state["tex_signature"] = self._tex_signature()
         self.state["tex_open"] = sorted(self._open_theorems())
         # And what the compile actually produced. A signature says only that
