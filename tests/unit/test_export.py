@@ -668,3 +668,36 @@ def test_the_evidence_shown_before_an_axiom_was_approved_is_on_the_page():
     assert "Mathlib.GroupTheory.Sylow has no such statement" in page
     assert "an earlier version quantified over all groups" in page
     assert "sylow_big" in page
+
+
+def test_a_short_bearer_token_is_still_a_token():
+    """The comment beside the rule named this exact six-character example as
+    something that must not pass, while the rule let it through."""
+    assert "abc123" not in export.redact("Bearer abc123")
+
+
+def test_an_identity_shows_its_separators_rather_than_swallowing_them():
+    """`_toolchain_identity` joins with NUL. Written into HTML those bytes are
+    not displayed, so the page showed something other than the exact identity
+    the audit was established under -- for a value whose whole job is to be
+    compared, the one thing it must not do."""
+    page = build(toolchain="leanprover/lean4:v4.9.0\x00abc123")
+
+    assert "\x00" not in page
+    assert "leanprover/lean4:v4.9.0\\0abc123" in page
+
+
+def test_a_destination_that_is_not_an_ordinary_file_is_refused(tmp_path):
+    """`os.replace` onto a fifo unlinks it and puts an HTML file where another
+    process's IPC endpoint was."""
+    import os
+
+    import pytest
+
+    destination = tmp_path / "report.html"
+    os.mkfifo(destination)
+
+    with pytest.raises(ValueError, match="not an ordinary file"):
+        export.write(material(), destination)
+
+    assert destination.is_fifo(), "the fifo was destroyed anyway"

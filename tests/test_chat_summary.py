@@ -269,3 +269,22 @@ def test_the_shared_identity_is_refreshed_before_a_verdict_is_graded(tmp_path: P
     chat.export_material()
 
     assert len(refreshed) == 2, "a gatherer graded verdicts against a stale identity"
+
+
+def test_a_private_theorem_cannot_answer_for_a_public_one_of_the_same_name(tmp_path: Path):
+    """The statements map is keyed by name, so a later `private theorem result`
+    overwrote the public one -- and a private declaration is not in the axiom
+    audit, so the page showed the private statement under the public verdict."""
+    chat = built(tmp_path)
+    read = chat.lean_workspace.sources
+
+    def two_modules():
+        found = dict(read())
+        found["Later"] = (
+            "import Mathlib\nprivate theorem hardyBasic : 1 = 1 := by rfl\n"
+        )
+        return found
+
+    chat.lean_workspace.sources = two_modules
+
+    assert "1 = 1" not in chat.export_material()["theorems"]["hardyBasic"]

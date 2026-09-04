@@ -151,12 +151,18 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
     # without opening the PDF. Deliberately not an obligation: a statement one
     # tactic closes is still a theorem -- it may just assert far less than the
     # prose around it suggests, and that is the reader's to weigh.
+    # From the same gathering as the sections above when there is one: read
+    # separately, this could flag a theorem the summary beside it does not
+    # have, or miss one it does.
     flagged = getattr(state.session, "automation_closed", None)
-    if flagged is not None:
-        try:
-            closed = flagged()
-        except Exception:  # noqa: BLE001 - a status line must not end the session
-            closed = {}
+    if summarised is not None or flagged is not None:
+        if summarised is not None:
+            closed = dict(summarised.automation)
+        else:
+            try:
+                closed = flagged()
+            except Exception:  # noqa: BLE001 - a status line must not end the session
+                closed = {}
         if closed:
             ui.write("  Closed by a single automation call (each may assert less than")
             ui.write("  its name or prose suggests):")

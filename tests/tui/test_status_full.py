@@ -125,3 +125,29 @@ async def test_a_plain_status_still_asks_the_session_for_its_obligations(ui, set
     await handlers.handle_status(ui, "", state)
 
     assert asked == [1]
+
+
+async def test_the_automation_disclosure_comes_from_the_same_gathering(ui, settings):
+    """Read separately, it could flag a theorem the summary beside it does not
+    have, or miss one it does."""
+    assembled = summary.assemble(
+        goal="",
+        assumptions=[],
+        registry=[],
+        audit={},
+        theorems={"sylow": "theorem sylow : True"},
+        open_theorems=(),
+        obligations=(),
+        automation={"sylow": "aesop"},
+    )
+
+    def moved():
+        raise AssertionError("the flags were read a second time")
+
+    state = State(
+        config=settings,
+        session=session(summary=lambda: assembled, automation_closed=moved),
+    )
+    await handlers.handle_status(ui, "--full", state)
+
+    assert "sylow (by aesop)" in ui.text

@@ -194,3 +194,18 @@ def test_inline_mathematics_with_a_zero_is_not_a_placeholder():
     it made `Show $0 < x$` a template that could never expand."""
     parsed = templates.parse("show", "Show $0 < x$ for the base case.")
     assert templates.expand(parsed, "") == "Show $0 < x$ for the base case."
+
+
+def test_a_positional_index_too_long_to_convert_is_refused_rather_than_raised(tmp_path):
+    """Python refuses to turn more than 4,300 digits into an int, and `$`
+    followed by 5,000 of them fits inside a template -- so a checked-in file
+    could raise `ValueError` where the dispatcher expects `TemplateError`, and
+    in a plain session that ends the session."""
+    parsed = templates.parse("big", "Show $" + "9" * 5000 + ".")
+    with pytest.raises(templates.TemplateError):
+        templates.expand(parsed, "one two")
+
+
+def test_an_ordinary_two_digit_placeholder_still_works():
+    parsed = templates.parse("tenth", "$10 came last")
+    assert templates.expand(parsed, " ".join(str(n) for n in range(1, 12))) == "10 came last"

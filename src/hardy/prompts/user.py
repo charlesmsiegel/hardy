@@ -166,6 +166,14 @@ def expand(template: Template, argument: str) -> str:
             if not rest:
                 missing.append("$@")
             return rest
+        # Bounded before the conversion, not after. Python refuses to turn a
+        # string of more than 4,300 digits into an int at all, and `$` followed
+        # by 5,000 of them fits comfortably inside a template -- so a checked-in
+        # file could raise `ValueError` here instead of the `TemplateError` the
+        # dispatcher handles, which in a plain session ends the session.
+        if len(token) > len(str(len(words))) and len(token) > 1:
+            missing.append(f"${token}")
+            return ""
         index = int(token)
         if index < 1 or index > len(words):
             missing.append(f"${token}")
