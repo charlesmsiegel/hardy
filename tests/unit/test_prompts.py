@@ -316,3 +316,20 @@ def test_the_writeup_prompt_states_the_verification_outcome() -> None:
     assert 'kernel verified' in accepted and 'no verification is claimed' in accepted
     assert 'partial' in refused and 'no submitted' in refused.lower()
     assert accepted != refused
+
+
+def test_the_workaround_passages_are_marked_in_the_source_and_absent_from_the_prompt():
+    """Issue #108: the interactive prompt mixes standard of evidence, which does
+    not decay, with workarounds for specific model failures, which do. The
+    template tells the two apart in Jinja comments, so a reader can find the
+    passages worth re-testing at a model change without re-deriving the
+    distinction -- and a comment is what the renderer strips, so the model
+    never sees the annotation and the prompt text itself is unchanged."""
+    prompts = importlib.import_module("hardy.prompts")
+    marker = "{# workaround, not principle"
+    assert prompts.source("chat").count(marker) == 2
+    assert prompts.source("cas_spill").count(marker) == 1
+    assert "workaround" not in prompts.render("chat").lower()
+    spill = prompts.render("cas_spill", artifact="spill.txt", capture_truncated=False)
+    assert "workaround" not in spill.lower()
+    assert "{#" not in prompts.render("chat") and "{#" not in spill
