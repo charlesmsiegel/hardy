@@ -1217,3 +1217,37 @@ def test_a_run_cancelled_during_the_read_is_not_an_unreachable_reader(tmp_path) 
     # claiming no review beside a directory holding one is the inconsistency
     # the release audit exists to report.
     assert manifest.grades.faithfulness_review is not None
+
+
+def test_an_abandoned_approval_selector_is_not_a_rejection(tmp_path) -> None:
+    """Both answer "cancel", and they are different facts: one read the
+    formalization and refused it, the other walked away from the run."""
+    workflow, domain, controller, state = _scripted_controller(tmp_path)
+
+    class Abandoned(Terminal):
+        def choose_approval(self):
+            controller.cancel()           # the press, while the selector is up
+            return super().choose_approval()
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'),
+        Abandoned(decisions=('cancel',)),
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert manifest.terminal_reason is not domain.TerminalReason.USER_REJECTION
+
+
+def test_a_run_cancelled_during_the_proof_turn_buys_no_verification(tmp_path) -> None:
+    """The verifier runs Lean over the whole claim. The check after it keeps
+    the record honest; this one keeps an abandoned run from paying for it."""
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path, cancel_quietly_at='proof'
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert state.verifier_calls == 0, 'an abandoned run paid for a verification'
