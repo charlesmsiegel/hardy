@@ -648,8 +648,11 @@ rather than from anything the model remembers: the goal, the approved
 assumptions with their source, stated reason and approval date, every saved
 theorem under the verdict its own stored audit record gives it, what is still
 open, the tool calls that were refused and what Lean said, the naming registry,
-and what is outstanding. It carries no spend — that is `/status`'s own section,
-for the human, and is withheld from the model on purpose.
+and what is outstanding. A theorem whose audit never ran, has expired, or whose
+name is not unique appears under `Not established` rather than under `Proved` —
+two headings would make one of them a claim. It carries no spend — that is
+`/status`'s own section, for the human, and is withheld from the model on
+purpose.
 
 This is the checkable half of context compaction (#100). Hardy cannot yet decide
 what leaves a long session's context, because the SDK owns the turn loop (#23);
@@ -683,6 +686,14 @@ verdict expires: if the toolchain, the source, or a dependency has moved since
 the audit, the theorem reads "audit no longer established" rather than
 "kernel-verified", the same way `/status` already reports it. A proof that is
 both unfinished *and* resting on an approved axiom names both.
+
+A third: a name that two saved modules declare is not graded at all. The
+workspace permits that (nothing makes those modules import each other) and
+everything downstream addresses a theorem *by name*, so the statement shown
+comes from whichever module was read last while the verdict over it is drawn
+from both — which could print a stale module's statement under the other's
+clean audit. Both surfaces refuse to grade it and say which modules collide;
+`/status` already reports the collision as work to do.
 
 The conversation keeps its own limitations too: a reply the model was cut off
 mid-sentence is labelled as an interrupted fragment rather than shown as a

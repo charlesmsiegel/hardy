@@ -1064,3 +1064,24 @@ def test_a_cancellation_arriving_before_the_run_starts_is_not_lost(tmp_path) -> 
     )
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
     assert state.starts == [], 'a provider thread was opened for an abandoned run'
+
+
+def test_a_run_cancelled_during_verification_does_not_open_the_writeup_turn(tmp_path) -> None:
+    """The verifier runs Lean over the whole claim and can take minutes, so a
+    press very plausibly lands inside it -- and the verified branch leaves the
+    proving loop for the writeup turn without passing its check again."""
+    workflow, domain, controller, state = _scripted_controller(tmp_path)
+
+    verify = controller._verifier.verify
+
+    def cancelling(claim, proof_body, store):
+        result = verify(claim, proof_body, store)
+        controller.cancel()                   # the press, mid-verification
+        return result
+
+    controller._verifier = SimpleNamespace(verify=cancelling)
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert 'writeup' not in [stage for stage, _ in state.prompts]

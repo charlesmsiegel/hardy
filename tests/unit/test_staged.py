@@ -324,3 +324,28 @@ def test_each_provider_report_is_counted_whole(tmp_path) -> None:
     assert usage['exchanges'] == 2
     assert abs(usage['cost_usd'] - 0.10) < 1e-9
     assert usage['cache_read_tokens'] == 2 * 38443
+
+
+def test_a_cancelled_runtime_refuses_to_open_a_new_turn():
+    """`_cancelled` gated tool DISPATCH only, which stops a cancelled run doing
+    more work and does not stop it starting a new billable exchange -- and the
+    workflow has stages that open one with no tool call at all."""
+    from types import SimpleNamespace
+
+    import pytest
+
+    from hardy.staged import ClaudeStagedRuntime, StagedThread
+
+    runtime = ClaudeStagedRuntime(
+        store=SimpleNamespace(append=lambda *a, **k: None),
+        lean_runtime_factory=lambda claim: None,
+    )
+    asked: list[str] = []
+    thread = StagedThread(
+        runtime=SimpleNamespace(ask=lambda prompt: asked.append(prompt) or "{}"),
+        claim=None,
+    )
+    runtime._cancelled.set()
+    with pytest.raises(RuntimeError, match="cancelled before the writeup turn"):
+        runtime.run_structured(thread, "writeup", "prompt", dict)
+    assert asked == [], "a cancelled run opened a provider turn"

@@ -3020,6 +3020,11 @@ class MathematicsSession:
             obligations=self._obligations(),
             failed=summary_module.attempts(self._recorded()),
             modules=sorted(self.lean_workspace.sources()),
+            # Already computed for the obligations, and needed here for the
+            # same reason: a name two modules declare cannot be graded, because
+            # the statement shown and the verdict over it may come from
+            # different ones.
+            shared=self._shared_names(),
         )
 
     def export_material(self) -> dict[str, Any]:
@@ -3055,6 +3060,7 @@ class MathematicsSession:
             "audit": self._current_audit(),
             "theorems": self._theorem_statements(),
             "open": sorted(self._open_theorems()),
+            "shared": self._shared_names(),
             "lean": self.lean_workspace.sources(),
             "tex": self._tex_sources(),
             "obligations": [str(item) for item in self._obligations()],
