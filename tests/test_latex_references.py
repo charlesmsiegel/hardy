@@ -366,3 +366,28 @@ def test_a_pdf_left_in_the_tree_is_not_mistaken_for_this_compile_s(tmp_path: Pat
     assert "no writeup.pdf" in result.output
     assert committed == []
     assert not (output / "writeup.pdf").exists()
+
+
+def test_a_stale_table_of_contents_is_not_read_as_this_compile_s(tmp_path: Path):
+    r"""`.aux` was the first artifact found; it is not the only one.
+
+    Under `\nofiles` LaTeX reads an existing `.toc`, does not rewrite it, and
+    puts last time's section titles and page numbers into a PDF that exits
+    zero -- which the save then publishes and stamps as current.
+    """
+    tree = _tree(tmp_path)
+    for name in ("writeup.toc", "writeup.out", "writeup.lof", "writeup.lot"):
+        (tree / name).write_text("stale\n", encoding="utf-8")
+    (tree / "figure.pdf").write_bytes(b"%PDF-figure")
+    result = LatexTools(COMMAND).check(
+        PREAMBLE + "% list-inputs\nText.\n" + END, tree=tree
+    )
+    assert result.ok, result.output
+    handed = next(
+        line for line in result.output.splitlines() if line.startswith("inputs: ")
+    )
+    for artifact in ("writeup.toc", "writeup.out", "writeup.lof", "writeup.lot"):
+        assert artifact not in handed, handed
+    # And an ordinary input of the same shape is still handed over: a `.pdf`
+    # figure is a document's own file, not the compiler's leavings.
+    assert "figure.pdf" in handed

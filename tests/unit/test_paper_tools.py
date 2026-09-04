@@ -439,3 +439,17 @@ def test_a_fetch_answer_fits_the_budget_even_when_the_identity_does_not(tmp_path
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 128
     assert "math.DG/0211159v1" in result.output
+
+
+def test_an_empty_search_answer_is_measured_like_every_other(tmp_path: Path):
+    """Clipping the echo bounded the query and not the answer.
+
+    With a small budget the clipped echo plus the fixed note still overran
+    it, on the one branch that has no papers to shed.
+    """
+    empty = b'<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+    runtime = _runtime(tmp_path, empty, observation_bytes=128)
+    result = runtime.call("search_papers", {"query": "ricci " * 500})
+    assert result.ok, result.output
+    assert len(result.output.encode("utf-8")) <= 128
+    assert "matched nothing" in result.output

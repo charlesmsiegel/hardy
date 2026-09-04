@@ -25,6 +25,7 @@ from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .domain import RunLimits
+from .latex import ARTIFACTS as LATEX_ARTIFACTS
 from .latex import OUTPUTS as LATEX_OUTPUTS
 from .latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented, unreached_fragments
 from .layout import (
@@ -3726,7 +3727,8 @@ class MathematicsSession:
         return [
             relative.as_posix()
             for relative in found
-            if relative.suffix != ".aux" and relative.as_posix() not in LATEX_OUTPUTS
+            if relative.suffix not in LATEX_ARTIFACTS
+            and relative.as_posix() not in LATEX_OUTPUTS
         ]
 
     def _tex_path(self, path: str) -> tuple[str, Path] | ToolResult:

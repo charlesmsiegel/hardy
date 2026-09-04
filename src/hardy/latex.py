@@ -67,6 +67,15 @@ def stamped(source: str, stamp: str | None) -> str:
 #: a `.pdf` figure is an ordinary thing a writeup does.
 OUTPUTS = frozenset({"writeup.pdf", "writeup.log"})
 
+#: Files a LaTeX run writes for its own next pass. None of them is an input,
+#: and every one of them is a way for the last compile to speak for this one.
+#: `.aux` was the first found: a committed one had its `\citation` records
+#: read as this document's. A `.toc` is the same shape with a worse ending --
+#: under `\nofiles` LaTeX reads the stale file, does not rewrite it, and puts
+#: last time's section titles and page numbers in a PDF that exits zero and is
+#: then published and stamped as current.
+ARTIFACTS = frozenset({".aux", ".toc", ".out", ".lof", ".lot", ".nav", ".snm", ".vrb"})
+
 BODY = "\\begin{document}"
 INCLUSION = re.compile(r"\\(?:input|include|subfile)\s*\{([^}]*)\}")
 
@@ -253,17 +262,30 @@ VERBATIM_ENVIRONMENT = re.compile(
 INLINE_VERBATIM = re.compile(r"\\verb\*?(?P<mark>[^*\sa-zA-Z])")
 
 
-def _executed_line(line: str) -> str:
-    r"""One line as TeX reads it: comments gone, `\verb` spans removed.
+def _executed_line(line: str) -> tuple[str, str | None, str]:
+    r"""One line as TeX reads it, up to any verbatim environment it opens.
 
-    Both in ONE left-to-right pass, because they are the same decision. Doing
-    comments first loses `\verb%x%` -- `%` is a legal `\verb` delimiter, and
-    the opening one was read as a comment, so everything after it on the line
-    vanished from the check while TeX closed the verbatim at the second `%`
-    and executed the rest. Doing verbatim first loses the other direction: a
-    `\verb` written inside a comment is not a `\verb` at all.
+    Returns the text TeX would run, the environment opened (or None), and
+    what follows the opener on that line.
 
-    Whichever comes first in the line wins, which is what TeX does.
+    Comments, `\verb` spans and environment openers are found in ONE
+    left-to-right pass, because they are the same decision and each of them
+    depends on the escapes seen so far. Deciding them separately lost a case
+    each time:
+
+    - comments first loses `\verb%x%` -- `%` is a legal `\verb` delimiter, and
+      the opening one was read as a comment, so the rest of the line vanished
+      from the check while TeX closed the verbatim at the second `%`;
+    - verbatim first loses the other direction, since a `\verb` written inside
+      a comment is not a `\verb` at all;
+    - and searching for `\begin{verbatim}` in text this scan had already
+      cleaned found one inside `\\begin{verbatim}`, where TeX sees `\\` and
+      then the ordinary word "begin" -- opening a region it never opens, and
+      so removing real source from inspection.
+
+    Scanning once, in order, is what makes all three come out right: a
+    backslash is consumed with the character after it, so an escaped one can
+    neither open a comment nor start a command.
     """
     kept: list[str] = []
     index = 0
@@ -276,9 +298,9 @@ def _executed_line(line: str) -> str:
                 kept.append(" ")
                 index = len(line) if closed < 0 else closed + 1
                 continue
-            # An escaped character, `\%` among them, so it cannot open a
-            # comment. Two characters at a time is enough for that: a control
-            # word's remaining letters are ordinary text to this scan.
+            opener = VERBATIM_ENVIRONMENT.match(line, index)
+            if opener is not None:
+                return "".join(kept), opener.group("env"), line[opener.end() :]
             kept.append(line[index : index + 2])
             index += 2
             continue
@@ -286,7 +308,7 @@ def _executed_line(line: str) -> str:
             break
         kept.append(character)
         index += 1
-    return "".join(kept)
+    return "".join(kept), None, ""
 
 
 def typeset(source: str) -> str:
@@ -298,9 +320,8 @@ def typeset(source: str) -> str:
     delete executable source: `% \begin{verbatim}`, a real `thebibliography`,
     then `% \end{verbatim}` was cut out whole, and TeX ran every line of it.
 
-    So the state is carried line by line: outside a region a line has its
-    comments and `\verb` spans removed and is then looked at for an opener,
-    so a commented opener is gone before it can open anything; inside one,
+    So the state is carried line by line: outside a region each line is
+    scanned once for comments, `\verb` and an opener together; inside one,
     `%` is an ordinary character and only the literal closer ends the region.
     """
     kept: list[str] = []
@@ -313,18 +334,16 @@ def typeset(source: str) -> str:
                 continue
             line, closing = rest, None
         while True:
-            line = _executed_line(line)
-            found = VERBATIM_ENVIRONMENT.search(line)
-            if found is None:
+            text, environment, rest = _executed_line(line)
+            kept.append(text)
+            if environment is None:
                 break
-            kept.append(line[: found.start()])
-            closer = f"\\end{{{found.group('env')}}}"
-            _, marker, rest = line[found.end() :].partition(closer)
+            closer = f"\\end{{{environment}}}"
+            _, marker, after = rest.partition(closer)
             if not marker:
-                closing, line = closer, ""
+                closing = closer
                 break
-            line = rest
-        kept.append(line)
+            line = after
     return "\n".join(kept)
 
 
@@ -490,15 +509,15 @@ def _copy_tree(tree: Path, work: Path) -> None:
     everywhere else in a project.
     """
     for relative in files_under(tree, ""):
-        # Auxiliary files are the compiler's own output, and this is its
-        # input. A checkout carrying `tex/old.aux` -- a build artifact
+        # A compiler artifact is the compiler's own output, and this directory
+        # is its input. A checkout carrying `tex/old.aux` -- a build artifact
         # somebody committed -- would otherwise be read as something this
         # compile produced: its `\citation` records would be judged as
         # citations of the document being checked, and every clean writeup in
         # that tree would be refused over a file the compiler never wrote.
         # Stale numbers on the first pass are the same mistake in the other
         # direction, so they are left out rather than trusted.
-        if relative.suffix == ".aux" or relative.as_posix() in OUTPUTS:
+        if relative.suffix in ARTIFACTS or relative.as_posix() in OUTPUTS:
             continue
         guard, name = guard_for(work, relative, create=True)
         # Not fsynced: every byte here lands in a `TemporaryDirectory` this
