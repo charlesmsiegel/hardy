@@ -223,9 +223,16 @@ function renderDetail() {
         return `<div>${i === 0 ? "<b>primary</b> · " : ""}${cite} &nbsp;<span class="mono">${esc(o.locator.join("."))}</span></div>`;
       }).join("")
     : `<p class="none">No occurrences. Authored entry — rationale: ${esc(e.rationale) || '<span class="warnline">missing</span>'}</p>`;
-  const witness = e.witness
+  // `e.unwitnessed`, not `e.witness`: A6 has nothing to close when an entry
+  // has no binders, so a term stored there was never checked against anything.
+  // Branching on the field would show it as evidence while the header counted
+  // the entry unwitnessed -- two panels disagreeing about the same statement.
+  const stored = e.witness
+    ? ` The stored term <code class="mono">${esc(e.witness)}</code> is not checked: there are no binders to close.`
+    : "";
+  const witness = !e.unwitnessed
     ? `<pre class="lean">${esc(e.witness)}</pre>`
-    : `<p class="none">Unwitnessed — ${esc(e.witness_note) || "no note."} A6 cannot rule out vacuity here.</p>`;
+    : `<p class="none">Unwitnessed — ${esc(e.witness_note) || "no note."} A6 cannot rule out vacuity here.${stored}</p>`;
   const review = e.review
     ? `<table class="kv"><tr><td>reviewer</td><td>${esc(e.review.reviewer)}</td></tr>
        <tr><td>reviewed</td><td>${esc(e.review.reviewed_at)}</td></tr>
