@@ -1741,6 +1741,26 @@ fails at the final `ProblemSet` construction rather than in any one shard — so
 `corpus check`, whose whole job is to report malformed corpus state, exited
 with a pydantic traceback instead.
 
+**A relabelled twin is re-swept rather than carried forward.** The truth-label
+staleness check added above refuses a twin whose baseline records no negation
+sweep, and the documented repair is `hardy evals baseline` — which reuses rows
+by statement digest, and that digest excludes `expected`. So the repair
+carried the row forward with `negation: null`, wrote another baseline
+`staleness` refused, and looped forever unless the file was deleted by hand.
+The reuse condition now requires the prior row to have the *shape* the entry
+needs, not just a matching statement.
+
+**`problems.py` joins the procedure identity.** `sweep_entry` builds stage A,
+stage B and the A3 negation out of `Entry.declaration/proposition/negation`. A
+correction to that assembly moves neither the corpus fields nor the fixed
+package version, so an incremental sweep would have reused rows the old
+assembly produced.
+
+**A malformed taxonomy envelope is reported, not raised.** `msc2020.json`
+without a `codes` table, or `msc-to-arxiv.json` missing a roll-up, raised a
+bare `KeyError` from inside entry validation — out of the command whose job is
+to report exactly that.
+
 ### Known gaps, deliberately left to their phase
 
 - **`Review` does not bind the origin it was read against.** `occurrences` and

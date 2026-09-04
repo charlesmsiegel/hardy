@@ -131,6 +131,8 @@ def _load_shard(path: Path) -> Shard:
     """
     try:
         return Shard.model_validate_json(path.read_text(encoding="utf-8"))
+    except taxonomy.MalformedTaxonomy as error:
+        raise CorpusError(str(error)) from error
     except (ValidationError, ValueError, OSError) as error:
         raise CorpusError(f"{path.name} is not a readable shard: {error}") from error
 
@@ -268,6 +270,12 @@ def check_issues(root: Path) -> list[str]:
     _gathered(issues, "tombstones.json", lambda: tombstone_issues(problems, load_tombstones(root)))
     _gathered(issues, "sources.json", lambda: source_issues(problems, load_sources(root)))
     _gathered(issues, "CHANGELOG.md", lambda: version_issues(root))
+    _gathered(issues, "taxonomy", lambda: _code_issues(problems, root))
+    return sorted(issues)
+
+
+def _code_issues(problems: ProblemSet, root: Path) -> list[str]:
+    issues: list[str] = []
     with taxonomy.using(root):
         for entry in problems.entries:
             for code in entry.msc:
@@ -288,7 +296,7 @@ def check_issues(root: Path) -> list[str]:
                             f"{entry.id!r}: {code!r} has no {table} entry for its class "
                             f"{code[:2]!r} in taxonomy/msc-to-arxiv.json"
                         )
-    return sorted(issues)
+    return issues
 
 
 def report(root: Path) -> list[str]:

@@ -26,6 +26,15 @@ class UnknownCode(KeyError):
     """A code absent from the vendored MSC2020 table."""
 
 
+class MalformedTaxonomy(ValueError):
+    """A taxonomy file that parses as JSON but is not a taxonomy.
+
+    A `ValueError` so that `corpus.load_corpus`, which runs these lookups
+    inside entry validation, normalises it to a `CorpusError` rather than
+    letting a bare `KeyError` walk out of `hardy evals corpus check`.
+    """
+
+
 @contextmanager
 def using(root: Path) -> Iterator[None]:
     """Resolve lookups against `root`'s tables for the duration of the block.
@@ -43,14 +52,26 @@ def using(root: Path) -> Iterator[None]:
         _active = previous
 
 
+def _table(payload: dict, key: str, path: Path) -> dict:
+    value = payload.get(key)
+    if not isinstance(value, dict):
+        raise MalformedTaxonomy(f"{path.name} has no {key!r} table")
+    return value
+
+
 @cache
 def _codes_at(root: Path) -> dict[str, str]:
-    return json.loads((root / "taxonomy" / "msc2020.json").read_text(encoding="utf-8"))["codes"]
+    path = root / "taxonomy" / "msc2020.json"
+    return _table(json.loads(path.read_text(encoding="utf-8")), "codes", path)
 
 
 @cache
 def _mapping_at(root: Path) -> dict[str, dict[str, str]]:
-    return json.loads((root / "taxonomy" / "msc-to-arxiv.json").read_text(encoding="utf-8"))
+    path = root / "taxonomy" / "msc-to-arxiv.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for name in ("arxiv", "fields", "groups"):
+        _table(payload, name, path)
+    return payload
 
 
 def _codes() -> dict[str, str]:
