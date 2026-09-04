@@ -782,6 +782,18 @@ UNGUARDED = {
     # reverting either of them to `shutil.copyfile` fails this ratchet rather
     # than passing it.
     ("latex.py", "check"): "test_a_symlink_in_the_writeup_tree_is_refused_rather_than_skipped",
+    # A bounded READ of `writeup.log`, and no write at all: `open` is watched
+    # as a shape rather than by mode, because `open(path, "w")` is the write
+    # this ratchet exists for. The read has to be `open` rather than
+    # `read_text` precisely because it seeks to the tail instead of loading a
+    # log a document can make arbitrarily large. It lands in the same scratch
+    # tree as `check`'s writes, which `_copy_tree` refuses to build at all if
+    # there is a symlink anywhere in it -- and `_diagnostics` checks
+    # `is_symlink` itself before opening, so the file it reads is the file the
+    # compiler just wrote.
+    ("latex.py", "_diagnostics"): (
+        "test_a_symlink_in_the_writeup_tree_is_refused_rather_than_skipped"
+    ),
 }
 
 

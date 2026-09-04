@@ -446,7 +446,10 @@ class PaperToolRuntime:
             if not cut.text and start > cut.total_lines:
                 return ToolResult(
                     False,
-                    f"{record.arxiv_id} has {cut.total_lines} lines; start_line={start} is past the end",
+                    self._bounded(
+                        f"{record.arxiv_id} has {cut.total_lines} lines; "
+                        f"start_line={start} is past the end"
+                    ),
                 )
             rest = (
                 f" Call read_paper again with start_line={cut.next_line} for the rest."
@@ -467,9 +470,17 @@ class PaperToolRuntime:
         # back a page that cannot be turned.
         return ToolResult(
             False,
-            f"a window of {record.arxiv_id} does not fit the "
-            f"{self.observation_bytes}-byte observation budget once the continuation "
-            "line is counted; raise limits.model_observation_bytes to read this record.",
+            # Measured like every other answer, refusals included. Both of
+            # these quote the identifier back, and an identifier is a tool
+            # argument, which nothing bounds: the budget that made the window
+            # not fit is the same budget the explanation has to fit in, so
+            # returning an unmeasured refusal spends more of the context than
+            # the answer it declined to give.
+            self._bounded(
+                f"a window of {record.arxiv_id} does not fit the "
+                f"{self.observation_bytes}-byte observation budget once the continuation "
+                "line is counted; raise limits.model_observation_bytes to read this record."
+            ),
         )
 
     def cite(self, paper_id: str) -> ToolResult:

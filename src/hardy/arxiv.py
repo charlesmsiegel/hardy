@@ -451,6 +451,7 @@ class PaperLibrary:
                 f"the record stored under {identifier} says it is {record.arxiv_id}; "
                 "refusing to serve one paper under another's identifier"
             )
+        _coherent(identifier, record)
         return record
 
     def stored(self) -> tuple[str, ...]:
@@ -846,14 +847,36 @@ class ArxivClient:
         # closer together than the interval both of them waited out. So the
         # claim is checked at the moment it is used: if somebody else has
         # reserved since, this one queues again rather than firing on a slot
-        # that is no longer its own. Bounded, because losing the race twice is
-        # a reason to be late rather than to keep giving way.
+        # that is no longer its own. Bounded, because losing the race three
+        # times is a reason to be late -- see below -- rather than to keep
+        # giving way until nobody else wants a slot.
+        held = False
         for _ in range(3):
             reserved = self._throttle(_already_answered)
             if reserved is None:
                 return served[0]
             if self.library.last_request() == reserved:
+                held = True
                 break
+        if not held:
+            # Giving way three times is a reason to be late, not a reason to
+            # stop waiting. The loop used to fall through here and transport
+            # immediately, which is the one thing the whole reservation dance
+            # exists to prevent: three lost races ended in the request that
+            # lost them firing right behind the one that won, closer together
+            # than the interval either had waited out.
+            #
+            # So the spacing is honoured on the way out too, measured against
+            # whoever holds the slot now rather than waiting a fixed interval:
+            # this process has already waited three of them, and the winner
+            # may be most of the way through its own. Unlocked, because this
+            # is the give-way path -- another process may reserve during the
+            # sleep, and the answer to that is to be later still, not to hold
+            # the lock across a network request.
+            since = self._clock() - self.library.last_request()
+            remaining = self._interval if since < 0 else self._interval - since
+            if remaining > 0:
+                self._sleep(remaining)
         body = self._transport(url, self._timeout)
         now = self._clock()
         # Parsed before it is cached, so the refusal below leaves nothing
@@ -922,6 +945,51 @@ def _narrow(response: Any, seconds: float) -> None:
         response.settimeout(max(0.001, seconds))
     except (OSError, AttributeError, ValueError):
         return
+
+
+def _coherent(identifier: ArxivId, record: PaperRecord) -> None:
+    """Refuse a record whose provenance does not hold together.
+
+    The two fields the Atom feed does not carry. `read` re-derives a record
+    from its stored response and compares the whole model, which proves every
+    other field came out of those bytes -- but the reparse is handed
+    `source_url` and `fetched_at` from the record itself, so those two are
+    compared with themselves and prove nothing. They are checked against what
+    they claim to be instead: a source that is arXiv's API, and a retrieval
+    time that is a time.
+
+    WHAT THIS IS NOT. It is not authentication. Nothing computed from the
+    library can tell a genuine record from one written by somebody who can
+    edit the library: whoever rewrites `record.json` can put a plausible URL
+    and a plausible timestamp in it as easily as an implausible one, and can
+    recompute every digest afterwards. The claim that travels is the content
+    digest a bibliography entry carries to another machine, where the paper
+    can be fetched again and the digest recomputed. What is caught here is the
+    weaker and commoner thing: a record whose provenance is not even
+    internally coherent.
+
+    WHAT IS DELIBERATELY NOT CHECKED. Whether `fetched_at` falls after the
+    version's own `published`/`updated` date. It would catch a hand-edited
+    stamp only in the case where the editor got the year wrong -- one who
+    writes a later date defeats it entirely -- and it would make reading a
+    stored record depend on this machine's clock agreeing with arXiv's. A
+    container with no battery-backed clock, or a machine whose time has not
+    yet been corrected, would then be refused papers it fetched itself, with
+    every digest agreeing. Refusing a genuine record is the worse error, and
+    a check anyone can evade at no cost is not worth buying it with.
+    """
+    if not record.source_url.startswith(f"{ENDPOINT}?"):
+        raise ArxivError(
+            f"the record stored under {identifier} says its metadata came from "
+            f"{record.source_url[:200]!r}, which is not arXiv's API"
+        )
+    try:
+        datetime.fromisoformat(record.fetched_at)
+    except ValueError as error:
+        raise ArxivError(
+            f"the record stored under {identifier} does not say when it was "
+            f"retrieved: {record.fetched_at[:64]!r} is not a timestamp"
+        ) from error
 
 
 def _stamp(when: float) -> str:
