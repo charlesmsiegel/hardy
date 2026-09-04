@@ -93,6 +93,14 @@ class Message:
     #: reads it nor records it, and `as_dict` leaves it out because a
     #: transcript is a human-facing record of what was said.
     reasoning: tuple[Any, ...] = ()
+    #: The assistant turn's content exactly as the provider sent it, in its own
+    #: order, for a transport that has to hand the turn back. `text` and
+    #: `tool_calls` above are Hardy's view of it -- what the loop dispatches,
+    #: shows and records -- and grouping by kind is fine for all three. It is
+    #: not fine for the continuation: a turn that put text *after* a tool call
+    #: was replayed with that text moved in front of it, so the message the
+    #: provider was asked to continue from was not the one it produced.
+    blocks: tuple[Any, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         value: dict[str, Any] = {"role": self.role, "text": self.text}
@@ -120,6 +128,9 @@ class ProviderTurn:
     #: transcribed and never shown: `thinking` above is what the record and the
     #: terminal get, which is that it happened.
     reasoning: tuple[Any, ...] = ()
+    #: The turn's content blocks in the provider's own order, for a transport
+    #: that must hand the turn back unchanged. See `Message.blocks`.
+    blocks: tuple[Any, ...] = ()
     #: The provider's token report, verbatim, or None when it stated nothing.
     #: Never `{}`: a spend meter that cannot tell silence from zero is worse
     #: than one that says nothing.
@@ -367,10 +378,18 @@ class AgentLoop:
             if self._cancelled:
                 return
             self._deadline(budget)
-            if budget.exhausted():
+            # Asked before the bound, because a run with nothing left to do has
+            # not reached one. A submission accepted on the `max_turns`-th call
+            # left the next iteration raising here first: the trajectory
+            # recorded a `turn_limit` and a `max_turns` limit event, the runner
+            # then overwrote the terminal reason to `verified`, and the record
+            # said a bound had ended a run that already had its result -- with
+            # the decline that actually ended it missing. The bound still binds
+            # a run that has work left, because the hook returns None there.
+            declined = self._hook(lambda: self._before_turn(self.messages)) if self._before_turn is not None else None
+            if declined is None and budget.exhausted():
                 self._observe({"type": "turn_limit", "turns": budget.spent, "max_turns": self.max_turns})
                 raise TurnLimitReached(f"the exchange reached its {self.max_turns}-turn bound")
-            declined = self._hook(lambda: self._before_turn(self.messages)) if self._before_turn is not None else None
             if declined is not None:
                 # Hardy declining to spend a turn is a fact about the run, not
                 # an absence of one, so it is recorded and said out loud.
@@ -472,7 +491,8 @@ class AgentLoop:
             # of it: the durable record and the model's own history diverge,
             # which is the failure this whole loop exists to make impossible.
             self.messages.append(Message(
-                "assistant", text=turn.text, tool_calls=turn.tool_calls, reasoning=turn.reasoning
+                "assistant", text=turn.text, tool_calls=turn.tool_calls,
+                reasoning=turn.reasoning, blocks=turn.blocks,
             ))
             placeholders = self._preanswer(turn.tool_calls)
             # Recorded for every assistant turn, including one that said

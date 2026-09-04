@@ -653,7 +653,12 @@ def _digest(messages: Sequence[Message]) -> str:
         # `thinking` event records -- so nothing here transcribes what it will
         # not publish and a reader holding the transcript can still recompute
         # what this covered.
-        for block in message.reasoning:
+        # The ordered blocks when the transport kept them, since they are what
+        # is sent and they subsume the reasoning; the reasoning alone
+        # otherwise. Two turns differing only in the order of their text and
+        # calls are two different requests, and hashing the regrouped view
+        # could not tell them apart.
+        for block in message.blocks or message.reasoning:
             running.update(reasoning_digest(block).encode("utf-8"))
             running.update(b"\x1f")
         running.update(b"\x1e")
@@ -3172,6 +3177,21 @@ class MathematicsSession:
             output_tokens=self._output_cap(),
         )
         if not outcome.needed:
+            # A request the window has no room for, with nothing above the
+            # tail that may legally be cut. There is no compaction to perform,
+            # and that is not the same fact as a conversation that fits: left
+            # to `needed` alone, the record showed nothing at all where an
+            # oversized request was about to go out. It still goes --
+            # `estimate_tokens` bounds from above, so over the estimate is not
+            # necessarily over the endpoint's own count -- and if the provider
+            # refuses it, this is the entry that says why.
+            if outcome.overflow:
+                self._record({
+                    "type": "overflow",
+                    "estimated_tokens": {"before": outcome.before, "available": outcome.available},
+                    "context_window": self.context_window,
+                    "why": "the request is over the window and no legal cut is above the kept tail",
+                })
             return None
         self._record({
             "type": "compaction",

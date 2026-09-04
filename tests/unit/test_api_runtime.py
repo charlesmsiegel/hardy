@@ -30,6 +30,17 @@ class Block:
         self.__dict__.update(fields)
 
 
+def _kind(block: Any) -> str:
+    """The block's type, whichever shape `_block` handed back.
+
+    A block with `model_dump` becomes a dict; one without -- these stand-ins,
+    and anything an SDK version hands over as a plain object -- is passed
+    through verbatim, which is the point of carrying it rather than rebuilding
+    it.
+    """
+    return block["type"] if isinstance(block, dict) else block.type
+
+
 class Reply:
     def __init__(self, content, usage=None, stop_reason="end_turn") -> None:
         self.content, self.usage, self.stop_reason = content, usage, stop_reason
@@ -580,3 +591,51 @@ def test_the_gate_lets_a_run_with_nothing_yet_carry_on(tmp_path, monkeypatch: py
     # Two turns: the refused submission did not end the run, and the accepted
     # one did.
     assert len(client.sent) == 2
+
+
+def test_an_assistant_turn_is_handed_back_in_the_order_it_arrived() -> None:
+    """Text after a tool call stays after it.
+
+    Regrouped by kind, a turn whose text followed its call came back with the
+    text moved in front, so the continuation asked the model to carry on from a
+    message it had not written.
+    """
+    reply = Reply(
+        [
+            Block(type="text", text="first, let me check"),
+            Block(type="tool_use", id="c1", name="check_proof", input={"proof": "by rfl"}),
+            Block(type="text", text="and then I will submit"),
+        ],
+        stop_reason="tool_use",
+    )
+    provider = AnthropicProvider("claude-test", client=FakeClient([reply]))
+    turn = provider.complete(system="", messages=[Message("user", text="go")], specs=[])
+
+    # Hardy's own view still groups by kind, which is what it dispatches on.
+    assert turn.text == "first, let me check\n\nand then I will submit"
+    assert [call.id for call in turn.tool_calls] == ["c1"]
+
+    sent = as_messages([
+        Message("user", text="go"),
+        Message("assistant", text=turn.text, tool_calls=turn.tool_calls, blocks=turn.blocks),
+        Message("tool_result", text="ok", call_id="c1", name="check_proof", ok=True),
+    ])
+
+    assert [_kind(block) for block in sent[1]["content"]] == ["text", "tool_use", "text"]
+    assert sent[1]["content"][2].text == "and then I will submit"
+
+
+def test_a_message_with_no_blocks_is_still_rebuilt() -> None:
+    """A turn adopted from another backend, or replayed from a record, carries
+    no blocks -- and reasoning still has to come first when it does."""
+    thinking = Block(type="thinking", thinking="...", signature="sig")
+    sent = as_messages([
+        Message(
+            "assistant",
+            text="here",
+            tool_calls=(ToolCall("c1", "check_proof", {}),),
+            reasoning=(thinking,),
+        ),
+    ])
+
+    assert [_kind(block) for block in sent[0]["content"]] == ["thinking", "text", "tool_use"]
