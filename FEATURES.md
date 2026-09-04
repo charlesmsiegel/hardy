@@ -728,13 +728,21 @@ Priority labels are sequencing hints:
   that quietly claimed to be enough. A compaction that left no trace is
   the invisible loss the feature exists to prevent. A backend whose SDK owns
   the loop is not offered a compactor at all, rather than handed one it would
-  silently drop. The window itself is `context_window` (or
+  silently drop. The estimate charges ASCII at a prose ratio and everything
+  else at one token per code point, because a transcript full of `∀` and `⟨⟩`
+  — or a session not conducted in ASCII at all — is exactly where dividing
+  every character by 3.5 understated the conversation, and understating it is
+  the direction that loses the request rather than some context. The window
+  itself is `context_window` (or
   `HARDY_CONTEXT_WINDOW`), defaulting to 200K and recorded in the compaction
   event: it is a property of the endpoint rather than of Hardy — a gateway
   answering `claude-opus-5` may offer less than Anthropic does — and it is not
   derived from the model identity, because Hardy sends no long-context beta and
   a window guessed too large is the direction that cannot recover, the
-  compactor never running while the provider refuses every request.
+  compactor never running while the provider refuses every request. The reply
+  allowance is capped at a quarter of whatever window is configured, so a
+  gateway correctly set below four times the flat reserve still leaves room to
+  compact into rather than reserving the whole of itself.
 - **Next:** carry the same three back to the subscription backends, where the
   SDK still owns the loop — Hardy's own turn bound, the closers, and the
   compaction above — whether through the SDK's `can_use_tool` and `PreCompact`

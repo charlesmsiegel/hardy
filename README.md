@@ -468,7 +468,9 @@ the cut never lands between a tool call and its result, and the compaction
 goes into `transcript.jsonl` saying what was summarised, where the kept
 messages start, what the summary said, and the window it was all planned
 against — `context_window`, 200K by default and settable, because the window
-belongs to the endpoint and not to Hardy. `DESIGN.md` records the full
+belongs to the endpoint and not to Hardy. Which endpoint that was is recorded
+too, with any credentials in it stripped: a gateway URL carrying a token in its
+userinfo or its query would otherwise be committed beside the experiment. `DESIGN.md` records the full
 argument, including how much of it the SDK's own `PreCompact` hook might
 recover on the backends where the loop is still not Hardy's.
 

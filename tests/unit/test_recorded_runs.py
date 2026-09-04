@@ -1064,3 +1064,59 @@ def test_a_closer_that_landed_late_is_not_a_record_at_odds_with_itself(tmp_path)
     assert trajectory['events'][index - 1]['type'] == 'discarded'
 
     assert acceptance.validate_batch_consistency(output) == ()
+
+
+def test_a_malformed_sketch_is_a_finding_rather_than_a_crash(tmp_path) -> None:
+    """`sketch_section` indexes `proof` and reads `keyword` and `line` off every
+    hole, so a truncated or hand-edited record took the audit down with a
+    TypeError two comparisons later. "This artifact is invalid" is the finding;
+    a crash is the one answer a validator may not give."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _sketched(tmp_path)
+    for name in ('result.json', 'trajectory.json'):
+        payload = json.loads((output / name).read_text(encoding='utf-8'))
+        payload['sketch']['holes'] = 'one sorry'
+        (output / name).write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('not shaped like one' in issue for issue in issues)
+
+
+def test_a_sketch_with_no_proof_is_refused_the_same_way(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _sketched(tmp_path)
+    for name in ('result.json', 'trajectory.json'):
+        payload = json.loads((output / name).read_text(encoding='utf-8'))
+        del payload['sketch']['proof']
+        (output / name).write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('not shaped like one' in issue for issue in issues)
+
+
+def test_a_run_that_asked_no_provider_records_zero_turns(tmp_path) -> None:
+    """Hardy knows exactly how many provider turns a ladder-only run took, and
+    it is zero. `None` means "nobody said", which is honest only when a
+    provider was asked and did not report -- so reading it off a runtime that
+    was never built turned a measurement into an unknown, and a turn-based
+    comparison could not use the run at all."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path, tactic='exact True.intro', name='ladder-only')
+
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    result = json.loads((output / 'result.json').read_text(encoding='utf-8'))
+    assert trajectory['closers']['closed_by'] == 'exact True.intro'
+    assert result['turns'] == 0
+    assert trajectory['closers']['enabled'] is True
+    assert acceptance.validate_batch_consistency(output) == ()
+
+    # And the record may not say anything else. A count beside a run that asked
+    # nothing is a count nobody measured.
+    result['turns'] = 2
+    (output / 'result.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+    assert any(
+        'asked no provider anything' in issue or 'turn count' in issue
+        for issue in acceptance.validate_batch_consistency(output)
+    )

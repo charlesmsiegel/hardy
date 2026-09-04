@@ -17,6 +17,7 @@ from hardy.api_runtime import (
     ApiRuntime,
     _usage,
     as_messages,
+    redacted,
     tool_schema,
 )
 from hardy.loop import Message, ToolCall
@@ -364,3 +365,73 @@ def test_a_dribbling_endpoint_does_not_outlast_the_budget() -> None:
     # Hardy stopped when it said it would; the abandoned request is a stated
     # limit, not a silent wait.
     assert time.monotonic() - started < 2
+
+
+def test_a_gateway_credential_never_reaches_the_record() -> None:
+    """`provenance()` writes the endpoint into `session.json` and into every
+    batch trajectory, and both are versioned files. A gateway configured with
+    its key in the userinfo or the query would have committed that credential
+    beside the experiment."""
+    assert redacted("https://tok3n@gateway.example/v1") == "https://gateway.example/v1"
+    with_port = redacted("https://user:tok3n@gateway.example:8443/v1")
+    assert "tok3n" not in with_port
+    assert with_port == "https://gateway.example:8443/v1"
+    # The query goes whole rather than by the names Hardy happens to know: a
+    # gateway may call its key anything, and a redactor that has to recognise
+    # the name fails silently on the parameter nobody thought of.
+    assert redacted("https://gateway.example/v1?api_key=tok3n") == (
+        "https://gateway.example/v1 (query redacted)"
+    )
+    # And which endpoint answered survives, because that is the fact the field
+    # exists to record.
+    assert redacted("https://api.anthropic.com") == "https://api.anthropic.com"
+
+
+def test_the_recorded_endpoint_is_the_redacted_one(monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://secret@gateway.example/v1")
+    provider = AnthropicProvider("claude-test")
+
+    assert "secret" not in provider.endpoint
+    assert "gateway.example" in provider.endpoint
+
+
+def test_a_value_that_is_not_a_url_is_not_republished() -> None:
+    """Nothing here can say which part of an unparseable value is a secret, so
+    nothing here passes it through."""
+    assert redacted("not a url at all") == "unreadable endpoint"
+
+
+def test_thinking_blocks_go_back_with_the_turn_they_belong_to() -> None:
+    """On a tool continuation the API requires the thinking blocks of the turn
+    that asked, unchanged and in order. Summarised to a boolean they cannot be
+    given back, and the next request is refused -- in the configuration that
+    asked for thinking, which is the one nobody tries first."""
+    block = {"type": "thinking", "thinking": "step one", "signature": "sig"}
+
+    sent = as_messages([
+        Message("user", text="prove it"),
+        Message(
+            "assistant",
+            text="checking",
+            tool_calls=(ToolCall("c1", "check_proof", {"proof": "by rfl"}),),
+            reasoning=(block,),
+        ),
+        Message("tool_result", text="ok", call_id="c1", name="check_proof", ok=True),
+    ])
+
+    assistant = next(item for item in sent if item["role"] == "assistant")
+    assert assistant["content"][0] == block
+    assert [entry["type"] for entry in assistant["content"]] == ["thinking", "text", "tool_use"]
+
+
+def test_a_reply_keeps_the_thinking_block_it_reported() -> None:
+    block = Block(type="thinking", thinking="step one", signature="sig")
+    client = FakeClient([Reply([block, Block(type="text", text="hello")])])
+    provider = AnthropicProvider("claude-test", client=client)
+
+    turn = provider.complete(system="be exact", messages=[], specs=[])
+
+    assert turn.thinking is True
+    assert turn.reasoning == (block,)
+    # Reported, never transcribed: the text a caller sees is the model's words.
+    assert turn.text == "hello"

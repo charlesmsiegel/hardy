@@ -573,3 +573,55 @@ def test_a_cancel_during_the_before_turn_hook_is_read_too() -> None:
 
     assert provider.calls == 0
     assert loop.turns == 0
+
+
+def test_a_truncated_reply_is_disclosed_even_when_it_asked_for_tools() -> None:
+    """The case where the disclosure matters most was the case that lost it.
+
+    A reply that ran out of output tokens *while* issuing tool calls used to
+    skip the notice entirely: the calls dispatched, the exchange carried on,
+    and nothing in the trajectory said the model had been cut off partway
+    through deciding what to ask for.
+    """
+    loop, _, observed = _loop([
+        ProviderTurn(
+            text="I will check",
+            tool_calls=(ToolCall("c1", "check_proof", {}),),
+            stop_reason="max_tokens",
+        ),
+        ProviderTurn(text="done"),
+    ])
+
+    events = _drain(loop, "prove it")
+
+    assert any(item["type"] == "truncated" for item in observed)
+    notices = [event for event in events if event.kind == "notice"]
+    assert notices and "max_tokens" in notices[0].text
+    # And the tools still ran: the disclosure is added, not substituted.
+    assert any(item["type"] == "tool_result" for item in observed) or any(
+        event.kind == "tool_result" for event in events
+    )
+
+
+def test_every_tool_call_is_answered_even_if_nobody_drains_the_stream() -> None:
+    """A consumer that stops iterating at the `tool_use` event suspends the
+    generator there forever, and a closed generator may not yield -- so a
+    cleanup that tried to append the missing result could not run. The
+    conversation would keep an assistant `tool_use` with nothing answering it,
+    and every later request built from it is one the API refuses."""
+    loop, _, _ = _loop([
+        ProviderTurn(tool_calls=(ToolCall("c1", "check_proof", {}),)),
+        ProviderTurn(text="never reached"),
+    ])
+
+    stream = loop.run("prove it")
+    for event in stream:
+        if event.kind == "tool_use":
+            break
+    stream.close()
+
+    results = [message for message in loop.messages if message.role == "tool_result"]
+    assert len(results) == 1
+    assert results[0].call_id == "c1"
+    assert results[0].ok is False
+    assert "abandoned" in results[0].text
