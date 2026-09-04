@@ -171,8 +171,21 @@ def test_the_estimate_counts_tool_arguments_too() -> None:
         Message("assistant", text="", tool_calls=(ToolCall("c1", "save_lean", {"source": "x" * 1000}),))
     ])
 
-    assert plain == 0
-    assert with_call > 200
+    assert with_call > plain + 200
+
+
+def test_an_empty_message_still_costs_something() -> None:
+    """Roles, block framing and the ids that pair a call with its result all
+    reach the wire. Counting only text made the estimate lightest exactly where
+    a tool-heavy conversation is heaviest -- and light in the direction that
+    sends a request the provider refuses."""
+    empty = compaction.estimate_tokens([Message("assistant", text="")])
+    result = compaction.estimate_tokens([
+        Message("tool_result", text="", call_id="toolu_01ABCDEFGHIJKLMNOP", name="save_lean")
+    ])
+
+    assert empty > 0
+    assert result > empty
 
 
 @pytest.mark.parametrize("field", ["usage", "usage_cursor", "provider_session"])

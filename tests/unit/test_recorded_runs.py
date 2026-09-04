@@ -884,3 +884,32 @@ def test_a_sketch_swapped_for_another_skeleton_is_refused(tmp_path) -> None:
 
     assert any('not the source Lean was given' in issue for issue in issues)
     assert any('does not hash to the source Lean recorded' in issue for issue in issues)
+
+
+def test_a_sketch_with_no_recorded_source_is_refused(tmp_path) -> None:
+    """Conditional checks let missing evidence pass. A sketch nothing can tie
+    to a Lean run is a sketch with no evidence behind it."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _sketched(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    for event in trajectory['events']:
+        if event.get('name') == 'sketch_proof':
+            event['result']['source'] = None
+            event['result']['source_sha256'] = None
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('records no source for Lean to have elaborated' in issue for issue in issues)
+
+
+def test_a_sketch_whose_request_cannot_be_rebuilt_is_refused(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _sketched(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    trajectory['request']['imports'] = []
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('cannot rebuild the sketch' in issue for issue in issues)
