@@ -197,7 +197,15 @@ class AnthropicProvider:
         if self._client is None:
             if not os.environ.get("ANTHROPIC_API_KEY"):
                 raise RuntimeError(KEY_MISSING)
-            self._client = load_sdk().Anthropic()
+            # No retries. The client retries a timeout by default, and every
+            # attempt is handed the same `timeout` -- the whole of the run's
+            # remaining budget -- so a request with five minutes left could
+            # spend that three times over, plus backoff, before control came
+            # back here. A trajectory saying `wall_clock_enforced_by: "hardy"`
+            # would then be describing a bound nothing kept. Retrying is a
+            # decision the loop can make with the clock in front of it; the
+            # transport may not make it invisibly.
+            self._client = load_sdk().Anthropic(max_retries=0)
         return self._client
 
     @property
