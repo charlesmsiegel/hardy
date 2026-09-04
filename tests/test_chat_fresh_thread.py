@@ -182,6 +182,8 @@ class ThreadlessRuntime(FakeChatRuntime):
     is nothing to resume.
     """
 
+    resumes_conversation = False
+
     def stream(self, text: str):
         yield from super().stream(text)
         self.session_id = None
@@ -202,9 +204,16 @@ def test_a_backend_with_no_thread_drops_the_one_it_cannot_account_for(tmp_path: 
     session(tmp_path, runtime_class=ThreadlessRuntime).send("And this one.")
 
     assert "provider_session" not in local(tmp_path)
-    # The boundary is in the record, where a reader can see it: turns above it
-    # were produced on a conversation the turns below have no memory of.
-    assert [item["reason"] for item in recorded(tmp_path)] == ["no thread on this backend"]
+    # Two boundaries, at two moments, saying two things. Opening on a backend
+    # that resumes nothing is the join a reader needs to see -- turns above it
+    # were produced on a conversation the turns below have no memory of -- and
+    # the drop is the separate fact that the stored thread is now gone, which
+    # happens when the first turn is recorded rather than when the session
+    # opens.
+    assert [item["reason"] for item in recorded(tmp_path)] == [
+        "fresh context: this backend resumes nothing",
+        "no thread on this backend",
+    ]
     # And a later Claude session starts fresh rather than resuming the stale one.
     assert session(tmp_path).runtime.context["session_id"] is None
 
@@ -213,5 +222,39 @@ def test_a_backend_with_no_thread_and_nothing_to_drop_says_nothing(tmp_path: Pat
     """A workspace that never had a thread has no boundary to mark, and a
     record that gained an event on every open would be noise."""
     session(tmp_path, runtime_class=ThreadlessRuntime).send("First question.")
+
+    assert recorded(tmp_path) == []
+
+
+def test_reopening_on_a_backend_that_resumes_nothing_marks_the_join(tmp_path: Path):
+    """The `api` transport starts with an empty conversation every time, and
+    `_sync_provenance` sees the same model and the same backend and records
+    nothing -- so later events landed in a transcript that reads as one
+    unbroken conversation while every request omitted everything above this
+    point. An auditor could not say what context the model actually had."""
+    session(tmp_path, runtime_class=ThreadlessRuntime).send("First question.")
+
+    session(tmp_path, runtime_class=ThreadlessRuntime)
+
+    assert [item["reason"] for item in recorded(tmp_path)] == [
+        "fresh context: this backend resumes nothing"
+    ]
+
+
+def test_a_workspace_nobody_has_spoken_to_has_no_join_to_mark(tmp_path: Path):
+    """Nothing above the boundary, so nothing to disclose -- the same rule
+    `_discard_thread` follows about a thread it never had."""
+    session(tmp_path, runtime_class=ThreadlessRuntime)
+
+    assert recorded(tmp_path) == []
+
+
+def test_a_backend_that_resumes_marks_no_join(tmp_path: Path):
+    """Asked of the backend, not of the instance: a runtime that resumes has no
+    thread *yet* on a workspace nobody has spoken to, and reading `session_id`
+    alone announced a fresh context on every first turn of every backend."""
+    session(tmp_path).send("First question.")
+
+    session(tmp_path)
 
     assert recorded(tmp_path) == []
