@@ -808,3 +808,45 @@ def test_a_turn_that_only_asked_for_tools_is_still_recorded() -> None:
     assert len(assistant) == 2
     assert assistant[0]["message"]["content"] == ""
     assert assistant[0]["tool_calls"] == ["a"]
+
+
+def test_a_stream_nobody_started_leaves_the_conversation_alone() -> None:
+    """An iterator built and dropped before its first `next()` is not a turn.
+
+    A generator's body does not start until then, so `_exchange`'s `finally`
+    -- the whole of the abandonment bookkeeping -- never runs. With the prompt
+    appended by `run` it stayed in the conversation with nothing to answer it,
+    and the next exchange sent the abandoned text ahead of the new one as
+    though the user had said both, with no record that anything was dropped.
+    """
+    loop, provider, observed = _loop([ProviderTurn(text="answered")])
+
+    loop.run("abandoned")  # built, never iterated
+
+    assert loop.messages == []
+    assert provider.calls == 0
+    assert observed == []
+
+    assert list(loop.run("asked"))[-1].text == "answered"
+
+    assert [message.text for message in provider.seen[0]] == ["asked"]
+    assert [message.role for message in loop.messages] == ["user", "assistant"]
+
+
+def test_a_stream_stopped_after_one_event_is_still_a_turn() -> None:
+    """The converse, so the rollback is about turns that never began.
+
+    One `next()` starts the body: the prompt is in the conversation, the
+    provider was asked, and the exchange is reported on the way out -- which is
+    what makes a dropped iterator distinguishable from a turn nobody drained.
+    """
+    loop, provider, _ = _loop(
+        [ProviderTurn(tool_calls=(ToolCall("c1", "check_proof", {"proof": "by rfl"}),))]
+    )
+
+    stream = loop.run("asked")
+    next(stream)
+    stream.close()
+
+    assert provider.calls == 1
+    assert loop.messages[0].text == "asked"

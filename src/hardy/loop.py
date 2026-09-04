@@ -282,16 +282,29 @@ class AgentLoop:
         Not a generator itself, for the reason `ClaudeAgentRuntime.stream`
         gives: the per-exchange reset has to happen on the thread that
         sequenced the turn, not on whichever thread first iterates it.
+
+        The prompt is *not* appended here, though, and that asymmetry is the
+        point. A generator's body does not start until the first `next()`, so
+        an iterator a consumer builds and then drops -- a TUI task cancelled
+        before its worker begins -- never reaches `_exchange`'s `finally`.
+        Appended here, the prompt stayed in the conversation with nothing to
+        answer it and no record that anything had happened, and the next
+        exchange sent the abandoned text ahead of the new one as though the
+        user had said both. A turn that never began leaves the conversation
+        exactly as it found it.
         """
         self._cancelled = False
         self._pending = []
         self._stated, self._failure = set(), None
         self.turns = None
-        self.messages.append(Message("user", text=text))
         budget = Budget(self.max_turns, self.wall_seconds)
-        return self._exchange(budget)
+        return self._exchange(budget, text)
 
-    def _exchange(self, budget: Budget) -> Iterator[TurnEvent]:
+    def _exchange(self, budget: Budget, text: str) -> Iterator[TurnEvent]:
+        # The first thing the body does, so it is inside the generator and
+        # therefore covered by the `finally` below. See `run` for why it is
+        # not appended before this point.
+        self.messages.append(Message("user", text=text))
         spoken: list[str] = []
         try:
             yield from self._turns(budget, spoken)
