@@ -12,10 +12,12 @@ from hardy.evals.corpus import (
     CorpusError,
     check_issues,
     corpus_version,
+    head_of,
     load_corpus,
     load_tombstones,
     manifest_digest,
     registry_issues,
+    release,
     release_issues,
     report,
     tombstone_issues,
@@ -435,3 +437,43 @@ def test_the_registry_is_append_only_across_versions():
     assert registry_issues({**prior, "c": "2026-09-04"}, prior) == [], "issuing a new id is normal"
     assert any("never withdrawn" in i for i in registry_issues({"a": "2026-09-01"}, prior))
     assert any("history" in i for i in registry_issues({**prior, "a": "2026-09-04"}, prior))
+
+
+# --- Cutting a release ---
+
+
+def test_a_release_bumps_every_shard_and_binds_the_digest_it_produced(tmp_path):
+    """Three steps in an order that is not obvious: the manifest covers the
+    content, so the digest exists only after the entries land, and a changelog
+    written first binds the corpus as it was. Every shard must agree on the
+    version too, which is easy to miss when one of them gained the entry.
+    """
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])], version="0.1.0")
+    _write(tmp_path, "20", [_entry(id="b", name="B", msc=["20Dxx"])], version="0.1.0")
+    _registry(tmp_path, {"a": "2026-09-03", "b": "2026-09-03"})
+    _changelog(tmp_path, "0.1.0")
+
+    assert release(tmp_path, "0.2.0", ["added `b`"], today="2026-09-04") == []
+    assert corpus_version(tmp_path) == "0.2.0", "every shard, not just the one that changed"
+    version, date, bound = head_of((tmp_path / "CHANGELOG.md").read_text(encoding="utf-8"))
+    assert (version, date) == ("0.2.0", "2026-09-04")
+    assert bound == manifest_digest(tmp_path), "the digest is taken after the bump, not before"
+    assert "added `b`" in (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## 0.1.0" in (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8"), "history is kept"
+
+
+def test_a_release_refuses_a_version_that_does_not_follow(tmp_path):
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])], version="0.2.0")
+    _registry(tmp_path, {"a": "2026-09-03"})
+    _changelog(tmp_path, "0.2.0")
+    for bad in ("0.1.9", "0.2.0", "1.2", "two"):
+        with pytest.raises(CorpusError):
+            release(tmp_path, bad, ["x"], today="2026-09-04")
+
+
+def test_a_release_reports_what_check_would_have_said(tmp_path):
+    """Cutting a release is not a way to launder an unregistered id."""
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])], version="0.1.0")
+    _registry(tmp_path, {})
+    _changelog(tmp_path, "0.1.0")
+    assert any("not registered" in i for i in release(tmp_path, "0.2.0", ["x"], today="2026-09-04"))

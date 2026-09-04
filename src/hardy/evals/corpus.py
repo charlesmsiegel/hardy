@@ -335,6 +335,40 @@ def _gathered(issues: list[str], label: str, produce):
         issues.append(f"{label}: {error}")
 
 
+def release(root: Path, version: str, notes: list[str], *, today: str) -> list[str]:
+    """Bump every shard to `version` and write the changelog head it binds.
+
+    Done by hand this is three steps in an order that is not obvious: the
+    manifest covers the content, so the digest can only be computed *after* the
+    entries land, and a changelog written first binds a hash of the corpus as
+    it was. Every shard must also agree on `corpus_version`, which is easy to
+    miss when only one of them gained an entry. Both are mechanical, and a
+    mechanical step done by hand a hundred times is a hundred chances to get it
+    wrong -- so this does them, in the one order that works.
+    """
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise CorpusError(f"a corpus version is three numbers, not {version!r}")
+    current, _, _ = head_of((root / "CHANGELOG.md").read_text(encoding="utf-8"))
+    if _parts(version) <= _parts(current):
+        raise CorpusError(
+            f"{version} does not follow {current}: a corpus version only ever goes up. "
+            "Correcting entries is a patch, adding them a minor, breaking the schema a major"
+        )
+    for shard in _shards(root):
+        payload = json.loads(shard.read_text(encoding="utf-8"))
+        payload["corpus_version"] = version
+        shard.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                         encoding="utf-8", newline="\n")
+
+    changelog = root / "CHANGELOG.md"
+    text = changelog.read_text(encoding="utf-8")
+    entry = "\n".join(f"- {note}" for note in notes) or "- (no note given)"
+    section = f"## {version} - {today} - manifest {manifest_digest(root)}\n\n{entry}\n\n"
+    at = text.index(f"## {current}")
+    changelog.write_text(text[:at] + section + text[at:], encoding="utf-8", newline="\n")
+    return check_issues(root)
+
+
 def check_issues(root: Path) -> list[str]:
     """Every mechanical objection to the corpus on disk, gathered not raised."""
     try:
