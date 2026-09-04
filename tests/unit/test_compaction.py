@@ -328,3 +328,30 @@ def test_each_tool_call_is_charged_its_own_framing() -> None:
     extra = compaction.estimate_tokens(busy) - compaction.estimate_tokens(quiet)
     # Six blocks of framing, plus whatever the ids and names themselves cost.
     assert extra >= 6 * compaction.FRAMING_PER_BLOCK
+
+
+def test_the_reserve_is_never_smaller_than_what_the_model_may_write() -> None:
+    """A quarter of 16,384 is 4,096 while the transport asks for up to 8,192
+    output tokens, so the planner called a request fitting that the endpoint
+    has no room to answer. The reserve is an allowance for the reply; it cannot
+    be smaller than the reply it allows for."""
+    conversation = [Message("user", text="x" * 200_000)]
+
+    outcome = compaction.plan(
+        conversation,
+        context_window=16_384,
+        reserve_tokens=compaction.RESERVE_TOKENS,
+        keep_tokens=compaction.RECENT_TOKENS,
+        output_tokens=8_192,
+    )
+
+    assert outcome.available == 16_384 - 8_192
+    # And a large window keeps the flat reserve, which already exceeds the cap.
+    big = compaction.plan(
+        conversation,
+        context_window=200_000,
+        reserve_tokens=compaction.RESERVE_TOKENS,
+        keep_tokens=compaction.RECENT_TOKENS,
+        output_tokens=8_192,
+    )
+    assert big.available == 200_000 - compaction.RESERVE_TOKENS

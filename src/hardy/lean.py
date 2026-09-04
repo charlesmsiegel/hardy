@@ -32,6 +32,11 @@ if TYPE_CHECKING:
     from .modules import ModuleIndex
 
 HOLE = re.compile(r"\b(sorry|admit)\b")
+#: A Lean escaped identifier, `«like this»`. Its contents are a *name*, not
+#: syntax, so `«sorry»` is an ordinary lemma somebody may legitimately call --
+#: and `\b` matches inside the guillemets, so an unblanked scan reported a hole
+#: in a proof that has none and kept a complete candidate as a partial one.
+ESCAPED_NAME = re.compile(r"«[^»\n]*»")
 # Lean's report for an import it cannot resolve. It names the `.olean` first,
 # which is why it reads as a damaged installation rather than as a wrong path.
 MISSING_MODULE = re.compile(r"object file '[^']*' of module ([\w.'!?«»]+) does not exist")
@@ -140,6 +145,20 @@ class LeanDiagnostic(FrozenModel):
     file: str | None = None
     line: int | None = None
     column: int | None = None
+
+
+def _scannable(source: str) -> str:
+    """`source` with everything a hole cannot hide in blanked out, offsets kept.
+
+    Comments and string literals first, for the reason `has_holes` gives, and
+    then Lean's escaped identifiers: `«sorry»` is a name, and a proof entitled
+    to call a lemma so named was being told it had a hole it does not have --
+    which then kept a complete candidate in the record as an explicitly partial
+    one. Blanked rather than removed, because every position this feeds is
+    reported against the original text.
+    """
+    blanked = strip_comments(source)
+    return ESCAPED_NAME.sub(lambda match: " " * len(match.group(0)), blanked)
 
 
 class Hole(FrozenModel):
@@ -664,7 +683,7 @@ class LeanTools:
         "sorry"`, in both cases telling the model to fix something that was
         never there.
         """
-        return HOLE.search(strip_comments(source)) is not None
+        return HOLE.search(_scannable(source)) is not None
 
     @staticmethod
     def holes(source: str) -> tuple[Hole, ...]:
@@ -677,7 +696,7 @@ class LeanTools:
         unfinished without saying where, and a sketch is only useful when its
         holes can be pointed at.
         """
-        blanked = strip_comments(source)
+        blanked = _scannable(source)
         found = []
         for match in HOLE.finditer(blanked):
             before = blanked[: match.start()]

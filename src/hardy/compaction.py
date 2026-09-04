@@ -328,8 +328,8 @@ class Plan:
         return self.available > 0 and self.after <= self.available
 
 
-def _reserve(context_window: int, reserve_tokens: int) -> int:
-    """Room kept for the reply, scaled to a window that cannot spare the flat one.
+def _reserve(context_window: int, reserve_tokens: int, output_tokens: int = 0) -> int:
+    """Room kept for the reply: proportional to the window, never below the cap.
 
     The reserve is an allowance for what the model is about to write, and
     `RESERVE_TOKENS` is sized for the 200K window. A gateway correctly
@@ -337,11 +337,19 @@ def _reserve(context_window: int, reserve_tokens: int) -> int:
     because the window belongs to the endpoint -- would have the whole of it
     reserved: `available` became zero, every plan reported that nothing legal
     could be kept, and a request that would have fitted went out with no
-    compaction behind it. Capped at a quarter of the window so the allowance
-    stays proportional, which on any window at or above 65,536 is the flat
-    figure unchanged.
+    compaction behind it. So it is capped at a quarter of the window, which on
+    any window at or above 65,536 is the flat figure unchanged.
+
+    And floored at what the transport will actually ask for. A quarter of
+    16,384 is 4,096 while `AnthropicProvider` requests up to 8,192 output
+    tokens, so the planner would call a request fitting that the endpoint has
+    no room to answer -- the scaling fixed one end of that and left the other
+    disconnected from the cap it is an allowance for. `output_tokens` is what
+    the runtime states it may write; zero when it states nothing, which leaves
+    the proportional figure as it was.
     """
-    return min(reserve_tokens, max(context_window // 4, 0))
+    proportional = min(reserve_tokens, max(context_window // 4, 0))
+    return max(proportional, min(output_tokens, context_window))
 
 
 def plan(
@@ -352,6 +360,7 @@ def plan(
     keep_tokens: int,
     summary_tokens: int = 0,
     overhead_tokens: int = 0,
+    output_tokens: int = 0,
 ) -> Plan:
     """Decide whether this conversation needs compacting, and where to cut.
 
@@ -376,12 +385,16 @@ def plan(
     workspace whose `AGENTS.md` is in the prompt can spend a substantial part
     of the window before the first message.
 
+    `output_tokens` is what the transport will ask the model to write. The
+    reserve is never smaller than that: a window with room for the request and
+    none for the answer is not a window the request fits in.
+
     A cut of 0 means nothing above the tail could be dropped legally, and the
     plan says it is not needed rather than performing a compaction that
     summarises nothing and keeps everything.
     """
     before = overhead_tokens + estimate_tokens(messages)
-    available = max(context_window - _reserve(context_window, reserve_tokens), 0)
+    available = max(context_window - _reserve(context_window, reserve_tokens, output_tokens), 0)
     if before <= available:
         return Plan(False, before=before, after=before, available=available)
     # Never more recent context than the window has room for, and never more

@@ -179,6 +179,13 @@ def redacted(url: str) -> str:
         # a run whose Lean had already succeeded -- a closer-only batch that
         # never contacted the provider included.
         host = parsed.hostname or ""
+        # Re-bracketed, because `hostname` strips the brackets an IPv6 literal
+        # needs: `[2001:db8::1]` came back as `2001:db8::1`, and appending a
+        # port to that produced `2001:db8::1:8443`, which is not the endpoint
+        # that served the run and is not a valid authority either. The record
+        # would then name an address nothing answered at.
+        if ":" in host:
+            host = f"[{host}]"
         if parsed.port is not None:
             host = f"{host}:{parsed.port}"
     except ValueError:

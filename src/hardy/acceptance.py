@@ -994,14 +994,26 @@ def _sketch_issues(
 
     Absent from both records means a run from before sketches existed.
     """
-    accepted_events = [
-        event for index, event in enumerate(events)
-        if event.get("type") == "tool"
-        and event.get("name") == "sketch_proof"
-        and isinstance(event.get("result"), dict)
-        and event["result"].get("ok") is True
-        and not _discarded(events, index)
-    ]
+    def _kept(names: tuple[str, ...]) -> list[dict[str, Any]]:
+        return [
+            event for index, event in enumerate(events)
+            if event.get("type") == "tool"
+            and event.get("name") in names
+            and isinstance(event.get("result"), dict)
+            and event["result"].get("ok") is True
+            and not _discarded(events, index)
+        ]
+
+    # Two lists, because the runner has two rules. `sketch_proof` is what puts
+    # a run into sketch mode -- so it alone decides whether a record *should*
+    # carry one. A `check_proof` Lean accepted can only replace what is already
+    # retained, and that is what makes the newest development the kept one: a
+    # model that sketched with holes, closed them, and ran out of turns before
+    # submitting would otherwise leave the older skeleton published as the
+    # run's remaining work, with the trajectory two events above proving it was
+    # not.
+    accepted_events = _kept(("sketch_proof",))
+    latest_events = _kept(("sketch_proof", "check_proof"))
     if "sketch" not in trajectory and "sketch" not in result:
         # The legacy-record exception, and only where it is genuinely one. A
         # trajectory holding an accepted sketch is a record from this code
@@ -1062,10 +1074,16 @@ def _sketch_issues(
     if not accepted:
         issues.append("a sketch is recorded that no accepted sketch_proof produced")
     else:
-        last = accepted[-1]
+        last = latest_events[-1] if latest_events else accepted[-1]
         if str((last.get("arguments") or {}).get("proof", "")) != str(sketch.get("proof", "")):
             issues.append("the kept sketch is not the last skeleton Lean accepted")
-        if last["result"].get("holes") != sketch.get("holes"):
+        # Asked of `sketch_proof` alone, because it is the only tool that
+        # reports a hole list: `check_proof` answers whether Lean accepted the
+        # body and says nothing about holes, so an empty list there is silence
+        # rather than a claim of none. What the sketch's own holes are checked
+        # against in every case is the skeleton itself, a dozen lines above --
+        # this is the second witness, not the only one.
+        if last.get("name") == "sketch_proof" and last["result"].get("holes") != sketch.get("holes"):
             issues.append("the kept sketch's holes are not the ones Lean reported")
         # And the file Lean actually elaborated. Everything above compares the
         # record against itself; this compares it against the one thing in the

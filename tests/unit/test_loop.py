@@ -715,3 +715,62 @@ def test_a_truncated_batch_abandoned_at_the_notice_is_still_answered() -> None:
     assert [message.call_id for message in results] == ["c1", "c2"]
     assert not any(message.ok for message in results)
     assert all("abandoned" in message.text for message in results)
+
+
+def test_the_assistant_turn_is_in_the_conversation_before_it_is_shown() -> None:
+    """Every `yield` is a place a consumer can stop, and a generator never
+    resumes from one it was closed at.
+
+    Appended after the first of them, the assistant turn was written into the
+    transcript and drawn on the user's terminal while the conversation the next
+    request is built from had never heard of it -- the durable record and the
+    model's own history diverging, which is the failure this loop exists to
+    make impossible.
+    """
+    loop, _, _ = _loop([
+        ProviderTurn(text="here is my answer", tool_calls=(ToolCall("c1", "check_proof", {}),)),
+        ProviderTurn(text="never reached"),
+    ])
+
+    stream = loop.run("prove it")
+    for event in stream:
+        if event.kind == "text":
+            break
+    stream.close()
+
+    assistant = [message for message in loop.messages if message.role == "assistant"]
+    assert [message.text for message in assistant] == ["here is my answer"]
+    assert assistant[0].tool_calls[0].id == "c1"
+    results = [message for message in loop.messages if message.role == "tool_result"]
+    assert [message.call_id for message in results] == ["c1"]
+
+
+def test_an_abandoned_tool_call_reaches_the_record_too() -> None:
+    """The placeholders keep the provider's history valid; without an
+    observation they keep it valid *invisibly*. A later request would then
+    carry a tool result `transcript.jsonl` never recorded, and an auditor could
+    not reconstruct what was actually sent."""
+    loop, _, observed = _loop([
+        ProviderTurn(tool_calls=(ToolCall("c1", "check_proof", {}), ToolCall("c2", "check_proof", {}))),
+        ProviderTurn(text="never reached"),
+    ])
+
+    stream = loop.run("prove it")
+    for event in stream:
+        if event.kind == "tool_use":
+            break
+    stream.close()
+
+    abandoned = [item for item in observed if item["type"] == "abandoned_tool"]
+    assert [item["call_id"] for item in abandoned] == ["c1", "c2"]
+
+
+def test_a_drained_exchange_records_no_abandonment() -> None:
+    loop, _, observed = _loop([
+        ProviderTurn(tool_calls=(ToolCall("c1", "check_proof", {}),)),
+        ProviderTurn(text="done"),
+    ])
+
+    _drain(loop, "prove it")
+
+    assert not [item for item in observed if item["type"] == "abandoned_tool"]

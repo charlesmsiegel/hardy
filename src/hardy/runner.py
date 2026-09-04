@@ -263,6 +263,35 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     # other cannot be read back as the sequence they are written as.
     one_at_a_time = threading.Lock()
 
+    def _retain(name: str, proof: str, result: LeanToolResult) -> None:
+        """Keep the newest development Lean accepted, if the budget bought it.
+
+        The same clock a submission is judged against. A skeleton that began
+        inside the deadline and elaborated after it is work the run's budget
+        did not buy, and keeping it would put a partial artifact produced
+        outside the recorded bound into a `wall_clock_limit` run's writeup.
+
+        Overwritten rather than accumulated: this is the development's current
+        state, and the transcript already holds every earlier one. The holes
+        are recomputed from the body rather than read off the result, so the
+        two doors this comes through record the same thing about it.
+        """
+        if not result.ok:
+            return
+        # A `check_proof` *replaces* a retained candidate; it never creates
+        # one. Retaining on every accepted check would give a `## Sketch (not
+        # a proof)` section to every run that ever asked Lean about a body with
+        # a `sorry` in it, which is a much wider change than the one this is
+        # for: a run is in sketch mode because it called `sketch_proof`, and
+        # what this fixes is that mode going stale.
+        if name != "sketch_proof" and sketched["proof"] is None:
+            return
+        if closed.is_set() or time.monotonic() > deadline.get("at", float("inf")):
+            events.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
+            return
+        sketched["proof"] = proof
+        sketched["holes"] = [item.model_dump(mode="json") for item in lean.holes(proof)]
+
     def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
         """Hardy runs every proof check, whoever decided to ask for one.
 
@@ -278,7 +307,17 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             return ToolResult(False, "the run's budget expired before this tool call was made")
         try:
             if name == "check_proof":
-                result = lean.check_proof(str(arguments["proof"]))
+                proof = str(arguments["proof"])
+                result = lean.check_proof(proof)
+                # A development Lean accepted is a development Lean accepted,
+                # whichever door it came through. A model that sketched with
+                # holes, closed them, and ran out of turns before submitting
+                # used to leave the artifacts pointing at the earlier skeleton
+                # -- publishing the old holes as the run's remaining work while
+                # the trajectory two events above proved they were closed. The
+                # newest one Lean accepted is the development's current state,
+                # and that is what the retained candidate means.
+                _retain(name, proof, result)
             elif name == "inspect_goal":
                 result = lean.inspect_goal(str(arguments.get("tactic", "")))
             elif name == "search_declaration":
@@ -286,20 +325,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             elif name == "sketch_proof":
                 proof = str(arguments["proof"])
                 result = lean.sketch_proof(proof)
-                # The same clock a submission is judged against. A skeleton
-                # that began inside the deadline and elaborated after it is
-                # work the run's budget did not buy, and keeping it would put
-                # a partial artifact produced outside the recorded bound into
-                # a `wall_clock_limit` run's writeup.
-                late = closed.is_set() or time.monotonic() > deadline.get("at", float("inf"))
-                if result.ok and late:
-                    events.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
-                elif result.ok:
-                    # Overwritten rather than accumulated: the sketch is the
-                    # development's current state, and the transcript already
-                    # holds every earlier one.
-                    sketched["proof"] = proof
-                    sketched["holes"] = [item.model_dump(mode="json") for item in result.holes]
+                _retain(name, proof, result)
             elif name == "submit_proof":
                 proof = str(arguments["proof"])
                 result = lean.check_proof(proof, final=True)

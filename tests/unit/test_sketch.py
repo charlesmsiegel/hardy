@@ -395,3 +395,82 @@ def test_the_fence_is_the_ordinary_three_when_nothing_needs_more() -> None:
 
     assert "```lean" in section
     assert "````" not in section
+
+
+def test_an_escaped_identifier_is_a_name_not_a_hole() -> None:
+    """`«sorry»` is a Lean escaped identifier -- an ordinary lemma name.
+
+    `\\b` matches inside the guillemets, so the scan reported a hole in a proof
+    that has none, and the run kept a complete candidate in the record as an
+    explicitly partial one.
+    """
+    assert LeanTools.holes("by exact «sorry»") == ()
+    assert not LeanTools.has_holes("by exact «sorry»")
+    # And a real hole beside one is still found, at its own line.
+    found = LeanTools.holes("by\n  have h := «admit»\n  sorry")
+    assert [(item.keyword, item.line) for item in found] == [("sorry", 3)]
+
+
+def test_the_newest_development_lean_accepted_is_the_one_kept(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """Sketch with a hole, close it, run out of turns before submitting.
+
+    The artifacts used to keep the earlier skeleton and publish its holes as
+    the run's remaining work -- while the trajectory two events above proved
+    they had been closed. A development Lean accepted is one whichever door it
+    came through.
+    """
+    result = run(
+        proof_request,
+        factory([
+            call("sketch_proof", {"proof": "by sorry"}),
+            call("check_proof", {"proof": "by exact True.intro"}),
+        ]),
+        lean,
+        tmp_path,
+    )
+
+    assert result.sketch is not None
+    assert result.sketch["proof"] == "by exact True.intro"
+    assert result.sketch["holes"] == []
+    assert result.proof is None
+    assert "a hole closes any goal" not in (tmp_path / "writeup.md").read_text(encoding="utf-8")
+
+
+def test_a_check_lean_refused_does_not_replace_the_sketch(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """Only what Lean accepted. A failed attempt after a good skeleton must not
+    take the skeleton's place in the record."""
+    result = run(
+        proof_request,
+        factory([
+            call("sketch_proof", {"proof": "by sorry"}),
+            call("check_proof", {"proof": "by nonsense_tactic"}),
+        ]),
+        lean,
+        tmp_path,
+    )
+
+    assert result.sketch is not None
+    assert result.sketch["proof"] == "by sorry"
+
+
+def test_the_audit_accepts_a_candidate_check_proof_produced(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    import importlib
+
+    acceptance = importlib.import_module("hardy.acceptance")
+    run(
+        proof_request,
+        factory([
+            call("sketch_proof", {"proof": "by sorry"}),
+            call("check_proof", {"proof": "by exact True.intro"}),
+        ]),
+        lean,
+        tmp_path,
+        toolchain={
+            "lean_version": "4.32.0",
+            "lean_commit": "a" * 40,
+            "mathlib_revision": "b" * 40,
+            "lake_manifest_sha256": "c" * 64,
+        },
+    )
+
+    assert acceptance.validate_batch_consistency(tmp_path) == ()
