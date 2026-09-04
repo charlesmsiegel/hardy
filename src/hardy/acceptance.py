@@ -837,13 +837,23 @@ def _sketch_issues(
         # trajectory that came out of Lean -- the source it was given and the
         # hash of it. A skeleton swapped consistently through every artifact
         # still leaves this describing the program that was really checked.
+        # Required, not merely compared when present. Conditional checks let
+        # missing evidence pass: an event stripped of its `source`, or a
+        # request edited until it could not be rebuilt from, skipped the one
+        # comparison that reaches outside the record -- and a sketch nothing
+        # can tie to a Lean run is a sketch with no evidence behind it.
         rebuilt = _sketch_source(trajectory, str(sketch.get("proof", "")))
         recorded = str(last["result"].get("source") or "")
-        if rebuilt is not None and recorded and rebuilt != recorded:
-            issues.append("the kept sketch is not the source Lean was given")
         digest = last["result"].get("source_sha256")
-        if rebuilt is not None and digest and hashlib.sha256(rebuilt.encode("utf-8")).hexdigest() != digest:
-            issues.append("the kept sketch does not hash to the source Lean recorded")
+        if rebuilt is None:
+            issues.append("the trajectory's request cannot rebuild the sketch's source")
+        elif not recorded or not digest:
+            issues.append("the accepted sketch event records no source for Lean to have elaborated")
+        else:
+            if rebuilt != recorded:
+                issues.append("the kept sketch is not the source Lean was given")
+            if hashlib.sha256(rebuilt.encode("utf-8")).hexdigest() != digest:
+                issues.append("the kept sketch does not hash to the source Lean recorded")
     if not carried:
         issues.append("writeup.md does not carry the sketch the record kept")
     elif sketch_section(sketch) not in writeup:
