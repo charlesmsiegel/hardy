@@ -625,7 +625,7 @@ interactive session, exactly as `hardy chat` is.
 | `hardy prove` | Take one claim from statement to verified document, staged and gated. |
 | `hardy accept` | Run the checked-in acceptance problems, or recheck recorded runs. |
 | `hardy batch` | The earlier one-shot proof experiment, retained as a check. |
-| `hardy evals` | The fixed corpus: baseline sweep, scored set runs, scoreboard checks. |
+| `hardy evals` | The fixed corpus: baseline sweep, scored set runs, scoreboard checks, and a local browser for the corpus itself (`hardy evals corpus serve`). |
 | `hardy latency` | Measure the fixed Lean import cost a warm process pool would recover. |
 
 Exit codes are uniform: `0` when the command answered and the answer was good,
@@ -807,6 +807,23 @@ aggregates when nothing disagreed. Exits `1` on any inconsistency.
 | `report` | Coverage by group, status, difficulty, and source. |
 | `serve` | Browse the corpus in a local page that re-reads from disk on every refresh: statement, Lean, classification. `--host` (default `127.0.0.1`) and `--port` (default `8765`). |
 | `release` | Bump every shard and write the changelog head it binds. `--version` is required and must be three numbers greater than the last; `--note` adds a changelog bullet citing the ids that moved and is repeatable. A malformed release is refused with `2`. |
+
+```sh
+hardy evals corpus serve          # http://127.0.0.1:8765, re-read on every refresh
+```
+
+`serve` is the tool for reading the corpus as a mathematician rather than as
+JSON: each entry rendered with its Lean beside it and its MSC codes under their
+names, the objections `corpus check` would raise shown against the entries that
+earned them, and the whole page re-read from disk on every refresh, so a shard
+edited in an editor shows up — correct or broken — on the next reload. It is
+bound to loopback, because a working corpus is not a published site.
+
+It is a viewer and not an editor: nothing is written back. The `review` record
+that promotes an entry to `active` has to be bound to that entry's digests, and
+a button that wrote one without the binding would be worse than no button, so
+entries are still authored in a text editor and checked with `hardy evals corpus
+check`.
 
 ### `hardy latency`
 
