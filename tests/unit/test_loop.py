@@ -1,0 +1,268 @@
+"""The loop Hardy runs itself (#23).
+
+Four things moved back across the boundary when Hardy stopped handing the turn
+loop to a provider's SDK, and each of them is a test here: Hardy decides
+whether a provider is called at all, it counts the turns, it keeps the wall
+clock, and the conversation is a list it owns rather than a thread somebody
+else resumes. The provider is scripted throughout — nothing here goes near a
+network, which is the point of keeping the transport out of this module.
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Any
+
+import pytest
+
+from hardy.loop import AgentLoop, Message, ProviderTurn, ToolCall, TurnLimitReached, first_legal_cut
+from hardy.models import ToolResult
+
+
+class ScriptedProvider:
+    """Answers each call with the next turn in its script."""
+
+    model = "scripted@test"
+
+    def __init__(self, script: list[ProviderTurn]) -> None:
+        self.script = list(script)
+        self.seen: list[list[Message]] = []
+        self.calls = 0
+
+    def complete(self, *, system, messages, specs) -> ProviderTurn:
+        self.calls += 1
+        self.seen.append(list(messages))
+        if not self.script:
+            return ProviderTurn(text="nothing left to say")
+        return self.script.pop(0)
+
+
+def _loop(script, dispatch=None, **kwargs) -> tuple[AgentLoop, ScriptedProvider, list]:
+    provider = ScriptedProvider(script)
+    observed: list[dict[str, Any]] = []
+    loop = AgentLoop(
+        provider,
+        system_prompt="be exact",
+        specs=[{"function": {"name": "check_proof", "parameters": {"type": "object"}}}],
+        dispatch=dispatch or (lambda name, arguments: ToolResult(True, "ok")),
+        observe=observed.append,
+        **kwargs,
+    )
+    return loop, provider, observed
+
+
+def _drain(loop: AgentLoop, text: str) -> list:
+    return list(loop.run(text))
+
+
+def test_a_reply_with_no_tool_call_ends_the_exchange() -> None:
+    loop, provider, observed = _loop([ProviderTurn(text="two is even")])
+
+    events = _drain(loop, "is two even?")
+
+    assert provider.calls == 1
+    assert [event.kind for event in events] == ["text", "reply"]
+    assert events[-1].text == "two is even"
+    assert loop.turns == 1
+    assert [item["type"] for item in observed] == ["assistant", "result"]
+
+
+def test_hardy_runs_the_tool_and_sends_its_result_back() -> None:
+    ran: list[tuple[str, dict]] = []
+
+    def dispatch(name, arguments):
+        ran.append((name, arguments))
+        return ToolResult(True, "Lean accepted it")
+
+    loop, provider, _ = _loop(
+        [
+            ProviderTurn(tool_calls=(ToolCall("call-1", "check_proof", {"proof": "by rfl"}),)),
+            ProviderTurn(text="done"),
+        ],
+        dispatch=dispatch,
+    )
+
+    events = _drain(loop, "prove it")
+
+    assert ran == [("check_proof", {"proof": "by rfl"})]
+    assert [event.kind for event in events] == ["tool_use", "tool_result", "text", "reply"]
+    # The result went back as its own message, immediately after the assistant
+    # turn that asked for it.
+    roles = [message.role for message in loop.messages]
+    assert roles == ["user", "assistant", "tool_result", "assistant"]
+    assert loop.messages[2].text == "Lean accepted it"
+
+
+def test_the_turn_bound_is_counted_here_and_stops_the_exchange() -> None:
+    loop, provider, observed = _loop(
+        [ProviderTurn(tool_calls=(ToolCall(f"c{index}", "check_proof", {}),)) for index in range(10)],
+        max_turns=3,
+    )
+
+    with pytest.raises(TurnLimitReached, match="3-turn bound"):
+        _drain(loop, "keep going")
+
+    # Three provider calls, not the SDK's idea of three of something else.
+    assert provider.calls == 3
+    assert loop.turns == 3
+    assert {"type": "turn_limit", "turns": 3, "max_turns": 3} in observed
+
+
+def test_the_wall_clock_is_kept_here_too() -> None:
+    def slow(name, arguments):
+        time.sleep(0.05)
+        return ToolResult(True, "ok")
+
+    loop, provider, observed = _loop(
+        [ProviderTurn(tool_calls=(ToolCall(f"c{index}", "check_proof", {}),)) for index in range(50)],
+        dispatch=slow,
+        wall_seconds=0.1,
+    )
+
+    with pytest.raises(TimeoutError, match="wall-clock budget"):
+        _drain(loop, "keep going")
+
+    assert any(item["type"] == "wall_clock_limit" for item in observed)
+    # Bounded, which is the whole claim: it stopped long before the script did.
+    assert provider.calls < 50
+
+
+def test_hardy_can_decline_to_call_the_provider_at_all() -> None:
+    loop, provider, observed = _loop(
+        [ProviderTurn(text="never asked")],
+        before_turn=lambda messages: "closed by `simp` before a model turn was spent",
+    )
+
+    events = _drain(loop, "prove it")
+
+    assert provider.calls == 0
+    assert events[-1].text == "closed by `simp` before a model turn was spent"
+    assert any(item["type"] == "declined_turn" for item in observed)
+    assert loop.turns == 0
+
+
+def test_a_declined_turn_still_reports_the_exchange() -> None:
+    # The ledger is entitled to know an exchange happened and cost nothing,
+    # rather than being told nothing at all.
+    loop, _, observed = _loop([], before_turn=lambda messages: "not this time")
+
+    _drain(loop, "prove it")
+
+    report = next(item for item in observed if item["type"] == "result")
+    assert report["turns"] == 0
+    assert report["usage"] is None
+    assert report["enforced_by"] == "hardy"
+
+
+def test_usage_is_reported_session_to_date() -> None:
+    # `usage.Usage` differences each figure against the last one stated for it,
+    # because the SDK reports session-to-date. A per-exchange report climbing
+    # past its predecessor would be counted as the difference and undercount
+    # every exchange after the first.
+    loop, _, observed = _loop([ProviderTurn(text="one", usage={"input_tokens": 10, "output_tokens": 4})])
+    _drain(loop, "first")
+    loop._provider.script = [ProviderTurn(text="two", usage={"input_tokens": 30, "output_tokens": 6})]
+    _drain(loop, "second")
+
+    reports = [item for item in observed if item["type"] == "result"]
+    assert reports[0]["usage"] == {"input_tokens": 10, "output_tokens": 4}
+    assert reports[1]["usage"] == {"input_tokens": 40, "output_tokens": 10}
+
+
+def test_the_conversation_carries_across_exchanges() -> None:
+    loop, provider, _ = _loop([ProviderTurn(text="first"), ProviderTurn(text="second")])
+
+    _drain(loop, "one")
+    _drain(loop, "two")
+
+    assert [message.role for message in loop.messages] == ["user", "assistant", "user", "assistant"]
+    # The second call saw the first exchange, which is what "Hardy owns the
+    # conversation" has to mean if it means anything.
+    assert len(provider.seen[1]) == 3
+
+
+def test_cancelling_stops_the_next_provider_call() -> None:
+    def dispatch(name, arguments):
+        loop.cancel()
+        return ToolResult(True, "ok")
+
+    loop, provider, _ = _loop(
+        [
+            ProviderTurn(tool_calls=(ToolCall("c1", "check_proof", {}),)),
+            ProviderTurn(text="should never be asked"),
+        ],
+        dispatch=lambda name, arguments: dispatch(name, arguments),
+    )
+
+    events = _drain(loop, "prove it")
+
+    assert provider.calls == 1
+    assert events[-1].kind == "reply"
+
+
+def test_a_cancelled_turn_still_answers_every_tool_call() -> None:
+    # A provider left with a `tool_use` and no `tool_result` cannot be sent
+    # another message at all, so the answer is a refusal rather than silence.
+    # The window this is really about: a cancel arriving from the terminal
+    # while a Lean check is running, with more calls in the same batch behind
+    # it. The one in flight is not unwound -- that limit is stated in
+    # `AgentLoop` -- and the ones after it are refused rather than skipped.
+    def dispatch(name, arguments):
+        loop.cancel()
+        return ToolResult(True, "Lean accepted it")
+
+    loop, _, _ = _loop(
+        [ProviderTurn(tool_calls=(ToolCall("c1", "check_proof", {}), ToolCall("c2", "check_proof", {})))],
+        dispatch=lambda name, arguments: dispatch(name, arguments),
+    )
+
+    _drain(loop, "prove it")
+
+    results = [message for message in loop.messages if message.role == "tool_result"]
+    assert [message.ok for message in results] == [True, False]
+    assert "cancelled" in results[1].text
+
+
+def test_a_compactor_may_replace_the_conversation_before_a_turn() -> None:
+    seen: list[int] = []
+
+    def compact(messages):
+        seen.append(len(messages))
+        return [Message("user", text="summary")] if len(messages) > 2 else None
+
+    loop, provider, _ = _loop(
+        [ProviderTurn(text="a"), ProviderTurn(text="b")],
+        compact=compact,
+    )
+    _drain(loop, "one")
+    _drain(loop, "two")
+
+    assert seen == [1, 3]
+    assert [message.text for message in provider.seen[1]] == ["summary"]
+
+
+# -- legal cut points -------------------------------------------------------
+
+
+def _conversation() -> list[Message]:
+    return [
+        Message("user", text="one"),
+        Message("assistant", tool_calls=(ToolCall("c1", "check_proof", {}),)),
+        Message("tool_result", call_id="c1", name="check_proof", ok=True),
+        Message("assistant", text="two"),
+    ]
+
+
+def test_a_cut_never_lands_on_a_tool_result() -> None:
+    # Keeping two would cut between the call and its answer. Walking back is
+    # the only direction that is safe: it keeps more than was asked for.
+    assert first_legal_cut(_conversation(), 2) == 1
+
+
+def test_a_cut_that_already_lands_legally_is_left_alone() -> None:
+    assert first_legal_cut(_conversation(), 1) == 3
+
+
+def test_asking_to_keep_everything_keeps_everything() -> None:
+    assert first_legal_cut(_conversation(), 99) == 0
+    assert first_legal_cut(_conversation(), 4) == 0

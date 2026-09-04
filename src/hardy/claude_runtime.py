@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .chat import final_text
+from .loop import TurnLimitReached
 from .models import ToolResult, TurnEvent
 
 SERVER = "hardy"
@@ -50,8 +51,10 @@ class _Failed:
 TURN_LIMIT = "error_max_turns"
 
 
-class TurnLimitReached(RuntimeError):
-    """The provider stopped because the requested turn bound was reached."""
+# Defined in `loop`, re-exported here. Both backends stop for the same reason
+# and a caller catching one of two classes with one name would catch neither
+# reliably -- `runner.run` reads it as a terminal reason, not as a failure.
+__all__ = ["ClaudeAgentRuntime", "TurnLimitReached", "build_server", "load_sdk", "plain", "qualified"]
 
 SDK_MISSING = (
     "the Claude backend needs claude-agent-sdk and the Claude Code CLI: "
@@ -152,6 +155,13 @@ class ClaudeAgentRuntime:
 
     backend = "claude"
     endpoint = "claude-code (subscription)"
+    # Who keeps each bound. `max_turns` is handed to the SDK, which owns the
+    # loop and is therefore the only thing in a position to count turns;
+    # `_within_budget` keeps the wall clock here because nothing else bounds a
+    # stalled request. Published rather than assumed by the caller, so a
+    # trajectory records who actually applied each limit -- which is the honesty
+    # problem issue #23 exists for, stated instead of hidden.
+    enforcement = {"turns": "provider sdk", "wall_clock": "hardy"}
 
     def __init__(
         self,
