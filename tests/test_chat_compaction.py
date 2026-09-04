@@ -15,7 +15,7 @@ from test_chat import FakeChatRuntime, call, session
 from workspace_helpers import events
 
 from hardy import compaction
-from hardy.chat import MathematicsSession
+from hardy.chat import MathematicsSession, _digest
 from hardy.loop import Message, ToolCall
 
 
@@ -127,6 +127,17 @@ def test_a_compaction_records_what_it_dropped_and_where_the_tail_starts(tmp_path
     # two records with different windows can report the same `available` and a
     # reader could not tell which endpoint's limit these cuts were for.
     assert entry["context_window"] == 60_000
+    # The counts locate the cut in the loop's message list, which ends with the
+    # process -- and one assistant turn can produce five transcript events
+    # while Hardy's own steering events have no message at all, so the counts
+    # cannot identify which recorded turns were kept. The digests can: two
+    # different conversations of the same length agree on every number in this
+    # entry and on neither of these.
+    assert entry["summarized_digest"] != entry["kept_digest"]
+    assert entry["summarized_digest"] == _digest(messages[: entry["summarized_messages"]])
+    assert entry["kept_digest"] == _digest(messages[entry["summarized_messages"] :])
+    # And the entry locates itself in the record rather than only in the run.
+    assert isinstance(entry["transcript_length"], int)
 
 
 def test_the_spend_ledger_never_reaches_the_summary(tmp_path: Path, lean_source: str) -> None:

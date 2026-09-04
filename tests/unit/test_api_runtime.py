@@ -423,6 +423,22 @@ def test_a_value_that_is_not_a_url_is_not_republished() -> None:
     assert redacted("not a url at all") == "unreadable endpoint"
 
 
+def test_a_malformed_port_does_not_take_the_record_down_with_it() -> None:
+    """`urlsplit` is lazy: it parses the netloc only when `hostname` or `port`
+    is read, so `:notaport` raises there rather than at the split. `provenance`
+    reads this while writing `result.json`, so the exception lost the whole
+    record of a run whose Lean had already succeeded -- a closer-only batch
+    that never contacted a provider included."""
+    assert redacted("https://gateway.example:notaport/v1") == "unreadable endpoint"
+
+
+def test_a_malformed_base_url_still_lets_a_run_state_its_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.example:notaport/v1")
+    provider = AnthropicProvider("claude-test")
+
+    assert provider.endpoint == "messages api (unreadable endpoint)"
+
+
 def test_thinking_blocks_go_back_with_the_turn_they_belong_to() -> None:
     """On a tool continuation the API requires the thinking blocks of the turn
     that asked, unchanged and in order. Summarised to a boolean they cannot be
