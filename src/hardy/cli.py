@@ -21,6 +21,7 @@ from . import config as configuration
 from .cas import CasError
 from .cas_export import export_session
 from .chat import MathematicsSession, SchemaError
+from .closers import CLOSERS
 from .lean import LeanTools
 from .models import Request
 from .runner import WARNING, run
@@ -152,10 +153,22 @@ def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> config
         parser.error(str(error))
 
 
-def runtime_factory(default_model: str) -> Callable[..., Any]:
-    """A way for the session to build its runtime once it can offer the tools."""
+def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BACKEND) -> Callable[..., Any]:
+    """A way for the session to build its runtime once it can offer the tools.
+
+    `backend` chooses the transport, and with it who owns the turn loop. The
+    default authenticates through the Claude Code agent SDK and needs no API
+    key, at the cost of the SDK running the loop (issue #23); `api` runs the
+    loop in Hardy and needs `ANTHROPIC_API_KEY`. Imported where it is chosen
+    rather than at module scope, so a machine with neither the Anthropic SDK
+    nor a key installed still starts on the default.
+    """
 
     def make(model: str | None = None, **context: Any) -> Any:
+        if backend == "api":
+            from .api_runtime import ApiRuntime
+
+            return ApiRuntime(model or default_model, **context)
         return claude_runtime.ClaudeAgentRuntime(model or default_model, **context)
 
     return make
@@ -521,7 +534,7 @@ class ProjectOpener:
             # to be.
             session = MathematicsSession(
                 config.layout.problem,
-                runtime_factory(str(config.model)),
+                runtime_factory(str(config.model), config.backend),
                 config.lean_command,
                 config.latex_command,
                 confirm,
@@ -684,7 +697,7 @@ def _chat(
         try:
             session = MathematicsSession(
                 config.layout.problem,
-                runtime_factory(str(config.model)),
+                runtime_factory(str(config.model), config.backend),
                 config.lean_command,
                 config.latex_command,
                 confirm,
@@ -820,7 +833,8 @@ def _batch(args: argparse.Namespace, config: configuration.Config, parser: argpa
     # costs a whole billable model run to reach a conclusion available now.
     if lean.target_name is None:
         parser.error(f"batch needs a named theorem or lemma to audit, not: {request.declaration!r}")
-    result = run(request, runtime_factory(str(config.model)), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds)
+    closers = tuple(item.strip() for item in str(args.closers).split(",") if item.strip()) if args.closers else None
+    result = run(request, runtime_factory(str(config.model), config.backend), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds, closers=closers)
     print(json.dumps(result.as_dict(), indent=2))
     return 0 if result.terminal_reason == "verified" else 1
 
@@ -1586,6 +1600,19 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--output", type=Path, default=Path("hardy-output"))
     batch.add_argument("--max-turns", type=int, default=8)
     batch.add_argument("--wall-seconds", type=float, default=300)
+    batch.add_argument(
+        "--closers",
+        nargs="?",
+        const=",".join(CLOSERS),
+        default=None,
+        metavar="TACTIC,TACTIC",
+        help=(
+            "try these Lean tactics against the statement before spending a model turn "
+            f"(bare flag means {', '.join(CLOSERS)}). Off by default: a result a tactic "
+            "ladder reached and a result a model reached are not the same experiment, and "
+            "the trajectory records which it was either way."
+        ),
+    )
 
     from .evals.commands import add_parser as add_evals_parser
 

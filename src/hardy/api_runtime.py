@@ -1,0 +1,301 @@
+"""The API backend: the Messages API, with Hardy driving the loop.
+
+The other two backends authenticate through an agent product, which is what
+makes a Claude Max or ChatGPT Pro subscription usable with no API key — and
+the price is that the product's SDK owns the turn loop (issue #23). This
+backend is the trade the issue's third direction describes: a user who is
+willing to supply an API key gets a loop Hardy runs, and everything that
+follows from owning it.
+
+It is opt-in and says so everywhere it matters. The two conditions are not the
+same experiment — a different transport, a different bound-keeper, a
+conversation Hardy holds rather than a thread the provider resumes — so the
+backend and endpoint go into `session.json` and every `trajectory.json` like
+any other part of a run's identity.
+
+What does not change is the part that never does: Hardy runs every tool. This
+module translates messages and nothing else; `loop.AgentLoop` decides when to
+call the model, and `MathematicsSession._dispatch` or `runner.dispatch` still
+performs every Lean check and every write.
+"""
+
+from __future__ import annotations
+
+import os
+import uuid
+from collections.abc import Callable, Iterator, Sequence
+from pathlib import Path
+from typing import Any
+
+from .chat import final_text
+from .loop import AgentLoop, Message, ProviderTurn, ToolCall
+from .models import ToolResult, TurnEvent
+
+BACKEND = "anthropic-api"
+
+SDK_MISSING = (
+    "the API backend needs the Anthropic SDK and a key: pip install 'hardy-prover[api]', "
+    "then set ANTHROPIC_API_KEY"
+)
+
+# Short on purpose. Hardy's other backends authenticate through an agent
+# product and need no key at all; this one exists for users who prefer a key to
+# a subscription, and it cannot start without one.
+KEY_MISSING = "the API backend needs ANTHROPIC_API_KEY; the other backends need no key at all"
+
+#: How much one assistant turn may write. A bound rather than the provider's
+#: maximum: an unbounded turn is a bound nobody keeps, which is the thing this
+#: backend exists to stop being true of anything.
+DEFAULT_MAX_TOKENS = 8192
+
+
+def load_sdk() -> Any:
+    try:
+        import anthropic
+    except ImportError as error:  # pragma: no cover - depends on the install
+        raise RuntimeError(SDK_MISSING) from error
+    return anthropic
+
+
+def tool_schema(specs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Hardy's tool specs, in the shape the Messages API asks for.
+
+    The specs are stored in the function-calling shape the rest of Hardy uses,
+    so the translation lives here rather than being duplicated into every
+    tool definition — one list of tools, however many transports read it.
+    """
+    tools = []
+    for spec in specs:
+        function = spec.get("function", spec)
+        tools.append({
+            "name": function["name"],
+            "description": function.get("description", ""),
+            "input_schema": function.get("parameters") or {"type": "object", "properties": {}},
+        })
+    return tools
+
+
+def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
+    """Hardy's conversation, in the shape the Messages API asks for.
+
+    Two rules do the work. An assistant turn carries its text and its tool
+    calls as blocks of one message, because that is how the provider issued
+    it. And consecutive tool results are collected into a single `user`
+    message — the API pairs every `tool_use` with a `tool_result` in the reply
+    that follows it, so results sent one message each would leave the first
+    call unanswered while the second was already being asked about.
+
+    An assistant turn that said nothing and called nothing is dropped: the API
+    refuses empty content, and there is nothing in such a turn to preserve.
+    """
+    out: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+
+    def flush() -> None:
+        if pending:
+            out.append({"role": "user", "content": list(pending)})
+            pending.clear()
+
+    for message in messages:
+        if message.role == "tool_result":
+            pending.append({
+                "type": "tool_result",
+                "tool_use_id": message.call_id,
+                "content": message.text or "",
+                "is_error": message.ok is False,
+            })
+            continue
+        flush()
+        if message.role == "user":
+            if message.text:
+                out.append({"role": "user", "content": [{"type": "text", "text": message.text}]})
+            continue
+        content: list[dict[str, Any]] = []
+        if message.text:
+            content.append({"type": "text", "text": message.text})
+        for call in message.tool_calls:
+            content.append({"type": "tool_use", "id": call.id, "name": call.name, "input": call.arguments})
+        if content:
+            out.append({"role": "assistant", "content": content})
+    flush()
+    return out
+
+
+def _usage(reported: Any) -> dict[str, Any] | None:
+    """The provider's token report, or None when it stated nothing.
+
+    Copied into a plain dict, and never `{}`: `usage.Usage` reads an absent
+    report as "not stated" and an empty one as a measured zero, and only one
+    of those is true of a provider that said nothing.
+    """
+    if reported is None:
+        return None
+    if hasattr(reported, "model_dump"):
+        counts = reported.model_dump()
+    elif isinstance(reported, dict):
+        counts = dict(reported)
+    else:
+        counts = {key: getattr(reported, key) for key in dir(reported) if not key.startswith("_")}
+    stated = {
+        str(key): value
+        for key, value in counts.items()
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
+    return stated or None
+
+
+class AnthropicProvider:
+    """One Messages API call. The loop decides whether to make it."""
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        client: Any | None = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> None:
+        self.model = model
+        self.max_tokens = max_tokens
+        if client is not None:
+            self._client = client
+        else:
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                raise RuntimeError(KEY_MISSING)
+            self._client = load_sdk().Anthropic()
+
+    @property
+    def endpoint(self) -> str:
+        base = getattr(self._client, "base_url", None)
+        return f"messages api ({base})" if base else "messages api"
+
+    def complete(
+        self, *, system: str, messages: Sequence[Message], specs: Sequence[dict[str, Any]]
+    ) -> ProviderTurn:
+        reply = self._client.messages.create(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            system=system,
+            messages=as_messages(messages),
+            tools=tool_schema(specs),
+        )
+        text: list[str] = []
+        calls: list[ToolCall] = []
+        thinking = False
+        for block in getattr(reply, "content", None) or []:
+            kind = getattr(block, "type", "")
+            if kind == "text":
+                text.append(str(getattr(block, "text", "")))
+            elif kind == "tool_use":
+                calls.append(ToolCall(
+                    id=str(getattr(block, "id", "") or uuid.uuid4()),
+                    name=str(getattr(block, "name", "")),
+                    arguments=dict(getattr(block, "input", None) or {}),
+                ))
+            elif kind in ("thinking", "redacted_thinking"):
+                # Reported as having happened and never transcribed, which is
+                # the rule the SDK backend keeps too.
+                thinking = True
+        return ProviderTurn(
+            text="\n\n".join(part for part in text if part),
+            tool_calls=tuple(calls),
+            thinking=thinking,
+            usage=_usage(getattr(reply, "usage", None)),
+            stop_reason=getattr(reply, "stop_reason", None),
+        )
+
+
+class ApiRuntime:
+    """Hardy's conversation with a model over the Messages API.
+
+    Shaped like `ClaudeAgentRuntime` so every caller is indifferent to which
+    one it got, with two differences a caller may ask about rather than
+    discover:
+
+    - `session_id` is always None. There is no provider thread to resume; the
+      conversation is the loop's own message list, and it ends with the
+      process. A workspace opened again starts a new conversation, and
+      `_carried_thread` is told that honestly rather than handed an id that
+      resumes nothing.
+    - `enforcement` says "hardy" for both bounds, because both are kept here.
+    """
+
+    backend = BACKEND
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        system_prompt: str,
+        specs: list[dict[str, Any]],
+        dispatch: Callable[[str, dict[str, Any]], ToolResult],
+        cwd: Path | None = None,
+        session_id: str | None = None,
+        observe: Callable[[dict[str, Any]], None] | None = None,
+        max_turns: int | None = None,
+        wall_seconds: float | None = None,
+        provider: Any | None = None,
+        before_turn: Callable[[Sequence[Message]], str | None] | None = None,
+        compact: Callable[[list[Message]], list[Message] | None] | None = None,
+    ) -> None:
+        self.model = model
+        # Accepted and dropped. A caller that has a thread id from another
+        # backend is not wrong to offer it; this transport simply has nothing
+        # to do with one, and saying so here is cheaper than every caller
+        # having to know which backend it is talking to.
+        self.session_id: str | None = None
+        self._cwd = cwd
+        self._provider = provider if provider is not None else AnthropicProvider(model)
+        self._loop = AgentLoop(
+            self._provider,
+            system_prompt=system_prompt,
+            specs=specs,
+            dispatch=dispatch,
+            observe=observe,
+            max_turns=max_turns,
+            wall_seconds=wall_seconds,
+            before_turn=before_turn,
+            compact=compact,
+            # Stable for the life of the runtime, so the ledger reads every
+            # exchange as belonging to one conversation rather than as a
+            # counter restart per turn.
+            session_id=str(uuid.uuid4()),
+        )
+
+    @property
+    def endpoint(self) -> str:
+        return getattr(self._provider, "endpoint", "messages api")
+
+    @property
+    def turns(self) -> int | None:
+        return self._loop.turns
+
+    @property
+    def max_turns(self) -> int | None:
+        return self._loop.max_turns
+
+    @property
+    def wall_seconds(self) -> float | None:
+        return self._loop.wall_seconds
+
+    @property
+    def enforcement(self) -> dict[str, str]:
+        """Who kept each bound this runtime ran under."""
+        return {"turns": "hardy", "wall_clock": "hardy"}
+
+    @property
+    def conversation(self) -> list[Message]:
+        """The messages this runtime is carrying. Hardy's, and readable."""
+        return self._loop.messages
+
+    def stream(self, text: str) -> Iterator[TurnEvent]:
+        return self._loop.run(text)
+
+    def ask(self, text: str) -> str:
+        return final_text(self.stream(text))
+
+    def cancel(self) -> None:
+        self._loop.cancel()
+
+    def settle(self, timeout: float = 0.0) -> bool:
+        """Always settled: this loop runs on the caller's own thread."""
+        return True

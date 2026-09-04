@@ -511,10 +511,37 @@ Priority labels are sequencing hints:
   `--no-project-context` — the pair composes into the fully clean interactive
   condition. With no resumable conversation to discard it is a silent no-op;
   the banner and `/status` name the fresh start either way.
-- **Known gap:** the SDK owns the turn loop, so turn limits are enforced by the
-  provider, only the wall clock is Hardy's, and a long session's context is
-  compacted by the provider's rules with no record of what was dropped.
-  Tracked in issue #23.
+- **Known gap, on the subscription backends:** the SDK owns the turn loop, so
+  turn limits are enforced by the provider and only the wall clock is Hardy's.
+  Every trajectory names who kept each bound rather than implying the harness
+  kept both, and the note pointing at issue #23 is printed exactly when the
+  turn bound was somebody else's to apply. The `api` backend below is the way
+  out for a user willing to supply a key.
+- **Now (implemented):** an `api` backend — the Messages API, with the loop in
+  Hardy. Chosen by `backend = "api"` in the config or `HARDY_BACKEND=api`,
+  shipped as the optional `api` extra, and needing `ANTHROPIC_API_KEY`, which
+  is the whole reason it is not the default: the other backends authenticate
+  through an agent product and need no key. On it, `max_turns` counts provider
+  calls here and `wall_seconds` is measured here, so the limits a trajectory
+  records are the limits that applied to it; `before_turn` may decline a
+  provider call outright; and the conversation is a list Hardy owns rather than
+  a thread the provider resumes. That last part has a cost stated rather than
+  discovered: there is no provider thread, so the conversation ends with the
+  process and a reopened workspace starts a new one. The backend and endpoint
+  land in `session.json` and every `trajectory.json`, because a run on one
+  transport and a run on the other are not the same experimental condition.
+- **Now (implemented):** cheap Lean closers before a model turn is spent —
+  `hardy batch --closers` tries `rfl`, `trivial`, `simp`, `omega`, `decide`,
+  `aesop` and `exact?` (or a comma-separated list of your own) against the
+  statement, and a run whose ladder closes it never asks a provider anything.
+  Each tactic's proof goes in through `submit_proof` exactly as a model's
+  would, so the axiom audit, the deadline and the trajectory apply to it
+  unchanged; the ladder is a decision about whose turn it is, never a second
+  route to a verdict. Off unless asked for, and recorded either way in a
+  `closers` block naming every tactic tried and what came of it: a result a
+  tactic ladder reached and a result a model reached are not the same
+  experiment, and a scoreboard that could not tell them apart would be worse
+  than no ladder at all.
 - **Now (implemented):** a Codex backend for ChatGPT subscriptions, on the same
   shape, shipped as the optional `codex` extra.
 - **Now (implemented):** an interactive session accumulates the cost and token
@@ -534,14 +561,15 @@ Priority labels are sequencing hints:
   report and is recorded as one exchange nobody billed, not as a free one.
 - **Next:** token and cost budgets with reserve/settle accounting, and the
   budget and what remains of it alongside the spend in `/status`. Recording is
-  done; enforcement still needs a decision point before each call, which the SDK
-  owns (issue #23).
-- **Next:** reclaim enough of the loop to enforce Hardy's own bounds, run
-  cheap Lean closers before spending a model turn, and choose — or at least
-  record — what a compaction keeps, whether by owning the loop or through the
-  SDK's `PreCompact` hook (issue #23).
-- **Later:** adapters for other agent SDKs, and an API-key path for users who
-  prefer one to a subscription.
+  done, and the decision point enforcement needs now exists on the `api`
+  backend — `AgentLoop`'s `before_turn` is asked before every provider call and
+  may decline it. On the subscription backends the SDK still owns that moment
+  (issue #23).
+- **Next:** carry the same three back to the subscription backends, where the
+  SDK still owns the loop — Hardy's own turn bound, the closers, and a
+  compaction it chooses — whether through the SDK's `can_use_tool` and
+  `PreCompact` hooks or not at all (issue #23).
+- **Later:** adapters for other agent SDKs beyond the two here.
 - **Later:** summarize failed attempts into compact lessons rather than replaying
   entire transcripts; measure whether summarization loses needed context.
 

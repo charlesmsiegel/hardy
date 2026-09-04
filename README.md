@@ -277,11 +277,11 @@ conversation the flag is a quiet no-op that records nothing.
 
 ### What it does get to do, and why that matters
 
-**The SDK owns the turn loop.** Hardy no longer decides when a model call
-happens, so `--max-turns` is passed to the SDK and enforced there. The wall clock
-stays Hardy's, because nothing in the SDK bounds a stalled request. The
-trajectory says which of the two applied rather than implying the harness did
-both:
+**On the subscription backends, the SDK owns the turn loop.** Hardy does not
+decide when a model call happens there, so `--max-turns` is passed to the SDK
+and enforced there. The wall clock stays Hardy's, because nothing in the SDK
+bounds a stalled request. The trajectory says which of the two applied rather
+than implying the harness did both:
 
 ```json
 "limits": {
@@ -290,6 +290,26 @@ both:
   "note": "the SDK owns the loop; see issue #23"
 }
 ```
+
+**There is a backend where Hardy owns it.** Set `backend = "api"` (or
+`HARDY_BACKEND=api`), install the `api` extra, and supply `ANTHROPIC_API_KEY`:
+the Messages API is called directly and the loop runs here. `max_turns` then
+counts provider calls Hardy made, `wall_seconds` is measured here, the
+conversation is a list Hardy holds rather than a thread the provider resumes,
+and the same `limits` block reads `"turns_enforced_by": "hardy"` with no note
+under it, because there is nothing left to point at. It is opt-in because it is
+the one transport that needs an API key rather than a subscription — and
+because it is a different experimental condition, which is why the backend and
+endpoint are in every record.
+
+That loop is what lets Hardy decline a provider call. `hardy batch --closers`
+tries `rfl`, `trivial`, `simp`, `omega`, `decide`, `aesop` and `exact?` against
+the statement first, and a statement one of them closes never reaches a model.
+Each tactic's proof goes in through `submit_proof` like any other, so the axiom
+audit refuses a bad one in the same words; the ladder is off unless asked for,
+and the trajectory's `closers` block names every tactic tried either way. A
+result a tactic ladder reached and a result a model reached are not the same
+experiment.
 
 Issue #23 records why this is worth reversing: bounded experiments, trajectory
 fidelity, cheap Lean closers before model tokens, and token budgets all live in

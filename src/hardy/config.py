@@ -45,6 +45,7 @@ SETTINGS = {
     "tectonic": "HARDY_TECTONIC",
     "tectonic_bundle": "HARDY_TECTONIC_BUNDLE",
     "tectonic_bundle_sha256": "HARDY_TECTONIC_BUNDLE_SHA256",
+    "backend": "HARDY_BACKEND",
     "cas_backend": "HARDY_CAS_BACKEND",
     "cas_command": "HARDY_CAS_COMMAND",
     "project_context": "HARDY_PROJECT_CONTEXT",
@@ -59,6 +60,15 @@ PROJECT_SETTINGS = frozenset({"project"})
 # SymPy is the default because it is a Python dependency and therefore always
 # present. Singular and Macaulay2 are far better at algebraic geometry and far
 # worse at Windows, so they are opt-in rather than assumed.
+# Which transport a conversation is carried by. `claude` is the default
+# because it is the one that needs no API key: it authenticates through the
+# Claude Code agent SDK and a Claude Max subscription. `api` is the opt-in
+# harness-owned loop of issue #23 -- Hardy decides when a provider call is
+# made, keeps both bounds itself, and can decline a call outright -- and it
+# needs `ANTHROPIC_API_KEY`.
+BACKENDS = ("claude", "api")
+DEFAULT_BACKEND = "claude"
+
 CAS_BACKENDS = ("sympy", "singular", "macaulay2")
 DEFAULT_CAS_BACKEND = "sympy"
 
@@ -211,6 +221,14 @@ class Config:
     tectonic: Path = Path(DEFAULT_TECTONIC)
     tectonic_bundle: str = DEFAULT_TECTONIC_BUNDLE
     tectonic_bundle_sha256: str = DEFAULT_TECTONIC_BUNDLE_SHA256
+    # Which transport carries the conversation, and with it who owns the turn
+    # loop. `claude` authenticates through the Claude Code agent SDK, needs no
+    # API key, and leaves the loop to the SDK (issue #23). `api` calls the
+    # Messages API directly with `ANTHROPIC_API_KEY` and runs the loop here,
+    # which is what makes Hardy's own turn bound, its wall clock and its cheap
+    # closers real rather than declared. They are different experimental
+    # conditions and both are recorded as such.
+    backend: str = DEFAULT_BACKEND
     # The computer algebra kernel. `cas_command` is unset for SymPy, which runs
     # on Hardy's own interpreter; the other backends need an executable.
     cas_backend: str = DEFAULT_CAS_BACKEND
@@ -430,6 +448,9 @@ def load(
             return False
         raise ValueError(f"{key} must be true or false, not {value!r}")
 
+    backend = text("backend", DEFAULT_BACKEND)
+    if backend not in BACKENDS:
+        raise ValueError(f"backend must be one of {list(BACKENDS)}, not {backend!r}")
     cas_backend = text("cas_backend", DEFAULT_CAS_BACKEND)
     # Rejected here rather than at first use: an unknown backend is a typo in a
     # config file, and the place to say so is where the file is read.
@@ -456,6 +477,7 @@ def load(
         tectonic=location("tectonic") or Path(DEFAULT_TECTONIC),
         tectonic_bundle=text("tectonic_bundle", DEFAULT_TECTONIC_BUNDLE),
         tectonic_bundle_sha256=text("tectonic_bundle_sha256", DEFAULT_TECTONIC_BUNDLE_SHA256),
+        backend=backend,
         cas_backend=cas_backend,
         cas_command=location("cas_command"),
         project_context=flag("project_context", True),

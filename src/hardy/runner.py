@@ -4,11 +4,12 @@ import json
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
 from . import audit
+from . import closers as closer_ladder
 from .chat import provenance
 from .claude_runtime import TurnLimitReached
 from .latency import manifest_binds
@@ -113,7 +114,40 @@ def describe_toolchain(toolchain: dict[str, Any] | None) -> str:
     )
 
 
-def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools, output_dir: Path, *, max_turns: int = 8, wall_seconds: float = 300, toolchain: dict[str, Any] | None = None) -> RunResult:
+def _limits(runtime: Any, max_turns: int, wall_seconds: float, elapsed: float) -> dict[str, Any]:
+    """The bounds a run declared, and who actually applied each of them.
+
+    Asked of the runtime rather than stated here. A trajectory that names a
+    limit without naming its keeper is the honesty problem issue #23 is about:
+    under an SDK-driven loop the turn bound is the SDK's to apply, and writing
+    "hardy" beside it would claim a guarantee the harness cannot make. A
+    backend that keeps both says so, and one that keeps neither could say that
+    too.
+    """
+    enforcement = getattr(runtime, "enforcement", None)
+    if not isinstance(enforcement, dict):
+        enforcement = {"turns": "provider sdk", "wall_clock": "hardy"}
+    limits = {
+        "max_turns": max_turns,
+        "wall_seconds": wall_seconds,
+        "turns_enforced_by": enforcement.get("turns", "provider sdk"),
+        "wall_clock_enforced_by": enforcement.get("wall_clock", "hardy"),
+        "elapsed_seconds": elapsed,
+    }
+    if limits["turns_enforced_by"] != "hardy":
+        limits["note"] = "the SDK owns the loop; see issue #23"
+    return limits
+
+
+def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools, output_dir: Path, *, max_turns: int = 8, wall_seconds: float = 300, toolchain: dict[str, Any] | None = None, closers: Sequence[str] | None = None) -> RunResult:
+    """One unattended attempt at `request`, and everything it is recorded by.
+
+    `closers` is the cheap Lean ladder from issue #23, tried before the model
+    is asked anything. None means nobody asked for it and none runs, which is
+    the default because a run whose result came from a tactic ladder and a run
+    whose result came from a model are not the same experiment. Whichever it
+    was is written into `trajectory.json` either way.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     # Before the first turn, so a run the wall clock cuts short still says
     # what it ran against; and asked rather than trusted from the caller when
@@ -211,8 +245,36 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     reason = "completed"
     runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=observe,
                            max_turns=max_turns, wall_seconds=wall_seconds)
+    # Built before the ladder runs, and asked nothing until after it: the
+    # runtime's identity belongs in the record of every run, including one that
+    # never spoke to it. Constructing it makes no provider call.
+    ladder = closer_ladder.DISABLED
+    if closers:
+        # Through `dispatch`, not around it. A tactic's proof goes in by the
+        # same door a model's does, so the axiom audit, the deadline and the
+        # trajectory all apply to it unchanged -- the ladder is a decision
+        # about whose turn it is, never a second route to a verdict.
+        def submit(proof: str) -> tuple[bool, str]:
+            outcome = dispatch("submit_proof", {"proof": proof})
+            return outcome.ok, outcome.output
+
+        outcome = closer_ladder.close(
+            submit,
+            closers,
+            keep_going=lambda: not closed.is_set() and time.monotonic() < deadline["at"],
+        )
+        ladder = outcome.as_dict()
+        events.append({"type": "closers", **ladder})
+    # Whether a provider was asked anything at all. A ladder that closed the
+    # statement means Hardy declined to spend a turn, which is a fact about the
+    # run and not an absence of one -- and it is what keeps the ledger below
+    # from billing an exchange that never happened.
+    asked = not (found["result"] and ladder["closed_by"])
+    if not asked:
+        events.append({"type": "declined_turn", "why": f"closed by `{ladder['closed_by']}` before a model turn was spent"})
     try:
-        runtime.ask(task)
+        if asked:
+            runtime.ask(task)
     except TurnLimitReached as error:
         # The bound the caller asked for, reached as asked. Recording it as a
         # provider failure would misreport an expected partial result.
@@ -251,7 +313,11 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     # the SDK's final result -- did not thereby make it free. So the exchange is
     # counted with nothing stated about it, rather than left out of the ledger
     # and rendered as a run that spent nothing.
-    spent = spend["total"] if spend["total"].turns else Usage().record({})
+    # A run that never asked a provider anything spent nothing, and says so.
+    # A run that asked and got no report is a different thing: it is counted
+    # with everything about it unstated, because a provider may well have
+    # billed for what it did before the wall clock cut the exchange short.
+    spent = spend["total"] if spend["total"].turns else (Usage().record({}) if asked else Usage())
 
     # What the audit decided: the verdict that verified the run, or failing that
     # the record of what refused it -- which distinguishes an audit that ran and
@@ -293,6 +359,6 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             f"verified.\n\n```lean\n{sketch['proof']}\n```\n"
         )
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
-    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds, "turns_enforced_by": "provider sdk", "wall_clock_enforced_by": "hardy", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "usage": spent.summary(), "sketch": sketch, "events": events, "terminal_reason": reason})
+    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": _limits(runtime, max_turns, wall_seconds, elapsed), "usage": spent.summary(), "sketch": sketch, "closers": ladder, "events": events, "terminal_reason": reason})
     _write_json(output_dir / "result.json", result.as_dict())
     return result

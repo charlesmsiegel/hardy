@@ -32,6 +32,10 @@ test = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-cov>=6"]
 # The Codex backend is optional: Hardy runs on the Claude backend alone, and
 # only a ChatGPT-subscription user needs this SDK installed.
 codex = ["openai-codex>=0.144"]
+# The API backend is optional for the mirror-image reason: it is the one
+# transport that needs an API key rather than a subscription, and it is what a
+# user installs to get the loop Hardy runs itself (issue #23).
+api = ["anthropic>=0.40"]
 
 [project.scripts]
 hardy = "hardy.cli:main"
