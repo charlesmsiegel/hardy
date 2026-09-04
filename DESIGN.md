@@ -166,7 +166,11 @@ user needs no API key to use it. What it cannot do from there is decline a turn
 partway through an exchange, which is what the decision point above would buy.
 
 The first thing it buys is the end of a run. `hardy batch` declines every turn
-after the submission it keeps: the writeup is assembled from the artifacts
+after the submission it keeps, and the runner refuses the calls already queued
+behind it — one response can ask for two submissions, and declining the *next*
+provider turn does not reach the second of them. That half lives in the runner
+rather than the loop, because the runner is what knows a run has its result,
+and so it holds on every backend: the writeup is assembled from the artifacts
 rather than from whatever the model says once it has finished, so a further
 exchange is billed for and buys nothing — and it is not inert, since the tools
 stay live and a second accepted submission would replace the proof the run had

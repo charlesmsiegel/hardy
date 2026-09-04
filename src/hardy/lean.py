@@ -147,7 +147,7 @@ class LeanDiagnostic(FrozenModel):
     column: int | None = None
 
 
-def _scannable(source: str) -> str:
+def scannable(source: str) -> str:
     """`source` with everything a hole cannot hide in blanked out, offsets kept.
 
     Comments and string literals first, for the reason `has_holes` gives, and
@@ -156,6 +156,12 @@ def _scannable(source: str) -> str:
     which then kept a complete candidate in the record as an explicitly partial
     one. Blanked rather than removed, because every position this feeds is
     reported against the original text.
+
+    Public because the three surfaces that scan Lean for a forbidden token
+    have to agree about what counts as one. `hardy accept --recorded` and the
+    staged verifier read `FORBIDDEN_TOKEN` over the same text this returns, so
+    a proof `submit_proof` was right to accept is not refused offline for a
+    `sorry` that is a piece of quoted syntax or a declaration's own name.
     """
     blanked = ESCAPED_NAME.sub(lambda match: " " * len(match.group(0)), strip_comments(source))
     return _blank_quotations(blanked)
@@ -700,7 +706,7 @@ class LeanTools:
         "sorry"`, in both cases telling the model to fix something that was
         never there.
         """
-        return HOLE.search(_scannable(source)) is not None
+        return HOLE.search(scannable(source)) is not None
 
     @staticmethod
     def holes(source: str) -> tuple[Hole, ...]:
@@ -713,7 +719,7 @@ class LeanTools:
         unfinished without saying where, and a sketch is only useful when its
         holes can be pointed at.
         """
-        blanked = _scannable(source)
+        blanked = scannable(source)
         found = []
         for match in HOLE.finditer(blanked):
             before = blanked[: match.start()]

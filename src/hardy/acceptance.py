@@ -45,7 +45,7 @@ from .domain import (
     TerminalReason,
     VerificationEvidence,
 )
-from .lean import DECLARATION_HEAD, LeanCheckResult, LeanTools
+from .lean import DECLARATION_HEAD, LeanCheckResult, LeanTools, scannable
 from .process import ProcessResult
 from .prompts import PROMPT_SET_SHA256
 from .verifier import (
@@ -56,7 +56,7 @@ from .verifier import (
     verification_source,
 )
 from .workflow import ProveRequest, ProveWorkflow
-from .workspace import declared_name, strip_comments
+from .workspace import declared_name
 from .writeup import RunIdentities, WriteupContent, build_writeup, dropped_glyphs, host_paths
 
 
@@ -1309,7 +1309,7 @@ def _verified_batch_issues(
     if not isinstance(proof, str) or not proof.strip():
         issues.append("a verified run names no proof")
         return issues
-    if FORBIDDEN_TOKEN.search(strip_comments(proof)):
+    if FORBIDDEN_TOKEN.search(scannable(proof)):
         issues.append("the verified proof carries a forbidden token")
     if not proof_path.exists():
         issues.append("a verified run has no proof.lean")
@@ -1332,7 +1332,7 @@ def _verified_batch_issues(
                 issues.append("proof.lean is not the request's declaration, the result's proof, and the audit line")
         if not source.rstrip().endswith(axiom_report_line(name)):
             issues.append("proof.lean does not end with the axiom report the verdict rests on")
-    if FORBIDDEN_TOKEN.search(strip_comments(source)):
+    if FORBIDDEN_TOKEN.search(scannable(source)):
         issues.append("proof.lean carries a forbidden token")
     audited = result.get("axioms") or {}
     if audited.get("status") != "clean":

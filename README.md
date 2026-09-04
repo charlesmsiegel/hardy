@@ -625,7 +625,13 @@ Esc cancels an in-flight turn: the model stops, no further tool call runs, and
 the Lean, LaTeX, or computer algebra process it started is interrupted rather
 than left running to its timeout — with one exception: the fresh kernel and the
 script an export runs to check itself belong to a session built for that export,
-and are bounded only by their own limits. A computer algebra cell that answers
+and are bounded only by their own limits. "The model stops" is exact on the
+subscription backends, whose SDK can interrupt a turn. On `backend = "api"` it
+means Hardy stops: a request already in flight cannot be aborted, so it runs to
+its answer and is billed for, and the reply is recorded as discarded rather than
+shown — being told a turn was cancelled and then handed its answer is worse than
+no answer. No tool call runs and the turn ends either way; what differs is
+whether the provider was also stopped. A computer algebra cell that answers
 the interrupt costs only itself: the kernel survives, and with it everything the
 earlier cells put in the namespace. What an interrupted cell had already changed
 before it was stopped stays changed — nothing is rolled back — which is why such

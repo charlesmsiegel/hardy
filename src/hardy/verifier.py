@@ -27,7 +27,7 @@ from .domain import (
     VerificationEvidence,
     freeze_claim,
 )
-from .lean import LeanDiagnostic, elaborate, render_theorem
+from .lean import LeanDiagnostic, elaborate, render_theorem, scannable
 from .process import ProcessResult, ProcessSpec, run_process
 from .storage import RunStore
 
@@ -135,7 +135,7 @@ class FinalVerifier:
                 TerminalReason.FORBIDDEN_HOLE,
                 "Forbidden Lean syntax in Frozen Claim signature: " + signature_violation,
             )
-        forbidden = FORBIDDEN_TOKEN.search(strip_comments(proof_body))
+        forbidden = FORBIDDEN_TOKEN.search(scannable(proof_body))
         if forbidden is not None:
             result = VerificationResult(
                 verified=False,
