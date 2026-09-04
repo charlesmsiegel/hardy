@@ -244,12 +244,15 @@ def overhead(system_prompt: str, specs: Sequence[Mapping[str, Any]]) -> int:
     return estimate_text(system_prompt) + sum(estimate_text(repr(spec)) for spec in specs)
 
 
-#: What one message costs beyond its own text: a role, the framing of a
-#: content block, and the punctuation the transport wraps them in. Small and
-#: deliberately generous -- a conversation of many short turns is where an
-#: estimate that counted only text drifted furthest, and drifted in the
-#: direction that sends a request the provider refuses.
-FRAMING_PER_MESSAGE = 8
+#: What one *content block* costs beyond its own text: its type, its field
+#: names, and the punctuation the transport wraps them in. Charged per block
+#: rather than per message, because that is what the transport sends: a turn
+#: asking for six tools is seven blocks, not one, and counting it as one made
+#: the estimate drift further with every call a tool-heavy conversation makes.
+#: Small and deliberately generous -- a conversation of many short turns is
+#: where an estimate that counted only text drifted furthest, and drifted in
+#: the direction that sends a request the provider refuses.
+FRAMING_PER_BLOCK = 8
 
 
 def estimate_tokens(messages: Sequence[Message]) -> int:
@@ -266,7 +269,16 @@ def estimate_tokens(messages: Sequence[Message]) -> int:
     where the conversation was heaviest.
     """
     tokens = 0
+    blocks = 0
     for message in messages:
+        # One content block for the message itself, and one more for each thing
+        # the transport sends as a block of its own. Charging the framing once
+        # per message counted a turn asking for six tools the same as a turn
+        # saying one word: each `tool_use` is a separate structured block with
+        # its own field names and JSON punctuation, and the shortfall grows
+        # with every call a tool-heavy conversation makes -- which is the shape
+        # of conversation Hardy has.
+        blocks += 1 + len(message.tool_calls) + len(message.reasoning)
         tokens += estimate_text(message.text) + estimate_text(message.role)
         for call in message.tool_calls:
             tokens += estimate_text(call.name) + estimate_text(call.id) + estimate_text(repr(call.arguments))
@@ -276,7 +288,7 @@ def estimate_tokens(messages: Sequence[Message]) -> int:
         # signature are in it, which is the bulk of what they cost.
         tokens += sum(estimate_text(repr(block)) for block in message.reasoning)
         tokens += estimate_text(message.call_id) + estimate_text(message.name)
-    return tokens + FRAMING_PER_MESSAGE * len(messages)
+    return tokens + FRAMING_PER_BLOCK * blocks
 
 
 @dataclass(frozen=True)

@@ -687,3 +687,31 @@ def test_a_drained_batch_keeps_every_real_result() -> None:
     assert [message.call_id for message in results] == ["c1", "c2"]
     assert all(message.ok for message in results)
     assert not any("abandoned" in message.text for message in results)
+
+
+def test_a_truncated_batch_abandoned_at_the_notice_is_still_answered() -> None:
+    """`_settle` yields, and it now yields *before* the tools run.
+
+    A consumer that stops at that notice would have left the whole batch
+    unanswered -- the same dead conversation the placeholders exist to prevent,
+    reached by a path the placeholders were on the wrong side of.
+    """
+    loop, _, _ = _loop([
+        ProviderTurn(
+            text="I will check",
+            tool_calls=(ToolCall("c1", "check_proof", {}), ToolCall("c2", "check_proof", {})),
+            stop_reason="max_tokens",
+        ),
+        ProviderTurn(text="never reached"),
+    ])
+
+    stream = loop.run("prove it")
+    for event in stream:
+        if event.kind == "notice":
+            break
+    stream.close()
+
+    results = [message for message in loop.messages if message.role == "tool_result"]
+    assert [message.call_id for message in results] == ["c1", "c2"]
+    assert not any(message.ok for message in results)
+    assert all("abandoned" in message.text for message in results)

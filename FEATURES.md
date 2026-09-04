@@ -732,10 +732,15 @@ Priority labels are sequencing hints:
   the invisible loss the feature exists to prevent. A backend whose SDK owns
   the loop is not offered a compactor at all, rather than handed one it would
   silently drop. The estimate charges ASCII at a prose ratio and everything
-  else at one token per code point, because a transcript full of `∀` and `⟨⟩`
-  — or a session not conducted in ASCII at all — is exactly where dividing
-  every character by 3.5 understated the conversation, and understating it is
-  the direction that loses the request rather than some context. The window
+  else at its UTF-8 byte count, and the framing allowance per *content block*
+  rather than per message — a turn asking for six tools is seven blocks. Both
+  are bounds rather than guesses: a BPE token covers at least one byte, so
+  nothing costs more tokens than it has bytes. A transcript full of `∀` and
+  `⟨⟩` — or a session not conducted in ASCII at all — is exactly where
+  dividing every character by 3.5 understated the conversation, and
+  understating it is the direction that loses the request rather than some
+  context. It overshoots for CJK, which is nearer one token per character than
+  three, and that is the trade taken deliberately. The window
   itself is `context_window` (or
   `HARDY_CONTEXT_WINDOW`), defaulting to 200K and recorded in the compaction
   event: it is a property of the endpoint rather than of Hardy — a gateway
