@@ -913,3 +913,40 @@ def test_a_sketch_whose_request_cannot_be_rebuilt_is_refused(tmp_path) -> None:
     issues = acceptance.validate_batch_consistency(output)
 
     assert any('cannot rebuild the sketch' in issue for issue in issues)
+
+
+def test_rewriting_a_failed_closer_attempt_is_refused(tmp_path) -> None:
+    """Only the tactic that closed the statement was bound to a submission, so
+    the names and outputs of the failures could be rewritten together while the
+    proofs the run actually submitted stayed where they were."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path, tactic='nonsense_tactic')
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    for block in (trajectory['closers'], *[e for e in trajectory['events'] if e.get('type') == 'closers']):
+        block['tactics'] = ['omega']
+        block['attempts'][0]['tactic'] = 'omega'
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('does not match the proof submitted for it' in issue for issue in issues)
+
+
+def test_deleting_the_sketch_fields_does_not_buy_the_legacy_exception(tmp_path) -> None:
+    """A trajectory holding an accepted sketch is a record from this code whose
+    fields have been removed. Taking the compatibility exception there let the
+    human-facing artifact drop every remaining hole."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    runner = importlib.import_module('hardy.runner')
+    output = _sketched(tmp_path)
+    for name in ('result.json', 'trajectory.json'):
+        payload = json.loads((output / name).read_text(encoding='utf-8'))
+        del payload['sketch']
+        (output / name).write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+    writeup = output / 'writeup.md'
+    text = writeup.read_text(encoding='utf-8')
+    writeup.write_text(text[: text.index(runner.SKETCH_HEADING)], encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('carries no sketch fields' in issue for issue in issues)

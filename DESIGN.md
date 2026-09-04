@@ -157,9 +157,15 @@ There is now a second transport where none of that is lost. The `api` backend
 calls the Messages API directly and runs the loop in `hardy/loop.py`: it counts
 provider calls itself, measures its own wall clock, holds the conversation as a
 list rather than as a provider thread, and is asked before every provider call
-whether to make one at all — which is what makes the cheap Lean closers
-possible, since declining a turn is a decision only something inside the loop
-can take. Owning the loop is also what lets the wall clock reach every place the loop can
+whether to make one at all — the decision point that token budgets and a
+mid-conversation closer ladder both need, and that no SDK-driven loop offers.
+
+The `hardy batch --closers` ladder is deliberately *not* one of those: it runs
+before any runtime is built, so it works on every backend, and a subscription
+user needs no API key to use it. What it cannot do from there is decline a turn
+partway through an exchange, which is what the decision point above would buy.
+
+Owning the loop is what lets the wall clock reach every place the loop can
 block, rather than only the gap between exchanges. There are four such places
 and they were found one at a time, which is the honest way to record it:
 between exchanges; before a provider call, because the hooks that run there —

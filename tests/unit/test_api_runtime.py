@@ -341,3 +341,26 @@ def test_the_client_is_built_without_retries(monkeypatch: pytest.MonkeyPatch) ->
     module.AnthropicProvider("claude-test").client()
 
     assert seen["max_retries"] == 0
+
+
+def test_a_dribbling_endpoint_does_not_outlast_the_budget() -> None:
+    """The client's `timeout` is HTTPX's, and HTTPX bounds the wait for each
+    chunk rather than the whole exchange -- so an endpoint that keeps sending
+    can hold the call open past `wall_seconds` while the record says Hardy
+    enforced it."""
+    import time
+
+    class Dribbling(FakeClient):
+        def create(self, **request):
+            time.sleep(5)
+            return Reply([Block(type="text", text="eventually")])
+
+    provider = AnthropicProvider("claude-test", client=Dribbling([]))
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="0.2s budget"):
+        provider.complete(system="", messages=[Message("user", text="hi")], specs=[], timeout=0.2)
+
+    # Hardy stopped when it said it would; the abandoned request is a stated
+    # limit, not a silent wait.
+    assert time.monotonic() - started < 2
