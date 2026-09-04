@@ -427,3 +427,16 @@ def test_a_name_two_modules_declare_is_not_graded():
     assert "not graded" in shown
     assert 'class="badge verified"' not in shown
     assert "A, B" in shown
+
+
+def test_the_path_reported_is_where_the_write_actually_landed(tmp_path):
+    """`O_NOFOLLOW` guards the leaf and nothing above it, so a linked ancestor
+    still redirects the write. The destination is allowed to leave the tree --
+    that is what an export is for -- so the line a user reads names the real
+    file rather than the one they typed."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "exports").symlink_to(elsewhere)
+    written = export.write(material(), tmp_path / "exports" / "report.html")
+    assert written == elsewhere / "report.html"
+    assert (elsewhere / "report.html").is_file()

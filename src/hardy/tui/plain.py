@@ -20,6 +20,10 @@ WIDTH = 80
 class PlainUi:
     """A Ui with no event loop. Its `from_thread` calls straight through."""
 
+    #: There is no loop here to keep responsive, and one thread to be
+    #: interrupted on. See `Ui.runs_on_event_loop`.
+    runs_on_event_loop = False
+
     def __init__(self, out: Callable[[str], None], read: Callable[[str], str]):
         self._out = out
         self._read = read

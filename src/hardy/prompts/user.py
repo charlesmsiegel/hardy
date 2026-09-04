@@ -154,6 +154,13 @@ def expand(template: Template, argument: str) -> str:
         if token == "$":
             return "$"
         if token == "@":
+            # Empty is missing, exactly as `$1` with no first word is. The
+            # contract is that a placeholder with nothing to fill it refuses;
+            # `/formalize` with no argument was sending and recording
+            # "Formalize ." instead, which is the malformed prompt the rule
+            # exists to prevent.
+            if not rest:
+                missing.append("$@")
             return rest
         index = int(token)
         if index < 1 or index > len(words):

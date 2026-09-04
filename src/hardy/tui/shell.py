@@ -193,6 +193,9 @@ class GuardedFileHistory(FileHistory):
 class Shell:
     """The interactive session: prompt area at the bottom, scrollback above."""
 
+    #: Everything here is drawn by prompt_toolkit's loop. See `Ui.runs_on_event_loop`.
+    runs_on_event_loop = True
+
     def __init__(
         self,
         config: Any,
@@ -251,6 +254,14 @@ class Shell:
         # handler through `stopping`. None whenever no command owns work of its
         # own -- which is every command but `/prove` today.
         self._command_cancel: Any = None
+        # Whether Esc was pressed before that publication. `_submit_key`
+        # SCHEDULES a command and returns, so an Escape typed behind the same
+        # Enter is resolved in the very same input batch -- before the handler
+        # has run a line, let alone registered anything. Without this the press
+        # found nothing to stop, was spent on the idle session, and the staged
+        # run started anyway. The same hazard `_submit_key` already documents
+        # for `turn_running` and for the reopen's `arm`.
+        self._command_stop_requested = False
         # Requests from `_FromThread`, each an (already-created, not-yet-
         # awaited) coroutine paired with the `concurrent.futures.Future` a
         # tool thread is blocked on. Never touched from that thread beyond
@@ -489,8 +500,16 @@ class Shell:
         return picked is not None and picked.value == "yes"
 
     def stopping(self, cancel: Any) -> None:
-        """See `Ui.stopping`. Held on the shell, read by `_stop_command`."""
+        """See `Ui.stopping`. Held on the shell, read by `_stop_command`.
+
+        A stop already requested is honoured at once: the press came before the
+        handler could publish, and a key the user has already pressed must not
+        be waiting on the code it was aimed at to finish starting.
+        """
         self._command_cancel = cancel
+        if cancel is not None and self._command_stop_requested:
+            self._command_stop_requested = False
+            cancel()
 
     @property
     def from_thread(self) -> _FromThread:
@@ -670,6 +689,7 @@ class Shell:
                 # the press would find no command running and do nothing.
                 if self._commands_running == 0:
                     self._command_stopping = False
+                    self._command_stop_requested = False
                 self._commands_running += 1
                 # Lifted here, synchronously, and not inside `_run_command`:
                 # an Escape typed behind this Enter is resolved in the very
@@ -913,6 +933,12 @@ class Shell:
         if stopper is not None and stopper():
             self.write("stopping the staged run; it will finalize and say how it ended")
             return
+        if self._commands_running:
+            # A command is running and has published nothing yet. Remembered
+            # rather than dropped, so `stopping` can honour it the moment the
+            # handler gets there; the session is still asked below, which is
+            # right for every command that owns no work of its own.
+            self._command_stop_requested = True
         session = self._state.session
         if self._command_stopping:
             escalate = getattr(session, "escalate", None)
