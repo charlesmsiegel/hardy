@@ -65,7 +65,21 @@ DUPLICATE = re.compile(WARNING + r" Label [`']([^']*)' multiply defined")
 # emits in some form even when the individual warnings are worded differently.
 # It is the backstop for a package this file has never seen: it says something
 # did not resolve without saying what, which is still a refusal.
-SUMMARY = re.compile(r"There were undefined (references|citations)")
+SUMMARY = re.compile(r"There were (undefined (?:references|citations))")
+# The same backstop for the third finding. A duplicate-label warning names its
+# label, and `unwrapped` joins the wrapped halves back together to read it --
+# but that join assumes `max_print_line` is the default 79, and a TeX
+# installation configured otherwise wraps at a boundary it does not know to
+# join. `SUMMARY` did not cover this case, because LaTeX's undefined-reference
+# summary is a different sentence, so a long enough label name on a
+# non-standard installation resolved to no findings at all and the compile
+# published a PDF whose `\ref`s point at whichever duplicate came last.
+#
+# Kept out of `SUMMARY` rather than added to it: `rerun_requested` reads
+# `SUMMARY`, and a duplicate label is permanent -- running again cannot
+# unmake it, and asking for a pass that changes nothing is how a compile
+# spends its budget on a verdict it already has.
+DUPLICATE_SUMMARY = re.compile(r"There were multiply-defined labels")
 # What the compiler says when the numbers themselves are still moving, as
 # opposed to being permanently absent. Kept apart from `SUMMARY` because they
 # call for opposite responses: this one is answered by compiling again, and
@@ -118,10 +132,14 @@ class Unresolved:
                 f"entry `{self.name}`"
             )
         if self.kind == "unnamed":
+            # `name` is the whole complaint here, not a key: "references",
+            # "citations", or "multiply-defined labels". Worded so it reads
+            # for all three -- the summary says something did not resolve
+            # without saying what, and the log above is where the what is.
             return (
-                f"the compiler reports undefined {self.name} without naming them; the "
+                f"the compiler reports {self.name} without naming them; the "
                 "package reporting this is not one Hardy can read warnings from, so read "
-                "the log above for the keys"
+                "the log above for the names"
             )
         if self.kind == "unconverged":
             return (
@@ -191,6 +209,8 @@ def unresolved(log: str) -> tuple[Unresolved, ...]:
         # published: the compile is refused, and the log says the rest.
         for kind in dict.fromkeys(SUMMARY.findall(text)):
             found.append(Unresolved(kind="unnamed", name=kind))
+        if DUPLICATE_SUMMARY.search(text) is not None:
+            found.append(Unresolved(kind="unnamed", name="multiply-defined labels"))
     return tuple(found)
 
 

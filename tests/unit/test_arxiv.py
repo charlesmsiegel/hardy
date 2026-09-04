@@ -1044,3 +1044,33 @@ def test_a_clock_behind_arxivs_does_not_refuse_a_record_it_fetched(tmp_path: Pat
     record, _ = client.fetch("math.DG/0211159v1")
     assert record.fetched_at < record.published
     assert library.read(record.identifier) == record
+
+
+def test_a_wrong_identifier_drop_removes_only_the_body_it_rejected(tmp_path: Path):
+    """The same race as the malformed body, on the other rejection path.
+
+    A response about a different paper is dropped before the refusal, or
+    every retry reuses it. Dropped unqualified, though, it removed whatever
+    was under the key rather than the bytes just rejected: a neighbour that
+    met the same wrong answer, threw it away, retried and cached a good one
+    had its replacement deleted -- so the next request went to the network
+    for something that had been on disk, and could fail there.
+    """
+    right = _feed("math.DG/0211159v1")
+    client, library, _ = _client(tmp_path, Recorder(_feed("math.DG/9999999v1")))
+    original = library.drop_query
+    keys: list[str] = []
+
+    def _slow(key: str, *, body: bytes | None = None) -> None:
+        # The neighbour gets there while this process is off the CPU.
+        keys.append(key)
+        library.cache_query(key, right, now=1_000_000.0)
+        original(key, body=body)
+
+    library.drop_query = _slow
+    with pytest.raises(arxiv.ArxivError, match="refusing to store one paper"):
+        client.fetch("math.DG/0211159v1")
+    assert keys, "the wrong answer was not dropped at all"
+    held = library.cached_query(keys[0], now=1_000_000.0)
+    assert held is not None, "a good answer was deleted by the process that read a bad one"
+    assert held[0] == right

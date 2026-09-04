@@ -778,7 +778,14 @@ class ArxivClient:
             # Not an answer to this question, so not an answer worth keeping
             # for a day: dropped from the cache before the refusal, or every
             # retry would reuse the same wrong response.
-            self.library.drop_query(_key(url))
+            #
+            # By identity, like the malformed-body drop. Unqualified, this
+            # removed whatever was under the key rather than the bytes it had
+            # just rejected: a neighbour that met the same wrong answer, threw
+            # it away and cached a good one had its replacement deleted here,
+            # so the next request went to the network for something that was
+            # on disk a moment ago -- and could fail there.
+            self.library.drop_query(_key(url), body=body)
             raise ArxivError(
                 f"asked arXiv for {identifier} and it answered with {resolved}; "
                 "refusing to store one paper under another's identifier"
