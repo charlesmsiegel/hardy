@@ -134,7 +134,8 @@ The corpus is a standalone CC-BY-4.0 dataset: entries are sharded by MSC2020
 2-digit class under `corpus/problems/<NN>.json`, hold statements only — nothing
 measured, nothing derived — and a release is gated by a manifest digest the
 changelog head binds. `hardy evals corpus check` reports every mechanical
-objection to it, `hardy evals corpus report` gives coverage by field, and
+objection to it, `hardy evals corpus report` gives coverage by group, status,
+difficulty and source, and
 `hardy evals corpus serve` opens a local page that renders each entry —
 statement, Lean, classification — re-read from disk on every refresh. Then: `hardy evals baseline` sweeps a committed tactic set to measure, per
 statement, how much a plain tactic already closes before any model is asked;
@@ -651,7 +652,11 @@ proof checks or failed to compile its document still reaches that phase — with
 `partial` formal status and a terminal reason saying why. So `0` there means
 the pipeline ran to the end, not that Lean verified anything; the manifest's
 grades are what say which. A caller that must distinguish them reads
-`grades.formal` in `manifest.json`.
+`manifest.json` — and reads more than one field, because the grades move
+independently: an exhausted proof search lands as `grades.formal: partial`,
+while a document Tectonic could not compile leaves the formal grade
+`kernel_verified` and shows up only as `grades.document: tex_failed` with a
+matching `terminal_reason`.
 
 The `1`/`2` distinction is a convention the commands keep where they check
 their inputs, not a guarantee Python makes. A path that raises instead —
@@ -683,8 +688,12 @@ ignored there on purpose — a row checked under a compiler other than the one
 the scoreboard and the baseline name would be measuring nothing — and its
 staged documents are built with Tectonic, so `--latex-command` does nothing
 there either (a batch row compiles no document at all). `--latex-command` in
-fact only ever reaches `chat` and `doctor`; the staged path is Tectonic
-throughout. `prove`, `accept`, and `setup`
+fact only ever reaches `chat` and `doctor` — with one sting in the tail: the
+staged preflight is `hardy doctor`'s check set, so `prove` and `accept` still
+require the configured `latex_command` (`pdflatex` by default) on `PATH` even
+though they build the document with Tectonic. Tectonic without pdflatex halts
+at setup; pdflatex without Tectonic passes setup and fails later, at the
+document. `prove`, `accept`, and `setup`
 re-read the settings file and the `HARDY_*` variables themselves, and see only
 `--config` and `--model` from the command line: pass
 `--lean-command`, `--lean-project`, or `--latex-command` to one of those three
@@ -749,8 +758,8 @@ hardy prove "every prime above two is odd"
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `claim` (positional) | prompted for if omitted | The claim in ordinary language. An empty one is refused. |
-| `--backend {claude,codex}` | `claude` | Which SDK drives the run. The no-tools guarantee behind the faithfulness reader holds on `claude` and not on `codex`; each runtime reports what its isolation is worth and every verdict records it. |
+| `claim` (positional) | prompted for if omitted | The claim in ordinary language. Only an answer that is still empty after the prompt is refused, with `2`. Passing an empty string is not the same as refusing: `hardy prove "$CLAIM"` with an unset variable falls through to the prompt, so it raises `EOFError` on closed stdin and reads the next line of piped input as the claim — check the variable before the call. A whitespace-only claim is taken as given. |
+| `--backend {claude,codex}` | `claude` | Which SDK drives the run. The no-tools guarantee behind the faithfulness reader holds on `claude` and not on `codex`; each runtime reports what its isolation is worth and every verdict records it. Note that the staged preflight is Claude's either way: it runs `hardy doctor`'s required checks, which include the Claude SDK, the `claude` CLI, and a signed-in login, so a Codex-only machine records a setup failure before the backend is ever built. |
 | `--model IDENTITY` | the global `--model` | Who does the work. |
 | `--faithfulness-model IDENTITY` | `faithfulness_model`, else the run's own model | Who reads the translation back — the configured reviewer wins, and the run's model is only the fallback. Per invocation, because the setting is global and the backends do not share model names. |
 
