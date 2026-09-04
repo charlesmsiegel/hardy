@@ -558,3 +558,19 @@ def test_a_window_whose_first_line_was_clipped_is_refused(tmp_path: Path):
     result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "start_line": 11})
     assert not result.ok, result.output
     assert "does not fit" in result.output
+
+
+def test_a_long_identity_sheds_down_to_the_paper_id(tmp_path: Path):
+    """The fetch answer has a shorter TRUE answer; the cite key does not.
+
+    The identity rung below the full one was returned unconditionally, and
+    for an old-style identifier under a small budget it is still about 57
+    bytes. `already_held` is a convenience the caller can recompute by asking
+    again, so there is something left to shed here -- unlike a cite key,
+    where shortening the answer would name a different paper.
+    """
+    runtime = _runtime(tmp_path, _feed(), observation_bytes=48)
+    result = runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    assert result.ok, result.output
+    assert len(result.output.encode("utf-8")) <= 48
+    assert json.loads(result.output)["paper_id"] == "math.DG/0211159v1"

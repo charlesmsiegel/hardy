@@ -390,7 +390,16 @@ class PaperToolRuntime:
         # 64-character digest and a sentence do not fit in 256 bytes. The
         # paper is stored either way, so the honest short answer is the
         # identifier and where to go for the rest.
-        return json.dumps({"paper_id": record.arxiv_id, "already_held": held})
+        shorter = json.dumps({"paper_id": record.arxiv_id, "already_held": held})
+        if len(shorter.encode("utf-8")) <= self.observation_bytes:
+            return shorter
+        # And measured too, with one rung below it. Unlike the cite key, where
+        # the answer IS the key and a shorter one names a different paper,
+        # `already_held` is a convenience the caller can recompute by asking
+        # again -- so there is a shorter TRUE answer here and the budget gets
+        # it. Below the identifier there is nothing left to shed: it is what
+        # was fetched, and it goes back whole.
+        return json.dumps({"paper_id": record.arxiv_id})
 
     def _fetch_payload(self, record: PaperRecord, held: bool, title: int) -> str:
         # Bounded like the other two. A title or an author list can be

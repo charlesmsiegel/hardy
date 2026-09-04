@@ -875,3 +875,69 @@ def test_an_entry_with_nothing_in_it_is_not_a_citation():
     for field, empty in (("title", ""), ("authors", ()), ("identities", ())):
         with pytest.raises(ValidationError):
             Entry(**{**whole, field: empty})
+
+
+def test_a_let_alias_of_a_forbidden_command_is_still_visible():
+    r"""Erasing the copied meaning hid every alias of what this scan rejects.
+
+    `\let\start\thebibliography`, `\let\entry\bibitem`,
+    `\let\stop\endthebibliography` and then those three aliases writes a real
+    reference list with none of the forbidden names left in the executed text.
+    What `\let` actually does is copy a token WITHOUT running it, which is
+    exactly one thing -- it cannot open a region -- so the text stays and only
+    the opener match is skipped.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "\\let\\start\\thebibliography\n"
+        "\\let\\entry\\bibitem\n"
+        "\\let\\stop\\endthebibliography\n"
+        "\\start{1}\\entry{known2020} Fake.\\stop\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal
+
+
+def test_a_definition_left_open_at_the_end_of_a_file_is_refused():
+    r"""A file is not a complete TeX input.
+
+    `\newcommand{\x}` at the end of one takes its body from whatever includes
+    it, and this sweep reads each file from a standing start -- so the body
+    reads as live text, a `\begin{verbatim}` in it opens a region TeX never
+    enters, and a real `thebibliography` after it drops out of the check.
+
+    Answered rather than chased: following the body across the `\input` means
+    scanning in TeX's inclusion order, which has no answer at all for a file
+    nothing includes.
+    """
+    for opener in ("\\newcommand{\\x}", "\\def\\x", "\\newenvironment{e}{a}", "\\let\\x="):
+        refusal = hand_written_bibliography("writeup.tex", f"Text.\n{opener}\n")
+        assert refusal, opener
+        assert "no body yet" in refusal
+    # And a definition that finishes in its own file is nobody's business.
+    assert not hand_written_bibliography("writeup.tex", "\\newcommand{\\x}{body}\n")
+
+
+def test_a_blank_string_inside_a_required_tuple_is_not_metadata():
+    r"""`authors=[""]` is not an empty tuple, and is just as blank.
+
+    The first version of this validator asked only whether the tuple itself
+    was empty, so an entry with one empty author, one empty identity, or a
+    whitespace-only title still loaded, regenerated as a `\bibitem` with
+    nothing readable in it, and had its key vouched for.
+    """
+    whole = {
+        "key": "nobody2020-0123456789",
+        "identities": ("arxiv:2401.00001v1",),
+        "title": "A paper",
+        "authors": ("Nobody",),
+        "content_sha256": "a" * 64,
+    }
+    for field, blank in (
+        ("title", "   "),
+        ("authors", ("",)),
+        ("authors", ("Nobody", " ")),
+        ("identities", ("",)),
+    ):
+        with pytest.raises(ValidationError):
+            Entry(**{**whole, field: blank})

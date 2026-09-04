@@ -50,6 +50,18 @@ def _uncommented(text: str) -> str:
 path = pathlib.Path(sys.argv[-1])
 source = path.read_text()
 
+# `% write-tex: NAME` makes the stand-in write a `.tex` file of its own, which
+# is what a document with a loop over a TeX write stream does. BEFORE the
+# inclusion walk below, because TeX writes such a file and reads it back in the
+# same run -- and because a test can only say the reference scan ignores it if
+# the compile that produced it succeeds.
+written = re.search(r"%\s*write-tex:\s*(\S+)", source)
+if written:
+    pathlib.Path(written.group(1)).write_text(
+        "\\ref{never:defined:by:anything}\n", encoding="utf-8"
+    )
+    print(f"wrote {written.group(1)}")
+
 pending = [(path, source)]
 seen = set()
 while pending:
@@ -97,6 +109,7 @@ if SLOW:
 # assert the compile merely succeeded -- which it would either way.
 if re.search(r"%\s*list-inputs", source):
     print("inputs: " + " ".join(sorted(p.name for p in pathlib.Path().iterdir())))
+
 
 if "\\begin{document}" in source and "\\end{document}" in source:
     # `-draftmode`, or `\pdfdraftmode` in the source: everything runs, the
