@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -18,7 +19,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -66,7 +67,7 @@ class LockTimeout(RuntimeError):
 
 
 class FileLock:
-    """One exclusively-created file, standing in for a cross-process mutex.
+    """A cross-process mutex the operating system holds, not a heuristic.
 
     Two Hardy processes on one machine share a paper library and a problem
     directory, and both of the promises made about those -- "one request every
@@ -75,11 +76,42 @@ class FileLock:
     step whole; it does nothing about two processes interleaving their steps,
     and the second promise is precisely about that.
 
-    `O_CREAT | O_EXCL` is the whole mechanism, and it is chosen over `fcntl` or
-    `msvcrt` because it is the same code on every platform Hardy installs on.
-    Its one weakness is a holder that died: the file outlives the process. So
-    a lock older than `stale_after` is taken from it rather than waited on
-    forever, and `stale_after` must be comfortably longer than any hold.
+    The lock is `flock` on POSIX and a byte-range lock on Windows, taken on an
+    open descriptor and released by the kernel when the descriptor closes --
+    including when it closes because the process died. That last part is the
+    reason for the mechanism.
+
+    This started as `O_CREAT | O_EXCL` on a file, which is the same code
+    everywhere and needs no platform branch, and the whole of what went wrong
+    followed from one gap in it: a file outlives the process that made it, so
+    an abandoned lock had to be recognised by its age and taken. Every attempt
+    to make that sound failed on the same seam, because "remove the lock I
+    judged stale" cannot be written atomically against a *pathname*:
+
+    - two processes meeting one abandoned lock both broke it, the second
+      removing the first's fresh replacement; serialising the break with a
+      second lock file narrowed that and did not close it;
+    - a holder slower than the staleness window had its lock broken, then
+      released by name and deleted its successor's lock;
+    - recognising an instance by device and inode does not work at all, since
+      a filesystem hands the number of a file just unlinked straight to the
+      next one created;
+    - recognising it by a token written into the file leaves the read and the
+      unlink as two calls, and POSIX has no unlink-by-content;
+    - and the age itself was a wall-clock subtraction, so a clock stepped
+      backwards or a VM restored with a lock dated in the future made an
+      abandoned lock immortal and every citation fail until the clock caught
+      up.
+
+    None of those exist here. There is no staleness window, nothing is ever
+    broken, no lock file is ever unlinked, and no clock is read. A dead
+    holder's lock is free the moment it dies.
+
+    The file is still created -- it is the rendezvous point the descriptor is
+    opened on -- and it is deliberately left behind, since an empty file at a
+    known path is not a claim on anything. `O_NOFOLLOW` still refuses a
+    symlink at the final component, so a repository shipping one as a link
+    cannot make a lock, or anything written under its cover, land elsewhere.
 
     `required` says what a caller loses if the lock cannot be had. The
     bibliography loses a citation, so it raises; the arXiv throttle loses only
@@ -92,21 +124,15 @@ class FileLock:
         path: Path,
         *,
         timeout: float = 30.0,
-        stale_after: float = 300.0,
         required: bool = True,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.path = path
         self.timeout = timeout
-        self.stale_after = stale_after
         self.required = required
         self._sleep = sleep
         self.held = False
-        #: What this lock wrote into the file it created. An inode number is
-        #: not an identity -- a filesystem hands the number of a file just
-        #: unlinked straight to the next one created -- so what it removes is
-        #: recognised by content it alone could have written.
-        self._token: bytes | None = None
+        self._handle: int | None = None
 
     def __enter__(self) -> FileLock:
         deadline = time.monotonic() + self.timeout
@@ -115,6 +141,7 @@ class FileLock:
                 self.held = True
                 return self
             if time.monotonic() >= deadline:
+                self._close()
                 if self.required:
                     raise LockTimeout(
                         f"{self.path} was held by another process for more than "
@@ -124,139 +151,73 @@ class FileLock:
             self._sleep(0.05)
 
     def __exit__(self, *_: object) -> None:
-        """Release, and only what this lock actually took.
+        """Release by closing the descriptor, which is all a release is now.
 
-        Not an unconditional unlink. A holder slower than `stale_after` has
-        its lock broken and a new holder claims a fresh one at the same path;
-        the slow holder then finishes and, removing the path by name, deletes
-        the *new* holder's lock -- and a third process claims immediately,
-        putting two writers in the critical section. Deleting by identity
-        instead makes a broken lock the breaker's problem alone.
+        Nothing is unlinked. A lock file left on disk is inert -- the next
+        caller opens the same path and takes the lock on it -- so there is no
+        successor's lock to delete by mistake, and no abandoned file for a
+        fresh checkout to wait out.
         """
-        if self.held:
-            self._unlink_instance(self.path, self._token)
+        if self.held and self._handle is not None:
+            _unlock(self._handle)
             self.held = False
-            self._token = None
+        self._close()
+
+    def _close(self) -> None:
+        if self._handle is not None:
+            os.close(self._handle)
+            self._handle = None
 
     def _claim(self) -> bool:
-        """Take the lock, or say why not. A stale one is taken from its holder."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        """Take the lock, or say why not."""
+        if self._handle is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                # `O_NOFOLLOW` fails on a symlink rather than opening what it
+                # points at, so a lock file shipped in a repository as a link
+                # is never written through and never taken.
+                self._handle = os.open(self.path, flags, 0o600)
+            except OSError:
+                return False
         try:
-            # `O_EXCL` refuses an existing path of any kind, a symlink
-            # included, so a lock file shipped in a repository as a link
-            # cannot be written through -- it is simply never claimed, and the
-            # staleness check below removes it.
-            handle = os.open(self.path, flags, 0o600)
-        except FileExistsError:
-            self._break_if_stale()
-            return False
+            _lock(self._handle)
         except OSError:
             return False
-        token = f"{os.getpid()} {uuid4().hex}".encode()
+        # Whose it is, for a person looking at a stuck workspace. Written
+        # under the lock, so it is never a partial read, and it is not what
+        # the lock is enforced by -- nothing here is trusted to be accurate.
         try:
-            os.write(handle, token)
+            os.ftruncate(self._handle, 0)
+            os.write(self._handle, str(os.getpid()).encode())
         except OSError:
-            # The exclusive create succeeded and writing into it did not -- a
-            # quota or a full disk, reached while allocating the lock's first
-            # block. Leaving the file behind would block every caller for the
-            # whole staleness window over a lock nobody holds.
-            os.close(handle)
-            self.path.unlink(missing_ok=True)
-            return False
-        os.close(handle)
-        self._token = token
+            pass
         return True
 
-    @staticmethod
-    def _instance(path: Path) -> tuple[bytes, float] | None:
-        """What the file at `path` says it is, and how old it is -- or None.
 
-        Both out of one descriptor, so the age judged and the file removed are
-        the same file rather than the same name read twice.
-        """
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            handle = os.open(path, flags)
-        except OSError:
-            return None
-        try:
-            return os.read(handle, 256), os.fstat(handle).st_mtime
-        except OSError:
-            return None
-        finally:
-            os.close(handle)
+if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI
+    import msvcrt
 
-    @classmethod
-    def _unlink_instance(cls, path: Path, token: bytes | None) -> None:
-        """Remove `path`, but only while it still holds `token`.
+    def _lock(handle: int) -> None:
+        os.lseek(handle, 0, os.SEEK_SET)
+        msvcrt.locking(handle, msvcrt.LK_NBLCK, 1)
 
-        A lock file is a name, and every process racing for one races for the
-        same name; what a holder or a breaker may remove is the particular
-        lock it saw, and only a token written into the file can say whether
-        that is what is there now. Reading and unlinking are two calls and no
-        POSIX primitive unlinks by content, so a lock replaced between them is
-        still removed; what this closes is the far wider window in which a
-        decision taken earlier is carried out later against whatever has since
-        answered to the name.
-        """
-        if token is None:
-            return
-        found = cls._instance(path)
-        if found is None or found[0] != token:
-            return
-        path.unlink(missing_ok=True)
+    def _unlock(handle: int) -> None:
+        os.lseek(handle, 0, os.SEEK_SET)
+        msvcrt.locking(handle, msvcrt.LK_UNLCK, 1)
 
-    def _break_if_stale(self) -> None:
-        """Take a lock its holder cannot still be using, if anyone may.
+else:
+    import fcntl
 
-        Breaking is itself serialised, by a second `O_EXCL` file, and that is
-        not fussiness. Two processes meeting the same abandoned lock both see
-        it as stale; the first unlinks it and claims a fresh one, and the
-        second's unlink -- decided on the old file and executed a moment later
-        -- then removes the NEW holder's lock. Both are inside the critical
-        section, which is exactly the concurrency this class exists to
-        prevent, arrived at through the recovery path.
+    def _lock(handle: int) -> None:
+        # `flock` and not `fcntl.lockf`: a POSIX record lock belongs to the
+        # process, so two sessions inside one process -- which is what a test
+        # is, and what a threaded caller would be -- would not exclude each
+        # other at all.
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
-        With the mutex, only one process may break a given lock at a time, and
-        it re-checks staleness while holding it. A process that loses the race
-        simply returns and retries the lock itself on the next poll.
-
-        The mutex is held for one `stat` and one `unlink`, so a `.break` file
-        that is itself old belongs to a process that died mid-recovery: it is
-        removed and the next poll tries again. That is one level of recovery,
-        not a recursion.
-        """
-        if not self._stale(self.path):
-            return
-        breaking = self.path.with_name(self.path.name + ".break")
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            os.close(os.open(breaking, flags, 0o600))
-        except FileExistsError:
-            if self._stale(breaking):
-                breaking.unlink(missing_ok=True)
-            return
-        except OSError:
-            return
-        try:
-            # Re-checked under the mutex: the holder may have finished and a
-            # new one taken the lock while this process was getting here, and
-            # that lock is not stale and not this one's to remove. The file
-            # judged stale here is also the file removed -- one stat decides
-            # both, so a lock replaced between them keeps its own age rather
-            # than inheriting the verdict passed on its predecessor.
-            found = self._instance(self.path)
-            if found is not None and time.time() - found[1] > self.stale_after:
-                self._unlink_instance(self.path, found[0])
-        finally:
-            breaking.unlink(missing_ok=True)
-
-    def _stale(self, path: Path) -> bool:
-        try:
-            return time.time() - path.stat().st_mtime > self.stale_after
-        except OSError:
-            return False
+    def _unlock(handle: int) -> None:
+        fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 class RunStore:

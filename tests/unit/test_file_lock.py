@@ -4,11 +4,20 @@ An atomic write makes each step whole; it says nothing about two processes
 interleaving their steps, and both promises built on those files -- machine-
 wide request spacing, and citing two papers at once losing neither -- are
 about exactly that interleaving.
+
+The lock is held by the operating system rather than represented by a file
+somebody has to judge and remove, so the properties asserted here are the
+ones the earlier `O_EXCL`-and-staleness design could never quite have: a dead
+holder blocks nobody, a live one blocks everybody, and no lock is ever removed
+by a process that does not hold it.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -21,8 +30,8 @@ def test_a_lock_is_taken_and_released(tmp_path: Path):
     path = tmp_path / "x.lock"
     with FileLock(path) as lock:
         assert lock.held
-        assert path.exists()
-    assert not path.exists()
+    with FileLock(path) as again:
+        assert again.held
 
 
 def test_a_second_holder_is_refused_while_the_first_holds_it(tmp_path: Path):
@@ -35,116 +44,117 @@ def test_the_lock_is_released_even_when_the_body_raises(tmp_path: Path):
     path = tmp_path / "x.lock"
     with pytest.raises(ValueError, match="boom"), FileLock(path):
         raise ValueError("boom")
-    assert not path.exists()
+    with FileLock(path, timeout=0.05) as lock:
+        assert lock.held
 
 
-def test_a_lock_left_by_a_dead_process_is_taken_from_it(tmp_path: Path):
-    """`O_EXCL` outlives the holder, so an abandoned lock is forever."""
+def test_a_lock_file_left_behind_by_a_dead_process_blocks_nobody(tmp_path: Path):
+    """The case the whole staleness heuristic existed to recover from.
+
+    An `O_EXCL` file outlives the process that made it, so an abandoned lock
+    had to be recognised by age and taken -- and every attempt to do that
+    soundly failed on the same seam. A lock the kernel holds is released when
+    its holder dies, so there is nothing to recognise and nothing to take.
+    """
     path = tmp_path / "x.lock"
     path.write_text("999999", encoding="utf-8")
     old = time.time() - 600
     os.utime(path, (old, old))
-    with FileLock(path, timeout=0.05, stale_after=60.0) as lock:
+    with FileLock(path, timeout=0.05) as lock:
         assert lock.held
+
+
+def test_a_lock_dated_in_the_future_is_not_immortal(tmp_path: Path):
+    """A clock stepped backwards, or a VM restored with a lock dated ahead.
+
+    Under a wall-clock age this file was never old enough to break, so every
+    citation waited out the timeout and failed -- for as long as it took the
+    clock to catch up. No clock is read here at all.
+    """
+    path = tmp_path / "x.lock"
+    path.write_text("999999", encoding="utf-8")
+    ahead = time.time() + 86_400
+    os.utime(path, (ahead, ahead))
+    with FileLock(path, timeout=0.05) as lock:
+        assert lock.held
+
+
+def test_a_holder_slower_than_any_window_keeps_its_lock(tmp_path: Path):
+    """Nothing is taken from a process that is alive, however long it takes.
+
+    Under the staleness design a slow holder had its lock broken, a new
+    holder claimed the same path, and the slow one's release then deleted the
+    new holder's lock -- two writers in the section this class exists to keep
+    to one.
+    """
+    path = tmp_path / "x.lock"
+    with FileLock(path) as slow:
+        assert slow.held
+        os.utime(path, (0, 0))  # as old as a file can look
+        with pytest.raises(LockTimeout), FileLock(path, timeout=0.1):
+            pass
+        assert slow.held
 
 
 def test_a_lock_a_caller_may_do_without_comes_back_unheld(tmp_path: Path):
     """Politeness degrades; the work still happens."""
     path = tmp_path / "x.lock"
-    with FileLock(path), FileLock(path, timeout=0.05, required=False) as second:
+    with FileLock(path) as first, FileLock(path, timeout=0.05, required=False) as second:
+        assert first.held
         assert not second.held
-    # The unheld lock must not have removed the holder's file on the way out.
-    assert not path.exists()
+    # And the caller that could do without it has not disturbed the holder's.
+    with FileLock(path, timeout=0.05) as third:
+        assert third.held
 
 
 def test_a_symlinked_lock_file_is_never_written_through(tmp_path: Path):
-    """A repository is free to ship one. `O_EXCL` refuses an existing path."""
+    """A repository is free to ship one. `O_NOFOLLOW` refuses to open it."""
     outside = tmp_path / "outside"
     outside.write_text("mine", encoding="utf-8")
     path = tmp_path / "x.lock"
     path.symlink_to(outside)
-    with pytest.raises(LockTimeout), FileLock(path, timeout=0.05, stale_after=10_000.0):
+    with pytest.raises(LockTimeout), FileLock(path, timeout=0.05):
         pass
     assert outside.read_text(encoding="utf-8") == "mine"
 
 
-def test_two_processes_meeting_one_stale_lock_do_not_both_enter(tmp_path: Path):
-    """Recovery must not become the concurrency it exists to prevent.
-
-    Both see the same abandoned lock as stale; the first unlinks it and
-    claims a fresh one, and the second's unlink -- decided on the old file,
-    executed a moment later -- would remove the NEW holder's lock and let it
-    in as well. Breaking is serialised so it cannot.
-    """
-    path = tmp_path / "x.lock"
-    path.write_text("999999", encoding="utf-8")
-    old = time.time() - 600
-    os.utime(path, (old, old))
-    first = FileLock(path, timeout=0.5, stale_after=60.0)
-    first.__enter__()
-    assert first.held
-    # The second arrives while the first holds a *fresh* lock. It must not
-    # break it, however stale the file it originally met.
-    with pytest.raises(LockTimeout), FileLock(path, timeout=0.2, stale_after=60.0):
-        pass
-    first.__exit__()
-    assert not path.exists()
-
-
-def test_a_break_marker_left_by_a_dead_process_is_cleaned_up(tmp_path: Path):
-    """One level of recovery, not a recursion."""
-    path = tmp_path / "x.lock"
-    path.write_text("999999", encoding="utf-8")
-    marker = tmp_path / "x.lock.break"
-    marker.write_text("999998", encoding="utf-8")
-    old = time.time() - 600
-    for stale in (path, marker):
-        os.utime(stale, (old, old))
-    # The first poll clears the marker, the next one breaks the lock.
-    with FileLock(path, timeout=1.0, stale_after=60.0) as lock:
-        assert lock.held
-    assert not marker.exists()
-
-
-def test_a_slow_holder_does_not_delete_the_lock_that_replaced_its_own(tmp_path: Path):
-    """The release has to be of what was taken, not of whatever has the name.
-
-    A holder slower than `stale_after` has its lock broken and a new holder
-    claims a fresh one at the same path. Releasing by name then deletes the
-    new holder's lock -- and the next process claims immediately, which puts
-    two writers inside the section this class exists to keep to one.
-    """
-    path = tmp_path / "x.lock"
-    slow = FileLock(path, stale_after=0.01)
-    slow.__enter__()
-    path.unlink()  # as a breaker that judged it stale would
-    successor = FileLock(path)
-    successor.__enter__()
-    slow.__exit__()
-    assert path.exists(), "the successor's lock was deleted by the lock it replaced"
-    with pytest.raises(LockTimeout):
-        FileLock(path, timeout=0.05).__enter__()
-    successor.__exit__()
-    assert not path.exists()
-
-
-def test_two_locks_at_one_path_are_told_apart_by_more_than_their_inode(
+def test_a_lock_held_by_another_process_is_seen_across_the_process_boundary(
     tmp_path: Path,
 ):
-    """A filesystem hands a freed inode number straight to the next file.
+    """The promise is about two Hardy processes, so one process cannot test it.
 
-    So a lock that recognised its own by device and inode recognised its
-    successor as itself, which is precisely the case identity is checked for.
+    A lock that only excluded within a process would pass every other test
+    here and keep none of what it is for.
     """
     path = tmp_path / "x.lock"
-    first = FileLock(path)
-    first.__enter__()
-    before = path.stat().st_ino
-    path.unlink()
-    second = FileLock(path)
-    second.__enter__()
-    if path.stat().st_ino != before:
-        pytest.skip("this filesystem did not reuse the inode; nothing to tell apart")
-    first.__exit__()
-    assert path.exists()
-    second.__exit__()
+    ready = tmp_path / "ready"
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                f"""
+                import pathlib, time
+                from hardy.storage import FileLock
+                with FileLock(pathlib.Path({str(path)!r})):
+                    pathlib.Path({str(ready)!r}).write_text("held")
+                    time.sleep(5)
+                """
+            ),
+        ],
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not ready.exists() and time.monotonic() < deadline:
+            if child.poll() is not None:
+                pytest.fail("the child exited before it took the lock")
+            time.sleep(0.02)
+        assert ready.exists(), "the child never reported holding the lock"
+        with pytest.raises(LockTimeout), FileLock(path, timeout=0.2):
+            pass
+    finally:
+        child.kill()
+        child.wait()
+    # And killing it releases the lock, with nothing to clean up by hand.
+    with FileLock(path, timeout=5.0) as lock:
+        assert lock.held

@@ -277,12 +277,11 @@ class PaperLibrary:
     def lock_target(self) -> Path:
         """The throttle lock's path, with the directory holding it proven.
 
-        The lock was the one library file reached without a guard, and it is
-        the worst one to reach without a guard: `FileLock` creates the parent
-        directory if it is missing and, on a stale lock, DELETES the file it
-        finds. Pointed through `.hardy/papers -> somewhere`, that is Hardy
-        removing a stranger's file before any guarded call had a chance to
-        refuse the symlink. Proven first, so there is nothing to point at.
+        The lock was the one library file reached without a guard, and
+        `FileLock` creates the parent directory if it is missing. Pointed
+        through `.hardy/papers -> somewhere`, that is Hardy making a directory
+        wherever the link leads, before any guarded call had a chance to
+        refuse it. Proven first, so there is nothing to point at.
         """
         guard, _ = self._throttle_guard()
         return guard.path("state.lock")
@@ -699,7 +698,6 @@ class ArxivClient:
         with FileLock(
             self.library.lock_target(),
             timeout=self._lock_timeout,
-            stale_after=max(60.0, self._interval * 20),
             required=False,
         ):
             now = self._clock()
