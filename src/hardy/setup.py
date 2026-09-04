@@ -8,6 +8,7 @@ environment is called healthy, and Mathlib is asked to elaborate a real import.
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 from collections.abc import Callable, Iterable
@@ -83,6 +84,38 @@ def probe_claude() -> tuple[bool, str]:
     except metadata.PackageNotFoundError:
         return False, "claude-agent-sdk is not installed"
     return shutil.which("claude") is not None, f"claude-agent-sdk {version}"
+
+
+def probe_api() -> tuple[bool, str]:
+    """Report whether the Messages API transport has what it needs here.
+
+    Its credentials are a key in this process, not a signed-in CLI, so this
+    asks about the two things that decide whether a run can start: the SDK and
+    the key. Whether one is set, never what it is -- a setup report is pasted
+    into issues, and a key printed there is a key that has been disclosed.
+    """
+    from importlib import metadata
+
+    try:
+        version = metadata.version("anthropic")
+    except metadata.PackageNotFoundError:
+        return False, "anthropic is not installed"
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return False, f"anthropic {version}, ANTHROPIC_API_KEY unset"
+    return True, f"anthropic {version}"
+
+
+def backend_probe(backend: str) -> Callable[[], tuple[bool, str]]:
+    """The probe for the *selected* transport, the way the doctor chooses one.
+
+    `discover_environment` defaulted to `probe_claude` for every caller, and
+    `hardy setup` never overrode it -- so its exit status answered a question
+    about a backend the machine may not be using. Both directions were wrong:
+    an API-only machine with a good key was reported broken for lacking the
+    Claude CLI, and a Claude-configured machine passed setup without the key
+    the `api` runtime needs and failed at its first request instead.
+    """
+    return probe_api if backend == "api" else probe_claude
 
 
 def resolve_executable(

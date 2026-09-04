@@ -976,3 +976,24 @@ def test_dropping_a_trailing_closer_attempt_is_refused(tmp_path) -> None:
     issues = acceptance.validate_batch_consistency(output)
 
     assert any('proofs were submitted before the closers event' in issue for issue in issues)
+
+
+def test_rewriting_a_closer_diagnostic_is_refused(tmp_path) -> None:
+    """`ok` alone left Lean's own words free.
+
+    The tactic name and the verdict were bound to the submission behind them;
+    the `output` beside them was not, so the diagnostic could be rewritten in
+    the block and its duplicated event together while the `submit_proof` that
+    produced it kept the real one -- a record saying a tactic failed for a
+    reason Lean never gave."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path, tactic='nonsense_tactic')
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    blocks = [trajectory['closers'], *[e for e in trajectory['events'] if e.get('type') == 'closers']]
+    for block in blocks:
+        block['attempts'][0]['output'] = 'unknown tactic; try `omega` instead'
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('reports output its submission did not produce' in issue for issue in issues)

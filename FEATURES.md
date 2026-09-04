@@ -673,7 +673,13 @@ Priority labels are sequencing hints:
   that quietly claimed to be enough. A compaction that left no trace is
   the invisible loss the feature exists to prevent. A backend whose SDK owns
   the loop is not offered a compactor at all, rather than handed one it would
-  silently drop.
+  silently drop. The window itself is `context_window` (or
+  `HARDY_CONTEXT_WINDOW`), defaulting to 200K and recorded in the compaction
+  event: it is a property of the endpoint rather than of Hardy — a gateway
+  answering `claude-opus-5` may offer less than Anthropic does — and it is not
+  derived from the model identity, because Hardy sends no long-context beta and
+  a window guessed too large is the direction that cannot recover, the
+  compactor never running while the provider refuses every request.
 - **Next:** carry the same three back to the subscription backends, where the
   SDK still owns the loop — Hardy's own turn bound, the closers, and the
   compaction above — whether through the SDK's `can_use_tool` and `PreCompact`

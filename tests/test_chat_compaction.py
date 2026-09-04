@@ -122,6 +122,11 @@ def test_a_compaction_records_what_it_dropped_and_where_the_tail_starts(tmp_path
     # What the summary said, not merely that one happened.
     assert entry["sections"]["Goal"] == ["Show that True is true."]
     assert entry["text"].startswith(compaction.PREAMBLE)
+    # The window the cut was planned against, not only what was left of it:
+    # `available` is the window less the reserve and the request's overhead, so
+    # two records with different windows can report the same `available` and a
+    # reader could not tell which endpoint's limit these cuts were for.
+    assert entry["context_window"] == 60_000
 
 
 def test_the_spend_ledger_never_reaches_the_summary(tmp_path: Path, lean_source: str) -> None:

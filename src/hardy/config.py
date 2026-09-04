@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import layout
+from . import compaction, layout
 from .domain import RunLimits
 
 DEFAULT_MODEL = "claude-opus-5"
@@ -49,6 +49,7 @@ SETTINGS = {
     "cas_backend": "HARDY_CAS_BACKEND",
     "cas_command": "HARDY_CAS_COMMAND",
     "project_context": "HARDY_PROJECT_CONTEXT",
+    "context_window": "HARDY_CONTEXT_WINDOW",
 }
 
 # What a project's own committed config may say. Deliberately tiny: the file
@@ -83,6 +84,26 @@ AUTHENTICATION = {
 def authentication(backend: str) -> str:
     """What a session on `backend` is billed against."""
     return AUTHENTICATION.get(backend, backend)
+
+#: The context window Hardy plans compaction against, in tokens.
+#:
+#: Deliberately not derived from the model identity, even though `catalog`
+#: notes a larger figure for three of the four entries: Hardy sends no
+#: long-context beta with its requests, so 200K is the window every catalogued
+#: model actually offers on the path Hardy uses. Guessing higher is the
+#: unrecoverable direction -- the compactor would never run and the provider
+#: would refuse every request -- while guessing lower only cuts sooner than it
+#: had to.
+#:
+#: Settable because the figure is a property of the endpoint, not of Hardy: a
+#: gateway answering `claude-opus-5` may offer a smaller window than Anthropic
+#: does, and a user who knows that needs somewhere to say so. What was used is
+#: written into the compaction event, so a transcript states the window its
+#: cuts were planned against rather than leaving it to be inferred.
+#:
+#: The figure itself lives in `compaction`, beside the reserve and recent
+#: budgets it is spent against, so the default and the planner cannot drift.
+DEFAULT_CONTEXT_WINDOW = compaction.CONTEXT_WINDOW
 
 CAS_BACKENDS = ("sympy", "singular", "macaulay2")
 DEFAULT_CAS_BACKEND = "sympy"
@@ -244,6 +265,8 @@ class Config:
     # closers real rather than declared. They are different experimental
     # conditions and both are recorded as such.
     backend: str = DEFAULT_BACKEND
+    # See DEFAULT_CONTEXT_WINDOW: what compaction plans against, in tokens.
+    context_window: int = DEFAULT_CONTEXT_WINDOW
     # The computer algebra kernel. `cas_command` is unset for SymPy, which runs
     # on Hardy's own interpreter; the other backends need an executable.
     cas_backend: str = DEFAULT_CAS_BACKEND
@@ -463,6 +486,16 @@ def load(
             return False
         raise ValueError(f"{key} must be true or false, not {value!r}")
 
+    try:
+        context_window = int(values.get("context_window", DEFAULT_CONTEXT_WINDOW))
+    except (TypeError, ValueError):
+        raise ValueError(f"context_window must be a number of tokens, not {values['context_window']!r}") from None
+    # A window no request could fit inside is a typo, not a preference, and a
+    # compactor told to plan against it would cut every conversation to
+    # nothing while still overflowing. Refused where the file is read.
+    if context_window <= 0:
+        raise ValueError(f"context_window must be a positive number of tokens, not {context_window}")
+
     backend = text("backend", DEFAULT_BACKEND)
     if backend not in BACKENDS:
         raise ValueError(f"backend must be one of {list(BACKENDS)}, not {backend!r}")
@@ -496,6 +529,7 @@ def load(
         cas_backend=cas_backend,
         cas_command=location("cas_command"),
         project_context=flag("project_context", True),
+        context_window=context_window,
         path=path if path.exists() else None,
         requested_path=path,
     )
