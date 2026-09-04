@@ -1,0 +1,242 @@
+"""One shareable HTML account of a session, which must not flatten it (#105)."""
+
+from __future__ import annotations
+
+import re
+
+from hardy import export
+
+
+def audit_record(name: str, axioms: list[str], *, assumed: list[str] = ()):
+    return {
+        "status": "clean",
+        "declarations": [{"name": name, "axioms": axioms}],
+        "forbidden": [],
+        "unapproved": [],
+        "assumed": list(assumed),
+    }
+
+
+def material(**overrides):
+    fields = {
+        "project": "sylow",
+        "workspace": "/tmp/sylow",
+        "goal": "Classify the Sylow subgroups",
+        "assumptions": [],
+        "registry": [],
+        "audit": {},
+        "theorems": {},
+        "open": [],
+        "lean": {},
+        "tex": {},
+        "obligations": [],
+        "document": "No compiled document was found in this workspace.",
+        "usage": [],
+        "provenance": {"model": "claude-opus-5", "backend": "claude", "endpoint": "sdk"},
+        "toolchain": "lean-4.9.0",
+        "environment": "env-abc",
+        "transcript": [],
+    }
+    return {**fields, **overrides}
+
+
+def build(**overrides):
+    return export.build(export.prepare(material(**overrides)))
+
+
+def results(page: str) -> str:
+    """Just the results, so the legend's own badges cannot answer for them."""
+    return page.split("<h2>Results</h2>", 1)[1].split("<h2>Standing assumptions</h2>", 1)[0]
+
+
+def test_the_page_is_self_contained_and_fetches_nothing():
+    page = build()
+    assert "<!doctype html>" in page
+    assert "<style>" in page
+    for tag in ("<script", "<link", "<img", "src=", "@import", "url("):
+        assert tag not in page, tag
+    assert not re.search(r"https?://", page)
+
+
+def test_three_statuses_are_visibly_different_rather_than_alike():
+    page = build(
+        theorems={
+            "clean_": "theorem clean_ : True",
+            "assumed_": "theorem assumed_ : True",
+            "open_": "theorem open_ : True",
+        },
+        open=["open_"],
+        audit={
+            "A": audit_record("clean_", ["propext"]),
+            "B": audit_record("assumed_", ["propext", "big"], assumed=["big"]),
+        },
+        assumptions=[
+            {
+                "formal_name": "big",
+                "lean_statement": "True",
+                "source": "Aschbacher 1.2",
+                "reason": "Mathlib does not expose it",
+                "status": "user-approved",
+                "approved_at": "2026-09-04T10:00:00+00:00",
+            }
+        ],
+    )
+    shown = results(page)
+    assert 'class="badge verified"' in shown
+    assert 'class="badge assumed"' in shown
+    assert 'class="badge open"' in shown
+    # And the assumption is named where the theorem resting on it is stated.
+    assert "user-approved on 2026-09-04T10:00:00+00:00" in shown
+    assert "Mathlib does not expose it" in shown
+
+
+def test_a_theorem_no_verdict_covers_is_shown_as_unaudited_not_as_verified():
+    shown = results(build(theorems={"lonely": "theorem lonely : True"}, audit={}))
+    assert 'class="badge unaudited"' in shown
+    assert 'class="badge verified"' not in shown
+
+
+def test_a_workspace_with_no_theorem_says_so_rather_than_showing_an_empty_table():
+    page = build(transcript=[{"type": "assistant", "message": {"role": "assistant", "content": "Proved it!"}}])
+    assert "No theorem is saved in this workspace" in page
+    assert "rests on the conversation alone" in page
+
+
+def test_the_conversation_is_labelled_as_not_evidence():
+    page = build(
+        transcript=[{"type": "user", "message": {"role": "user", "content": "prove Sylow"}}]
+    )
+    assert "prove Sylow" in page
+    assert "None of it is evidence" in page
+
+
+def test_the_withheld_material_a_human_wants_is_present():
+    page = build(
+        usage=["7 turns", "$1.20"],
+        transcript=[
+            {"type": "model", "reason": "switched", "previous": {"model": "old"}, "model": "new"},
+            {
+                "type": "tool",
+                "name": "save_lean",
+                "arguments": {"path": "Work.lean"},
+                "result": {"ok": False, "output": "unsolved goals"},
+            },
+        ],
+    )
+    assert "$1.20" in page
+    assert "old -&gt; new" in page or "old -> new" in page
+    assert "unsolved goals" in page
+
+
+def test_html_in_a_transcript_cannot_escape_into_the_page():
+    page = build(
+        transcript=[
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "<script>alert(1)</script>"},
+            }
+        ]
+    )
+    assert "<script>" not in page
+    assert "&lt;script&gt;" in page
+
+
+def test_known_credential_shapes_are_removed_before_anything_is_written():
+    page = build(
+        transcript=[
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": (
+                        "here is sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345 and "
+                        "ghp_abcdefghijklmnopqrstuvwxyz0123 and "
+                        "Authorization: Bearer abcdefghijklmnopqrstuvwxyz"
+                    ),
+                },
+            }
+        ]
+    )
+    assert "sk-ant-api03" not in page
+    assert "ghp_abcdefghij" not in page
+    assert "[REDACTED-KEY]" in page
+
+
+def test_a_credential_under_a_credential_shaped_key_is_removed_too():
+    """The key-name rule the trajectory is already written under."""
+    prepared = export.prepare(material(transcript=[{"type": "tool", "api_key": "hunter2"}]))
+    assert prepared["transcript"][0]["api_key"] == "[REDACTED]"
+
+
+def test_the_page_says_what_its_redaction_is_and_is_not():
+    page = build()
+    assert "That is a filter, not a\nproof" in page or "filter, not a" in page
+
+
+def test_lean_and_writeup_sources_travel_with_the_export():
+    page = build(
+        lean={"Work": "theorem t : True := trivial"},
+        tex={"tex/writeup.tex": "\\documentclass{article}"},
+    )
+    assert "theorem t : True := trivial" in page
+    assert "documentclass" in page
+
+
+def test_write_puts_the_page_on_disk(tmp_path):
+    target = tmp_path / "out" / "session.html"
+    written = export.write(material(), target)
+    assert written == target
+    assert target.read_text(encoding="utf-8").startswith("<!doctype html>")
+
+
+def test_the_default_path_names_the_project_and_the_time(tmp_path):
+    path = export.default_path(tmp_path, "sylow")
+    assert path.parent == tmp_path
+    assert path.name.startswith("sylow-") and path.suffix == ".html"
+
+
+def test_what_hardy_told_the_user_is_in_the_conversation_too():
+    """A transcript of the model's replies alone leaves out the half that
+    contradicts them."""
+    page = build(
+        transcript=[
+            {"type": "assistant", "message": {"role": "assistant", "content": "Proved it."}},
+            {"type": "obligations", "outstanding": ["lean hardyOne: still open"]},
+        ]
+    )
+    assert "what the workspace still owed" in page
+    assert "hardyOne: still open" in page
+
+
+def test_a_refused_tool_call_keeps_both_of_its_classes():
+    page = build(
+        transcript=[
+            {
+                "type": "tool",
+                "name": "save_lean",
+                "result": {"ok": False, "output": "unsolved goals"},
+            }
+        ]
+    )
+    assert 'class="tool fail"' in page
+
+
+def test_an_axiom_no_approval_record_covers_is_called_out_rather_than_glossed():
+    page = build(
+        theorems={"t": "theorem t : True"},
+        audit={"A": audit_record("t", ["propext", "ghost"], assumed=["ghost"])},
+        assumptions=[],
+    )
+    assert "does not list as approved" in results(page)
+
+
+def test_a_block_structured_message_is_rendered_from_its_text_parts():
+    page = build(
+        transcript=[
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+            }
+        ]
+    )
+    assert "hello" in page

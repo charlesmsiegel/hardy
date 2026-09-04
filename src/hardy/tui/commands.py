@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
+from ..prompts.user import Template
 from .ports import State, Ui
 
 
@@ -26,6 +27,26 @@ class Command:
     # Defaults to False so a command added later is refused while a turn is
     # still running until someone has thought about whether that is safe.
     safe_in_flight: bool = False
+    #: The user's own `.hardy/prompts/<name>.md`, when this entry came from
+    #: one. Such a command has no handler of its own: `dispatch.classify`
+    #: expands it and the line becomes an ordinary message, which is what puts
+    #: the expanded text -- rather than the `/name` -- in `transcript.jsonl`.
+    template: Template | None = None
+
+
+async def _expanded_elsewhere(ui: Ui, argument: str, state: State) -> State:  # pragma: no cover
+    """The handler a template entry can never reach. See `Command.template`."""
+    raise RuntimeError("a prompt template is expanded by dispatch, not run as a command")
+
+
+def from_template(template: Template) -> Command:
+    return Command(
+        template.name,
+        template.summary,
+        _expanded_elsewhere,
+        argument_hint=template.argument_hint,
+        template=template,
+    )
 
 
 def _split(text: str) -> tuple[str, str] | None:

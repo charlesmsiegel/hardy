@@ -90,6 +90,18 @@ hash, an independent reader checks that the frozen Lean says what you said befor
 any proof search starts, a proof is sought against that frozen statement, and an
 independent verifier rebuilds and rechecks the result before anything is graded.
 
+The same workflow is reachable from inside a running session as `/prove
+<claim>`, on that session's live model and through its own terminal — a selector
+for the approval, Esc to walk away — rather than as a separate program with its
+own blocking prompts. Exploration and staged proving are the same activity at
+different levels of commitment, and leaving the session to change level dropped
+the conversation that motivated the claim exactly when it became useful. Nothing
+about the workflow is relaxed by being reached this way: it is the same code,
+the same frozen claim, the same independent faithfulness read, and the same
+typed acknowledgement that generated code runs without isolation. A staged run
+writes its own run directory and leaves your workspace and your conversation
+untouched.
+
 That faithfulness check is the one gate a green kernel cannot stand in for:
 Lean's acceptance says a statement was proved and nothing about whether it is
 the claim you made. The reader is asked from a conversation of its own, with no
@@ -550,9 +562,13 @@ this root and moves between them (`/project list`, `/project switch <name>`,
 running turn is appending to the record and the transcript of the problem it
 started in — `/status` shows the
 workspace/model/paths and the full spend breakdown — turns, cost, and input,
-output, cache-write and cache-read tokens — `/doctor` checks Lean, LaTeX,
+output, cache-write and cache-read tokens — and `/status --full` adds the
+workspace summary described below, `/prove [claim]` stages one claim from
+statement to document without leaving the session, `/export [path]` writes one
+shareable HTML account of the session, `/doctor` checks Lean, LaTeX,
 computer algebra, and the model, `/clear` clears the screen (nothing on disk is
-touched), and `/exit` (or `/quit`, or Ctrl+D) leaves.
+touched), and `/exit` (or `/quit`, or Ctrl+D) leaves. A project may add commands
+of its own; see "Your own commands" below.
 
 Typing `/` shows a dim inline suggestion for the rest of a likely command as you
 type it; Tab accepts it. Enter submits; to write a second line without
@@ -591,10 +607,67 @@ instead, with no ghost text or selectors. If the real terminal session cannot
 start at all, Hardy falls back to that line-based session automatically rather
 than ending the run.
 
+### Your own commands
+
+A project keeps its repeatable asks beside itself, in `.hardy/prompts/`. Each
+`<name>.md` there becomes `/<name>`: optional frontmatter supplies `description`
+(what `/help` shows) and `argument-hint`, and the body is the message that gets
+sent. `$1`…`$n` are the words typed after the command, `$@` is all of them, and
+`$$` is a literal dollar so a body can carry LaTeX. Quoting groups one argument;
+backslashes survive, because a mathematician's argument is full of them.
+
+Two rules make a shared record readable. A placeholder with nothing to fill it
+is a refusal rather than an empty string — a prompt that quietly lost half its
+sentence still looks entirely ordinary. And **the expansion is what is recorded**:
+`transcript.jsonl` holds the text that was sent, never the `/name`, so a
+transcript shared with someone who does not have your `.hardy/prompts/` still
+says what was asked. A file whose name would shadow a built-in command is
+refused rather than allowed to redefine `/exit` or `/status`, and a template is
+input rather than instruction: it is deliberately not folded into
+`PROMPT_SET_SHA256`, so it can never move the hash a staged run records.
+
+### The workspace summary
+
+`/status --full` adds an account of the session assembled from the artifacts
+rather than from anything the model remembers: the goal, the approved
+assumptions with their source, stated reason and approval date, every saved
+theorem under the verdict its own stored audit record gives it, what is still
+open, the tool calls that were refused and what Lean said, the naming registry,
+and what is outstanding. It carries no spend — that is `/status`'s own section,
+for the human, and is withheld from the model on purpose.
+
+This is the checkable half of context compaction (#100). Hardy cannot yet decide
+what leaves a long session's context, because the SDK owns the turn loop (#23);
+what it can do already is derive the summary such a compaction would need from
+files rather than from a narration nobody can verify.
+
+### Exporting a session
+
+`/export [path]` writes one self-contained HTML file — no scripts, no fonts, no
+images, nothing fetched when it is opened — holding the conversation, the Lean
+sources, the writeup sources, the audit verdicts, the naming registry, the
+approved assumptions with their provenance, the spend, and the model and
+toolchain identities. With no path it lands in the problem directory under the
+project's name and the time.
+
+The point of it is that it does **not** flatten Hardy's distinctions. A
+kernel-verified theorem, a theorem the kernel checked given an axiom a human
+approved, and a sentence somebody typed into the conversation are three
+different things and are rendered as three different things, with the axiom, its
+source, the stated reason and the approval date printed beside the theorem
+resting on it. The conversation appears under a heading saying plainly that
+nothing in it is evidence for anything above it.
+
+Credentials matching known token shapes, and values under credential-shaped key
+names, are removed before the file is written. That is a filter and not a proof,
+and the page says so where a reader will see it: an export is made to leave the
+machine, so read it before sharing it.
+
 Use `hardy chat --root path --project slug` to open a particular problem; either
 flag alone still narrows the choice, and both default to the current directory
 and to whichever problem is already there. A staged run is `hardy prove "every
-prime above two is odd"`, and its artifacts — request, frozen claim, trajectory,
+prime above two is odd"`, or `/prove every prime above two is odd` from inside a
+session, and its artifacts — request, frozen claim, trajectory,
 Lean source, verification, paper, and manifest — are written under `runs_root`.
 The retained batch check is `hardy batch examples/true.json --output
 hardy-output`, and `examples/sqrt-two-plus-sqrt-three.json` is the nontrivial

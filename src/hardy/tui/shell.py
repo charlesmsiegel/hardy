@@ -202,9 +202,17 @@ class Shell:
         input=None,
         output=None,
         reopen: Any = None,
+        notices: Sequence[str] = (),
     ):
-        self._state = State(config=config, session=session, reopen=reopen)
+        self._state = State(
+            config=config, session=session, reopen=reopen, commands=tuple(registry)
+        )
         self._registry = registry
+        # What could not be arranged before the session started -- today, the
+        # `.hardy/prompts/` files that would not load. Held rather than written
+        # here so it lands after the banner, in the scrollback, where every
+        # other startup line is.
+        self._notices = tuple(notices)
         self._input, self._output = input, output
         # Whether the turn currently running (if any) has been walked away
         # from with Esc. Read by `_run_turn` when its reply lands, so the
@@ -1038,6 +1046,8 @@ class Shell:
                 fresh_thread=getattr(session, "fresh_thread_detail", ""),
             ):
                 self.write(text, style=style)
+            for notice in self._notices:
+                self.write(notice, style="error")
             print()
             try:
                 return await self._app.run_async() or 0

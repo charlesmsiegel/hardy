@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from . import banner, dispatch, stream, transcript
-from .handlers import build_registry
+from .handlers import build_registry, load_templates
 from .ports import Choice, State
 
 WIDTH = 80
@@ -90,6 +90,8 @@ def run(
     read: Callable[[str], str] = input,
     ui_holder: dict[str, Any] | None = None,
     reopen: Any = None,
+    registry: Sequence[Any] | None = None,
+    notices: Sequence[str] = (),
 ) -> int:
     ui = PlainUi(out, read)
     if ui_holder is not None:
@@ -109,8 +111,16 @@ def run(
         ui.write(text, style=style)
     out("")
 
-    registry = build_registry()
-    state = State(config=config, session=session, reopen=reopen)
+    if registry is None:
+        templates, refused = load_templates(config)
+        registry, notices = build_registry(templates), [*notices, *refused]
+    # Said once, at startup, where the rest of what this session could not
+    # arrange is said. A template Hardy would not load is not an error worth a
+    # session for -- but silence would leave a user typing a `/name` that is
+    # simply unknown with nothing to explain why.
+    for notice in notices:
+        ui.write(notice, style="error")
+    state = State(config=config, session=session, reopen=reopen, commands=tuple(registry))
     while not state.done:
         try:
             text = read("> ")
