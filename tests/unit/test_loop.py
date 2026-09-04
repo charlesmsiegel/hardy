@@ -413,3 +413,35 @@ def test_a_reply_that_lands_after_a_cancel_is_recorded_and_not_published() -> No
     assert discarded["message"]["content"] == "the late answer"
     # Not smuggled into the conversation either: the user never saw it.
     assert [message.role for message in loop.messages] == ["user"]
+
+
+def test_the_budget_is_read_again_before_each_tool_call() -> None:
+    """One response can ask for several Lean checks, each able to run to its
+    own process timeout. Checked once for the batch, a nominally bounded run
+    overran by minutes per queued call while nothing looked again."""
+    ran: list[str] = []
+
+    def slow(name, arguments):
+        ran.append(name)
+        time.sleep(0.12)
+        return ToolResult(True, "ok")
+
+    loop, _, observed = _loop(
+        [ProviderTurn(tool_calls=tuple(ToolCall(f"c{i}", "check_proof", {}) for i in range(4)))],
+        dispatch=slow,
+        wall_seconds=0.1,
+    )
+
+    # The exchange ends on the deadline, as it should -- what is under test is
+    # what the queued calls did on the way there.
+    with pytest.raises(TimeoutError):
+        _drain(loop, "prove it")
+
+    # The first ran and ate the budget; the rest were refused rather than run.
+    assert ran == ["check_proof"]
+    assert sum(1 for item in observed if item["type"] == "skipped_tool") == 3
+    # And every call still has an answer: a `tool_use` the provider issued and
+    # nothing answered is a request it will refuse outright.
+    answered = [message for message in loop.messages if message.role == "tool_result"]
+    assert len(answered) == 4
+    assert [message.ok for message in answered] == [True, False, False, False]

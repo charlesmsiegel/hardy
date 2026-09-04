@@ -352,7 +352,7 @@ class AgentLoop:
             if not turn.tool_calls:
                 yield from self._settle(turn)
                 return
-            yield from self._call_tools(turn.tool_calls)
+            yield from self._call_tools(turn.tool_calls, budget)
 
     def _settle(self, turn: ProviderTurn) -> Iterator[TurnEvent]:
         """Say so when a turn ended for a reason other than having finished.
@@ -374,7 +374,17 @@ class AgentLoop:
             ),
         )
 
-    def _call_tools(self, calls: Sequence[ToolCall]) -> Iterator[TurnEvent]:
+    def _call_tools(self, calls: Sequence[ToolCall], budget: Budget) -> Iterator[TurnEvent]:
+        """Run the calls one response asked for, and answer every one of them.
+
+        The budget is re-read before each of them, not once for the batch. One
+        response can ask for several Lean checks, each of which may run to its
+        own process timeout -- so a batch begun inside the deadline could
+        overrun it by minutes per queued call while nothing looked again. A
+        call the budget no longer covers is refused rather than skipped: the
+        provider needs an answer for every `tool_use` it issued, whatever the
+        answer is.
+        """
         for call in calls:
             self._observe({"type": "tool_use", "name": call.name, "input": call.arguments})
             yield TurnEvent("tool_use", name=call.name, call_id=call.id)
@@ -382,6 +392,9 @@ class AgentLoop:
                 # The model asked and Hardy declined; the provider still needs
                 # an answer for the call, or the next request is malformed.
                 result = ToolResult(False, "the turn was cancelled before this tool call was made")
+            elif budget.expired():
+                self._observe({"type": "skipped_tool", "name": call.name, "why": "the wall-clock budget expired"})
+                result = ToolResult(False, "the run's wall-clock budget expired before this tool call was made")
             else:
                 try:
                     result = self._dispatch(call.name, dict(call.arguments))

@@ -220,3 +220,17 @@ def test_a_compaction_that_shrinks_the_request_says_it_fits() -> None:
     outcome = compaction.plan(messages, context_window=3000, reserve_tokens=500, keep_tokens=1200)
 
     assert outcome.fits
+    assert outcome.after <= outcome.available
+
+
+def test_fits_is_measured_against_the_window_and_not_against_the_old_size() -> None:
+    """"Smaller than before" was the wrong test. An oversized newest message
+    leaves a request still over the limit while the older ones make it smaller
+    than it was -- `true` for a request the provider will reject."""
+    messages = [_long("user"), _long("assistant"), _long("user", size=40_000)]
+
+    outcome = compaction.plan(messages, context_window=3000, reserve_tokens=500, keep_tokens=1200)
+
+    assert outcome.needed
+    assert outcome.after < outcome.before  # what the old test would have accepted
+    assert not outcome.fits                # and what the window actually says
