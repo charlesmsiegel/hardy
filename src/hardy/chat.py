@@ -3926,6 +3926,13 @@ class MathematicsSession:
         if target.resolve() == (self.tex_root / ROOT_DOCUMENT).resolve():
             return ToolResult(False, f"{ROOT_DOCUMENT} is the root document and cannot be deleted")
         relative = target.relative_to(self.tex_root).as_posix()
+        # The source-level rule too, over the tree as it will be once this file
+        # is gone. Checked before the unlink so a refusal costs nothing to undo.
+        refusal = self._bibliography_refusal(relative, "")
+        if refusal:
+            return ToolResult(
+                False, f"the writeup cannot be published as it stands, so {path} was kept: {refusal}"
+            )
         guard, name = guard_for(self.tex_root, relative)
         kept = read_text(self.tex_root, relative)
         guard.unlink(name)
@@ -3941,6 +3948,13 @@ class MathematicsSession:
                 # silently replaced a stamped PDF with an unstamped one and
                 # recorded it as current.
                 stamp=self._stamp(),
+                # And it is a publish, so it owes the same bibliography gate a
+                # save does. Without it, deleting an unrelated fragment
+                # published whatever reference list the remaining files
+                # happened to build -- the ordinary unresolved-reference check
+                # sees nothing wrong with an invented `\bibitem` that
+                # resolves.
+                vouched=self._vouched_references,
             )
             if not checked.ok:
                 guard.mkdir()

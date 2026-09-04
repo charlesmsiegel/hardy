@@ -9,6 +9,7 @@ the rules that keep a stored record from ever moving. The live service is
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -540,3 +541,55 @@ def test_a_deleted_response_is_refused(tmp_path: Path):
     (library.path_for(record.identifier) / "response.xml").unlink()
     with pytest.raises(arxiv.ArxivError, match="could not be read"):
         library.read(record.identifier)
+
+
+def test_a_record_with_no_response_digest_is_refused(tmp_path: Path):
+    """An empty digest was an opt-out from the provenance check."""
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    path = library.path_for(record.identifier) / "record.json"
+    path.write_text(
+        record.model_copy(update={"response_sha256": ""}).model_dump_json(),
+        encoding="utf-8",
+    )
+    with pytest.raises(arxiv.ArxivError, match="no response digest"):
+        library.read(record.identifier)
+
+
+def test_a_symlinked_response_is_refused(tmp_path: Path):
+    """The one read beside two guarded ones that followed links."""
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    stored = library.path_for(record.identifier) / "response.xml"
+    outside = tmp_path / "elsewhere.xml"
+    outside.write_bytes(stored.read_bytes())
+    stored.unlink()
+    stored.symlink_to(outside)
+    with pytest.raises(arxiv.ArxivError, match="could not be read"):
+        library.read(record.identifier)
+
+
+def test_a_record_admitted_from_the_cache_says_when_the_bytes_arrived(tmp_path: Path):
+    """Not when they were read back.
+
+    A fetch whose admission failed -- a full disk -- and succeeded on a retry
+    an hour later would otherwise record the retry as the moment its source
+    was obtained.
+    """
+    clock = Clock()
+    client, library, _ = _client(tmp_path, Recorder(_feed()), clock)
+    obtained = clock.now
+    first, _ = client.fetch("math.DG/0211159v1")
+    # The admission is undone and the query cache left in place: the shape of
+    # a fetch that reached arXiv and then failed to land, retried later.
+    shutil.rmtree(library.path_for(first.identifier))
+    clock.now += 3_600
+    again, _ = client.fetch("math.DG/0211159v1")
+    assert again.fetched_at == arxiv._stamp(obtained)
+    assert again.fetched_at != arxiv._stamp(clock.now)
+
+
+def test_a_stored_abstract_is_wrapped_so_every_line_can_be_read(tmp_path: Path):
+    client, _, _ = _client(tmp_path, Recorder(_feed(abstract="word " * 2_000)))
+    record, _ = client.fetch("math.DG/0211159v1")
+    assert max(len(line) for line in record.content().splitlines()) <= arxiv.ABSTRACT_COLUMNS

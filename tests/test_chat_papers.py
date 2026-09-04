@@ -260,3 +260,30 @@ def test_a_citation_no_paper_backs_is_refused_from_the_compilers_own_record(sess
     )["cite_key"]
     assert session._vouched_references((key,)) == ""
     assert "invented2020" in session._vouched_references((key, "invented2020"))
+
+
+def test_deleting_a_fragment_is_gated_like_a_save(session) -> None:
+    r"""Deleting publishes `writeup.pdf` too, so it owes the same gate.
+
+    Without it, removing an unrelated fragment republished whatever reference
+    list the remaining files happened to build: the ordinary
+    unresolved-reference check sees nothing wrong with an invented `\bibitem`
+    that resolves.
+    """
+    tex = session.workspace / "tex"
+    tex.mkdir(parents=True, exist_ok=True)
+    (tex / "writeup.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    (tex / "spare.tex").write_text("Nothing much.\n", encoding="utf-8")
+    (tex / "refs.tex").write_text(
+        "\\begin{thebibliography}{9}\n\\bibitem{invented2020} Nobody.\n"
+        "\\end{thebibliography}\n",
+        encoding="utf-8",
+    )
+    result = session._tool("delete_file", {"path": "spare.tex"})
+    assert not result.ok
+    assert "refs.tex" in result.output
+    # Refused before anything was removed, so nothing has to be put back.
+    assert (tex / "spare.tex").is_file()

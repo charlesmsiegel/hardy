@@ -9,6 +9,7 @@ enter from.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from hardy import arxiv
@@ -289,3 +290,52 @@ def test_a_fetch_answer_is_bounded_too(tmp_path: Path):
     payload = _json(result)
     assert payload["paper_id"] == "math.DG/0211159v1"
     assert "more" in payload["authors"][-1]
+
+
+def test_a_fetch_answer_fits_even_when_one_field_is_enormous(tmp_path: Path):
+    """Clipping by count leaves a hole a single huge field walks through."""
+    runtime = _runtime(
+        tmp_path,
+        FEED.format(
+            identifier="math.DG/0211159v1", title="T" * 200_000, abstract="a"
+        ).encode("utf-8"),
+        observation_bytes=1_024,
+    )
+    result = runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    assert result.ok
+    assert len(result.output.encode("utf-8")) <= 1_024
+    assert _json(result)["paper_id"] == "math.DG/0211159v1"
+
+
+def test_every_line_of_a_stored_record_can_be_reached(tmp_path: Path):
+    """An abstract arriving as one enormous line used to strand its tail.
+
+    `truncate` clips a line too long for the window and counts it consumed, so
+    `next_line` steps past it -- and `read_paper` pages by line, so the rest
+    of that line could never be asked for. The stored record is wrapped, so
+    every line fits and paging reaches the end.
+    """
+    runtime = _runtime(
+        tmp_path,
+        FEED.format(
+            identifier="math.DG/0211159v1", title="T", abstract="word " * 4_000
+        ).encode("utf-8"),
+        observation_bytes=2_048,
+    )
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    seen = ""
+    start = 1
+    for _ in range(200):
+        result = runtime.call(
+            "read_paper", {"paper_id": "math.DG/0211159v1", "start_line": start}
+        )
+        assert result.ok, result.output
+        seen += result.output
+        found = re.search(r"start_line=(\d+)", result.output)
+        if not found:
+            break
+        start = int(found.group(1))
+    else:  # pragma: no cover - a loop that never ends is the bug
+        raise AssertionError("paging never reached the end of the record")
+    # The last word of the abstract is reachable, which is the whole claim.
+    assert seen.count("word") > 3_900

@@ -302,27 +302,52 @@ class PaperToolRuntime:
 
     def fetch(self, paper_id: str) -> ToolResult:
         record, held = self.client.fetch(paper_id)
+        return ToolResult(True, self._fetched(record, held))
+
+    def _fetched(self, record: PaperRecord, held: bool) -> str:
+        """One fetch answer, guaranteed to fit the observation bound.
+
+        Clipping each field by count was not enough: one enormous author name
+        or DOI is a single field, and a valid response may carry one. So the
+        serialised payload is measured, and if it does not fit, everything but
+        the identity is dropped -- which always fits, and still names the
+        paper `read_paper` will serve in full.
+        """
+        full = self._fetch_payload(record, held, SEARCH_DETAIL[0].title)
+        if len(full.encode("utf-8")) <= self.observation_bytes:
+            return full
+        return json.dumps(
+            {
+                "paper_id": record.arxiv_id,
+                "content_sha256": record.content_sha256,
+                "already_held": held,
+                "note": (
+                    "Stored under this exact version. Its metadata is too large to "
+                    "return here; read_paper serves it a bounded piece at a time."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    def _fetch_payload(self, record: PaperRecord, held: bool, title: int) -> str:
         # Bounded like the other two. A title or an author list can be
         # enormous -- a collaboration paper carries thousands of names -- and
         # this was the one answer that put whatever arrived straight into the
         # model's context and the transcript.
-        return ToolResult(
-            True,
-            json.dumps(
-                {
-                    "paper_id": record.arxiv_id,
-                    "title": _clipped(record.title, SEARCH_DETAIL[0].title),
-                    "authors": _authors(record.authors, self.observation_bytes),
-                    "doi": record.doi,
-                    "content_sha256": record.content_sha256,
-                    "already_held": held,
-                    "note": (
-                        "Stored under this exact version. A later version is a separate "
-                        "record; this one cannot change underneath the citation."
-                    ),
-                },
-                ensure_ascii=False,
-            ),
+        return json.dumps(
+            {
+                "paper_id": record.arxiv_id,
+                "title": _clipped(record.title, title),
+                "authors": _authors(record.authors, self.observation_bytes),
+                "doi": _clipped(record.doi, title) if record.doi else None,
+                "content_sha256": record.content_sha256,
+                "already_held": held,
+                "note": (
+                    "Stored under this exact version. A later version is a separate "
+                    "record; this one cannot change underneath the citation."
+                ),
+            },
+            ensure_ascii=False,
         )
 
     def read(self, paper_id: str, start_line: int = 1) -> ToolResult:
@@ -399,11 +424,17 @@ class PaperToolRuntime:
 
 
 def _authors(authors: tuple[str, ...], budget: int) -> list[str]:
-    """Author names, cut to a count the observation bound can carry."""
+    """Author names, cut to a count AND a length the bound can carry.
+
+    Both, because either alone leaves a hole: a thousand short names overrun
+    the budget by count, and one name of a thousand characters overruns it
+    without ever being a second name.
+    """
     room = max(1, min(len(authors), budget // 64))
-    if len(authors) <= room:
-        return list(authors)
-    return [*authors[:room], f"... and {len(authors) - room} more"]
+    kept = [_clipped(name, 200) for name in authors[:room]]
+    if len(authors) > room:
+        kept.append(f"... and {len(authors) - room} more")
+    return kept
 
 
 def _clipped(text: str, limit: int) -> str:

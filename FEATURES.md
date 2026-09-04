@@ -874,7 +874,11 @@ Priority labels are sequencing hints:
   for another pass — one pass can resolve no `\ref` at all — and then read the log:
   an undefined `\ref`, an undefined `\cite`, or a label defined twice refuses the
   compile and names the reference, and the refusal takes the save and the published
-  PDF with it. Citation packages are read too — natbib reports a missing key in
+  PDF with it — a deletion that republishes the document included, since that is a
+  publish like any other. The diagnostics are read from `writeup.log` rather than
+  the terminal, because `batchmode` — which a compiler setting or the document
+  itself may select — stops TeX echoing its warnings and would otherwise leave the
+  verdict computed from an empty stream. Citation packages are read too — natbib reports a missing key in
   its own name rather than LaTeX's — and a summary naming nothing still refuses,
   because a package Hardy cannot parse warnings from is not a package that found
   nothing wrong. A document still asking to be run again after the last pass is
