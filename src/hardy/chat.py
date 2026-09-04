@@ -2630,9 +2630,18 @@ class MathematicsSession:
         return set(NEWLABEL.findall(written))
 
     def _saved_theorems(self, sources: dict[str, str] | None = None) -> set[str]:
+        """The public theorems the tree declares.
+
+        The same set `_theorem_statements` keys, and it has to be: a private
+        theorem has no statement here (Lean mangles the name, so nothing
+        outside its module can refer to it), and counting one anyway sent that
+        name to `_audit_gaps`, which asked for an audit that cannot be
+        established -- an obligation with no way to satisfy it.
+        """
         found: set[str] = set()
         for source in (self.lean_workspace.sources() if sources is None else sources).values():
-            found.update(declarations(source)["theorem"])
+            declared = declarations(source)
+            found.update(set(declared["theorem"]) - set(declared["private"]))
         return found
 
     def _theorem_statements(self, sources: dict[str, str] | None = None) -> dict[str, str]:

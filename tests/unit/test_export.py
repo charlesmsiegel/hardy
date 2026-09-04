@@ -744,3 +744,68 @@ def test_a_theorem_one_tactic_closed_says_so_beside_its_verdict():
     assert "aesop" in shown
     # Still kernel-verified: what one tactic closes the kernel still checked.
     assert 'class="badge verified"' in shown
+
+
+def test_audited_lean_is_shown_exactly_as_the_kernel_checked_it():
+    """Lean writes a type ascription with a colon, so the key/value credential
+    rule rewrote ordinary Lean -- and the page then displayed and badged a
+    statement that was not the one the kernel graded."""
+    statement = "theorem secret : Nat = Nat := rfl"
+    page = build(
+        theorems={"secret": statement},
+        audit={"A": audit_record("secret", ["propext"])},
+        lean={"Work": "structure S where\n  password : String\n"},
+    )
+    assert statement in page
+    assert "password : String" in page
+    assert "[REDACTED]" not in results(page)
+
+
+def test_a_token_shape_is_still_removed_from_a_lean_source():
+    """Only the key/value rules step aside for source; a token cannot occur in
+    valid Lean by accident."""
+    page = build(lean={"Work": "-- key sk-abcdefghijklmnopqrstuv\n"})
+    assert "sk-abcdefghijklmnopqrstuv" not in page
+
+
+def test_a_turn_with_no_saved_theorem_keeps_its_warning():
+    """An empty obligations list means two different things, and the wrong one
+    turns Hardy's warning into apparent completion."""
+    page = build(transcript=[
+        {"type": "assistant", "message": {"role": "assistant", "content": "Proved it."}},
+        {"type": "obligations", "outstanding": [], "saved_theorems": 0},
+    ])
+    assert "nothing here is reportable" in page
+    assert "Nothing outstanding." not in page
+
+
+def test_a_tool_the_sdk_refused_is_reported_as_refused():
+    """A request for `Read` or `Bash` is recorded as `refused_tool`, not as a
+    failed `tool`, so the section printed "Nothing was refused" over a run in
+    which the model had reached for the host."""
+    page = build(transcript=[{"type": "refused_tool", "name": "Bash"}])
+    assert "Bash" in page
+    assert "not a Hardy tool" in page
+
+
+def test_a_model_switch_is_marked_where_it_happened():
+    page = build(transcript=[
+        {"type": "user", "message": {"role": "user", "content": "before"}},
+        {"type": "model", "reason": "switched", "previous": {"model": "old"}, "model": "new"},
+        {"type": "user", "message": {"role": "user", "content": "after"}},
+    ])
+    assert "The model changed here" in page
+
+
+def test_a_theorem_named_like_a_credential_keeps_its_statement():
+    """`prepare`'s key-name rule reads `theorems["secret"]` as a credential
+    under a key called `secret`. It is a theorem called `secret`, and replacing
+    its statement makes the page disagree with what the kernel checked."""
+    prepared = export.prepare(material(theorems={"secret": "theorem secret : True"}))
+    assert prepared["theorems"]["secret"] == "theorem secret : True"
+
+
+def test_a_real_credential_key_is_still_redacted_structurally():
+    """The exemption is only for the maps keyed by declaration or path."""
+    prepared = export.prepare(material(transcript=[{"type": "tool", "password": "hunter2"}]))
+    assert prepared["transcript"][0]["password"] == "[REDACTED]"

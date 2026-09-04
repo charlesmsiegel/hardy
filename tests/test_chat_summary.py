@@ -342,3 +342,20 @@ def test_the_automation_disclosure_reads_the_same_tree_the_results_do(tmp_path: 
 
     assert seen and seen[0] is not None, "the flags were read from their own tree"
     assert material["automation"] == {}
+
+
+def test_a_private_theorem_owes_no_audit_it_cannot_have(tmp_path: Path):
+    """`_audit_gaps` was asked about a name Lean mangles, so the obligation
+    asked for an audit that cannot be established."""
+    chat = built(tmp_path)
+    read = chat.lean_workspace.sources
+
+    def with_private():
+        found = dict(read())
+        found["Hidden"] = "import Mathlib\nprivate theorem hidden : True := by exact True.intro\n"
+        return found
+
+    chat.lean_workspace.sources = with_private
+    owed = " ".join(chat.export_material()["obligations"])
+
+    assert "hidden" not in owed
