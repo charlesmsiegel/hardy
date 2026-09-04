@@ -1130,7 +1130,7 @@ dropped or rewrote an id it had already issued. Both are *gathered* — a
 malformed previous registry is reported as an objection, not raised, since
 aborting would suppress the very finding the option exists to make.
 `hardy evals corpus report [--corpus]` prints coverage by reporting group,
-status, and difficulty. `hardy evals corpus release --version <x.y.z> --note
+status, difficulty, and source. `hardy evals corpus release --version <x.y.z> --note
 <line>` stamps every shard with the new version and writes the changelog
 section that binds the manifest digest of the tree it stamped, refusing a
 version that does not follow the current head, then re-runs the check.
