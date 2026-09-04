@@ -342,6 +342,15 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
                 # this the late branches below could no longer tell that a
                 # submission had arrived at all.
                 submitted = result.ok
+                # And it is a development Lean accepted, so it replaces the
+                # retained one -- judged on Lean's answer, before the audit
+                # changes it. A run that sketched with holes, closed them, and
+                # then had the finished proof refused for an unapproved axiom
+                # otherwise published the older skeleton as the development in
+                # hand: the holes were the run's remaining work two events ago
+                # and the axiom is its remaining work now, and the artifacts
+                # named the wrong one.
+                _retain(name, proof, result)
                 if result.ok:
                     result, verdict, record = _audited(result, lean)
                 # Judged against the clock rather than a flag: a check that was

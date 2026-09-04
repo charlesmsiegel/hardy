@@ -96,13 +96,27 @@ def probe_api() -> tuple[bool, str]:
     """
     from importlib import metadata
 
+    # Imported, not merely looked up. Distribution metadata survives a partial
+    # installation and says nothing about whether the package will load -- a
+    # missing runtime dependency leaves the version readable and the import
+    # broken, and `hardy setup` reports its final health from this probe. It
+    # would have called an unusable installation ready and left the failure for
+    # the first provider turn.
     try:
-        version = metadata.version("anthropic")
-    except metadata.PackageNotFoundError:
-        return False, "anthropic is not installed"
+        import anthropic
+    except ImportError as error:
+        return False, f"anthropic is not importable: {error}"
+    version = getattr(anthropic, "__version__", None) or _installed_version(metadata)
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return False, f"anthropic {version}, ANTHROPIC_API_KEY unset"
     return True, f"anthropic {version}"
+
+
+def _installed_version(metadata: Any) -> str:
+    try:
+        return str(metadata.version("anthropic"))
+    except metadata.PackageNotFoundError:
+        return "unknown version"
 
 
 def backend_probe(backend: str) -> Callable[[], tuple[bool, str]]:

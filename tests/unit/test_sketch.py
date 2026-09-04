@@ -474,3 +474,50 @@ def test_the_audit_accepts_a_candidate_check_proof_produced(tmp_path: Path, proo
     )
 
     assert acceptance.validate_batch_consistency(tmp_path) == ()
+
+
+def test_a_syntax_quotation_is_data_rather_than_a_hole() -> None:
+    """`` `(tactic| sorry) `` builds a piece of syntax Lean never runs.
+
+    A proof entitled to construct one was told it had a hole -- refused by
+    `submit_proof` before the kernel ever saw it, and recorded by
+    `sketch_proof` as work that does not exist.
+    """
+    assert not LeanTools.has_holes("by exact f `(tactic| sorry)")
+    assert LeanTools.holes("by exact f `(tactic| sorry)") == ()
+    # Nesting is followed, because a quotation nests and a pattern cannot.
+    assert not LeanTools.has_holes("by exact `(term| (fun x => sorry))")
+    # And a real hole beside one is still found, at its own line.
+    found = LeanTools.holes("by\n  have h := `(tactic| sorry)\n  sorry")
+    assert [(item.keyword, item.line) for item in found] == [("sorry", 3)]
+
+
+def test_an_axiom_refused_submission_replaces_the_stale_sketch(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """Sketch with holes, close them, and have the finished proof refused for
+    an unapproved axiom.
+
+    The artifacts published the older skeleton as the development in hand: the
+    holes were the run's remaining work two events ago and the axiom is its
+    remaining work now, and the record named the wrong one. Judged on Lean's
+    answer, before the audit changes it.
+    """
+    result = run(
+        proof_request,
+        factory([
+            call("sketch_proof", {"proof": "by sorry"}),
+            call("submit_proof", {"proof": "by exact True.intro -- axioms: badAxiom"}),
+        ]),
+        lean,
+        tmp_path,
+    )
+
+    # The audit refused it, so the run is not verified and the sketch survives.
+    assert result.terminal_reason == "axioms_rejected"
+    assert result.proof is None
+    assert result.sketch is not None
+    # And it is the newest thing Lean accepted, not the skeleton from before
+    # those holes were closed.
+    assert result.sketch["proof"] == "by exact True.intro -- axioms: badAxiom"
+    assert result.sketch["holes"] == []
+    writeup = (tmp_path / "writeup.md").read_text(encoding="utf-8")
+    assert "by sorry" not in writeup
