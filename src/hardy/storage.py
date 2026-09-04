@@ -143,12 +143,51 @@ class FileLock:
         return True
 
     def _break_if_stale(self) -> None:
+        """Take a lock its holder cannot still be using, if anyone may.
+
+        Breaking is itself serialised, by a second `O_EXCL` file, and that is
+        not fussiness. Two processes meeting the same abandoned lock both see
+        it as stale; the first unlinks it and claims a fresh one, and the
+        second's unlink -- decided on the old file and executed a moment later
+        -- then removes the NEW holder's lock. Both are inside the critical
+        section, which is exactly the concurrency this class exists to
+        prevent, arrived at through the recovery path.
+
+        With the mutex, only one process may break a given lock at a time, and
+        it re-checks staleness while holding it. A process that loses the race
+        simply returns and retries the lock itself on the next poll.
+
+        The mutex is held for one `stat` and one `unlink`, so a `.break` file
+        that is itself old belongs to a process that died mid-recovery: it is
+        removed and the next poll tries again. That is one level of recovery,
+        not a recursion.
+        """
+        if not self._stale(self.path):
+            return
+        breaking = self.path.with_name(self.path.name + ".break")
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
         try:
-            age = time.time() - self.path.stat().st_mtime
+            os.close(os.open(breaking, flags, 0o600))
+        except FileExistsError:
+            if self._stale(breaking):
+                breaking.unlink(missing_ok=True)
+            return
         except OSError:
             return
-        if age > self.stale_after:
-            self.path.unlink(missing_ok=True)
+        try:
+            # Re-checked under the mutex: the holder may have finished and a
+            # new one taken the lock while this process was getting here, and
+            # that lock is not stale and not this one's to remove.
+            if self._stale(self.path):
+                self.path.unlink(missing_ok=True)
+        finally:
+            breaking.unlink(missing_ok=True)
+
+    def _stale(self, path: Path) -> bool:
+        try:
+            return time.time() - path.stat().st_mtime > self.stale_after
+        except OSError:
+            return False
 
 
 class RunStore:

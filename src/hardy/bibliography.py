@@ -40,8 +40,8 @@ from typing import Literal
 from .arxiv import PaperRecord
 from .domain import FrozenModel
 from .latex import uncommented
-from .layout import WriteGuard
-from .storage import FileLock, LockTimeout, atomic_write_bytes
+from .layout import LayoutError, WriteGuard, read_text
+from .storage import FileLock, LockTimeout
 
 #: The canonical store, beside the session record: versioned, hand-readable,
 #: and never the file LaTeX reads.
@@ -201,13 +201,30 @@ class Bibliography:
         # alive and busy.
         self.lock_timeout = lock_timeout
 
+    def _lock_target(self) -> Path:
+        """The lock's path, with the problem directory proven first.
+
+        `FileLock` creates its parent and, on a stale lock, deletes the file
+        it finds -- neither of which may happen through a symlinked problem
+        directory.
+        """
+        return WriteGuard(self.problem, create=True).path(LOCK)
+
     def read(self) -> Store:
-        """What the store says, or an empty one when there is nothing yet."""
+        """What the store says, or an empty one when there is nothing yet.
+
+        Read through the problem's own guard, not with `Path.read_text`. A
+        clone is free to ship `bibliography.json` as a symlink, and a
+        following read would let a store from outside the project be merged
+        into it by the next citation -- so the recorded bibliography, and the
+        source identities in it, would depend on which machine opened the
+        clone.
+        """
         try:
-            text = self.path.read_text(encoding="utf-8")
+            text = read_text(self.problem, STORE)
         except FileNotFoundError:
             return Store()
-        except OSError as error:
+        except (OSError, LayoutError) as error:
             raise BibliographyError(f"the bibliography could not be read: {error}") from error
         try:
             return Store.model_validate_json(text)
@@ -241,7 +258,7 @@ class Bibliography:
         reached by one stays a single entry.
         """
         try:
-            with FileLock(self.problem / LOCK, timeout=self.lock_timeout):
+            with FileLock(self._lock_target(), timeout=self.lock_timeout):
                 return self._cite(record, now)
         except LockTimeout as error:
             raise BibliographyError(
@@ -380,8 +397,8 @@ class Bibliography:
         WriteGuard(self.tex, create=True).write_bytes(
             GENERATED, self.render(store).encode("utf-8")
         )
-        atomic_write_bytes(
-            self.path, (store.model_dump_json(indent=2) + "\n").encode("utf-8")
+        WriteGuard(self.problem, create=True).write_bytes(
+            STORE, (store.model_dump_json(indent=2) + "\n").encode("utf-8")
         )
 
 #: Every character that means something to TeX, and what it becomes. Applied

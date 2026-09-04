@@ -198,3 +198,50 @@ def test_the_runtime_finds_the_library_under_the_root(tmp_path: Path):
     runtime = build_runtime(tmp_path / "sylow", tmp_path)
     assert runtime.library.root == tmp_path / ".hardy" / "papers"
     assert runtime.bibliography.path == tmp_path / "sylow" / "bibliography.json"
+
+
+def test_a_search_answer_is_bounded_like_every_other_observation(tmp_path: Path):
+    """`read_paper` was bounded and this was not.
+
+    Twenty-five abstracts -- a feed may approach the response cap on its own
+    -- went into the model's context and the transcript whole, from a tool
+    whose answer is meant to be a list of leads.
+    """
+    runtime = _runtime(
+        tmp_path, _feed(abstract="x" * 40_000), observation_bytes=4_096
+    )
+    result = runtime.call("search_papers", {"query": "ricci flow"})
+    assert result.ok
+    assert len(result.output.encode("utf-8")) <= 4_096
+    payload = _json(result)
+    # The list is never cut: a shortened list hides papers the search found,
+    # and a model cannot tell that from a search that found fewer.
+    assert len(payload["results"]) == 1
+    assert payload["results"][0]["paper_id"] == "math.DG/0211159v1"
+
+
+def test_a_search_abstract_is_clipped_before_the_whole_thing_is_dropped(tmp_path: Path):
+    runtime = _runtime(tmp_path, _feed(abstract="y" * 5_000))
+    payload = _json(runtime.call("search_papers", {"query": "ricci flow"}))
+    abstract = payload["results"][0]["abstract"]
+    assert len(abstract) < 5_000
+    assert "read_paper" in abstract
+
+
+def test_a_filesystem_failure_is_a_tool_result_rather_than_a_traceback(tmp_path: Path):
+    """The session dispatcher catches argument errors, and nothing else.
+
+    A full disk or a read-only library ended the turn with a traceback, no
+    tool result and no trajectory event -- the one shape of failure Hardy's
+    own record cannot describe afterwards.
+    """
+    runtime = _runtime(tmp_path)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+
+    def refuse(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    runtime.bibliography.cite = refuse
+    result = runtime.call("cite_paper", {"paper_id": "math.DG/0211159v1"})
+    assert not result.ok
+    assert "could not be written" in result.output

@@ -8,6 +8,8 @@ the rules that keep a stored record from ever moving. The live service is
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -433,3 +435,67 @@ def test_a_stuck_lock_slows_the_throttle_rather_than_stopping_a_fetch(tmp_path: 
         lock_timeout=0.05,
     )
     assert client.search("ricci flow")
+
+
+def test_a_record_filed_under_another_papers_identifier_is_refused(tmp_path: Path):
+    """The digests say a record is consistent, not that it is *this* record.
+
+    A directory holding another paper's `record.json` and `content.txt` --
+    an interrupted move, a hand-copied cache -- passes both digest checks,
+    and then `read_paper(A)` serves B and `cite_paper(A)` records B under A.
+    """
+    client, library, _ = _client(tmp_path, Recorder(_feed(), _feed("2401.00001v1")))
+    first, _ = client.fetch("math.DG/0211159v1")
+    other, _ = client.fetch("2401.00001v1")
+    stolen = library.path_for(first.identifier)
+    for name in ("record.json", "content.txt"):
+        (stolen / name).write_bytes((library.path_for(other.identifier) / name).read_bytes())
+    with pytest.raises(arxiv.ArxivError, match="under another's identifier"):
+        library.read(first.identifier)
+
+
+def test_an_unversioned_request_still_has_to_be_answered_about_that_paper(tmp_path: Path):
+    """A version may change under a bare id. The paper may not."""
+    client, library, _ = _client(tmp_path, Recorder(_feed("2401.99999v1")))
+    with pytest.raises(arxiv.ArxivError, match="refusing to store"):
+        client.fetch("2401.00001")
+    assert library.stored() == ()
+
+
+def test_an_unversioned_request_accepts_the_version_it_is_told(tmp_path: Path):
+    client, library, _ = _client(tmp_path, Recorder(_feed("2401.00001v3")))
+    record, _ = client.fetch("2401.00001")
+    assert record.arxiv_id == "2401.00001v3"
+    assert library.stored() == ("2401.00001v3",)
+
+
+def test_a_doctype_behind_padding_is_still_refused(tmp_path: Path):
+    """A prefix search is defeated by legal whitespace before the DOCTYPE."""
+    padded = b'<?xml version="1.0"?>' + b" " * 8192 + b'<!DOCTYPE feed [<!ENTITY a "aa">]><feed/>'
+    client, _, _ = _client(tmp_path, Recorder(padded))
+    with pytest.raises(arxiv.ArxivError, match="DOCTYPE"):
+        client.search("anything")
+
+
+def test_the_throttle_lock_is_not_opened_through_a_symlink(tmp_path: Path):
+    """`FileLock` creates its parent and deletes what it finds stale.
+
+    Pointed through `.hardy/papers -> somewhere`, that is Hardy removing a
+    stranger's file before any guarded call could refuse the link.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = outside / "state.lock"
+    victim.write_text("someone else's file", encoding="utf-8")
+    old = time.time() - 10_000
+    os.utime(victim, (old, old))
+    hardy = tmp_path / ".hardy"
+    hardy.mkdir()
+    (hardy / "papers").symlink_to(outside, target_is_directory=True)
+    library = arxiv.PaperLibrary(hardy / "papers")
+    client = arxiv.ArxivClient(
+        library, transport=Recorder(_feed()), clock=lambda: 0.0, sleep=lambda seconds: None
+    )
+    with pytest.raises(LayoutError):
+        client.search("ricci flow")
+    assert victim.read_text(encoding="utf-8") == "someone else's file"

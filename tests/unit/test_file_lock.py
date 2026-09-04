@@ -66,3 +66,41 @@ def test_a_symlinked_lock_file_is_never_written_through(tmp_path: Path):
     with pytest.raises(LockTimeout), FileLock(path, timeout=0.05, stale_after=10_000.0):
         pass
     assert outside.read_text(encoding="utf-8") == "mine"
+
+
+def test_two_processes_meeting_one_stale_lock_do_not_both_enter(tmp_path: Path):
+    """Recovery must not become the concurrency it exists to prevent.
+
+    Both see the same abandoned lock as stale; the first unlinks it and
+    claims a fresh one, and the second's unlink -- decided on the old file,
+    executed a moment later -- would remove the NEW holder's lock and let it
+    in as well. Breaking is serialised so it cannot.
+    """
+    path = tmp_path / "x.lock"
+    path.write_text("999999", encoding="utf-8")
+    old = time.time() - 600
+    os.utime(path, (old, old))
+    first = FileLock(path, timeout=0.5, stale_after=60.0)
+    first.__enter__()
+    assert first.held
+    # The second arrives while the first holds a *fresh* lock. It must not
+    # break it, however stale the file it originally met.
+    with pytest.raises(LockTimeout), FileLock(path, timeout=0.2, stale_after=60.0):
+        pass
+    first.__exit__()
+    assert not path.exists()
+
+
+def test_a_break_marker_left_by_a_dead_process_is_cleaned_up(tmp_path: Path):
+    """One level of recovery, not a recursion."""
+    path = tmp_path / "x.lock"
+    path.write_text("999999", encoding="utf-8")
+    marker = tmp_path / "x.lock.break"
+    marker.write_text("999998", encoding="utf-8")
+    old = time.time() - 600
+    for stale in (path, marker):
+        os.utime(stale, (old, old))
+    # The first poll clears the marker, the next one breaks the lock.
+    with FileLock(path, timeout=1.0, stale_after=60.0) as lock:
+        assert lock.held
+    assert not marker.exists()
