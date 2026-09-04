@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
-from . import audit, completion, ingest, process
+from . import audit, compaction, completion, ingest, process
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
@@ -36,6 +36,7 @@ from .layout import (
     read_text,
 )
 from .lean import DECLARATION_NAME, LeanTools
+from .loop import Message
 from .models import Request, ToolResult, TurnEvent
 from .modules import ModuleIndex
 from .project_context import (
@@ -614,7 +615,7 @@ def _vacuity_source(stripped: str, *, include_probes: bool = True) -> tuple[str,
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, context_window: int = compaction.CONTEXT_WINDOW):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -722,6 +723,11 @@ class MathematicsSession:
         self._shared_observed: dict[str, Any] = {"shadowed": {}, "unbuildable": []}
         self._shared_failures: tuple[str, ...] = ()
         self._make_runtime = make_runtime
+        # What a compaction is trying to fit inside. A default rather than a
+        # measurement: no transport here will count a conversation before it is
+        # sent, so a caller that knows its model's real window is the one that
+        # should say so.
+        self.context_window = context_window
         # The SDK may call several tools at once, each on its own thread, but
         # these run Lean, rewrite session.json, and stop to ask a human for
         # approval. None of that is safe to interleave.
@@ -827,7 +833,7 @@ class MathematicsSession:
         prompt = SYSTEM_PROMPT
         if self.cas is not None:
             prompt += "\n\n" + chat_cas_prompt(self.cas.session.backend.name)
-        return self._make_runtime(
+        runtime = self._make_runtime(
             model=model,
             system_prompt=prompt + self._context(),
             specs=CHAT_TOOLS + (CAS_TOOLS if self.cas is not None else []),
@@ -836,6 +842,15 @@ class MathematicsSession:
             session_id=session_id,
             observe=self._observed,
         )
+        # Offered rather than passed in, and only to a runtime that says it can
+        # take it. A backend whose SDK owns the loop cannot let Hardy choose
+        # what a compaction keeps (issue #23), and handing it a compactor it
+        # would silently drop would leave the record claiming a compaction
+        # Hardy never got to make.
+        attach = getattr(runtime, "attach_compactor", None)
+        if attach is not None:
+            attach(self.compact)
+        return runtime
 
     def _observed(self, event: dict[str, Any]) -> None:
         """What the runtime reports, recorded and acted on.
@@ -2938,6 +2953,82 @@ class MathematicsSession:
         be shown the first when the second is true.
         """
         return bool(self._saved_theorems())
+
+    def facts(self) -> compaction.Facts:
+        """The mechanical parts of a summary, each read off something checkable.
+
+        Nothing here is remembered. The goal, the approved assumptions and the
+        naming registry come from `session.json`; what is proved and what is
+        still open come from the stored audit verdicts, which expire when the
+        build inputs beneath them move; the modules come from the Lean tree;
+        and the failed attempts come from the tool results the transcript
+        already holds, in Lean's own words. That is the whole argument for
+        Hardy compacting its own sessions rather than asking a model to
+        remember them -- a summary assembled this way can be checked.
+
+        Deliberately without the spend ledger and its cursor. They are Hardy's
+        bookkeeping and no more the model's business in a summary than in the
+        workspace listing; a summary is not a loophole into the context.
+        """
+        try:
+            modules = sorted(self.lean_workspace.sources())
+        except ImportCycle:
+            # A tree that does not order is reported by the obligations below.
+            # Listing no modules for it is honest; raising out of a summary is
+            # not, since the summary is what a stuck session is read by.
+            modules = []
+        return compaction.Facts(
+            goal=self.goal(),
+            assumptions=list(self.state.get("assumptions", ())),
+            proved=sorted(self._settled_declarations()),
+            open_declarations=sorted(self._open_declarations()),
+            names=list(self.state.get("names", ())),
+            attempts=compaction.failed_attempts(self._recorded()),
+            next_steps=[str(item) for item in self._obligations()],
+            modules=modules,
+        )
+
+    def summary(self) -> str:
+        """The workspace-derived summary, rendered.
+
+        The same text a compaction would insert, available without one: it is
+        worth having as an answer to "what is going on in here" whether or not
+        a conversation has grown long enough to need cutting.
+        """
+        return compaction.summarize(self.facts()).render()
+
+    def compact(self, messages: list[Message]) -> list[Message] | None:
+        """Hardy's compaction, for a loop Hardy owns.
+
+        Returns None when nothing needs doing, which is most turns. When
+        something does, the conversation becomes the summary plus a tail cut
+        at a point a conversation may legally resume from -- `loop`'s rule,
+        which never separates a tool result from the call it answers.
+
+        The event goes into `transcript.jsonl` before the new conversation is
+        handed back, and it carries what was summarised, where the kept
+        messages start, and what the summary said. A compaction that left no
+        trace would be exactly the invisible loss this exists to prevent.
+        """
+        outcome = compaction.plan(
+            messages,
+            context_window=self.context_window,
+            reserve_tokens=compaction.RESERVE_TOKENS,
+            keep_tokens=compaction.RECENT_TOKENS,
+        )
+        if not outcome.needed:
+            return None
+        summarised = compaction.summarize(self.facts())
+        self._record({
+            "type": "compaction",
+            "summarized_messages": outcome.cut,
+            "kept_from": outcome.cut,
+            "kept_messages": len(messages) - outcome.cut,
+            "estimated_tokens": {"before": outcome.before, "after": outcome.after},
+            "sections": summarised.as_dict(),
+            "text": summarised.render(),
+        })
+        return compaction.compacted(messages, outcome.cut, summarised)
 
     def obligations(self) -> tuple[completion.Obligation, ...]:
         """What the workspace owes, for the human rather than the model.

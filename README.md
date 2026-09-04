@@ -314,16 +314,25 @@ experiment.
 Issue #23 records why this is worth reversing: bounded experiments, trajectory
 fidelity, cheap Lean closers before model tokens, and token budgets all live in
 the loop, and Hardy cannot make those decisions while it does not run one. So
-does compaction, and that reason is stronger than the four: Hardy has no
-compaction of its own, so when a long session outgrows the context window the
+does compaction, and that reason is stronger than the four: on a backend whose
+SDK owns the loop, when a long session outgrows the context window the
 provider decides, invisibly, what survives about which lemmas were proved,
 which axioms are standing, and which attempts failed — and `transcript.jsonl`
-does not record what was dropped. Most of a useful mathematical summary is
-already in `session.json` and `read_workspace`, mechanical and therefore
-checkable in a way no coding agent's summary can be; only "what was tried and
-why it failed" needs the model. `DESIGN.md` records the full argument,
-including how much of it the SDK's own `PreCompact` hook could recover
-without reclaiming the loop.
+does not record what was dropped.
+
+On the `api` backend it does not. Hardy assembles the summary itself, and
+almost none of it is narration: the goal, the approved assumptions and the
+naming registry come from `session.json`, what is proved and what is still
+open come from the stored audit verdicts, the modules from the Lean tree, and
+even "what was tried and why it failed" comes from the tool results the
+transcript already holds, in Lean's own words. So the summary is checkable
+against the things it was read off, which is what no coding agent's summary
+can offer. `/status --full` prints it at any time. When it is used to compact,
+the cut never lands between a tool call and its result, and the compaction
+goes into `transcript.jsonl` saying what was summarised, where the kept
+messages start and what the summary said. `DESIGN.md` records the full
+argument, including how much of it the SDK's own `PreCompact` hook might
+recover on the backends where the loop is still not Hardy's.
 
 ## Install
 

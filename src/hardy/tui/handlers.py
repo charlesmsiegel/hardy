@@ -40,6 +40,13 @@ async def handle_help(ui: Ui, argument: str, state: State) -> State:
 
 async def handle_status(ui: Ui, argument: str, state: State) -> State:
     config = state.config
+    # `--full` adds the workspace-derived summary: the same text a compaction
+    # would put in front of the model, assembled from `session.json`, the Lean
+    # tree and the transcript rather than from anybody's memory. It is here
+    # because it is worth reading whether or not a conversation has grown long
+    # enough to need cutting -- and because a summary a user can check is the
+    # whole argument for Hardy compacting its own sessions (issue #100).
+    full = argument.strip() in {"--full", "full"}
     ui.write("Session", style="normal")
     ui.write(f"  Model:        {config.model}")
     # `getattr` for the reason the `spent` line below gives: `/status` is safe
@@ -110,6 +117,22 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
             ui.write("  its name or prose suggests):")
             for name, tactic in sorted(closed.items()):
                 ui.write(f"    - {name} (by {tactic})")
+    if full:
+        # `getattr` for the reason every other line here uses it: `/status` is
+        # safe in flight and the shell is built before its session is.
+        assemble = getattr(state.session, "summary", None)
+        if assemble is None:
+            ui.write("Summary", style="normal")
+            ui.write("  Not available: this session has no workspace to read.")
+            return state
+        try:
+            summary = assemble()
+        except Exception as error:  # noqa: BLE001 - a status line must not end the session
+            ui.write(f"  Summary could not be assembled: {error}", style="error")
+            return state
+        ui.write("Summary", style="normal")
+        for line in summary.splitlines():
+            ui.write(f"  {line}")
     return state
 
 
@@ -655,7 +678,10 @@ def build_registry() -> list[Command]:
             "project", "see the problems here, or open another", handle_project,
             argument_hint="[list|new|switch]",
         ),
-        Command("status", "show the project, model, and paths", handle_status, safe_in_flight=True),
+        Command(
+            "status", "show the project, model, and paths", handle_status,
+            argument_hint="[--full]", safe_in_flight=True,
+        ),
         Command("doctor", "check that Lean and LaTeX are usable", handle_doctor),
         Command("clear", "clear the screen; deletes nothing", handle_clear, safe_in_flight=True),
         exit_command,
