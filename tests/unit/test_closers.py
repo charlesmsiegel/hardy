@@ -106,7 +106,9 @@ def test_no_ladder_runs_unless_one_was_asked_for(tmp_path: Path, proof_request: 
 
     # Explicit, not absent: a missing key reads as a harness with no closers,
     # and this one has them and was told not to use them.
-    assert trajectory["closers"] == {"enabled": False, "tactics": [], "attempts": [], "closed_by": None}
+    assert trajectory["closers"] == {
+        "enabled": False, "tactics": [], "attempts": [], "closed_by": None, "seconds": 0.0
+    }
     assert seen[0].asked is True
 
 
@@ -195,3 +197,50 @@ def test_a_harness_owned_loop_says_hardy_kept_both(tmp_path: Path, proof_request
     # And no note pointing at the open issue: there is nothing left of it to
     # point at on this transport.
     assert "note" not in limits
+
+
+def test_the_ladder_spends_the_runs_clock_and_not_a_clock_of_its_own(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """A ladder that used the whole budget must not hand the model a fresh one.
+
+    Left as it was, the command could take the ladder's time plus the entire
+    declared `wall_seconds` again, and the figure in the trajectory would bound
+    neither half.
+    """
+    seen: list[FakeRuntime] = []
+
+    result = run(
+        proof_request,
+        factory([], seen),
+        lean,
+        tmp_path,
+        # Already spent by the time the one closer has run.
+        wall_seconds=0.0001,
+        closers=("nonsense_tactic",),
+    )
+
+    assert seen[0].asked is False
+    assert result.terminal_reason == "wall_clock_limit"
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text(encoding="utf-8"))
+    assert any(
+        event.get("type") == "limit" and event.get("limit") == "wall_seconds"
+        for event in trajectory["events"]
+    )
+
+
+def test_the_model_gets_only_what_the_ladder_left(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    seen: list[FakeRuntime] = []
+
+    run(proof_request, factory([], seen), lean, tmp_path, wall_seconds=300, closers=("nonsense_tactic",))
+
+    # Not the declared 300: what remains of it after the ladder elaborated.
+    assert 0 < seen[0].context["wall_seconds"] < 300
+
+
+def test_what_the_ladder_cost_is_recorded(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    # A run that spent four minutes elaborating tactics and then reported a
+    # model turn limit is not readable without this.
+    run(proof_request, factory([]), lean, tmp_path, closers=("nonsense_tactic",))
+
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text(encoding="utf-8"))
+
+    assert trajectory["closers"]["seconds"] > 0
