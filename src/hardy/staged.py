@@ -441,8 +441,10 @@ class ClaudeStagedRuntime:
         manifest that does not describe the directory it names.
 
         The boundary is the documented one, the same as the interactive path's:
-        no further tool call runs, and one already inside a subprocess is left
-        to finish rather than torn out halfway.
+        no further tool call runs, and a subprocess already running is asked to
+        stop rather than killed. This waits for it either way -- that is what
+        taking the gate below is for -- so a finished Lean check is recorded
+        before the manifest is written rather than lost.
         """
         # Under `_starting`, which is what makes this atomic with opening a
         # turn: see `run_structured`. Held for the arming only -- the waiting

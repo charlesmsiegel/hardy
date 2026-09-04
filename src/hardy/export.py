@@ -71,11 +71,14 @@ SECRETS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
     # separator, which "of" and "news" do not have and `abc123`, `sk-...` and
     # every base64 fragment do. A long run of letters is taken too: a
     # hexadecimal token can be all letters, and no word here is sixteen.
+    # The alphabet is base64's, not an identifier's: `Bearer abc+123/==` is an
+    # ordinary encoded credential and a class of `[A-Za-z0-9._-]` stopped at the
+    # `+`, leaving most of it on the page. JWTs and base64url add `~` and `=`.
     (
         re.compile(
             r"(?i)\bbearer\s+(?:"
-            r"(?=[A-Za-z0-9._\-]*[0-9._\-])[A-Za-z0-9._\-]{3,}"
-            r"|[A-Za-z0-9._\-]{16,})"
+            r"(?=[A-Za-z0-9._~+/=\-]*[0-9._~+/=\-])[A-Za-z0-9._~+/=\-]{3,}"
+            r"|[A-Za-z0-9._~+/=\-]{16,})"
         ),
         "Bearer [REDACTED-KEY]",
         # A shape, not a pair: `Bearer <token>` names no key. It stays on for
@@ -505,7 +508,12 @@ def _imported(entries: Iterable[Mapping[str, Any]]) -> str:
         if isinstance(entry, Mapping)
     ]
     if not rows:
-        return "<p>Nothing was imported: everything below was written in this session.</p>"
+        return (
+            "<p>No import was recorded for this workspace. That is not a claim that "
+            "everything below was written here: a user may edit the Lean and TeX "
+            "directly, which Hardy supports and does not track, and a workspace "
+            "opened from before import tracking existed records nothing either.</p>"
+        )
     return _rows(rows)
 
 
@@ -1004,19 +1012,35 @@ def _default_mode() -> int:
 
 
 def default_path(workspace: Path, project: str, *, now: datetime | None = None) -> Path:
-    """A name of Hardy's choosing, which must not land on one already taken.
+    """A name of Hardy's choosing, reserved rather than merely looked at.
 
     The timestamp is to the second, and two exports inside one second is an
     ordinary thing to do -- export, change the goal, export again, or a script
-    doing both. `write` replaces its destination deliberately, so the second
-    call silently destroyed the first account rather than keeping both, which
-    is the opposite of what a timestamped name is for. A path the user typed is
-    left alone: naming the file is saying which file to write.
+    doing both. `write` replaces its destination deliberately, so a second call
+    landing on the same name silently destroyed the first account rather than
+    keeping both, which is the opposite of what a timestamped name is for.
+
+    Checking the name was not enough: two exports racing both see it free and
+    both pick it. So the name is taken by creating the file, and the caller's
+    own write replaces a file it already owns. The cost is an empty file left
+    behind when the export then fails, which is visible and harmless; losing
+    the other session's report is neither.
+
+    A path the user typed is left alone: naming the file is saying which file
+    to write, replacement included.
     """
     stamp = (now or datetime.now()).strftime("%Y%m%dT%H%M%S")
+    workspace.mkdir(parents=True, exist_ok=True)
     chosen = workspace / f"{project}-{stamp}.html"
     for suffix in range(1, 1000):
-        if not chosen.exists():
+        try:
+            # Created, not merely checked. Two sessions exporting the same
+            # project in the same second both passed a bare existence test and
+            # picked the same name, and `write` replaces its destination -- so
+            # whichever finished last destroyed the other's account. `O_EXCL`
+            # is the reservation: the name is taken the moment it is chosen.
+            os.close(os.open(chosen, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
             return chosen
-        chosen = workspace / f"{project}-{stamp}-{suffix}.html"
+        except FileExistsError:
+            chosen = workspace / f"{project}-{stamp}-{suffix}.html"
     return chosen

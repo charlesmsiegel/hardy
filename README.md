@@ -107,8 +107,10 @@ call in flight is stopped, no further stage begins, and the run finalizes as a
 cancellation rather than as a runtime failure — so an abandoned `/prove` is not
 billed for stages nobody waited for, and its manifest says why it stopped. That
 holds for a press during the slow toolchain identification before the run has
-even started, as well as during it. What was already inside Lean is left to
-finish rather than torn out halfway, as everywhere else.
+even started, as well as during it. A Lean or Tectonic process already running
+is asked to stop rather than killed, and Hardy waits for the call to come back
+before finalizing, so the manifest describes the directory it names; a second
+Esc kills what did not take the hint.
 
 That faithfulness check is the one gate a green kernel cannot stand in for:
 Lean's acceptance says a statement was proved and nothing about whether it is
