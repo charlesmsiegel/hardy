@@ -202,6 +202,17 @@ class AgentLoop:
         self._totals: dict[str, int] = {}
         self._cancelled = False
 
+    def attach_compactor(
+        self, compact: Callable[[list[Message]], list[Message] | None] | None
+    ) -> None:
+        """Decide what a long conversation keeps, from here on.
+
+        Settable after construction because the thing that knows how to
+        summarise a Hardy session is the session, and the session builds the
+        runtime rather than the other way round.
+        """
+        self._compact = compact
+
     def cancel(self) -> None:
         """Stop the exchange at the next decision point. Safe from any thread."""
         self._cancelled = True

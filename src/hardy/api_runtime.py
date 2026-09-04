@@ -296,6 +296,18 @@ class ApiRuntime:
     def cancel(self) -> None:
         self._loop.cancel()
 
+    def attach_compactor(
+        self, compact: Callable[[list[Message]], list[Message] | None]
+    ) -> None:
+        """Let a caller decide what a long conversation keeps.
+
+        Published as a capability rather than taken in the constructor, so a
+        caller can offer one to whichever backend can honour it and skip the
+        ones that cannot. On this transport the conversation is Hardy's, so
+        the offer is real: the compactor is asked before every provider call.
+        """
+        self._loop.attach_compactor(compact)
+
     def settle(self, timeout: float = 0.0) -> bool:
         """Always settled: this loop runs on the caller's own thread."""
         return True

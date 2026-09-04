@@ -620,10 +620,30 @@ Priority labels are sequencing hints:
   backend — `AgentLoop`'s `before_turn` is asked before every provider call and
   may decline it. On the subscription backends the SDK still owns that moment
   (issue #23).
+- **Now (implemented):** compaction Hardy owns, with a summary derived from the
+  workspace rather than narrated by a model. `hardy/compaction.py` assembles
+  Goal, Standing assumptions, Proved, Open, Naming registry, Workspace, Failed
+  attempts and Next steps — the goal, assumptions and registry from
+  `session.json`, what is proved and what is open from the stored audit
+  verdicts (which expire when the build inputs beneath them move), the modules
+  from the Lean tree, and the failed attempts from the tool results the
+  transcript already holds, in Lean's own words. Nothing is remembered, so the
+  summary can be checked; only a session's spend ledger is absent, for the
+  reason `WITHHELD` gives about the workspace listing. `/status --full` prints
+  it whether or not anything needs compacting. On a backend that owns its loop
+  the summary replaces the oldest part of the conversation once the estimate
+  passes `context_window - reserve`, cut at a point a conversation may legally
+  resume from — never between a tool call and its result — and the compaction
+  is written into `transcript.jsonl` with what was summarised, where the kept
+  messages start and what the summary said. A compaction that left no trace is
+  the invisible loss the feature exists to prevent. A backend whose SDK owns
+  the loop is not offered a compactor at all, rather than handed one it would
+  silently drop.
 - **Next:** carry the same three back to the subscription backends, where the
-  SDK still owns the loop — Hardy's own turn bound, the closers, and a
-  compaction it chooses — whether through the SDK's `can_use_tool` and
-  `PreCompact` hooks or not at all (issue #23).
+  SDK still owns the loop — Hardy's own turn bound, the closers, and the
+  compaction above — whether through the SDK's `can_use_tool` and `PreCompact`
+  hooks or not at all (issue #23). The summary itself is already backend-
+  independent; what is missing there is the moment to insert it.
 - **Later:** adapters for other agent SDKs beyond the two here.
 - **Later:** summarize failed attempts into compact lessons rather than replaying
   entire transcripts; measure whether summarization loses needed context.
