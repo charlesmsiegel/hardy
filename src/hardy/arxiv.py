@@ -59,6 +59,11 @@ from .storage import FileLock
 ENDPOINT = "https://export.arxiv.org/api/query"
 #: arXiv's own request: one call every three seconds from a given caller.
 MIN_INTERVAL_SECONDS = 3.0
+#: How long a cache write or a conditional drop waits for the key it touches.
+#: Short, because what the lock covers is a comparison and one filesystem
+#: call: a wait this long means the holder died mid-write, and going ahead
+#: unlocked is better than refusing to cache an answer already in hand.
+LOCK_SECONDS = 5.0
 #: How long a cached search stays an answer. A day, because arXiv publishes
 #: once a day: a shorter window spends requests to learn nothing, and a longer
 #: one hides a paper that has since appeared.
@@ -568,15 +573,35 @@ class PaperLibrary:
             return None
         return body.encode("utf-8"), fetched
 
+    def query_lock(self, key: str) -> Path:
+        """The lock for one cache entry, with the directory holding it proven.
+
+        Per KEY rather than the library-wide lock, and that is not tidiness:
+        `_throttle` holds the library lock while it sleeps out the interval,
+        and the cache recheck it runs under that lock calls `drop_query`. One
+        lock for both would be this process waiting on itself.
+
+        Nothing waits on this lock for long -- what it covers is a comparison
+        and an unlink -- so it never stands between a caller and the network.
+        """
+        guard, _ = self._guard(f"queries/{key}.json")
+        return guard.path(f"{key}.lock")
+
     def cache_query(self, key: str, body: bytes, *, now: float) -> None:
+        # Under the same lock the conditional drop takes. Without it the
+        # comparison there is still racing a write: a process that has
+        # established the cached bytes are the ones it rejected can be
+        # overtaken between that and the unlink, and delete a good answer
+        # somebody else had just put there.
         guard, name = self._guard(f"queries/{key}.json")
-        guard.write_bytes(
-            name,
-            json.dumps(
-                {"fetched_at": now, "body": body.decode("utf-8", errors="replace")},
-                ensure_ascii=False,
-            ).encode("utf-8"),
-        )
+        with FileLock(self.query_lock(key), timeout=LOCK_SECONDS, required=False):
+            guard.write_bytes(
+                name,
+                json.dumps(
+                    {"fetched_at": now, "body": body.decode("utf-8", errors="replace")},
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
 
     def drop_query(self, key: str, *, body: bytes | None = None) -> None:
         """Forget one cached answer, or the particular one that was bad.
@@ -594,10 +619,17 @@ class PaperLibrary:
         disk. A bad entry is dropped once, by the process that read it.
         """
         try:
-            if body is not None and self._cached_body(key) not in (None, body):
-                return
+            # Compared and deleted under one lock. The two were separate,
+            # unlocked steps: a process that had established the cached bytes
+            # were the ones it rejected could be overtaken between them --
+            # somebody else drops, refetches, caches a good answer -- and then
+            # delete that, turning a cached success into another request and
+            # possibly into a network failure.
             guard, name = self._guard(f"queries/{key}.json")
-            guard.unlink(name, missing_ok=True)
+            with FileLock(self.query_lock(key), timeout=LOCK_SECONDS, required=False):
+                if body is not None and self._cached_body(key) not in (None, body):
+                    return
+                guard.unlink(name, missing_ok=True)
         except (OSError, LayoutError):
             return
 

@@ -57,6 +57,13 @@ class Truncation:
     # follow-up read should start, or None when this reached the end.
     first_line: int
     next_line: int | None
+    #: Whether the first or last line came back cut in the middle. `_fit`
+    #: returns one line even when that line alone does not fit, because
+    #: nothing at all is the wrong answer for a file that is one enormous
+    #: line -- but the cut suffix is then unreachable, since `next_line`
+    #: counts the line as read. A caller paging through has to be able to
+    #: tell that from an honest short page.
+    clipped: bool = False
 
     @property
     def truncated(self) -> bool:
@@ -117,8 +124,9 @@ def truncate(
     if line_limit is not None and len(window) > line_limit:
         truncated_by = "lines"
         window = window[:line_limit] if keep == "head" else window[-line_limit:]
+    clipped = False
     if byte_limit is not None:
-        fitted = _fit(window, byte_limit, keep)
+        fitted, clipped = _fit(window, byte_limit, keep)
         if fitted != window:
             # Reported over a line cut already made: whichever limit produced
             # the smaller window is the one that actually bound this call, and
@@ -141,15 +149,21 @@ def truncate(
         output_bytes=len(kept.encode("utf-8")),
         first_line=first_line if window else max(begin + 1, 1),
         next_line=last_line + 1 if last_line < total_lines else None,
+        clipped=clipped,
     )
 
 
-def _fit(lines: list[str], limit: int, keep: Literal["head", "tail"]) -> list[str]:
-    """The most whole lines from one end of `lines` that fit in `limit` bytes.
+def _fit(
+    lines: list[str], limit: int, keep: Literal["head", "tail"]
+) -> tuple[list[str], bool]:
+    """The most whole lines from one end of `lines` that fit in `limit` bytes,
+    and whether the one that came back had to be cut in the middle.
 
     At least one line always comes back, cut on a character boundary when that
     line alone does not fit -- see `truncate` for why nothing is the wrong
-    answer there.
+    answer there. The flag is what lets a caller paging through tell that from
+    an honest short page: the cut suffix is unreachable, because the line
+    counts as read.
     """
     ordered = lines if keep == "head" else list(reversed(lines))
     fitted: list[str] = []
@@ -160,9 +174,11 @@ def _fit(lines: list[str], limit: int, keep: Literal["head", "tail"]) -> list[st
             break
         fitted.append(line)
         spent += cost
+    clipped = False
     if not fitted and ordered:
         fitted = [_clip(ordered[0], limit, keep)]
-    return fitted if keep == "head" else list(reversed(fitted))
+        clipped = fitted != [ordered[0]]
+    return (fitted if keep == "head" else list(reversed(fitted))), clipped
 
 
 def _clip(line: str, limit: int, keep: Literal["head", "tail"]) -> str:

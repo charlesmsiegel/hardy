@@ -537,3 +537,24 @@ def test_a_long_cite_key_sheds_the_json_around_it(tmp_path: Path):
     # key is a different key that no `\bibitem` defines.
     entry = runtime.bibliography.entries()[0]
     assert entry.key in result.output
+
+
+def test_a_window_whose_first_line_was_clipped_is_refused(tmp_path: Path):
+    r"""A page that only appears to fit is not better than one that refuses.
+
+    `truncate` returns one line even when that line alone does not fit --
+    right for a file that is one enormous line, wrong here, because the line
+    counts as read and `next_line` then points PAST the suffix that was cut.
+    The budget-shrinking loop walked straight into it: with a small enough
+    budget the assembled payload fits, `read_paper` reports success, and the
+    omitted middle is unreachable by any later call.
+    """
+    runtime = _runtime(tmp_path, _feed(abstract="word " * 400), observation_bytes=160)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    # Line 11 is a 94-byte wrapped abstract line, and the continuation note
+    # for it runs to about 120 bytes -- so no shrunken budget holds both, and
+    # what used to come back was that line with its tail cut off and a
+    # `start_line` pointing past the cut.
+    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "start_line": 11})
+    assert not result.ok, result.output
+    assert "does not fit" in result.output

@@ -159,7 +159,17 @@ _CONDITIONAL = re.compile(r"\\(if[a-zA-Z]*|fi)(?![a-zA-Z])")
 _MACRO_DEF = re.compile(
     r"\\(?P<env>new|renew)environment\*?(?![a-zA-Z])"
     r"|\\(?:newcommand|renewcommand|providecommand)\*?(?![a-zA-Z])"
-    r"|\\def\b"
+    # `\gdef`, `\xdef` and `\edef` are `\def` for this purpose: TeX stores a
+    # body and runs none of it where it is written. `\def` alone left
+    # `\gdef\x{\begin{verbatim}}` looking like a live opener, which put the
+    # scan into verbatim mode and hid a real `thebibliography` after it.
+    #
+    # The prefixes need no clause of their own. `\global\def` is two control
+    # sequences, and the scan consumes `\global` as an ordinary one and then
+    # meets `\def` at its own backslash -- so `\long`, `\outer` and
+    # `\protected` are covered by the same walk rather than by an alternation
+    # that would have to guess at the order they were written in.
+    r"|\\[gxe]?def\b"
 )
 
 

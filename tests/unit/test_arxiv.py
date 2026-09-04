@@ -11,6 +11,9 @@ from __future__ import annotations
 import http.client
 import os
 import shutil
+import subprocess
+import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -1074,3 +1077,52 @@ def test_a_wrong_identifier_drop_removes_only_the_body_it_rejected(tmp_path: Pat
     held = library.cached_query(keys[0], now=1_000_000.0)
     assert held is not None, "a good answer was deleted by the process that read a bad one"
     assert held[0] == right
+
+
+def test_a_conditional_drop_waits_for_the_key_it_is_comparing(tmp_path: Path):
+    """Compare and delete are one step now, or they are not a comparison.
+
+    They were two unlocked filesystem calls: a process that had established
+    the cached bytes were the ones it rejected could be overtaken between them
+    -- somebody else drops, refetches, caches a good answer -- and then delete
+    that, turning a cached success into another request and possibly into a
+    network failure.
+
+    One process cannot show this, so the lock is taken by a child: while it
+    holds the key, a drop here cannot get past its comparison.
+    """
+    library = arxiv.PaperLibrary(tmp_path / "papers")
+    key = "k" * 64
+    library.cache_query(key, _feed(), now=1_000_000.0)
+    lock = library.query_lock(key)
+    ready = tmp_path / "ready"
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                f"""
+                import pathlib, time
+                from hardy.storage import FileLock
+                with FileLock(pathlib.Path({str(lock)!r})):
+                    pathlib.Path({str(ready)!r}).write_text("held")
+                    time.sleep(1.0)
+                """
+            ),
+        ],
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not ready.exists() and time.monotonic() < deadline:
+            if child.poll() is not None:
+                pytest.fail("the child exited before it took the lock")
+            time.sleep(0.02)
+        assert ready.exists(), "the child never reported holding the lock"
+        started = time.monotonic()
+        library.drop_query(key, body=_feed())
+        elapsed = time.monotonic() - started
+    finally:
+        child.kill()
+        child.wait()
+    assert elapsed >= 0.4, "the drop compared and deleted without holding the key"
+    assert library.cached_query(key, now=1_000_000.0) is None

@@ -458,9 +458,19 @@ class PaperToolRuntime:
             )
             payload = f"{record.arxiv_id}: {cut.summary}.{rest}\n\n{cut.text}"
             over = len(payload.encode("utf-8")) - self.observation_bytes
-            if over <= 0:
+            # `cut.clipped` disqualifies a window that would otherwise fit.
+            # `truncate` returns one line even when that line alone does not
+            # fit -- which is right for a file that is one enormous line, and
+            # wrong here, because the line counts as read and `next_line`
+            # therefore points PAST the suffix that was cut. Shrinking the
+            # budget to make the payload fit walks straight into that: the
+            # answer is a page whose missing middle no later `read_paper` can
+            # ask for. The refusal below is the same one this loop already
+            # writes when no window fits at all; a window that only appears to
+            # fit is not a better outcome than one that admits it does not.
+            if over <= 0 and not cut.clipped:
                 return ToolResult(True, payload)
-            if budget <= over:
+            if cut.clipped or budget <= over:
                 break
             budget -= over
         # No window fits. Returning the oversized one anyway put it in the
