@@ -22,6 +22,7 @@ performs every Lean check and every write.
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
@@ -223,6 +224,42 @@ class AnthropicProvider:
         base = base or os.environ.get("ANTHROPIC_BASE_URL")
         return f"messages api ({base})" if base else "messages api"
 
+    def _within(self, request: dict[str, Any], timeout: float | None) -> Any:
+        """The request, under a deadline the loop can actually rely on.
+
+        The client's `timeout` is HTTPX's, and HTTPX's read timeout bounds the
+        wait for *each chunk* rather than the whole exchange -- so an endpoint
+        or gateway that keeps dribbling data can hold `messages.create` open
+        past `wall_seconds` while the trajectory says Hardy enforced it. The
+        call therefore runs on a thread of its own and is waited on for exactly
+        the time the loop has left.
+
+        The limit that remains is stated rather than hidden, and it is the one
+        `ClaudeAgentRuntime.cancel` and the tool gate both state: the request
+        is abandoned, not aborted. A daemon thread may still be waiting on the
+        socket when Hardy has stopped. What the deadline guarantees is that
+        *Hardy* stops -- the run ends as a timeout at the moment it should,
+        rather than whenever the far end decides to finish.
+        """
+        if timeout is None:
+            return self.client().messages.create(**request)
+        outcome: dict[str, Any] = {}
+
+        def call() -> None:
+            try:
+                outcome["reply"] = self.client().messages.create(**request)
+            except BaseException as error:  # noqa: BLE001 - re-raised on the caller's thread
+                outcome["error"] = error
+
+        worker = threading.Thread(target=call, name="hardy-provider", daemon=True)
+        worker.start()
+        worker.join(max(timeout, 0.0))
+        if worker.is_alive():
+            raise TimeoutError(f"the provider request exceeded its {timeout:g}s budget")
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["reply"]
+
     def complete(
         self,
         *,
@@ -247,7 +284,7 @@ class AnthropicProvider:
         if timeout is not None:
             request["timeout"] = max(timeout, 0.0)
         try:
-            reply = self.client().messages.create(**request)
+            reply = self._within(request, timeout)
         except Exception as error:
             # The SDK's own timeout is an `APITimeoutError` -- a subclass of
             # `APIConnectionError`, not of Python's `TimeoutError` -- so a

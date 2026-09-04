@@ -125,10 +125,29 @@ def _codex_checks() -> list[Check]:
     which is the worse direction.
     """
     try:
-        import openai_codex
+        import openai_codex  # noqa: F401 - presence is the check
     except ImportError:
         return [Check("codex sdk", False, "not installed; pip install 'hardy-prover[codex]'")]
-    return [Check("codex sdk", True, f"openai-codex {getattr(openai_codex, '__version__', 'unknown')}")]
+    # An installed SDK is not a signed-in one, and `staged_doctor` reads
+    # authentication off a check whose name carries "login" -- so a branch that
+    # stopped at the import reported a logged-out machine as ready and failed
+    # at the first request instead. `setup.probe_codex` already asks the SDK
+    # whether an account is present; this is that answer, named so the staged
+    # workflow can see it.
+    from .setup import probe_codex
+
+    try:
+        authenticated, detail = probe_codex()
+    except Exception as error:  # noqa: BLE001 - a doctor check reports, it does not raise
+        return [Check("codex login", False, f"could not ask the Codex SDK: {error}")]
+    return [
+        Check("codex sdk", True, detail),
+        Check(
+            "codex login",
+            authenticated,
+            "signed in" if authenticated else "not signed in; run `hardy setup` to sign in to ChatGPT",
+        ),
+    ]
 
 
 def _api_checks() -> list[Check]:
