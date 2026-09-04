@@ -609,6 +609,249 @@ artifact. One number it reports is a measurement limit rather than a gap:
 `hardy/cas_driver.py` is the body of a helper process the suite starts with
 `subprocess`, so nothing in the harness observes it running.
 
+## Commands
+
+`hardy` is one executable with a handful of subcommands. The global options go
+**before** the subcommand, because they resolve the configuration every command
+shares; each also has a `HARDY_*` environment variable and a config-file key
+behind it, and a flag outranks both. Running `hardy` with no subcommand is the
+interactive session, exactly as `hardy chat` is.
+
+| Command | What it does |
+| --- | --- |
+| `hardy`, `hardy chat` | Open or resume the interactive session on one problem. |
+| `hardy doctor` | Report whether Lean, LaTeX, computer algebra, and the model are usable. |
+| `hardy setup` | Discover, install, and record the pinned toolchain. |
+| `hardy prove` | Take one claim from statement to verified document, staged and gated. |
+| `hardy accept` | Run the checked-in acceptance problems, or recheck recorded runs. |
+| `hardy batch` | The earlier one-shot proof experiment, retained as a check. |
+| `hardy evals` | The fixed corpus: baseline sweep, scored set runs, scoreboard checks. |
+| `hardy latency` | Measure the fixed Lean import cost a warm process pool would recover. |
+
+Exit codes are uniform: `0` when the command answered and the answer was good,
+`1` when it answered and the answer was bad — a failed check, an unverified
+proof, an inconsistent artifact, a withheld verdict — and `2` when the
+invocation itself was refused before doing any work.
+
+### Global options
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--config PATH` | `~/.hardy/config.toml`, or `$HARDY_CONFIG` | Which settings file to read. |
+| `--model IDENTITY` | `model` in the config file, or `$HARDY_MODEL` | Who does the work. |
+| `--lean-command CMD` | `lake env lean` | The command that elaborates a Lean file. |
+| `--lean-project PATH` | unset — Lean runs in the current directory | The Lake project whose imports Lean should resolve; the installer points this at the shared Mathlib project. |
+| `--latex-command CMD` | `pdflatex -interaction=nonstopmode -halt-on-error` | The command that compiles a LaTeX file. |
+| `--plain` | off | Use the line-based session with no terminal control. Implied by a pipe on either end, `TERM=dumb`, or `HARDY_PLAIN=1`. |
+| `--no-project-context` | off | Do not read the project's `AGENTS.md` or `HARDY.md` (equivalently `project_context = false`, or `HARDY_PROJECT_CONTEXT=0`). |
+| `--fresh-thread` | off | Start this session on a new provider conversation; the workspace, its record, and the spend ledger continue unchanged. A flag only — "always start fresh" is not a coherent standing preference, so there is no setting behind it. |
+
+`prove`, `accept`, and `evals run` also accept `--model` *after* the subcommand;
+omitting it there leaves the global one alone rather than overwriting it.
+
+### `hardy chat`
+
+Opens the durable terminal session described above. `--root` and `--project`
+live here rather than at the top level; a bare `hardy` takes both from the
+config file, from `HARDY_ROOT`/`HARDY_PROJECT`, or from the current directory.
+With several problems recorded and none configured as active, a launch with a
+terminal on both ends asks which to open rather than silently creating a third.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--root PATH` | the current directory | The directory holding one or more problems. |
+| `--project SLUG` | the active problem, or `main` | Which problem to open. |
+| `--register-lakefile` | ask, where a host `lakefile.toml` exists | Add this problem's `lean/` to the host `lakefile.toml` as a `lean_lib`. |
+| `--no-register-lakefile` | — | Never touch the host `lakefile.toml`. Hardy's own resolution does not depend on registration. |
+
+### `hardy doctor`
+
+Checks the SDK, the CLI, the login, Lean, LaTeX, and the computer algebra
+kernel, and prints what each one reported. A named non-default CAS backend is
+treated as required and the built-in SymPy as advisory. Exits `1` when a
+required check failed.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--deep` | off | Also compile a Mathlib probe file, which can take minutes. |
+
+### `hardy setup`
+
+Discovers the pinned toolchain, offers to install what is missing — elan,
+Tectonic, and the shared Mathlib project — verifying the Tectonic download
+against its recorded digest before installing it, and writes the paths it found
+into the config file. Takes no options of its own; `--config` selects the file
+it writes. Exits `1` if the environment is still not healthy afterwards.
+
+### `hardy prove`
+
+Stages a single claim: Hardy proposes a formalization, you approve or revise
+it, the approved statement is frozen under a hash, an independent reader checks
+that the frozen Lean says what you said before any proof search starts, a proof
+is sought against that frozen statement, and an independent verifier rebuilds
+and rechecks the result before anything is graded. Artifacts — request, frozen
+claim, trajectory, Lean source, verification, paper, manifest, and
+`faithfulness.json` — are written under `runs_root`.
+
+```sh
+hardy prove "every prime above two is odd"
+```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `claim` (positional) | prompted for if omitted | The claim in ordinary language. An empty one is refused. |
+| `--backend {claude,codex}` | `claude` | Which SDK drives the run. The no-tools guarantee behind the faithfulness reader holds on `claude` and not on `codex`; each runtime reports what its isolation is worth and every verdict records it. |
+| `--model IDENTITY` | the global `--model` | Who does the work. |
+| `--faithfulness-model IDENTITY` | the run's own model, or `faithfulness_model` | Who reads the translation back. Per invocation, because the setting is global and the backends do not share model names. |
+
+### `hardy accept`
+
+Runs the checked-in acceptance problems end to end and cross-checks the
+artifacts each produces — manifest against trajectory against Lean source
+against document. Exits `1` if any run failed its audit.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--backend {claude,codex}` | `claude` | As for `prove`. |
+| `--model IDENTITY` | the global `--model` | Who does the work. |
+| `--faithfulness-model IDENTITY` | the run's own model | Who reads the translation back. |
+| `--force-budget-exhaustion-test` | off | Run the deterministic no-model path instead and check its artifacts — the whole pipeline with no model, no network, and no toolchain. |
+| `--recorded RUN_DIR [RUN_DIR ...]` | — | Cross-check these recorded run directories (batch or staged) and run nothing: the manifest against the trajectory against the Lean source against the document, the axiom line Lean printed against the graded verdict, the toolchain named by revision. This is how `acceptance/recorded/` is rechecked without being re-run. |
+
+```sh
+hardy accept --recorded acceptance/recorded/*
+```
+
+### `hardy batch`
+
+The earlier one-shot proof experiment, kept as a check rather than as the
+primary path. It reads a request file, gives the model a bounded loop against
+Lean, and prints the run's result as JSON; it exits `0` only when the result
+verified. A request whose declaration is an anonymous `example` is refused up
+front, since `#print axioms` has no name to audit and the run could never
+verify.
+
+```sh
+hardy batch examples/true.json --output hardy-output
+```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `request` (positional) | required | Path to the request JSON. `examples/sqrt-two-plus-sqrt-three.json` is the nontrivial problem the recorded acceptance runs used. |
+| `--output PATH` | `hardy-output` | Where the run's artifacts are written. |
+| `--max-turns N` | `8` | Model turns the loop may take. |
+| `--wall-seconds S` | `300` | Wall-clock budget for the run. |
+
+### `hardy evals`
+
+The fixed problem set. The corpus (`corpus/`), the tier file
+(`evals/baseline.json`), and the scoreboards (`evals/scoreboards/`) are
+repository evidence read relative to the current directory, so these commands
+want a source checkout — a released wheel carries none of it, and a default path
+resolved outside a checkout is refused with a sentence rather than a bare
+`FileNotFoundError`.
+
+**`hardy evals baseline`** sweeps a committed tactic set over every canonical
+statement and writes the tier file, which is what says how much of each result
+automation already closes. Entries whose environment identity did not move are
+carried forward rather than re-elaborated. Exits `1` if the sweep found problems
+with the corpus.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--problems PATH` | `corpus` | The corpus to sweep. |
+| `--out PATH` | `evals/baseline.json` | Where the tier file is written. |
+| `--acknowledge-unsafe-execution` | required | The sweep elaborates Lean built from the problem file's imports, binders, and conclusion, without isolation. Without this flag the command refuses. |
+
+**`hardy evals run`** runs every selected entry through the batch or staged path
+and writes a scoreboard under a label.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--label NAME` | required | Names the scoreboard this run writes. |
+| `--mode {batch,staged}` | `batch` | Which path each entry is run through. |
+| `--backend {claude,codex}` | `claude` | Claude only, in practice: the batch runner, the canonical reader, and staged tool-event counting are Claude-shaped, so `codex` is refused rather than recorded as a condition it is not. |
+| `--model IDENTITY` | the global `--model` | Who does the work. |
+| `--repeats N` | `1` | Times each entry is run. Must be at least 1 — a zero-row run would still write a scoreboard that `evals check` would pass. |
+| `--only IDS` | every entry | Comma-separated entry ids. |
+| `--tiers LIST` | every tier | Comma-separated tiers, e.g. `2,3`. |
+| `--no-twins` | twins run | Drop the twin runs (#23). |
+| `--max-turns N` | `60` in batch mode | Refused under `--mode staged`, whose budgets are `active_seconds`, `proof_seconds`, and `official_checks`. |
+| `--wall-seconds S` | `1800` in batch mode | Same: refused under `--mode staged`. Must be positive and finite, so that a recorded budget really bounded something. |
+| `--problems PATH` | `corpus` | The corpus to run. |
+| `--baseline PATH` | `evals/baseline.json` | The tier file to score against. |
+| `--scoreboards PATH` | `evals/scoreboards` | Where the scoreboard directory is written. |
+| `--acknowledge-unsafe-execution` | required | Accepts unsandboxed execution for every run in the set. |
+
+```sh
+hardy evals run --label first-pass --acknowledge-unsafe-execution
+```
+
+**`hardy evals check <scoreboard-dir>`** re-derives every figure in a committed
+scoreboard from its run directories — the way `hardy accept --recorded` does for
+acceptance runs — and prints the headline, the floor, and the per-tier
+aggregates when nothing disagreed. Exits `1` on any inconsistency.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `scoreboard` (positional) | required | The scoreboard directory to re-derive. |
+| `--problems PATH` | `corpus` | The corpus it was run against. |
+| `--baseline PATH` | `evals/baseline.json` | The tier file it was scored against. |
+
+**`hardy evals corpus`** works on the corpus directory itself. Every verb takes
+`--corpus PATH` (default `corpus`).
+
+| Verb | What it does |
+| --- | --- |
+| `check` | Report every mechanical objection to the corpus on disk. Exits `1` if there is one. `--since-registry PATH` takes the previous release's `tombstones.json` and establishes that the id registry stayed append-only, which only a comparison can show; `--since PATH` takes the previous release's `CHANGELOG.md` and refuses content that moved under a version already released. CI passes the merge base's copy of each. |
+| `report` | Coverage by group, status, difficulty, and source. |
+| `serve` | Browse the corpus in a local page that re-reads from disk on every refresh: statement, Lean, classification. `--host` (default `127.0.0.1`) and `--port` (default `8765`). |
+| `release` | Bump every shard and write the changelog head it binds. `--version` is required and must be three numbers greater than the last; `--note` adds a changelog bullet citing the ids that moved and is repeatable. A malformed release is refused with `2`. |
+
+### `hardy latency`
+
+Measures how much of a Lean call is the fixed `import Mathlib` prelude that a
+warm process pool would pay only once per worker — the evidence the deferred
+worker pool in [DESIGN.md](DESIGN.md) and issue #54 is waiting on, rather than a
+reason to build one. It runs inside the configured Lake project through the
+configured Lean command, since an import cost measured against a different
+Mathlib is not the cost this harness pays. Give it the call count and wall time
+of a real run and it reports the share such a pool would have recovered and
+whether that clears the threshold; a verdict it cannot reach exits `1` rather
+than passing silently.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `--import MODULE` | `Mathlib` | Module to import in the probe. Repeatable. |
+| `--repeats N` | `3` | Probes to time. Each pays a full import. |
+| `--calls N` | — | Lean calls in an observed run that imported the probed set. Given together with `--total-seconds` or not at all. |
+| `--total-seconds S` | — | Wall time of that observed run. |
+| `--workers N` | `1` | Warm processes the hypothetical pool would hold. A pool of N pays the prelude N times, not once. |
+| `--threshold FRACTION` | `0.25` | Recoverable share that warrants a pool. Must be above 0 and at most 1. |
+| `--timeout S` | `300` | Seconds one probe may take — its own bound, because the ordinary 30-second check timeout would kill every Mathlib probe and report the cost as unmeasurable. |
+
+### Session commands
+
+Inside the interactive session, these are what the `/` prompt takes; `/help`
+lists them and typing `/` offers the rest of a likely name as dim ghost text
+that Tab accepts. Only `/help`, `/status`, `/clear`, and `/exit` work while a
+turn or a computer algebra cell is running — the rest are refused in flight,
+because a running turn owns the record, the transcript, and the one locked
+kernel.
+
+| Command | What it does |
+| --- | --- |
+| `/help` | List the commands. |
+| `/model [identity]` | Switch the live model, or open a selector (arrow keys or a row number, Enter to choose, Esc to cancel). |
+| `/cas [state\|reset\|export\|expr]` | Drive the same persistent computer algebra kernel the model uses: `/cas <source>` runs one cell, a bare `/cas` opens a block ended by `/end`, `/cas state` reports the backend and what the kernel holds, `/cas reset` starts a clean kernel, `/cas export` writes the script and notebook and replays every cell to check they reproduce. |
+| `/goal [text]` | State what this session is for, or print it. It is shown beside every request to approve an assumption, so nobody approves an axiom with the assignment off-screen. |
+| `/import [<dir>\|lean\|reference\|tex]` | Triage a pile of existing files without modifying it, or promote one: `/import lean <file> [dest]` through the ordinary save path, `/import reference <file> [dest]` into the root's shared `.hardy/lean/`, `/import tex <file> [dest]` through the LaTeX save path. |
+| `/project [list\|new\|switch]` | List the problems in this root and mark the active one, start another, or open one. |
+| `/status` | The workspace, model, and paths, plus the full spend breakdown: turns, cost, and input, output, cache-write, and cache-read tokens. |
+| `/doctor` | Check Lean, LaTeX, computer algebra, and the model without leaving the session. |
+| `/clear` | Clear the screen. Nothing on disk is touched. |
+| `/exit`, `/quit` | Leave. Ctrl+D does the same. |
+
 ## Documentation
 
 - [DESIGN.md](DESIGN.md) defines the architecture, trust boundary, and design
