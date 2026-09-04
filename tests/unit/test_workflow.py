@@ -1339,3 +1339,42 @@ def test_a_press_while_the_disagreement_is_being_shown_still_records_the_dispute
     assert manifest.terminal_reason is domain.TerminalReason.FAITHFULNESS_DISPUTED
     assert manifest.grades.faithfulness_review is not None
     assert not manifest.grades.faithfulness_review.agreed
+
+
+def test_a_press_while_the_formalization_is_being_shown_does_not_open_the_selector(
+    tmp_path,
+) -> None:
+    """Esc during `show_formalization` must not be swallowed.
+
+    The selector is a question. A press that lands while the proposed Lean is
+    being printed sets the flag but cannot raise into this worker, so without a
+    check between the two the run opened the selector on a claim the user had
+    already walked away from and asked them to answer a second time. The check
+    after `choose_approval` classifies the answer correctly but cannot un-ask
+    the question.
+
+    This is the opposite call from the faithfulness verdict, deliberately:
+    there, re-checking would destroy the fact that the gate fired; here,
+    nothing is lost by honouring the press, because an abandoned run at the
+    approval stage is a user cancellation however it is reached.
+    """
+    domain = importlib.import_module('hardy.domain')
+    workflow, _, controller, _ = _scripted_controller(tmp_path)
+
+    asked = []
+
+    class PressingTerminal(Terminal):
+        def show_formalization(self, proposal, elaboration):
+            controller.cancel()
+
+        def choose_approval(self):
+            asked.append(True)
+            return 'approve'
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'),
+        PressingTerminal(),
+    )
+
+    assert asked == []
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION

@@ -1103,3 +1103,52 @@ def test_refused_calls_are_not_filed_under_what_the_model_never_saw():
     assert "save_lean" not in withheld
     refusals = page.split("<h2>Tool calls Hardy refused</h2>", 1)[1].split("<h2>", 1)[0]
     assert "save_lean" in refusals
+
+
+def test_an_approval_carries_the_goal_it_was_given_for():
+    """`/goal` overwrites a singleton.
+
+    The goal printed at the top of the page is the workspace's current one. An
+    axiom approved before the goal moved was not approved for that question,
+    and a page that showed only the new goal above the standing assumptions
+    credited the approval to something nobody was asked about.
+    """
+    page = build(
+        goal="Classify the Sylow subgroups",
+        assumptions=[
+            {
+                "formal_name": "chebotarev",
+                "lean_statement": "True",
+                "informal_statement": "Chebotarev density",
+                "source": "Neukirch VII.13.4",
+                "reason": "standard, out of scope here",
+                "latex_name": "chebotarev",
+                "status": "user-approved",
+                "approved_at": "2026-01-01T00:00:00+00:00",
+                "goal_at_approval": "Prove the density theorem for cyclotomic fields",
+            }
+        ],
+    )
+    assert "Goal at approval" in page
+    assert "Prove the density theorem for cyclotomic fields" in page
+
+
+def test_an_approval_without_a_recorded_goal_says_the_page_cannot_tell():
+    """Records written before the field lack it, and must not borrow the
+    heading's goal to fill the gap."""
+    page = build(
+        goal="Classify the Sylow subgroups",
+        assumptions=[
+            {
+                "formal_name": "old",
+                "lean_statement": "True",
+                "informal_statement": "an older approval",
+                "source": "somewhere",
+                "reason": "recorded before the field existed",
+                "latex_name": "old",
+                "status": "user-approved",
+            }
+        ],
+    )
+    assert "not recorded" in page
+    assert "may not be the one it was given for" in page

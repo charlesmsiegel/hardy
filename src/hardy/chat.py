@@ -4481,6 +4481,16 @@ class MathematicsSession:
             # record.
             record = {key: value for key, value in proposal.items() if key not in {"checked", "goal", "searched", "previous"}}
             record["status"] = "user-approved"
+            # Except the goal, kept under a name that says what it is. `goal`
+            # is a singleton that `/goal` overwrites, so an export rendered
+            # after the goal moved showed the NEW goal above an axiom approved
+            # for the old one -- an approval attributed to a question it was
+            # never asked about. Hardy sets `proposal["goal"]` from its own
+            # state rather than taking the model's word for it, so this is the
+            # workspace's goal at the moment the user said yes.
+            approved_goal = str(proposal.get("goal") or "").strip()
+            if approved_goal:
+                record["goal_at_approval"] = approved_goal
             # When a human said yes, in UTC. Additive, so `schema_version`
             # stays 2 for the reason `goal` gives: a record written before
             # this existed simply lacks the key, and every reader of it says

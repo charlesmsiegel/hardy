@@ -79,6 +79,23 @@ def test_an_assumption_carries_its_provenance_its_reason_and_its_approval():
     assert "user-approved on 2026-09-04T10:00:00+00:00" in text
 
 
+def test_an_assumption_names_the_goal_it_was_approved_under():
+    """`/goal` overwrites a singleton, so the goal at the top of the summary is
+    not necessarily the one an older approval was given for."""
+    text = assemble(
+        goal="Classify the Sylow subgroups",
+        assumptions=[
+            {
+                "formal_name": "big",
+                "lean_statement": "True",
+                "status": "user-approved",
+                "goal_at_approval": "Prove the density theorem",
+            }
+        ],
+    ).text()
+    assert "goal at approval: Prove the density theorem" in text
+
+
 def test_an_assumption_approved_before_dates_were_recorded_says_so():
     text = assemble(
         assumptions=[{"formal_name": "old", "lean_statement": "True", "status": "user-approved"}]

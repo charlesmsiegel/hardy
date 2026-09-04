@@ -417,6 +417,16 @@ class ProveWorkflow:
                 # model output, blaming the model for the interruption.
                 self._refuse_if_cancelled()
                 terminal.show_formalization(proposal, elaboration)
+                # And again after the display. Unlike the faithfulness verdict
+                # below, nothing here is lost by honouring a press that lands
+                # in this window and everything is lost by ignoring it: the
+                # selector would open on a run the user has already abandoned
+                # and ask them to answer a second time, having swallowed the
+                # first Esc. The check after `choose_approval` still classifies
+                # the answer, but it cannot un-ask the question. The revision
+                # `continue` below is covered by the same call: a press here
+                # must not buy another provider turn either.
+                self._refuse_if_cancelled()
                 if not elaboration.success:
                     store.append(
                         "formalization.rejected",

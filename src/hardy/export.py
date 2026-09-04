@@ -395,6 +395,17 @@ def _assumptions(records: Sequence[Mapping[str, Any]]) -> str:
                         f"{record.get('status', 'unknown')}"
                         + (f" on {approved}" if approved else " (date not recorded)"),
                     ),
+                    # The goal as it stood when the user said yes, which is not
+                    # necessarily the one printed at the top of this page:
+                    # `/goal` overwrites a singleton. Without this the approval
+                    # read as given for whatever question the workspace is
+                    # asking now.
+                    (
+                        "Goal at approval",
+                        str(record.get("goal_at_approval", "")).strip()
+                        or "not recorded — this approval predates the field, so the "
+                        "goal shown above may not be the one it was given for",
+                    ),
                 )
             )
             + "</div>"

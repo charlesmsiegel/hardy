@@ -257,8 +257,28 @@ def test_the_probe_note_is_not_written_into_the_durable_record(
 
     stored = session.state["assumptions"][0]
     assert "checked" not in stored
+    # `goal` itself stays out -- it is the request's copy of a singleton. What
+    # is kept is the answer to a different question, under a name that says
+    # which: see the test below.
     assert "goal" not in stored
     assert stored["status"] == "user-approved"
+
+
+def test_the_goal_the_user_was_asked_under_is_written_into_the_record(
+    session, approvals, fake_lean
+) -> None:
+    """`/goal` overwrites a singleton, so the workspace's current goal is not
+    evidence of what an older approval was given for. Without this the export
+    and `/status --full` showed the new goal above an axiom approved for the
+    old one, crediting the approval to a question nobody was asked."""
+    session.set_goal("Prove the density theorem")
+    session._tool("request_assumption", _request())
+
+    stored = session.state["assumptions"][0]
+    assert stored["goal_at_approval"] == "Prove the density theorem"
+
+    session.set_goal("Classify the Sylow subgroups")
+    assert session.state["assumptions"][0]["goal_at_approval"] == "Prove the density theorem"
 
 
 def test_a_lean_that_fails_without_readable_diagnostics_is_a_caveat(
