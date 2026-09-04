@@ -545,7 +545,12 @@ def test_a_credited_review_with_no_reader_result_is_refused(tmp_path) -> None:
 # -- the closer ladder, cross-checked against the events --------------------
 
 
-def _with_closers(tmp_path: Path, tactic: str = 'exact True.intro', name: str = 'ladder') -> Path:
+def _with_closers(
+    tmp_path: Path,
+    tactic: str = 'exact True.intro',
+    name: str = 'ladder',
+    tactics: tuple[str, ...] | None = None,
+) -> Path:
     models = importlib.import_module('hardy.models')
     lean_module = importlib.import_module('hardy.lean')
     runner = importlib.import_module('hardy.runner')
@@ -562,7 +567,7 @@ def _with_closers(tmp_path: Path, tactic: str = 'exact True.intro', name: str = 
         max_turns=3,
         wall_seconds=300.0,
         toolchain=IDENTITY,
-        closers=(tactic,),
+        closers=tactics if tactics is not None else (tactic,),
     )
     return output
 
@@ -950,3 +955,24 @@ def test_deleting_the_sketch_fields_does_not_buy_the_legacy_exception(tmp_path) 
     issues = acceptance.validate_batch_consistency(output)
 
     assert any('carries no sketch fields' in issue for issue in issues)
+
+
+def test_dropping_a_trailing_closer_attempt_is_refused(tmp_path) -> None:
+    """The forward checks bind each claimed attempt to a submission; they say
+    nothing about a submission no attempt claims. So a seven-tactic ladder
+    could be recertified as the cheaper three-tactic condition by deleting the
+    trailing attempts from the block and its duplicated event together, with
+    the elaborations the run actually paid for still sitting in the events."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path, tactics=('nonsense_tactic', 'other_nonsense'))
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    blocks = [trajectory['closers'], *[e for e in trajectory['events'] if e.get('type') == 'closers']]
+    assert len(blocks[0]['attempts']) == 2
+    for block in blocks:
+        block['tactics'] = block['tactics'][:1]
+        block['attempts'] = block['attempts'][:1]
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('proofs were submitted before the closers event' in issue for issue in issues)

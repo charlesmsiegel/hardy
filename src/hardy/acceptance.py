@@ -754,15 +754,34 @@ def _attempt_issues(attempts: list[Any], events: list[dict[str, Any]]) -> list[s
     """Each recorded closer attempt against the `submit_proof` it produced.
 
     The ladder submits `by <tactic>` for each tactic in turn and stops at the
-    first the run keeps, so the attempts are the opening run of submissions in
-    the trajectory -- matched by position, because that is the only thing an
-    editor cannot rewrite without also rewriting what Lean was asked.
+    first the run keeps, so the attempts are the submissions the runner made
+    before it wrote the `closers` event -- matched by position, because that is
+    the only thing an editor cannot rewrite without also rewriting what Lean
+    was asked.
+
+    Counted in both directions. Checking each claimed attempt against the
+    submission behind it leaves the converse open: trailing attempts could be
+    deleted from the block and from its duplicated event together, and the
+    submissions they made would sit in the trajectory unaccounted for -- a run
+    that tried seven tactics recertified as the cheaper three-tactic condition,
+    with the four elaborations it actually paid for still on the record. So the
+    ladder's share of the submissions is bounded by the `closers` event the
+    runner wrote after it, and a surplus is refused by count.
     """
+    boundary = next(
+        (index for index, event in enumerate(events) if event.get("type") == "closers"),
+        len(events),
+    )
     submissions = [
-        event for event in events
+        event for event in events[:boundary]
         if event.get("type") == "tool" and event.get("name") == "submit_proof"
     ]
     issues: list[str] = []
+    if len(submissions) > len(attempts):
+        issues.append(
+            f"{len(submissions)} proofs were submitted before the closers event, "
+            f"which records {len(attempts)} attempts"
+        )
     for index, attempt in enumerate(attempts):
         if index >= len(submissions):
             issues.append(f"closer attempt {index + 1} has no submit_proof behind it")

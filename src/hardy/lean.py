@@ -738,6 +738,13 @@ class LeanTools:
         Never a submission. The result says how many holes remain and where,
         and `submit_proof` still refuses every one of them; a sketch is an
         intermediate state and is graded as one.
+
+        The holes it names are the ones in the proof body it was handed, and
+        nothing here audits what the imports rest on: a skeleton whose every
+        local hole is closed can still stand on a lemma that is itself backed
+        by `sorryAx` or by an axiom nobody approved. Only the axiom report
+        `submit_proof` runs answers that, so this says what it scanned rather
+        than calling its list the only thing missing.
         """
         holes = self.holes(proof)
         result = self._run(self.source(proof))
@@ -761,8 +768,9 @@ class LeanTools:
             )
         if not holes:
             note = (
-                "the skeleton elaborates and has no hole left in it: this is a complete "
-                "candidate, so call submit_proof to have it checked and audited."
+                "the skeleton elaborates and has no hole left in its own proof body: this "
+                "is a complete candidate, so call submit_proof to have it checked and "
+                "audited. Nothing here has audited what it rests on."
             )
         else:
             # Numbered against the proof body the caller sent, not against the
@@ -771,9 +779,11 @@ class LeanTools:
             # unchanged declaration would point at the wrong line of it.
             where = ", ".join(f"{item.keyword} at line {item.line} of the proof body" for item in holes)
             note = (
-                f"the skeleton elaborates and {len(holes)} hole(s) are the only thing missing "
+                f"the skeleton elaborates and {len(holes)} hole(s) remain in its proof body "
                 f"({where}). This is not a proof and is not verified; keep the skeleton and "
-                "close the holes one at a time, then call submit_proof."
+                "close the holes one at a time, then call submit_proof. Those holes are what "
+                "was scanned here, not everything left to establish: only the axiom report "
+                "submit_proof runs can say whether what this imports is itself holed."
             )
         return LeanToolResult(
             True,

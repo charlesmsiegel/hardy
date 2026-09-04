@@ -31,9 +31,11 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 from .models import ToolResult, TurnEvent
+
+T = TypeVar("T")
 
 #: Stop reasons that mean the model finished saying what it had to say. None
 #: is here because a provider that states nothing has told Hardy nothing to
@@ -284,7 +286,7 @@ class AgentLoop:
             if budget.exhausted():
                 self._observe({"type": "turn_limit", "turns": budget.spent, "max_turns": self.max_turns})
                 raise TurnLimitReached(f"the exchange reached its {self.max_turns}-turn bound")
-            declined = self._before_turn(self.messages) if self._before_turn is not None else None
+            declined = self._hook(lambda: self._before_turn(self.messages)) if self._before_turn is not None else None
             if declined is not None:
                 # Hardy declining to spend a turn is a fact about the run, not
                 # an absence of one, so it is recorded and said out loud.
@@ -298,7 +300,7 @@ class AgentLoop:
                 self.messages.append(Message("user", text=declined))
                 return
             if self._compact is not None:
-                compacted = self._compact(self.messages)
+                compacted = self._hook(lambda: self._compact(self.messages))
                 if compacted is not None:
                     self.messages = compacted
             # Again, because the two hooks above are where a caller spends real
@@ -361,6 +363,24 @@ class AgentLoop:
                 yield from self._settle(turn)
                 return
             yield from self._call_tools(turn.tool_calls, budget)
+
+    def _hook(self, run: Callable[[], T]) -> T:
+        """Run one of the caller's hooks, recording a failure of it as a failure.
+
+        `before_turn` and `compact` are where Hardy does its own work before
+        spending a turn -- a closer ladder elaborates Lean, a summary rescans
+        the workspace and reads the transcript back -- so both can raise for
+        the same ordinary reasons a provider call can. Recorded for the same
+        reason a provider error is, too: `_report` runs from a `finally`, and
+        an exchange that died in a hook would otherwise emit `is_error: false`
+        beside `turns: 0` and read as a turn nobody needed to spend rather
+        than as one that failed before it could be.
+        """
+        try:
+            return run()
+        except BaseException as error:  # noqa: BLE001 - re-raised, recorded on the way past
+            self._failure = f"{type(error).__name__}: {error}"
+            raise
 
     def _deadline(self, budget: Budget) -> None:
         """Stop if the wall clock has run out. Asked at every point that blocks.
