@@ -716,7 +716,7 @@ terminal on both ends asks which to open rather than silently creating a third.
 | --- | --- | --- |
 | `--root PATH` | `$HARDY_ROOT`, else `root` in the config file, else the current directory | The directory holding one or more problems. |
 | `--project SLUG` | `$HARDY_PROJECT`, else `project` in `<root>/.hardy/config.toml` or the settings file, else the sole recorded problem where the root holds exactly one, else `main` | Which problem to open. `main` is the answer for an empty root, or for an ambiguity a launch off a TTY cannot ask about. |
-| `--register-lakefile` | ask, where a host `lakefile.toml` exists *and* both streams are a TTY | Add this problem's `lean/` to the host `lakefile.toml` as a `lean_lib`. Off a TTY there is no question and no registration — a piped or `--plain` launch needs this flag to register at all. |
+| `--register-lakefile` | ask, where a host `lakefile.toml` exists *and* both streams are a TTY | Add this problem's `lean/` to the host `lakefile.toml` as a `lean_lib`. Off a TTY there is no question and no registration, so a piped launch needs this flag to register at all. `--plain` alone does not suppress it: the offer is decided by the streams, before that flag chooses the line-based session, so `hardy --plain chat` in a terminal still asks. |
 | `--no-register-lakefile` | — | Never touch the host `lakefile.toml`. Hardy's own resolution does not depend on registration. |
 
 ### `hardy doctor`
