@@ -93,6 +93,21 @@ HAND_WRITTEN = re.compile(
 #: lexical analysis. A mathematical document has no use for these, and one
 #: that does is doing something Hardy cannot vouch for.
 CONSTRUCTED = re.compile(r"\\(?:csname|expandafter|@namedef|@nameuse|noexpand)\b")
+#: Changing what a character MEANS to the tokeniser, which is the same problem
+#: from underneath: `\catcode64=0` makes `@` an escape character, and
+#: `@bibitem{known}` is then a `\bibitem` that no pattern over backslashes can
+#: see. Refused for the reason `CONSTRUCTED` is -- every rule here is about
+#: what a reader of the source can see, and a document that redefines the
+#: alphabet has put its commands beyond both a reader and this scan.
+#:
+#: `\catcode` alone. `\makeatletter` moves `@` to category 11, a LETTER, which
+#: makes `\foo@bar` spellable and creates no new escape character; it is
+#: ordinary in real LaTeX and refusing it would refuse working documents.
+#: `(?![a-zA-Z])` and not `\b`, for the reason `_MACRO_DEF` spells out: TeX
+#: ends a control sequence at the first non-letter, and `\catcode64=0` puts a
+#: DIGIT there -- which is a word character, so `\b` finds no boundary and the
+#: pattern matched nothing at all.
+RECATEGORISED = re.compile(r"\\catcode(?![a-zA-Z])")
 
 #: Words that say nothing about which paper this is.
 STOPWORDS = frozenset(
@@ -121,6 +136,13 @@ class Entry(FrozenModel):
     paper library can still say which bytes this citation was made against.
     """
 
+    #: The `\cite` a document writes and the `\bibitem` the generated file
+    #: defines, which have to be the same string to LaTeX as well as to
+    #: Python. `cite_key` mints one from `SAFE_KEY` and caps its stem, and a
+    #: persisted key that does not look like one is a store this code did not
+    #: write: `a,b` is ONE `\bibitem` and TWO keys inside `\cite{a,b}`, so
+    #: every citation of it is refused as unresolved, and a brace or a
+    #: backslash breaks the entry that defines it or runs as a command.
     key: str
     #: Every name this entry answers to: `arxiv:2401.12345v2`, `doi:10.…`.
     #: The first is the one it was created under.
@@ -164,6 +186,25 @@ class Entry(FrozenModel):
                 f"content_sha256 must be a sha256 digest; got {value[:80]!r}. "
                 "An entry with no digest names no bytes, and a clone carrying "
                 "this file cannot check the citation it makes."
+            )
+        return value
+
+    @field_validator("key")
+    @classmethod
+    def _citable(cls, value: str) -> str:
+        r"""A key LaTeX reads the way this store means it.
+
+        The same alphabet and cap `cite_key` mints under, checked on the way
+        in rather than assumed: what is generated here is not the only thing
+        that ends up here, since a clone or a merge can carry an entry this
+        code never wrote.
+        """
+        limit = STEM_CHARACTERS + 11
+        if not value or SAFE_KEY.search(value) or len(value) > limit:
+            raise ValueError(
+                f"key must be at most {limit} characters of {SAFE_KEY.pattern} and "
+                f"cannot be empty; got {value[:80]!r}. A key LaTeX reads differently "
+                "from this store is a citation that can never resolve."
             )
         return value
 
@@ -719,6 +760,15 @@ def hand_written_bibliography(path: str, source: str) -> str:
             "assembled at run time is a command no reader of the source can see, and "
             "every reference rule here is about what a reader ends up looking at. Write "
             "the mathematics directly."
+        )
+    recategorised = RECATEGORISED.search(executed)
+    if recategorised:
+        return (
+            f"this writeup changes what a character means to the tokeniser "
+            f"({recategorised.group(0)}), which Hardy will not accept in a document it "
+            "has to vouch for: `\\catcode64=0` makes `@bibitem{key}` a `\\bibitem`, and "
+            "a command spelled without a backslash is one no reader of the source sees. "
+            "Write the mathematics directly."
         )
     found = HAND_WRITTEN.search(executed)
     if found:

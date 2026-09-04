@@ -574,3 +574,23 @@ def test_a_long_identity_sheds_down_to_the_paper_id(tmp_path: Path):
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 48
     assert json.loads(result.output)["paper_id"] == "math.DG/0211159v1"
+
+
+def test_an_empty_search_fits_the_smallest_budget(tmp_path: Path):
+    """The sentence is not the answer; the empty list is.
+
+    Every rung of the empty-search ladder carried the note in words, so the
+    smallest was still 49 bytes and the last one was returned unmeasured. What
+    a caller must not lose is that the search RAN and found nothing, which an
+    empty list says on its own.
+    """
+    empty = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<feed xmlns="http://www.w3.org/2005/Atom" '
+        b'xmlns:arxiv="http://arxiv.org/schemas/atom"></feed>'
+    )
+    runtime = _runtime(tmp_path, empty, observation_bytes=48)
+    result = runtime.call("search_papers", {"query": "ricci flow"})
+    assert result.ok, result.output
+    assert len(result.output.encode("utf-8")) <= 48
+    assert json.loads(result.output)["results"] == []

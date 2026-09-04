@@ -698,3 +698,42 @@ def test_a_neighbouring_save_during_the_compile_leaves_the_writeup_stale(session
     assert session.state["tex_signature"] == stale, (
         "a signature was stamped for a tree the compiler never read"
     )
+
+
+def test_a_save_landing_during_the_signature_hash_does_not_get_stamped(session) -> None:
+    """The comparison has to survive the hash it is about.
+
+    Comparing before `_stamp_writeup` closes the window up to the compile and
+    not the one across the signature hash, which reads every file again. A
+    neighbour landing in there -- including one overwriting the candidate this
+    save just committed -- left the stamp describing their source rather than
+    the compiled document.
+    """
+    tex = session.workspace / "tex"
+    tex.mkdir(parents=True, exist_ok=True)
+    (tex / "writeup.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    session._stamp_writeup()
+    stale = session.state["tex_signature"]
+    original = session._tex_signature
+
+    def _meddled(*args, **kwargs):
+        signature = original(*args, **kwargs)
+        # A neighbour overwrites the candidate while this signature is taken.
+        (tex / "writeup.tex").write_text("Theirs, not ours.\n", encoding="utf-8")
+        return signature
+
+    session._tex_signature = _meddled
+    result = session._tool(
+        "save_latex",
+        {
+            "path": "writeup.tex",
+            "source": "\\documentclass{article}\n\\begin{document}\nMore.\n\\end{document}\n",
+        },
+    )
+    assert result.ok, result.output
+    assert session.state["tex_signature"] == stale, (
+        "a signature was stamped for a tree that moved while it was being hashed"
+    )
