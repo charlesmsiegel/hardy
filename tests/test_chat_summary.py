@@ -94,3 +94,42 @@ def test_a_verdict_the_session_has_expired_is_handed_out_as_expired(tmp_path: Pa
     assert all(
         record.get("stale") for record in chat.export_material()["audit"].values()
     )
+
+
+def test_the_summary_and_the_export_gather_under_the_session_gate(tmp_path: Path):
+    """`/status --full` is safe in flight, so a `save_lean` on another thread
+    can land between two of the reads. The pair that must not straddle one is
+    the audit and the sources: an old verdict beside a new statement says
+    "kernel-verified" about content Lean never saw."""
+    chat = built(tmp_path)
+    held: list[str] = []
+
+    class Watched:
+        """Stands in for the gate, recording that it was held throughout."""
+
+        def __init__(self):
+            self.depth = 0
+
+        def __enter__(self):
+            self.depth += 1
+            held.append("enter")
+            return self
+
+        def __exit__(self, *exception):
+            held.append("exit")
+            self.depth -= 1
+            return False
+
+    watched = Watched()
+    chat._gate = watched
+    # Read inside the gathering, so a witness can say the gate was open then.
+    original = chat._theorem_statements
+
+    def watching():
+        assert watched.depth == 1, "the sources were read outside the gate"
+        return original()
+
+    chat._theorem_statements = watching
+    chat.summary()
+    chat.export_material()
+    assert held == ["enter", "exit", "enter", "exit"]

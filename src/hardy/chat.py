@@ -2995,9 +2995,21 @@ class MathematicsSession:
         put them back in a prompt; `/status` prints them separately, to the
         human.
         """
-        # Copied rather than passed by reference: `/status --full` is safe in
-        # flight, so a tool call on another thread can be appending to these
-        # very lists while this iterates them.
+        # Under the gate, and that is the whole of what makes the answer sound.
+        # `/status --full` is safe in flight, so a `save_lean` on another thread
+        # can commit between two of the reads below -- and the pair that must
+        # not straddle one is the audit and the sources. A verdict validated
+        # against the old signatures, paired with the statement the save has
+        # just written, says "kernel-verified" about content Lean never saw.
+        # The gate is the session's own consistency boundary: every tool call
+        # that writes holds it, so taking it here is what "one snapshot" means.
+        # It also removes the weaker reason the copies below existed -- a list
+        # being appended to while it is iterated.
+        with self._gate:
+            return self._summary()
+
+    def _summary(self) -> summary_module.Summary:
+        """`summary`'s body, with the gate already held."""
         return summary_module.assemble(
             goal=self.goal(),
             assumptions=list(self.state["assumptions"]),
@@ -3025,6 +3037,14 @@ class MathematicsSession:
         what a result cost and which model produced it are exactly what a
         collaborator weighing it wants, and the export is written for them.
         """
+        # Under the gate, for `summary`'s reason: the audit and the sources it
+        # grades must come from one moment, or the page pairs an old verdict
+        # with a new statement.
+        with self._gate:
+            return self._export_material()
+
+    def _export_material(self) -> dict[str, Any]:
+        """`export_material`'s body, with the gate already held."""
         document = self.workspace / "writeup.pdf"
         return {
             "project": self.workspace.name,

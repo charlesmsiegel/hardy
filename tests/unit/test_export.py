@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from hardy import export
 
 
@@ -299,3 +301,51 @@ def test_an_open_theorem_still_names_the_axiom_it_also_rests_on():
     )
     assert 'class="badge open"' in shown
     assert "not in Mathlib" in shown
+
+
+def test_an_interrupted_fragment_is_not_rendered_as_a_completed_answer():
+    """The runtime records what the user watched arrive as `partial`; an export
+    that dropped the flag would show a cut-off sentence as a finished reply."""
+    page = build(
+        transcript=[
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": "The proof goes by indu"},
+                "partial": True,
+            },
+            {"type": "turn", "status": "cancelled", "reason": "user_pressed_escape"},
+        ]
+    )
+    assert "interrupted, not a completed answer" in page
+    assert "This turn was cancelled (user_pressed_escape)" in page
+
+
+def test_a_wall_clock_limit_is_shown_rather_than_dropped():
+    page = build(transcript=[{"type": "wall_clock_limit", "seconds": 600}])
+    assert "wall-clock limit fired after 600s" in page
+
+
+def test_a_completed_reply_carries_no_interruption_note():
+    page = build(
+        transcript=[{"type": "assistant", "message": {"role": "assistant", "content": "Done."}}]
+    )
+    assert "interrupted" not in page
+
+
+def test_a_symlinked_destination_is_refused_rather_than_followed(tmp_path):
+    """`report.html -> ~/.bashrc` in a checkout would otherwise overwrite the
+    host file on an `/export report.html` that looks entirely local."""
+    victim = tmp_path / "victim"
+    victim.write_text("do not overwrite me", encoding="utf-8")
+    link = tmp_path / "report.html"
+    link.symlink_to(victim)
+    with pytest.raises(ValueError, match="symlink"):
+        export.write(material(), link)
+    assert victim.read_text(encoding="utf-8") == "do not overwrite me"
+
+
+def test_an_ordinary_destination_is_still_written_and_overwritten(tmp_path):
+    target = tmp_path / "out.html"
+    target.write_text("stale", encoding="utf-8")
+    export.write(material(), target)
+    assert target.read_text(encoding="utf-8").startswith("<!doctype html>")

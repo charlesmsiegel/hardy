@@ -167,7 +167,15 @@ class ProveWorkflow:
     def run(self, request: ProveRequest, terminal: Terminal) -> RunManifest:
         self._runtime_in_flight = None
         self._thread_in_flight = None
-        self._cancelled.clear()
+        # Deliberately NOT cleared here. `build_prove_workflow` makes a fresh
+        # workflow per run, so there is nothing stale to clear -- and clearing
+        # would throw away the one case the whole handle exists for. `/prove`
+        # publishes the workflow the moment it is built, which is *before* this
+        # call: building it identifies the Lean environment, which takes long
+        # enough to be a very likely moment to press Esc. A `cancel()` landing
+        # in that window found no runtime yet and left only the flag, and a
+        # clear here would then wipe it and start the provider run the terminal
+        # had already abandoned -- exactly the billing this plumbing prevents.
         try:
             return self._run(request, terminal)
         finally:
@@ -249,6 +257,12 @@ class ProveWorkflow:
         terminal_reason: TerminalReason | None = None
         grades = Grades()
         try:
+            # Before anything is asked of the user or the provider: a run
+            # cancelled between being built and being started must not open a
+            # thread. Inside the `try`, and after the store exists, so it takes
+            # the ordinary cancellation path and leaves a run directory saying
+            # what happened rather than vanishing.
+            self._refuse_if_cancelled()
             wait_started = self._monotonic()
             acknowledged = terminal.acknowledge_unsafe_execution()
             user_wait += self._monotonic() - wait_started

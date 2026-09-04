@@ -322,7 +322,10 @@ interactive surface's own live run is still to come.
   identities (issue #105). It does not flatten Hardy's distinctions: a
   kernel-verified theorem, a theorem checked given an approved axiom, and a
   sentence from the conversation are rendered as three visibly different things,
-  and the conversation is labelled as evidence for nothing. An axiom is
+  and the conversation is labelled as evidence for nothing — with an
+  interrupted reply labelled as a fragment rather than shown as a finished
+  answer, and a cancelled, abandoned or wall-clock-stopped turn saying where it
+  ended. An axiom is
   attributed to the declarations whose own axiom report names it rather than to
   every declaration in its module, and a verdict whose toolchain, source or
   dependencies have moved reads as no longer established rather than as a
