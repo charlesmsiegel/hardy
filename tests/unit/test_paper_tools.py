@@ -453,3 +453,17 @@ def test_an_empty_search_answer_is_measured_like_every_other(tmp_path: Path):
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 128
     assert "matched nothing" in result.output
+
+
+def test_a_citation_answer_is_measured_and_never_loses_its_key(tmp_path: Path):
+    """The citation is already made, so there is nothing to refuse.
+
+    What is shed is the advice and then the counts -- never the key, because
+    a caller that does not get it cannot cite the paper it just recorded.
+    """
+    runtime = _runtime(tmp_path, observation_bytes=96)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("cite_paper", {"paper_id": "math.DG/0211159v1"})
+    assert result.ok, result.output
+    assert len(result.output.encode("utf-8")) <= 96
+    assert json.loads(result.output)["cite_key"]

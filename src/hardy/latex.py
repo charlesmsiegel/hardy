@@ -301,7 +301,16 @@ def _executed_line(line: str) -> tuple[str, str | None, str]:
             opener = VERBATIM_ENVIRONMENT.match(line, index)
             if opener is not None:
                 return "".join(kept), opener.group("env"), line[opener.end() :]
-            kept.append(line[index : index + 2])
+            # An escaped backslash is dropped rather than carried through.
+            # `\\` is TeX's line break and means nothing to any of the
+            # patterns run over this text -- but leaving the pair intact left
+            # a backslash that those patterns matched from: `\\begin{verbatim}`
+            # opened a region TeX never opens, and `\\input{appendix}` made a
+            # fragment look part of the document when TeX reads it as a line
+            # break followed by the word "input". Removing it here fixes the
+            # class rather than each pattern in turn, which is what the last
+            # two rounds of this kept failing to do.
+            kept.append(" " if line[index : index + 2] == "\\\\" else line[index : index + 2])
             index += 2
             continue
         if character == "%":
@@ -426,6 +435,21 @@ def reached_fragments(sources: Mapping[str, str]) -> set[str]:
                 reached.add(target)
                 frontier.append(target)
     return reached
+
+
+def _tail(text: str, limit: int) -> str:
+    """The last `limit` ENCODED BYTES of `text`, cut at a character boundary.
+
+    Slicing by character counted the wrong unit against a byte budget: a
+    report naming many multibyte labels came back several times the limit it
+    was cut to, which is the same mismatch the record wrapping had.
+    """
+    if limit <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    return encoded[-limit:].decode("utf-8", errors="ignore")
 
 
 def _reached(work: Path) -> set[str]:
@@ -749,7 +773,7 @@ class LatexTools:
             # unresolved labels is Hardy's own verdict rather than TeX's
             # chatter; the exit status is held out of the cut because it is
             # one line and it is the first thing a reader looks for.
-            return ToolResult(resolved, head + body[-max(0, self.output_limit - len(head)) :], source)
+            return ToolResult(resolved, head + _tail(body, self.output_limit - len(head)), source)
 
     def _cited(self, work: Path, vouched: Callable[[tuple[str, ...]], str]) -> str:
         r"""Hand every key the compile touched to `vouched`, and report its answer.
