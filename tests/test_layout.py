@@ -745,7 +745,12 @@ GUARD_BINDINGS = frozenset({
 #: `writeup.pdf -> ~/.bashrc` had `%PDF-` written into the user's shell
 #: profile. `unlink` is here because deleting follows every directory on the
 #: way to the file even though it never follows the file itself.
-WATCHED_METHODS = frozenset({"open", "write_text", "write_bytes", "touch", "unlink"})
+#: `write_from` is here from the day it existed: it is `write_bytes` for a
+#: file too big to hold, so a call to it outside a guard escapes exactly what
+#: a call to `write_bytes` outside one does.
+WATCHED_METHODS = frozenset(
+    {"open", "write_text", "write_bytes", "write_from", "touch", "unlink"}
+)
 WATCHED_BUILTINS = frozenset({"open"})
 #: Watched only on the module they belong to, since `replace` and `open` are
 #: also ordinary string and file methods.
@@ -1118,3 +1123,39 @@ def test_the_marker_is_written_before_any_child_tree(tmp_path, monkeypatch):
     # The first call makes the problem directory itself; every one after it
     # makes a child, and the marker must already be there by then.
     assert seen[1:] and all(seen[1:])
+
+
+def test_a_file_is_published_without_being_held_in_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`write_from` is `write_bytes` for a file too big to hold.
+
+    `writeup.pdf` is the one compiler output nothing bounds -- a long document
+    with embedded figures is legitimately enormous -- and reading it whole to
+    hand it to `write_bytes` made a SUCCESSFUL compile able to end the session
+    instead of returning a result. Streamed rather than bounded, because the
+    PDF is copied rather than read: a limit would only refuse a document the
+    compiler really made.
+    """
+    source = tmp_path / "big.pdf"
+    payload = b"%PDF-" + bytes(range(256)) * 4096
+    source.write_bytes(payload)
+
+    def _refuse(self: Path) -> bytes:
+        raise AssertionError(f"{self} was read whole")
+
+    # Pinned rather than assumed: a copy that reads the file into one object
+    # first passes every assertion below and keeps the bug.
+    monkeypatch.setattr(Path, "read_bytes", _refuse)
+    destination = tmp_path / "out"
+    guard = layout.WriteGuard(destination, create=True)
+    guard.write_from("writeup.pdf", source)
+    monkeypatch.undo()
+    assert (destination / "writeup.pdf").read_bytes() == payload
+    # And it lands whole or not at all, like every other guarded write: the
+    # temporary is renamed over the target rather than truncating it.
+    guard.write_from("writeup.pdf", source)
+    assert (destination / "writeup.pdf").read_bytes() == payload
+    assert not [child for child in destination.iterdir() if child.name != "writeup.pdf"], (
+        "a temporary was left behind"
+    )

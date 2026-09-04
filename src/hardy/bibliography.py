@@ -176,6 +176,31 @@ class Entry(FrozenModel):
                 raise ValueError(f"also_read must hold sha256 digests; got {digest[:80]!r}")
         return value
 
+    @field_validator("title", "identities", "authors")
+    @classmethod
+    def _present(cls, value: str | tuple[str, ...], info: object) -> str | tuple[str, ...]:
+        """What a `\bibitem` needs to be an entry rather than a blank line.
+
+        A digest that is well formed says the entry names some bytes; it says
+        nothing about the entry being readable. An `Entry` with `title=""`,
+        `authors=()` and `identities=()` was schema-valid, so a cloned or
+        merged store carrying one had `regenerate` publish an empty
+        `\bibitem` and `_vouched_references` accept its key as a paper Hardy
+        had recorded -- a citation in front of a reader that says nothing at
+        all, from a store that reported itself sound.
+
+        Required here because it is required at admission: `_entry` refuses
+        an arXiv response with no title, summary or authors, so no entry this
+        code writes can lack them, and one that does was not written by it.
+        """
+        if not value:
+            name = getattr(info, "field_name", "field")
+            raise ValueError(
+                f"{name} must not be empty: an entry with none is a `\\bibitem` "
+                "with nothing in it, and a key vouched for a paper nobody can read"
+            )
+        return value
+
     def rendered(self) -> str:
         r"""The `\bibitem` a reader sees.
 

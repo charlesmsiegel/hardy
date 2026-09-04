@@ -5400,10 +5400,25 @@ class MathematicsSession:
         is, and the next compile settles it. Erring the other way would mark a
         PDF current against a bibliography it was not built from.
         """
+        # Hashed FIRST, then checked. The comparison used to come before the
+        # hash, which leaves the same window one step along: a `cite_paper`
+        # landing between them has `_tex_signature` read the new
+        # `references.tex` and the new store, so the stamp describes a tree
+        # the PDF was not built from -- and vouching does not catch it,
+        # because the old compile's keys are a subset of the new store's.
+        #
+        # This way round the check is about the value being persisted rather
+        # than about a value read before it. The signature covers the
+        # bibliography identity itself (that is what made it a signature of
+        # the whole compile), so a store that moved during the hash produces
+        # one that no longer matches `compiled_against` and nothing is
+        # stamped at all.
+        signature = self._tex_signature()
+        open_now = sorted(self._open_theorems())
         if compiled_against is not None and self._bibliography_identity() != compiled_against:
             return
-        self.state["tex_signature"] = self._tex_signature()
-        self.state["tex_open"] = sorted(self._open_theorems())
+        self.state["tex_signature"] = signature
+        self.state["tex_open"] = open_now
         # And what the compile actually produced. A signature says only that
         # Hardy compiled *something* here once; a user who then drops another
         # `writeup.pdf` over it leaves the signature truthy and the bytes

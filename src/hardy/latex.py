@@ -434,12 +434,31 @@ class _MacroState:
                     self.phase = "args"
             return
         if self.phase == "args":
-            # Brackets and `\def`'s parameter text are skipped rather than
-            # parsed: the body is the next brace group whatever stands in
-            # front of it.
+            # A bracket group is TRACKED, not skipped past. `\newcommand`'s
+            # optional default is a legal place for a brace group --
+            # `\newcommand{\x}[1][{default}]{...}` -- and taking the first
+            # `{` anywhere as the body opener made `{default}` the body: it
+            # closed, the count reached zero, and the real body was live text
+            # with a dormant `\begin{verbatim}` in it read as an opener.
+            # `_macro_bodies` walks the brackets for the same reason; this is
+            # the streaming form of the same rule.
+            if character == "[":
+                self.phase = "bracket"
+                self.depth = 1
+                return
+            # `\def`'s parameter text is still skipped rather than parsed:
+            # it carries no braces, so the next brace group is the body.
             if character == "{":
                 self.phase = "body"
                 self.depth = 1
+            return
+        if self.phase == "bracket":
+            if character == "[":
+                self.depth += 1
+            elif character == "]":
+                self.depth -= 1
+                if self.depth == 0:
+                    self.phase = "args"
             return
         if self.phase == "body":
             if character == "{":
@@ -487,13 +506,23 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str,
     while index < len(line):
         character = line[index]
         if character == "\\":
-            if state.swallowed():
+            if state.letting > 0:
                 # A token `\let` is consuming, not one the document runs.
                 # `\let\x=\begin{verbatim}` hands `\begin` over without
                 # executing it, so honouring it as an opener put every line
                 # after into a region TeX never entered.
-                kept.append(" ")
-                index = _skip_command(line, index)
+                #
+                # Only the MEANING is erased. The first operand is the name
+                # being redefined, and it is still a command this file's
+                # readers need to see: erasing both took `\let\bibitem
+                # \wrapper` out of the source-level check entirely, which is
+                # a document rewriting `\bibitem` and saying so in as many
+                # words. It is kept, and not matched against as an opener --
+                # what it means is being assigned here, not run.
+                after = _skip_command(line, index)
+                kept.append(line[index:after] if state.letting == 2 else " ")
+                state.swallowed()
+                index = after
                 continue
             found = INLINE_VERBATIM.match(line, index)
             if found is not None:
@@ -855,7 +884,17 @@ def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> None:
     instead of truncating it in place.
     """
     guard = WriteGuard(output_dir, create=True)
-    guard.write_bytes("writeup.pdf", (work / "writeup.pdf").read_bytes())
+    # Streamed rather than read whole. A long document with embedded figures
+    # makes a legitimately enormous PDF, and nothing bounds it: the subprocess
+    # guard bounds the terminal, `MAX_LOG_BYTES` the log and `MAX_AUX_BYTES`
+    # the auxiliary files, and this was the one output left that a successful
+    # compile could use to end the session instead of returning a result.
+    #
+    # Streamed and not bounded, unlike the `.aux`: half an auxiliary file is a
+    # wrong answer about what was cited, while the PDF is copied rather than
+    # read, so a limit here would only refuse a document the compiler really
+    # made.
+    guard.write_from("writeup.pdf", work / "writeup.pdf")
     # The compiler's own record of the labels it created. What a caller needs
     # to know is which labels LaTeX *made*, not which ones appear in the text
     # -- a `\label` inside `\verb` or a discarded branch is written down but
@@ -863,7 +902,11 @@ def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> None:
     aux = work / "writeup.aux"
     if aux_dir is not None:
         if aux.exists():
-            WriteGuard(aux_dir, create=True).write_bytes("writeup.aux", aux.read_bytes())
+            # Streamed too. `_cited` refuses an auxiliary file past
+            # `MAX_AUX_BYTES` before publication is reached -- but only when a
+            # caller passed `vouched`, and the callers that do not would
+            # otherwise reach this line with whatever the compiler wrote.
+            WriteGuard(aux_dir, create=True).write_from("writeup.aux", aux)
         else:
             # This compile made no auxiliary file -- `\nofiles` suppresses it,
             # and a PDF is still produced -- so there is nothing to publish

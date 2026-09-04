@@ -816,3 +816,62 @@ def test_a_real_verbatim_block_after_a_let_still_opens():
         "\\let\\x=\\relax\n"
         "\\begin{verbatim}\n\\bibitem{ghost2020} Printed, not run.\n\\end{verbatim}\n",
     )
+
+
+def test_a_let_that_redefines_bibitem_is_still_visible():
+    r"""Only the meaning `\let` copies is dormant; the name is not.
+
+    `\let\bibitem\wrapper` is a document rewriting `\bibitem` and saying so in
+    as many words. Erasing both operands took that out of the source-level
+    check entirely -- a wrapper can then emit the auxiliary record through the
+    saved original while replacing the entry a reader sees, and the key the
+    compiler writes is one that was vouched for.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "\\let\\originalbibitem\\bibitem\n"
+        "\\def\\wrapper#1{Fabricated.}\n"
+        "\\let\\bibitem\\wrapper\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal
+
+
+def test_a_bracketed_default_is_not_the_macro_body():
+    r"""`\newcommand{\x}[1][{default}]{...}` has a brace group in its OPTIONAL
+    argument, and the body is the one after it.
+
+    Taking the first `{` anywhere as the body opener made `{default}` the
+    body: it closed, the count reached zero, and the real body became live
+    text -- so a dormant `\begin{verbatim}` in it was honoured and hid a real
+    `thebibliography` until a commented closer.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "\\newcommand{\\x}[1][{default}]{\\begin{verbatim}}\n"
+        "\\begin{thebibliography}{1}\n\\bibitem{known2020} Fake.\n"
+        "\\end{thebibliography}\n% \\end{verbatim}\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal
+
+
+def test_an_entry_with_nothing_in_it_is_not_a_citation():
+    r"""A digest says the entry names some bytes, not that it is readable.
+
+    `title=""`, `authors=()` and `identities=()` with a well-formed digest was
+    schema-valid, so a cloned store carrying one had `regenerate` publish a
+    blank `\bibitem` and `_vouched_references` accept its key as a paper Hardy
+    had recorded. Required here because it is required at admission.
+    """
+    whole = {
+        "key": "nobody2020-0123456789",
+        "identities": ("arxiv:2401.00001v1",),
+        "title": "A paper",
+        "authors": ("Nobody",),
+        "content_sha256": "a" * 64,
+    }
+    assert Entry(**whole).title == "A paper"
+    for field, empty in (("title", ""), ("authors", ()), ("identities", ())):
+        with pytest.raises(ValidationError):
+            Entry(**{**whole, field: empty})

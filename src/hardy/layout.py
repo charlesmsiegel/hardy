@@ -18,6 +18,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -735,6 +736,42 @@ class WriteGuard:
             with tempfile.NamedTemporaryFile(dir=self.directory, delete=False) as handle:
                 temporary = handle.name
                 handle.write(content)
+                if sync:
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            os.replace(temporary, target)
+            temporary = None
+        finally:
+            if temporary is not None:
+                Path(temporary).unlink(missing_ok=True)
+
+    def write_from(self, name: str, source: Path, *, sync: bool = True) -> None:
+        """Replace `name` with the contents of `source`, whole or not at all.
+
+        `write_bytes` for a file too big to hold. `writeup.pdf` is the one
+        output nothing bounds -- a long document with embedded figures is
+        legitimately enormous, and reading it whole to hand it to
+        `write_bytes` made a successful compile able to end the session
+        instead of returning a result. There is nothing to parse here and no
+        reason to have it all at once.
+
+        Bounded rather than streamed was the alternative and it is the wrong
+        one for this file: an oversized `.aux` is refused because half of it
+        is a wrong answer about what was cited, while a PDF is copied rather
+        than read, so a size limit would only refuse a document the compiler
+        really made.
+
+        The same temporary-and-rename as `write_bytes`, for the same reasons:
+        `NamedTemporaryFile` cannot be a name a repository shipped, and the
+        rename means a reader never sees half a document.
+        """
+        target = self.reserve(name)
+        temporary: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=self.directory, delete=False) as handle:
+                temporary = handle.name
+                with source.open("rb") as reading:
+                    shutil.copyfileobj(reading, handle)
                 if sync:
                     handle.flush()
                     os.fsync(handle.fileno())
