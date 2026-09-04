@@ -159,11 +159,18 @@ provider calls itself, measures its own wall clock, holds the conversation as a
 list rather than as a provider thread, and is asked before every provider call
 whether to make one at all — which is what makes the cheap Lean closers
 possible, since declining a turn is a decision only something inside the loop
-can take. Owning the loop is also what lets the wall clock reach *inside* a
-request rather than only between them: the remaining seconds are handed to the
-transport as its own timeout and the deadline is re-checked afterwards, so a
-reply that overran the budget ends the run as a timeout rather than as one that
-finished. The closers spend that same clock; the model is handed what they left. What
+can take. Owning the loop is also what lets the wall clock reach every place the loop can
+block, rather than only the gap between exchanges. There are four such places
+and they were found one at a time, which is the honest way to record it:
+between exchanges; before a provider call, because the hooks that run there —
+a cheap-closer ladder above all — spend real seconds; after one, because the
+request itself blocks and a reply that overran the budget must end the run as a
+timeout rather than as one that finished; and before each tool call of a batch,
+because one response can ask for several Lean checks and each can run to its
+own process timeout. A bound binds only where it is checked. The fifth place is
+not checkable and is stated instead: a tool call already running is not
+interrupted, which is the same limit `MathematicsSession.cancel` states about
+cancelling one. The closers spend that same clock; the model is handed what they left. What
 owning the loop does *not* buy is the power to abort a request already in
 flight: the SDK backend can interrupt one and this transport cannot, so a
 cancel that arrives mid-request lets the reply come back — recorded as
