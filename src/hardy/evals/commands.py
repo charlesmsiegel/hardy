@@ -229,10 +229,19 @@ def main(args: argparse.Namespace, config: Any) -> int:
             if getattr(args, "since", None) is not None:
                 issues.extend(release_issues(args.corpus, args.since.read_text(encoding="utf-8")))
             if getattr(args, "since_registry", None) is not None:
-                from .corpus import load_tombstones, registry_issues
+                from .corpus import CorpusError, load_tombstones, registry_issues
 
-                prior = json.loads(args.since_registry.read_text(encoding="utf-8"))["issued"]
-                issues.extend(registry_issues(load_tombstones(args.corpus), prior))
+                # Both sides are gathered, not raised: CI always passes this
+                # option, so a malformed registry -- the very case the check
+                # exists to report -- would otherwise abort the command before
+                # it printed anything, including the objection about it.
+                try:
+                    prior = json.loads(args.since_registry.read_text(encoding="utf-8"))["issued"]
+                    if not isinstance(prior, dict):
+                        raise CorpusError("the previous registry's 'issued' is not a mapping")
+                    issues.extend(registry_issues(load_tombstones(args.corpus), prior))
+                except (CorpusError, OSError, ValueError, KeyError, TypeError) as error:
+                    issues.append(f"tombstones.json: {error}")
             for issue in issues:
                 print(issue, file=sys.stderr)
             return 1 if issues else 0

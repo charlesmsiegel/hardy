@@ -96,6 +96,19 @@ def _mapping() -> dict[str, dict[str, str]]:
     return _mapping_at(_active)
 
 
+def forget() -> None:
+    """Drop the cached tables so the next lookup re-reads them.
+
+    The caches are keyed by root and never expire, which is right for a CLI
+    process that exits. A long-lived reader -- the viewer -- promises the
+    corpus as it is on disk, and a cached taxonomy would quietly break that
+    half of the promise: a code added to `msc2020.json` would keep being
+    rejected until the server restarted.
+    """
+    _codes_at.cache_clear()
+    _mapping_at.cache_clear()
+
+
 def is_known(code: str) -> bool:
     return code in _codes()
 

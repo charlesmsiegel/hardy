@@ -237,9 +237,12 @@ def aggregate(rows: list[Row], baseline: Baseline, *, active_ids: set[str]) -> A
     # alone: A3 cannot see vacuity, so nothing mechanical stands between a
     # vacuously-true statement and this headline. The spec requires that fact
     # reported rather than hidden (§7), so the count travels with the number.
+    # Tier-gated like the headline itself: a tier-0 entry cannot enter it, so
+    # counting one here would attach a caveat to a number it says nothing about.
     floor["active_unwitnessed"] = sum(
         1 for id in active_ids
-        if (row := baseline.entries.get(id)) is not None and row.witness != "witnessed"
+        if (row := baseline.entries.get(id)) is not None
+        and row.tier in (2, 3) and row.witness != "witnessed"
     )
     return Aggregates(tiers=tiers, headline=headline, floor=floor)
 
