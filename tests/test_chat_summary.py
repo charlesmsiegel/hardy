@@ -628,3 +628,37 @@ def test_the_retrieval_budget_is_reported_without_a_computer_algebra_kernel(tmp_
     assert "Computer algebra limits" not in settings
     assert "wall clock" in settings["Literature search budget"]
     assert "bytes per tool result" in settings["Observed by the model"]
+
+
+def test_the_export_says_when_the_shared_library_moved_under_it(tmp_path: Path):
+    """One snapshot, and an honest answer when it does not match the identity
+    the verdicts were checked against.
+
+    The edit has to land in the real window -- between `_refresh_shared_identity`
+    validating the stored verdicts and the modules being read -- so it is made
+    from inside `_shared_sources`. Editing before the gather proves nothing:
+    the refresh would simply re-stamp the new bytes and the verdicts would be
+    expired against them, which is the path that already works.
+    """
+    workspace = tmp_path / "problem"
+    shared = tmp_path / ".hardy" / "lean"
+    shared.mkdir(parents=True)
+    helper = shared / "Helper.lean"
+    helper.write_text("theorem helper : True := trivial\n", encoding="utf-8")
+
+    runtime = FakeChatRuntime([{"role": "assistant", "content": "Nothing to do."}])
+    chat = session(workspace, runtime)
+    lean = Path(chat.workspace) / "lean"
+    lean.mkdir(parents=True, exist_ok=True)
+    (lean / "Basic.lean").write_text("import Helper\n", encoding="utf-8")
+
+    assert chat.export_material()["shared_moved"] is False
+
+    original = chat._shared_sources
+
+    def edit_then_read(sources=None):
+        helper.write_text("theorem helper : True := by trivial\n", encoding="utf-8")
+        return original(sources)
+
+    chat._shared_sources = edit_then_read
+    assert chat.export_material()["shared_moved"] is True

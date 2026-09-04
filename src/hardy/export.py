@@ -980,6 +980,7 @@ paragraph above says.</p>
 {_sources(material.get("tex", {}), "No writeup source is saved.")}
 
 <h2>Shared Lean this workspace imports</h2>
+{_shared_warning(material)}
 <p class="sub">Locally authored modules from <code>.hardy/lean</code>, elaborated
 together with the sources above. A verdict on a theorem that imports one of
 these rests on this text as much as on its own module, so it is carried here
@@ -1191,6 +1192,30 @@ def _printable(value: Any) -> str:
     must not do. Rendered `\\0`, so what is on the page can be read back.
     """
     return str(value).replace("\0", "\\0")
+
+
+def _shared_warning(material: Mapping[str, Any]) -> str:
+    """Whether the shared library moved between the audit check and this read.
+
+    Editing `.hardy/lean` while a session is open is supported and is not
+    serialised by the tool gate, so the two can straddle an edit. The verdicts
+    above were validated against the identity taken first; if the digest has
+    moved since, the modules below are not the ones the audit was established
+    against, and a page that showed them under a kernel-verified badge without
+    saying so would be asserting exactly what it cannot.
+
+    Said rather than reconciled. Re-taking the identity here would make the
+    badges agree with the new bytes without anything having re-checked them,
+    which is the failure dressed as a fix.
+    """
+    if not material.get("shared_moved"):
+        return ""
+    return (
+        '<p class="fail">The shared library changed while this page was being '
+        "gathered. The verdicts above were established against the earlier "
+        "state, so the modules below are not necessarily the ones they were "
+        "checked against. Re-run the audit before relying on either.</p>"
+    )
 
 
 def _settings(settings: Any) -> tuple[tuple[str, Any], ...]:
