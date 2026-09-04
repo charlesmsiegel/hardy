@@ -88,10 +88,22 @@ class UiTerminal(ConsoleTerminal):
             APPROVALS,
             subtitle="Approving freezes this exact Lean statement as the claim.",
         )
-        # Cancelling the selector cancels the run. There is no third state here:
-        # the workflow is waiting on one of three words, and treating an
-        # abandoned prompt as "approve" would freeze a claim nobody read.
-        return picked.value if picked is not None else "cancel"
+        # An abandoned selector cancels the RUN, which is not the same as
+        # picking the "Cancel" row. That row is a judgement -- the user read
+        # the formalization and refused it, recorded as USER_REJECTION -- and
+        # Esc is not: it is walking away from the question, recorded as
+        # USER_CANCELLATION. Returning "cancel" for both put a judgement in the
+        # manifest that nobody made.
+        #
+        # Raised rather than signalled, because the selector runs its own
+        # nested application: it consumes the key itself, so the shell's stop
+        # binding never fires and the workflow's cancellation flag is never
+        # set. `KeyboardInterrupt` is the path the workflow already has for
+        # exactly this, and on the console this prompt is an `input()` where
+        # Ctrl+C raises it anyway.
+        if picked is None:
+            raise KeyboardInterrupt
+        return picked.value
 
 
 def problem_slug(claim: str) -> str:
