@@ -228,9 +228,11 @@ def test_a_summary_larger_than_the_window_is_recorded_as_not_fitting() -> None:
 
 
 def test_a_compaction_that_shrinks_the_request_says_it_fits() -> None:
+    # Sized in bytes, as the estimate is: `_long` writes 4,000 ASCII
+    # characters, which the bound charges as 4,000 tokens.
     messages = [_long("user"), _long("assistant"), _long("user"), _long("assistant")]
 
-    outcome = compaction.plan(messages, context_window=3000, reserve_tokens=500, keep_tokens=1200)
+    outcome = compaction.plan(messages, context_window=10_500, reserve_tokens=1_750, keep_tokens=4_200)
 
     assert outcome.fits
     assert outcome.after <= outcome.available
@@ -249,28 +251,19 @@ def test_fits_is_measured_against_the_window_and_not_against_the_old_size() -> N
     assert not outcome.fits                # and what the window actually says
 
 
-def test_symbols_are_not_counted_as_though_they_were_prose() -> None:
-    """`CHARACTERS_PER_TOKEN` is an English-prose ratio and this is a theorem
-    prover: a transcript is full of `∀`, `∈` and `⟨⟩`, and a session may be
-    conducted in a language not written in ASCII at all. Divided by 3.5, those
-    conversations were understated exactly where Hardy is used -- and an
-    understated conversation is one the planner says fits while the provider
-    refuses it."""
-    prose = compaction.estimate_text("a" * 350)
-    symbols = compaction.estimate_text("∀" * 350)
-
-    assert prose == 100
-    # A real bound, not a nearly-right guess: a BPE token covers at least one
-    # byte, so a string can never cost more tokens than it has bytes. One token
-    # per code point was the earlier attempt and is not a bound -- an emoji is
-    # several tokens on its own.
-    assert symbols == len("∀".encode()) * 350
-    assert symbols > prose
-    emoji = compaction.estimate_text("🔥" * 10)
-    assert emoji == len("🔥".encode()) * 10 > 10
-
-    mixed = compaction.estimate_text("a" * 350 + "∀" * 350)
-    assert mixed == prose + symbols
+def test_the_estimate_is_a_bound_rather_than_a_prose_ratio() -> None:
+    """A BPE token covers at least one byte, so nothing costs more tokens than
+    it has bytes. That is the only bound available without the provider's
+    tokenizer, and every ratio tried here was an average dressed as a rule:
+    `1/3.5` is an English-prose figure, while a Hardy transcript is full of `∀`
+    and `⟨⟩`, may not be in ASCII at all, and even its ASCII is often a hash or
+    a wall of JSON that tokenizes near one token per character."""
+    assert compaction.estimate_text("a" * 350) == 350
+    assert compaction.estimate_text("∀" * 350) == len("∀".encode()) * 350
+    assert compaction.estimate_text("🔥" * 10) == len("🔥".encode()) * 10
+    # Additive, so no arrangement of the same bytes is cheaper than another.
+    mixed = "a" * 350 + "∀" * 350
+    assert compaction.estimate_text(mixed) == compaction.estimate_text("a" * 350) + compaction.estimate_text("∀" * 350)
 
 
 def test_a_small_configured_window_still_leaves_room_to_compact_into() -> None:
