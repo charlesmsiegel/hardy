@@ -134,7 +134,9 @@ The corpus is a standalone CC-BY-4.0 dataset: entries are sharded by MSC2020
 2-digit class under `corpus/problems/<NN>.json`, hold statements only — nothing
 measured, nothing derived — and a release is gated by a manifest digest the
 changelog head binds. `hardy evals corpus check` reports every mechanical
-objection to it and `hardy evals corpus report` gives coverage by field. Then: `hardy evals baseline` sweeps a committed tactic set to measure, per
+objection to it, `hardy evals corpus report` gives coverage by field, and
+`hardy evals corpus serve` opens a local page that renders each entry —
+statement, Lean, classification — re-read from disk on every refresh. Then: `hardy evals baseline` sweeps a committed tactic set to measure, per
 statement, how much a plain tactic already closes before any model is asked;
 `hardy evals run --label L --acknowledge-unsafe-execution` scores a model
 against that floor and writes a scoreboard under `evals/scoreboards/<label>/`;

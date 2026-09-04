@@ -88,9 +88,13 @@ def add_parser(subparsers: Any) -> None:
     corpus = verbs.add_parser("corpus", help="the corpus directory: mechanical checks and coverage")
     corpus_verbs = corpus.add_subparsers(dest="corpus_verb", required=True)
     for verb, helptext in (("check", "report every mechanical objection to the corpus on disk"),
-                           ("report", "coverage by group, status, difficulty and source")):
+                           ("report", "coverage by group, status, difficulty and source"),
+                           ("serve", "browse the corpus in a local page, re-read on every refresh")):
         sub = corpus_verbs.add_parser(verb, help=helptext)
         sub.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
+        if verb == "serve":
+            sub.add_argument("--port", type=int, default=8765)
+            sub.add_argument("--host", default="127.0.0.1")
         if verb == "check":
             sub.add_argument(
                 "--since-registry", type=Path, default=None,
@@ -227,6 +231,11 @@ def main(args: argparse.Namespace, config: Any) -> int:
             for issue in issues:
                 print(issue, file=sys.stderr)
             return 1 if issues else 0
+        if args.corpus_verb == "serve":
+            from .viewer import serve
+
+            serve(args.corpus, host=args.host, port=args.port)
+            return 0
         for line in report(args.corpus):
             print(line)
         return 0

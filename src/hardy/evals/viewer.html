@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardy corpus</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #fff; --ink: #1a1a19; --dim: #6b6b66; --line: #e3e3df;
+    --accent: #2f5d8a; --ok: #1f6f43; --bad: #a8321f; --warn: #8a5a12;
+    --code-bg: #f4f4f1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15161a; --panel: #1c1e23; --ink: #e6e6e3; --dim: #9a9a94; --line: #2e3138;
+      --accent: #7aa8d4; --ok: #66c08c; --bad: #e8846f; --warn: #d6a55a;
+      --code-bg: #22252b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  header {
+    padding: .7rem 1rem; border-bottom: 1px solid var(--line); background: var(--panel);
+    display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
+    position: sticky; top: 0; z-index: 5;
+  }
+  header h1 { margin: 0; font-size: 1rem; font-weight: 650; letter-spacing: -.01em; }
+  header .ver { color: var(--dim); font-size: .82rem; }
+  header .counts { margin-left: auto; color: var(--dim); font-size: .82rem; }
+  header .counts b { color: var(--ink); font-weight: 600; }
+  #status { padding: .5rem 1rem; font-size: .85rem; border-bottom: 1px solid var(--line); }
+  #status.ok { color: var(--ok); }
+  #status.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, transparent); }
+  #status ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+  main { display: grid; grid-template-columns: minmax(260px, 30%) 1fr; min-height: calc(100vh - 96px); }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } #list { max-height: 40vh; } }
+  #list { border-right: 1px solid var(--line); overflow-y: auto; background: var(--panel); }
+  .filters { padding: .6rem; border-bottom: 1px solid var(--line); display: grid; gap: .4rem; }
+  .filters input, .filters select {
+    width: 100%; padding: .35rem .5rem; font: inherit; font-size: .85rem;
+    background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 5px;
+  }
+  .filters .row { display: flex; gap: .4rem; }
+  .item {
+    padding: .5rem .7rem; border-bottom: 1px solid var(--line); cursor: pointer;
+    display: grid; gap: .15rem;
+  }
+  .item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .item[aria-current="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .item .id { font-size: .84rem; font-weight: 600; }
+  .item .meta { font-size: .74rem; color: var(--dim); display: flex; gap: .45rem; flex-wrap: wrap; }
+  .tag {
+    font-size: .68rem; padding: .05rem .32rem; border-radius: 4px; border: 1px solid var(--line);
+    color: var(--dim); white-space: nowrap;
+  }
+  .tag.false { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+  .tag.active { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+  #detail { padding: 1.1rem 1.3rem 4rem; overflow-y: auto; }
+  #detail h2 { margin: 0 0 .1rem; font-size: 1.15rem; }
+  #detail .sub { color: var(--dim); font-size: .82rem; margin-bottom: 1.1rem; }
+  .pane { margin-bottom: 1.15rem; }
+  .pane > h3 {
+    margin: 0 0 .35rem; font-size: .7rem; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--dim); font-weight: 650;
+  }
+  .statement {
+    font-size: 1.02rem; padding: .7rem .85rem; background: var(--panel);
+    border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 5px;
+  }
+  pre.lean {
+    margin: 0; padding: .7rem .85rem; background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 5px; font-size: .84rem; overflow-x: auto; white-space: pre-wrap;
+    word-break: break-word;
+  }
+  table.kv { border-collapse: collapse; width: 100%; font-size: .87rem; }
+  table.kv td { padding: .25rem .5rem .25rem 0; vertical-align: top; border-bottom: 1px solid var(--line); }
+  table.kv td:first-child { color: var(--dim); width: 8.5rem; white-space: nowrap; }
+  .none { color: var(--dim); font-style: italic; }
+  .warnline { color: var(--warn); }
+  footer { padding: .6rem 1rem; color: var(--dim); font-size: .76rem; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Hardy corpus</h1>
+  <span class="ver" id="version"></span>
+  <span class="counts" id="counts"></span>
+</header>
+<div id="status">loading…</div>
+<main>
+  <div id="list">
+    <div class="filters">
+      <input id="q" type="search" placeholder="Search id, statement, Lean, title…" autocomplete="off">
+      <div class="row">
+        <select id="fGroup"><option value="">every group</option></select>
+        <select id="fStatus"><option value="">every status</option></select>
+      </div>
+      <div class="row">
+        <select id="fDifficulty"><option value="">every difficulty</option></select>
+        <select id="fExpected">
+          <option value="">true and twins</option>
+          <option value="true">true only</option>
+          <option value="false">twins only</option>
+        </select>
+      </div>
+    </div>
+    <div id="items"></div>
+  </div>
+  <div id="detail"><p class="none">Select an entry.</p></div>
+</main>
+<footer id="foot"></footer>
+
+<script>
+let DATA = { entries: [], issues: [], counts: {}, sources: {} };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function renderMath(el) {
+  // Rendered if KaTeX loaded; the raw LaTeX stays readable if the CDN is
+  // unreachable, which is the offline case this tool should survive.
+  if (!window.renderMathInElement) return;
+  try {
+    renderMathInElement(el, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "\\[", right: "\\]", display: true },
+        { left: "$", right: "$", display: false },
+        { left: "\\(", right: "\\)", display: false },
+      ],
+      throwOnError: false,
+    });
+  } catch (_) { /* leave the source visible */ }
+}
+
+function fillSelect(el, values) {
+  const keep = el.value;
+  el.length = 1;
+  for (const v of values) el.add(new Option(v, v));
+  el.value = keep;
+}
+
+function matches(e) {
+  const q = $("q").value.trim().toLowerCase();
+  if ($("fGroup").value && e.group !== $("fGroup").value) return false;
+  if ($("fStatus").value && e.status !== $("fStatus").value) return false;
+  if ($("fDifficulty").value && e.difficulty !== $("fDifficulty").value) return false;
+  if ($("fExpected").value && e.expected !== $("fExpected").value) return false;
+  if (!q) return true;
+  return [e.id, e.input, e.title, e.declaration, e.name, ...e.msc.map((m) => m.code + " " + m.name)]
+    .join(" ").toLowerCase().includes(q);
+}
+
+function renderList() {
+  const shown = DATA.entries.filter(matches);
+  const current = location.hash.slice(1);
+  $("items").innerHTML = shown.map((e) => `
+    <div class="item" data-id="${esc(e.id)}" aria-current="${e.id === current}">
+      <span class="id">${esc(e.id)}</span>
+      <span class="meta">
+        <span class="tag">${esc(e.msc[0].code)}</span>
+        <span class="tag">${esc(e.group)}</span>
+        ${e.expected === "false" ? '<span class="tag false">twin</span>' : ""}
+        ${e.status === "active" ? '<span class="tag active">active</span>' : `<span class="tag">${esc(e.status)}</span>`}
+      </span>
+    </div>`).join("") || '<p class="none" style="padding:.8rem">Nothing matches.</p>';
+  for (const el of $("items").children) {
+    if (el.dataset.id) el.onclick = () => { location.hash = el.dataset.id; };
+  }
+  $("foot").textContent =
+    `${shown.length} of ${DATA.entries.length} shown · read from disk at ${DATA.generated_at} · refresh to re-read`;
+}
+
+function pane(title, html) { return `<div class="pane"><h3>${title}</h3>${html}</div>`; }
+
+function renderDetail() {
+  const id = location.hash.slice(1);
+  const e = DATA.entries.find((x) => x.id === id);
+  const box = $("detail");
+  if (!e) { box.innerHTML = '<p class="none">Select an entry.</p>'; return; }
+
+  const codes = e.msc.map((m) =>
+    `<div><code>${esc(m.code)}</code> &nbsp;${esc(m.name)}</div>`).join("");
+  const occ = e.occurrences.length
+    ? e.occurrences.map((o, i) => {
+        const src = DATA.sources[o.source_id];
+        const cite = src ? esc(src.title || o.source_id) : `<span class="warnline">${esc(o.source_id)} (not in sources.json)</span>`;
+        return `<div>${i === 0 ? "<b>primary</b> · " : ""}${cite} &nbsp;<span class="mono">${o.locator.join(".")}</span></div>`;
+      }).join("")
+    : `<p class="none">No occurrences. Authored entry — rationale: ${esc(e.rationale) || '<span class="warnline">missing</span>'}</p>`;
+  const witness = e.witness
+    ? `<pre class="lean">${esc(e.witness)}</pre>`
+    : `<p class="none">Unwitnessed — ${esc(e.witness_note) || "no note."} A6 cannot rule out vacuity here.</p>`;
+  const review = e.review
+    ? `<table class="kv"><tr><td>reviewer</td><td>${esc(e.review.reviewer)}</td></tr>
+       <tr><td>reviewed</td><td>${esc(e.review.reviewed_at)}</td></tr>
+       <tr><td>verdict</td><td>${esc(e.review.verdict)}</td></tr></table>`
+    : '<p class="none">No review. Only <code>active</code> entries reach a headline.</p>';
+
+  box.innerHTML = `
+    <h2>${esc(e.title || e.id)}</h2>
+    <div class="sub"><code>${esc(e.id)}</code> · shard ${esc(e.shard)} · ${esc(e.difficulty)} ·
+      ${e.expected === "false" ? `twin of <code>${esc(e.twin_of)}</code>` : "true"}</div>
+    ${pane("Statement", `<div class="statement" id="stmt">${esc(e.input)}</div>`)}
+    ${pane("Lean", `<pre class="lean">${esc(e.imports.map((i) => "import " + i).join("\n"))}\n\n${esc(e.declaration)}</pre>`)}
+    ${pane("Classification", `<table class="kv">
+      <tr><td>MSC2020</td><td>${codes}</td></tr>
+      <tr><td>field</td><td>${esc(e.field)}</td></tr>
+      <tr><td>reporting group</td><td>${esc(e.group)}</td></tr>
+      <tr><td>arXiv</td><td>${esc(e.arxiv)}${e.arxiv_override ? ` <span class="warnline">(override: ${esc(e.override_reason)})</span>` : ""}</td></tr>
+    </table>`)}
+    ${pane("Provenance", occ)}
+    ${pane("Witness (A6)", witness)}
+    ${pane("Fixtures", e.fixtures.length
+      ? `<div class="mono">${e.fixtures.map(esc).join(", ")}</div>`
+      : '<p class="none">None.</p>')}
+    ${pane("Review", review)}
+    ${pane("Digest", `<div class="mono" style="font-size:.76rem;color:var(--dim)">statement ${esc(e.statement_digest)}</div>`)}
+  `;
+  renderMath($("stmt"));
+  renderList();
+}
+
+async function load() {
+  try {
+    const res = await fetch("/api/corpus", { cache: "no-store" });
+    DATA = await res.json();
+  } catch (err) {
+    $("status").className = "bad";
+    $("status").textContent = "Could not reach the viewer server: " + err;
+    return;
+  }
+  $("version").textContent = DATA.corpus_version ? "v" + DATA.corpus_version : "";
+  const c = DATA.counts;
+  $("counts").innerHTML = c.entries === undefined ? "" :
+    `<b>${c.entries}</b> entries · <b>${c.twins}</b> twins · <b>${c.active}</b> active ·
+     <b>${c.unwitnessed}</b> unwitnessed · <b>${c.unsourced}</b> unsourced`;
+  const s = $("status");
+  if (DATA.issues.length) {
+    s.className = "bad";
+    s.innerHTML = `<b>${DATA.issues.length} objection${DATA.issues.length > 1 ? "s" : ""} from <code>corpus check</code>:</b>
+      <ul>${DATA.issues.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+  } else {
+    s.className = "ok";
+    s.textContent = "corpus check: clean";
+  }
+  fillSelect($("fGroup"), [...new Set(DATA.entries.map((e) => e.group))].sort());
+  fillSelect($("fStatus"), [...new Set(DATA.entries.map((e) => e.status))].sort());
+  fillSelect($("fDifficulty"), [...new Set(DATA.entries.map((e) => e.difficulty))].sort());
+  renderDetail();
+}
+
+for (const id of ["q", "fGroup", "fStatus", "fDifficulty", "fExpected"]) {
+  $(id).addEventListener("input", renderList);
+}
+window.addEventListener("hashchange", renderDetail);
+window.addEventListener("DOMContentLoaded", load);
+load();
+</script>
+</body>
+</html>
