@@ -779,3 +779,48 @@ def test_a_provider_counted_timeout_still_may_not(tmp_path) -> None:
     issues = acceptance.validate_batch_consistency(output)
 
     assert any('the provider never delivered' in issue for issue in issues)
+
+
+def test_a_hole_list_that_agrees_with_itself_but_not_with_the_proof_is_refused(tmp_path) -> None:
+    """Edited consistently everywhere -- all three artifacts and the event --
+    the copies agree with each other and conceal the hole from every one of
+    them. Lean's own rule is the only thing outside that agreement."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    runner = importlib.import_module('hardy.runner')
+    output = _sketched(tmp_path)
+    empty = {'proof': 'by sorry', 'holes': []}
+    for name in ('result.json', 'trajectory.json'):
+        _rewrite(output / name, sketch=empty)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    for event in trajectory['events']:
+        if event.get('name') == 'sketch_proof':
+            event['result']['holes'] = []
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+    writeup = output / 'writeup.md'
+    text = writeup.read_text(encoding='utf-8')
+    writeup.write_text(text[: text.index(runner.SKETCH_HEADING)] + runner.sketch_section(empty), encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('not the ones its own skeleton contains' in issue for issue in issues)
+
+
+def test_a_closer_whose_submission_was_refused_may_not_be_credited(tmp_path) -> None:
+    """Matching the submission's text alone let a refused attempt stand behind
+    a `closed_by`."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path, tactic='nonsense_tactic')
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    # The ladder ran and closed nothing; forge the block to claim it did.
+    trajectory['closers']['closed_by'] = 'nonsense_tactic'
+    trajectory['closers']['attempts'][0]['ok'] = True
+    for event in trajectory['events']:
+        if event.get('type') == 'closers':
+            event['closed_by'] = 'nonsense_tactic'
+            event['attempts'][0]['ok'] = True
+    trajectory['events'].append({'type': 'declined_turn', 'why': 'forged'})
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('no submission that was accepted and kept' in issue for issue in issues)

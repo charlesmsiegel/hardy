@@ -7,6 +7,7 @@ the record and the transcript, and that a compaction leaves a trace.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from test_chat import FakeChatRuntime, call, session
 from workspace_helpers import events
 
 from hardy import compaction
+from hardy.chat import MathematicsSession
 from hardy.loop import Message, ToolCall
 
 
@@ -214,7 +216,99 @@ def test_the_summary_is_counted_against_the_window_it_will_be_sent_in(tmp_path: 
 
     assert rebuilt is not None
     entry = [item for item in events(tmp_path) if item.get("type") == "compaction"][-1]
+    # `after` is the whole request: the system prompt and tool schemas the
+    # provider charges for whatever the conversation holds, plus the summary,
+    # plus the kept tail.
     counted = entry["estimated_tokens"]["after"]
-    actual = compaction.estimate_tokens(rebuilt)
-    assert counted == actual
+    assert counted == chat._request_overhead() + compaction.estimate_tokens(rebuilt)
     assert entry["estimated_tokens"]["fits"] is True
+
+
+def test_the_prompt_and_tool_schemas_are_charged_against_the_window(tmp_path: Path) -> None:
+    """A workspace whose `AGENTS.md` is in the prompt -- up to 50 KB of it,
+    which Hardy supports on purpose -- can spend a large part of the window
+    before the first message. Counting only messages would call a request that
+    the provider refuses one that needed no compaction."""
+    chat = session(tmp_path, FakeChatRuntime([]))
+
+    overhead = chat._request_overhead()
+
+    assert overhead > 0
+    # And it is what the plan is told about: a conversation that would fit on
+    # its own does not, once the request it travels in is counted.
+    conversation = [Message("user", text="x" * 1_000), Message("assistant", text="y" * 1_000)]
+    room = compaction.estimate_tokens(conversation)
+    # A window with room for the conversation and nothing else. Counted alone
+    # it fits exactly; counted inside the request that carries it, it does not.
+    chat.context_window = compaction.RESERVE_TOKENS + room
+
+    assert not compaction.plan(
+        conversation,
+        context_window=chat.context_window,
+        reserve_tokens=compaction.RESERVE_TOKENS,
+        keep_tokens=compaction.RECENT_TOKENS,
+    ).needed
+    assert chat.compact(conversation) is not None
+
+
+class Capped(FakeChatRuntime):
+    """A runtime that states an output cap, as the API transport does."""
+
+    output_limit = 8192
+
+
+def test_reopening_on_a_backend_with_no_output_cap_drops_the_old_one(tmp_path: Path) -> None:
+    """A workspace opened once on the API backend carries `output_limit`.
+    Merged rather than dropped, the old cap stayed in the record -- and in the
+    manifest the system prompt embeds -- so subscription turns read as though
+    they had run under an API-only generation limit."""
+    session(tmp_path, Capped([]))
+
+    reopened = session(tmp_path, FakeChatRuntime([]))
+
+    assert "output_limit" not in reopened.state
+    # And the change is on the record from both sides, so a reader can see what
+    # the earlier turns did run under.
+    resumed = [item for item in events(tmp_path) if item.get("reason") == "session_resumed"][-1]
+    assert resumed["previous"]["output_limit"] == 8192
+
+
+def test_switching_to_a_runtime_with_no_cap_drops_it_too(tmp_path: Path) -> None:
+    built: list[FakeChatRuntime] = []
+
+    def make(model=None, **context):
+        # Capped first, uncapped after: the shape of a switch that lands on a
+        # transport imposing none of its own.
+        runtime = (Capped if not built else FakeChatRuntime)([], **context)
+        if model:
+            runtime.model = model
+        built.append(runtime)
+        return runtime
+
+    chat = MathematicsSession(
+        tmp_path,
+        make,
+        (sys.executable, str(Path(__file__).with_name("fake_lean.py"))),
+        (sys.executable, str(Path(__file__).with_name("fake_latex.py"))),
+        lambda proposal: False,
+    )
+    assert chat.state["output_limit"] == 8192
+
+    chat.switch_model("another-model@test")
+
+    assert "output_limit" not in chat.state
+    switched = [item for item in events(tmp_path) if item.get("reason") == "switched"][-1]
+    assert switched["previous"]["output_limit"] == 8192
+
+
+def test_the_facts_are_not_rebuilt_for_a_conversation_that_needs_no_compaction(tmp_path: Path) -> None:
+    """`compact` runs before every provider call on the API backend, and
+    assembling the facts scans the Lean tree, the audits and the whole
+    transcript -- so doing it to discover a short conversation needs nothing
+    made an ordinary turn re-read an ever-growing record."""
+    chat = session(tmp_path, FakeChatRuntime([]))
+    calls = []
+    chat.facts = lambda: (calls.append(1), compaction.Facts())[1]
+
+    assert chat.compact([Message("user", text="hello")]) is None
+    assert calls == []

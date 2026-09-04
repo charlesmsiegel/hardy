@@ -1,3 +1,4 @@
+import dataclasses
 import importlib
 import json
 from datetime import UTC, datetime
@@ -131,7 +132,7 @@ def test_staged_doctor_ignores_an_advisory_cas_failure(tmp_path, monkeypatch) ->
     doctor_module = importlib.import_module('hardy.doctor')
     config = _staged_config(tmp_path)
 
-    def fake_checks(value, *, deep=False):
+    def fake_checks(value, *, deep=False, backend=None):
         return [
             doctor_module.Check('python', True, 'ok'),
             doctor_module.Check('lean', True, 'ok'),
@@ -144,6 +145,37 @@ def test_staged_doctor_ignores_an_advisory_cas_failure(tmp_path, monkeypatch) ->
     report = workflow._doctor(config)
 
     assert report.healthy is True
+
+
+def test_the_staged_doctor_checks_the_backend_the_run_will_build(tmp_path, monkeypatch):
+    """`hardy prove` takes a `--backend` of its own, and the global setting is
+    for interactive and batch work. Reading the wrong one blocks a usable
+    staged run on a missing API key -- and, worse, reports a machine ready on
+    credentials the run is not going to use."""
+    cli = importlib.import_module('hardy.cli')
+    doctor_module = importlib.import_module('hardy.doctor')
+    config = dataclasses.replace(_staged_config(tmp_path), backend='api')
+    seen = {}
+
+    def fake_checks(value, *, deep=False, backend=None):
+        seen['backend'] = backend
+        return [doctor_module.Check('python', True, 'ok')]
+
+    monkeypatch.setattr(cli.doctor, 'run_checks', fake_checks)
+    workflow = cli.build_prove_workflow(config, tmp_path / 'config.toml', backend='claude')
+
+    workflow._doctor(config)
+
+    assert seen['backend'] == 'claude'
+
+
+def test_doctor_asked_for_a_backend_checks_that_one(tmp_path):
+    doctor_module = importlib.import_module('hardy.doctor')
+    config = dataclasses.replace(_staged_config(tmp_path), backend='api')
+
+    names = [check.name for check in doctor_module.run_checks(config, backend='claude')]
+
+    assert 'claude sdk' in names and 'anthropic key' not in names
 
 
 def test_staged_runtime_factory_records_cas_tool_results_in_the_trajectory(
