@@ -1781,6 +1781,33 @@ return a list, `corpus check` pass, and `corpus report` crash on an unhashable
 8601 `reviewed_at` (not `"unknown"`), because `active_ids` trusts the status
 that record grants.
 
+**The registry gate is anchored too, so the reintroduced-id gap is closed.**
+Deleting an entry *and* its `tombstones.json` key leaves the current tree
+self-consistent — live and issued still match — so no file-level check can see
+it. `registry_issues(issued, prior_issued)` compares against the merge base's
+registry and rejects any id that vanished or whose issue date moved; the same
+CI step supplies it with a second `git show`. A corpus version must also now
+*increase*: rejecting only an unchanged version let `0.1.1` be replaced by
+`0.0.1`, moving the chronology backward.
+
+**The headline discloses how many of its statements have no witness.** An
+`active` entry may still be `unwitnessed` — every migrated entry is — and such
+a statement rests on the human read alone, since A3 cannot see vacuity. The
+spec requires that reported rather than hidden, so `floor["active_unwitnessed"]`
+travels with the number.
+
+**The A6 kernel test now runs in CI.** It was written against Mathlib and lived
+in `test_lean_real.py`, which the real-toolchain job does not invoke and whose
+project carries no Mathlib — so the one test meant to prove that A6's generated
+source is accepted or refused by an actual kernel skipped everywhere, which is
+the very trap `test_audit_real.py`'s own docstring warns about. Rewritten
+against core Lean (`Nat`, `∃`, `True`, `trivial`, `decide`) and moved into the
+file CI runs.
+
+**The registry envelope is validated.** `issued: null` returned straight from
+the loader made `tombstone_issues` raise `TypeError` on iteration — not caught
+by `check_issues`, so a traceback out of the command asked to report it.
+
 ### Known gaps, deliberately left to their phase
 
 - **`Review` does not bind the origin it was read against.** `occurrences` and
@@ -1788,11 +1815,6 @@ that record grants.
   citation leaves an approval current although the reviewer no longer attests
   the stated origin. No review records exist yet; adding an origin digest is a
   spec change (§2.2) rather than an implementation fix.
-- **A delete-and-reintroduce of one id inside a single commit is invisible** to
-  a file-level check. The registry catches the deletion whenever it lands
-  alone. Catching both at once needs a merge-base comparison of `tombstones.json`
-  — the same shape as the release gate now in `tests.yml`, and the obvious next
-  thing to add there.
 - **Scoreboard rows carry no prompt digest.** Nothing reuses a model run yet —
   every run is fresh — so there is no reuse decision for it to govern. It
   belongs with phase 2's reporting.

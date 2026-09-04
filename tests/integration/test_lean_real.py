@@ -129,31 +129,3 @@ def test_a_genuine_sylow_statement_is_closed_by_nothing() -> None:
     if not (LEAN_PROJECT / 'lake-manifest.json').exists():
         pytest.skip('the pinned Lean project is not built; run `hardy setup`')
     assert _closed_by(REAL_SYLOW) == []
-
-
-@pytest.mark.real_toolchain
-def test_a_true_witness_passes_the_real_kernel_and_a_false_one_does_not() -> None:
-    """A6 against the real kernel: the term is checked, not merely parsed.
-
-    The hermetic tests script the elaborator, so nothing there would notice if
-    `witness_source` built Lean the kernel accepts vacuously -- which is the
-    exact failure A6 exists to catch.
-    """
-    if not (LEAN_PROJECT / 'lake-manifest.json').exists():
-        pytest.skip('the pinned Lean project is not built; run `hardy setup`')
-    from hardy.evals.problems import Entry
-    from hardy.evals.sweep import witness_verdict
-
-    service = _service(_environment())
-    elaborate = service._check_source
-
-    def _entry(witness: str) -> Entry:
-        return Entry(id='pos-nat', input='...', name='PosNat', binders='(n : ℕ) (h : n > 0)',
-                     conclusion='n ≥ 1', expected='true', source='textbook', msc=('11A',),
-                     difficulty='routine', rationale='A6 real-toolchain check', witness=witness)
-
-    assert witness_verdict(_entry('⟨1, by norm_num, trivial⟩'), elaborate=elaborate) == 'witnessed'
-    assert witness_verdict(_entry('⟨0, by norm_num, trivial⟩'), elaborate=elaborate) == 'broken'
-    # `sorry` is a warning, so the elaboration succeeds; only the axiom report
-    # separates a witness from a hole wearing a term's clothes.
-    assert witness_verdict(_entry('⟨0, sorry, trivial⟩'), elaborate=elaborate) == 'broken'

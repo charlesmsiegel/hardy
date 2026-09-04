@@ -15,6 +15,7 @@ from hardy.evals.corpus import (
     load_corpus,
     load_tombstones,
     manifest_digest,
+    registry_issues,
     release_issues,
     report,
     tombstone_issues,
@@ -399,3 +400,38 @@ def test_content_may_not_move_under_a_version_that_was_already_released(tmp_path
 def test_a_prior_release_that_bound_no_digest_cannot_anchor_anything(tmp_path):
     _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
     assert release_issues(tmp_path, "# Changelog\n\n## 0.1.0 - 2026-09-01\n") == []
+
+
+def test_a_corpus_version_only_ever_goes_up(tmp_path):
+    """Rejecting only an unchanged version let 0.1.1 be replaced by 0.0.1:
+    the chronology moves backward and patch/minor/major stops telling a
+    consumer anything about what changed between two numbers."""
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])], version="0.1.1")
+    released = _released("0.1.1", manifest_digest(tmp_path))
+
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"], conclusion="True")], version="0.0.1")
+    assert any("only ever goes up" in i for i in release_issues(tmp_path, released))
+
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"], conclusion="True")], version="0.2.0")
+    assert release_issues(tmp_path, released) == []
+
+
+def test_a_malformed_registry_envelope_is_reported_not_raised(tmp_path):
+    """`issued: null` returned straight from the loader made `tombstone_issues`
+    raise `TypeError` on iteration, which `check_issues` does not catch."""
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
+    _changelog(tmp_path)
+    for bad in (None, 7, {"a": 1}):
+        (tmp_path / "tombstones.json").write_text(
+            json.dumps({"schema_version": 1, "issued": bad}), encoding="utf-8")
+        assert any("'issued' must map ids to dates" in i for i in check_issues(tmp_path)), bad
+
+
+def test_the_registry_is_append_only_across_versions():
+    """Deleting an entry *and* its registry key leaves the current tree
+    self-consistent, so only a comparison with the prior release sees it."""
+    prior = {"a": "2026-09-01", "b": "2026-09-01"}
+    assert registry_issues(prior, prior) == []
+    assert registry_issues({**prior, "c": "2026-09-04"}, prior) == [], "issuing a new id is normal"
+    assert any("never withdrawn" in i for i in registry_issues({"a": "2026-09-01"}, prior))
+    assert any("history" in i for i in registry_issues({**prior, "a": "2026-09-04"}, prior))

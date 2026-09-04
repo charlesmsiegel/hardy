@@ -110,3 +110,49 @@ def test_a_primed_declaration_name_is_still_auditable() -> None:
     result = tools.check_proof('by rfl', final=True)
     assert result.ok, result.output
     assert parse(result.report, ("hardy_target'",)) is not None, result.report
+
+
+def _elaborate(source: str):
+    """A6's source against the real toolchain, core Lean only.
+
+    Same reasoning as `_tools` above: written against Mathlib this skipped
+    everywhere, CI included, and a skipped test reads as coverage while proving
+    nothing. `Nat`, `∃`, `True`, `trivial` and `decide` are all core.
+    """
+    from hardy.lean import elaborate
+
+    lake = shutil.which('lake')
+    if lake is None:
+        pytest.skip('lake is not installed')
+    if not (LEAN_PROJECT / 'lake-manifest.json').exists():
+        pytest.skip('the pinned Lean project is not built; run `hardy setup`')
+    return elaborate(source, argv=(lake, 'env', 'lean'), cwd=LEAN_PROJECT, timeout_seconds=120)
+
+
+def _witness_entry(witness: str):
+    from hardy.evals.problems import Entry
+
+    return Entry(id='pos-nat', input='...', name='PosNat', binders='(n : Nat) (h : n > 0)',
+                 conclusion='n ≥ 1', imports=('Init',), expected='true', source='textbook',
+                 msc=('11A',), difficulty='routine', rationale='A6 real-toolchain check',
+                 witness=witness)
+
+
+@pytest.mark.real_toolchain
+def test_a6_witness_is_accepted_or_refused_by_the_real_kernel() -> None:
+    """The hermetic tests script the elaborator, so nothing there would notice
+    if `witness_source` built Lean the kernel accepts vacuously -- the exact
+    failure A6 exists to catch."""
+    from hardy.evals.sweep import witness_verdict
+
+    assert witness_verdict(_witness_entry('⟨1, by decide, trivial⟩'), elaborate=_elaborate) == 'witnessed'
+    assert witness_verdict(_witness_entry('⟨0, by decide, trivial⟩'), elaborate=_elaborate) == 'broken'
+
+
+@pytest.mark.real_toolchain
+def test_a6_refuses_a_witness_that_is_a_hole() -> None:
+    """`sorry` is a *warning*, so the elaboration succeeds and only the axiom
+    report separates a witness from a hole wearing a term's clothes."""
+    from hardy.evals.sweep import witness_verdict
+
+    assert witness_verdict(_witness_entry('⟨0, sorry, trivial⟩'), elaborate=_elaborate) == 'broken'

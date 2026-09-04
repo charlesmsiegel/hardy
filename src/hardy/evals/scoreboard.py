@@ -232,6 +232,15 @@ def aggregate(rows: list[Row], baseline: Baseline, *, active_ids: set[str]) -> A
         floor[f"tier_{t}"] = sum(1 for e in baseline.entries.values() if e.tier == t)
     floor["single_tactic_closes"] = sum(1 for e in baseline.entries.values() if e.tier in (0, 1))
     floor["active"] = len(active_ids)
+    # An `active` entry may still be `unwitnessed` -- the schema allows it, and
+    # every migrated entry is one. Such a statement rests on the human read
+    # alone: A3 cannot see vacuity, so nothing mechanical stands between a
+    # vacuously-true statement and this headline. The spec requires that fact
+    # reported rather than hidden (§7), so the count travels with the number.
+    floor["active_unwitnessed"] = sum(
+        1 for id in active_ids
+        if (row := baseline.entries.get(id)) is not None and row.witness != "witnessed"
+    )
     return Aggregates(tiers=tiers, headline=headline, floor=floor)
 
 
