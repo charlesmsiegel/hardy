@@ -10,6 +10,22 @@ they are hand-maintained here, versioned with the corpus, and written by this
 script so a re-vendoring cannot silently drop them.
 
 The CSV is tab-separated despite its name, latin-1, CRLF, with quoted fields.
+
+Running this **changes the committed tables even given the identical CSV**,
+because they were vendored before `source` recorded the input digest and still
+carry the bare URL. That is not a discrepancy in the data -- the committed
+tables reproduce byte for byte apart from those two provenance lines -- it is a
+pending re-vendoring. Landing it is three steps, in this order:
+
+    python3 scripts/vendor_msc2020.py MSC_2020.csv
+    hardy evals baseline --acknowledge-unsafe-execution   # needs Lean + Mathlib
+    hardy evals corpus release --version <x.y.z> --note ...
+
+The sweep is not optional. `evals/baseline.json` binds the corpus manifest, and
+the manifest covers these tables, so regenerating them without re-sweeping
+leaves the committed baseline claiming to describe a corpus that has moved --
+which `tests/integration/test_recorded_evals.py` fails on, correctly. Editing
+`problems_sha256` to match is not the repair.
 """
 from __future__ import annotations
 
