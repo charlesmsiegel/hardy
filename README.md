@@ -434,14 +434,18 @@ the one transport that needs an API key rather than a subscription — and
 because it is a different experimental condition, which is why the backend and
 endpoint are in every record.
 
-That loop is what lets Hardy decline a provider call. `hardy batch --closers`
-tries `rfl`, `trivial`, `simp`, `omega`, `decide`, `aesop` and `exact?` against
-the statement first, and a statement one of them closes never reaches a model.
-Each tactic's proof goes in through `submit_proof` like any other, so the axiom
-audit refuses a bad one in the same words; the ladder is off unless asked for,
-and the trajectory's `closers` block names every tactic tried either way. A
-result a tactic ladder reached and a result a model reached are not the same
-experiment.
+The cheap Lean closers need no such loop and do not use one. `hardy batch
+--closers` tries `rfl`, `trivial`, `simp`, `omega`, `decide`, `aesop` and
+`exact?` against the statement before any runtime is built, so it works on
+every backend and a subscription user needs no API key for it; a statement one
+of them closes never reaches a model. Each tactic's proof goes in through
+`submit_proof` like any other, so the axiom audit refuses a bad one in the same
+words; the ladder is off unless asked for, and the trajectory's `closers` block
+names every tactic tried either way. A result a tactic ladder reached and a
+result a model reached are not the same experiment. What owning the loop adds
+on top is the decision point *inside* an exchange — declining a provider call
+partway through one, which is where a token budget or a mid-conversation ladder
+would have to live.
 
 Issue #23 records why this is worth reversing: bounded experiments, trajectory
 fidelity, cheap Lean closers before model tokens, and token budgets all live in
