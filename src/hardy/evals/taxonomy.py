@@ -108,17 +108,26 @@ def _lookup(table: dict[str, str], key: str, code: str) -> str:
 
 
 def _rollup(table: dict[str, str], code: str) -> str:
-    """A 2-digit roll-up, but only for a code that exists.
+    """The most specific entry that covers `code`, for a code that exists.
 
-    Rolling up on the prefix alone would report `13ZZZ` as valid commutative
-    algebra: the prefix resolves and the invented tail is never looked at.
-    `Entry` already rejects unknown codes, so this is what protects every
-    caller that is not an `Entry` -- the editor, a report, a third party's
-    script over the published corpus.
+    Tried whole code, then section (`12L`), then class (`12`). MSC classes are
+    not homogeneous under an arXiv reading -- MSC 12 alone spans math.NT
+    (Galois theory), math.AC (valuation theory), math.RA (near-fields) and
+    math.LO (model theory of fields) -- so a class-only table would file a
+    third of a class under the wrong archive.
+
+    Rolling up on the prefix without checking the code itself would report
+    `13ZZZ` as valid commutative algebra: the prefix resolves and the invented
+    tail is never looked at. `Entry` already rejects unknown codes, so this is
+    what protects every caller that is not an `Entry` -- the editor, a report,
+    a third party's script over the published corpus.
     """
     if not is_known(code):
         raise UnknownCode(code)
-    return _lookup(table, code[:2], code)
+    for key in (code, code[:3], code[:2]):
+        if key in table:
+            return table[key]
+    raise UnknownCode(code)
 
 
 def name_of(code: str) -> str:

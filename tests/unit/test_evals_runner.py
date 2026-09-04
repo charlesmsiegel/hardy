@@ -18,9 +18,9 @@ from hardy.evals.problems import Entry, sha256_of
 HOST = sweep.host_info()
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
 ENTRIES = (
-    Entry(id="t", input="True.", name="T", conclusion="True", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
-    Entry(id="u", input="True again.", name="U", conclusion="True", expected="true", source="classical", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
-    Entry(id="f", input="False.", name="F", conclusion="True", expected="false", twin_of="t", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+    Entry(id="t", input="True.", name="T", conclusion="True", expected="true", source="textbook", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+    Entry(id="u", input="True again.", name="U", conclusion="True", expected="true", source="classical", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+    Entry(id="f", input="False.", name="F", conclusion="True", expected="false", twin_of="t", source="textbook", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
 )
 
 

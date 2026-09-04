@@ -24,7 +24,7 @@ def _entry(**overrides) -> dict:
         "id": "odd-squares", "input": "If $a$ and $b$ are odd, $a^2+b^2$ is not a square.",
         "name": "OddSquares", "binders": "(a b : ℤ) (ha : Odd a) (hb : Odd b)",
         "conclusion": "¬ IsSquare (a ^ 2 + b ^ 2)", "expected": "true",
-        "source": "classical", "msc": ("11A",), "difficulty": "substantial",
+        "source": "classical", "msc": ("11Axx",), "difficulty": "substantial",
         "occurrences": ({"source_id": "hardy-wright", "locator": (6, 1, 3)},),
         "status": "candidate", "witness": "⟨1, 1⟩",
     }
@@ -153,7 +153,7 @@ def test_refiling_a_reviewed_entry_under_a_new_code_revokes_its_active_status():
     """
     reviewed = _approval(Entry(**_entry()))
     with pytest.raises(ValidationError, match="classification"):
-        Entry(**_entry(status="active", msc=("20D",), review=reviewed))
+        Entry(**_entry(status="active", msc=("20Dxx",), review=reviewed))
 
 
 # --- Occurrences and locators (spec §2.1) ---
@@ -290,12 +290,12 @@ def test_duplicate_detection_and_lookup_are_linear():
 
 
 def test_a_false_twin_inherits_its_targets_primary_msc():
-    target = Entry(**_entry(id="sq-ge", name="SqGe", msc=("26D",)))
-    drifted = Entry(**_entry(id="sq-le", name="SqLe", msc=("11A",), expected="false", twin_of="sq-ge"))
+    target = Entry(**_entry(id="sq-ge", name="SqGe", msc=("26Dxx",)))
+    drifted = Entry(**_entry(id="sq-le", name="SqLe", msc=("11Axx",), expected="false", twin_of="sq-ge"))
     with pytest.raises(ValidationError):
         ProblemSet(entries=(target, drifted))
 
-    ok = Entry(**_entry(id="sq-le", name="SqLe", msc=("26D",), expected="false", twin_of="sq-ge"))
+    ok = Entry(**_entry(id="sq-le", name="SqLe", msc=("26Dxx",), expected="false", twin_of="sq-ge"))
     assert len(ProblemSet(entries=(target, ok)).entries) == 2
 
 

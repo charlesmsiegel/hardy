@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "corpus_version": "0.1.1",
+  "corpus_version": "0.2.0",
   "entries": [
     {
       "id": "two-plus-two",
@@ -15,7 +15,7 @@
       "twin_of": null,
       "source": "textbook",
       "msc": [
-        "11A"
+        "11Axx"
       ],
       "difficulty": "routine",
       "occurrences": [],
@@ -37,7 +37,7 @@
       "twin_of": null,
       "source": "classical",
       "msc": [
-        "11A"
+        "11Axx"
       ],
       "difficulty": "routine",
       "occurrences": [],
@@ -59,7 +59,7 @@
       "twin_of": null,
       "source": "classical",
       "msc": [
-        "11J"
+        "11Jxx"
       ],
       "difficulty": "substantial",
       "occurrences": [],
@@ -81,7 +81,7 @@
       "twin_of": null,
       "source": "classical",
       "msc": [
-        "11J"
+        "11Jxx"
       ],
       "difficulty": "substantial",
       "occurrences": [],
@@ -103,7 +103,7 @@
       "twin_of": null,
       "source": "textbook",
       "msc": [
-        "11A"
+        "11Axx"
       ],
       "difficulty": "routine",
       "occurrences": [],
@@ -125,7 +125,7 @@
       "twin_of": null,
       "source": "textbook",
       "msc": [
-        "11A"
+        "11Axx"
       ],
       "difficulty": "routine",
       "occurrences": [],
@@ -147,7 +147,7 @@
       "twin_of": null,
       "source": "classical",
       "msc": [
-        "11J"
+        "11Jxx"
       ],
       "difficulty": "substantial",
       "occurrences": [],
@@ -169,7 +169,7 @@
       "twin_of": null,
       "source": "classical",
       "msc": [
-        "11A"
+        "11Axx"
       ],
       "difficulty": "substantial",
       "occurrences": [],
@@ -191,7 +191,7 @@
       "twin_of": null,
       "source": "classical",
       "msc": [
-        "11A"
+        "11Axx"
       ],
       "difficulty": "routine",
       "occurrences": [],
@@ -213,7 +213,7 @@
       "twin_of": null,
       "source": "textbook",
       "msc": [
-        "11A"
+        "11Axx"
       ],
       "difficulty": "substantial",
       "occurrences": [],
@@ -235,7 +235,7 @@
       "twin_of": "euler-polynomial-small",
       "source": "classical",
       "msc": [
-        "11A"
+        "11Axx"
       ],
       "difficulty": "substantial",
       "occurrences": [],
@@ -257,7 +257,7 @@
       "twin_of": "odd-squares-sum-not-square",
       "source": "classical",
       "msc": [
-        "11A"
+        "11Axx"
       ],
       "difficulty": "substantial",
       "occurrences": [],

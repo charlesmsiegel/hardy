@@ -6,6 +6,47 @@ Each head line binds the **manifest digest** — a hash over every content file 
 so an edit that leaves both version strings in place still fails
 `hardy evals corpus check`.
 
+## 0.2.0 - 2026-09-04 - manifest a062377273b798e7b3dfd092ed32ce04095b43de6cdf8dc84716185704ac48d6
+
+- **The MSC2020 table is complete**: all 6603 codes from
+  `https://msc2020.org/MSC_2020.csv`, in the form MSC publishes them, each with
+  its own name. It was nine hand-written codes before, which meant a correct
+  tag outside that handful was reported as an unknown code.
+  `scripts/vendor_msc2020.py` regenerates the taxonomy so a re-vendoring is
+  reproducible rather than a hand edit.
+- **Entries now carry published code forms.** `11A` was never an MSC2020 code;
+  the section is `11Axx`. The twenty migrated entries move to `11Axx`, `11Jxx`,
+  `12Fxx`, `20Axx`, `20Dxx`, `26Dxx`. A code must now name a section (`12Fxx`)
+  or a subsection (`12F10`): `12-XX` is the bare class, and `12-01` classifies
+  a publication type rather than mathematics.
+- **The arXiv and reporting-group tables cover all 63 classes**, and resolve
+  most-specific-first — whole code, then section, then class. MSC classes are
+  not homogeneous under an arXiv reading, and MSC 12 is the worst case: it
+  spans math.NT (Galois theory), math.AC (valuation theory), math.RA
+  (near-fields, skew fields) and math.LO (model theory of fields). A
+  class-only table filed a third of that class under the wrong archive.
+- **MSC 12 derives `math.NT`, not `math.AC` or `math.RA`.** arXiv's own
+  math.NT description names "Galois theory", and 12E/12F are the bulk of the
+  class. 12D/12H/12J override to math.AC, 12K and 12E15 to math.RA, 12L to
+  math.LO. (0.1.2 briefly set the whole class to math.RA; that was decided
+  before reading arXiv's definitions and is superseded here.)
+- Reporting groups are deliberately coarser than the classes — a ranking per
+  2-digit class would be dozens of underpowered comparisons — while keeping
+  the four the corpus targets distinct: commutative algebra, real analysis
+  (MSC 26 and 28 together), group theory, linear algebra.
+
+## 0.1.2 - 2026-09-04 - manifest 1da02be51aed5ac13d1d3092a4d9c9fab0b3c7c22b17a07cfd26989095d094cf
+
+- MSC 12 (field theory and polynomials) now derives `math.RA`, not `math.AC`.
+  math.AC's practical identity is Noetherian and homological commutative ring
+  theory — local cohomology, Cohen–Macaulay, monomial ideals, Gröbner bases —
+  and field theory is not that. math.RA is where 12G (Galois cohomology, Brauer
+  groups) and 12K (near-fields, which are not even commutative) actually go.
+  The derivation is a default, and 12 is unusually split: much 12E/12F content
+  lands in math.NT in practice, and 12L belongs in math.LO. Those are what
+  `arxiv_override` is for, and it will carry more weight for 12 than for any
+  other class here.
+
 ## 0.1.1 - 2026-09-03 - manifest eff83575a64948834b698725c9e84a8b3e67f032b54901b8510cbdd9ae76bbc3
 
 - `pigeonhole-residues`: restore the positivity premise in `input`. The prose

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "corpus_version": "0.1.1",
+  "corpus_version": "0.2.0",
   "entries": [
     {
       "id": "prime-order-cyclic",
@@ -15,7 +15,7 @@
       "twin_of": null,
       "source": "textbook",
       "msc": [
-        "20D"
+        "20Dxx"
       ],
       "difficulty": "substantial",
       "occurrences": [],
@@ -37,7 +37,7 @@
       "twin_of": null,
       "source": "textbook",
       "msc": [
-        "20A"
+        "20Axx"
       ],
       "difficulty": "substantial",
       "occurrences": [],
@@ -59,7 +59,7 @@
       "twin_of": "prime-order-cyclic",
       "source": "textbook",
       "msc": [
-        "20D"
+        "20Dxx"
       ],
       "difficulty": "substantial",
       "occurrences": [],

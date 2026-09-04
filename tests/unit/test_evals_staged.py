@@ -19,7 +19,7 @@ from hardy.evals.corpus import load_corpus, manifest_digest
 from hardy.evals.problems import Entry, sha256_of
 from hardy.storage import RunStore
 
-ENTRY = Entry(id="odd-sum", input="...", name="OddSum", binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
+ENTRY = Entry(id="odd-sum", input="...", name="OddSum", binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
 HOST = sweep.host_info()
 IDENTITY = EnvironmentIdentity(lean_version="4.33.1", lean_commit="8", mathlib_revision="v", lake_manifest_sha256="m" * 64)
 
@@ -287,7 +287,7 @@ def _solved_fixture(tmp_path: Path):
     row_dir.mkdir(parents=True)
     run_dir = _audit_clean_deterministic_run(row_dir)
     entry = Entry(id="odd-sum", input=(run_dir / "request.md").read_text(encoding="utf-8").strip(), name="OddSum",
-                 binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
+                 binders="(n : ℕ)", conclusion="∑ i ∈ Finset.range n, (2 * i + 1) = n ^ 2", expected="true", source="textbook", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
     staged.compare_canonical(entry, run_dir, row_dir, runtime_factory=lambda store: _CanonicalRuntime(AGREES, store), model="reader@test", wall_seconds=60.0)
 
     problems_path = write_corpus(tmp_path / "corpus", (entry,))

@@ -134,7 +134,7 @@ def _witness_entry(witness: str):
 
     return Entry(id='pos-nat', input='...', name='PosNat', binders='(n : Nat) (h : n > 0)',
                  conclusion='n ≥ 1', imports=('Init',), expected='true', source='textbook',
-                 msc=('11A',), difficulty='routine', rationale='A6 real-toolchain check',
+                 msc=('11Axx',), difficulty='routine', rationale='A6 real-toolchain check',
                  witness=witness)
 
 

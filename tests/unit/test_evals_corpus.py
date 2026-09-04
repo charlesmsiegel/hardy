@@ -29,7 +29,7 @@ def _entry(**overrides) -> dict:
     base = {
         "id": "odd-squares", "input": "If $a$ and $b$ are odd, $a^2+b^2$ is not a square.",
         "name": "OddSquares", "binders": "(a b : ℤ)", "conclusion": "¬ IsSquare (a ^ 2 + b ^ 2)",
-        "expected": "true", "source": "classical", "msc": ["11A"],
+        "expected": "true", "source": "classical", "msc": ["11Axx"],
         "difficulty": "substantial", "status": "candidate",
         "witness": None, "witness_note": "n/a", "rationale": "smoke", "occurrences": [],
     }
@@ -70,13 +70,13 @@ def _changelog(root: Path, version: str = "0.1.0", digest: str | None = None) ->
 
 def test_shards_are_concatenated_into_one_set(tmp_path):
     _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
-    _write(tmp_path, "20", [_entry(id="b", name="B", msc=["20D"])])
+    _write(tmp_path, "20", [_entry(id="b", name="B", msc=["20Dxx"])])
     assert {e.id for e in load_corpus(tmp_path).entries} == {"a", "b"}
 
 
 def test_an_id_duplicated_across_two_shards_is_rejected(tmp_path):
     _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
-    _write(tmp_path, "20", [_entry(id="a", name="B", msc=["20D"])])
+    _write(tmp_path, "20", [_entry(id="a", name="B", msc=["20Dxx"])])
     with pytest.raises(CorpusError, match="duplicate id"):
         load_corpus(tmp_path)
 
@@ -345,7 +345,7 @@ def test_an_invariant_spanning_two_shards_is_reported_not_raised(tmp_path):
     raw, it is a pydantic error walking out of the command asked to report it.
     """
     _write(tmp_path, "13", [_entry(id="a", name="Same", msc=["13A15"])])
-    _write(tmp_path, "20", [_entry(id="b", name="Same", msc=["20D"])])
+    _write(tmp_path, "20", [_entry(id="b", name="Same", msc=["20Dxx"])])
     with pytest.raises(CorpusError, match="do not form one valid corpus"):
         load_corpus(tmp_path)
     assert any("one valid corpus" in i for i in check_issues(tmp_path))
