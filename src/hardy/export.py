@@ -28,10 +28,12 @@ Two further rules:
 
 from __future__ import annotations
 
+import contextlib
 import html
 import json
 import os
 import re
+import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from importlib import resources
@@ -681,10 +683,33 @@ def write(material: Mapping[str, Any], path: Path, *, now: datetime | None = Non
     # user's own. `written` is what the caller shows, so the line a user reads
     # names the real file.
     landed = path.parent.resolve() / path.name
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags, 0o644)
-    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-        stream.write(page)
+    # Written beside the destination and moved onto it, rather than opened with
+    # O_TRUNC. A write that fails part way -- a full disk is the ordinary way --
+    # had already emptied whatever was there, so a user who re-exported over
+    # last week's report lost it and got half a page of HTML that still opens
+    # in a browser and still looks like a report. The move is atomic, so the
+    # destination is either the old file or the whole new one.
+    #
+    # `mkstemp` rather than a chosen name: it creates exclusively under a name
+    # nothing else holds, so the temporary cannot itself be a planted link, and
+    # it lands in the destination's own directory so the move never crosses a
+    # filesystem. `replace` does not follow a link at the destination either,
+    # which is the same guarantee `O_NOFOLLOW` was giving above.
+    descriptor, temporary = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".part"
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(page)
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, path)
+    except BaseException:
+        # Including a cancellation: a half-written temporary left in the
+        # workspace is litter the user did not ask for and would have to
+        # recognise as Hardy's.
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
     return landed
 
 

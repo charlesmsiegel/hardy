@@ -46,7 +46,11 @@ NAME = re.compile(r"[a-z0-9][a-z0-9_-]*\Z")
 #: `$@`, `$1`, `$12`, and `$$` for a literal dollar. Nothing else is touched,
 #: which is what lets a template body carry LaTeX: `$x + y$` has no digit and
 #: no `@` after its dollars, so it survives verbatim.
-PLACEHOLDER = re.compile(r"\$(\$|@|[0-9]+)")
+#:
+#: Positional indices start at 1, so `$0` is not one. Matching it made
+#: `Show $0 < x$` -- ordinary inline mathematics -- a template that could never
+#: expand, because the argument it asked for does not exist at any index.
+PLACEHOLDER = re.compile(r"\$(\$|@|[1-9][0-9]*)")
 
 FRONTMATTER = "---"
 #: `description: ...`. Hyphens accepted in keys because Pi spells one

@@ -210,3 +210,24 @@ def test_a_lemma_elsewhere_cannot_lend_its_verdict_to_a_theorem(tmp_path: Path):
     chat.lean_workspace.sources = two_modules
 
     assert "hardyBasic" in chat.export_material()["shared"]
+
+
+def test_the_obligations_describe_the_same_tree_the_results_do(tmp_path: Path):
+    """A later read can ask for LESS, not only for more: an edit that removes
+    an undocumented theorem between the reads left the page showing that
+    theorem's statement and its verdict beside "Nothing outstanding"."""
+    chat = built(tmp_path)
+    read = chat.lean_workspace.sources
+    calls: list[int] = []
+
+    def vanishing():
+        calls.append(1)
+        found = read()
+        # The editor deleted the module after the results were captured.
+        return found if len(calls) == 1 else {}
+
+    chat.lean_workspace.sources = vanishing
+    material = chat.export_material()
+
+    assert material["theorems"], "the fixture saved no theorem"
+    assert material["obligations"], "the page shows a result and owes nothing for it"

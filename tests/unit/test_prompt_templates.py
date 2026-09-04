@@ -187,3 +187,10 @@ def test_a_linked_hardy_directory_is_refused_like_a_linked_prompts_one(tmp_path)
 
     assert found == []
     assert "symlink" in problems[0]
+
+
+def test_inline_mathematics_with_a_zero_is_not_a_placeholder():
+    """Positional arguments are one-based, so `$0` is not one -- and matching
+    it made `Show $0 < x$` a template that could never expand."""
+    parsed = templates.parse("show", "Show $0 < x$ for the base case.")
+    assert templates.expand(parsed, "") == "Show $0 < x$ for the base case."

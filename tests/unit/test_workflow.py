@@ -212,7 +212,13 @@ def _scripted_controller(
                     raise answer
                 return answer
             if stage == 'formalization':
-                return proposals.pop(0) if proposals else _proposal(domain)
+                answer = proposals.pop(0) if proposals else _proposal(domain)
+                # An entry may be an exception to raise, as `reviews` may: an
+                # interrupted turn comes back empty, and `run_structured` turns
+                # an empty answer into `ValueError`.
+                if isinstance(answer, Exception):
+                    raise answer
+                return answer
             return writeup.WriteupContent(
                 title='Fixture writeup',
                 theorem_text='Fixture theorem.',
@@ -1251,3 +1257,22 @@ def test_a_run_cancelled_during_the_proof_turn_buys_no_verification(tmp_path) ->
 
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
     assert state.verifier_calls == 0, 'an abandoned run paid for a verification'
+
+
+def test_a_cancelled_formalization_turn_is_not_malformed_model_output(tmp_path) -> None:
+    """An interrupted exchange comes back empty, and an empty answer is what
+    "no structured response" means -- so a press during the last allowed
+    proposal was graded as the model returning nonsense."""
+    domain = importlib.import_module('hardy.domain')
+    workflow, _, controller, state = _scripted_controller(
+        tmp_path,
+        limits=domain.RunLimits(formalization_proposals=1),
+        cancel_quietly_at='formalization',
+        proposals=[ValueError('formalization turn returned no structured final response')],
+    )
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
