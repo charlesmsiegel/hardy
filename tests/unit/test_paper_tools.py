@@ -339,3 +339,30 @@ def test_every_line_of_a_stored_record_can_be_reached(tmp_path: Path):
         raise AssertionError("paging never reached the end of the record")
     # The last word of the abstract is reachable, which is the whole claim.
     assert seen.count("word") > 3_900
+
+
+def test_the_session_builds_its_paper_runtime_on_the_configured_budget(tmp_path: Path):
+    """`cas` and `search` are handed in already built against the operator's
+    `limits.model_observation_bytes`; this runtime is built by the session
+    itself, and being built there is how it came to keep its own 32 KiB
+    default while every other tool in the same workspace respected a smaller
+    configured limit.
+    """
+    import sys
+
+    from test_chat import FakeChatRuntime, factory
+
+    from hardy.chat import MathematicsSession
+
+    workspace = tmp_path / "problem"
+    workspace.mkdir()
+    runtime = FakeChatRuntime([])
+    session = MathematicsSession(
+        workspace,
+        factory(type(runtime), runtime.script),
+        (sys.executable, "-c", ""),
+        (sys.executable, "-c", ""),
+        lambda proposal: False,
+        observation_bytes=4096,
+    )
+    assert session.papers.observation_bytes == 4096

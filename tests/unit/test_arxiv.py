@@ -683,3 +683,58 @@ def test_a_query_answered_while_this_one_waited_is_not_asked_again(tmp_path: Pat
     found = client.search("ricci flow")
     assert found, "the cached answer was served"
     assert transport.urls == [], "the answer was already on disk when the wait ended"
+
+
+def test_a_record_that_lies_about_where_it_came_from_is_refused(tmp_path: Path):
+    """Provenance is inside the digest, not merely beside it.
+
+    `content_sha256` is the claim a bibliography entry carries off to another
+    machine. While the source, the time and the response digest sat outside
+    the digested text, a restored or edited `record.json` could say the bytes
+    came from somewhere else, or at another time, and every check passed --
+    the paper fields were untouched, so both content digests matched, and
+    `response.xml` was untouched, so its digest matched too.
+    """
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    stored = library.path_for(record.identifier) / "record.json"
+    for moved in (
+        record.model_copy(update={"source_url": "https://example.invalid/made-up"}),
+        record.model_copy(update={"fetched_at": "1999-01-01T00:00:00+00:00"}),
+    ):
+        stored.write_text(moved.model_dump_json(), encoding="utf-8")
+        with pytest.raises(arxiv.ArxivError, match="does not match its recorded digest"):
+            library.read(record.identifier)
+
+
+def test_the_provenance_a_reader_is_served_is_the_provenance_recorded(tmp_path: Path):
+    client, _, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    served = record.content()
+    assert record.source_url in served
+    assert f"Retrieved: {record.fetched_at}" in served
+    assert f"sha256:{record.response_sha256}" in served
+
+
+def test_a_cache_entry_with_a_timestamp_that_is_not_a_number_is_dropped(tmp_path: Path):
+    """`json.loads` accepts a bare `NaN` and `float` keeps it.
+
+    Every comparison against a NaN is false, so a corrupted entry passed both
+    freshness tests as fresh -- and `_stamp` then raised `ValueError`, which
+    is not the `ArxivError` the caller catches, so the entry was never
+    dropped and every search for that URL failed identically forever after.
+    """
+    library = arxiv.PaperLibrary(tmp_path / "papers")
+    library.cache_query("k" * 64, b"<feed/>", now=1_000_000.0)
+    entry = library.queries / f"{'k' * 64}.json"
+    entry.write_text('{"fetched_at": NaN, "body": "<feed/>"}', encoding="utf-8")
+    assert library.cached_query("k" * 64, now=1_000_000.0) is None
+
+
+def test_a_query_whose_cache_entry_is_corrupt_reaches_arxiv_again(tmp_path: Path):
+    """And the fetch that follows must actually happen, not raise."""
+    client, library, clock = _client(tmp_path, Recorder(_feed()))
+    client.search("ricci flow")
+    for entry in library.queries.glob("*.json"):
+        entry.write_text('{"fetched_at": NaN, "body": "<feed/>"}', encoding="utf-8")
+    assert client.search("ricci flow"), "the corrupt entry was skipped and arXiv asked again"
