@@ -38,6 +38,7 @@ from typing import Any
 
 # The key-name rule a trajectory is already written under. Imported rather than
 # restated so one list decides what counts as a credential for both.
+from .audit import DeclarationStatus, declaration_status
 from .storage import _redact as redact_payload
 
 #: Token shapes worth removing from free text. Deliberately narrow: a pattern
@@ -55,19 +56,35 @@ SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     # `api_key = "..."`, `password: ...`, `authorization=...` in prose or in a
     # pasted config. The key names are `storage.SECRET_KEY`'s, so one list
     # decides what counts as a credential for both the trajectory and this.
+    #
+    # The optional quote after the key name is what makes this cover the shape
+    # a credential is actually pasted in. `{"api_key": "hunter2"}` is the
+    # common case and the first version missed it outright: it required the
+    # separator to follow the bare name, so a JSON snippet inside a message
+    # went through untouched -- and the structural redactor cannot help there,
+    # because the snippet is one string rather than a key of its own.
     (
         re.compile(
             r"(?i)\b(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)"
-            r"(\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|\S+)"
+            r"([\"']?\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|\S+)"
         ),
         r"\1\2[REDACTED]",
     ),
 )
 
+#: The readings a caller's own list of open declarations may replace. See
+#: `classify`.
+OPENABLE = frozenset({"verified", "assumed", "unaudited"})
+
 STATUS_STYLES = {
     "verified": ("verified", "kernel-verified"),
     "assumed": ("assumed", "rests on an approved assumption"),
     "open": ("open", "open — rests on a hole"),
+    "unapproved": ("open", "rests on an axiom nobody approved"),
+    # Distinct from "not audited", and the distinction matters: one was never
+    # asked about, the other was and the answer has since expired because the
+    # toolchain, the source or a dependency moved. Neither is evidence.
+    "stale": ("unaudited", "audit no longer established"),
     "unaudited": ("unaudited", "not audited"),
 }
 
@@ -111,26 +128,24 @@ def _badge(kind: str) -> str:
     return f'<span class="badge {style}">{html.escape(label)}</span>'
 
 
-def classify(name: str, audit: Mapping[str, Mapping[str, Any]], *, open_names: Sequence[str]) -> tuple[str, tuple[str, ...]]:
-    """One theorem's status and the assumptions it rests on, from stored verdicts.
+def classify(
+    name: str, audit: Mapping[str, Mapping[str, Any]], *, open_names: Sequence[str] = ()
+) -> DeclarationStatus:
+    """One theorem's status, from the stored verdicts, as `summary` reads it too.
 
-    The weakest reading wins, module by module, for `summary`'s reason: a
-    declaration that is open in any record is open, and one no record mentions
-    is unaudited rather than clean.
+    `audit.declaration_status` is the whole of it, and sharing it is the point:
+    a badge on this page and a line in `/status --full` must not be able to
+    grade one theorem differently. `open_names` is the session's own list of
+    declarations resting on a hole, read from the same verdicts, so the two
+    agree on an ordinary workspace. `open_names` upgrades a
+    reading to open from the three that are compatible with a hole; it never
+    overrides `unapproved` or `stale`, which each carry a warning a reader
+    must not lose to a coarser one.
     """
-    if name in open_names:
-        return "open", ()
-    mentions = [
-        record
-        for record in audit.values()
-        if any(str(item.get("name")) == name for item in record.get("declarations", ()))
-    ]
-    if not mentions:
-        return "unaudited", ()
-    assumed: set[str] = set()
-    for record in mentions:
-        assumed.update(str(item) for item in record.get("assumed", ()))
-    return ("assumed", tuple(sorted(assumed))) if assumed else ("verified", ())
+    status = declaration_status(name, audit)
+    if name in open_names and status.kind in OPENABLE:
+        return DeclarationStatus("open", status.assumed, status.unapproved)
+    return status
 
 
 def _results(material: Mapping[str, Any]) -> str:
@@ -147,12 +162,20 @@ def _results(material: Mapping[str, Any]) -> str:
         )
     parts = []
     for name in sorted(theorems):
-        kind, assumed = classify(name, audit, open_names=open_names)
-        detail = ""
-        if kind == "assumed":
-            detail = "".join(_assumption_note(approvals.get(axiom), axiom) for axiom in assumed)
+        status = classify(name, audit, open_names=open_names)
+        # Named whatever the grade: a proof that is both unfinished and resting
+        # on an approved axiom has two limitations, and printing only the badge
+        # for the worse one leaves a reader believing the rest is Lean's own.
+        detail = "".join(
+            _assumption_note(approvals.get(axiom), axiom) for axiom in status.assumed
+        )
+        if status.kind == "stale":
+            detail += (
+                f"<p class='fail'>{_escape(status.detail or 'The verdict has expired.')} "
+                "Nothing here is graded until it is audited again.</p>"
+            )
         parts.append(
-            f'<div class="result"><p>{_badge(kind)} <code>{_escape(name)}</code></p>'
+            f'<div class="result"><p>{_badge(status.kind)} <code>{_escape(name)}</code></p>'
             f"{_block(theorems[name])}{detail}</div>"
         )
     return "".join(parts)

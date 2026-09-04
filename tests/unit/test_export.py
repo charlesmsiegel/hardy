@@ -240,3 +240,62 @@ def test_a_block_structured_message_is_rendered_from_its_text_parts():
         ]
     )
     assert "hello" in page
+
+
+def test_a_stale_verdict_is_not_rendered_as_a_verification():
+    stale = {
+        **audit_record("sylow", ["propext"]),
+        "status": "not established",
+        "reason": "the toolchain moved since this was established",
+        "stale": True,
+    }
+    page = build(theorems={"sylow": "theorem sylow : True"}, audit={"Work": stale})
+    shown = results(page)
+    assert "audit no longer established" in shown
+    assert 'class="badge verified"' not in shown
+    assert "the toolchain moved" in shown
+
+
+def test_an_assumption_is_attributed_only_to_the_declarations_that_use_it():
+    record = {
+        "status": "modulo",
+        "declarations": [
+            {"name": "clean_", "axioms": ["propext"]},
+            {"name": "leans_", "axioms": ["propext", "big"]},
+        ],
+        "forbidden": [],
+        "unapproved": [],
+        "assumed": ["big"],
+    }
+    shown = results(
+        build(
+            theorems={"clean_": "theorem clean_ : True", "leans_": "theorem leans_ : True"},
+            audit={"Work": record},
+            assumptions=[{"formal_name": "big", "lean_statement": "True", "reason": "r"}],
+        )
+    )
+    clean, leans = shown.split("<code>leans_</code>")
+    assert 'class="badge verified"' in clean
+    assert "Rests on" not in clean
+    assert 'class="badge assumed"' in shown
+
+
+def test_an_open_theorem_still_names_the_axiom_it_also_rests_on():
+    record = {
+        "status": "open",
+        "declarations": [{"name": "both_", "axioms": ["sorryAx", "big"]}],
+        "forbidden": ["sorryAx"],
+        "unapproved": [],
+        "assumed": ["big"],
+    }
+    shown = results(
+        build(
+            theorems={"both_": "theorem both_ : True"},
+            audit={"Work": record},
+            assumptions=[
+                {"formal_name": "big", "lean_statement": "True", "reason": "not in Mathlib"}
+            ],
+        )
+    )
+    assert 'class="badge open"' in shown
+    assert "not in Mathlib" in shown

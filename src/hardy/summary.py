@@ -126,29 +126,27 @@ def attempts(events: Iterable[Mapping[str, Any]], *, limit: int = ATTEMPTS) -> t
     return tuple(folded.values())[-limit:]
 
 
+def export_openable() -> frozenset[str]:
+    """The readings `open_theorems` may replace, shared with the export.
+
+    Imported lazily rather than at module scope: `export` reads a package
+    resource at import, and a summary must not pay for a stylesheet.
+    """
+    from .export import OPENABLE
+
+    return OPENABLE
+
+
 def _status_of(name: str, records: Mapping[str, Mapping[str, Any]]) -> str:
     """What the stored audit verdicts say about one declaration.
 
-    Every module that reports on the name is consulted, and the weakest reading
-    wins: a declaration that is open in any record is open. A name no record
-    mentions is "not audited" rather than clean, which is the distinction the
-    whole audit exists to keep.
+    Through `audit.declaration_status`, which the export uses too: a theorem's
+    grade must not depend on which surface printed it. That is also where the
+    two rules a first version of this got wrong are stated -- a stored record
+    grades a module rather than a declaration, and a record the session has
+    marked stale is not evidence of anything.
     """
-    mentions = [
-        record
-        for record in records.values()
-        if any(str(item.get("name")) == name for item in record.get("declarations", ()))
-    ]
-    if not mentions:
-        return "not audited -- no stored verdict names it"
-    if any(name in audit_module.open_declarations(record) for record in mentions):
-        return "open -- rests on a hole"
-    assumed: list[str] = []
-    for record in mentions:
-        assumed.extend(str(item) for item in record.get("assumed", ()))
-    if assumed:
-        return f"rests on approved assumptions {sorted(set(assumed))}"
-    return "kernel-verified -- standard axioms only"
+    return str(audit_module.declaration_status(name, records))
 
 
 def _assumption_line(record: Mapping[str, Any]) -> str:
@@ -205,13 +203,20 @@ def assemble(
     what failed, what is open, the naming registry, and what is left. Every
     section is derived; none of it is narrated.
     """
+    # Routed by the verdict rather than by the caller's list alone. The session
+    # supplies `open_theorems` from the same records, so the two agree -- but a
+    # theorem whose own axioms name a hole belongs under `Open` whichever list
+    # noticed, and one whose verdict has expired belongs under neither heading
+    # as a result: it goes under `Proved` carrying "no longer established",
+    # which is exactly what a reader has to see rather than a silent promotion.
     opened = set(open_theorems)
-    proved = [
-        f"{name}: {_status_of(name, audit)}"
-        for name in sorted(theorems)
-        if name not in opened
-    ]
-    still_open = [f"{name}: still open -- rests on a hole" for name in sorted(opened)]
+    proved: list[str] = []
+    still_open: list[str] = []
+    for name in sorted(theorems):
+        status = audit_module.declaration_status(name, audit)
+        if name in opened and status.kind in export_openable():
+            status = audit_module.DeclarationStatus("open", status.assumed, status.unapproved)
+        (still_open if status.kind == "open" else proved).append(f"{name}: {status}")
     return Summary(
         (
             Section("Goal", (goal,) if goal.strip() else (), empty="not set (/goal)"),

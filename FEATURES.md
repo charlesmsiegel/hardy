@@ -292,7 +292,10 @@ interactive surface's own live run is still to come.
   same workflow with nothing relaxed: the same frozen claim, the same
   independent faithfulness read, the same typed acknowledgement that generated
   code runs unisolated, and its own run directory, so a staged run leaves the
-  workspace and the conversation it was launched from untouched.
+  workspace and the conversation it was launched from untouched. Esc reaches
+  the run rather than only its subprocesses: the provider call in flight is
+  stopped, no further stage begins, and the manifest records a cancellation
+  rather than a runtime failure.
 - **Now (implemented):** a project keeps its own `/commands` in
   `.hardy/prompts/<name>.md` (issue #101). Frontmatter supplies `description`
   and `argument-hint`; the body supports `$1`…`$n`, `$@` and `$$`. A placeholder
@@ -301,7 +304,9 @@ interactive surface's own live run is still to come.
   the **expansion** is what `transcript.jsonl` records — never the `/name` — so a
   shared transcript does not refer to a file its reader lacks. A user template
   is input rather than instruction and is deliberately outside
-  `PROMPT_SET_SHA256`.
+  `PROMPT_SET_SHA256`. Nothing is read through a link and nothing but an
+  ordinary file is read at all: a template's body is sent, so a symlinked one
+  would be a command that mails a host file to the provider.
 - **Now (implemented):** `/status --full` prints the workspace's own summary of
   the session, assembled from the artifacts rather than narrated by the model:
   goal, approved assumptions with source, reason and approval date, each saved
@@ -317,7 +322,11 @@ interactive surface's own live run is still to come.
   identities (issue #105). It does not flatten Hardy's distinctions: a
   kernel-verified theorem, a theorem checked given an approved axiom, and a
   sentence from the conversation are rendered as three visibly different things,
-  and the conversation is labelled as evidence for nothing. Known credential
+  and the conversation is labelled as evidence for nothing. An axiom is
+  attributed to the declarations whose own axiom report names it rather than to
+  every declaration in its module, and a verdict whose toolchain, source or
+  dependencies have moved reads as no longer established rather than as a
+  verification — the same expiry `/status` and the obligations already apply. Known credential
   shapes and values under credential-shaped key names are removed before the
   file is written, and the page states that this is a filter rather than a
   proof.

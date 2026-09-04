@@ -33,6 +33,10 @@ from pathlib import Path
 #: Where a project keeps them, under `.hardy/`.
 DIRECTORY = "prompts"
 SUFFIX = ".md"
+#: The largest template Hardy will read. A prompt template is a paragraph or
+#: two; anything past this is either not one or is not meant to be sent, and
+#: reading it whole at startup is how a session stops opening.
+LIMIT = 64 * 1024
 
 #: What a command may be called. The same shape the built-in names have, so a
 #: template is typed and completed exactly like `/status` -- and so a filename
@@ -188,10 +192,23 @@ def load(root: Path, *, reserved: frozenset[str] | set[str] = frozenset()) -> tu
     shadowing it. Shadowing `/exit` or `/status` would let a checked-in file
     change what Hardy's own commands do, and a user who cannot leave the
     session has no way to find out why.
+
+    Nothing here is read through a link, and nothing that is not an ordinary
+    file is read at all -- the same rule `layout` enforces on every other path
+    inside a project, and it has to hold here for two reasons. A checkout can
+    ship `.hardy/prompts/notes.md -> ~/.ssh/id_rsa`, and the body of a template
+    is *sent*: the link would turn `/notes` into a command that mails a host
+    file to the provider. And a link to a device or a fifo -- `/dev/zero` is
+    the easy one -- would hang or exhaust memory during startup, before the
+    session exists to report it.
     """
     where = directory(root)
     problems: list[str] = []
     try:
+        if where.is_symlink():
+            return [], [
+                f"{where} is a symlink; refusing to read prompt templates through it."
+            ]
         if not where.is_dir():
             return [], problems
         files = sorted(where.iterdir(), key=lambda item: item.name)
@@ -200,10 +217,27 @@ def load(root: Path, *, reserved: frozenset[str] | set[str] = frozenset()) -> tu
 
     found: dict[str, Template] = {}
     for item in files:
-        if item.suffix != SUFFIX or item.is_dir():
+        if item.suffix != SUFFIX:
             continue
         name = item.stem.lower()
         try:
+            if item.is_symlink():
+                problems.append(
+                    f"{item.name} is a symlink, so it was not loaded. A template's "
+                    "body is sent to the model; Hardy reads one only where it lies."
+                )
+                continue
+            # A regular file and nothing else: a directory named `x.md`, a
+            # fifo, or a device would each get past a bare existence test, and
+            # two of those never finish being read.
+            if not item.is_file():
+                continue
+            if item.stat().st_size > LIMIT:
+                problems.append(
+                    f"{item.name} is larger than {LIMIT} bytes, so it was not loaded. "
+                    "A prompt template is prose."
+                )
+                continue
             text = item.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
             problems.append(f"Could not read {item.name}: {error}")

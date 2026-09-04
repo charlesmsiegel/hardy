@@ -57,7 +57,7 @@ def test_an_open_theorem_is_listed_as_open_and_never_as_proved():
         audit={"Work": audit_record("partial_", ["sorryAx"], status="open")},
     )
     text = assembled.text()
-    assert "partial_: still open -- rests on a hole" in text
+    assert "partial_: open -- rests on a hole" in text
     assert "Proved" in text and "no closed theorem is saved" in text
 
 
@@ -168,3 +168,52 @@ def test_a_failure_with_nothing_to_name_it_by_still_appears():
     found = summary.attempts(events)
     assert found[0].subject == ""
     assert str(found[0]) == "read_workspace: unreadable"
+
+
+def test_a_stale_verdict_never_reads_as_verified():
+    """The session marks an expired record; a summary that ignored that would
+    call a theorem kernel-verified on the same page that reports its audit as
+    no longer established."""
+    stale = {
+        **audit_record("sylow", ["propext"]),
+        "status": "not established",
+        "reason": "the toolchain moved since this was established",
+        "stale": True,
+    }
+    text = assemble(theorems={"sylow": "theorem sylow : True"}, audit={"Work": stale}).text()
+    assert "sylow: no longer established -- the toolchain moved" in text
+    assert "kernel-verified" not in text
+
+
+def test_an_assumption_is_attributed_only_to_the_declarations_that_use_it():
+    """The stored `assumed` is the union for a whole module, not for a theorem."""
+    record = {
+        "status": "modulo",
+        "declarations": [
+            {"name": "clean_", "axioms": ["propext"]},
+            {"name": "leans_", "axioms": ["propext", "big"]},
+        ],
+        "forbidden": [],
+        "unapproved": [],
+        "assumed": ["big"],
+    }
+    text = assemble(
+        theorems={"clean_": "theorem clean_ : True", "leans_": "theorem leans_ : True"},
+        audit={"Work": record},
+    ).text()
+    assert "clean_: kernel-verified -- standard axioms only" in text
+    assert "leans_: rests on approved assumptions ['big']" in text
+
+
+def test_an_open_theorem_still_discloses_the_axiom_it_also_rests_on():
+    """Two limitations, and naming only the hole leaves the rest looking like
+    Lean's own."""
+    record = {
+        "status": "open",
+        "declarations": [{"name": "both_", "axioms": ["sorryAx", "big"]}],
+        "forbidden": ["sorryAx"],
+        "unapproved": [],
+        "assumed": ["big"],
+    }
+    text = assemble(theorems={"both_": "theorem both_ : True"}, audit={"Work": record}).text()
+    assert "both_: open -- rests on a hole; approved assumptions ['big']" in text

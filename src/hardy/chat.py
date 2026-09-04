@@ -2941,6 +2941,41 @@ class MathematicsSession:
         """
         return bool(self._saved_theorems())
 
+    def _current_audit(self) -> dict[str, dict[str, Any]]:
+        """The stored verdicts, each measured against the tree in front of us.
+
+        `session.json` keeps a verdict for reference after the module beneath
+        it has moved; `_still_current` is what says whether it still describes
+        anything, and every existing reader of the audit -- `_open_theorems`,
+        `_settled_declarations`, `_audit_gaps` -- goes through it. `/status
+        --full` and `/export` must too, and the first version of both did not:
+        they read `state["audit"]` raw, so a theorem whose toolchain had moved
+        was rendered "kernel-verified" on the same page that reports its audit
+        as no longer established. A disclosure that contradicts the obligation
+        beside it is worse than none.
+
+        A signature that cannot be computed -- a tree that does not order --
+        expires everything rather than passing it through. `_audit_gaps`
+        reports the cycle; nothing here may grade a workspace it cannot read.
+        """
+        stored = self.state.get("audit", {})
+        try:
+            signatures = self.lean_workspace.current_signatures()
+        except ImportCycle as error:
+            return {
+                module: {
+                    **record,
+                    "status": "not established",
+                    "reason": f"the workspace does not order: {error}",
+                    "stale": True,
+                }
+                for module, record in stored.items()
+            }
+        return {
+            module: self._still_current(module, record, signatures)
+            for module, record in stored.items()
+        }
+
     def summary(self) -> summary_module.Summary:
         """This session, read off the workspace rather than remembered (#100).
 
@@ -2967,7 +3002,7 @@ class MathematicsSession:
             goal=self.goal(),
             assumptions=list(self.state["assumptions"]),
             registry=list(self.state["names"]),
-            audit=dict(self.state.get("audit", {})),
+            audit=self._current_audit(),
             theorems=self._theorem_statements(),
             open_theorems=self._open_theorems(),
             obligations=self._obligations(),
@@ -2997,7 +3032,7 @@ class MathematicsSession:
             "goal": self.goal(),
             "assumptions": list(self.state["assumptions"]),
             "registry": list(self.state["names"]),
-            "audit": dict(self.state.get("audit", {})),
+            "audit": self._current_audit(),
             "theorems": self._theorem_statements(),
             "open": sorted(self._open_theorems()),
             "lean": self.lean_workspace.sources(),

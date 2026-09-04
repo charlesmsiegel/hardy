@@ -153,6 +153,108 @@ def open_declarations(record: Mapping[str, Any]) -> tuple[str, ...]:
     )
 
 
+@dataclass(frozen=True)
+class DeclarationStatus:
+    """What the stored verdicts say about ONE declaration.
+
+    A stored record grades a MODULE: its `assumed` and `unapproved` lists are
+    the union over everything the module declares, which is the right shape for
+    refusing a save and the wrong shape for reporting a result. Attributing the
+    union to each declaration says a theorem that uses nothing but `propext`
+    rests on an approved axiom because its neighbour does -- and a reader who
+    checks and finds it does not learns that Hardy's disclosures are decorative.
+
+    So this reads each declaration's OWN axiom list back out of the record and
+    intersects it with what the module's verdict sanctioned. Openness is
+    tracked independently of assumption, because a proof can be both: one with
+    a hole *and* an approved dependency has two limitations, and naming only
+    the hole leaves a reader believing the rest is Lean's own.
+    """
+
+    kind: str                                   # see `GRADES`
+    assumed: tuple[str, ...] = ()
+    unapproved: tuple[str, ...] = ()
+    #: Why, where the kind alone does not say it: a stale record's reason.
+    detail: str = ""
+
+    def __str__(self) -> str:
+        if self.kind == "unaudited":
+            return "not audited -- no stored verdict names it"
+        if self.kind == "stale":
+            return f"no longer established -- {self.detail or 'the verdict has expired'}"
+        if self.kind == "unapproved":
+            return f"rests on unapproved axioms {list(self.unapproved)}"
+        if self.kind == "open":
+            opened = "open -- rests on a hole"
+            return f"{opened}; approved assumptions {list(self.assumed)}" if self.assumed else opened
+        if self.kind == "assumed":
+            return f"rests on approved assumptions {list(self.assumed)}"
+        return "kernel-verified -- standard axioms only"
+
+
+#: The kinds, worst first. `unapproved` outranks `open` for `classify`'s own
+#: reason: it is the half a reader can act on, and a result carrying both must
+#: be described by that one.
+GRADES = ("unaudited", "stale", "unapproved", "open", "assumed", "verified")
+
+
+def declaration_status(
+    name: str, records: Mapping[str, Mapping[str, Any]]
+) -> DeclarationStatus:
+    """How one declaration stands, across every stored verdict that names it.
+
+    `records` is module -> stored record, as `session.json` holds them and as
+    the session hands them out once each has been through `_still_current`. A
+    record marked `stale` there is not evidence of anything: the toolchain, the
+    source or a dependency moved after it was written, so what it says was true
+    of a tree that is no longer in front of us. Such a record cannot grade a
+    declaration, and a name that has only stale records reads as expired rather
+    than as verified -- which is the whole point of stamping them.
+
+    The weakest current reading wins where several modules name one
+    declaration: `GRADES` is the order.
+    """
+    mentions = [
+        record
+        for record in records.values()
+        if any(str(item.get("name")) == name for item in record.get("declarations", ()))
+    ]
+    if not mentions:
+        return DeclarationStatus("unaudited")
+    current = [record for record in mentions if not record.get("stale")]
+    if not current:
+        return DeclarationStatus(
+            "stale", detail=str(mentions[0].get("reason", "")).strip()
+        )
+
+    assumed: list[str] = []
+    unapproved: list[str] = []
+    opened = False
+    for record in current:
+        sanctioned = {str(item) for item in record.get("assumed", ())}
+        refused = {str(item) for item in record.get("unapproved", ())}
+        for entry in record.get("declarations", ()):
+            if str(entry.get("name")) != name:
+                continue
+            axioms = [str(axiom) for axiom in entry.get("axioms", ())]
+            opened = opened or any(axiom in FORBIDDEN for axiom in axioms)
+            assumed.extend(
+                axiom for axiom in axioms if axiom in sanctioned and axiom not in assumed
+            )
+            unapproved.extend(
+                axiom for axiom in axioms if axiom in refused and axiom not in unapproved
+            )
+    if unapproved:
+        kind = "unapproved"
+    elif opened:
+        kind = "open"
+    elif assumed:
+        kind = "assumed"
+    else:
+        kind = "verified"
+    return DeclarationStatus(kind, tuple(sorted(assumed)), tuple(sorted(unapproved)))
+
+
 def unestablished(reason: str) -> dict[str, Any]:
     """The record for an audit that was attempted and could not be completed.
 
