@@ -2648,7 +2648,16 @@ class MathematicsSession:
         """
         found: dict[str, str] = {}
         for source in (self.lean_workspace.sources() if sources is None else sources).values():
-            theorems = set(declarations(source)["theorem"])
+            declared = declarations(source)
+            # Private ones left out, and this is not merely tidiness. The map
+            # is keyed by NAME, so a `private theorem result` in a later module
+            # overwrote the public `theorem result` an earlier one declared --
+            # and a private declaration is not in the axiom audit, so the page
+            # then showed the private statement under the public theorem's
+            # clean verdict. Lean mangles the private name; nothing outside its
+            # module can refer to it, so nothing outside can owe a writeup for
+            # it either.
+            theorems = set(declared["theorem"]) - set(declared["private"])
             found.update(
                 {name: text for name, text in statements(source).items() if name in theorems}
             )
@@ -3078,6 +3087,10 @@ class MathematicsSession:
             # the statement shown and the verdict over it may come from
             # different ones.
             shared=self._shared_names(sources),
+            # Under the same gate as everything else here, for the reason the
+            # obligations are: read separately, this disclosure could name a
+            # theorem the sections beside it do not have.
+            automation=self._automation_closed(),
         )
 
     def export_material(self) -> dict[str, Any]:

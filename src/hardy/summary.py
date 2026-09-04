@@ -194,6 +194,11 @@ class Summary:
     #: `Next steps` is the same page contradicting itself.
     obligations: tuple[str, ...] = field(default_factory=tuple)
     has_theorems: bool = False
+    #: Theorems a single automation call closed, gathered at the same moment.
+    #: The same rule as the obligations above: read separately, this disclosure
+    #: could name a theorem the sections beside it do not have, or miss one
+    #: they do.
+    automation: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
     def lines(self) -> list[str]:
         out: list[str] = []
@@ -221,6 +226,7 @@ def assemble(
     obligations: Sequence[Any],
     failed: Sequence[Attempt] = (),
     modules: Sequence[str] = (),
+    automation: Mapping[str, str] | None = None,
     shared: Mapping[str, Sequence[str]] | None = None,
 ) -> Summary:
     """The summary, in the order a reader needs it.
@@ -296,4 +302,5 @@ def assemble(
         ),
         obligations=tuple(str(item) for item in obligations),
         has_theorems=bool(theorems),
+        automation=tuple(sorted((str(k), str(v)) for k, v in dict(automation or {}).items())),
     )

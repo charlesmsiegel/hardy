@@ -58,10 +58,22 @@ SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}"), "[REDACTED-KEY]"),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED-KEY]"),
     (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}"), "[REDACTED-KEY]"),
-    # A short token is still a token. 16 was an arbitrary floor that let
-    # `Bearer abc123` through, and nothing in a mathematical conversation is
-    # spelled `Bearer <word>` by accident.
-    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}"), "Bearer [REDACTED-KEY]"),
+    # A short token is still a token, and length was never the right question:
+    # 16 let `Bearer abc123` through, 8 let the same six-character example
+    # through while a comment right here claimed otherwise, and no floor at all
+    # redacts "the bearer of bad news". What separates a credential from an
+    # English word is not how long it is but what it is made of -- a digit or a
+    # separator, which "of" and "news" do not have and `abc123`, `sk-...` and
+    # every base64 fragment do. A long run of letters is taken too: a
+    # hexadecimal token can be all letters, and no word here is sixteen.
+    (
+        re.compile(
+            r"(?i)\bbearer\s+(?:"
+            r"(?=[A-Za-z0-9._\-]*[0-9._\-])[A-Za-z0-9._\-]{3,}"
+            r"|[A-Za-z0-9._\-]{16,})"
+        ),
+        "Bearer [REDACTED-KEY]",
+    ),
     # `Authorization: Basic dXNlcjpwYXNz` -- a pasted header, and the shape the
     # generic rule below gets exactly backwards: its unquoted alternative
     # matches `\S+`, which is the SCHEME, so it redacted the word "Basic" and
@@ -653,8 +665,8 @@ proof: read the conversation below before sharing it.</p>
         ("Model", provenance.get("model", "unknown")),
         ("Backend", provenance.get("backend", "unknown")),
         ("Endpoint", provenance.get("endpoint", "unknown")),
-        ("Lean toolchain", material.get("toolchain", "unknown")),
-        ("Lean environment", material.get("environment", "unknown")),
+        ("Lean toolchain", _printable(material.get("toolchain", "unknown"))),
+        ("Lean environment", _printable(material.get("environment", "unknown"))),
     )
 )}
 
@@ -702,6 +714,17 @@ def write(material: Mapping[str, Any], path: Path, *, now: datetime | None = Non
             f"{path} is a symlink; refusing to write an export through it. "
             "Name the file itself."
         )
+    # And nothing but an ordinary file. `os.replace` onto a fifo, a socket or a
+    # device node unlinks it and puts an HTML file where it was -- so
+    # `/export /tmp/report.html` over another process's IPC endpoint destroys
+    # it silently. A destination that exists must be a file Hardy may replace.
+    with contextlib.suppress(OSError):
+        existing = os.lstat(path)
+        if not stat.S_ISREG(existing.st_mode):
+            raise ValueError(
+                f"{path} is not an ordinary file; refusing to replace it with an export. "
+                "Name a file, or a path that does not exist yet."
+            )
     # `O_NOFOLLOW` guards the leaf and nothing above it, so a checked-out
     # `exports -> ~/.config/app` would still redirect the write while the path
     # typed looks entirely local. The destination is deliberately allowed to
@@ -748,6 +771,20 @@ def write(material: Mapping[str, Any], path: Path, *, now: datetime | None = Non
             os.unlink(temporary)
         raise
     return landed
+
+
+def _printable(value: Any) -> str:
+    """An identity with its separators shown rather than swallowed.
+
+    `_toolchain_identity` joins its components with NUL, and a workspace with
+    shared Lean sources adds another to the environment identity. Written into
+    HTML those bytes are not displayed: a browser substitutes a replacement
+    character and some tooling treats one as a terminator, so the page showed
+    something other than the exact identity the audit was established under --
+    which for a value whose whole job is to be compared is the one thing it
+    must not do. Rendered `\\0`, so what is on the page can be read back.
+    """
+    return str(value).replace("\0", "\\0")
 
 
 def _default_mode() -> int:
