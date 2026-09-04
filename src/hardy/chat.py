@@ -20,6 +20,7 @@ from . import summary as summary_module
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
+from .domain import RunLimits
 from .latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented, unreached_fragments
 from .layout import (
     HARDY_DIR,
@@ -617,7 +618,7 @@ def _vacuity_source(stripped: str, *, include_probes: bool = True) -> tuple[str,
 
 
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -629,6 +630,13 @@ class MathematicsSession:
         # (the interactive session, real or plain) has it without needing to
         # keep its own `build_runtime` call in sync with this one.
         self.cas_detail = cas_detail
+        # The budgets in force for this session, held here rather than read
+        # back off whichever runtime happens to exist. `_chat` builds the CAS
+        # and the search independently, so a session with retrieval and no
+        # kernel had no CAS `limits` object to scavenge and reported no
+        # retrieval budget at all -- and the export's whole point is that two
+        # runs under different budgets are distinguishable.
+        self.limits = limits if limits is not None else RunLimits()
         # None when no pinned Lake project was found. Unlike `cas`, the tools
         # are still advertised and refuse with the reason: a CAS backend is
         # optional, a Lean project is what Hardy is for, and a model handed no
@@ -5003,22 +5011,22 @@ class MathematicsSession:
         # summary of are three different reasons a computation is missing from
         # the record -- and a reader comparing two exports needs to be able to
         # tell a different question from a different budget.
-        limits = getattr(getattr(self.cas, "session", None), "limits", None)
-        if limits is not None:
+        limits = self.limits
+        if self.cas is not None:
             settings["Computer algebra limits"] = (
                 f"{limits.cas_cell_seconds}s per cell, "
                 f"{limits.cas_session_seconds}s per session, "
                 f"{limits.cas_output_bytes} bytes captured"
             )
-        observation = getattr(self.cas, "observation_bytes", None)
-        if observation is not None:
-            settings["Observed by the model"] = (
-                f"{observation} bytes per tool result; more than that was summarised"
-            )
-        if limits is not None:
+        if self.search is not None:
             settings["Literature search budget"] = (
-                f"{limits.retrieval_seconds}s of wall clock across the session"
+                f"{limits.retrieval_seconds}s of wall clock across the session, "
+                f"{limits.lean_process_seconds}s per Lean process it starts"
             )
+        settings["Observed by the model"] = (
+            f"{limits.model_observation_bytes} bytes per tool result; "
+            "more than that was summarised"
+        )
         return settings
 
     def _document_is_hardys(self, document: Path) -> bool:

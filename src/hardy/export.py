@@ -815,6 +815,12 @@ def _withheld(material: Mapping[str, Any]) -> str:
     )
 
 
+#: The newest failed calls always keep at least this many of the fifty slots.
+#: A run with fifty SDK denials is a story worth telling, and so is the Lean
+#: complaint that stopped the work; neither may hide the other.
+FAILURE_FLOOR = 10
+
+
 def _refusals(material: Mapping[str, Any]) -> str:
     """Every tool call that did not run, or ran and failed.
 
@@ -854,7 +860,21 @@ def _refusals(material: Mapping[str, Any]) -> str:
     # and they are the ones a reader is here for.
     denials = [item for item in refused if item.endswith("the request never ran")]
     failures = [item for item in refused if not item.endswith("the request never ran")]
-    kept = denials + failures[-max(0, 50 - len(denials)):] if denials else failures[-50:]
+    # Two things compete for the fifty slots and both have to survive. The SDK
+    # denials are what a reader is here for -- a run in which the model reached
+    # for the host -- and the newest failures are what says why the work
+    # stopped. A wall of fifty denials must not hide the current Lean
+    # complaint, and one failure must not push a denial off the page, so the
+    # newest failures are reserved a floor and the denials take what is left.
+    #
+    # `[-0:]` is the WHOLE list rather than an empty one, so the room left has
+    # to be tested before it is used as a slice bound: without that a run with
+    # fifty denials kept every failed call as well and reported no clip.
+    floor = min(len(failures), FAILURE_FLOOR)
+    room = max(0, 50 - max(len(denials), 50 - floor))
+    kept_denials = denials[-(50 - floor) :] if 50 - floor > 0 else []
+    kept_failures = failures[-max(room, floor) :] if max(room, floor) > 0 else []
+    kept = kept_denials + kept_failures
     dropped = len(refused) - len(kept)
     shown = _list(kept, "Nothing was refused.")
     if not dropped:

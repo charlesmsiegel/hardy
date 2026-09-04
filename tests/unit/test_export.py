@@ -996,6 +996,33 @@ def test_a_recent_refusal_is_not_pushed_out_by_older_denials():
     assert "Lean rejected the proof" in listed
 
 
+def test_a_wall_of_denials_cannot_hide_the_failure_that_stopped_the_work():
+    """Both compete for the fifty slots and both have to survive.
+
+    The denials are what a reader is here for; the newest failures are what
+    says why the work stopped. Filling the cap with denials dropped the current
+    Lean complaint, and filling it with failures dropped the evidence that the
+    model reached for the host.
+    """
+    transcript = [{"type": "refused_tool", "name": f"Bash{index}"} for index in range(50)] + [
+        {
+            "type": "tool",
+            "name": f"save{index}",
+            "result": {"ok": False, "output": "no"},
+        }
+        for index in range(60)
+    ]
+    listed = (
+        build(transcript=transcript)
+        .split("<h2>Tool calls Hardy refused</h2>", 1)[1]
+        .split("<h2>", 1)[0]
+    )
+    assert listed.count("<li>") <= 50
+    assert "save59" in listed, "the newest failure was pushed out by older denials"
+    assert "not a Hardy tool" in listed, "the denials were pushed out by newer failures"
+    assert "not listed here" in listed
+
+
 def test_an_outstanding_obligation_is_the_sentence_the_user_was_shown():
     """The event carries `Obligation.as_dict`, not its string."""
     page = build(

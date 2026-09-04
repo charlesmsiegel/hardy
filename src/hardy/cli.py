@@ -531,6 +531,7 @@ class ProjectOpener:
                 search=search,
                 search_detail=self._search_detail,
                 project_context=config.project_context,
+                limits=config.limits,
             )
         except BaseException:
             # The kernel this call started, and only that one. The session the
@@ -695,6 +696,7 @@ def _chat(
                 search_detail=search_detail,
                 project_context=config.project_context,
                 fresh_thread=fresh,
+                limits=config.limits,
             )
         except BaseException:
             launch["fresh_thread"] = fresh

@@ -50,6 +50,11 @@ NAME = re.compile(r"[a-z0-9][a-z0-9_-]*\Z")
 #: which is what lets a template body carry LaTeX: `$x + y$` has no digit and
 #: no `@` after its dollars, so it survives verbatim.
 #:
+#: `O_NOFOLLOW` where the platform has it, nothing where it does not, matching
+#: `layout`'s `_NOFOLLOW`. Windows has no equivalent, so there the `is_symlink`
+#: check is the whole of the leaf check.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
 #: Positional indices start at 1, so `$0` is not one. Matching it made
 #: `Show $0 < x$` -- ordinary inline mathematics -- a template that could never
 #: expand, because the argument it asked for does not exist at any index.
@@ -263,8 +268,23 @@ def load(root: Path, *, reserved: frozenset[str] | set[str] = frozenset()) -> tu
             #
             # `O_NONBLOCK` so a fifo cannot hang the open itself; the type
             # check below refuses it a moment later either way.
+            #
+            # `_NOFOLLOW` is 0 on Windows, which has no equivalent flag --
+            # `layout` states the same thing for the same reason. Naming
+            # `os.O_NOFOLLOW` directly raised `AttributeError` there, and this
+            # runs before the session's own error handling, so a project with
+            # any template in it could not open a Windows session at all. Where
+            # the flag is absent the `is_symlink` check below is the whole of
+            # the leaf check, exactly as it is in `WriteGuard`: narrower than
+            # the atomic refusal, and far better than none.
+            if not _NOFOLLOW and item.is_symlink():
+                problems.append(
+                    f"{item.name} is a symlink, so it was not loaded. A template's "
+                    "body is sent to the model; Hardy reads one only where it lies."
+                )
+                continue
             try:
-                flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+                flags = os.O_RDONLY | _NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
                 descriptor = os.open(item, flags)
             except OSError as error:
                 if error.errno in (errno.ELOOP, errno.EMLINK):
