@@ -48,14 +48,6 @@ CONTEXT_WINDOW = 200_000
 RESERVE_TOKENS = 16_384
 RECENT_TOKENS = 20_000
 
-#: Roughly how many characters make a token. A ratio, not a measurement, and
-#: named so that nothing downstream mistakes it for one: no provider on any of
-#: Hardy's transports will count a conversation for free before it is sent, and
-#: a compaction that waited for an exact number would never run. Deliberately
-#: conservative — over-estimating compacts early, and under-estimating compacts
-#: after the request has already been refused.
-CHARACTERS_PER_TOKEN = 3.5
-
 #: What a tool result is cut to when it is serialised into a summary. Lean's
 #: output is the largest thing in a mathematical transcript by a wide margin,
 #: and a summary that carried it whole would be the size of what it replaced.
@@ -203,33 +195,30 @@ def _name(item: Mapping[str, Any]) -> str:
 
 
 def estimate_text(text: str) -> int:
-    """About how large one piece of text is, and never confidently under.
+    """One token per UTF-8 byte: a bound, not an estimate.
 
-    `CHARACTERS_PER_TOKEN` is an English-prose ratio, and this is a theorem
-    prover: a transcript is full of `∀`, `∈`, `≤` and `⟨⟩`, and a session may
-    be conducted in a language that is not written in ASCII at all. Those
-    characters are one token each at best and several at worst, so dividing
-    every code point by 3.5 understates exactly the conversations Hardy is
-    for -- and an understated conversation is one the planner says fits while
-    the provider refuses it, which is the failure this module exists to
-    prevent. The two directions are not symmetric: compacting a little early
-    costs some kept context, and compacting too late costs the request.
+    A BPE token covers at least one byte, so nothing can cost more tokens than
+    it has bytes. That is the whole justification, and it is the only one
+    available without the provider's tokenizer -- which Hardy cannot run
+    offline, and which the planner is consulted far too often to ask over the
+    network.
 
-    So ASCII is charged at the prose ratio and everything else at its UTF-8
-    byte count. That is a real bound rather than a nearly-right guess: a BPE
-    token covers at least one byte, so a string can never cost more tokens than
-    it has bytes. One token per code point was the earlier attempt and is not a
-    bound -- an emoji or a rarer symbol is several tokens on its own, and the
-    conversations that would have exceeded it are the ones this exists for.
+    Every ratio tried here was an average dressed as a rule. `1/3.5` is an
+    English-prose figure, and this is a theorem prover: a transcript is full of
+    `∀` and `⟨⟩`, a session may not be conducted in ASCII at all, and even the
+    ASCII is often a hash, a generated identifier, or a wall of JSON that
+    tokenizes near one token per character. Each of those was a conversation
+    the planner called safe and the provider refused.
 
-    It overshoots for CJK, which is nearer one token per character than three.
-    Deliberately: the cost of overshooting is compacting sooner than strictly
-    necessary, and the cost of undershooting is a request the provider refuses.
+    The cost is real and worth stating plainly: on ordinary English prose this
+    charges about three and a half times what the text costs, so a session
+    compacts at roughly a third of the window rather than at its edge, keeping
+    less of its tail than it strictly had to. That is the direction to be wrong
+    in -- compacting early loses some context, compacting late loses the
+    request -- and it is what a real tokenizer would buy back, which is the
+    obvious next step rather than a cleverer ratio.
     """
-    ascii_characters = sum(1 for character in text if character.isascii())
-    # Every byte of the string, less the ASCII ones, which are one byte each.
-    other_bytes = len(text.encode("utf-8")) - ascii_characters
-    return int(ascii_characters / CHARACTERS_PER_TOKEN) + other_bytes
+    return len(text.encode("utf-8"))
 
 
 def overhead(system_prompt: str, specs: Sequence[Mapping[str, Any]]) -> int:
@@ -256,11 +245,12 @@ FRAMING_PER_BLOCK = 8
 
 
 def estimate_tokens(messages: Sequence[Message]) -> int:
-    """About how large this conversation is, by `CHARACTERS_PER_TOKEN`.
+    """An upper bound on how large this conversation is, by `estimate_text`.
 
-    An estimate and named as one. Nothing on Hardy's transports will count a
-    conversation before it is sent, so a compaction that insisted on an exact
-    figure would be a compaction that never ran.
+    A bound rather than an estimate, and for the reason that one gives: nothing
+    on Hardy's transports will count a conversation before it is sent, so the
+    choice is between a bound and a guess, and a guess is wrong in the
+    direction that loses the request.
 
     Everything that reaches the wire is counted, not only the prose: the ids
     that pair a tool call with its result, the tool names on both ends, and a
