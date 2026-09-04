@@ -4036,6 +4036,25 @@ class MathematicsSession:
                 )
             except BaseException:
                 _restore()
+                # And the stamp goes with it. `check` publishes `writeup.pdf`
+                # and `writeup.aux` once the compile resolves, and an
+                # exception raised part of the way through that leaves a
+                # PUBLISHED document built without this fragment while
+                # `_restore` puts the fragment back -- so the tree on disk
+                # matches the signature stamped before the deletion again,
+                # and `report_result` would accept a PDF that does not
+                # describe it. A root using `\IfFileExists` compiles happily
+                # either way, which is what makes the mismatch reachable
+                # rather than theoretical.
+                #
+                # Clearing the stamp rather than rolling the outputs back:
+                # restoring a PDF is itself a publish that can fail the same
+                # way, and there is nothing to gain from a rollback that
+                # needs a rollback. The writeup reads stale, which is what it
+                # is, and the next compile settles it -- the same direction
+                # `_stamp_writeup` already takes when the bibliography moves
+                # underneath a compile.
+                self._unstamp_writeup()
                 raise
             if not checked.ok:
                 _restore()
@@ -5368,6 +5387,19 @@ class MathematicsSession:
             self.state["writeup_sha256"] = hashlib.sha256(
                 document.read_bytes()
             ).hexdigest()
+        self._save_state()
+
+    def _unstamp_writeup(self) -> None:
+        """Say that nothing on disk is known to describe the compiled writeup.
+
+        Used where an operation that publishes went wrong partway: the
+        outputs may or may not have moved, and the sources may have been put
+        back, so the honest answer to "is the PDF current" is "no idea",
+        which reads the same as "no". Never widened into a general reset --
+        the open set is left alone, because it is a fact about the workspace
+        rather than a claim about the PDF.
+        """
+        self.state["tex_signature"] = ""
         self._save_state()
 
     def _stale_only_from_holes(self) -> bool:

@@ -543,3 +543,42 @@ def test_a_citation_landing_mid_compile_does_not_stamp_the_old_pdf(session) -> N
     # And the ordinary case still stamps.
     session._stamp_writeup(compiled_against=moved)
     assert session.state["tex_signature"] == session._tex_signature()
+
+
+def test_a_publish_that_fails_partway_through_a_deletion_unstamps_the_writeup(
+    session, monkeypatch
+) -> None:
+    r"""Restoring the fragment is not the whole rollback.
+
+    `check` publishes `writeup.pdf` and `writeup.aux` once the compile
+    resolves. If that raises partway -- a guard refusal, a full disk -- the
+    handler puts the fragment back, and the tree on disk then matches the
+    signature stamped before the deletion again while a PUBLISHED PDF built
+    WITHOUT the fragment sits beside it. `report_result` would accept that
+    PDF as describing the tree. A root using `\IfFileExists` compiles either
+    way, which is what makes it reachable rather than theoretical.
+
+    Rolling the outputs back would need a publish that can fail the same way,
+    so the stamp goes instead: the writeup reads stale, which is what it is.
+    """
+    tex = session.workspace / "tex"
+    tex.mkdir(parents=True, exist_ok=True)
+    (tex / "writeup.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    (tex / "spare.tex").write_text("Nothing much.\n", encoding="utf-8")
+    session._stamp_writeup()
+    stamped = session.state["tex_signature"]
+    assert stamped
+
+    def _explode(work, output_dir, aux_dir):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr("hardy.latex._publish", _explode)
+    with pytest.raises(OSError):
+        session._tool("delete_file", {"path": "spare.tex"})
+    # The fragment came back...
+    assert (tex / "spare.tex").is_file()
+    # ...and the stamp did not, so nothing claims the published PDF is current.
+    assert session.state["tex_signature"] == ""
