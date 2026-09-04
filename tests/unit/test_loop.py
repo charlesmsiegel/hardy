@@ -22,6 +22,7 @@ from hardy.loop import (
     ProviderTurn,
     ToolCall,
     TurnLimitReached,
+    block_order,
     first_legal_cut,
     reasoning_digest,
 )
@@ -1032,3 +1033,47 @@ def test_a_run_with_work_left_still_reaches_its_turn_bound() -> None:
         list(loop.run("asked"))
 
     assert "turn_limit" in [event["type"] for event in observed]
+
+
+def test_the_block_order_a_digest_covers_is_the_one_recorded() -> None:
+    """An auditor holding the transcript must be able to recompute the digest.
+
+    Hashing the provider objects put the representation of public text and tool
+    blocks into a digest the record could not reproduce: the trajectory carries
+    the normalised text and calls, not those objects. Each public block now
+    contributes its identity and position -- what it *says* is already in
+    `as_dict` -- and only a block Hardy will not transcribe contributes a
+    digest of itself.
+    """
+    thinking = {"type": "thinking", "thinking": "...", "signature": "sig"}
+    blocks = (
+        {"type": "text", "text": "let me check"},
+        {"type": "tool_use", "id": "c1", "name": "check_proof", "input": {"proof": "by rfl"}},
+        {"type": "text", "text": "and then submit"},
+    )
+    loop, _, observed = _loop([
+        ProviderTurn(
+            text="let me check\n\nand then submit",
+            tool_calls=(ToolCall("c1", "check_proof", {"proof": "by rfl"}),),
+            blocks=(thinking, *blocks),
+            thinking=True,
+            reasoning=(thinking,),
+        ),
+    ])
+
+    stream = loop.run("asked")
+    next(stream)
+    stream.close()
+
+    assistant = [event for event in observed if event["type"] == "assistant"][0]
+    assert assistant["blocks"] == [
+        f"thinking:{reasoning_digest(thinking)}", "text", "tool_use:c1", "text",
+    ]
+    # And that recorded list is exactly what the digest is taken over, so the
+    # record holds every input to it.
+    assert list(block_order(loop.messages[-2].blocks)) == assistant["blocks"]
+    # The order is what distinguishes the two arrangements: the same blocks
+    # rearranged are a different context.
+    assert block_order((thinking, *blocks)) != block_order((thinking, blocks[1], blocks[0], blocks[2]))
+    # Nothing here writes down what Hardy declines to publish.
+    assert "sig" not in json.dumps(observed)
