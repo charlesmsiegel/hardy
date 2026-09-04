@@ -15,6 +15,7 @@ from hardy.evals.corpus import (
     load_corpus,
     load_tombstones,
     manifest_digest,
+    release_issues,
     report,
     tombstone_issues,
     version_issues,
@@ -368,3 +369,33 @@ def test_a_taxonomy_missing_a_rollup_table_is_reported_not_raised(tmp_path):
     _registry(tmp_path, {"a": "2026-09-03"})
     _changelog(tmp_path)
     assert any("msc-to-arxiv.json" in i for i in check_issues(tmp_path))
+
+
+# --- The release gate against the previous version ---
+
+
+def _released(version: str, digest: str) -> str:
+    return f"# Changelog\n\n## {version} - 2026-09-01 - manifest {digest}\n\n- prior\n"
+
+
+def test_content_may_not_move_under_a_version_that_was_already_released(tmp_path):
+    """`version_issues` compares two values from the same working tree, so
+    editing a shard *and* rewriting the digest on the existing heading passes.
+    The same number then denotes different content, and a published release is
+    no longer reproducible from its number.
+    """
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])], version="0.1.0")
+    released = _released("0.1.0", manifest_digest(tmp_path))
+    assert release_issues(tmp_path, released) == [], "unchanged content is clean"
+
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"], conclusion="True")], version="0.1.0")
+    issues = release_issues(tmp_path, released)
+    assert any("still the declared version" in i for i in issues), issues
+
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"], conclusion="True")], version="0.1.1")
+    assert release_issues(tmp_path, released) == [], "a bumped version may carry new content"
+
+
+def test_a_prior_release_that_bound_no_digest_cannot_anchor_anything(tmp_path):
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
+    assert release_issues(tmp_path, "# Changelog\n\n## 0.1.0 - 2026-09-01\n") == []

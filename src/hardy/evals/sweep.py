@@ -598,6 +598,14 @@ def _truth_label_issues(baseline: Baseline, expectations: dict[str, str]) -> lis
             issues.append(
                 f"{id}: a twin closed by {', '.join(entry.closed_by)}, so it is true"
             )
+        if entry.witness == "broken":
+            # Re-derived for the same reason as the twin guard above:
+            # `baseline.problems` is an editable top-level list, so a sweep
+            # finding cleared from it would let a run consume a baseline the
+            # sweep itself rejected.
+            issues.append(
+                f"{id}: the stored witness does not typecheck, so A6 cannot rule out vacuity"
+            )
     return issues
 
 

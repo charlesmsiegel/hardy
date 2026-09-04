@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import Counter
+from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from typing import Literal
@@ -62,12 +63,30 @@ class Review(FrozenModel):
 
     reviewer: str = Field(min_length=1)
     reviewed_at: str = Field(min_length=1)
+    # See `_identifies_a_reviewer_and_a_date`: `min_length` alone accepts " "
+    # and "unknown", and `active_ids` trusts the status this record grants.
     statement_digest: str = Field(min_length=64, max_length=64)
     prompt_digest: str = Field(min_length=64, max_length=64)
     msc: tuple[str, ...] = Field(min_length=1)
     group: str = Field(min_length=1)
     verdict: Literal["faithful", "unfaithful"]
     reason: str | None = None
+
+    @model_validator(mode="after")
+    def _identifies_a_reviewer_and_a_date(self) -> Review:
+        """A review is the gate between a candidate and a field headline, so
+        it must say who read the entry and when. `min_length=1` accepts a
+        whitespace name and `"unknown"` as a date, which identifies neither.
+        """
+        if not self.reviewer.strip():
+            raise ValueError("a review must name its reviewer")
+        try:
+            datetime.fromisoformat(self.reviewed_at.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError(
+                f"reviewed_at must be an ISO 8601 date or timestamp, not {self.reviewed_at!r}"
+            ) from error
+        return self
 
     @model_validator(mode="after")
     def _unfaithful_needs_a_reason(self) -> Review:

@@ -682,3 +682,15 @@ def test_the_procedure_identity_covers_the_module_that_assembles_the_proposition
     """
     deciding = {Path(p).name for p in sweep.DECIDING_SOURCES}
     assert {"sweep.py", "audit.py", "lean.py", "problems.py"} <= deciding, deciding
+
+
+def test_a_broken_witness_is_re_derived_even_if_the_findings_were_cleared():
+    """`baseline.problems` is an editable top-level list, so the A6 finding is
+    re-derived at reuse -- like the twin guard -- rather than trusted."""
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    row = baseline.entries["easy"].model_copy(update={"witness": "broken"})
+    tampered = baseline.model_copy(update={"entries": {**baseline.entries, "easy": row}, "problems": ()})
+    issues = sweep.staleness(tampered, statement_digests=DIGESTS, environment=IDENTITY,
+                             problem_ids=PROBLEM_IDS, host=HOST, expectations=EXPECTED)
+    assert any("easy" in i and "witness" in i for i in issues), issues

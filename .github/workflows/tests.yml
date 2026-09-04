@@ -21,6 +21,21 @@ jobs:
         run: uv run --extra test pytest -q --cov --cov-report=xml --cov-report=html --cov-report=term
       - name: Lint
         run: uvx ruff check src tests
+      # The manifest gate inside the tree can only compare two values from that
+      # same tree, so editing a shard *and* rewriting the digest on the
+      # existing heading passes it. The anchor has to come from outside: the
+      # merge base's changelog head carries the version it released and the
+      # manifest that version bound, which is the whole input.
+      - name: Corpus release gate, against the merge base
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          if git show "origin/${{ github.base_ref }}:corpus/CHANGELOG.md" > /tmp/base-changelog.md 2>/dev/null; then
+            uv run hardy evals corpus check --since /tmp/base-changelog.md
+          else
+            echo "no corpus on the base branch yet; nothing to anchor against"
+          fi
       # Kept whether the run passed or failed: a suite that fell below the floor
       # is exactly when someone wants to read the report.
       - name: Keep the coverage report

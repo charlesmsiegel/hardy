@@ -206,13 +206,45 @@ def manifest_digest(root: Path) -> str:
     return hasher.hexdigest()
 
 
-def changelog_head(root: Path) -> tuple[str, str, str | None]:
-    """`(version, date, manifest digest)`. The digest is `None` on a heading
-    written before the binding existed, which `version_issues` reports."""
-    match = HEAD.search((root / "CHANGELOG.md").read_text(encoding="utf-8"))
+def head_of(text: str) -> tuple[str, str, str | None]:
+    """`(version, date, manifest digest)` from changelog text.
+
+    The digest is `None` on a heading written before the binding existed,
+    which `version_issues` reports.
+    """
+    match = HEAD.search(text)
     if match is None:
         raise CorpusError("CHANGELOG.md has no version heading")
     return match.group(1), match.group(2), match.group(3)
+
+
+def changelog_head(root: Path) -> tuple[str, str, str | None]:
+    return head_of((root / "CHANGELOG.md").read_text(encoding="utf-8"))
+
+
+def release_issues(root: Path, prior_changelog: str) -> list[str]:
+    """Whether content moved since the previous release without a new version.
+
+    `version_issues` compares two values from the same working tree, so
+    updating a shard *and* rewriting the digest on the existing heading passes:
+    the same version number then denotes different content, and a published
+    release is no longer reproducible from its number. The anchor has to come
+    from outside the tree — and the previous release's changelog head already
+    carries both its version and the manifest digest it bound, so the merge
+    base's `CHANGELOG.md` is the whole input (spec §3's merge-base gate).
+    """
+    prior_version, _, prior_manifest = head_of(prior_changelog)
+    version = corpus_version(root)
+    manifest = manifest_digest(root)
+    if prior_manifest is None or manifest == prior_manifest:
+        return []
+    if version == prior_version:
+        return [
+            f"the corpus content changed since {prior_version} (manifest {prior_manifest[:12]}… is "
+            f"now {manifest[:12]}…) but {version} is still the declared version: a released "
+            "version must denote one content, so bump it and add a changelog entry citing the ids"
+        ]
+    return []
 
 
 def corpus_version(root: Path) -> str:

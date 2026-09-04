@@ -77,3 +77,17 @@ def test_lookups_resolve_from_the_corpus_being_loaded_not_hardys_own(tmp_path):
         assert group_of("99Z99") == "invented" and arxiv_of("99Z99") == "math.XX"
         assert not is_known("13A15"), "Hardy's own table must not leak into the selected corpus"
     assert is_known("13A15"), "the default root is restored"
+
+
+def test_a_rollup_mapping_a_class_to_a_non_string_is_refused(tmp_path):
+    """Dict-ness alone let `group_of` return a list, `corpus check` pass, and
+    `corpus report` crash on an unhashable `Counter` key."""
+    (tmp_path / "taxonomy").mkdir(parents=True)
+    (tmp_path / "taxonomy" / "msc2020.json").write_text(
+        json.dumps({"codes": {"13A15": "Ideals"}}), encoding="utf-8")
+    (tmp_path / "taxonomy" / "msc-to-arxiv.json").write_text(json.dumps({
+        "arxiv": {"13": "math.AC"}, "fields": {"13": "Commutative algebra"},
+        "groups": {"13": ["commutative-algebra"]},
+    }), encoding="utf-8")
+    with taxonomy.using(tmp_path), pytest.raises(taxonomy.MalformedTaxonomy, match="strings to strings"):
+        group_of("13A15")

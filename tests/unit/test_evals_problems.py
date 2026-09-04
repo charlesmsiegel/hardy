@@ -297,3 +297,16 @@ def test_a_false_twin_inherits_its_targets_primary_msc():
 
     ok = Entry(**_entry(id="sq-le", name="SqLe", msc=("26D",), expected="false", twin_of="sq-ge"))
     assert len(ProblemSet(entries=(target, ok)).entries) == 2
+
+
+def test_a_review_must_identify_a_reviewer_and_a_date():
+    """`min_length=1` accepts " " and "unknown", neither of which identifies
+    anyone or anything -- and `active_ids` trusts the status this grants."""
+    for bad in ({"reviewer": "   "}, {"reviewer": ""}):
+        with pytest.raises(ValidationError, match="reviewer"):
+            Review(**_review(**bad))
+    for bad in ("unknown", "sometime", "2026-13-45"):
+        with pytest.raises(ValidationError, match="ISO 8601"):
+            Review(**_review(reviewed_at=bad))
+    assert Review(**_review(reviewed_at="2026-09-03")).reviewed_at == "2026-09-03"
+    assert Review(**_review(reviewed_at="2026-09-03T00:00:00Z")).reviewed_at.endswith("Z")

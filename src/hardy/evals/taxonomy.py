@@ -53,9 +53,23 @@ def using(root: Path) -> Iterator[None]:
 
 
 def _table(payload: dict, key: str, path: Path) -> dict:
+    """One taxonomy table, checked to be a mapping of strings to strings.
+
+    Dict-ness alone is not enough: a class mapped to a list makes `group_of`
+    return a list, `corpus check` pass, and `corpus report` crash when
+    `Counter` is handed something unhashable -- on a corpus the check just
+    declared clean.
+    """
     value = payload.get(key)
     if not isinstance(value, dict):
         raise MalformedTaxonomy(f"{path.name} has no {key!r} table")
+    bad = sorted(
+        repr(k) for k, v in value.items() if not isinstance(k, str) or not isinstance(v, str)
+    )
+    if bad:
+        raise MalformedTaxonomy(
+            f"{path.name}: {key!r} must map strings to strings; these do not: {', '.join(bad[:5])}"
+        )
     return value
 
 
