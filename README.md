@@ -645,6 +645,14 @@ was written, whatever the rows say, because an unsolved entry or a twin a model
 proved is a measurement and not a failure of the command. Read the scoreboard,
 or gate CI on `hardy evals check`, rather than on that status.
 
+`hardy prove` is the other exception, in the opposite direction: it exits `0`
+whenever the run reached its completed phase, and a run that exhausted its
+proof checks or failed to compile its document still reaches that phase — with
+`partial` formal status and a terminal reason saying why. So `0` there means
+the pipeline ran to the end, not that Lean verified anything; the manifest's
+grades are what say which. A caller that must distinguish them reads
+`grades.formal` in `manifest.json`.
+
 The `1`/`2` distinction is a convention the commands keep where they check
 their inputs, not a guarantee Python makes. A path that raises instead —
 `hardy batch missing.json`, `hardy evals corpus report` outside a checkout —
@@ -669,10 +677,14 @@ omitting it there leaves the global one alone rather than overwriting it.
 
 Not every command sees every flag. `chat`, `doctor`, `latency`, and `batch`
 resolve the whole configuration, command line included. `evals` resolves it too
-but pins its own Lean: the sweep, the toolchain identity it records, and every
-batch row all invoke `lake env lean`, so `--lean-command` is ignored there on
-purpose — a row checked under a compiler other than the one the scoreboard and
-the baseline name would be measuring nothing. `prove`, `accept`, and `setup`
+but pins its own toolchain at both ends: the sweep, the toolchain identity it
+records, and every batch row all invoke `lake env lean`, so `--lean-command` is
+ignored there on purpose — a row checked under a compiler other than the one
+the scoreboard and the baseline name would be measuring nothing — and its
+staged documents are built with Tectonic, so `--latex-command` does nothing
+there either (a batch row compiles no document at all). `--latex-command` in
+fact only ever reaches `chat` and `doctor`; the staged path is Tectonic
+throughout. `prove`, `accept`, and `setup`
 re-read the settings file and the `HARDY_*` variables themselves, and see only
 `--config` and `--model` from the command line: pass
 `--lean-command`, `--lean-project`, or `--latex-command` to one of those three
@@ -798,9 +810,13 @@ automation already closes. Rows are carried forward from the existing tier file
 rather than re-elaborated, but only under all three digests: the environment
 identity and the procedure digest must match the prior baseline — a Mathlib
 upgrade or a change to the sweep code invalidates every row at once — and then
-each entry is reused only where its own statement digest is unchanged, so a
-corrected statement re-sweeps that entry and nothing else. Exits `1` if the
-sweep found problems with the corpus.
+each entry is reused only where its own statement digest is unchanged and the
+prior row still has the shape the entry now needs. That last gate is what
+catches a relabelling: the statement digest deliberately excludes `expected`,
+so a true entry turned into a twin keeps its digest while its old row carries
+no negation baseline, and it is swept again rather than reused. A corrected
+statement re-sweeps that entry and nothing else. Exits `1` if the sweep found
+problems with the corpus.
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -890,7 +906,7 @@ than passing silently.
 | `--repeats N` | `3` | Probes to time. Each pays a full import. |
 | `--calls N` | — | Lean calls in an observed run that imported the probed set. Given together with `--total-seconds` or not at all. |
 | `--total-seconds S` | — | Wall time of that observed run. |
-| `--workers N` | `1` | Warm processes the hypothetical pool would hold. A pool of N pays the prelude N times, not once. |
+| `--workers N` | `1` | Warm processes the hypothetical pool would hold. A pool of N pays the prelude once per worker that actually receives a call — N times, not once, but capped by `--calls`, since a pool larger than the run leaves the surplus idle and idle workers never import anything. The report names how many would never receive a call. |
 | `--threshold FRACTION` | `0.25` | Recoverable share that warrants a pool. Must be above 0 and at most 1. |
 | `--timeout S` | `300` | Seconds one probe may take. Its own bound rather than `lean_timeout` (180 seconds by default): a probe exists to pay a full Mathlib import, and the ordinary check timeout would kill it and report the cost as unmeasurable. |
 
