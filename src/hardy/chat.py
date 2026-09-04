@@ -903,9 +903,19 @@ class MathematicsSession:
         The transcript records the change because which model produced which
         turn is part of the experiment's identity, not a UI detail. The provider
         thread is carried over, so the new model inherits the conversation.
+
+        A backend that has no provider thread carries the conversation itself,
+        so it is handed over here explicitly. Without that, switching model on
+        such a backend would discard every turn the session had taken while
+        the thread-carrying backends kept theirs -- the same act meaning two
+        different things depending on the transport.
         """
         previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint")}
+        carried = getattr(self.runtime, "conversation", None)
         self.runtime = self._build(model=model, session_id=self._carried_thread())
+        adopt = getattr(self.runtime, "adopt_conversation", None)
+        if adopt is not None and carried is not None:
+            adopt(carried)
         self.state.update(provenance(self.runtime))
         self._save_state()
         self._record({"type": "model", "reason": "switched", "previous": previous, **provenance(self.runtime)})
@@ -3010,21 +3020,31 @@ class MathematicsSession:
         messages start, and what the summary said. A compaction that left no
         trace would be exactly the invisible loss this exists to prevent.
         """
+        # Rendered before the plan, not after: the summary is prepended to
+        # whatever the plan keeps, so what it costs has to be charged against
+        # the same budget the kept tail is. Costed by rendering it once and
+        # measuring, rather than by an allowance -- a workspace with fifty
+        # registered names has a summary an allowance would badly misjudge.
+        summarised = compaction.summarize(self.facts())
         outcome = compaction.plan(
             messages,
             context_window=self.context_window,
             reserve_tokens=compaction.RESERVE_TOKENS,
             keep_tokens=compaction.RECENT_TOKENS,
+            summary_tokens=compaction.estimate_tokens([Message("user", text=summarised.render())]),
         )
         if not outcome.needed:
             return None
-        summarised = compaction.summarize(self.facts())
         self._record({
             "type": "compaction",
             "summarized_messages": outcome.cut,
             "kept_from": outcome.cut,
             "kept_messages": len(messages) - outcome.cut,
-            "estimated_tokens": {"before": outcome.before, "after": outcome.after},
+            # `after` counts the summary as well as the kept tail, because
+            # both are sent. `fits` is false when the summary alone is over
+            # budget -- compacting is still the best move available, and
+            # saying so beats a record that implies it was enough.
+            "estimated_tokens": {"before": outcome.before, "after": outcome.after, "fits": outcome.fits},
             "sections": summarised.as_dict(),
             "text": summarised.render(),
         })

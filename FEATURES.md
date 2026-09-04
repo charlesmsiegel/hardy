@@ -432,7 +432,11 @@ Priority labels are sequencing hints:
   formalized", no `proof.lean` is written, and a verified run records no sketch
   beside its proof. The refusal audit (`acceptance.refusal_issues`) reads a
   hole-free skeleton Lean accepted exactly as it reads a `check_proof` — a
-  sketch is exempt for as long as it has a hole in it and no longer.
+  sketch is exempt for as long as it has a hole in it and no longer — and
+  `hardy accept --recorded` requires the three copies of a kept sketch to agree
+  with each other and with the `sketch_proof` event Lean produced, so a partial
+  result cannot have its holes edited out of whichever artifact a reader
+  opens.
 - **Now (implemented) — `sorry`-backed sketches, interactive:** an interactive save may carry a
   hole. The file must still elaborate; only the hole is forgiven, and the audit
   records which declarations rest on `sorryAx` rather than refusing the save for
@@ -525,9 +529,18 @@ Priority labels are sequencing hints:
   calls here and `wall_seconds` is measured here, so the limits a trajectory
   records are the limits that applied to it; `before_turn` may decline a
   provider call outright; and the conversation is a list Hardy owns rather than
-  a thread the provider resumes. That last part has a cost stated rather than
-  discovered: there is no provider thread, so the conversation ends with the
-  process and a reopened workspace starts a new one. The backend and endpoint
+  a thread the provider resumes; `/model` hands it to the replacement runtime,
+  so a switch means the same thing on both transports. That has a cost stated
+  rather than discovered: there is no provider thread, so the conversation ends
+  with the process and a reopened workspace starts a new one. The wall clock
+  reaches inside a request as well as between them — the remaining seconds
+  become the client's own timeout, and the deadline is re-checked after every
+  call — and a provider error is reported as the failed turn it was, counted
+  against the bound and recorded with `is_error` rather than as a successful
+  exchange that happened to report nothing. `hardy doctor` checks whichever
+  backend is configured and only that one: reporting a correctly configured
+  API-only machine as broken is the obvious failure, and calling a machine
+  ready on credentials it will not use is the worse one. The backend and endpoint
   land in `session.json` and every `trajectory.json`, because a run on one
   transport and a run on the other are not the same experimental condition.
 - **Now (implemented):** cheap Lean closers before a model turn is spent —
@@ -538,10 +551,16 @@ Priority labels are sequencing hints:
   would, so the axiom audit, the deadline and the trajectory apply to it
   unchanged; the ladder is a decision about whose turn it is, never a second
   route to a verdict. Off unless asked for, and recorded either way in a
-  `closers` block naming every tactic tried and what came of it: a result a
-  tactic ladder reached and a result a model reached are not the same
-  experiment, and a scoreboard that could not tell them apart would be worse
-  than no ladder at all.
+  `closers` block naming every tactic tried, what came of it, and what the
+  ladder cost in seconds: a result a tactic ladder reached and a result a model
+  reached are not the same experiment, and a scoreboard that could not tell
+  them apart would be worse than no ladder at all. The ladder spends the run's
+  own clock rather than one of its own — the model is handed what is left of
+  `wall_seconds`, and a ladder that used all of it ends the run as
+  `wall_clock_limit` rather than being given a fresh budget. The block is
+  cross-checked by `hardy accept --recorded`, which re-derives it from the
+  events: a forged `closed_by`, a removed attempt, or a claim that no model was
+  needed beside a recorded provider exchange is refused.
 - **Now (implemented):** a Codex backend for ChatGPT subscriptions, on the same
   shape, shipped as the optional `codex` extra.
 - **Now (implemented):** an interactive session accumulates the cost and token
@@ -580,7 +599,11 @@ Priority labels are sequencing hints:
   passes `context_window - reserve`, cut at a point a conversation may legally
   resume from — never between a tool call and its result — and the compaction
   is written into `transcript.jsonl` with what was summarised, where the kept
-  messages start and what the summary said. A compaction that left no trace is
+  messages start and what the summary said. The summary is rendered before the
+  cut is chosen and charged against the same budget the kept tail is, so the
+  recorded `after` is the whole of what will be sent; a workspace whose
+  standing assumptions alone overflow the window is recorded as not fitting
+  rather than as a compaction that quietly claimed to be enough. A compaction that left no trace is
   the invisible loss the feature exists to prevent. A backend whose SDK owns
   the loop is not offered a compactor at all, rather than handed one it would
   silently drop.

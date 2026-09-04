@@ -181,3 +181,42 @@ def test_the_spend_ledger_is_not_a_field_a_summary_can_carry(field: str) -> None
     # withheld keys cannot reach the model through one by construction rather
     # than by a filter somebody has to remember to apply.
     assert field not in compaction.Facts.__dataclass_fields__
+
+
+def test_the_summary_is_charged_against_the_budget_it_will_be_sent_in() -> None:
+    # `compacted()` prepends the summary, so counting only the tail produced a
+    # "compacted" request that could still be over the window -- and reported
+    # an `after` smaller than what it actually built.
+    messages = [_long("user"), _long("assistant"), _long("user"), _long("assistant")]
+
+    without = compaction.plan(messages, context_window=3000, reserve_tokens=500, keep_tokens=1200)
+    with_summary = compaction.plan(
+        messages, context_window=3000, reserve_tokens=500, keep_tokens=1200, summary_tokens=800
+    )
+
+    assert with_summary.after >= without.after + 800
+    # And the tail it keeps shrinks to make room, rather than the summary
+    # being added on top of a tail sized as though it were free.
+    assert with_summary.cut >= without.cut
+
+
+def test_a_summary_larger_than_the_window_is_recorded_as_not_fitting() -> None:
+    # A workspace can genuinely have more standing assumptions than fit.
+    # Compacting is still the best move available; claiming it was enough is
+    # not.
+    messages = [_long("user"), _long("assistant"), _long("user"), _long("assistant")]
+
+    outcome = compaction.plan(
+        messages, context_window=3000, reserve_tokens=500, keep_tokens=1200, summary_tokens=100_000
+    )
+
+    assert outcome.needed
+    assert not outcome.fits
+
+
+def test_a_compaction_that_shrinks_the_request_says_it_fits() -> None:
+    messages = [_long("user"), _long("assistant"), _long("user"), _long("assistant")]
+
+    outcome = compaction.plan(messages, context_window=3000, reserve_tokens=500, keep_tokens=1200)
+
+    assert outcome.fits

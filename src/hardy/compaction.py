@@ -224,7 +224,22 @@ class Plan:
     needed: bool
     cut: int = 0
     before: int = 0
+    #: What the compacted request will cost: the summary plus the kept tail.
+    #: It can still exceed the window when the summary alone does -- a
+    #: workspace can genuinely have more standing assumptions than fit -- and
+    #: the entry recorded in `transcript.jsonl` says so rather than a
+    #: compaction quietly claiming to have solved it.
     after: int = 0
+
+    @property
+    def fits(self) -> bool:
+        """Whether what this plan builds is actually smaller than it must be.
+
+        False means the summary alone is over budget. Compacting is still the
+        best move available -- it is strictly smaller than not compacting --
+        but the caller is entitled to record that it was not enough.
+        """
+        return self.after < self.before
 
 
 def plan(
@@ -233,6 +248,7 @@ def plan(
     context_window: int,
     reserve_tokens: int,
     keep_tokens: int,
+    summary_tokens: int = 0,
 ) -> Plan:
     """Decide whether this conversation needs compacting, and where to cut.
 
@@ -242,6 +258,15 @@ def plan(
     only ever keep more than `keep_tokens` asked for — a tool result separated
     from its call is not a smaller context, it is an invalid one.
 
+    `summary_tokens` is what the summary that will be prepended costs, and it
+    is charged against the same budget the tail is. A workspace with a long
+    naming registry or many approved assumptions has a substantial summary,
+    and counting only the tail would produce a "compacted" conversation still
+    over the window — rejected by the provider on every retry, with the
+    compaction reporting a smaller `after` than the request it built. So the
+    caller renders the summary first and says what it costs; `after` is the
+    whole of what will be sent.
+
     A cut of 0 means nothing above the tail could be dropped legally, and the
     plan says it is not needed rather than performing a compaction that
     summarises nothing and keeps everything.
@@ -250,10 +275,11 @@ def plan(
     available = max(context_window - reserve_tokens, 0)
     if before <= available:
         return Plan(False, before=before, after=before)
-    # Never more recent context than the window has room for. Asking to keep
-    # twenty thousand tokens of tail inside a budget of five is not a smaller
-    # context, it is the same overflow with a summary bolted on top.
-    budget = min(keep_tokens, available)
+    # Never more recent context than the window has room for, and never more
+    # than the summary leaves. Asking to keep twenty thousand tokens of tail
+    # inside a budget of five is not a smaller context, it is the same
+    # overflow with a summary bolted on top.
+    budget = min(keep_tokens, max(available - summary_tokens, 0))
     keep = 0
     running = 0
     for message in reversed(messages):
@@ -264,7 +290,10 @@ def plan(
     cut = first_legal_cut(messages, keep)
     if cut <= 0:
         return Plan(False, before=before, after=before)
-    return Plan(True, cut=cut, before=before, after=estimate_tokens(messages[cut:]))
+    # The summary is part of what will be sent, so it is part of what `after`
+    # says will be sent. A figure that counted only the tail would understate
+    # the compacted request by exactly the thing the compaction added.
+    return Plan(True, cut=cut, before=before, after=summary_tokens + estimate_tokens(messages[cut:]))
 
 
 def compacted(messages: Sequence[Message], cut: int, summary: Summary) -> list[Message]:

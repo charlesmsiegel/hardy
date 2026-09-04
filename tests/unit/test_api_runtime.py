@@ -192,3 +192,39 @@ def test_the_key_is_required_before_anything_is_sent(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
         AnthropicProvider("claude-test")
+
+
+def test_the_loops_remaining_clock_becomes_the_requests_timeout() -> None:
+    client = FakeClient([Reply([Block(type="text", text="done")])])
+    provider = AnthropicProvider("claude-test", client=client)
+
+    provider.complete(system="", messages=[Message("user", text="hi")], specs=[], timeout=12.5)
+
+    assert client.sent[0]["timeout"] == 12.5
+
+
+def test_an_unbounded_loop_leaves_the_clients_own_timeout_alone() -> None:
+    # Passing `None` would read as an instruction to wait forever, which is
+    # the opposite of what an unbounded loop means here.
+    client = FakeClient([Reply([Block(type="text", text="done")])])
+    provider = AnthropicProvider("claude-test", client=client)
+
+    provider.complete(system="", messages=[Message("user", text="hi")], specs=[], timeout=None)
+
+    assert "timeout" not in client.sent[0]
+
+
+def test_a_replacement_runtime_can_take_over_the_conversation() -> None:
+    # `/model` builds a new runtime rather than mutating the live one, and on
+    # this transport the conversation is the runtime's own list.
+    runtime = ApiRuntime(
+        "claude-test",
+        system_prompt="",
+        specs=[],
+        dispatch=lambda name, arguments: ToolResult(True, "ok"),
+        provider=AnthropicProvider("claude-test", client=FakeClient([])),
+    )
+
+    runtime.adopt_conversation([Message("user", text="earlier"), Message("assistant", text="answer")])
+
+    assert [item.text for item in runtime.conversation] == ["earlier", "answer"]

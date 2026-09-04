@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from . import audit
 from . import closers as closer_ladder
+from .acceptance import SKETCH_HEADING
 from .chat import provenance
 from .claude_runtime import TurnLimitReached
 from .latency import manifest_binds
@@ -243,12 +244,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     start = time.monotonic()
     deadline["at"] = start + wall_seconds
     reason = "completed"
-    runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=observe,
-                           max_turns=max_turns, wall_seconds=wall_seconds)
-    # Built before the ladder runs, and asked nothing until after it: the
-    # runtime's identity belongs in the record of every run, including one that
-    # never spoke to it. Constructing it makes no provider call.
-    ladder = closer_ladder.DISABLED
+    ladder = dict(closer_ladder.DISABLED)
     if closers:
         # Through `dispatch`, not around it. A tactic's proof goes in by the
         # same door a model's does, so the axiom audit, the deadline and the
@@ -263,15 +259,38 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             closers,
             keep_going=lambda: not closed.is_set() and time.monotonic() < deadline["at"],
         )
-        ladder = outcome.as_dict()
+        # What the ladder cost, in the same seconds the model would have spent.
+        # Recorded because a run that spent four minutes elaborating tactics
+        # and then reported a model turn limit is not readable without it.
+        ladder = {**outcome.as_dict(), "seconds": round(time.monotonic() - start, 3)}
         events.append({"type": "closers", **ladder})
+    # The ladder spends the run's clock, not a clock of its own. Left to the
+    # declared figure, a run whose closers used four of five minutes would then
+    # hand the model a fresh five -- so the command could take the ladder's
+    # time plus the whole budget again, and the wall clock in the trajectory
+    # would bound neither half.
+    # What the ladder took off the clock, and nothing else. Subtracting the
+    # measured elapsed time instead would shave a few microseconds of setup off
+    # every run that asked for no ladder at all -- a difference that means
+    # nothing and would make the declared bound and the applied one differ for
+    # no reason.
+    remaining = wall_seconds - float(ladder["seconds"])
+    runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=observe,
+                           max_turns=max_turns, wall_seconds=max(remaining, 0.0))
     # Whether a provider was asked anything at all. A ladder that closed the
     # statement means Hardy declined to spend a turn, which is a fact about the
     # run and not an absence of one -- and it is what keeps the ledger below
     # from billing an exchange that never happened.
-    asked = not (found["result"] and ladder["closed_by"])
-    if not asked:
+    closed_by_ladder = bool(found["result"] and ladder["closed_by"])
+    asked = not closed_by_ladder and remaining > 0
+    if closed_by_ladder:
         events.append({"type": "declined_turn", "why": f"closed by `{ladder['closed_by']}` before a model turn was spent"})
+    elif not asked:
+        # Out of time before the model was asked anything. Reported as the
+        # limit it is, not as a model that submitted nothing.
+        closed.set()
+        reason = "wall_clock_limit"
+        events.append({"type": "limit", "limit": "wall_seconds", "detail": "the closers used the whole wall-clock budget; no model turn was spent"})
     try:
         if asked:
             runtime.ask(task)
@@ -353,7 +372,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         holes = sketch["holes"]
         where = ", ".join(f"line {item['line']}" for item in holes) or "none recorded"
         writeup += (
-            f"\n## Sketch (not a proof)\n\nThe run left an elaborating skeleton with "
+            f"\n{SKETCH_HEADING}\n\nThe run left an elaborating skeleton with "
             f"{len(holes)} hole(s) in it ({where}). Lean accepted its structure and nothing "
             f"else: a hole closes any goal, so this is not evidence for the claim and is not "
             f"verified.\n\n```lean\n{sketch['proof']}\n```\n"

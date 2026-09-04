@@ -540,3 +540,165 @@ def test_a_credited_review_with_no_reader_result_is_refused(tmp_path) -> None:
     issues = acceptance._live_staged_issues(run_dir, credited)
 
     assert any('holds no reader result' in issue for issue in issues)
+
+
+# -- the closer ladder, cross-checked against the events --------------------
+
+
+def _with_closers(tmp_path: Path, tactic: str = 'exact True.intro', name: str = 'ladder') -> Path:
+    models = importlib.import_module('hardy.models')
+    lean_module = importlib.import_module('hardy.lean')
+    runner = importlib.import_module('hardy.runner')
+    request = models.Request.from_dict(
+        {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+    )
+    lean = lean_module.LeanTools(request, (sys.executable, str(FAKE_LEAN)))
+    output = tmp_path / name
+    runner.run(
+        request,
+        lambda model=None, **context: _Runtime([], **context),
+        lean,
+        output,
+        max_turns=3,
+        wall_seconds=300.0,
+        toolchain=IDENTITY,
+        closers=(tactic,),
+    )
+    return output
+
+
+def test_a_ladder_that_really_ran_is_self_consistent(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+
+    assert acceptance.validate_batch_consistency(_with_closers(tmp_path)) == ()
+
+
+def test_a_forged_closed_by_is_refused(tmp_path) -> None:
+    """The field exists to say which experimental condition a run was. A field
+    nothing cross-checks is a field a record can simply assert."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    trajectory['closers']['closed_by'] = 'omega'
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('`omega` closed the statement' in issue for issue in issues)
+
+
+def test_removing_the_ladders_attempts_is_refused(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    trajectory['closers']['attempts'] = []
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('differs from the event the runner recorded' in issue for issue in issues)
+
+
+def test_claiming_no_model_was_needed_beside_a_model_exchange_is_refused(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    trajectory['events'].append({'type': 'result', 'turns': 2, 'cost_usd': 0.1, 'usage': None})
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('declined its model turn records a provider exchange' in issue for issue in issues)
+
+
+def test_a_disabled_ladder_beside_a_ladder_that_ran_is_refused(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    trajectory['closers']['enabled'] = False
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('disabled beside a' in issue for issue in issues)
+
+
+def test_a_record_from_before_closers_existed_still_validates(tmp_path) -> None:
+    """The runs this audit is written for are kept evidence from paid
+    experiments. A cross-check that cannot be made on them is skipped, not
+    faked."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _verified(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    del trajectory['closers']
+    del trajectory['sketch']
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+    result = json.loads((output / 'result.json').read_text(encoding='utf-8'))
+    del result['sketch']
+    (output / 'result.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+
+    assert acceptance.validate_batch_consistency(output) == ()
+
+
+# -- the kept sketch, in all three places it appears ------------------------
+
+
+def _sketched(tmp_path: Path, name: str = 'sketch') -> Path:
+    return _batch(tmp_path, [('sketch_proof', {'proof': 'by sorry'})], name=name)
+
+
+def test_a_kept_sketch_is_self_consistent(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+
+    assert acceptance.validate_batch_consistency(_sketched(tmp_path)) == ()
+
+
+def test_editing_the_holes_out_of_one_copy_is_refused(tmp_path) -> None:
+    """A partial result is valid only when its remaining holes are explicit,
+    so the three copies have to agree with each other and with Lean."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _sketched(tmp_path)
+    result = json.loads((output / 'result.json').read_text(encoding='utf-8'))
+    result['sketch']['holes'] = []
+    (output / 'result.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('differs between result.json and trajectory.json' in issue for issue in issues)
+
+
+def test_a_sketch_lean_never_accepted_is_refused(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _sketched(tmp_path)
+    for name in ('result.json', 'trajectory.json'):
+        payload = json.loads((output / name).read_text(encoding='utf-8'))
+        payload['sketch']['proof'] = 'by omega'
+        (output / name).write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('not the last skeleton Lean accepted' in issue for issue in issues)
+
+
+def test_a_writeup_with_its_sketch_section_removed_is_refused(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _sketched(tmp_path)
+    writeup = output / 'writeup.md'
+    writeup.write_text(
+        writeup.read_text(encoding='utf-8').split(acceptance.SKETCH_HEADING)[0], encoding='utf-8'
+    )
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('does not carry the sketch the record kept' in issue for issue in issues)
+
+
+def test_a_verified_run_may_not_record_a_sketch(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _verified(tmp_path)
+    _rewrite(output / 'result.json', sketch={'proof': 'by sorry', 'holes': []})
+    _rewrite(output / 'trajectory.json', sketch={'proof': 'by sorry', 'holes': []})
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('verified run records a sketch' in issue for issue in issues)

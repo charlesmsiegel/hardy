@@ -159,7 +159,11 @@ provider calls itself, measures its own wall clock, holds the conversation as a
 list rather than as a provider thread, and is asked before every provider call
 whether to make one at all — which is what makes the cheap Lean closers
 possible, since declining a turn is a decision only something inside the loop
-can take. The price is the thing the SDK backends exist to avoid: an API key
+can take. Owning the loop is also what lets the wall clock reach *inside* a
+request rather than only between them: the remaining seconds are handed to the
+transport as its own timeout and the deadline is re-checked afterwards, so a
+reply that overran the budget ends the run as a timeout rather than as one that
+finished. The closers spend that same clock; the model is handed what they left. The price is the thing the SDK backends exist to avoid: an API key
 instead of a subscription, and a conversation that ends with the process
 because there is no thread to resume. So it is opt-in, and which transport
 carried a run is part of that run's recorded identity — the two are not the

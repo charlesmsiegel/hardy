@@ -200,14 +200,26 @@ rather than as a claim the writeup ratchet will then demand a paragraph for.
 
 ## Models and authentication
 
-Hardy talks to Claude through the Claude Code agent SDK, so it runs on your
-**Claude Max subscription**. There is no API key to configure and no endpoint to
-point at: the credentials belong to the signed-in CLI.
+By default Hardy talks to Claude through the Claude Code agent SDK, so it runs
+on your **Claude Max subscription**. On that backend there is no API key to
+configure and no endpoint to point at: the credentials belong to the signed-in
+CLI.
 
 ```sh
 pip install claude-agent-sdk
 npm install -g @anthropic-ai/claude-code
 claude login
+```
+
+There is one alternative, and it is the mirror image. `backend = "api"` (or
+`HARDY_BACKEND=api`) calls the Messages API directly and *does* need a key —
+which is exactly why it is not the default. What it buys is the turn loop:
+Hardy decides when a provider call is made, keeps both bounds itself, and can
+decline a call outright. See **What it does get to do** below.
+
+```sh
+pip install 'hardy-prover[api]'
+export ANTHROPIC_API_KEY=...   # hardy doctor checks for it when this backend is selected
 ```
 
 `/model` inside a session lists the catalogued Claude models, switches the live
@@ -217,13 +229,18 @@ session thread, which also survives closing and reopening the workspace. A model
 not in the catalog can be typed in directly — that is the escape hatch for a
 release this list has not caught up with.
 
-`hardy doctor` reports whether the SDK, the CLI, and the login are actually
+`hardy doctor` checks whichever backend is configured, and only that one: on
+the subscription backend it reports whether the SDK, the CLI, and the login are
 usable, asking `claude auth status` rather than assuming an installed binary
-means a signed-in one.
+means a signed-in one; on the API backend it reports whether the Anthropic SDK
+is installed and a key is set. Checking the other backend's requirements would
+call a correctly configured machine broken, and — worse — call a machine ready
+on credentials it is not going to use.
 
 Hardy is described as model-agnostic in the sense that nothing in the harness's
-design depends on a particular provider; in practice the only backend wired up
-today is Claude through the agent SDK. Other model providers will be added once
+design depends on a particular provider. Three backends are wired up today:
+Claude through the agent SDK, Codex for a ChatGPT subscription (the optional
+`codex` extra), and the Messages API above. Other providers will be added once
 the core loop has been validated.
 
 ### What the SDK does not get to do
