@@ -1534,8 +1534,9 @@ def build_parser() -> argparse.ArgumentParser:
     measure.add_argument("--workers", type=int, default=1, help="warm processes the hypothetical pool would hold (default 1)")
     measure.add_argument("--threshold", type=float, default=latency.DEFAULT_THRESHOLD, help=f"recoverable share that warrants a pool (default {latency.DEFAULT_THRESHOLD})")
     # Its own bound rather than `lean_timeout`: the probe exists because a
-    # Mathlib import is slow, and the ordinary 30s check timeout would kill
-    # every probe and report the cost as unmeasurable.
+    # Mathlib import is slow, and the ordinary check timeout (`lean_timeout`,
+    # 180s by default) would kill every probe and report the cost as
+    # unmeasurable.
     measure.add_argument("--timeout", type=float, default=DEFAULT_PROBE_TIMEOUT, help=f"seconds one probe may take (default {DEFAULT_PROBE_TIMEOUT:.0f})")
     prove = subparsers.add_parser("prove", help="stage one claim from statement to document")
     prove.add_argument("claim", nargs="?", help="the claim in ordinary language")

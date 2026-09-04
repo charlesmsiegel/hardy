@@ -645,12 +645,18 @@ was written, whatever the rows say, because an unsolved entry or a twin a model
 proved is a measurement and not a failure of the command. Read the scoreboard,
 or gate CI on `hardy evals check`, rather than on that status.
 
+The `1`/`2` distinction is a convention the commands keep where they check
+their inputs, not a guarantee Python makes. A path that raises instead —
+`hardy batch missing.json`, `hardy evals corpus report` outside a checkout —
+exits `1` with a traceback, which a script reading only the status cannot tell
+from a bad answer. Where that matters, look for the traceback.
+
 ### Global options
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `--config PATH` | `~/.hardy/config.toml`, or `$HARDY_CONFIG` | Which settings file to read. |
-| `--model IDENTITY` | `model` in the config file, else `$HARDY_MODEL`, else the built-in `claude-opus-5` | Who does the work. A fresh checkout that has configured nothing still has a model, and it is billable. |
+| `--model IDENTITY` | `$HARDY_MODEL`, else `model` in the config file, else the built-in `claude-opus-5` | Who does the work. That order is how every setting resolves: the flag beats the environment, which beats the file. A fresh checkout that has configured nothing still has a model, and it is billable. |
 | `--lean-command CMD` | `lake env lean` | The command that elaborates a Lean file. |
 | `--lean-project PATH` | unset — Lean runs in the current directory | The Lake project whose imports Lean should resolve; the installer points this at the shared Mathlib project. |
 | `--latex-command CMD` | `pdflatex -interaction=nonstopmode -halt-on-error` | The command that compiles a LaTeX file. |
@@ -734,7 +740,7 @@ hardy prove "every prime above two is odd"
 | `claim` (positional) | prompted for if omitted | The claim in ordinary language. An empty one is refused. |
 | `--backend {claude,codex}` | `claude` | Which SDK drives the run. The no-tools guarantee behind the faithfulness reader holds on `claude` and not on `codex`; each runtime reports what its isolation is worth and every verdict records it. |
 | `--model IDENTITY` | the global `--model` | Who does the work. |
-| `--faithfulness-model IDENTITY` | the run's own model, or `faithfulness_model` | Who reads the translation back. Per invocation, because the setting is global and the backends do not share model names. |
+| `--faithfulness-model IDENTITY` | `faithfulness_model`, else the run's own model | Who reads the translation back — the configured reviewer wins, and the run's model is only the fallback. Per invocation, because the setting is global and the backends do not share model names. |
 
 ### `hardy accept`
 
@@ -748,7 +754,7 @@ against document. Exits `1` if any run failed its audit.
 | `--model IDENTITY` | the global `--model` | Who does the work. |
 | `--faithfulness-model IDENTITY` | `faithfulness_model`, else the run's own model | Who reads the translation back. Resolved exactly as in `prove`, and worth passing on a `--backend codex` run whose config names a Claude reviewer. |
 | `--force-budget-exhaustion-test` | off | Run the deterministic no-model path instead and check its artifacts — the whole pipeline with no model, no network, and no toolchain. |
-| `--recorded RUN_DIR [RUN_DIR ...]` | — | Cross-check these recorded run directories (batch or staged) and run nothing: the manifest against the trajectory against the Lean source against the document, the axiom line Lean printed against the graded verdict, the toolchain named by revision. This is how `acceptance/recorded/` is rechecked without being re-run. |
+| `--recorded RUN_DIR [RUN_DIR ...]` | — | Cross-check these recorded run directories and run nothing. What is checked depends on the surface, which the directory's own files decide: a staged run (`manifest.json`) is audited manifest against trajectory against Lean source against document, with the axiom line Lean printed against the graded verdict and the toolchain named by revision; a batch run (`result.json`) is audited across `result.json`, `trajectory.json`, `writeup.md` and, where the verdict needs one, `proof.lean` — it has no manifest and no compiled document. A directory holding exactly one such run is descended into. This is how `acceptance/recorded/` is rechecked without being re-run. |
 
 ```sh
 hardy accept --recorded acceptance/recorded/*
@@ -886,7 +892,7 @@ than passing silently.
 | `--total-seconds S` | — | Wall time of that observed run. |
 | `--workers N` | `1` | Warm processes the hypothetical pool would hold. A pool of N pays the prelude N times, not once. |
 | `--threshold FRACTION` | `0.25` | Recoverable share that warrants a pool. Must be above 0 and at most 1. |
-| `--timeout S` | `300` | Seconds one probe may take — its own bound, because the ordinary 30-second check timeout would kill every Mathlib probe and report the cost as unmeasurable. |
+| `--timeout S` | `300` | Seconds one probe may take. Its own bound rather than `lean_timeout` (180 seconds by default): a probe exists to pay a full Mathlib import, and the ordinary check timeout would kill it and report the cost as unmeasurable. |
 
 ### Session commands
 
