@@ -650,7 +650,12 @@ Priority labels are sequencing hints:
   The wall clock is read again before *each* call of a batch, not once for the
   batch — one response can ask for several Lean checks, each able to run to its
   own process timeout — and a call the budget no longer covers is refused
-  rather than skipped, since every `tool_use` still needs an answer. The output
+  rather than skipped, since every `tool_use` still needs an answer. An
+  exchange nobody starts is not one: a stream built and dropped before its
+  first event leaves the conversation exactly as it found it, since a
+  generator's body — and so the bookkeeping that answers for an abandoned turn
+  — does not run until then, and a prompt appended earlier would have been sent
+  ahead of the next one as though the user had said both. The output
   cap each reply is generated under is recorded in the run's provenance
   alongside model, backend and endpoint: change it and the same model gets a
   different amount of room to reach a submission, which is a different
