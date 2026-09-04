@@ -835,8 +835,16 @@ def _batch(args: argparse.Namespace, config: configuration.Config, parser: argpa
     # costs a whole billable model run to reach a conclusion available now.
     if lean.target_name is None:
         parser.error(f"batch needs a named theorem or lemma to audit, not: {request.declaration!r}")
+    # Finite, because the bound is enforced by waiting for it. `argparse`
+    # accepts `inf` and `nan` as floats, and an infinite join raises
+    # `OverflowError` while the daemon request carries on in the background --
+    # the run written as a `runtime_error` immediately, for a request that may
+    # yet finish and be billed for. A bound nothing can wait for is not a
+    # bound, and the place to say so is where the flag is read.
+    if not math.isfinite(args.wall_seconds):
+        parser.error(f"--wall-seconds must be a finite number of seconds, not {args.wall_seconds}")
     closers = _closer_ladder(args.closers)
-    result = run(request, runtime_factory(str(config.model), config.backend), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds, closers=closers)
+    result = run(request, runtime_factory(str(config.model), config.backend), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds, closers=closers, context_window=config.context_window)
     print(json.dumps(result.as_dict(), indent=2))
     return 0 if result.terminal_reason == "verified" else 1
 

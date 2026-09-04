@@ -676,7 +676,12 @@ Priority labels are sequencing hints:
   that quietly claimed to be enough. A compaction that left no trace is
   the invisible loss the feature exists to prevent. A backend whose SDK owns
   the loop is not offered a compactor at all, rather than handed one it would
-  silently drop. The estimate is one token per UTF-8 byte, plus a framing
+  silently drop. `hardy batch` gets the same treatment on the same terms: the
+  facts are narrower — an unattended run has no naming registry and no approved
+  assumptions, but it has the claim it was given, the skeleton it holds and
+  every failed attempt in Lean's own words — and the trajectory's `limits`
+  record both the window the run was planned against and which of the two did
+  the compacting. The estimate is one token per UTF-8 byte, plus a framing
   allowance per *content block* rather than per message — a turn asking for six
   tools is seven blocks. A bound rather than a guess: a BPE token covers at
   least one byte, so nothing costs more tokens than it has bytes, and that is
