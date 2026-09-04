@@ -421,3 +421,34 @@ def test_the_press_guard_restores_the_previous_handler():
     with _pressing(lambda: True):
         assert signal.getsignal(signal.SIGINT) is not before
     assert signal.getsignal(signal.SIGINT) is before
+
+
+async def test_a_second_press_kills_what_the_first_only_asked(ui, settings, monkeypatch):
+    """The stopper answered true on every press, so the shell returned before
+    reaching any escalation and the documented second Esc never happened -- the
+    user could press it all day while a Lean child that ignores interrupts ran
+    out its timeout."""
+    from hardy.tui import prove
+
+    recorder = Recorder()
+    asked: list[str] = []
+    monkeypatch.setattr(
+        "hardy.tui.handlers.process.interrupt_children", lambda: asked.append("asked") or 1
+    )
+    monkeypatch.setattr(
+        "hardy.tui.handlers.process.stop_children", lambda: asked.append("killed") or 1
+    )
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        ready(recorder)
+        ui.stopper()              # the first press
+        ui.stopper()              # and the second
+        return recorder.run(SimpleNamespace(text=claim, model=config.model), terminal)
+
+    monkeypatch.setattr(prove, "run", run)
+    await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+
+    assert asked == ["asked", "killed"]
+    # The second press escalates rather than abandoning a second time: the run
+    # is already refusing stages, and what is left is the child that will not.
+    assert recorder.abandoned == 1

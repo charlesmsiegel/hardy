@@ -497,6 +497,32 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
                 f"({_escape(event.get('reason', 'reset'))}); nothing above this point "
                 "was in the model's context afterwards.</p>"
             )
+        elif kind == "assumption_prompt":
+            # What the human was actually shown before approving an axiom.
+            # `checked`, `searched` and `previous` reach the confirmation and
+            # never the stored record, so this event is the only durable copy:
+            # without it the page says an axiom was approved, with its source
+            # and reason, and nothing at all about the evidence that the thing
+            # was not already available and had not been refused once before.
+            rows = [
+                (label, str(event.get(key, "")).strip())
+                for key, label in (
+                    ("checked", "Lean was asked about"),
+                    ("searched", "the search found"),
+                    ("previous", "an earlier version was refused"),
+                )
+                if str(event.get(key, "")).strip()
+            ]
+            parts.append(
+                '<div class="turn"><div class="who">Evidence put to the human before '
+                f'approving {_escape(event.get("formal_name", "an axiom"))}</div>'
+                + (
+                    _rows(rows)
+                    if rows
+                    else '<p class="tool">Nothing was recorded beside the request.</p>'
+                )
+                + "</div>"
+            )
         elif kind == "imported":
             # Where a file entered the workspace from outside. In the
             # conversation as well as in its own section, because the reader

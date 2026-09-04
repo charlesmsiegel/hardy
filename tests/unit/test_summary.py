@@ -257,3 +257,20 @@ def test_a_name_two_modules_declare_is_not_graded():
     ).text()
     assert "not graded" in text
     assert "kernel-verified" not in text
+
+
+def test_a_long_refusal_keeps_the_end_where_the_diagnostic_is():
+    """Lean prints setup and imports first and the error that failed the call
+    last, so a head slice is the one part carrying no information."""
+    noise = "building Mathlib " * 40
+    found = summary.attempts([
+        {
+            "type": "tool",
+            "name": "save_lean",
+            "arguments": {"path": "Basic.lean"},
+            "result": {"ok": False, "output": noise + "error: unknown identifier 'foo'"},
+        }
+    ])
+
+    assert "unknown identifier 'foo'" in found[0].detail
+    assert found[0].detail.startswith("…")

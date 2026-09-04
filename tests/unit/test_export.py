@@ -650,3 +650,21 @@ def test_replacing_an_export_keeps_the_mode_it_had(tmp_path):
     export.write(material(), destination)
 
     assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+
+
+def test_the_evidence_shown_before_an_axiom_was_approved_is_on_the_page():
+    """`checked`, `searched` and `previous` reach the confirmation and never
+    the stored record, so the transcript event is the only durable copy of what
+    the human was actually looking at when they approved."""
+    page = build(transcript=[
+        {
+            "type": "assumption_prompt",
+            "formal_name": "sylow_big",
+            "checked": "Mathlib.GroupTheory.Sylow has no such statement",
+            "searched": "no result for 'sylow subgroup count'",
+            "previous": "an earlier version quantified over all groups",
+        },
+    ])
+    assert "Mathlib.GroupTheory.Sylow has no such statement" in page
+    assert "an earlier version quantified over all groups" in page
+    assert "sylow_big" in page

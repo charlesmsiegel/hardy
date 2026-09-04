@@ -739,3 +739,30 @@ async def test_a_command_that_finishes_normally_still_installs_its_state(setting
     built._commands_running = 1
     await built._run_command(outcome)
     assert built.state.session == "replaced"
+
+
+def test_a_second_escape_reaches_the_commands_own_escalation(settings):
+    """The stopper answered true on every press, so this returned with the same
+    first-press wording every time and the documented second Esc was swallowed.
+    It is not the session's escalation to do either: that would take the
+    interactive CAS kernel with it, whose state is not what the user is waiting
+    on.
+
+    Asserted on what the user is TOLD, not on how many times the stopper was
+    called: the old code called it on every press too, so a count could not
+    tell the two behaviours apart.
+    """
+    said: list[str] = []
+    session = SimpleNamespace(
+        interrupt_work=lambda: pytest.fail("the session answered for the command"),
+        escalate=lambda: pytest.fail("the session's kernel was killed for a staged run"),
+    )
+    built = shell.Shell(settings, session, handlers.build_registry())
+    built.write = lambda text, style="normal": said.append(text)
+    built.stopping(lambda: True)
+
+    built._stop_command()
+    built._stop_command()
+
+    assert "esc again" in said[0]
+    assert "killed what had not stopped" in said[1], "the second press said the same thing"
