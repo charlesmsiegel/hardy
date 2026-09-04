@@ -550,10 +550,11 @@ Priority labels are sequencing hints:
   so a switch means the same thing on both transports. That has a cost stated
   rather than discovered: there is no provider thread, so the conversation ends
   with the process and a reopened workspace starts a new one. The wall clock
-  reaches inside a request as well as between them — the remaining seconds
-  become the client's own timeout, the client is built with retries disabled
-  so a single bound cannot be spent three times over, and the deadline is
-  re-checked after every call — and a provider error is reported as the failed turn it was, counted
+  reaches inside a request as well as between them — the request runs under a
+  total deadline of the seconds the loop has left, rather than the transport's
+  per-chunk timeout, the client is built with retries disabled so a single
+  bound cannot be spent three times over, and the deadline is re-checked after
+  every call — and a provider error is reported as the failed turn it was, counted
   against the bound and recorded with `is_error` rather than as a successful
   exchange that happened to report nothing. The transport's own timeout is
   translated into the one the harness reads, so a request that ran out of the
@@ -583,7 +584,8 @@ Priority labels are sequencing hints:
   it was produced and billed for, and never published to a user who has been
   told the turn stopped. `hardy doctor` checks whichever
   backend is *selected* — the staged commands take a `--backend` of their own
-  and pass it, and each of the three has its own checks — and only that one: reporting a correctly configured
+  and pass it, and each of the three has its own checks, each asking about
+  credentials rather than about an installed package — and only that one: reporting a correctly configured
   API-only machine as broken is the obvious failure, and calling a machine
   ready on credentials it will not use is the worse one. The backend and endpoint
   land in `session.json` and every `trajectory.json`, because a run on one
@@ -604,7 +606,8 @@ Priority labels are sequencing hints:
   `wall_seconds`, and a ladder that used all of it ends the run as
   `wall_clock_limit` rather than being given a fresh budget. The block is
   cross-checked by `hardy accept --recorded`, which re-derives it from the
-  events: a forged `closed_by`, a removed attempt, a missing decline, a
+  events: every attempt is matched in order against the `submit_proof` it
+  produced, and a forged `closed_by`, a rewritten attempt, a missing decline, a
   submission that was never accepted, a terminal reason other than `verified`,
   or a recorded provider exchange beside a ladder that claims to have closed
   the statement is refused. `closed_by` names a tactic only when the run *kept* its
