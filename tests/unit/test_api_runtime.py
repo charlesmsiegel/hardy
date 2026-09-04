@@ -473,3 +473,14 @@ def test_a_reply_keeps_the_thinking_block_it_reported() -> None:
     assert turn.reasoning == (block,)
     # Reported, never transcribed: the text a caller sees is the model's words.
     assert turn.text == "hello"
+
+
+def test_an_ipv6_endpoint_keeps_its_brackets() -> None:
+    """`hostname` strips the brackets an IPv6 literal needs, so appending a
+    port produced `2001:db8::1:8443` -- not the endpoint that served the run,
+    and not a valid authority either. The record would name an address nothing
+    answered at."""
+    assert redacted("https://[2001:db8::1]:8443/v1").startswith("https://[2001:db8::1]:8443 ")
+    assert redacted("https://[2001:db8::1]") == "https://[2001:db8::1]"
+    # An ordinary host is untouched by the bracketing.
+    assert redacted("https://api.anthropic.com:8443").startswith("https://api.anthropic.com:8443")

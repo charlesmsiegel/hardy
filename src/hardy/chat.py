@@ -3103,6 +3103,7 @@ class MathematicsSession:
             reserve_tokens=compaction.RESERVE_TOKENS,
             keep_tokens=compaction.RECENT_TOKENS,
             overhead_tokens=overhead,
+            output_tokens=self._output_cap(),
         ).needed:
             return None
         # Now it is worth the read. Rendered before the plan is settled, not
@@ -3119,6 +3120,7 @@ class MathematicsSession:
             keep_tokens=compaction.RECENT_TOKENS,
             summary_tokens=compaction.estimate_tokens([Message("user", text=summarised.render())]),
             overhead_tokens=overhead,
+            output_tokens=self._output_cap(),
         )
         if not outcome.needed:
             return None
@@ -3165,6 +3167,15 @@ class MathematicsSession:
             "text": summarised.render(),
         })
         return compaction.compacted(messages, outcome.cut, summarised)
+
+    def _output_cap(self) -> int:
+        """What the runtime says it may write, charged against the same window.
+
+        Zero when it states none -- a backend that imposes no cap of its own
+        has nothing to reserve for beyond the proportional allowance, and a
+        key that is present and empty would claim a measurement nobody made.
+        """
+        return int(getattr(self.runtime, "output_limit", None) or 0)
 
     def _request_overhead(self) -> int:
         """What every request carries before a message is added.

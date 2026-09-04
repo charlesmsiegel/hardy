@@ -43,6 +43,10 @@ T = TypeVar("T")
 #: reason the reader has to be told about.
 TERMINAL_STOPS = frozenset({"end_turn", "stop_sequence", "tool_use", None})
 
+#: What a tool call is answered with when the exchange ends before it runs.
+#: One string, because the loop writes it and the teardown recognises it.
+ABANDONED = "the turn was abandoned before this tool call was made"
+
 
 class TurnLimitReached(RuntimeError):
     """The exchange stopped because the requested turn bound was reached.
@@ -244,6 +248,10 @@ class AgentLoop:
         #: which runs from a `finally` and cannot otherwise tell.
         self._failure: str | None = None
         self._cancelled = False
+        #: Indices of tool results still holding their placeholder answer. The
+        #: teardown reads them, so an exchange nobody drained still says which
+        #: calls it never made.
+        self._pending: list[int] = []
 
     def attach_compactor(
         self, compact: Callable[[list[Message]], list[Message] | None] | None
@@ -272,6 +280,7 @@ class AgentLoop:
         sequenced the turn, not on whichever thread first iterates it.
         """
         self._cancelled = False
+        self._pending = []
         self._stated, self._failure = set(), None
         self.turns = None
         self.messages.append(Message("user", text=text))
@@ -283,6 +292,13 @@ class AgentLoop:
         try:
             yield from self._turns(budget, spoken)
         finally:
+            # What was answered on the way out rather than on the way through.
+            # A consumer that stops iterating leaves placeholders standing in
+            # the conversation, and the next request carries them -- so a
+            # transcript that did not have them could not reconstruct what was
+            # actually sent. This runs even on `GeneratorExit`: a closed
+            # generator may not yield, but it may still record.
+            self._disclose_abandoned()
             # On every way out, including the two that raise: an exchange that
             # reached the provider may have been billed for what it did before
             # the bound fired, and the ledger is entitled to know it happened.
@@ -372,6 +388,19 @@ class AgentLoop:
                     "message": {"role": "assistant", "content": turn.text},
                 })
                 return
+            # The conversation is brought up to date before anything at all is
+            # yielded. Every `yield` below is a place a consumer can stop --
+            # `--plain` taking a Ctrl+C while it draws the reply is the
+            # concrete one -- and the generator never resumes from a `yield` it
+            # was closed at. Left after the first of them, the assistant turn
+            # was recorded in `transcript.jsonl` and shown to the user while
+            # the conversation the next request is built from had never heard
+            # of it: the durable record and the model's own history diverge,
+            # which is the failure this whole loop exists to make impossible.
+            self.messages.append(Message(
+                "assistant", text=turn.text, tool_calls=turn.tool_calls, reasoning=turn.reasoning
+            ))
+            placeholders = self._preanswer(turn.tool_calls)
             if turn.thinking:
                 self._observe({"type": "thinking"})
                 yield TurnEvent("thinking")
@@ -379,15 +408,6 @@ class AgentLoop:
                 spoken.append(turn.text)
                 self._observe({"type": "assistant", "message": {"role": "assistant", "content": turn.text}})
                 yield TurnEvent("text", text=turn.text)
-            self.messages.append(Message(
-                "assistant", text=turn.text, tool_calls=turn.tool_calls, reasoning=turn.reasoning
-            ))
-            # Answered before anything is yielded, including the notice below.
-            # `_settle` yields, and a consumer that stops there would leave the
-            # whole batch unanswered -- the same dead conversation the
-            # placeholders exist to prevent, reached by a path the placeholders
-            # were on the wrong side of.
-            placeholders = self._preanswer(turn.tool_calls)
             # Said before the tools run, not only when there are none. A reply
             # that ended on `max_tokens` *with* a tool call in it is the case
             # where the disclosure matters most and was the case that lost it:
@@ -457,6 +477,26 @@ class AgentLoop:
             ),
         )
 
+    def _disclose_abandoned(self) -> None:
+        """Record every tool call the exchange answered only with a placeholder.
+
+        Emitted here rather than when the placeholder is written, because at
+        that point it is not yet a fact: nearly every one of them is replaced
+        by a real result a moment later, and recording each in advance would
+        fill the transcript with cancellations that never happened.
+        """
+        for index in self._pending:
+            message = self.messages[index] if index < len(self.messages) else None
+            if message is None or message.text != ABANDONED:
+                continue
+            self._observe({
+                "type": "abandoned_tool",
+                "name": message.name,
+                "call_id": message.call_id,
+                "why": ABANDONED,
+            })
+        self._pending = []
+
     def _preanswer(self, calls: Sequence[ToolCall]) -> list[int]:
         """Answer every call of a batch before anything about it is yielded.
 
@@ -474,15 +514,10 @@ class AgentLoop:
         placeholders: list[int] = []
         for call in calls:
             self.messages.append(
-                Message(
-                    "tool_result",
-                    text="the turn was abandoned before this tool call was made",
-                    call_id=call.id,
-                    name=call.name,
-                    ok=False,
-                )
+                Message("tool_result", text=ABANDONED, call_id=call.id, name=call.name, ok=False)
             )
             placeholders.append(len(self.messages) - 1)
+        self._pending.extend(placeholders)
         return placeholders
 
     def _call_tools(self, calls: Sequence[ToolCall], placeholders: Sequence[int], budget: Budget) -> Iterator[TurnEvent]:
