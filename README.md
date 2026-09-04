@@ -665,7 +665,7 @@ sources, the writeup sources, the audit verdicts, the naming registry, the
 approved assumptions with their provenance, the spend, the project instructions
 the model was given, the points where its memory of the conversation was reset,
 what arrived from outside by import rather than being written here, the shared
-Lean from `.hardy/lean` that the saved theorems are elaborated against, and the
+Lean from `.hardy/lean` that the saved theorems actually import, and the
 model and toolchain identities alongside the settings that decided what the
 session could find out. With no path it lands in the problem directory under the
 project's name and the time.

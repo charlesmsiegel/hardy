@@ -321,7 +321,9 @@ interactive surface's own live run is still to come.
   assumptions with their provenance, the spend, the project instructions the
   model was given, the points where its memory of the conversation was reset,
   what arrived from outside by import rather than being written here, the shared
-  Lean from `.hardy/lean` the saved theorems are elaborated against, and the
+  Lean from `.hardy/lean` the saved theorems actually import — the import
+  closure, not every module the machine happens to offer, so exporting one
+  project cannot publish an unrelated personal library — and the
   model and toolchain identities beside the settings that decided what the
   session could find out — the Lean timeout, and whether a computer algebra
   kernel and a literature search were available at all (issue #105). It does not flatten Hardy's distinctions: a

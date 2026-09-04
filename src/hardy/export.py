@@ -995,7 +995,9 @@ opened.</footer>
 #: Not `tex`: its keys are paths, which the anchored rule cannot match, and
 #: keeping it out keeps this list about key naming rather than about content.
 #: What is rendered verbatim is a separate decision -- see `redact`.
-NAMED_BY_WORKSPACE = frozenset({"theorems", "lean", "audit", "automation", "shared"})
+NAMED_BY_WORKSPACE = frozenset(
+    {"theorems", "lean", "audit", "automation", "shared", "shared_sources"}
+)
 
 #: The same problem one level down: a report event carries `statements`, keyed
 #: by theorem name, and it is the only durable copy of what was reported.
