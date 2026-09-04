@@ -24,6 +24,7 @@ TOOLS = [
     {"type": "function", "function": {"name": "check_proof", "description": "Elaborate a complete candidate proof against the unchanged theorem statement.", "parameters": {"type": "object", "properties": {"proof": {"type": "string"}}, "required": ["proof"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "inspect_goal", "description": "Show the goal state after an optional tactic prefix.", "parameters": {"type": "object", "properties": {"tactic": {"type": "string"}}, "additionalProperties": False}}},
     {"type": "function", "function": {"name": "search_declaration", "description": "Check whether a declaration name exists in the current environment.", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "sketch_proof", "description": "Elaborate a proof skeleton whose holes are deliberate. `sorry` and `admit` are allowed and are what this tool reports; an error is still a failure. The accepted skeleton is kept, so work continues from it rather than starting again. A sketch is never a submission and is never verified.", "parameters": {"type": "object", "properties": {"proof": {"type": "string"}}, "required": ["proof"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "submit_proof", "description": "Submit the final proof for a strict, hole-free check.", "parameters": {"type": "object", "properties": {"proof": {"type": "string"}}, "required": ["proof"], "additionalProperties": False}}},
 ]
 
@@ -124,6 +125,12 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     # reason can say what happened instead of "nothing was submitted", and so the
     # verdict that refused it survives into the record.
     refused: dict[str, Any] = {"axioms": False, "record": None}
+    # The last skeleton Lean accepted with its holes still in it (#52). Kept so
+    # a run that never closes every hole still leaves the partial development
+    # behind rather than only the transcript of having attempted one. It is
+    # never a result: nothing here reaches `found`, and `submit_proof` is the
+    # only door a verdict comes through.
+    sketched: dict[str, Any] = {"proof": None, "holes": []}
     # Cancelling the exchange does not stop a Lean check already running on a
     # worker thread, and that thread is waited on during shutdown — so late work
     # can land before the timeout is even caught. The deadline itself decides
@@ -155,6 +162,15 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
                 result = lean.inspect_goal(str(arguments.get("tactic", "")))
             elif name == "search_declaration":
                 result = lean.search_declaration(str(arguments["name"]))
+            elif name == "sketch_proof":
+                proof = str(arguments["proof"])
+                result = lean.sketch_proof(proof)
+                if result.ok:
+                    # Overwritten rather than accumulated: the sketch is the
+                    # development's current state, and the transcript already
+                    # holds every earlier one.
+                    sketched["proof"] = proof
+                    sketched["holes"] = [item.model_dump(mode="json") for item in result.holes]
             elif name == "submit_proof":
                 proof = str(arguments["proof"])
                 result = lean.check_proof(proof, final=True)
@@ -245,7 +261,12 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     formal = "kernel verified" if final else "not formalized"
     informal = "not assessed"
     axioms = verdict.as_dict() if final and verdict is not None else refused["record"] or {"status": "not audited"}
-    result = RunResult(reason, formal, informal, proof if final else None, final.output if final else "No hole-free proof was accepted.", axioms, turns, spent.summary(), [WARNING], toolchain)
+    # Only when nothing was verified. A verified run's sketch is a step on the
+    # way to the proof beside it, and recording both would invite a reader to
+    # weigh them against each other; an unverified run's sketch is the only
+    # thing it has to show.
+    sketch = None if final else (dict(sketched) if sketched["proof"] else None)
+    result = RunResult(reason, formal, informal, proof if final else None, final.output if final else "No hole-free proof was accepted.", axioms, turns, spent.summary(), [WARNING], toolchain, sketch)
     if final and proof:
         (output_dir / "proof.lean").write_text(lean.source(proof, audit=True), encoding="utf-8")
     # The grade and what it rests on, together. "kernel verified" beside a
@@ -258,7 +279,20 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     writeup = f"# Hardy proof result\n\n## Claim\n\n{request.informal_claim}\n\n## Exact Lean statement\n\n```lean\n{request.declaration}\n```\n\n## Grades\n\n- Formalization: **{formal}**\n- Informal completeness: **{informal}**\n- Audited axioms: {stands_on}\n\n## Toolchain\n\n{describe_toolchain(toolchain)}\n\n## Limits\n\n{WARNING}\n"
     if not final:
         writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
+    if sketch is not None:
+        # Named a sketch in the heading and again in the sentence under it. A
+        # partial development in a file called `writeup.md` is exactly the
+        # thing a hurried reader mistakes for a result, so the two words that
+        # stop them are not left to the section title alone.
+        holes = sketch["holes"]
+        where = ", ".join(f"line {item['line']}" for item in holes) or "none recorded"
+        writeup += (
+            f"\n## Sketch (not a proof)\n\nThe run left an elaborating skeleton with "
+            f"{len(holes)} hole(s) in it ({where}). Lean accepted its structure and nothing "
+            f"else: a hole closes any goal, so this is not evidence for the claim and is not "
+            f"verified.\n\n```lean\n{sketch['proof']}\n```\n"
+        )
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
-    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds, "turns_enforced_by": "provider sdk", "wall_clock_enforced_by": "hardy", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "usage": spent.summary(), "events": events, "terminal_reason": reason})
+    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": {"max_turns": max_turns, "wall_seconds": wall_seconds, "turns_enforced_by": "provider sdk", "wall_clock_enforced_by": "hardy", "note": "the SDK owns the loop; see issue #23", "elapsed_seconds": elapsed}, "usage": spent.summary(), "sketch": sketch, "events": events, "terminal_reason": reason})
     _write_json(output_dir / "result.json", result.as_dict())
     return result

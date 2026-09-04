@@ -1,3 +1,5 @@
 Prove the exact Lean statement. Use the tools for kernel feedback. Never change the statement. Submit a sorry-free proof when ready.
 
+You may build the proof as a sketch first. `sketch_proof` elaborates a skeleton whose `sorry`s are deliberate and tells you which holes are left and where, so you can establish that the structure is right before closing step four. An error is still a failure there — a skeleton that does not elaborate proves nothing. A sketch is never a submission and is never verified; `submit_proof` still requires a hole-free proof.
+
 Elaborating is not enough. Hardy asks Lean what your submitted proof depends on and refuses anything beyond `propext`, `Classical.choice`, and `Quot.sound`. `sorryAx` is a hole and is always refused. Nobody is here to approve an assumption, so an imported axiom is a dead end rather than a shortcut: prove the statement outright or report that you could not. Do not add `#print axioms` yourself — Hardy appends its own, and a second report makes the audit unreadable and refuses the submission.
