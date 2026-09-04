@@ -129,6 +129,21 @@ def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
     return out
 
 
+def timed_out(error: BaseException) -> bool:
+    """Whether `error` is the transport saying the request ran out of time.
+
+    Asked of the SDK's class when it can be reached, and of the class name
+    otherwise -- a caller may have injected a client with no `anthropic`
+    installed behind it, and a timeout is still a timeout there.
+    """
+    if isinstance(error, TimeoutError):
+        return True
+    try:
+        return isinstance(error, load_sdk().APITimeoutError)
+    except (RuntimeError, AttributeError):
+        return type(error).__name__ == "APITimeoutError"
+
+
 def _usage(reported: Any) -> dict[str, Any] | None:
     """The provider's token report, or None when it stated nothing.
 
@@ -164,16 +179,32 @@ class AnthropicProvider:
     ) -> None:
         self.model = model
         self.max_tokens = max_tokens
-        if client is not None:
-            self._client = client
-        else:
+        self._client = client
+
+    def client(self) -> Any:
+        """The SDK client, built on the first call that needs one.
+
+        Lazily, and that is the point rather than an optimisation. A run whose
+        cheap closers close the statement asks no provider anything -- and
+        building the client eagerly meant such a run died on a missing
+        `ANTHROPIC_API_KEY` *after* Lean had already accepted the proof,
+        writing none of the artifacts it had earned. Nothing that never
+        happens should be able to fail.
+
+        `hardy doctor` is where a missing key is meant to be found, and it
+        checks for one whenever this backend is configured.
+        """
+        if self._client is None:
             if not os.environ.get("ANTHROPIC_API_KEY"):
                 raise RuntimeError(KEY_MISSING)
             self._client = load_sdk().Anthropic()
+        return self._client
 
     @property
     def endpoint(self) -> str:
-        base = getattr(self._client, "base_url", None)
+        # Never builds a client: this is asked while a trajectory is being
+        # written, including for a run that spoke to no provider at all.
+        base = getattr(self._client, "base_url", None) if self._client is not None else None
         return f"messages api ({base})" if base else "messages api"
 
     def complete(
@@ -199,7 +230,23 @@ class AnthropicProvider:
         # rather than being given `None` as an instruction to wait forever.
         if timeout is not None:
             request["timeout"] = max(timeout, 0.0)
-        reply = self._client.messages.create(**request)
+        try:
+            reply = self.client().messages.create(**request)
+        except Exception as error:
+            # The SDK's own timeout is an `APITimeoutError` -- a subclass of
+            # `APIConnectionError`, not of Python's `TimeoutError` -- so a
+            # request that ran out of the wall clock Hardy handed it would
+            # reach `runner.run` as an ordinary failure and be recorded as
+            # `runtime_error` rather than `wall_clock_limit`. The loop and the
+            # runner both read the built-in; this is where the two vocabularies
+            # meet.
+            if timed_out(error):
+                # `timeout` is None on an unbounded loop, where the client's own
+                # default fired instead -- still a timeout, and the message says
+                # which bound it was rather than formatting a None.
+                bound = f"its {timeout:g}s budget" if timeout is not None else "the transport's own timeout"
+                raise TimeoutError(f"the provider request exceeded {bound}") from error
+            raise
         text: list[str] = []
         calls: list[ToolCall] = []
         thinking = False

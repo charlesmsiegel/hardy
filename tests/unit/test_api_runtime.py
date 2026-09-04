@@ -189,9 +189,52 @@ def test_the_runtime_claims_no_provider_thread() -> None:
 
 def test_the_key_is_required_before_anything_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    provider = AnthropicProvider("claude-test")
 
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
-        AnthropicProvider("claude-test")
+        provider.complete(system="", messages=[Message("user", text="hi")], specs=[])
+
+
+def test_a_provider_nobody_calls_needs_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run whose cheap closers close the statement asks no provider anything.
+    Built eagerly, such a run died on a missing key *after* Lean had accepted
+    the proof, writing none of the artifacts it had earned."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    provider = AnthropicProvider("claude-test")
+
+    # Constructed, and its identity readable, without a client existing.
+    assert provider.endpoint == "messages api"
+    assert provider.max_tokens > 0
+
+
+def test_a_transport_timeout_is_reported_as_one() -> None:
+    """The SDK's own timeout is an `APITimeoutError` -- not a `TimeoutError` --
+    so a request that ran out of the wall clock Hardy handed it would reach the
+    runner as an ordinary failure and be graded `runtime_error` instead of
+    `wall_clock_limit`."""
+    class APITimeoutError(Exception):
+        pass
+
+    class Timing(FakeClient):
+        def create(self, **request):
+            raise APITimeoutError("request timed out")
+
+    provider = AnthropicProvider("claude-test", client=Timing([]))
+
+    with pytest.raises(TimeoutError, match="12s budget"):
+        provider.complete(system="", messages=[Message("user", text="hi")], specs=[], timeout=12)
+
+
+def test_an_ordinary_provider_failure_is_left_alone() -> None:
+    class Failing(FakeClient):
+        def create(self, **request):
+            raise RuntimeError("rate limited")
+
+    provider = AnthropicProvider("claude-test", client=Failing([]))
+
+    with pytest.raises(RuntimeError, match="rate limited"):
+        provider.complete(system="", messages=[Message("user", text="hi")], specs=[])
 
 
 def test_the_loops_remaining_clock_becomes_the_requests_timeout() -> None:
