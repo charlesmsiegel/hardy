@@ -915,14 +915,21 @@ Priority labels are sequencing hints:
   writeup `\input{references}` once and cites by the returned key, and a citation
   that does not resolve fails the compile.
 - **Now (implemented):** the document may not write its own bibliography either.
-  Every reference the compiler actually created — read from the `\bibcite`
-  entries it wrote into `writeup.aux`, the same evidence the label gate uses —
-  must be a key `cite_paper` put in the store, so a `\bibitem` reached through
-  `\csname`, a macro, or any other expansion is refused along with one spelled
-  out. A `\bibitem`, a `thebibliography`, a `\bibliography` or an
-  `\addbibresource` in any saved writeup file is additionally refused at the
-  check and at the save, where the refusal can say something useful; and the
-  generated `tex/references.tex` may be neither written nor deleted by hand.
+  Every key the compile touched — what the reference list defined (`\bibcite`)
+  and what the text cited (`\citation`), read from every auxiliary file the
+  compilation wrote rather than the root's alone, the same evidence the label
+  gate uses — must be a key `cite_paper` put in the store. A `\bibitem`, a
+  `thebibliography`, a `\bibliography` or an `\addbibresource` in any saved
+  writeup file is refused at the check and at the save, where the refusal can
+  say something useful; so is building a control sequence by name (`\csname`,
+  `\expandafter`, `\@namedef`), since a command assembled at run time is a
+  command no reader of the source can see and chasing spellings through a macro
+  language is not a rule anyone can state. The generated `tex/references.tex`
+  may be neither written nor deleted by hand. What this does *not* claim is
+  protection from a model that means to forge a citation: Hardy runs TeX
+  unsandboxed by design, and a determined one has easier routes than these.
+  What it does is make an invented reference impossible to arrive at by
+  accident, and visible when it is not.
 
 ## Assumed-paper libraries
 

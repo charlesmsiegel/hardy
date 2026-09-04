@@ -139,14 +139,22 @@ def unwrapped(log: str) -> str:
 
     Joining is by width alone, because that is the only signal there is: TeX
     wraps at `max_print_line` without a continuation marker of any kind.
+
+    The width tested is the PREVIOUS PHYSICAL line's, not the accumulated
+    logical one's. Testing the accumulated line stopped joining after the
+    first continuation -- it is longer than the wrap width by then -- so a
+    warning spanning three printed lines came back with its last third still
+    on a line of its own, and a name or a fixed phrase split across that break
+    matched nothing.
     """
-    lines = log.splitlines()
     joined: list[str] = []
-    for line in lines:
-        if joined and len(joined[-1]) == WRAP_WIDTH:
+    previous_was_full = False
+    for line in log.splitlines():
+        if joined and previous_was_full:
             joined[-1] += line
         else:
             joined.append(line)
+        previous_was_full = len(line) == WRAP_WIDTH
     return "\n".join(joined)
 
 
@@ -240,6 +248,28 @@ def unreferenced_labels(sources: Mapping[str, str]) -> tuple[str, ...]:
         if label and label not in referenced and label not in ordered:
             ordered.append(label)
     return tuple(ordered)
+
+
+#: What LaTeX writes into the `.aux` for every `\\cite` it ran, whether or not
+#: anything defined the key. Read alongside `\\bibcite` because they answer
+#: different questions: `\\bibcite` says what the reference list defined, and
+#: this says what the text actually cited.
+CITATION = re.compile(r"\\citation\s*\{([^}]*)\}")
+
+
+def citations(aux: str) -> tuple[str, ...]:
+    r"""Every key the document cited, as the compiler recorded it.
+
+    A `\cite` leaves a `\citation` here even when nothing defines the key --
+    and even when the definition was smuggled in some way that produces no
+    `\bibcite` at all. Checking both is what makes "every citation names a
+    paper Hardy fetched" a statement about the document rather than about its
+    reference list.
+    """
+    keys: list[str] = []
+    for group in CITATION.findall(aux):
+        keys.extend(part.strip() for part in group.split(",") if part.strip())
+    return tuple(dict.fromkeys(keys))
 
 
 def bibcites(aux: str) -> tuple[str, ...]:

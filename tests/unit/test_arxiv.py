@@ -448,7 +448,9 @@ def test_a_record_filed_under_another_papers_identifier_is_refused(tmp_path: Pat
     first, _ = client.fetch("math.DG/0211159v1")
     other, _ = client.fetch("2401.00001v1")
     stolen = library.path_for(first.identifier)
-    for name in ("record.json", "content.txt"):
+    # The whole record, response included, so this reaches the identity check
+    # rather than tripping the response digest on the way.
+    for name in ("record.json", "content.txt", "response.xml"):
         (stolen / name).write_bytes((library.path_for(other.identifier) / name).read_bytes())
     with pytest.raises(arxiv.ArxivError, match="under another's identifier"):
         library.read(first.identifier)
@@ -516,3 +518,25 @@ def test_a_cache_entry_dated_in_the_future_is_stale(tmp_path: Path):
     clock.now -= 10 * arxiv.QUERY_TTL_SECONDS
     client.search("ricci flow")
     assert len(transport.urls) == 2
+
+
+def test_an_edited_response_is_refused(tmp_path: Path):
+    """The record says its metadata came from these exact bytes.
+
+    Checking only `record.json` and `content.txt` left that claim standing
+    over a file that had been edited or deleted underneath it.
+    """
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    response = library.path_for(record.identifier) / "response.xml"
+    response.write_bytes(response.read_bytes() + b"<!-- edited -->")
+    with pytest.raises(arxiv.ArxivError, match="where its metadata came from"):
+        library.read(record.identifier)
+
+
+def test_a_deleted_response_is_refused(tmp_path: Path):
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    (library.path_for(record.identifier) / "response.xml").unlink()
+    with pytest.raises(arxiv.ArxivError, match="could not be read"):
+        library.read(record.identifier)

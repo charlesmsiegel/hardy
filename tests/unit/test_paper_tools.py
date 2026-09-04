@@ -274,3 +274,18 @@ def test_the_throttle_is_shared_across_project_roots(tmp_path: Path):
     assert first.library.root != second.library.root
     assert first.library.state_path == second.library.state_path
     assert first.library.lock_path == second.library.lock_path
+
+
+def test_a_fetch_answer_is_bounded_too(tmp_path: Path):
+    """The one answer that put whatever arrived straight into the context."""
+    authors = "".join(f"<author><name>Author {n}</name></author>" for n in range(3_000))
+    feed = FEED.format(
+        identifier="math.DG/0211159v1", title="T" * 5_000, abstract="a"
+    ).replace("<author><name>Grigori Perelman</name></author>", authors)
+    runtime = _runtime(tmp_path, feed.encode("utf-8"), observation_bytes=4_096)
+    result = runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    assert result.ok
+    assert len(result.output.encode("utf-8")) <= 4_096
+    payload = _json(result)
+    assert payload["paper_id"] == "math.DG/0211159v1"
+    assert "more" in payload["authors"][-1]

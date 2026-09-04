@@ -380,11 +380,23 @@ half that is easy to mistake for the whole: what a reader sees is the document,
 not the store, and a `\bibitem` written straight into the writeup resolves as
 well as a real one. So the writeup may not declare references at all, and the
 check that says so reads the compiler's own record rather than the source: TeX
-is a macro language, a `\bibitem` can be assembled from pieces, and only the
-`\bibcite` it writes into the `.aux` is the same whichever way it was spelled.
-The same move the label gate already makes — ask the compiler what it did, not
-the document what it says. The generated reference list is Hardy's file rather
-than the workspace's. The document side then closes the loop from the other end:
+is a macro language, a `\bibitem` can be assembled from pieces, and what the
+compiler writes into its auxiliary files — every key the reference list defined
+and every key the text cited — is the same whichever way it was spelled. The
+same move the label gate already makes: ask the compiler what it did, not the
+document what it says. The generated reference list is Hardy's file rather than
+the workspace's, and a writeup may not build control sequences by name, because
+a rule about what a reader sees cannot be enforced against text designed to be
+unreadable.
+
+Where that stops is worth stating, since it is easy to mistake for more than it
+is. Hardy runs TeX unsandboxed, by the same deliberate choice that runs
+model-authored Lean and computer algebra unsandboxed, so none of this defends
+against a model that means to forge a citation — such a model has `\write18`, a
+Lean `IO` action, and plain prose. The property being defended is the one that
+actually goes wrong: a model asked for a reference invents one, fluently and
+without meaning to. Against that, a citation is possible only for a paper Hardy
+fetched, and anything else is refused rather than published. The document side then closes the loop from the other end:
 a `\cite` with no entry, like a `\ref` with no label, fails the compile instead
 of resolving to `[?]` in a PDF that looks finished.
 

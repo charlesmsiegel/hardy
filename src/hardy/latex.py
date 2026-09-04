@@ -499,13 +499,7 @@ class LatexTools:
             # those keys and may refuse the document over them; nobody else
             # passes `vouched` and nothing changes for them.
             if actual and outcome.returncode == 0 and not broken and vouched is not None:
-                aux = work / "writeup.aux"
-                refused = vouched(
-                    references.bibcites(aux.read_text(encoding="utf-8", errors="replace"))
-                    if aux.exists()
-                    else ()
-                )
-                broken = refused or broken
+                broken = self._cited(work, vouched) or broken
             resolved = outcome.returncode == 0 and not broken
             # Before a single byte leaves the scratch tree, and deliberately
             # allowed to raise: see the note on `commit` above. A fragment
@@ -528,6 +522,28 @@ class LatexTools:
                 + (f"\n{report}" if report else ""),
                 source,
             )
+
+    def _cited(self, work: Path, vouched: Callable[[tuple[str, ...]], str]) -> str:
+        r"""Hand every key the compile touched to `vouched`, and report its answer.
+
+        EVERY auxiliary file, not `writeup.aux` alone. `\include` gives each
+        included fragment an `.aux` of its own and the root merely `\input`s
+        it on a later pass, so a reference list executed inside one wrote its
+        `\bibcite` records where a reader of the root's aux would never see
+        them -- and the citation resolved anyway.
+
+        Both what the reference list DEFINED (`\bibcite`) and what the text
+        CITED (`\citation`). The second is not redundant: a `\cite` records
+        itself here whether or not anything defined the key, so a definition
+        smuggled in by some route that produces no `\bibcite` still leaves the
+        citation itself in plain sight.
+        """
+        keys: list[str] = []
+        for relative in files_under(work, ".aux"):
+            text = read_bytes(work, relative).decode("utf-8", errors="replace")
+            keys.extend(references.bibcites(text))
+            keys.extend(references.citations(text))
+        return vouched(tuple(dict.fromkeys(keys)))
 
     def _passes(self, work: Path, root: Path) -> tuple[GuardedResult, str]:
         r"""Run the compiler until another pass would not change the answer.

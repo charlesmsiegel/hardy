@@ -106,6 +106,10 @@ if "\\begin{document}" in source and "\\end{document}" in source:
     cited = set(re.findall(r"\\bibcite\{([^}]*)\}", previous))
     written = [f"\\newlabel{{{name}}}{{{{1}}{{1}}}}" for name in LABEL.findall(executed)]
     written += [f"\\bibcite{{{name}}}{{1}}" for name in BIBITEM.findall(executed)]
+    # Real LaTeX records every `\cite` it ran, whether or not anything defined
+    # the key, so Hardy can ask what the text cited as well as what the
+    # reference list defined.
+    written += [f"\\citation{{{name}}}" for name in CITE.findall(executed)]
     record = "\n".join(written) + "\n"
     # `% unstable` models the document whose numbers never settle: a reference
     # that moves a page number that moves a reference. A real one converges in

@@ -287,3 +287,29 @@ def test_a_symlinked_store_is_refused_rather_than_followed(tmp_path: Path):
     (problem / "bibliography.json").symlink_to(outside)
     with pytest.raises(BibliographyError):
         Bibliography(problem).read()
+
+
+def test_a_paper_read_twice_as_different_bytes_records_both(tmp_path: Path):
+    """A clone with the bibliography but not the machine-local library.
+
+    The paper is fetched again and arXiv's metadata, an intermediary, or the
+    parser has moved. Keeping only the first digest would leave the entry
+    identifying bytes the second reader did not see; refusing would call one
+    of two honest reads false.
+    """
+    bibliography = Bibliography(tmp_path)
+    first, _ = bibliography.cite(_record())
+    moved = _record(title="The entropy formula for the Ricci flow (revised)")
+    moved = moved.model_copy(update={"arxiv_id": _record().arxiv_id})
+    second, added = bibliography.cite(moved)
+    assert not added
+    assert second.content_sha256 == first.content_sha256
+    assert second.also_read == (moved.content_sha256,)
+
+
+def test_building_a_control_sequence_by_name_is_refused():
+    r"""`\csname bibitem\endcsname` is a `\bibitem` nobody can see."""
+    for command in ("\\csname bibitem\\endcsname{x}", "\\expandafter\\def", "\\@namedef{x}"):
+        refusal = hand_written_bibliography("writeup.tex", command)
+        assert refusal, command
+        assert "control sequences by name" in refusal

@@ -73,6 +73,13 @@ HAND_WRITTEN = re.compile(
     r"\\(?:bibitem|bibliography|addbibresource|printbibliography|nocite)\b"
     r"|\\begin\s*\{thebibliography\}"
 )
+#: TeX primitives that build a control sequence out of characters, so that
+#: `\csname bibitem\endcsname` runs a `\bibitem` no reader of the source sees.
+#: Refused outright in a writeup, which is the honest way to bound this: the
+#: alternative is a lexical arms race against a language designed to defeat
+#: lexical analysis. A mathematical document has no use for these, and one
+#: that does is doing something Hardy cannot vouch for.
+CONSTRUCTED = re.compile(r"\\(?:csname|expandafter|@namedef|@nameuse|noexpand)\b")
 
 #: Words that say nothing about which paper this is.
 STOPWORDS = frozenset(
@@ -110,6 +117,12 @@ class Entry(FrozenModel):
     journal_ref: str | None = None
     url: str = ""
     content_sha256: str = ""
+    #: Digests of the same paper read again and found different -- a clone
+    #: refetching what its library no longer holds, after arXiv's metadata or
+    #: this parser moved. Kept rather than resolved: neither read is false,
+    #: and an entry that names only the first would identify bytes a later
+    #: reader did not see.
+    also_read: tuple[str, ...] = ()
     cited_at: str = ""
 
     def rendered(self) -> str:
@@ -300,9 +313,22 @@ class Bibliography:
         held = self._match(record, store)
         if held is not None:
             merged = tuple(dict.fromkeys((*held.identities, *names)))
-            if merged == held.identities:
+            # Same entry, different bytes. It happens to a clone carrying the
+            # bibliography but not the machine-local library: the paper is
+            # fetched again and arXiv's metadata, an intermediary, or this
+            # parser has moved since. Silently keeping the first digest would
+            # leave the entry identifying bytes the reader did not read, and
+            # refusing the citation would be wrong too -- neither read is
+            # false. Both are recorded, in the order they were read.
+            seen = tuple(
+                dict.fromkeys(
+                    (*(held.content_sha256,), *held.also_read, record.content_sha256)
+                )
+            ) if record.content_sha256 else (held.content_sha256, *held.also_read)
+            later = tuple(digest for digest in seen if digest and digest != held.content_sha256)
+            if merged == held.identities and later == held.also_read:
                 return held, False
-            updated = held.model_copy(update={"identities": merged})
+            updated = held.model_copy(update={"identities": merged, "also_read": later})
             self._write(
                 store.model_copy(
                     update={
@@ -456,7 +482,17 @@ def hand_written_bibliography(path: str, source: str) -> str:
             "whole on every citation, so an edit here would be undone by the next one. "
             "Use cite_paper to add a reference."
         )
-    found = HAND_WRITTEN.search(uncommented(source))
+    executed = uncommented(source)
+    constructed = CONSTRUCTED.search(executed)
+    if constructed:
+        return (
+            f"this writeup builds control sequences by name ({constructed.group(0)}), "
+            "which Hardy will not accept in a document it has to vouch for: a command "
+            "assembled at run time is a command no reader of the source can see, and "
+            "every reference rule here is about what a reader ends up looking at. Write "
+            "the mathematics directly."
+        )
+    found = HAND_WRITTEN.search(executed)
     if found:
         return (
             f"this writeup writes its own bibliography ({found.group(0)}), and a "
