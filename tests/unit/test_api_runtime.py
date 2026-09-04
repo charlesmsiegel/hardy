@@ -200,6 +200,7 @@ def test_a_provider_nobody_calls_needs_no_key(monkeypatch: pytest.MonkeyPatch) -
     Built eagerly, such a run died on a missing key *after* Lean had accepted
     the proof, writing none of the artifacts it had earned."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
 
     provider = AnthropicProvider("claude-test")
 
@@ -301,3 +302,20 @@ def test_a_backend_that_imposes_no_cap_states_none() -> None:
         model, backend, endpoint = "m", "claude", "fake"
 
     assert "output_limit" not in provenance(Subscription())
+
+
+def test_a_custom_gateway_is_recorded_before_the_first_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provenance is written at session start, and the lazy client does not
+    exist yet. Read off the client alone, a session that then ran every turn
+    against a private gateway recorded only `messages api`, with nothing
+    re-synchronising the record afterwards."""
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.internal")
+
+    assert AnthropicProvider("claude-test").endpoint == "messages api (https://gateway.internal)"
+
+
+def test_an_existing_client_still_answers_for_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://ignored.example")
+    provider = AnthropicProvider("claude-test", client=FakeClient([]))
+
+    assert provider.endpoint == "messages api (https://api.anthropic.test)"

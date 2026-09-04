@@ -202,9 +202,17 @@ class AnthropicProvider:
 
     @property
     def endpoint(self) -> str:
-        # Never builds a client: this is asked while a trajectory is being
-        # written, including for a run that spoke to no provider at all.
+        """Where this transport sends, without building a client to find out.
+
+        Asked while a trajectory is being written, and on an interactive
+        session before the first turn -- so reading it off a client that does
+        not exist yet would record `messages api` for a run that then went to
+        a private gateway all session, with nothing re-synchronising the
+        record afterwards. The SDK takes its base URL from the environment
+        when nothing overrides it, and so does this.
+        """
         base = getattr(self._client, "base_url", None) if self._client is not None else None
+        base = base or os.environ.get("ANTHROPIC_BASE_URL")
         return f"messages api ({base})" if base else "messages api"
 
     def complete(

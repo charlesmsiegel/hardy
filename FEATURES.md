@@ -609,10 +609,13 @@ Priority labels are sequencing hints:
   translated into the one the harness reads, so a request that ran out of the
   wall clock Hardy handed it is graded `wall_clock_limit` rather than
   `runtime_error` — the SDK raises `APITimeoutError`, which is not a
-  `TimeoutError`, and the two vocabularies meet in one place. The client itself
-  is built on the first call that needs one, so a run whose cheap closers close
-  the statement never needs a key at all: nothing that never happens should be
-  able to fail after Lean has already accepted a proof. A tool that raises is answered
+  `TimeoutError`, and the two vocabularies meet in one place. Every backend's SDK is
+  loaded on the first turn that needs one rather than when the runtime is
+  built, so a run whose cheap closers close the statement needs neither a key
+  nor an installed SDK: nothing that never happens should be able to fail after
+  Lean has already accepted a proof. The endpoint is still recorded before that
+  first turn, read from the configured base URL, so a session that runs against
+  a private gateway says so in its record from the start. A tool that raises is answered
   rather than propagated: an unanswered `tool_use` is not a bad turn but a dead
   conversation, since every later request built from it is one the API refuses.
   The wall clock is read again before *each* call of a batch, not once for the
@@ -629,7 +632,8 @@ Priority labels are sequencing hints:
   mid-request leaves the reply to arrive — it is recorded as discarded, since
   it was produced and billed for, and never published to a user who has been
   told the turn stopped. `hardy doctor` checks whichever
-  backend is configured and only that one: reporting a correctly configured
+  backend is *selected* — the staged commands take a `--backend` of their own
+  and pass it, and each of the three has its own checks — and only that one: reporting a correctly configured
   API-only machine as broken is the obvious failure, and calling a machine
   ready on credentials it will not use is the worse one. The backend and endpoint
   land in `session.json` and every `trajectory.json`, because a run on one
