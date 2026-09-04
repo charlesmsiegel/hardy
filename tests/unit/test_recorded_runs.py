@@ -608,7 +608,40 @@ def test_claiming_no_model_was_needed_beside_a_model_exchange_is_refused(tmp_pat
 
     issues = acceptance.validate_batch_consistency(output)
 
-    assert any('declined its model turn records a provider exchange' in issue for issue in issues)
+    assert any('ladder closed records a provider exchange' in issue for issue in issues)
+
+
+def test_deleting_the_decline_does_not_hide_the_model_exchange(tmp_path) -> None:
+    """Asked only as "if a turn was declined, does the rest agree", the check
+    could be disarmed by deleting the decline itself."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    trajectory['events'] = [
+        event for event in trajectory['events'] if event.get('type') != 'declined_turn'
+    ]
+    trajectory['events'].append({'type': 'result', 'turns': 2, 'cost_usd': 0.1, 'usage': None})
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('records 0 declined turns' in issue for issue in issues)
+    assert any('ladder closed records a provider exchange' in issue for issue in issues)
+
+
+def test_editing_the_hole_count_out_of_the_writeup_is_refused(tmp_path) -> None:
+    """The writeup is the artifact a reader opens, so it is where a partial
+    result would most usefully conceal its remaining work."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _sketched(tmp_path)
+    writeup = output / 'writeup.md'
+    writeup.write_text(
+        writeup.read_text(encoding='utf-8').replace('1 hole(s)', '0 hole(s)'), encoding='utf-8'
+    )
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('sketch section is not the one the record implies' in issue for issue in issues)
 
 
 def test_a_disabled_ladder_beside_a_ladder_that_ran_is_refused(tmp_path) -> None:
@@ -685,7 +718,7 @@ def test_a_writeup_with_its_sketch_section_removed_is_refused(tmp_path) -> None:
     output = _sketched(tmp_path)
     writeup = output / 'writeup.md'
     writeup.write_text(
-        writeup.read_text(encoding='utf-8').split(acceptance.SKETCH_HEADING)[0], encoding='utf-8'
+        writeup.read_text(encoding='utf-8').split(importlib.import_module('hardy.runner').SKETCH_HEADING)[0], encoding='utf-8'
     )
 
     issues = acceptance.validate_batch_consistency(output)
@@ -702,3 +735,47 @@ def test_a_verified_run_may_not_record_a_sketch(tmp_path) -> None:
     issues = acceptance.validate_batch_consistency(output)
 
     assert any('verified run records a sketch' in issue for issue in issues)
+
+
+def test_a_harness_counted_timeout_may_report_its_turns(tmp_path) -> None:
+    """The *provider's* count rides on a final result a cancelled run never
+    receives. A harness-owned loop counts its own provider calls and publishes
+    them however the exchange ended, so refusing a count there would fail every
+    truthful API-backed timeout."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
+    for name in ('result.json', 'trajectory.json'):
+        _rewrite(output / name, terminal_reason='wall_clock_limit')
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    trajectory['events'].append({'type': 'error', 'error': 'TimeoutError: the run exceeded its budget'})
+    trajectory['limits']['turns_enforced_by'] = 'hardy'
+    del trajectory['limits']['note']
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+    writeup = output / 'writeup.md'
+    writeup.write_text(
+        writeup.read_text(encoding='utf-8').replace('`no_proof_submitted`', '`wall_clock_limit`'),
+        encoding='utf-8',
+    )
+    _rewrite(output / 'result.json', turns=2)
+
+    assert acceptance.validate_batch_consistency(output) == ()
+
+
+def test_a_provider_counted_timeout_still_may_not(tmp_path) -> None:
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _batch(tmp_path, [('check_proof', {'proof': 'by exact True.intro'})])
+    for name in ('result.json', 'trajectory.json'):
+        _rewrite(output / name, terminal_reason='wall_clock_limit')
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    trajectory['events'].append({'type': 'error', 'error': 'TimeoutError: the run exceeded its budget'})
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+    writeup = output / 'writeup.md'
+    writeup.write_text(
+        writeup.read_text(encoding='utf-8').replace('`no_proof_submitted`', '`wall_clock_limit`'),
+        encoding='utf-8',
+    )
+    _rewrite(output / 'result.json', turns=2)
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('the provider never delivered' in issue for issue in issues)

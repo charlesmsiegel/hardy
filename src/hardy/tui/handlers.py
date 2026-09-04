@@ -21,6 +21,7 @@ from .. import catalog, doctor, layout, process
 from .. import config as configuration
 from ..cas import CasError
 from ..cas_export import export_session
+from ..config import DEFAULT_BACKEND, authentication
 from ..prompts import user as user_prompts
 from .banner import status_line
 from .commands import Command, canonical, from_template
@@ -267,7 +268,9 @@ async def _chosen_identity(ui: Ui, argument: str, config) -> str | None:
         "Select model",
         rows,
         current=current,
-        subtitle="Runs through your Claude Code subscription.",
+        # Derived, not hardcoded: on an API-key session the old wording told
+        # the user their subscription was about to be spent when it was not.
+        subtitle=f"Runs through: {authentication(getattr(config, 'backend', DEFAULT_BACKEND))}.",
     )
     if picked is None:
         return None

@@ -343,3 +343,73 @@ def test_a_failed_exchange_does_not_restate_the_previous_totals() -> None:
     reports = [item for item in observed if item["type"] == "result"]
     assert reports[0]["usage"] == {"input_tokens": 10}
     assert reports[1]["usage"] is None
+
+
+def test_a_tool_that_raises_is_still_answered() -> None:
+    """A dangling `tool_use` is not a bad turn, it is a dead conversation.
+
+    Every later request built from it is one the API refuses outright, so a
+    single unlucky write would end the session rather than the turn.
+    """
+    def dispatch(name, arguments):
+        raise OSError("disk full")
+
+    loop, _, observed = _loop(
+        [
+            ProviderTurn(tool_calls=(ToolCall("c1", "save_lean", {}),)),
+            ProviderTurn(text="carrying on"),
+        ],
+        dispatch=dispatch,
+    )
+
+    events = _drain(loop, "save it")
+
+    answered = [message for message in loop.messages if message.role == "tool_result"]
+    assert [message.ok for message in answered] == [False]
+    assert "disk full" in answered[0].text
+    assert any(item["type"] == "tool_error" for item in observed)
+    # And the exchange continued rather than dying with the tool.
+    assert events[-1].text == "carrying on"
+
+
+def test_a_truncated_reply_is_not_presented_as_a_finished_one() -> None:
+    loop, _, observed = _loop([ProviderTurn(text="half an ans", stop_reason="max_tokens")])
+
+    events = _drain(loop, "explain it")
+
+    assert any(item["type"] == "truncated" and item["stop_reason"] == "max_tokens" for item in observed)
+    notice = next(event for event in events if event.kind == "notice")
+    assert "cut off rather than complete" in notice.text
+
+
+def test_an_ordinary_finish_says_nothing_extra() -> None:
+    loop, _, _ = _loop([ProviderTurn(text="all of it", stop_reason="end_turn")])
+
+    events = _drain(loop, "explain it")
+
+    assert not [event for event in events if event.kind == "notice"]
+
+
+def test_a_provider_that_states_no_stop_reason_is_not_accused_of_truncating() -> None:
+    loop, _, _ = _loop([ProviderTurn(text="all of it")])
+
+    assert not [event for event in _drain(loop, "explain it") if event.kind == "notice"]
+
+
+def test_a_reply_that_lands_after_a_cancel_is_recorded_and_not_published() -> None:
+    """This transport cannot abort a request in flight, so the answer can come
+    back after Hardy has reported the turn stopped. Handing it to the user then
+    is worse than handing them nothing."""
+    def cancelling() -> ProviderTurn:
+        loop.cancel()
+        return ProviderTurn(text="the late answer")
+
+    loop, _, observed = _loop([cancelling])
+
+    events = _drain(loop, "prove it")
+
+    assert "the late answer" not in events[-1].text
+    discarded = next(item for item in observed if item["type"] == "discarded")
+    assert discarded["message"]["content"] == "the late answer"
+    # Not smuggled into the conversation either: the user never saw it.
+    assert [message.role for message in loop.messages] == ["user"]

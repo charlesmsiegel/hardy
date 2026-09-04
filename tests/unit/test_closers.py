@@ -244,3 +244,26 @@ def test_what_the_ladder_cost_is_recorded(tmp_path: Path, proof_request: Request
     trajectory = json.loads((tmp_path / "trajectory.json").read_text(encoding="utf-8"))
 
     assert trajectory["closers"]["seconds"] > 0
+
+
+def test_a_closer_whose_proof_lands_after_the_deadline_closes_nothing(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """A check that began inside the deadline and finished outside it is
+    discarded, so naming its tactic in `closed_by` would credit a closer for a
+    run that terminates with no verified proof."""
+    seen: list[FakeRuntime] = []
+
+    result = run(
+        proof_request,
+        factory([], seen),
+        lean,
+        tmp_path,
+        # Expired before the closer's own Lean call can finish.
+        wall_seconds=0.0001,
+        closers=("exact True.intro",),
+    )
+
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text(encoding="utf-8"))
+
+    assert result.terminal_reason != "verified"
+    assert trajectory["closers"]["closed_by"] is None
+    assert not any(event.get("type") == "declined_turn" for event in trajectory["events"])
