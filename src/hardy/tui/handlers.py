@@ -523,9 +523,24 @@ def _pressing(stop: Callable[[], bool]) -> Iterator[None]:
         yield
         return
 
+    # Raised ONCE. The first press is what delivers the interrupt into an
+    # inline workflow; by the second, that workflow is already unwinding
+    # through its cancellation path and finalizing -- writing the terminal
+    # event and hashing the run directory. Raising again from inside that
+    # handler abandons `_finalize` half done, and `handle_prove` then catches
+    # it as though the press had landed before the run started: a run
+    # directory on disk with no manifest describing it, which is precisely the
+    # state the whole cancellation design exists to prevent. `stop` still
+    # escalates on every press, so the second one does kill what did not take
+    # the hint -- it just lets finalization finish afterwards.
+    raised = False
+
     def pressed(number: int, frame: Any) -> None:
+        nonlocal raised
         stop()
-        raise KeyboardInterrupt
+        if not raised:
+            raised = True
+            raise KeyboardInterrupt
 
     try:
         previous = signal.signal(signal.SIGINT, pressed)
@@ -744,18 +759,25 @@ async def handle_export(ui: Ui, argument: str, state: State) -> State:
         ui.write("No session yet: there is nothing to export.", style="error")
         return state
     argument = argument.strip()
-    destination = (
-        Path(_unquoted(argument)).expanduser()
-        if argument
-        else export_module.default_path(state.config.layout.problem, state.config.project)
-    )
-    if destination.is_dir():
-        # Named inside the directory the user pointed at, not named in the
-        # current directory and then moved: `default_path` reserves the name it
-        # returns, and reserving it here would leave an empty file in whatever
-        # directory Hardy happened to be started from.
-        destination = export_module.default_path(destination, state.config.project)
+    # Inside the guarded block, not before it. `default_path` reserves the name
+    # it returns, so it touches the filesystem and can refuse -- an unwritable
+    # directory, or a second in which every name it may choose is taken. The
+    # TTY shell happens to catch a handler's exception; the plain session does
+    # not, so an ordinary export refusal ended the whole session on a traceback
+    # instead of printing the line below.
+    destination: Path | None = None
     try:
+        destination = (
+            Path(_unquoted(argument)).expanduser()
+            if argument
+            else export_module.default_path(state.config.layout.problem, state.config.project)
+        )
+        if destination.is_dir():
+            # Named inside the directory the user pointed at, not named in the
+            # current directory and then moved: `default_path` reserves the name
+            # it returns, and reserving it here would leave an empty file in
+            # whatever directory Hardy happened to be started from.
+            destination = export_module.default_path(destination, state.config.project)
         # On a thread for `/doctor`'s reason: it reads the Lean tree, the
         # writeup tree and the whole transcript, then writes a file.
         material = await asyncio.to_thread(gather)
@@ -763,11 +785,13 @@ async def handle_export(ui: Ui, argument: str, state: State) -> State:
     except asyncio.CancelledError:
         raise
     except Exception as error:  # noqa: BLE001 - never lose the session over a file
-        # Every refusal reading the workspace or writing the file can raise
-        # arrives here. The plain session has no catch around a command, so a
-        # `tex/` that cannot be read or a destination inside a regular file
-        # would otherwise end the session on a traceback.
-        ui.write(f"Could not write {destination}: {error}", style="error")
+        # Every refusal reading the workspace, choosing the name, or writing
+        # the file arrives here. The plain session has no catch around a
+        # command, so a `tex/` that cannot be read, a destination inside a
+        # regular file, or a name that could not be reserved would otherwise
+        # end the session on a traceback.
+        where = destination if destination is not None else "the export"
+        ui.write(f"Could not write {where}: {error}", style="error")
         return state
     ui.write(f"Wrote {written} ({written.stat().st_size} bytes).")
     ui.write("  One file, no external assets. Results carry their own verdicts;")

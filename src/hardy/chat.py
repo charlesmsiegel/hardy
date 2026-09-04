@@ -3183,6 +3183,14 @@ class MathematicsSession:
             # the origin path and arriving digest -- the only things that let a
             # reader check it against the file it came from -- are lost.
             "imported": list(self.state.get("imported", [])),
+            # The shared modules a saved theorem may import. They are elaborated
+            # with it and their text is hashed into the identity that stamps
+            # every verdict, so a page that omits them shows verdicts resting on
+            # source it does not carry -- and `shared` above is a duplicate-name
+            # map, not the source. Locally authored, so a recipient has no other
+            # copy to compare against: without this the export is not standalone
+            # for exactly the workspaces that wrote their own library.
+            "shared_sources": self._shared_sources(),
             # The disclosure the compiled document's banner carries. The export
             # embeds no PDF, so without this a theorem Hardy knows closes with
             # one `simp` reads as kernel-verified and nothing more -- the page
@@ -4884,6 +4892,28 @@ class MathematicsSession:
                 sorted(self._open_theorems(sources)) if open_names is None else sorted(open_names)
             ),
         }
+
+    def _shared_sources(self) -> dict[str, str]:
+        """Every shared Lean module this session can see, by module name.
+
+        Read through the same guard `_shared_digest` uses, so a link anywhere in
+        the tree is refused rather than followed -- the export must not be the
+        one reader that resolves what every other pass declined to.
+
+        Keyed by module name rather than by path: that is how a saved theorem
+        refers to it in an `import`, and it is what a recipient checking whether
+        their copy is the same one needs to match on. An unreadable file is left
+        out rather than taking the export down, and the page says which tree the
+        names came from.
+        """
+        found: dict[str, str] = {}
+        for source, _build in self.shared_roots:
+            for name, path in self._modules_under(source):
+                try:
+                    found[name] = read_text(source, path.relative_to(source), errors="replace")
+                except OSError:
+                    continue
+        return found
 
     def _effective_settings(self) -> dict[str, str]:
         """What this session was actually configured with, as the reader needs it.

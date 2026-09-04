@@ -461,3 +461,24 @@ def test_a_session_with_no_kernel_says_none_rather_than_staying_silent(tmp_path:
     chat.cas_detail = ""
 
     assert "none" in chat.export_material()["settings"]["Computer algebra"]
+
+
+def test_the_export_carries_the_shared_modules_the_workspace_can_import(tmp_path: Path):
+    """Read through the same guard the shared digest uses, and keyed by module
+    name -- which is how a saved theorem refers to one and what a recipient
+    matches their own copy against.
+
+    The tree has to exist before the session opens: `_discover_shared` runs at
+    construction, which is also why `built` is called after it is written.
+    """
+    workspace = tmp_path / "problem"
+    shared = tmp_path / ".hardy" / "lean"
+    shared.mkdir(parents=True)
+    (shared / "Helper.lean").write_text("theorem helper : True := trivial\n", encoding="utf-8")
+
+    chat = built(workspace)
+    assert chat.shared_roots, "the fixture did not place a shared tree the session can see"
+
+    carried = chat.export_material()["shared_sources"]
+    assert "Helper" in carried
+    assert "theorem helper : True := trivial" in carried["Helper"]

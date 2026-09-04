@@ -116,3 +116,23 @@ async def test_a_workspace_that_cannot_be_read_is_a_line_rather_than_a_lost_sess
     state = State(config=settings, session=SimpleNamespace(export_material=boom))
     assert await handlers.handle_export(ui, str(tmp_path / "x.html"), state) is state
     assert "tex/ is unreadable" in ui.text
+
+
+async def test_a_destination_that_cannot_be_reserved_is_a_line_not_a_traceback(
+    ui, settings, tmp_path, monkeypatch
+):
+    """`default_path` reserves the name it returns, so it touches the disk and
+    can refuse. The TTY shell happens to catch a handler's exception; the plain
+    session does not, so this refusal ended the whole session rather than
+    printing the diagnostic the handler was written to print."""
+    from hardy import export as export_module
+
+    def refuses(*_arguments, **_keywords):
+        raise ValueError("every name this second is taken")
+
+    monkeypatch.setattr(export_module, "default_path", refuses)
+    state = State(config=settings, session=session())
+
+    assert await handlers.handle_export(ui, "", state) is state
+    assert "Could not write" in ui.text
+    assert "every name this second is taken" in ui.text

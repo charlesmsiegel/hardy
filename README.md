@@ -670,8 +670,10 @@ images, nothing fetched when it is opened — holding the conversation, the Lean
 sources, the writeup sources, the audit verdicts, the naming registry, the
 approved assumptions with their provenance, the spend, the project instructions
 the model was given, the points where its memory of the conversation was reset,
-what arrived from outside by import rather than being written here, and the
-model and toolchain identities. With no path it lands in the problem directory under the
+what arrived from outside by import rather than being written here, the shared
+Lean from `.hardy/lean` that the saved theorems are elaborated against, and the
+model and toolchain identities alongside the settings that decided what the
+session could find out. With no path it lands in the problem directory under the
 project's name and the time.
 
 The point of it is that it does **not** flatten Hardy's distinctions. A

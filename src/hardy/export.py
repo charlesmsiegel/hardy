@@ -941,6 +941,18 @@ paragraph above says.</p>
 <p>{_escape(material.get("document", "No compiled document was found."))}</p>
 {_sources(material.get("tex", {}), "No writeup source is saved.")}
 
+<h2>Shared Lean this workspace imports</h2>
+<p class="sub">Locally authored modules from <code>.hardy/lean</code>, elaborated
+together with the sources above. A verdict on a theorem that imports one of
+these rests on this text as much as on its own module, so it is carried here
+rather than left on the machine that made the page — and printed verbatim, for
+the same reason the audited Lean is.</p>
+{_sources(
+    material.get("shared_sources", {}),
+    "This workspace imports no locally authored shared module.",
+    audited=True,
+)}
+
 <h2>Withheld from the model</h2>
 {_withheld(material)}
 

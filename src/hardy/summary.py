@@ -104,9 +104,15 @@ def _subject(name: str, arguments: Mapping[str, Any]) -> str:
         value = arguments.get(key)
         if isinstance(value, str) and value.strip():
             return _clip(value, 60)
-    theorems = arguments.get("theorems")
-    if isinstance(theorems, list) and theorems:
-        return _clip(str(theorems[0]), 60)
+    for key in ("theorems", "names"):
+        listed = arguments.get(key)
+        if isinstance(listed, list) and listed:
+            # `names` is `inspect_declarations`' subject and is bounded by the
+            # tool itself. Without it every failed inspection folded into one
+            # anonymous attempt keeping only the newest diagnostic, so the
+            # summary could not say which declarations were searched before an
+            # assumption request -- the question that section exists to answer.
+            return _clip(", ".join(str(item) for item in listed), 60)
     return ""
 
 
@@ -152,7 +158,33 @@ def attempts(events: Iterable[Mapping[str, Any]], *, limit: int = ATTEMPTS) -> t
         key = (tool, subject)
         seen = folded.pop(key, None)
         folded[key] = Attempt(tool, subject, detail, count=(seen.count + 1) if seen else 1)
-    return tuple(folded.values())[-limit:]
+    # Clipped newest-last, and the SDK denials survive the clip whatever their
+    # age. A silent slice dropped an early `Read` or `Bash` behind twelve later
+    # save failures, and "the transcript records no refused tool call" over a
+    # run in which the model reached for the host is the most misleading
+    # sentence this section can print -- the same reason they are counted here
+    # at all. What is cut is stated by `assemble`, which knows how many.
+    every = list(folded.values())
+    denied = [item for item in every if item.subject == "" and "not a Hardy tool" in item.detail]
+    rest = [item for item in every if item not in denied]
+    kept = denied + rest[-max(0, limit - len(denied)) :] if denied else rest[-limit:]
+    dropped = len(every) - len(kept)
+    if not dropped:
+        return tuple(kept)
+    # Said, not silently swallowed. A section a reader takes for the whole
+    # record has to admit when it is not, or "twelve attempts" reads as "twelve
+    # attempts happened".
+    return tuple(
+        kept
+        + [
+            Attempt(
+                "(clipped)",
+                "",
+                f"{dropped} older folded {'attempt is' if dropped == 1 else 'attempts are'} "
+                "not listed; every call the SDK refused outright is kept above",
+            )
+        ]
+    )
 
 
 def export_openable() -> frozenset[str]:

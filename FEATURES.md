@@ -320,8 +320,11 @@ interactive surface's own live run is still to come.
   writeup sources, the audit verdicts, the naming registry, the approved
   assumptions with their provenance, the spend, the project instructions the
   model was given, the points where its memory of the conversation was reset,
-  what arrived from outside by import rather than being written here, and the
-  model and toolchain identities (issue #105). It does not flatten Hardy's distinctions: a
+  what arrived from outside by import rather than being written here, the shared
+  Lean from `.hardy/lean` the saved theorems are elaborated against, and the
+  model and toolchain identities beside the settings that decided what the
+  session could find out — the Lean timeout, and whether a computer algebra
+  kernel and a literature search were available at all (issue #105). It does not flatten Hardy's distinctions: a
   kernel-verified theorem, a theorem checked given an approved axiom, and a
   sentence from the conversation are rendered as three visibly different things,
   and the conversation is labelled as evidence for nothing — with an
