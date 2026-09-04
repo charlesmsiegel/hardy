@@ -11,10 +11,12 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 from . import audit, completion, ingest, process
+from . import summary as summary_module
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
@@ -2939,6 +2941,81 @@ class MathematicsSession:
         """
         return bool(self._saved_theorems())
 
+    def summary(self) -> summary_module.Summary:
+        """This session, read off the workspace rather than remembered (#100).
+
+        The mechanical half of compaction, and useful on its own: the naming
+        registry, the approved assumptions and the stored audit verdicts are in
+        the record, the declarations are in the Lean tree, and what is
+        outstanding follows from both. A summary assembled from those is
+        checkable, which is the whole difference between this and asking a
+        model what it remembers doing.
+
+        The failed attempts are the exception and come from the transcript --
+        an attempt that failed left nothing in the workspace by definition --
+        so what was tried and what Lean said is read from the record of it.
+
+        Carries no spend. `usage` and the ledger are withheld from the model
+        deliberately, and a summary is precisely the shape of thing that would
+        put them back in a prompt; `/status` prints them separately, to the
+        human.
+        """
+        # Copied rather than passed by reference: `/status --full` is safe in
+        # flight, so a tool call on another thread can be appending to these
+        # very lists while this iterates them.
+        return summary_module.assemble(
+            goal=self.goal(),
+            assumptions=list(self.state["assumptions"]),
+            registry=list(self.state["names"]),
+            audit=dict(self.state.get("audit", {})),
+            theorems=self._theorem_statements(),
+            open_theorems=self._open_theorems(),
+            obligations=self._obligations(),
+            failed=summary_module.attempts(self._recorded()),
+            modules=sorted(self.lean_workspace.sources()),
+        )
+
+    def export_material(self) -> dict[str, Any]:
+        """Everything one exportable account of this session needs (#105).
+
+        Gathered here rather than reached for from outside, for the reason
+        `summary` is: the rules about what a theorem rests on, which writeup
+        the tree carries and which axiom a human approved live in this class,
+        and an exporter that re-derived them would be a second opinion nobody
+        checked against the first.
+
+        The spend and the model switches are in it deliberately. They are
+        withheld from the MODEL (`WITHHELD`, and the ledger in
+        `.local/state.json`) and never from the person holding the artifact:
+        what a result cost and which model produced it are exactly what a
+        collaborator weighing it wants, and the export is written for them.
+        """
+        document = self.workspace / "writeup.pdf"
+        return {
+            "project": self.workspace.name,
+            "workspace": str(self.workspace),
+            "goal": self.goal(),
+            "assumptions": list(self.state["assumptions"]),
+            "registry": list(self.state["names"]),
+            "audit": dict(self.state.get("audit", {})),
+            "theorems": self._theorem_statements(),
+            "open": sorted(self._open_theorems()),
+            "lean": self.lean_workspace.sources(),
+            "tex": self._tex_sources(),
+            "obligations": [str(item) for item in self._obligations()],
+            "document": (
+                f"{document.name} was compiled ({document.stat().st_size} bytes). "
+                "It is not embedded here: this file carries no external assets."
+                if document.is_file()
+                else "No compiled document was found in this workspace."
+            ),
+            "usage": self.usage.lines(),
+            "provenance": provenance(self.runtime),
+            "toolchain": self._toolchain,
+            "environment": self._environment,
+            "transcript": list(self._recorded()),
+        }
+
     def obligations(self) -> tuple[completion.Obligation, ...]:
         """What the workspace owes, for the human rather than the model.
 
@@ -4196,6 +4273,14 @@ class MathematicsSession:
             # record.
             record = {key: value for key, value in proposal.items() if key not in {"checked", "goal", "searched", "previous"}}
             record["status"] = "user-approved"
+            # When a human said yes, in UTC. Additive, so `schema_version`
+            # stays 2 for the reason `goal` gives: a record written before
+            # this existed simply lacks the key, and every reader of it says
+            # "date not recorded" rather than inventing one. An export meant
+            # to leave the machine has to be able to say who approved what and
+            # when (#105), and the transcript's own `assumption_prompt` event
+            # is not enough on its own -- it records the asking, not the answer.
+            record["approved_at"] = datetime.now(UTC).isoformat()
             if not any(item["formal_name"] == record["formal_name"] for item in self.state["assumptions"]):
                 self.state["assumptions"].append(record)
                 mapping = {"formal_name": record["formal_name"], "latex_name": record["latex_name"], "description": record["informal_statement"]}

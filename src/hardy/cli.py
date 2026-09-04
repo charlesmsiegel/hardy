@@ -5,7 +5,6 @@ import dataclasses
 import json
 import math
 import os
-import re
 import shutil
 import sys
 import threading
@@ -1215,7 +1214,11 @@ def run_prove(
     if not claim:
         print("A nonempty theorem statement is required.")
         return 2
-    slug = re.sub(r"[^a-z0-9]+", "-", claim.lower()).strip("-")[:48] or "theorem"
+    # Through `tui.prove`, which `/prove` uses too: the run directory a claim
+    # lands in must not depend on which surface asked for it.
+    from .tui.prove import problem_slug
+
+    slug = problem_slug(claim)
     terminal = ConsoleTerminal(input_fn=input_fn)
     workflow = workflow_factory(config, config_path, backend=getattr(args, "backend", "claude"))
     manifest = workflow.run(

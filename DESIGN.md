@@ -177,6 +177,17 @@ anything. What the hook cannot do is decide what the surviving context
 contains; establishing what it can and cannot provide comes before concluding
 that a harness-owned loop is required.
 
+The mechanical half now exists on its own, ahead of any of that, as
+`hardy.summary` and `/status --full`: goal, standing assumptions with source,
+reason and approval date, every saved theorem under the verdict its own stored
+audit record gives it, what is still open, the refused tool calls with what Lean
+said, the naming registry, and what is outstanding. It is worth having before
+compaction is possible at all — it is the answer to "where does this session
+actually stand", asked of the files rather than of the model — and when the loop
+question is settled it is the summary a compaction would persist. It carries no
+spend, deliberately: `usage` is withheld from the model, and a summary is exactly
+the shape of thing that would put it back in a prompt.
+
 ### 3. Tool layer
 
 The model receives narrow theorem-proving verbs rather than unrestricted control:

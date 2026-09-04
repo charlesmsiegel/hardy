@@ -1,0 +1,254 @@
+"""What a session amounts to, read off the workspace rather than remembered.
+
+This is the mechanical half of issue #100. Compaction itself is blocked on #23
+-- the SDK owns the turn loop, so Hardy cannot yet decide what leaves the
+context -- but the summary a compaction would need is not blocked on anything,
+because Hardy can do something a coding agent cannot: derive almost all of it
+from artifacts instead of asking a model to remember it.
+
+The approved assumptions, the naming registry and the stored audit verdicts are
+in `session.json`; the declarations are in the Lean tree; the outstanding
+obligations are computed from both. All of that is checkable, and none of it
+degrades as a conversation gets long. Only the failed attempts need narration,
+and even those have a mechanical shadow: the transcript records every tool call
+Hardy refused or Lean rejected, so what was tried and what it said is readable
+without a model's account of it.
+
+Pure functions over already-gathered inputs, in the same style as `completion`
+and `audit`: no filesystem, no subprocess, no model. `MathematicsSession.summary`
+gathers, this assembles, and the caller decides what to draw.
+
+Two rules this module keeps:
+
+- **Nothing about spend.** `usage` and `usage_cursor` are withheld from the
+  model on purpose (`chat.WITHHELD`, and `.local/state.json` for the ledger),
+  and a summary is exactly the shape of thing that would smuggle them back
+  into a prompt. `/status` prints spend beside this, for the human; this
+  never carries it.
+- **Nothing asserted that the artifacts do not say.** A theorem appears here
+  under the status its own stored audit verdict gives it, never under a
+  status derived from what anyone claimed in the conversation.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+from . import audit as audit_module
+
+#: How much of a refusal's text is worth keeping in a summary line. Long enough
+#: to say what Lean objected to, short enough that a dozen of them still read.
+DETAIL = 160
+#: How many failed attempts to carry. The most recent, because the summary is
+#: about where the work is now, not about everything that was ever tried.
+ATTEMPTS = 12
+
+
+@dataclass(frozen=True)
+class Section:
+    """One heading and the lines under it, already rendered."""
+
+    title: str
+    lines: tuple[str, ...] = ()
+    #: What to say when there are no lines. Empty means "leave the section out".
+    empty: str = ""
+
+    @property
+    def shown(self) -> tuple[str, ...]:
+        return self.lines or ((self.empty,) if self.empty else ())
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """One tool call the workspace refused, or Lean rejected."""
+
+    tool: str
+    subject: str
+    detail: str
+    count: int = 1
+
+    def __str__(self) -> str:
+        where = f" {self.subject}" if self.subject else ""
+        times = f" ({self.count}x)" if self.count > 1 else ""
+        return f"{self.tool}{where}{times}: {self.detail}"
+
+
+def _clip(text: str, limit: int = DETAIL) -> str:
+    flattened = " ".join(str(text).split())
+    return flattened if len(flattened) <= limit else flattened[: limit - 1] + "…"
+
+
+def _subject(name: str, arguments: Mapping[str, Any]) -> str:
+    """What a failed call was about, in the caller's own vocabulary.
+
+    A path for a save, a declaration for an assumption request, the first named
+    theorem for a report. Never the whole argument object: a `save_lean` carries
+    its entire source, and a summary that quoted it would be the file.
+    """
+    for key in ("path", "formal_name", "declaration", "query", "goal"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            return _clip(value, 60)
+    theorems = arguments.get("theorems")
+    if isinstance(theorems, list) and theorems:
+        return _clip(str(theorems[0]), 60)
+    return ""
+
+
+def attempts(events: Iterable[Mapping[str, Any]], *, limit: int = ATTEMPTS) -> tuple[Attempt, ...]:
+    """The failed tool calls a transcript holds, most recent last, folded by subject.
+
+    Folded because a session that fights one file loses the shape of the fight
+    in twenty near-identical lines: what a reader needs is that `Sylow.lean` was
+    refused nine times and what it said the last time.
+
+    Deliberately read from the transcript rather than from a model's account of
+    it. This is the one part of the proposed summary that cannot come from the
+    workspace -- an attempt that failed left nothing behind by definition -- so
+    it comes from the record of what happened instead.
+    """
+    folded: dict[tuple[str, str], Attempt] = {}
+    for event in events:
+        if event.get("type") != "tool":
+            continue
+        result = event.get("result")
+        if not isinstance(result, Mapping) or result.get("ok"):
+            continue
+        arguments = event.get("arguments")
+        tool = str(event.get("name", "tool"))
+        subject = _subject(tool, arguments if isinstance(arguments, Mapping) else {})
+        detail = _clip(result.get("output") or result.get("detail") or "refused")
+        key = (tool, subject)
+        seen = folded.pop(key, None)
+        folded[key] = Attempt(tool, subject, detail, count=(seen.count + 1) if seen else 1)
+    return tuple(folded.values())[-limit:]
+
+
+def _status_of(name: str, records: Mapping[str, Mapping[str, Any]]) -> str:
+    """What the stored audit verdicts say about one declaration.
+
+    Every module that reports on the name is consulted, and the weakest reading
+    wins: a declaration that is open in any record is open. A name no record
+    mentions is "not audited" rather than clean, which is the distinction the
+    whole audit exists to keep.
+    """
+    mentions = [
+        record
+        for record in records.values()
+        if any(str(item.get("name")) == name for item in record.get("declarations", ()))
+    ]
+    if not mentions:
+        return "not audited -- no stored verdict names it"
+    if any(name in audit_module.open_declarations(record) for record in mentions):
+        return "open -- rests on a hole"
+    assumed: list[str] = []
+    for record in mentions:
+        assumed.extend(str(item) for item in record.get("assumed", ()))
+    if assumed:
+        return f"rests on approved assumptions {sorted(set(assumed))}"
+    return "kernel-verified -- standard axioms only"
+
+
+def _assumption_line(record: Mapping[str, Any]) -> str:
+    name = str(record.get("formal_name", "?"))
+    parts = [f"{name} : {_clip(str(record.get('lean_statement', '')), 120)}"]
+    source = str(record.get("source", "")).strip()
+    reason = str(record.get("reason", "")).strip()
+    approved = str(record.get("approved_at", "")).strip()
+    parts.append(f"    source: {source or 'not stated'}")
+    parts.append(f"    reason: {reason or 'not stated'}")
+    parts.append(
+        f"    approved: {record.get('status', 'unknown')}"
+        + (f" on {approved}" if approved else " (date not recorded)")
+    )
+    return "\n".join(parts)
+
+
+@dataclass(frozen=True)
+class Summary:
+    """The assembled sections, and how to render them."""
+
+    sections: tuple[Section, ...] = field(default_factory=tuple)
+
+    def lines(self) -> list[str]:
+        out: list[str] = []
+        for section in self.sections:
+            shown = section.shown
+            if not shown:
+                continue
+            out.append(section.title)
+            for line in shown:
+                out.extend(f"  {part}" for part in str(line).splitlines())
+        return out
+
+    def text(self) -> str:
+        return "\n".join(self.lines())
+
+
+def assemble(
+    *,
+    goal: str,
+    assumptions: Sequence[Mapping[str, Any]],
+    registry: Sequence[Mapping[str, Any]],
+    audit: Mapping[str, Mapping[str, Any]],
+    theorems: Mapping[str, str],
+    open_theorems: Iterable[str],
+    obligations: Sequence[Any],
+    failed: Sequence[Attempt] = (),
+    modules: Sequence[str] = (),
+) -> Summary:
+    """The summary, in the order a reader needs it.
+
+    The shape issue #100 proposes: goal, standing assumptions, what is proved,
+    what failed, what is open, the naming registry, and what is left. Every
+    section is derived; none of it is narrated.
+    """
+    opened = set(open_theorems)
+    proved = [
+        f"{name}: {_status_of(name, audit)}"
+        for name in sorted(theorems)
+        if name not in opened
+    ]
+    still_open = [f"{name}: still open -- rests on a hole" for name in sorted(opened)]
+    return Summary(
+        (
+            Section("Goal", (goal,) if goal.strip() else (), empty="not set (/goal)"),
+            Section(
+                "Standing assumptions",
+                tuple(_assumption_line(item) for item in assumptions),
+                empty="none: nothing here rests on an approved axiom.",
+            ),
+            Section(
+                "Modules",
+                tuple(sorted(modules)),
+                empty="no Lean module is saved.",
+            ),
+            Section(
+                "Proved",
+                tuple(proved),
+                empty="no closed theorem is saved: nothing here is reportable.",
+            ),
+            Section("Open", tuple(still_open)),
+            Section(
+                "Failed attempts",
+                tuple(str(item) for item in failed),
+                empty="the transcript records no refused tool call.",
+            ),
+            Section(
+                "Naming registry",
+                tuple(
+                    f"{item.get('formal_name', '?')} <-> {item.get('latex_name', '?')}"
+                    f"  {_clip(str(item.get('description', '')), 80)}".rstrip()
+                    for item in registry
+                ),
+                empty="nothing is registered.",
+            ),
+            Section(
+                "Next steps",
+                tuple(str(item) for item in obligations),
+                empty="nothing outstanding.",
+            ),
+        )
+    )

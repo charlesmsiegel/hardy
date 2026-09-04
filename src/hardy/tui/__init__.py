@@ -42,12 +42,15 @@ def run_session(
     from .. import cli
     from ..chat import SchemaError
     from ..layout import LayoutError
-    from .handlers import build_registry
+    from .handlers import build_registry, load_templates
     from .shell import Shell
 
     shell = None
+    templates, notices = load_templates(config)
     try:
-        shell = Shell(config, None, build_registry(), reopen=reopen)
+        shell = Shell(
+            config, None, build_registry(templates), reopen=reopen, notices=notices
+        )
         session = session_factory(cli.confirm_assumption(shell))
         shell.attach(session)
         return shell.run()
@@ -85,11 +88,20 @@ def run_session(
 def _run_plain(config, session_factory: Callable[[Any], Any], *, reopen: Any = None) -> int:
     from .. import cli
     from . import plain as plain_mode
+    from .handlers import build_registry, load_templates
 
     ui_holder: dict[str, Any] = {}
 
     def confirm(proposal: dict[str, str]) -> bool:
         return cli.confirm_assumption(ui_holder["ui"])(proposal)
 
+    templates, notices = load_templates(config)
     session = session_factory(confirm)
-    return plain_mode.run(config, session, ui_holder=ui_holder, reopen=reopen)
+    return plain_mode.run(
+        config,
+        session,
+        ui_holder=ui_holder,
+        reopen=reopen,
+        registry=build_registry(templates),
+        notices=notices,
+    )

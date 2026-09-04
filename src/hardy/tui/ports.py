@@ -39,6 +39,12 @@ class State:
     #: and any embedding that never means to switch), and `/project switch`
     #: says so rather than failing on an attribute.
     reopen: Any = None
+    #: The registry this session is running, built-ins plus whatever
+    #: `.hardy/prompts/` added. Carried here because it stopped being derivable
+    #: from `build_registry()` alone the moment a project could add entries,
+    #: and `/help` has to list what the user can actually type. Empty wherever
+    #: nothing supplied one, and `/help` rebuilds the built-ins in that case.
+    commands: tuple = ()
 
 
 class BlockingUi(Protocol):

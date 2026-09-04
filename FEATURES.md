@@ -285,6 +285,42 @@ interactive surface's own live run is still to come.
   once the turn finishes, and both ends of every tool call are drawn, so a
   three-minute Lean check reports itself instead of looking like a hang
   (issue #32).
+- **Now (implemented):** the staged `prove` workflow runs from inside a live
+  session as `/prove <claim>`, on that session's model and through its own
+  terminal — a selector for the approval, Esc to walk away — rather than as a
+  separate program with its own blocking console prompts (issue #85). It is the
+  same workflow with nothing relaxed: the same frozen claim, the same
+  independent faithfulness read, the same typed acknowledgement that generated
+  code runs unisolated, and its own run directory, so a staged run leaves the
+  workspace and the conversation it was launched from untouched.
+- **Now (implemented):** a project keeps its own `/commands` in
+  `.hardy/prompts/<name>.md` (issue #101). Frontmatter supplies `description`
+  and `argument-hint`; the body supports `$1`…`$n`, `$@` and `$$`. A placeholder
+  with no argument refuses rather than expanding to nothing, a name that would
+  shadow a built-in command is refused rather than allowed to redefine it, and
+  the **expansion** is what `transcript.jsonl` records — never the `/name` — so a
+  shared transcript does not refer to a file its reader lacks. A user template
+  is input rather than instruction and is deliberately outside
+  `PROMPT_SET_SHA256`.
+- **Now (implemented):** `/status --full` prints the workspace's own summary of
+  the session, assembled from the artifacts rather than narrated by the model:
+  goal, approved assumptions with source, reason and approval date, each saved
+  theorem under the verdict its stored audit record gives it, what is still
+  open, the refused tool calls and what Lean said, the naming registry, and what
+  is outstanding. It carries no spend, which is withheld from the model
+  deliberately. This is the checkable half of issue #100; compaction itself
+  waits on #23, since the SDK still owns the turn loop.
+- **Now (implemented):** `/export [path]` writes one self-contained HTML file —
+  no scripts, fonts, images or fetches — holding the conversation, the Lean and
+  writeup sources, the audit verdicts, the naming registry, the approved
+  assumptions with their provenance, the spend, and the model and toolchain
+  identities (issue #105). It does not flatten Hardy's distinctions: a
+  kernel-verified theorem, a theorem checked given an approved axiom, and a
+  sentence from the conversation are rendered as three visibly different things,
+  and the conversation is labelled as evidence for nothing. Known credential
+  shapes and values under credential-shaped key names are removed before the
+  file is written, and the page states that this is a filter rather than a
+  proof.
 
 Priority labels are sequencing hints:
 

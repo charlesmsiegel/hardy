@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from ..prompts.user import TemplateError, expand
 from .commands import Command, resolve
 
 
@@ -65,4 +66,15 @@ def classify(
             "refused",
             message=f"/{command.name} cannot run while {busy.lower()} is still running.",
         )
+    if command.template is not None:
+        # A user template is not a command Hardy runs; it is a message the user
+        # is spared retyping. So it resolves to `send`, carrying the EXPANDED
+        # text -- which is what reaches the model and what `session.stream`
+        # writes into `transcript.jsonl`. Recording the `/name` instead would
+        # leave a shared transcript referring to a file its reader does not
+        # have.
+        try:
+            return Outcome("send", command=command, argument=expand(command.template, argument))
+        except TemplateError as error:
+            return Outcome("refused", command=command, message=str(error))
     return Outcome("command", command=command, argument=argument)

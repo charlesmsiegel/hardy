@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import shlex
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,29 +18,63 @@ from .. import catalog, doctor, layout, process
 from .. import config as configuration
 from ..cas import CasError
 from ..cas_export import export_session
+from ..prompts import user as user_prompts
 from .banner import status_line
-from .commands import Command, canonical
+from .commands import Command, canonical, from_template
 from .ports import Choice, State, Ui
 
 
+def _live(state: State) -> list[Command]:
+    """The registry this session is actually running.
+
+    `build_registry()` was enough while every entry was a module-level
+    function. It is not now that `.hardy/prompts/` can add entries, so the
+    state carries the live one and a bare rebuild is only the fallback for the
+    handful of callers (tests, embeddings) that never set it.
+    """
+    return list(state.commands) or build_registry()
+
+
 async def handle_help(ui: Ui, argument: str, state: State) -> State:
+    registry = _live(state)
     ui.write("Commands", style="normal")
-    # build_registry is idempotent -- the entries are module-level functions,
-    # not runtime registrations -- so listing a freshly built one describes
-    # exactly the registry in use. If commands ever become dynamic, this has
-    # to take the live registry instead.
-    for command in canonical(build_registry()):
+    for command in canonical(registry):
+        if command.template is not None:
+            continue
         name = f"/{command.name}"
         if command.argument_hint:
             name = f"{name} {command.argument_hint}"
         ui.write(f"  {name:24} {command.summary}")
     ui.write("  /clear deletes nothing: it clears the screen only. Your scrollback,")
     ui.write("  your transcript on disk, and the model's conversation all continue.")
+    yours = [command for command in registry if command.template is not None]
+    if yours:
+        ui.write("Your prompts", style="normal")
+        for command in yours:
+            name = f"/{command.name}"
+            if command.argument_hint:
+                name = f"{name} {command.argument_hint}"
+            ui.write(f"  {name:24} {command.summary}")
+        ui.write(f"  Read from {user_prompts.directory(state.config.root)}. Sending one")
+        ui.write("  records the expanded text, not the /name.")
     return state
 
 
 async def handle_status(ui: Ui, argument: str, state: State) -> State:
+    """Where the session stands, asked of the artifacts rather than the model.
+
+    `--full` adds the workspace's own summary (#100): the goal, the standing
+    assumptions with their provenance, what is proved and under what verdict,
+    what failed, what is open, the naming registry, and what is left. Every
+    line of it is derived from `session.json`, the Lean tree and the
+    transcript, so it can disagree with the conversation -- which is the only
+    reason it is worth printing.
+    """
     config = state.config
+    full = argument.strip().lower() in {"--full", "full", "-f"}
+    if argument.strip() and not full:
+        ui.write(f"Unknown: /status {argument.strip()}. /status · /status --full", style="error")
+        return state
     ui.write("Session", style="normal")
     ui.write(f"  Model:        {config.model}")
     # `getattr` for the reason the `spent` line below gives: `/status` is safe
@@ -110,7 +145,35 @@ async def handle_status(ui: Ui, argument: str, state: State) -> State:
             ui.write("  its name or prose suggests):")
             for name, tactic in sorted(closed.items()):
                 ui.write(f"    - {name} (by {tactic})")
+    if full:
+        await _full_summary(ui, state)
     return state
+
+
+async def _full_summary(ui: Ui, state: State) -> None:
+    """The workspace summary, or the reason there is none.
+
+    Guarded whole, for the reason every other line in `/status` is: reading the
+    Lean tree and the transcript can be refused by the filesystem, and the
+    plain session has no catch around a command.
+    """
+    assemble = getattr(state.session, "summary", None)
+    if assemble is None:
+        ui.write("  No workspace summary is available in this session.", style="error")
+        return
+    try:
+        # On a thread for `/doctor`'s reason: it reads every Lean file, the
+        # writeup tree and the whole transcript, and the input box must not
+        # freeze while it does.
+        summarised = await asyncio.to_thread(assemble)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:  # noqa: BLE001 - a summary must not end the session
+        ui.write(f"  The workspace summary could not be read: {error}", style="error")
+        return
+    ui.write("")
+    for line in summarised.lines():
+        ui.write(line, style="normal" if not line.startswith(" ") else "system")
 
 
 async def handle_clear(ui: Ui, argument: str, state: State) -> State:
@@ -426,6 +489,107 @@ async def handle_import(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
+async def handle_prove(ui: Ui, argument: str, state: State) -> State:
+    """Stage one claim from statement to document, without leaving (#85).
+
+    The same workflow `hardy prove` runs, on this session's live model and
+    through this session's terminal: ghost-text completion to get here, a real
+    selector for the approval, Esc to walk away. Nothing about the workflow is
+    relaxed -- the frozen claim, the independent faithfulness read and the
+    unsandboxed-execution acknowledgement are all exactly as they are on the
+    command line, because they are literally the same code (`tui/prove.py`).
+
+    `safe_in_flight` stays False, the default, and firmly: a staged run builds
+    its own Lean project, its own computer algebra kernel and its own provider
+    threads, and starting one on top of a running turn would put two of each in
+    the same process arguing over the same toolchain.
+    """
+    from . import prove as staged
+
+    claim = argument.strip()
+    if not claim:
+        typed = await ui.ask_line("State the theorem in ordinary language: ")
+        claim = (typed or "").strip()
+    if not claim:
+        ui.write("A nonempty theorem statement is required.", style="error")
+        return state
+    terminal = staged.UiTerminal(ui.from_thread)
+    try:
+        # On a thread because the workflow is synchronous end to end -- it runs
+        # Lean, LaTeX and several provider threads, and asks the user questions
+        # in between. Run inline it would block the loop that has to deliver
+        # those answers, which is the deadlock the `Ui` port exists to rule out.
+        manifest = await asyncio.to_thread(staged.run, state.config, claim, terminal)
+    except asyncio.CancelledError:
+        # Cancelling the await does not stop the worker; the subprocesses it
+        # owns are what a Ctrl+C would otherwise leave running. Same treatment
+        # `/doctor` and `/import` give their own, and the same limit: a call
+        # already inside Lean is left to finish rather than torn out halfway.
+        process.interrupt_children()
+        raise
+    except Exception as error:  # noqa: BLE001 - a failed run is not a lost session
+        ui.write(f"The staged run could not finish: {error}", style="error")
+        return state
+    ui.write(f"Artifacts: {state.config.runs_root}")
+    if getattr(manifest, "phase", None) is not None and manifest.phase.value != "completed":
+        ui.write(f"  The run ended in {manifest.phase.value}, not completed.")
+    ui.write("  Nothing from this run is in your workspace: a staged run writes")
+    ui.write("  its own directory, and this conversation is unchanged.")
+    return state
+
+
+async def handle_export(ui: Ui, argument: str, state: State) -> State:
+    """One shareable HTML file holding what this session established (#105).
+
+    Everything the artifact needs is already on disk in six places; this is the
+    one command that puts them together in the order a reader needs, with each
+    result under its own stored verdict rather than under whatever the
+    conversation claimed. What it must never do is flatten those apart -- see
+    `hardy.export`.
+
+    `safe_in_flight` stays False, the default: a running turn is writing the
+    Lean tree, the record and the transcript this reads, and an export taken
+    across a save would describe a workspace that never existed.
+    """
+    from .. import export as export_module
+
+    session = state.session
+    gather = getattr(session, "export_material", None)
+    if gather is None:
+        ui.write("No session yet: there is nothing to export.", style="error")
+        return state
+    argument = argument.strip()
+    destination = (
+        Path(_unquoted(argument)).expanduser()
+        if argument
+        else export_module.default_path(state.config.layout.problem, state.config.project)
+    )
+    if destination.is_dir():
+        destination = destination / export_module.default_path(
+            Path("."), state.config.project
+        ).name
+    try:
+        # On a thread for `/doctor`'s reason: it reads the Lean tree, the
+        # writeup tree and the whole transcript, then writes a file.
+        material = await asyncio.to_thread(gather)
+        written = await asyncio.to_thread(export_module.write, material, destination)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:  # noqa: BLE001 - never lose the session over a file
+        # Every refusal reading the workspace or writing the file can raise
+        # arrives here. The plain session has no catch around a command, so a
+        # `tex/` that cannot be read or a destination inside a regular file
+        # would otherwise end the session on a traceback.
+        ui.write(f"Could not write {destination}: {error}", style="error")
+        return state
+    ui.write(f"Wrote {written} ({written.stat().st_size} bytes).")
+    ui.write("  One file, no external assets. Results carry their own verdicts;")
+    ui.write("  the conversation in it is not evidence for any of them.")
+    ui.write("  Credentials matching known shapes were removed -- that is a filter,")
+    ui.write("  not a proof. Read it before you share it.")
+    return state
+
+
 PROJECT_USAGE = "/project list · /project switch <name> · /project new <name>"
 
 
@@ -635,7 +799,12 @@ async def _project(ui: Ui, argument: str, state: State) -> State:
     return await _switch(ui, slug, state, creating=True)
 
 
-def build_registry() -> list[Command]:
+def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Command]:
+    """Hardy's own commands, and then the user's.
+
+    Built-ins first and refused as names for a template (`load` enforces it),
+    so a file in a checkout can never change what `/exit` or `/status` does.
+    """
     exit_command = Command(
         "exit", "leave the session", handle_exit, safe_in_flight=True
     )
@@ -655,7 +824,18 @@ def build_registry() -> list[Command]:
             "project", "see the problems here, or open another", handle_project,
             argument_hint="[list|new|switch]",
         ),
-        Command("status", "show the project, model, and paths", handle_status, safe_in_flight=True),
+        Command(
+            "status", "show the project, model, and paths", handle_status,
+            argument_hint="[--full]", safe_in_flight=True,
+        ),
+        Command(
+            "prove", "stage one claim from statement to document", handle_prove,
+            argument_hint="[claim]",
+        ),
+        Command(
+            "export", "write one shareable HTML account of this session", handle_export,
+            argument_hint="[path]",
+        ),
         Command("doctor", "check that Lean and LaTeX are usable", handle_doctor),
         Command("clear", "clear the screen; deletes nothing", handle_clear, safe_in_flight=True),
         exit_command,
@@ -663,4 +843,15 @@ def build_registry() -> list[Command]:
             "quit", "leave the session", exit_command.handler,
             alias_of="exit", safe_in_flight=True,
         ),
+        *(from_template(template) for template in templates),
     ]
+
+
+def builtin_names() -> frozenset[str]:
+    """Every name Hardy owns, template or not. What `load` refuses to shadow."""
+    return frozenset(command.name for command in build_registry())
+
+
+def load_templates(config) -> tuple[list[user_prompts.Template], list[str]]:
+    """The project's own `/commands`, and one line per file that is not usable."""
+    return user_prompts.load(config.root, reserved=builtin_names())
