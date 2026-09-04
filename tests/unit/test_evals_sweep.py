@@ -645,3 +645,40 @@ def test_a_sweep_reuses_nothing_when_the_procedure_or_environment_moved():
     names = " ".join(swept)
     for name in ("Easy", "Lib", "Chain", "Hard", "Twin"):
         assert name in names, f"{name} must be re-swept when the procedure moved"
+
+
+def test_a_relabelled_twin_is_reswept_rather_than_carried_forward():
+    """The repair command must be able to repair.
+
+    `staleness` refuses a twin whose baseline records no negation sweep, and
+    the documented fix is `hardy evals baseline` -- which reuses rows by
+    statement digest. That digest excludes `expected`, so a relabelled entry
+    was carried forward with `negation=None`, the new baseline was refused
+    again, and the loop never terminated without deleting the file by hand.
+    """
+    entries = tuple(
+        e.model_copy(update={"expected": "false", "twin_of": "hard"}) if e.id == "easy" else e
+        for e in _problems().entries
+    )
+    first = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                        now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    assert first.entries["easy"].negation is None
+
+    again = sweep.sweep(ProblemSet(entries=entries), problems_sha256="p" * 64, environment=IDENTITY,
+                        elaborate=_scripted({}), now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=HOST,
+                        prior=first, prior_statement_digests=DIGESTS)
+    assert again.entries["easy"].negation is not None, "the relabelled twin must get its A3 sweep"
+    assert again.entries["hard"] == first.entries["hard"], "and nothing else is re-swept"
+
+    labels = {e.id: e.expected for e in entries}
+    assert sweep.staleness(again, statement_digests=DIGESTS, environment=IDENTITY,
+                           problem_ids=[e.id for e in entries], host=HOST, expectations=labels) == ()
+
+
+def test_the_procedure_identity_covers_the_module_that_assembles_the_proposition():
+    """`sweep_entry` builds A3 from `Entry.negation()`. A correction there
+    moves neither the corpus fields nor the fixed package version, so without
+    this the incremental sweep reuses A3 rows produced by the old assembly.
+    """
+    deciding = {Path(p).name for p in sweep.DECIDING_SOURCES}
+    assert {"sweep.py", "audit.py", "lean.py", "problems.py"} <= deciding, deciding

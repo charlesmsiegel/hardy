@@ -251,6 +251,12 @@ DECIDING_SOURCES = (
     str(Path(__file__).resolve()),
     str(Path(__file__).resolve().parents[1] / "audit.py"),
     str(Path(__file__).resolve().parents[1] / "lean.py"),
+    # `sweep_entry` builds stage A, stage B and the A3 negation out of
+    # `Entry.declaration/proposition/negation`. A correction to that assembly
+    # moves neither the corpus fields nor the fixed package version, so
+    # without it here an incremental sweep would reuse rows the old assembly
+    # produced.
+    str(Path(__file__).resolve().parent / "problems.py"),
 )
 
 
@@ -505,9 +511,15 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     findings: list[str] = []
     reused = 0
     for entry in problems.entries:
-        if (carry and prior is not None
-                and prior.statement_digests.get(entry.id) == current.get(entry.id)
-                and entry.id in prior.entries):
+        # The prior row must also have the *shape* this entry now needs.
+        # `statement_digest` excludes `expected`, so relabelling a true entry
+        # as a twin left a row with `negation=None` that `staleness` refuses
+        # -- and reusing it here meant `hardy evals baseline`, the documented
+        # repair, wrote another refused baseline forever.
+        prior_row = prior.entries.get(entry.id) if prior is not None else None
+        shaped = prior_row is not None and (entry.expected != "false" or prior_row.negation is not None)
+        if (carry and prior is not None and shaped
+                and prior.statement_digests.get(entry.id) == current.get(entry.id)):
             entries[entry.id] = result = prior.entries[entry.id]
             reused += 1
         else:

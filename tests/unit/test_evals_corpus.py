@@ -347,3 +347,24 @@ def test_an_invariant_spanning_two_shards_is_reported_not_raised(tmp_path):
     with pytest.raises(CorpusError, match="do not form one valid corpus"):
         load_corpus(tmp_path)
     assert any("one valid corpus" in i for i in check_issues(tmp_path))
+
+
+def test_a_malformed_taxonomy_envelope_is_reported_not_raised(tmp_path):
+    """The lookups run inside entry validation, so a missing `codes` key used
+    to raise `KeyError` straight out of the command asked to report it."""
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
+    (tmp_path / "taxonomy" / "msc2020.json").write_text(
+        json.dumps({"schema_version": 1}), encoding="utf-8")
+    with pytest.raises(CorpusError, match="msc2020.json"):
+        load_corpus(tmp_path)
+    assert any("msc2020.json" in i for i in check_issues(tmp_path))
+
+
+def test_a_taxonomy_missing_a_rollup_table_is_reported_not_raised(tmp_path):
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
+    mapping = json.loads((tmp_path / "taxonomy" / "msc-to-arxiv.json").read_text(encoding="utf-8"))
+    del mapping["fields"]
+    (tmp_path / "taxonomy" / "msc-to-arxiv.json").write_text(json.dumps(mapping), encoding="utf-8")
+    _registry(tmp_path, {"a": "2026-09-03"})
+    _changelog(tmp_path)
+    assert any("msc-to-arxiv.json" in i for i in check_issues(tmp_path))
