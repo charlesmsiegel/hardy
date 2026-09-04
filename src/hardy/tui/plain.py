@@ -60,6 +60,14 @@ class PlainUi:
         answer = await self.ask_line(f"{question} [y/N] ")
         return (answer or "").strip().lower() in {"y", "yes"}
 
+    def stopping(self, cancel: Any) -> None:
+        """Accepted and dropped: a line-based session has no Esc to route.
+
+        Ctrl+C there raises `KeyboardInterrupt` on the one thread the session
+        has, which the loop already handles; there is no second key for a
+        command to be stopped with.
+        """
+
     @property
     def from_thread(self) -> Any:
         return _Straight(self)

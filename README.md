@@ -105,9 +105,10 @@ untouched.
 Esc reaches the run itself, not only the subprocesses under it: the provider
 call in flight is stopped, no further stage begins, and the run finalizes as a
 cancellation rather than as a runtime failure — so an abandoned `/prove` is not
-billed for stages nobody waited for, and its manifest says why it stopped. What
-was already inside Lean is left to finish rather than torn out halfway, as
-everywhere else.
+billed for stages nobody waited for, and its manifest says why it stopped. That
+holds for a press during the slow toolchain identification before the run has
+even started, as well as during it. What was already inside Lean is left to
+finish rather than torn out halfway, as everywhere else.
 
 That faithfulness check is the one gate a green kernel cannot stand in for:
 Lean's acceptance says a statement was proved and nothing about whether it is
@@ -680,7 +681,10 @@ both unfinished *and* resting on an approved axiom names both.
 The conversation keeps its own limitations too: a reply the model was cut off
 mid-sentence is labelled as an interrupted fragment rather than shown as a
 finished answer, and a turn that was cancelled, abandoned, or stopped by
-Hardy's wall clock says so where it ended.
+Hardy's wall clock says so where it ended. A tool result too long to carry
+whole keeps its **end** and says it was cut — Lean and Tectonic print their
+setup first and the diagnostic that failed the call last, so a page that kept
+the beginning would show the imports and not the error.
 
 Credentials matching known token shapes, and values under credential-shaped key
 names, are removed before the file is written. That is a filter and not a proof,

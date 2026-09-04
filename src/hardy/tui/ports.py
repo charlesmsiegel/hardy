@@ -89,5 +89,20 @@ class Ui(Protocol):
 
     async def confirm(self, question: str) -> bool: ...
 
+    def stopping(self, cancel: Any) -> None:
+        """Publish what Esc should reach while this command runs, or None.
+
+        A command that owns work of its own has to say so, because Esc against
+        a command reaches the SESSION's children and nothing else -- which is
+        right for `/cas`, whose cell is a child, and wrong for `/prove`, whose
+        provider call is not. `/project switch` already solved this by hanging
+        a `cancel` on the opener the shell can see; this is the same answer
+        made general, so a handler running work on a worker can be stopped
+        without the shell having to know what the work is.
+
+        `cancel()` returns whether it stopped anything, so the shell can say
+        so. Registered before the work starts and cleared in a `finally`.
+        """
+
     @property
     def from_thread(self) -> BlockingUi: ...

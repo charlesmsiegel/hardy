@@ -626,3 +626,41 @@ def test_escape_still_reaches_a_running_cell_when_no_reopen_is_in_flight(setting
     built._stop_command()
 
     assert asked == [True]
+
+
+def test_escape_reaches_the_work_a_command_published(settings):
+    """`/prove`'s staged run is not a tracked child, so `interrupt_work` cannot
+    answer for it: the provider call and the stage loop would go on after the
+    press. A command that owns work of its own publishes a stop, and Esc takes
+    that before it reaches the session."""
+    stopped = []
+    session = SimpleNamespace(
+        interrupt_work=lambda: pytest.fail("the session answered for the command's work")
+    )
+    built = shell.Shell(settings, session, handlers.build_registry())
+    built.stopping(lambda: stopped.append(True) or True)
+    built._stop_command()
+
+    assert stopped == [True]
+
+
+def test_escape_falls_through_to_the_session_when_no_command_published_one(settings):
+    """Every command but `/prove` today: the press means the cell, as before."""
+    asked = []
+    session = SimpleNamespace(interrupt_work=lambda: asked.append(True) or 1)
+    built = shell.Shell(settings, session, handlers.build_registry())
+    built.stopping(None)
+    built._stop_command()
+
+    assert asked == [True]
+
+
+def test_a_published_stop_that_finds_nothing_leaves_the_press_to_the_session(settings):
+    """Same shape as the idle opener above: False means "not mine"."""
+    asked = []
+    session = SimpleNamespace(interrupt_work=lambda: asked.append(True) or 1)
+    built = shell.Shell(settings, session, handlers.build_registry())
+    built.stopping(lambda: False)
+    built._stop_command()
+
+    assert asked == [True]

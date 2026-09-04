@@ -172,3 +172,56 @@ async def test_a_workflow_too_old_to_be_cancelled_does_not_break_the_press(
     monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
     with pytest.raises(asyncio.CancelledError):
         await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+
+
+async def test_esc_reaches_the_staged_run_rather_than_only_the_session(ui, settings, monkeypatch):
+    """Esc against a command calls `_stop_command`, which reaches the SESSION's
+    children -- right for `/cas`, whose cell is a child, and wrong for a staged
+    run, whose provider call is not. The handler has to publish its own stop."""
+    from hardy.tui import prove
+
+    recorder = Recorder()
+    interrupted: list[int] = []
+    monkeypatch.setattr(
+        "hardy.tui.handlers.process.interrupt_children", lambda: interrupted.append(1)
+    )
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        ready(recorder)
+        # The press lands here, while the run is in flight, exactly as Esc does.
+        assert ui.stopper is not None, "nothing was published for Esc to reach"
+        assert ui.stopper() is True
+        return recorder.run(SimpleNamespace(text=claim, model=config.model), terminal)
+
+    monkeypatch.setattr(prove, "run", run)
+    await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+    assert recorder.cancelled == 1
+    assert interrupted == [1]
+    assert ui.stopper is None, "the stopper outlived the command"
+
+
+async def test_esc_during_the_workflow_build_still_stops_the_run(ui, settings, monkeypatch):
+    """Building the workflow identifies Lean and Tectonic, so a press very
+    plausibly lands before anything is published. The run must not then start."""
+    from hardy.tui import prove
+
+    recorder = Recorder()
+    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        # Pressed while the builder was still working: nothing is published yet.
+        assert ui.stopper() is True
+        ready(recorder)                     # published only afterwards
+        return recorder.run(SimpleNamespace(text=claim, model=config.model), terminal)
+
+    monkeypatch.setattr(prove, "run", run)
+    await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+    assert recorder.cancelled == 1, "the press before publication was lost"
+
+
+async def test_the_stopper_is_cleared_even_when_the_run_fails(ui, settings, monkeypatch):
+    from hardy.tui import prove
+
+    monkeypatch.setattr(prove, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no")))
+    await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+    assert ui.stopper is None

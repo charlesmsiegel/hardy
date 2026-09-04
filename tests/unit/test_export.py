@@ -349,3 +349,35 @@ def test_an_ordinary_destination_is_still_written_and_overwritten(tmp_path):
     target.write_text("stale", encoding="utf-8")
     export.write(material(), target)
     assert target.read_text(encoding="utf-8").startswith("<!doctype html>")
+
+
+def test_a_long_tool_result_keeps_the_end_where_the_diagnostic_is():
+    """Lean and Tectonic print setup first and the failure last, so a head
+    slice showed a page of imports and not one word of why the call failed."""
+    output = "\n".join([f"import Mathlib.Line{index}" for index in range(400)])
+    output += "\nerror: unsolved goals\n⊢ False"
+    page = build(
+        transcript=[
+            {"type": "tool", "name": "save_lean", "result": {"ok": False, "output": output}}
+        ]
+    )
+    assert "unsolved goals" in page
+    assert "import Mathlib.Line0" not in page          # the head was the part dropped
+
+
+def test_a_cut_tool_result_says_that_it_was_cut():
+    page = build(
+        transcript=[
+            {"type": "tool", "name": "save_lean", "result": {"ok": False, "output": "x\n" * 5000}}
+        ]
+    )
+    assert "Showing the end of this result" in page
+    assert "truncated by" in page
+
+
+def test_a_short_tool_result_is_shown_whole_and_unannotated():
+    page = build(
+        transcript=[{"type": "tool", "name": "save_lean", "result": {"ok": True, "output": "saved"}}]
+    )
+    assert "saved" in page
+    assert "Showing the end" not in page

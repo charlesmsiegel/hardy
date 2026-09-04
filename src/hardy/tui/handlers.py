@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import shlex
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -514,36 +515,62 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
         ui.write("A nonempty theorem statement is required.", style="error")
         return state
     terminal = staged.UiTerminal(ui.from_thread)
-    # Filled in on the worker the moment the workflow exists. Cancelling the
-    # `await` below does not reach into the worker, so the handle has to come
-    # back out: without it the only stop was `process.interrupt_children()`,
-    # which reaches Lean and LaTeX and not the provider call -- so an Esc left
-    # the staged run billing and still writing itself.
+    # What Esc reaches, and the two windows it has to cover.
+    #
+    # `running` is filled on the worker the moment the workflow exists.
+    # Cancelling an `await` does not reach into a worker, so the handle has to
+    # come back out: without it the only stop was `process.interrupt_children()`,
+    # which reaches Lean and Tectonic and not the provider call.
+    #
+    # `abandoned` covers the window BEFORE that, which is not a narrow one:
+    # building the workflow identifies Lean and Tectonic, so a press can easily
+    # land while `running` is still empty. Setting the flag and reading the map
+    # here, against publishing the map and reading the flag there, means at
+    # least one of the two sees the other whichever order they interleave in --
+    # so the run is stopped either way, and never started after the press.
     running: dict[str, Any] = {}
+    abandoned = threading.Event()
+
+    def stop() -> bool:
+        abandoned.set()
+        workflow = running.get("workflow")
+        cancel = getattr(workflow, "cancel", None)
+        if cancel is not None:
+            cancel()
+        # The children as well, for the Lean or Tectonic call already running:
+        # the workflow stops asking for new work, and this reaches what is
+        # already out. A call already inside Lean is still left to finish.
+        process.interrupt_children()
+        return True
+
+    def ready(workflow: Any) -> None:
+        running["workflow"] = workflow
+        if abandoned.is_set():
+            # Published after the press. The other half of the handshake above.
+            workflow.cancel()
+
+    stopping = getattr(ui, "stopping", None)
+    if stopping is not None:
+        stopping(stop)
     try:
         # On a thread because the workflow is synchronous end to end -- it runs
         # Lean, LaTeX and several provider threads, and asks the user questions
         # in between. Run inline it would block the loop that has to deliver
         # those answers, which is the deadlock the `Ui` port exists to rule out.
         manifest = await asyncio.to_thread(
-            staged.run, state.config, claim, terminal, ready=lambda w: running.update(workflow=w)
+            staged.run, state.config, claim, terminal, ready=ready
         )
     except asyncio.CancelledError:
-        # The workflow first: it stops the provider call in flight, refuses
-        # every queued tool call, and lets the run finalize as a cancellation
-        # rather than as a runtime failure. Then the children, for the
-        # subprocesses a Ctrl+C would otherwise leave running -- the same
-        # treatment `/doctor` and `/import` give their own, and the same limit:
-        # a call already inside Lean is left to finish rather than torn out.
-        workflow = running.get("workflow")
-        stop = getattr(workflow, "cancel", None)
-        if stop is not None:
-            stop()
-        process.interrupt_children()
+        # Ctrl+C and `/exit`, which cancel the task rather than pressing Esc.
+        # Same stop, so the two keys cannot diverge.
+        stop()
         raise
     except Exception as error:  # noqa: BLE001 - a failed run is not a lost session
         ui.write(f"The staged run could not finish: {error}", style="error")
         return state
+    finally:
+        if stopping is not None:
+            stopping(None)
     ui.write(f"Artifacts: {state.config.runs_root}")
     if getattr(manifest, "phase", None) is not None and manifest.phase.value != "completed":
         ui.write(f"  The run ended in {manifest.phase.value}, not completed.")
