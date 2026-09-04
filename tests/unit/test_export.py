@@ -959,9 +959,13 @@ def test_the_page_says_the_formal_sources_are_exempt_from_redaction():
     share has to be told about it rather than left to infer it.
     """
     page = build()
-    exemption = page.split("That is a filter", 1)[1].split("<h2>Goal</h2>", 1)[0]
+    # Whitespace-collapsed: the paragraph is wrapped in the source, so a
+    # sentence to assert on straddles a newline.
+    exemption = " ".join(
+        page.split("That is a filter", 1)[1].split("<h2>Goal</h2>", 1)[0].split()
+    )
     assert "exempt" in exemption
-    assert "Lean" in exemption and "TeX" in exemption
+    assert "Lean modules" in exemption
     assert "reaches this file intact" in exemption
 
 
@@ -987,7 +991,7 @@ def test_a_recent_refusal_is_not_pushed_out_by_older_denials():
     # The section itself, not the page: the same call is also rendered in the
     # conversation below, which would answer for this assertion without the
     # withheld section listing it at all.
-    listed = page.split("<h3>Refused tool calls</h3>", 1)[1].split("<h2>", 1)[0]
+    listed = page.split("<h2>Tool calls Hardy refused</h2>", 1)[1].split("<h2>", 1)[0]
     assert "save_lean" in listed
     assert "Lean rejected the proof" in listed
 
@@ -1027,3 +1031,75 @@ def test_the_project_instructions_are_exported_whole():
     assert "instruction line 0" in page
     assert "instruction line 1999" in page
     assert "Showing the end of this result" not in page
+
+
+def test_an_unquoted_credential_is_removed_past_its_first_space():
+    """A passphrase may contain spaces, and an unquoted YAML scalar keeps them.
+
+    Stopping the value at the first space published three words of a four-word
+    passphrase under a `[REDACTED]` that told the reader it had been handled --
+    the worst of both, since the page looked filtered.
+    """
+    from hardy.export import redact
+
+    cleaned = redact("password: correct horse battery staple")
+    for word in ("correct", "horse", "battery", "staple"):
+        assert word not in cleaned
+
+
+def test_widening_the_value_did_not_eat_the_scheme_word():
+    """`\\s*[:=]\\s*` can give back its trailing space.
+
+    A value allowed to begin with one then matched " Basic <token>" from a
+    separator of just ":", sliding past the lookahead that keeps the scheme
+    word and eating what the authorization rule deliberately left. `\\S+` could
+    not start with a space, so this only became reachable when the value was
+    widened.
+    """
+    from hardy.export import redact
+
+    assert redact("Authorization: Basic zzz") == "Authorization: Basic [REDACTED-KEY]"
+
+
+def test_a_quoted_value_still_stops_at_its_closing_quote():
+    """Otherwise the wider unquoted rule would take the rest of a JSON line."""
+    from hardy.export import redact
+
+    cleaned = redact('{"api_key": "abc", "user": "bob"}')
+    assert "abc" not in cleaned
+    assert '"user": "bob"' in cleaned
+
+
+def test_the_page_does_not_claim_the_writeup_tex_is_exempt_from_redaction():
+    """Only the formal sources are verbatim.
+
+    A `.tex` file is prose the user wrote rather than something the kernel
+    graded, so it goes through the filter -- and a notice saying otherwise
+    would invite sharing a writeup carrying a credential.
+    """
+    page = build(tex={"paper.tex": "% password: hunter2\n\\section{Sylow}"})
+    exemption = page.split("That is a filter", 1)[1].split("<h2>Goal</h2>", 1)[0]
+    assert "not</em> exempt" in exemption or "<em>not</em> exempt" in exemption
+    assert "hunter2" not in page
+
+
+def test_refused_calls_are_not_filed_under_what_the_model_never_saw():
+    """The dispatcher hands a failed `ToolResult` back to the provider.
+
+    Listing those under "Withheld from the model" told the reader a failed
+    proof attempt had carried on with no feedback, when the model read Lean's
+    complaint and was meant to act on it.
+    """
+    page = build(
+        transcript=[
+            {
+                "type": "tool",
+                "name": "save_lean",
+                "result": {"ok": False, "output": "Lean rejected the proof"},
+            }
+        ]
+    )
+    withheld = page.split("<h2>Withheld from the model</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "save_lean" not in withheld
+    refusals = page.split("<h2>Tool calls Hardy refused</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "save_lean" in refusals
