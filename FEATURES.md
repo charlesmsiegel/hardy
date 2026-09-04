@@ -874,7 +874,11 @@ Priority labels are sequencing hints:
   for another pass — one pass can resolve no `\ref` at all — and then read the log:
   an undefined `\ref`, an undefined `\cite`, or a label defined twice refuses the
   compile and names the reference, and the refusal takes the save and the published
-  PDF with it. A `\label` nothing points at is reported rather than refused, because
+  PDF with it. Citation packages are read too — natbib reports a missing key in
+  its own name rather than LaTeX's — and a summary naming nothing still refuses,
+  because a package Hardy cannot parse warnings from is not a package that found
+  nothing wrong. A document still asking to be run again after the last pass is
+  refused as well: its numbers have not settled, so the PDF's would be wrong. A `\label` nothing points at is reported rather than refused, because
   the completion gate requires a label for every registered name and requires
   nothing to reference it. A fragment compiled through a probe root is exempt: it
   cannot see its siblings' labels, and judging it on them would make the
@@ -886,7 +890,13 @@ Priority labels are sequencing hints:
   reported, with the digest of what they hold; admission is atomic, a stored record
   is never rewritten, a new version is a new record beside the old one, and a record
   whose content no longer matches its digest is refused rather than served. The
-  library lives under `.hardy/papers/` and is not committed.
+  library lives under `.hardy/papers/` and is not committed, and every path in it
+  is proven component by component at the moment of the write, so a clone that
+  ships `.hardy/papers` or its `records` as a symlink cannot make a download land
+  outside the project. Both the request clock and each problem's bibliography are
+  read-modify-write sequences, so both are held under a lock file for the whole
+  sequence: the spacing is machine-wide rather than per-process, and two sessions
+  citing at once cannot lose a citation between them.
 - **Next:** treat downloaded archives as hostile: normalized extraction, symlink
   defense, file/byte quotas, temporary staging, and atomic admission. Until that
   exists Hardy fetches metadata and abstracts only, and never a source bundle.
@@ -904,6 +914,12 @@ Priority labels are sequencing hints:
   there is no argument that puts a hand-written entry in the bibliography. The
   writeup `\input{references}` once and cites by the returned key, and a citation
   that does not resolve fails the compile.
+- **Now (implemented):** the document may not write its own bibliography either.
+  A `\bibitem`, a `thebibliography` environment, a `\bibliography` or a
+  `\addbibresource` in a saved writeup file is refused at the save, and the
+  generated `tex/references.tex` may be neither written nor deleted by hand — a
+  reference nobody fetched resolves perfectly well, so the reference check alone
+  would pass it and publish it.
 
 ## Assumed-paper libraries
 

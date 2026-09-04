@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from hardy import arxiv
+from hardy.layout import LayoutError
 
 FEED = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
@@ -288,3 +289,147 @@ def test_the_untouched_response_is_kept_beside_the_record(tmp_path: Path):
     record, _ = client.fetch("math.DG/0211159v1")
     stored = (library.path_for(record.identifier) / "response.xml").read_bytes()
     assert stored == _feed()
+
+
+def test_a_symlinked_library_directory_is_refused(tmp_path: Path):
+    """A clone is a hostile artifact, and `.hardy/papers` is not exempt.
+
+    `Layout.ensure` proves `.hardy` and stops, because it cannot know what a
+    tool will put inside it -- so a repository shipping `.hardy/papers` as a
+    link had every downloaded byte, every cached query and the throttle clock
+    written through it, outside the project.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    hardy = tmp_path / ".hardy"
+    hardy.mkdir()
+    (hardy / "papers").symlink_to(outside, target_is_directory=True)
+    library = arxiv.PaperLibrary(hardy / "papers")
+    with pytest.raises(LayoutError):
+        library.note_request(1.0)
+    with pytest.raises(LayoutError):
+        library.cache_query("abc", b"{}", now=1.0)
+    assert list(outside.iterdir()) == []
+
+
+def test_a_symlinked_records_directory_is_refused(tmp_path: Path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "papers"
+    root.mkdir(parents=True)
+    (root / "records").symlink_to(outside, target_is_directory=True)
+    library = arxiv.PaperLibrary(root)
+    client = arxiv.ArxivClient(
+        library, transport=Recorder(_feed()), clock=lambda: 0.0, sleep=lambda seconds: None
+    )
+    with pytest.raises(LayoutError):
+        client.fetch("math.DG/0211159v1")
+    assert list(outside.iterdir()) == []
+
+
+def test_a_response_that_is_not_an_answer_is_not_cached(tmp_path: Path):
+    """A maintenance page cached for a day fails every retry after recovery."""
+    transport = Recorder(b"<html>down for maintenance</html>", _feed())
+    client, _, _ = _client(tmp_path, transport)
+    with pytest.raises(arxiv.ArxivError):
+        client.search("ricci flow")
+    # The same query again reaches arXiv rather than the cache, and works.
+    assert client.search("ricci flow")
+    assert len(transport.urls) == 2
+
+
+def test_a_paper_answered_under_another_identifier_is_not_cached(tmp_path: Path):
+    transport = Recorder(_feed("2401.99999v1"), _feed("2401.00001v1"))
+    client, _, _ = _client(tmp_path, transport)
+    with pytest.raises(arxiv.ArxivError, match="refusing to store"):
+        client.fetch("2401.00001v1")
+    record, _ = client.fetch("2401.00001v1")
+    assert record.arxiv_id == "2401.00001v1"
+    assert len(transport.urls) == 2
+
+
+def test_an_edited_record_is_refused_even_when_its_content_file_matches(tmp_path: Path):
+    """`read_paper` serves the record's fields, not the file on disk.
+
+    Checking only `content.txt` against the digest let an edit to the title or
+    the abstract in `record.json` change what a reader is served while the
+    verified file sat untouched beside it.
+    """
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    path = library.path_for(record.identifier) / "record.json"
+    path.write_text(
+        record.model_copy(update={"title": "A completely different paper"}).model_dump_json(),
+        encoding="utf-8",
+    )
+    with pytest.raises(arxiv.ArxivError, match="does not match its recorded digest"):
+        library.read(record.identifier)
+
+
+def test_a_response_that_fails_mid_body_is_an_arxiv_error(monkeypatch):
+    """An `OSError` out of `read` escaped every caller and ended the turn.
+
+    `urlopen` succeeding is not the transfer succeeding: a connection reset
+    halfway through the body raises after the response object exists, outside
+    the handler that covered the connect. The tool dispatcher catches
+    `ArxivError` and argument errors, so that one came out as a traceback
+    where a failed tool result belonged.
+    """
+
+    class Collapsing:
+        def read(self, size: int) -> bytes:
+            raise ConnectionResetError("connection reset by peer")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    monkeypatch.setattr(arxiv.urllib.request, "urlopen", lambda *a, **k: Collapsing())
+    with pytest.raises(arxiv.ArxivError, match="failed after 0 bytes"):
+        arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
+
+
+def test_a_connection_that_never_opens_is_an_arxiv_error(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise OSError("network unreachable")
+
+    monkeypatch.setattr(arxiv.urllib.request, "urlopen", refuse)
+    with pytest.raises(arxiv.ArxivError, match="could not be reached"):
+        arxiv._http("https://export.arxiv.org/api/query?x=1", 5.0)
+
+
+def test_the_throttle_serialises_across_processes(tmp_path: Path):
+    """A timestamp on disk is not a mutex; the lock around it is.
+
+    Two idle processes both read the old value, both compute no wait, and
+    both fire -- which is the promise of machine-wide spacing not being kept.
+    """
+    clock = Clock()
+    client, library, _ = _client(tmp_path, Recorder(_feed()), clock)
+    client.search("ricci flow")
+    # Taken for the read-wait-reserve sequence and released afterwards, so the
+    # next process is not left waiting on a lock nobody holds.
+    assert not library.lock_path.exists()
+
+
+def test_a_stuck_lock_slows_the_throttle_rather_than_stopping_a_fetch(tmp_path: Path):
+    """Politeness degrades; the paper still arrives.
+
+    Refusing to fetch because another process is slow would trade a real
+    failure for an imagined discourtesy.
+    """
+    clock = Clock()
+    library = arxiv.PaperLibrary(tmp_path / "papers")
+    library.note_request(clock.now - 10)
+    library.lock_path.write_text("999999", encoding="utf-8")
+    client = arxiv.ArxivClient(
+        library,
+        transport=Recorder(_feed()),
+        clock=clock.time,
+        sleep=clock.sleep,
+        interval=0.01,
+        lock_timeout=0.05,
+    )
+    assert client.search("ricci flow")

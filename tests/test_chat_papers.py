@@ -103,3 +103,57 @@ def test_the_generated_bibliography_makes_a_citation_compile(session) -> None:
         "check_latex", {"source": body + "\\input{references}\n\\end{document}\n"}
     )
     assert with_input.ok, with_input.output
+
+
+def test_a_hand_written_bibliography_is_refused_at_the_save(session) -> None:
+    r"""The claim is about what a reader sees, not about `bibliography.json`.
+
+    `cite_paper` cannot be talked into an invented reference -- it takes an
+    identifier and nothing else -- but `save_latex` takes arbitrary LaTeX, and
+    a `\bibitem{invented2020}` written straight into the writeup resolves,
+    compiles, and would be published with nothing behind it.
+    """
+    source = (
+        "\\documentclass{article}\n\\begin{document}\nAs shown in \\cite{invented2020}.\n"
+        "\\begin{thebibliography}{9}\n\\bibitem{invented2020} Nobody. Never.\n"
+        "\\end{thebibliography}\n\\end{document}\n"
+    )
+    saved = session._tool("save_latex", {"source": source})
+    assert not saved.ok
+    assert "cite_paper" in saved.output
+    assert not (session.workspace / "tex" / "writeup.tex").exists()
+    # And refused at the check too, so the model is not told the document is
+    # sound and then refused the save.
+    assert not session._tool("check_latex", {"source": source}).ok
+
+
+def test_the_generated_bibliography_is_not_the_models_to_write(session) -> None:
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"})
+    overwrite = session._tool(
+        "save_latex",
+        {"path": "references.tex", "source": "\\bibitem{invented2020} Nobody.\n"},
+    )
+    assert not overwrite.ok
+    assert "bibliography.json" in overwrite.output
+    generated = (session.workspace / "tex" / "references.tex").read_text(encoding="utf-8")
+    assert "invented2020" not in generated
+    assert "perelman2002entropy" in generated
+
+
+def test_the_generated_bibliography_is_not_the_models_to_delete(session) -> None:
+    """Deleting it leaves every `\\input{references}` unresolvable."""
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"})
+    result = session._tool("delete_file", {"path": "references.tex"})
+    assert not result.ok
+    assert (session.workspace / "tex" / "references.tex").is_file()
+
+
+def test_a_comment_mentioning_bibitem_is_not_a_bibliography(session) -> None:
+    """TeX never reads it, so refusing the document over it refuses nothing."""
+    source = (
+        "\\documentclass{article}\n\\begin{document}\n"
+        "% never write \\bibitem by hand; use cite_paper\nText.\n\\end{document}\n"
+    )
+    assert session._tool("check_latex", {"source": source}).ok

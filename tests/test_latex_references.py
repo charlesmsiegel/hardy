@@ -49,6 +49,13 @@ def test_an_undefined_citation_fails_the_compile(tmp_path: Path):
 
 
 def test_a_citation_with_a_bibitem_resolves(tmp_path: Path):
+    """The compiler wrapper judges resolution, not authorship.
+
+    Who may write a `\\bibitem` is a workspace rule, enforced at the save --
+    see `bibliography.hand_written_bibliography` and
+    `tests/test_chat_papers.py`. Down here the only question is whether the
+    citation resolves, and against a `thebibliography` it does.
+    """
     source = (
         PREAMBLE
         + "As shown in \\cite{nobody2020}.\n"
@@ -125,3 +132,29 @@ def test_a_reference_into_another_fragment_of_the_same_document_resolves(tmp_pat
         PREAMBLE + "\\input{sections/one}\nSee \\ref{thm:main}.\n" + END, tree=tree
     )
     assert result.ok, result.output
+
+
+def test_a_document_whose_numbers_never_settle_is_refused(tmp_path: Path):
+    """Every pass spent and the compiler still asking for another one.
+
+    Accepting it because nothing was reported *undefined* publishes a PDF
+    whose numbers the compiler has just said are not the document's.
+    """
+    source = PREAMBLE + "% unstable\nTheorem \\label{thm:main}. See \\ref{thm:main}.\n" + END
+    result = LatexTools(COMMAND).check(source, tree=_tree(tmp_path))
+    assert not result.ok
+    assert "settled" in result.output
+
+
+def test_an_unsettled_document_is_not_published(tmp_path: Path):
+    output = tmp_path / "out"
+    committed = []
+    result = LatexTools(COMMAND).check(
+        PREAMBLE + "% unstable\nSee \\label{a}\\ref{a}.\n" + END,
+        tree=_tree(tmp_path),
+        output_dir=output,
+        commit=lambda: committed.append(True),
+    )
+    assert not result.ok
+    assert committed == []
+    assert not (output / "writeup.pdf").exists()
