@@ -624,3 +624,34 @@ def test_a_refused_deletion_leaves_the_writeup_stamped_as_it_was(session) -> Non
     assert not result.ok, result.output
     assert (tex / "spare.tex").is_file()
     assert session.state["tex_signature"] == stamped
+
+
+def test_a_citation_landing_during_the_hash_does_not_get_stamped(session) -> None:
+    """The check has to be about the value being persisted, not one before it.
+
+    `_stamp_writeup` compared the bibliography identity and THEN hashed the
+    tree, so a `cite_paper` landing between the two had `_tex_signature` read
+    the new `references.tex` and the new store: the stamp then described a
+    tree the PDF was not built from, and vouching does not catch it because
+    the old compile's keys are a subset of the new store's.
+    """
+    tex = session.workspace / "tex"
+    tex.mkdir(parents=True, exist_ok=True)
+    (tex / "writeup.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    compiled_against = session._bibliography_identity()
+    original = session._tex_signature
+
+    def _slow(*args, **kwargs):
+        # A neighbouring session cites while this one is hashing.
+        session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+        session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"})
+        return original(*args, **kwargs)
+
+    session._tex_signature = _slow
+    session._stamp_writeup(compiled_against)
+    assert session.state.get("tex_signature", "") == "", (
+        "a signature was stamped for a bibliography the compile never saw"
+    )
