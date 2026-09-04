@@ -348,3 +348,40 @@ def test_the_reserve_is_never_smaller_than_what_the_model_may_write() -> None:
         output_tokens=8_192,
     )
     assert big.available == 200_000 - compaction.RESERVE_TOKENS
+
+
+def test_a_request_nothing_can_be_cut_from_is_reported_as_overflow() -> None:
+    """`needed=False` over an oversized request is not "the window is fine".
+
+    A caller reading only `needed` sent it believing there was room, and the
+    record showed nothing at all where an oversized request was about to go
+    out. There is still no compaction to perform -- summarising nothing and
+    keeping everything is not one -- so the plan says both things.
+    """
+    # One user message, so `first_legal_cut` can only land at 0: there is
+    # nothing above the tail to summarise.
+    outcome = compaction.plan(
+        [compaction.Message("user", text="x" * 20_000)],
+        context_window=9000,
+        reserve_tokens=100,
+        keep_tokens=10,
+    )
+
+    assert outcome.needed is False
+    assert outcome.overflow is True
+    assert outcome.before > outcome.available
+    assert outcome.fits is False
+
+
+def test_a_request_that_fits_is_not_an_overflow() -> None:
+    """The converse, so `overflow` means what it says rather than "no cut"."""
+    outcome = compaction.plan(
+        [compaction.Message("user", text="short")],
+        context_window=200_000,
+        reserve_tokens=100,
+        keep_tokens=1000,
+    )
+
+    assert outcome.needed is False
+    assert outcome.overflow is False
+    assert outcome.fits is True
