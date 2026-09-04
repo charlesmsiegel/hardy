@@ -353,6 +353,7 @@ def test_the_session_builds_its_paper_runtime_on_the_configured_budget(tmp_path:
     from test_chat import FakeChatRuntime, factory
 
     from hardy.chat import MathematicsSession
+    from hardy.domain import RunLimits
 
     workspace = tmp_path / "problem"
     workspace.mkdir()
@@ -363,7 +364,7 @@ def test_the_session_builds_its_paper_runtime_on_the_configured_budget(tmp_path:
         (sys.executable, "-c", ""),
         (sys.executable, "-c", ""),
         lambda proposal: False,
-        observation_bytes=4096,
+        limits=RunLimits(model_observation_bytes=4096),
     )
     assert session.papers.observation_bytes == 4096
 
