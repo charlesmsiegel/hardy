@@ -57,6 +57,16 @@ def stamped(source: str, stamp: str | None) -> str:
         "\\par\\endgroup\\medskip\\hrule\\medskip\n"
     )
     return source[: found.end()] + banner + source[found.end() :]
+#: What a compile of the real document produces, by the exact names Hardy
+#: publishes and reads. Never copied into the scratch tree: a checked-in or
+#: left-behind `tex/writeup.pdf` made `pdf.exists()` true for a compile that
+#: wrote no document at all, so the refusal added for that case passed and the
+#: OLD file was published as the new source's -- the very outcome the check
+#: exists to prevent, with the evidence supplied by the tree being checked.
+#: Matched by whole path rather than by suffix, because `\includegraphics` of
+#: a `.pdf` figure is an ordinary thing a writeup does.
+OUTPUTS = frozenset({"writeup.pdf", "writeup.log"})
+
 BODY = "\\begin{document}"
 INCLUSION = re.compile(r"\\(?:input|include|subfile)\s*\{([^}]*)\}")
 
@@ -403,7 +413,7 @@ def _copy_tree(tree: Path, work: Path) -> None:
         # that tree would be refused over a file the compiler never wrote.
         # Stale numbers on the first pass are the same mistake in the other
         # direction, so they are left out rather than trusted.
-        if relative.suffix == ".aux":
+        if relative.suffix == ".aux" or relative.as_posix() in OUTPUTS:
             continue
         guard, name = guard_for(work, relative, create=True)
         # Not fsynced: every byte here lands in a `TemporaryDirectory` this

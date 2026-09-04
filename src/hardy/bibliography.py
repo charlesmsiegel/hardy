@@ -579,12 +579,10 @@ ATOM = re.compile(r"\\[a-zA-Z]+|\\.|.", re.DOTALL)
 #: active, so a `\bibitem` inside one is executed. Exempting it turned a
 #: verbatim-looking block into a way to put a fabricated entry in front of a
 #: reader under a key `cite_paper` had already vouched for.
-VERBATIM = re.compile(
-    r"\\verb\*?(?P<mark>[^*\sa-zA-Z])(?:(?!(?P=mark)).)*(?P=mark)"
-    r"|\\begin\s*\{(?P<env>verbatim\*?|Verbatim|lstlisting|minted)\}"
-    r".*?\\end\s*\{(?P=env)\}",
-    re.DOTALL,
+VERBATIM_ENVIRONMENT = re.compile(
+    r"\\begin\s*\{(?P<env>verbatim\*?|Verbatim|lstlisting|minted)\}"
 )
+INLINE_VERBATIM = re.compile(r"\\verb\*?(?P<mark>[^*\sa-zA-Z])(?:(?!(?P=mark)).)*(?P=mark)")
 
 #: Every character that means something to TeX, and what it becomes. Applied
 #: in ONE pass: replacing the backslash first and the braces afterwards turns
@@ -643,7 +641,7 @@ def hand_written_bibliography(path: str, source: str) -> str:
             "whole on every citation, so an edit here would be undone by the next one. "
             "Use cite_paper to add a reference."
         )
-    executed = uncommented(VERBATIM.sub(" ", source))
+    executed = typeset(source)
     constructed = CONSTRUCTED.search(executed)
     if constructed:
         return (
@@ -663,6 +661,50 @@ def hand_written_bibliography(path: str, source: str) -> str:
             "Hardy generates -- instead."
         )
     return ""
+
+
+def typeset(source: str) -> str:
+    r"""`source` reduced to what TeX would actually execute.
+
+    Comments are dropped and verbatim content removed, and the ORDER of those
+    two is the whole point. Removing verbatim regions first -- which is how
+    this was written when the exemption was added -- let a commented opener
+    delete executable source: `% \begin{verbatim}`, a real `thebibliography`,
+    then `% \end{verbatim}` was cut out whole, and TeX ran every line of it.
+    An earlier round called that "the right way round to be wrong" on the
+    grounds that the compiler's own `\bibcite` record was the real check. That
+    was mistaken: the record covers the KEYS, so a forged entry reusing a key
+    `cite_paper` had already vouched for passed both.
+
+    So the two are decided together, line by line, with the comment state
+    carried along: outside a verbatim region a line has its comments stripped
+    and is then looked at for an opener, so a commented opener is gone before
+    it can open anything; inside one, `%` is an ordinary character and only
+    the literal closer ends the region.
+    """
+    kept: list[str] = []
+    closing: str | None = None
+    for raw in source.splitlines():
+        line = raw
+        if closing is not None:
+            head, marker, rest = line.partition(closing)
+            if not marker:
+                continue
+            line, closing = rest, None
+        while True:
+            line = uncommented(line)
+            found = VERBATIM_ENVIRONMENT.search(line)
+            if found is None:
+                break
+            kept.append(line[: found.start()])
+            closer = f"\\end{{{found.group('env')}}}"
+            head, marker, rest = line[found.end() :].partition(closer)
+            if not marker:
+                closing, line = closer, ""
+                break
+            line = rest
+        kept.append(INLINE_VERBATIM.sub(" ", line))
+    return "\n".join(kept)
 
 
 def is_generated(path: str) -> bool:

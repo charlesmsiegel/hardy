@@ -342,3 +342,27 @@ def test_a_macro_included_fragment_is_still_compiled_and_still_caught(tmp_path: 
     whole = tools.check(root, tree=tree)
     assert not whole.ok
     assert "thm:missing" in whole.output
+
+
+def test_a_pdf_left_in_the_tree_is_not_mistaken_for_this_compile_s(tmp_path: Path):
+    r"""`_copy_tree` hands the compiler the tree, artifacts included.
+
+    A checked-in or left-behind `tex/writeup.pdf` made `pdf.exists()` true for
+    a compile that wrote no document at all, so the refusal added for exactly
+    that case passed -- and the OLD file was published as the new source's,
+    with the evidence supplied by the tree being checked.
+    """
+    tree = _tree(tmp_path)
+    (tree / "writeup.pdf").write_bytes(b"%PDF-committed")
+    output = tmp_path / "out"
+    committed = []
+    result = LatexTools(COMMAND).check(
+        PREAMBLE + "% draftmode\nText.\n" + END,
+        tree=tree,
+        output_dir=output,
+        commit=lambda: committed.append(True),
+    )
+    assert not result.ok
+    assert "no writeup.pdf" in result.output
+    assert committed == []
+    assert not (output / "writeup.pdf").exists()

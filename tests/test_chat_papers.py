@@ -458,3 +458,30 @@ def test_a_binary_file_in_the_tree_is_not_read_as_commands(session) -> None:
         {"source": "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n"},
     )
     assert result.ok, result.output
+
+
+def test_withdrawing_the_bibliography_stales_the_writeup(session) -> None:
+    """The keys are vouched at the save and the verdict remembered by the
+    signature, so the store has to be part of what the signature covers.
+
+    Edited or deleted after that save, it left the signature current, the
+    writeup reading as freshly compiled, and a report accepted against
+    references nothing recorded any more.
+    """
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    key = json.loads(
+        session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"}).output
+    )["cite_key"]
+    saved = session._tool(
+        "save_latex",
+        {
+            "source": "\\documentclass{article}\n\\begin{document}\n"
+            f"As shown in \\cite{{{key}}}.\n\\input{{references}}\n\\end{{document}}\n"
+        },
+    )
+    assert saved.ok, saved.output
+    before = session._tex_signature()
+    (session.workspace / "bibliography.json").unlink()
+    assert session._tex_signature() != before, (
+        "the writeup still reads as compiled against a store that is gone"
+    )

@@ -802,3 +802,45 @@ def test_a_record_edited_away_from_its_own_response_is_refused(tmp_path: Path):
     (held / "content.txt").write_bytes(forged.content().encode("utf-8"))
     with pytest.raises(arxiv.ArxivError, match="not what its own response says"):
         library.read(record.identifier)
+
+
+def test_a_wrapped_line_is_bounded_in_bytes_not_code_points(tmp_path: Path):
+    """The budget a wrapped line exists to fit inside is a byte budget.
+
+    Ninety-six CJK characters are two hundred and eighty-eight bytes, so a
+    line `textwrap` called short enough did not fit a small window -- and the
+    truncation clipped it and moved to the next line, leaving the tail
+    unreachable by any later `read_paper`.
+    """
+    client, _, _ = _client(tmp_path, Recorder(_feed(abstract="数" * 500)))
+    record, _ = client.fetch("math.DG/0211159v1")
+    widest = max(len(line.encode("utf-8")) for line in record.content().splitlines())
+    assert widest <= arxiv.ABSTRACT_COLUMNS
+
+
+def test_a_query_answered_during_the_wait_costs_no_reservation(tmp_path: Path):
+    """A reservation is a claim on the next slot, so it is not spent unused.
+
+    Reserving and then deciding not to fetch lets the order slip: a delayed
+    process has already written its timestamp, so a second can wait its
+    interval, reserve, and fire first -- putting the two real requests closer
+    together than the interval they were both waiting out.
+    """
+    clock = Clock()
+    transport = Recorder(_feed())
+    client, library, _ = _client(tmp_path, transport, clock)
+    library.note_request(clock.now)
+    reserved = clock.now
+    asked: list[str] = []
+    original = library.cached_query
+    library.cached_query = lambda key, *, now: asked.append(key) or original(key, now=now)
+
+    def _answered_by_someone_else(seconds: float) -> None:
+        clock.sleep(seconds)
+        library.cache_query(asked[0], _feed(), now=clock.now)
+
+    client._sleep = _answered_by_someone_else
+    assert client.search("ricci flow")
+    assert transport.urls == []
+    # The slot was never claimed, because no request was made in it.
+    assert library.last_request() == reserved
