@@ -230,16 +230,27 @@ class Plan:
     #: the entry recorded in `transcript.jsonl` says so rather than a
     #: compaction quietly claiming to have solved it.
     after: int = 0
+    #: What the request actually had to fit inside: `context_window` less the
+    #: reserve. Carried so `fits` can answer the question its name asks.
+    available: int = 0
 
     @property
     def fits(self) -> bool:
-        """Whether what this plan builds is actually smaller than it must be.
+        """Whether what this plan builds is small enough to be sent.
 
-        False means the summary alone is over budget. Compacting is still the
-        best move available -- it is strictly smaller than not compacting --
-        but the caller is entitled to record that it was not enough.
+        Against the window, not against the conversation it replaces. "Smaller
+        than before" was the wrong test: an oversized newest message, or a
+        tool-call group that cannot legally be cut into, leaves a request still
+        over the limit while older messages make it smaller than it was --
+        `true` for a request the provider will reject, recorded in
+        `transcript.jsonl` as a compaction that fit.
+
+        False does not mean do not compact. Compacting is still the best move
+        available, and a workspace can genuinely have more standing assumptions
+        or a longer last turn than the window holds. It means the record says
+        so rather than a compaction quietly claiming to have solved it.
         """
-        return self.after < self.before
+        return self.available > 0 and self.after <= self.available
 
 
 def plan(
@@ -274,7 +285,7 @@ def plan(
     before = estimate_tokens(messages)
     available = max(context_window - reserve_tokens, 0)
     if before <= available:
-        return Plan(False, before=before, after=before)
+        return Plan(False, before=before, after=before, available=available)
     # Never more recent context than the window has room for, and never more
     # than the summary leaves. Asking to keep twenty thousand tokens of tail
     # inside a budget of five is not a smaller context, it is the same
@@ -289,11 +300,17 @@ def plan(
         keep += 1
     cut = first_legal_cut(messages, keep)
     if cut <= 0:
-        return Plan(False, before=before, after=before)
+        return Plan(False, before=before, after=before, available=available)
     # The summary is part of what will be sent, so it is part of what `after`
     # says will be sent. A figure that counted only the tail would understate
     # the compacted request by exactly the thing the compaction added.
-    return Plan(True, cut=cut, before=before, after=summary_tokens + estimate_tokens(messages[cut:]))
+    return Plan(
+        True,
+        cut=cut,
+        before=before,
+        after=summary_tokens + estimate_tokens(messages[cut:]),
+        available=available,
+    )
 
 
 def compacted(messages: Sequence[Message], cut: int, summary: Summary) -> list[Message]:

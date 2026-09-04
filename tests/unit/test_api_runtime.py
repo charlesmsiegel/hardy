@@ -228,3 +228,33 @@ def test_a_replacement_runtime_can_take_over_the_conversation() -> None:
     runtime.adopt_conversation([Message("user", text="earlier"), Message("assistant", text="answer")])
 
     assert [item.text for item in runtime.conversation] == ["earlier", "answer"]
+
+
+def test_the_output_cap_is_part_of_what_a_run_is_recorded_as() -> None:
+    """Change the cap and the same model on the same backend truncates at a
+    different point and gets a different amount of room to reach a submission.
+    A record naming model, backend and limits but not this would call two
+    conditions the same run."""
+    from hardy.chat import provenance
+
+    runtime = ApiRuntime(
+        "claude-test",
+        system_prompt="",
+        specs=[],
+        dispatch=lambda name, arguments: ToolResult(True, "ok"),
+        provider=AnthropicProvider("claude-test", client=FakeClient([]), max_tokens=4096),
+    )
+
+    assert runtime.output_limit == 4096
+    assert provenance(runtime)["output_limit"] == 4096
+
+
+def test_a_backend_that_imposes_no_cap_states_none() -> None:
+    # Absent rather than null: a key that is present and empty would claim a
+    # measurement about a transport that made none.
+    from hardy.chat import provenance
+
+    class Subscription:
+        model, backend, endpoint = "m", "claude", "fake"
+
+    assert "output_limit" not in provenance(Subscription())

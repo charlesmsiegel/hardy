@@ -22,6 +22,11 @@ KNOWN_BACKENDS = ("claude", "codex")
 
 Outcome = Literal["solved", "solved_other", "unsolved", "refused", "exhausted", "graded", "invalid"]
 EXHAUSTION = frozenset({"turn_limit", "wall_clock_limit"})
+#: The batch tools that invoke Lean, for the `lean_checks` metric. Named once
+#: so a tool added to the runner cannot quietly go uncounted: `sketch_proof`
+#: elaborates exactly as the other two do, and leaving it out made a run that
+#: developed its proof as a sketch report fewer Lean calls than it made.
+LEAN_CALLS = frozenset({"check_proof", "submit_proof", "sketch_proof"})
 MEDIAN_FIELDS = ("exchanges", "turns", "cost_usd", "wall_seconds", "search_calls", "lean_checks")
 
 
@@ -70,7 +75,7 @@ def batch_row(entry: Entry, tier: int, run_dir: Path, scoreboard_dir: Path, *, r
         base, terminal_reason=result.get("terminal_reason"),
         cost_usd=usage.get("cost_usd"), exchanges=usage.get("exchanges"), turns=result.get("turns"),
         wall_seconds=(trajectory.get("limits") or {}).get("elapsed_seconds"),
-        lean_checks=sum(1 for e in tools if e.get("name") in {"check_proof", "submit_proof"}),
+        lean_checks=sum(1 for e in tools if e.get("name") in LEAN_CALLS),
         search_calls=sum(1 for e in tools if e.get("name") in acceptance.BATCH_SEARCH),
     )
     if entry.expected == "true":

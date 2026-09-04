@@ -541,6 +541,14 @@ Priority labels are sequencing hints:
   exchange that happened to report nothing. A tool that raises is answered
   rather than propagated: an unanswered `tool_use` is not a bad turn but a dead
   conversation, since every later request built from it is one the API refuses.
+  The wall clock is read again before *each* call of a batch, not once for the
+  batch — one response can ask for several Lean checks, each able to run to its
+  own process timeout — and a call the budget no longer covers is refused
+  rather than skipped, since every `tool_use` still needs an answer. The output
+  cap each reply is generated under is recorded in the run's provenance
+  alongside model, backend and endpoint: change it and the same model gets a
+  different amount of room to reach a submission, which is a different
+  experimental condition.
   A reply that ends on `max_tokens` is disclosed as cut off rather than
   presented as a finished answer. One limit is stated rather than hidden: this
   transport cannot abort a request already in flight, so a cancel arriving
@@ -614,9 +622,13 @@ Priority labels are sequencing hints:
   is written into `transcript.jsonl` with what was summarised, where the kept
   messages start and what the summary said. The summary is rendered before the
   cut is chosen and charged against the same budget the kept tail is, so the
-  recorded `after` is the whole of what will be sent; a workspace whose
-  standing assumptions alone overflow the window is recorded as not fitting
-  rather than as a compaction that quietly claimed to be enough. A compaction that left no trace is
+  recorded `after` is the whole of what will be sent, and `fits` compares it
+  against the window rather than against the conversation it replaced — an
+  oversized last turn leaves a request still over the limit while the older
+  messages make it smaller than it was, and "smaller than before" would call
+  that a fit. A workspace whose standing assumptions or whose newest turn alone
+  overflow the window is recorded as not fitting rather than as a compaction
+  that quietly claimed to be enough. A compaction that left no trace is
   the invisible loss the feature exists to prevent. A backend whose SDK owns
   the loop is not offered a compactor at all, rather than handed one it would
   silently drop.

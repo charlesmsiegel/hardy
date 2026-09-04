@@ -288,6 +288,18 @@ class ApiRuntime:
         return getattr(self._provider, "endpoint", "messages api")
 
     @property
+    def output_limit(self) -> int | None:
+        """The cap every reply on this transport is generated under.
+
+        Recorded as part of a run's identity, because it is one: change it and
+        the same model on the same backend truncates at a different point and
+        gets a different amount of room to reach a submission. A record naming
+        model, backend and limits but not this would call two different
+        experimental conditions the same run.
+        """
+        return getattr(self._provider, "max_tokens", None)
+
+    @property
     def turns(self) -> int | None:
         return self._loop.turns
 

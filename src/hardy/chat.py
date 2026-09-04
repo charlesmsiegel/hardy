@@ -213,8 +213,19 @@ def provenance(runtime: Any) -> dict[str, Any]:
     The same `claude-opus-5` answered by Anthropic and by an OpenAI-compatible
     gateway are different experimental conditions, and a transcript that records
     only the identity cannot tell them apart afterwards.
+
+    `output_limit` is here for the same reason and only where a runtime states
+    one: a cap on how much a turn may write changes where a reply truncates and
+    how much room a run has to reach a submission, so two values of it are two
+    conditions. Absent, rather than `null`, on a backend that imposes none of
+    its own -- a key that is present and empty would claim a measurement about
+    a transport that made none.
     """
-    return {"model": runtime.model, "backend": getattr(runtime, "backend", None), "endpoint": getattr(runtime, "endpoint", None)}
+    stated = {"model": runtime.model, "backend": getattr(runtime, "backend", None), "endpoint": getattr(runtime, "endpoint", None)}
+    limit = getattr(runtime, "output_limit", None)
+    if limit is not None:
+        stated["output_limit"] = limit
+    return stated
 
 
 def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None) -> str:
@@ -3041,10 +3052,16 @@ class MathematicsSession:
             "kept_from": outcome.cut,
             "kept_messages": len(messages) - outcome.cut,
             # `after` counts the summary as well as the kept tail, because
-            # both are sent. `fits` is false when the summary alone is over
-            # budget -- compacting is still the best move available, and
-            # saying so beats a record that implies it was enough.
-            "estimated_tokens": {"before": outcome.before, "after": outcome.after, "fits": outcome.fits},
+            # both are sent, and `fits` compares it against the window rather
+            # than against the conversation it replaced -- compacting is still
+            # the best move available when it does not fit, and saying so beats
+            # a record that implies it was enough.
+            "estimated_tokens": {
+                "before": outcome.before,
+                "after": outcome.after,
+                "available": outcome.available,
+                "fits": outcome.fits,
+            },
             "sections": summarised.as_dict(),
             "text": summarised.render(),
         })
