@@ -688,6 +688,23 @@ class ArxivClient:
             except ArxivError:
                 self.library.drop_query(key)
         self._throttle()
+        # Asked again on the way out of the wait. Two processes wanting the
+        # same uncached query both miss above and both queue on the throttle;
+        # the first fills the cache while the second is still sleeping out the
+        # interval, and without this the second woke up and asked arXiv for
+        # something already on disk -- a duplicate request in exactly the
+        # multi-process case the lock exists for. This does not make the miss
+        # atomic: the transport is deliberately outside the lock, since
+        # serialising every request machine-wide is a different and much
+        # larger promise than spacing them. It removes the waste that the
+        # waiting itself creates.
+        cached = self.library.cached_query(key, now=self._clock())
+        if cached is not None:
+            body, fetched = cached
+            try:
+                return _entries(body, url, _stamp(fetched)), body
+            except ArxivError:
+                self.library.drop_query(key)
         body = self._transport(url, self._timeout)
         now = self._clock()
         # Parsed before it is cached, so the refusal below leaves nothing

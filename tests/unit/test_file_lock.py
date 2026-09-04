@@ -108,12 +108,38 @@ def test_a_lock_a_caller_may_do_without_comes_back_unheld(tmp_path: Path):
 
 
 def test_a_symlinked_lock_file_is_never_written_through(tmp_path: Path):
-    """A repository is free to ship one. `O_NOFOLLOW` refuses to open it."""
+    """A repository is free to ship one, and taking the lock truncates it.
+
+    Refused by `lstat` before the open and by `O_NOFOLLOW` in the open, so
+    that the check holds on Windows too -- where `O_NOFOLLOW` does not exist
+    and the flag quietly becomes nothing. Without the `lstat`, a clone
+    shipping `.local/bibliography.lock -> somewhere` had that file emptied by
+    the first `cite_paper`.
+    """
     outside = tmp_path / "outside"
     outside.write_text("mine", encoding="utf-8")
     path = tmp_path / "x.lock"
     path.symlink_to(outside)
-    with pytest.raises(LockUnavailable), FileLock(path, timeout=0.05):
+    with pytest.raises(LockUnavailable, match="symlink"), FileLock(path, timeout=0.05):
+        pass
+    assert outside.read_text(encoding="utf-8") == "mine"
+
+
+def test_a_symlink_is_refused_even_where_the_open_flag_does_not_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Windows has no `O_NOFOLLOW`, so the `lstat` is the whole leaf check.
+
+    Simulated by taking the flag away, because the platform that needs this
+    is not the one the suite ordinarily runs on -- and a guard that only
+    works where a second guard already covers it is not a guard.
+    """
+    monkeypatch.setattr("hardy.storage._NOFOLLOW", 0)
+    outside = tmp_path / "outside"
+    outside.write_text("mine", encoding="utf-8")
+    path = tmp_path / "x.lock"
+    path.symlink_to(outside)
+    with pytest.raises(LockUnavailable, match="symlink"), FileLock(path, timeout=0.05):
         pass
     assert outside.read_text(encoding="utf-8") == "mine"
 

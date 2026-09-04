@@ -354,3 +354,32 @@ def test_the_generated_file_is_still_reserved_at_the_tree_root(session) -> None:
     refused = session._tool("save_latex", {"path": "references.tex", "source": "x\n"})
     assert not refused.ok
     assert "written by Hardy" in refused.output
+
+
+def test_a_deletion_that_cannot_be_judged_still_keeps_the_fragment(session) -> None:
+    """The unlink happens first, so every way out has to put the file back.
+
+    `bibliography.json` is read to vouch for the reference list the compile
+    built, and an unreadable one raises rather than returning a refusal --
+    which came out of the compile, went past the restoration, and left the
+    fragment permanently deleted by an operation reported as having failed.
+    """
+    bare = session._tool(
+        "save_latex",
+        {"source": "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n"},
+    )
+    assert bare.ok, bare.output
+    saved = session._tool("save_latex", {"path": "sections/one.tex", "source": "Text.\n"})
+    assert saved.ok, saved.output
+    joined = session._tool(
+        "save_latex",
+        {"source": "\\documentclass{article}\n\\begin{document}\n\\input{sections/one}\n\\end{document}\n"},
+    )
+    assert joined.ok, joined.output
+    fragment = session.workspace / "tex" / "sections" / "one.tex"
+    assert fragment.is_file()
+    (session.workspace / "bibliography.json").write_text("{ not json", encoding="utf-8")
+    result = session._tool("delete_file", {"path": "sections/one.tex"})
+    assert not result.ok
+    assert fragment.is_file(), "the fragment was lost by a deletion that reported failure"
+    assert fragment.read_text(encoding="utf-8") == "Text.\n"
