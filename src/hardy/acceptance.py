@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -724,7 +725,7 @@ def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]], rea
             event for event in events
             if event.get("type") == "tool"
             and event.get("name") == "submit_proof"
-            and str((event.get("arguments") or {}).get("proof", "")) == f"by {closed_by}"
+            and _proof_argument(event) == f"by {closed_by}"
         ]
         accepted = [
             event for index, event in enumerate(events)
@@ -799,7 +800,7 @@ def _attempt_issues(attempts: list[Any], events: list[dict[str, Any]]) -> list[s
             continue
         position, event = submissions[index]
         expected = f"by {attempt.get('tactic')}"
-        if str((event.get("arguments") or {}).get("proof", "")) != expected:
+        if _proof_argument(event) != expected:
             issues.append(f"closer attempt {index + 1} does not match the proof submitted for it")
         result = event.get("result")
         # Against whether the run *kept* the submission, not against Lean's raw
@@ -945,7 +946,7 @@ def _sketch_issues(
         issues.append("a sketch is recorded that no accepted sketch_proof produced")
     else:
         last = latest_events[-1] if latest_events else accepted[-1]
-        if str((last.get("arguments") or {}).get("proof", "")) != str(sketch.get("proof", "")):
+        if _proof_argument(last) != str(sketch.get("proof", "")):
             issues.append("the kept sketch is not the last skeleton Lean accepted")
         # Asked of `sketch_proof` alone, because it is the only tool that
         # reports a hole list: `check_proof` answers whether Lean accepted the
@@ -1026,6 +1027,18 @@ def _usage_issues(usage: Any, where: str) -> list[str]:
         elif usage[field] is not None and not isinstance(usage[field], (int, float)):
             issues.append(f"{where} usage states a non-numeric {field}")
     return issues
+
+
+def _proof_argument(event: Mapping[str, Any]) -> str:
+    """The `proof` a recorded tool event was called with, or "".
+
+    `or {}` is not a guard: a truthy non-mapping -- a string, from a truncated
+    or hand-merged trajectory -- passes straight through it and raises
+    `AttributeError` on `.get`, which turns "this record is invalid" into a
+    crash. A validator may report anything except that.
+    """
+    arguments = event.get("arguments")
+    return str(arguments.get("proof", "")) if isinstance(arguments, Mapping) else ""
 
 
 def _discarded(events: list[dict[str, Any]], index: int) -> bool:

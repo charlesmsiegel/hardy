@@ -36,3 +36,8 @@ release/
 .coverage.*
 coverage.xml
 htmlcov/
+
+# The default `hardy batch --output` destination. Generated experiment data,
+# and the one place an ordinary run from a checkout writes to: tracked, every
+# run dirties the worktree and invites a commit of model output.
+hardy-output/

@@ -435,9 +435,23 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             return None
         facts = compaction.Facts(
             goal=request.informal_claim,
+            # The frozen statement, verbatim. The cut discards the task message
+            # that carried it, and a model left with the prose alone writes
+            # candidates that cannot type-check against the declaration it was
+            # told not to change.
+            declaration=request.declaration,
             assumptions=[],
             proved=[found["proof"]] if found["proof"] else [],
-            open_declarations=[str(item.get("keyword")) for item in sketched["holes"]],
+            open_declarations=[
+                f"{item.get('keyword')} at line {item.get('line')} of the retained skeleton"
+                for item in sketched["holes"]
+            ],
+            # And the skeleton itself, which on this surface lives nowhere else:
+            # a batch run writes no workspace file for a partial development, so
+            # a cut that dropped the `sketch_proof` message would leave the
+            # model unable to continue from the development the record says
+            # Hardy is holding.
+            development=str(sketched["proof"] or ""),
             names=[],
             attempts=compaction.failed_attempts(events),
             next_steps=[],
