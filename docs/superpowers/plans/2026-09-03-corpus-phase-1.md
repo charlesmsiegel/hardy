@@ -1679,6 +1679,31 @@ changed, so `prompt_digest` moved and `statement_digest` did not — the entry's
 A-group measurements survive the correction, which is the component split
 doing its job.
 
+**The manifest hashes posix-shaped paths.** `str(Path.relative_to(root))`
+yields backslashes on Windows, so an unchanged corpus hashed differently per
+platform: the committed changelog would have failed `corpus check` on Windows
+— the very machine the baseline was swept on — and a scoreboard made there
+could not have carried the same corpus identity anywhere else.
+
+**Relabelling a true entry as a twin no longer reuses its baseline.**
+`statement_digest` excludes `expected` and `twin_of` (they live in
+`prompt_digest`), but `sweep_entry` records the A3 negation sweep only for a
+twin, and the "a twin closed by X, so it is true" finding is computed at sweep
+time under the label then in force. So a flipped entry kept a baseline with
+`negation: null`, A3 never ran on it as a twin, and the guard never fired —
+leaving the model asked to refute a claim the kernel can prove. `staleness`
+now re-derives both checks from what the baseline already records, so they
+hold at every run rather than only at the sweep that produced them.
+
+**The procedure digest covers the wall backstop, and survives CRLF.**
+`run_baseline` varies `wall_backstop_seconds` with `config.lean_timeout`, and
+the backstop moves attempts between `timed_out` and `closed` — which moves
+tiers — so it belongs in the procedure identity beside the heartbeat budget.
+Separately, `.gitattributes` pins `corpus/**` and `evals/**` but not `src/**`,
+so a Windows checkout of the same commit can hold CRLF source; the source
+digests normalise line endings rather than rejecting identical logic for a
+checkout artefact.
+
 ### Known gaps, deliberately left to their phase
 
 - **`Review` does not bind the origin it was read against.** `occurrences` and

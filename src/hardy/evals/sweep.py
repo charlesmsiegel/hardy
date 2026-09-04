@@ -247,21 +247,38 @@ DECIDING_SOURCES = (
 )
 
 
+def _digest_source(raw: bytes) -> str:
+    """Hash source with line endings normalised.
+
+    `.gitattributes` pins `corpus/**` and `evals/**` as `-text` because their
+    bytes are hashed; `src/**` is not pinned, so a Windows checkout of the
+    same commit can hold CRLF. Hashing raw bytes would then give identical
+    executable logic two different procedure digests, and a baseline swept
+    there would be refused everywhere else for no real reason.
+    """
+    return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+
+
 @cache
 def _source_digests() -> tuple[str, ...]:
-    return tuple(hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in DECIDING_SOURCES)
+    return tuple(_digest_source(Path(path).read_bytes()) for path in DECIDING_SOURCES)
 
 
-def procedure_digest_of() -> str:
+def procedure_digest_of(wall_backstop_seconds: float) -> str:
     """Hardy's identity, the ladder, the budgets -- and the deciding source.
 
     `__version__` alone is not a source revision: it is fixed at 0.1.0 across
     every checkout, so a change to the sweep logic, the axiom parser or the
     elaboration wrapper would leave the digest identical and `staleness` would
     accept measurements produced by different code. Hashing those modules'
-    bytes is deliberately conservative -- editing a comment in one of them
-    stales the baseline -- because the alternative error is the one this whole
-    arrangement exists to prevent.
+    (line-ending-normalised) bytes is deliberately conservative -- editing a
+    comment in one of them stales the baseline -- because the alternative
+    error is the one this whole arrangement exists to prevent.
+
+    `wall_backstop_seconds` is in here and `HEARTBEAT_BUDGET` beside it
+    because both decide outcomes: the process backstop moves attempts between
+    `timed_out` and `closed`, which moves tiers, and `run_baseline` varies it
+    with `config.lean_timeout` rather than holding it constant.
     """
     from .. import __version__
 
@@ -271,6 +288,7 @@ def procedure_digest_of() -> str:
         "singles": list(SINGLES),
         "chains": list(CHAINS),
         "heartbeat_budget": HEARTBEAT_BUDGET,
+        "wall_backstop_seconds": wall_backstop_seconds,
     })
 
 
@@ -461,7 +479,7 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
         created_at=now(), problems_sha256=problems_sha256,
         statement_digests={e.id: e.statement_digest() for e in problems.entries},
         environment_digest=environment_digest_of(environment, host),
-        procedure_digest=procedure_digest_of(),
+        procedure_digest=procedure_digest_of(wall_backstop_seconds),
         environment=environment,
         heartbeat_budget=HEARTBEAT_BUDGET, wall_backstop_seconds=wall_backstop_seconds, import_seconds=import_seconds,
         singles=SINGLES, chains=CHAINS, host=host, problems=tuple(findings), entries=entries,
@@ -490,8 +508,39 @@ def baseline_entries_mismatch(baseline: Baseline, problem_ids: Iterable[str]) ->
     return "the baseline's entries do not match the problem list (" + "; ".join(parts) + ")"
 
 
+def _truth_label_issues(baseline: Baseline, expectations: dict[str, str]) -> list[str]:
+    """Refuse a baseline swept under a different truth label (spec §3).
+
+    `statement_digest` deliberately excludes `expected` and `twin_of` -- they
+    live in `prompt_digest` -- but `sweep_entry` records the A3 negation sweep
+    only for a twin, and the "a twin closed by X, so it is true" finding is
+    computed at sweep time from the label then in force. So relabelling a true
+    entry as false left its old baseline looking fresh with `negation=None`:
+    A3 never ran on it as a twin, and the guard never fired. The model would
+    be asked to refute a claim the kernel can prove.
+
+    Both checks are re-derived here from what the baseline already records, so
+    they hold at every run rather than only at the sweep that produced it.
+    """
+    issues: list[str] = []
+    for id, expected in sorted(expectations.items()):
+        entry = baseline.entries.get(id)
+        if entry is None:
+            continue  # `baseline_entries_mismatch` names this
+        if expected == "false" and entry.negation is None:
+            issues.append(
+                f"{id} is a twin but its baseline records no negation sweep: it was swept as a "
+                "true entry; re-run `hardy evals baseline`"
+            )
+        if expected == "false" and entry.closed_by:
+            issues.append(
+                f"{id}: a twin closed by {', '.join(entry.closed_by)}, so it is true"
+            )
+    return issues
+
+
 def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environment: EnvironmentIdentity,
-              problem_ids: Iterable[str], host: dict[str, Any] | None = None) -> tuple[str, ...]:
+              problem_ids: Iterable[str], expectations: dict[str, str], host: dict[str, Any] | None = None) -> tuple[str, ...]:
     """Why this baseline cannot tier a run today (spec §3.1). Empty means it can.
 
     Staleness is per entry, not per file. A whole-corpus hash would call every
@@ -549,7 +598,7 @@ def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environm
         )
     if not baseline.procedure_digest:
         issues.append("the baseline records no procedure digest; re-run `hardy evals baseline`")
-    elif baseline.procedure_digest != procedure_digest_of():
+    elif baseline.procedure_digest != procedure_digest_of(baseline.wall_backstop_seconds):
         issues.append(
             "the baseline's procedure digest is not this build's: the ladder, the budgets or Hardy "
             "itself changed since the sweep; re-run `hardy evals baseline`"
@@ -566,6 +615,7 @@ def staleness(baseline: Baseline, *, statement_digests: dict[str, str], environm
         )
     if baseline.problems:
         issues.append("the baseline records problems with the list: " + "; ".join(baseline.problems))
+    issues.extend(_truth_label_issues(baseline, expectations))
     mismatch = baseline_entries_mismatch(baseline, problem_ids)
     if mismatch is not None:
         issues.append(mismatch)

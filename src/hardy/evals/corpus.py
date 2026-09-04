@@ -186,7 +186,12 @@ def manifest_digest(root: Path) -> str:
     """A hash over every content file. `measurements/` is deliberately absent."""
     hasher = hashlib.sha256()
     for path in _content_paths(root):
-        hasher.update(str(path.relative_to(root)).encode("utf-8"))
+        # `.as_posix()`, not `str`: `str(Path)` yields backslashes on Windows,
+        # so an unchanged corpus would hash differently per platform -- the
+        # committed changelog would fail `corpus check` on Windows, and a
+        # scoreboard made there could not carry the same corpus identity
+        # anywhere else.
+        hasher.update(path.relative_to(root).as_posix().encode("utf-8"))
         hasher.update(path.read_bytes())
     return hasher.hexdigest()
 
