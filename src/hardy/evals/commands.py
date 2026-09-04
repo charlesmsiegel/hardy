@@ -164,8 +164,18 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
     if config is not None:
         probe = elaborate(sweep.header(("Mathlib",)) + "\nexample : True := trivial\n")
         import_seconds = probe.process.duration_ms / 1000.0 if probe.success else None
+    # Carry forward every entry whose identity did not move (spec §3). The
+    # single repair route for a stale baseline is this command, so without it
+    # a one-line correction re-elaborates the whole corpus.
+    prior = None
+    if args.out.exists():
+        try:
+            prior = sweep.Baseline.model_validate_json(args.out.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            prior = None   # unreadable prior: sweep everything, say nothing
     baseline = sweep.sweep(
         problems, problems_sha256=manifest_digest(args.problems), environment=identity, elaborate=elaborate, now=now,
+        prior=prior,
         host=host_info(), import_seconds=import_seconds,
         wall_backstop_seconds=max(float(config.lean_timeout), sweep.WALL_BACKSTOP_FLOOR) if config is not None else sweep.WALL_BACKSTOP_FLOOR,
         report=lambda line: print(line, file=sys.stderr),

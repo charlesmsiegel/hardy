@@ -66,6 +66,11 @@ from a hole. A witness naming anything beyond `propext`, `Classical.choice` and
 `trivial` for the `True`. An entry with no binders needs no witness of this
 shape and records `trivial`.
 
+An entry with **no binders at all** is reported *unwitnessed* rather than
+trivially witnessed: a premise may live inside `conclusion` (as in
+`∀ n < 10, …`), and nothing here parses Lean to find it. Put hypotheses in
+`binders` if the entry should have A6 coverage.
+
 Binders that `∃` cannot bind — implicit `{α : Type*}` or instance `[Group G]` —
 have no witness in this form. Such an entry records `witness: null` with a
 `witness_note` saying so, and is reported *unwitnessed* rather than passed: the

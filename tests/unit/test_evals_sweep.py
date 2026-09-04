@@ -416,10 +416,17 @@ def test_a_witness_whose_axioms_were_never_reported_is_broken():
     assert sweep.witness_verdict(_witness_entry(), elaborate=lambda _: _elaboration([])) == "broken"
 
 
-def test_a_witness_for_a_hypothesis_free_entry_still_compiles_to_something():
-    """Nothing to instantiate, so there is nothing A6 can be lied to about."""
-    source = sweep.witness_source(_witness_entry(binders="", witness="trivial"))
-    assert "∃" not in source and "True" in source
+def test_an_entry_with_no_binders_is_unwitnessed_rather_than_trivially_witnessed():
+    """The schema lets a premise live in `conclusion` -- `euler-polynomial-small`
+    is `∀ n < 10, Nat.Prime (n ^ 2 + n + 41)` with empty binders -- and this
+    module never parses Lean, so it cannot pull that premise out to quantify
+    over. Building `True := trivial` would record A6 as `witnessed` while
+    establishing nothing about the premise, even an impossible one. A6 has
+    nothing to check here, and says so.
+    """
+    entry = _witness_entry(binders="", conclusion="∀ n < 10, Nat.Prime (n + 41)", witness="trivial")
+    assert sweep.witness_source(entry) is None
+    assert sweep.witness_verdict(entry, elaborate=_never_called) == "unwitnessed"
 
 
 def test_an_entry_with_no_witness_reports_unwitnessed_rather_than_failing():
@@ -588,3 +595,53 @@ def test_the_procedure_digest_covers_the_wall_backstop_and_survives_crlf():
 
     normalised = sweep._digest_source(b"def f():\r\n    return 1\r\n")
     assert normalised == sweep._digest_source(b"def f():\n    return 1\n")
+
+
+def test_a_sweep_reuses_entries_whose_identity_did_not_move():
+    """The point of per-entry digests (spec section 3): correcting one
+    statement in a corpus of thousands is a re-sweep of one entry, not of
+    thousands. Without a reuse path the digests are diagnostic only, and the
+    single repair route -- `hardy evals baseline` -- still elaborates
+    everything.
+    """
+    first = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                        now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+
+    swept: list[str] = []
+
+    def counting(source: str) -> Elaboration:
+        swept.append(source)
+        return _elaboration([])
+
+    corrected = {**DIGESTS, "easy": "e" * 64}
+    again = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=counting,
+                        now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=HOST,
+                        prior=first, prior_statement_digests=corrected)
+    assert swept, "the drifted entry is swept"
+    assert all("Easy" in s or "example :" in s for s in swept), swept
+    for id in ("lib", "chain", "hard", "twin"):
+        assert again.entries[id] == first.entries[id], f"{id} was re-swept for nothing"
+
+
+def test_a_sweep_reuses_nothing_when_the_procedure_or_environment_moved():
+    """Reuse is per entry, but only under an identity the prior baseline
+    shares: a Mathlib upgrade or a change to the sweep code invalidates every
+    row at once, and silently keeping them would be the exact failure the
+    environment and procedure digests exist to prevent.
+    """
+    first = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                        now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    stale = first.model_copy(update={"procedure_digest": "q" * 64})
+
+    swept: list[str] = []
+
+    def counting(source: str) -> Elaboration:
+        swept.append(source)
+        return _elaboration([])
+
+    sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=counting,
+                now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=HOST,
+                prior=stale, prior_statement_digests=DIGESTS)
+    names = " ".join(swept)
+    for name in ("Easy", "Lib", "Chain", "Hard", "Twin"):
+        assert name in names, f"{name} must be re-swept when the procedure moved"

@@ -35,6 +35,18 @@ def test_the_committed_baseline_describes_the_committed_list_with_no_problems():
         assert getattr(baseline.environment, field)
 
 
+def test_the_committed_baseline_never_claims_a_procedure_it_cannot_support():
+    """A digest is a claim about which code produced these measurements.
+
+    Hand-stamping it onto an artifact swept by earlier code would defeat the
+    source-identity gate exactly where it matters -- the committed evidence --
+    so the field is either absent (honestly stale until a real re-sweep) or
+    equal to what the current code computes. It is never edited to match.
+    """
+    baseline = sweep.Baseline.model_validate_json((EVALS / "baseline.json").read_text(encoding="utf-8"))
+    assert baseline.procedure_digest in ("", sweep.procedure_digest_of(baseline.wall_backstop_seconds))
+
+
 @pytest.mark.parametrize("scoreboard", SCOREBOARDS, ids=[p.name for p in SCOREBOARDS])
 def test_each_committed_scoreboard_recomputes_from_its_runs(scoreboard: Path) -> None:
     assert validate_scoreboard(scoreboard, problems_path=CORPUS, baseline_path=EVALS / "baseline.json") == ()
