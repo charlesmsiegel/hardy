@@ -184,17 +184,32 @@ def attempts(events: Iterable[Mapping[str, Any]], *, limit: int = ATTEMPTS) -> t
     dropped = len(every) - len(kept)
     if not dropped:
         return tuple(kept)
-    # Said, not silently swallowed. A section a reader takes for the whole
-    # record has to admit when it is not, or "twelve attempts" reads as "twelve
-    # attempts happened".
+    # Said, not silently swallowed, and BOTH kinds counted. A section a reader
+    # takes for the whole record has to admit when it is not, or "twelve
+    # attempts" reads as "twelve attempts happened" -- and the floor caps the
+    # denials too, so claiming every SDK refusal was kept is a false
+    # completeness guarantee in the one place this summary reports host access
+    # at all. The export's notice says the same two things for the same reason.
+    lost_denied = len(denied) - len(kept_denied)
+    lost_rest = len(rest) - (len(kept) - len(kept_denied))
+    said = []
+    if lost_denied:
+        said.append(
+            f"{lost_denied} older SDK-refused "
+            f"{'request is' if lost_denied == 1 else 'requests are'} not listed"
+        )
+    if lost_rest:
+        said.append(
+            f"{lost_rest} older folded "
+            f"{'attempt is' if lost_rest == 1 else 'attempts are'} not listed"
+        )
     return tuple(
         kept
         + [
             Attempt(
                 "(clipped)",
                 "",
-                f"{dropped} older folded {'attempt is' if dropped == 1 else 'attempts are'} "
-                "not listed; every call the SDK refused outright is kept above",
+                " and ".join(said) + "; the newest of each kind is kept",
             )
         ]
     )

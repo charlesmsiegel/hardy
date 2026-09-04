@@ -1364,3 +1364,21 @@ def test_the_clip_notice_names_both_kinds_it_dropped():
     )
     assert "SDK-refused requests are not listed" in listed
     assert "Every call the SDK refused outright is shown" not in listed
+
+
+def test_a_shared_library_that_moved_under_the_gather_is_flagged():
+    """Editing `.hardy/lean` mid-gather is supported and unserialised.
+
+    The verdicts were validated against the identity taken first; if the digest
+    moved before the modules were read, the page is showing source the audit
+    was not established against, under a badge that says it was.
+    """
+    page = build(
+        shared_moved=True, shared_sources={"Helper": "theorem helper : True := trivial"}
+    )
+    assert "changed while this page was being gathered" in page
+    assert "Re-run the audit" in page
+
+
+def test_a_settled_shared_library_says_nothing():
+    assert "changed while this page was being gathered" not in build()

@@ -3183,6 +3183,16 @@ class MathematicsSession:
         self._refresh_shared_identity()
         sources = self.lean_workspace.sources()
         tex = self._tex_sources()
+        # Read here, next to the identity that was just refreshed, and carried
+        # down rather than read again where it is used. `_refresh_shared_identity`
+        # validates every stored verdict against the shared bytes as they were a
+        # moment ago; a user editing `.hardy/lean` in their own editor is
+        # supported and is not serialised by the tool gate, so reading the
+        # modules later could put a different dependency on a page that has
+        # already badged the theorem kernel-verified. `_shared_moved` below says
+        # whether that happened between the two.
+        shared_sources = self._shared_sources(sources)
+        shared_moved = self._shared_digest() != self._shared_stamp
         document = self.workspace / "writeup.pdf"
         # Not through a link. `is_file` and `stat` both follow one, so a
         # checked-out `writeup.pdf -> /etc/passwd` would have the export state
@@ -3216,7 +3226,15 @@ class MathematicsSession:
             # map, not the source. Locally authored, so a recipient has no other
             # copy to compare against: without this the export is not standalone
             # for exactly the workspaces that wrote their own library.
-            "shared_sources": self._shared_sources(sources),
+            "shared_sources": shared_sources,
+            # Whether the shared library changed under the gather. It is not
+            # enough to read the modules once: the verdicts above were validated
+            # against the identity taken before that read, so if the digest has
+            # moved since, the page is showing source the audit was not
+            # established against. Said rather than silently reconciled --
+            # re-running the identity here would make the badges agree with the
+            # new bytes without anything having re-checked them.
+            "shared_moved": shared_moved,
             # The disclosure the compiled document's banner carries. The export
             # embeds no PDF, so without this a theorem Hardy knows closes with
             # one `simp` reads as kernel-verified and nothing more -- the page

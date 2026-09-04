@@ -168,6 +168,7 @@ def test_a_clipped_attempt_list_says_it_was_clipped():
     notice = [item for item in summary.attempts(events, limit=5) if item.tool == "(clipped)"]
     assert len(notice) == 1
     assert "35 older folded attempts are not listed" in notice[0].detail
+    assert "every call the SDK refused outright is kept" not in notice[0].detail
 
 
 def test_an_unclipped_attempt_list_claims_no_omission():
@@ -352,3 +353,21 @@ def test_a_tool_the_sdk_refused_counts_as_a_failed_attempt():
 
     assert found and found[0].tool == "Bash"
     assert "never ran" in found[0].detail
+
+
+def test_the_clip_notice_does_not_promise_every_denial_survived():
+    """The floor caps the denials too.
+
+    `/status --full` renders these attempts and no other section carries the
+    omitted denials, so telling the user every refusal was kept is a false
+    completeness guarantee in the one place this summary reports host access.
+    """
+    events = [{"type": "refused_tool", "name": f"Bash{index}"} for index in range(12)] + [
+        {"type": "tool", "name": f"save{index}", "arguments": {"path": f"M{index}.lean"},
+         "result": {"ok": False, "output": "no"}}
+        for index in range(6)
+    ]
+    notice = [item for item in summary.attempts(events) if item.tool == "(clipped)"]
+    assert len(notice) == 1
+    assert "SDK-refused requests are not listed" in notice[0].detail
+    assert "every call the SDK refused outright is kept" not in notice[0].detail
