@@ -194,6 +194,17 @@ def _assumption_line(record: Mapping[str, Any]) -> str:
         f"    approved: {record.get('status', 'unknown')}"
         + (f" on {approved}" if approved else " (date not recorded)")
     )
+    # The goal as it stood when the user said yes. `/goal` overwrites a
+    # singleton, so the goal printed at the top of this summary is not
+    # necessarily the one this axiom was approved for -- and a reader who
+    # assumed it was would credit the approval to a question nobody asked.
+    # Printed whenever it was recorded, not only when it differs: this
+    # function is not given the current goal to compare against, and a line
+    # that appeared only sometimes would read as a warning rather than as a
+    # field.
+    at_approval = str(record.get("goal_at_approval", "")).strip()
+    if at_approval:
+        parts.append(f"    goal at approval: {at_approval}")
     return "\n".join(parts)
 
 
