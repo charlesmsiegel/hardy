@@ -60,6 +60,12 @@ def _table(payload: dict, key: str, path: Path) -> dict:
     `Counter` is handed something unhashable -- on a corpus the check just
     declared clean.
     """
+    # The envelope, before the table: `[]` is valid JSON and an ordinary
+    # half-finished edit, and `.get` on it raises `AttributeError` -- which
+    # `corpus check` does not catch, so the command asked to report the
+    # malformed taxonomy died on it instead.
+    if not isinstance(payload, dict):
+        raise MalformedTaxonomy(f"{path.name} is not a JSON object")
     value = payload.get(key)
     if not isinstance(value, dict):
         raise MalformedTaxonomy(f"{path.name} has no {key!r} table")

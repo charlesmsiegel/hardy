@@ -14,6 +14,7 @@ The CSV is tab-separated despite its name, latin-1, CRLF, with quoted fields.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -95,16 +96,26 @@ GROUPS = {
 }
 
 
-def read(path: Path) -> list[tuple[str, str]]:
-    with path.open(encoding="latin-1", newline="") as handle:
-        rows = list(csv.reader(handle, delimiter="\t"))
+def read(path: Path) -> tuple[list[tuple[str, str]], str]:
+    """The rows, and the digest of the bytes they were read from.
+
+    The digest is what makes the recorded provenance checkable. This script
+    takes a path, so the bytes may be a stale download, a hand-edited copy, or
+    the wrong file entirely -- and the taxonomy it writes is manifest-bound
+    into a published corpus whose entries are classified by these codes.
+    Naming only the official URL would let any of those be published as the
+    official release; naming the digest lets anyone verify which it was.
+    """
+    raw = path.read_bytes()
+    rows = list(csv.reader(raw.decode("latin-1").splitlines(), delimiter="\t"))
     assert rows[0] == ["code", "text", "description"], rows[0]
-    return [(code, text) for code, text, _ in rows[1:]]
+    return [(code, text) for code, text, _ in rows[1:]], hashlib.sha256(raw).hexdigest()
 
 
 def main(argv: list[str]) -> int:
     source = Path(argv[1]) if len(argv) > 1 else Path("MSC_2020.csv")
-    rows = read(source)
+    rows, digest = read(source)
+    provenance = {"url": SOURCE, "sha256": digest}
     codes = dict(rows)
     fields = {code[:2]: text for code, text in rows if code.endswith("-XX")}
 
@@ -114,16 +125,21 @@ def main(argv: list[str]) -> int:
     assert not sorted(set(fields) - set(ARXIV_BY_CLASS)), "classes with no arXiv class"
 
     (TAXONOMY / "msc2020.json").write_text(
-        json.dumps({"schema_version": 2, "source": SOURCE, "codes": codes},
+        json.dumps({"schema_version": 2, "source": provenance, "codes": codes},
                    indent=1, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8", newline="\n")
     (TAXONOMY / "msc-to-arxiv.json").write_text(
         json.dumps({"schema_version": 2,
+                    # `arxiv` and `groups` are editorial and belong to this
+                    # script; only `fields` comes from the CSV, so only it has
+                    # a source to name.
+                    "fields_source": provenance,
                     "arxiv": {**ARXIV_BY_CLASS, **ARXIV_BY_SECTION},
                     "fields": fields, "groups": groups},
                    indent=1, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8", newline="\n")
     print(f"{len(codes)} codes, {len(fields)} classes, {len(set(groups.values()))} groups")
+    print(f"from {source} sha256 {digest}")
     return 0
 
 

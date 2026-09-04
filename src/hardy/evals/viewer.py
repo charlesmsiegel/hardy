@@ -106,9 +106,7 @@ def payload(root: Path) -> dict[str, Any]:
         version = None
     try:
         sources = load_sources(root)
-        if not isinstance(sources, dict):
-            sources = {}
-    except (OSError, ValueError, KeyError, TypeError):
+    except (CorpusError, OSError, ValueError, KeyError, TypeError):
         # `check_issues` already recorded it. Raising here would abort the
         # response, so the page could not show the objection it exists to show.
         sources = {}

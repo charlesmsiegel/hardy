@@ -498,3 +498,23 @@ def test_a_release_writes_nothing_when_any_shard_is_unreadable(tmp_path):
     assert "20.json" in str(raised.value)
     assert {p.name: p.read_bytes() for p in sorted((tmp_path / "problems").iterdir())} == before
     assert (tmp_path / "CHANGELOG.md").read_bytes() == changelog
+
+
+@pytest.mark.parametrize("name", ["sources.json", "tombstones.json",
+                                  "taxonomy/msc2020.json", "taxonomy/msc-to-arxiv.json"])
+def test_a_sidecar_that_is_valid_json_of_the_wrong_shape_is_reported(tmp_path, name):
+    """`[]` parses, so nothing on the read path objects to it.
+
+    Every one of these files is hand-edited, and a top-level list is what a
+    half-finished edit leaves behind. `load_sources` then indexes it and the
+    taxonomy calls `.get` on it, raising `TypeError` and `AttributeError` --
+    neither of which `_gathered` catches, so the command asked to report the
+    malformed corpus died on it instead.
+    """
+    root = tmp_path / "corpus"
+    _write(root, "13", [_entry(id="a", name="A", msc=["13A15"])], version="0.1.0")
+    _registry(root, {"a": "2026-09-03"})
+    _changelog(root, "0.1.0")
+    (root / name).write_text("[]", encoding="utf-8")
+    issues = check_issues(root)
+    assert issues and any(Path(name).name in issue for issue in issues), issues
