@@ -668,6 +668,13 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
             # being reconstructed from a tree that has moved since.
             named = ", ".join(str(name) for name in event.get("theorems", ()) or ())
             rested = ", ".join(str(name) for name in event.get("assumptions", ()) or ())
+            # WHICH of them still had holes. `partial` says some did; the event
+            # carries the names and the page was dropping them. The tool result
+            # below repeats them, but it keeps only its last 4,000 bytes, so a
+            # run with enough unrelated obligations pushed the names off the
+            # page entirely -- leaving a reader who can see that a report was
+            # partial unable to see what it was partial about.
+            opened = ", ".join(str(name) for name in event.get("open", ()) or ())
             statements = event.get("statements")
             body = (
                 "\n\n".join(
@@ -681,6 +688,7 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
                 f'<p class="tool">{_escape(named or "nothing")} — reported as '
                 f'{_escape(event.get("status", "?"))}'
                 + (f", resting on {_escape(rested)}" if rested else "")
+                + (f", still open: {_escape(opened)}" if opened else "")
                 + ". This is the statement as it was at the time of the report."
                 "</p>"
                 # Verbatim: this is a formal statement the kernel graded, and
@@ -948,6 +956,7 @@ paragraph above says.</p>
         ("Lean toolchain", _printable(material.get("toolchain", "unknown"))),
         ("Lean environment", _printable(material.get("environment", "unknown"))),
     )
+    + _settings(material.get("settings"))
 )}
 
 <h2>Conversation</h2>
@@ -1124,6 +1133,31 @@ def _printable(value: Any) -> str:
     return str(value).replace("\0", "\\0")
 
 
+def _settings(settings: Any) -> tuple[tuple[str, Any], ...]:
+    """The result-affecting configuration, as rows beside the identities.
+
+    Model and toolchain say who and what ran; these say what they were allowed
+    to do. Two sessions on the same model and the same Lean are still different
+    experiments if one gave Lean thirty seconds and the other three minutes, or
+    if one had a computer algebra kernel and the other had none -- the same
+    prompt then reaches a different set of finished audits and observed
+    computations, and a page that cannot show that cannot be used to compare
+    them.
+
+    A workspace whose gatherer predates the field says so rather than showing
+    nothing, which would read as "there was nothing to say".
+    """
+    if not isinstance(settings, Mapping) or not settings:
+        return (
+            (
+                "Session settings",
+                "not recorded — this export predates the field, so the Lean timeout "
+                "and the tools available cannot be read off this page",
+            ),
+        )
+    return tuple((str(name), value) for name, value in settings.items())
+
+
 def _default_mode() -> int:
     """0644 as the process umask would have made it.
 
@@ -1169,4 +1203,12 @@ def default_path(workspace: Path, project: str, *, now: datetime | None = None) 
             return chosen
         except FileExistsError:
             chosen = workspace / f"{project}-{stamp}-{suffix}.html"
-    return chosen
+    # Every name in the range was taken. Returning the last candidate would
+    # hand back a path this function never reserved -- so two exporters could
+    # pick it together and `write` would destroy one of the reports, which is
+    # the whole thing the reservation exists to prevent. Refusing says what
+    # happened and costs the user nothing they cannot fix by naming a file.
+    raise ValueError(
+        f"{workspace} already holds an export named {project}-{stamp} and 999 "
+        "numbered variants of it. Name the file to write instead."
+    )
