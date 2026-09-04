@@ -142,8 +142,9 @@ statement, how much a plain tactic already closes before any model is asked;
 `hardy evals run --label L --acknowledge-unsafe-execution` scores a model
 against that floor and writes a scoreboard under `evals/scoreboards/<label>/`;
 `hardy evals check <scoreboard-dir>` re-derives every figure in a committed
-scoreboard from its run directories, the way `hardy accept --recorded` does
-for the acceptance runs. See "Evaluation set (evals/)" in `FEATURES.md` for
+scoreboard from its run directories and the corpus and tier file it names by
+digest — as `hardy accept --recorded` does for the acceptance runs, which need
+nothing but the run itself. See "Evaluation set (evals/)" in `FEATURES.md` for
 the tiering rule, the outcome table, and what the aggregates do and do not
 report.
 
@@ -629,7 +630,7 @@ is.
 | Command | What it does |
 | --- | --- |
 | `hardy`, `hardy chat` | Open or resume the interactive session on one problem. |
-| `hardy doctor` | Report whether Lean, LaTeX, computer algebra, and the model are usable. |
+| `hardy doctor` | Report whether Lean, LaTeX, computer algebra, and the model configuration are usable. |
 | `hardy setup` | Discover, install, and record the pinned toolchain. |
 | `hardy prove` | Take one claim from statement to verified document, staged and gated. |
 | `hardy accept` | Run the checked-in acceptance problems, or recheck recorded runs. |
@@ -712,15 +713,17 @@ terminal on both ends asks which to open rather than silently creating a third.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `--root PATH` | the current directory | The directory holding one or more problems. |
-| `--project SLUG` | the active problem, or `main` | Which problem to open. |
-| `--register-lakefile` | ask, where a host `lakefile.toml` exists | Add this problem's `lean/` to the host `lakefile.toml` as a `lean_lib`. |
+| `--root PATH` | `$HARDY_ROOT`, else `root` in the config file, else the current directory | The directory holding one or more problems. |
+| `--project SLUG` | `$HARDY_PROJECT`, else `project` in `<root>/.hardy/config.toml` or the settings file, else `main` | Which problem to open. |
+| `--register-lakefile` | ask, where a host `lakefile.toml` exists *and* both streams are a TTY | Add this problem's `lean/` to the host `lakefile.toml` as a `lean_lib`. Off a TTY there is no question and no registration — a piped or `--plain` launch needs this flag to register at all. |
 | `--no-register-lakefile` | — | Never touch the host `lakefile.toml`. Hardy's own resolution does not depend on registration. |
 
 ### `hardy doctor`
 
 Checks the SDK, the CLI, the login, Lean, LaTeX, and the computer algebra
-kernel, and prints what each one reported. A named non-default CAS backend is
+kernel, and prints what each one reported. The model check is a check that one
+is *set*, not that it exists: any non-empty identity passes, so a typo in
+`model` is reported ready here and fails on the first call. A named non-default CAS backend is
 treated as required and the built-in SymPy as advisory. Exits `1` when a
 required check failed.
 
@@ -858,9 +861,13 @@ hardy evals run --label first-pass --acknowledge-unsafe-execution
 ```
 
 **`hardy evals check <scoreboard-dir>`** re-derives every figure in a committed
-scoreboard from its run directories — the way `hardy accept --recorded` does for
-acceptance runs — and prints the headline, the floor, and the per-tier
-aggregates when nothing disagreed. Exits `1` on any inconsistency.
+scoreboard from its run directories and the corpus and tier file the scoreboard
+names by digest — in the spirit of `hardy accept --recorded`, though that one
+needs nothing but the run. Both inputs must be present: the command refuses with
+`2` before reading the scoreboard if either is missing, since a scoreboard's
+selections, tiers and aggregates cannot be rebuilt without them. It prints the
+headline, the floor, and the per-tier aggregates when nothing disagreed, and
+exits `1` on any inconsistency.
 
 | Option | Default | What it does |
 | --- | --- | --- |
