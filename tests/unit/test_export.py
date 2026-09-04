@@ -855,3 +855,58 @@ def test_an_empty_workspace_is_not_reported_as_finished():
     page = build(theorems={}, obligations=[])
     assert "nothing here is reportable" in page
     assert "every saved theorem is written up" not in page
+
+
+def test_a_module_named_like_a_credential_does_not_break_the_export():
+    """`storage.SECRET_KEY` matches a key exactly, so a module called `Secret`
+    had its whole audit RECORD replaced by the string `[REDACTED]` -- and
+    `declaration_status` then called `.get()` on a string, so `/export` raised
+    instead of writing a page."""
+    page = build(
+        theorems={"t": "theorem t : True"},
+        audit={"Secret": audit_record("t", ["propext"])},
+    )
+    assert 'class="badge verified"' in results(page)
+
+
+def test_a_theorem_named_like_a_credential_keeps_its_automation_note():
+    prepared = export.prepare(material(automation={"secret": "aesop"}))
+    assert prepared["automation"]["secret"] == "aesop"
+
+
+def test_a_reported_statement_survives_the_structural_pass():
+    """`statements` is keyed by theorem name and is the only durable copy of
+    what was reported once the source moves on."""
+    prepared = export.prepare(
+        material(
+            transcript=[
+                {
+                    "type": "report",
+                    "theorems": ["secret"],
+                    "statements": {"secret": "theorem secret : True"},
+                    "status": "clean",
+                }
+            ]
+        )
+    )
+    assert prepared["transcript"][0]["statements"]["secret"] == "theorem secret : True"
+
+
+def test_a_reported_statement_is_rendered_verbatim():
+    page = build(transcript=[
+        {
+            "type": "report",
+            "theorems": ["secret"],
+            "statements": {"secret": "theorem secret : True"},
+            "status": "clean",
+        }
+    ])
+    assert "theorem secret : True" in page
+
+
+def test_a_real_credential_inside_a_transcript_event_is_still_redacted():
+    """The exemption is for name-keyed maps, not for the transcript at large."""
+    prepared = export.prepare(
+        material(transcript=[{"type": "tool", "password": "hunter2"}])
+    )
+    assert prepared["transcript"][0]["password"] == "[REDACTED]"

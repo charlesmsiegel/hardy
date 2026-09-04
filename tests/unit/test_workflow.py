@@ -1276,3 +1276,25 @@ def test_a_cancelled_formalization_turn_is_not_malformed_model_output(tmp_path) 
     )
 
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+
+
+def test_a_press_during_the_unsafe_warning_does_not_reach_the_doctor(tmp_path) -> None:
+    """The warning prints before its nested prompt exists, so a press there
+    sets the flag and the key is gone. Without a check the run took an answer
+    and walked on into the Lean and Tectonic probes with cancellation set."""
+    workflow, domain, controller, state = _scripted_controller(tmp_path)
+    probed: list[int] = []
+    probe = controller._doctor
+    controller._doctor = lambda config: probed.append(1) or probe(config)
+
+    class Pressed(Terminal):
+        def acknowledge_unsafe_execution(self):
+            controller.cancel()               # the press, mid-warning
+            return super().acknowledge_unsafe_execution()
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Pressed()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert probed == [], 'an abandoned run still probed the toolchain'
