@@ -378,8 +378,12 @@ nothing else, and refuses one the library does not hold, so the bibliography
 cannot contain a paper Hardy did not go and get. That is only half of it, and the
 half that is easy to mistake for the whole: what a reader sees is the document,
 not the store, and a `\bibitem` written straight into the writeup resolves as
-well as a real one. So the writeup may not declare references at all — the save
-refuses one that does, and the generated reference list is Hardy's file rather
+well as a real one. So the writeup may not declare references at all, and the
+check that says so reads the compiler's own record rather than the source: TeX
+is a macro language, a `\bibitem` can be assembled from pieces, and only the
+`\bibcite` it writes into the `.aux` is the same whichever way it was spelled.
+The same move the label gate already makes — ask the compiler what it did, not
+the document what it says. The generated reference list is Hardy's file rather
 than the workspace's. The document side then closes the loop from the other end:
 a `\cite` with no entry, like a `\ref` with no label, fails the compile instead
 of resolving to `[?]` in a PDF that looks finished.

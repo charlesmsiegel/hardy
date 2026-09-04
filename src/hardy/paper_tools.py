@@ -27,13 +27,14 @@ mistake `search_tools` documents at length.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from . import truncation
 from .arxiv import ArxivClient, ArxivError, PaperLibrary, PaperRecord, parse_id
 from .bibliography import Bibliography, BibliographyError
-from .layout import HARDY_DIR
+from .layout import HARDY_DIR, global_dir
 from .models import ToolResult
 from .storage import LockTimeout
 
@@ -130,10 +131,42 @@ PAPER_TOOL_NAMES = tuple(spec["function"]["name"] for spec in PAPER_TOOLS)
 
 #: What one `search_papers` call may ask for.
 MAX_SEARCH_RESULTS = 25
-#: How much of an abstract a search result carries. Enough to tell whether a
-#: paper is the one being looked for, which is all a lead has to do;
-#: `read_paper` serves the rest of whichever one is.
-ABSTRACT_CHARACTERS = 600
+@dataclass(frozen=True)
+class SearchDetail:
+    """One level of detail a search answer may be rendered at."""
+
+    abstract: int
+    metadata: bool
+    title: int
+    note: str
+
+
+#: What a search answer sheds, in order, to fit the observation bound. The
+#: first level is the ordinary one: enough abstract to tell whether a paper is
+#: the one being looked for, which is all a lead has to do. The last keeps
+#: nothing but identifiers, and is what a feed of a thousand collaboration
+#: authors reduces to rather than being cut short.
+SEARCH_DETAIL = (
+    SearchDetail(abstract=600, metadata=True, title=300, note=""),
+    SearchDetail(
+        abstract=0,
+        metadata=True,
+        title=300,
+        note=" Abstracts omitted to fit; read_paper serves one in full.",
+    ),
+    SearchDetail(
+        abstract=0,
+        metadata=False,
+        title=200,
+        note=" Only identifiers and titles fit; fetch_paper for the rest.",
+    ),
+    SearchDetail(
+        abstract=0,
+        metadata=False,
+        title=0,
+        note=" Only identifiers fit; fetch_paper for anything else.",
+    ),
+)
 
 
 class PaperToolRuntime:
@@ -217,35 +250,45 @@ class PaperToolRuntime:
             "Nothing here is recorded yet. fetch_paper pins one of these versions "
             "before it can be read or cited."
         )
-        payload = self._results(found, query, note, ABSTRACT_CHARACTERS)
-        if len(payload.encode("utf-8")) > self.observation_bytes:
-            # Still too large with every abstract clipped: the abstracts go
-            # entirely rather than the list being cut, because a truncated
-            # LIST silently hides papers a search did find, and a model cannot
-            # tell that from a search that found fewer.
-            payload = self._results(
-                found,
-                query,
-                note + " Abstracts omitted to fit; read_paper serves one in full.",
-                0,
-            )
+        # Shed detail until it fits, in the order a reader would give it up.
+        # Every level keeps every paper: a truncated LIST silently hides
+        # papers a search did find, and a model cannot tell that from a search
+        # that found fewer -- which is the same conflation `search_tools`
+        # refuses for a Lean search that timed out. Titles go last and
+        # identifiers never, so the worst case is still a list of papers to
+        # fetch, and it is bounded by `MAX_SEARCH_RESULTS` identifiers however
+        # large the feed was.
+        for level in SEARCH_DETAIL:
+            payload = self._results(found, query, note + level.note, level)
+            if len(payload.encode("utf-8")) <= self.observation_bytes:
+                return ToolResult(True, payload)
         return ToolResult(True, payload)
 
-    def _results(self, found: Any, query: str, note: str, abstract: int) -> str:
-        """One search answer, with each abstract clipped to `abstract` chars."""
+    def _results(self, found: Any, query: str, note: str, level: SearchDetail) -> str:
+        """One search answer at one level of detail."""
         return json.dumps(
             {
                 "query": query,
                 "results": [
                     {
                         "paper_id": record.arxiv_id,
-                        "title": record.title,
-                        "authors": list(record.authors),
-                        "categories": list(record.categories),
-                        "published": record.published,
                         **(
-                            {"abstract": _clipped(record.abstract, abstract)}
-                            if abstract
+                            {"title": _clipped(record.title, level.title)}
+                            if level.title
+                            else {}
+                        ),
+                        **(
+                            {
+                                "authors": list(record.authors),
+                                "categories": list(record.categories),
+                                "published": record.published,
+                            }
+                            if level.metadata
+                            else {}
+                        ),
+                        **(
+                            {"abstract": _clipped(record.abstract, level.abstract)}
+                            if level.abstract
                             else {}
                         ),
                         "held": self.library.holds(record.identifier),
@@ -371,7 +414,7 @@ def build_runtime(
     reachable is a per-call question, answered when a call is made.
     """
     return PaperToolRuntime(
-        PaperLibrary(root / HARDY_DIR / LIBRARY_DIR),
+        PaperLibrary(root / HARDY_DIR / LIBRARY_DIR, throttle=global_dir() / LIBRARY_DIR),
         Bibliography(problem),
         observation_bytes=observation_bytes,
     )

@@ -17,6 +17,7 @@ from hardy.bibliography import (
     Bibliography,
     BibliographyError,
     base_key,
+    cite_key,
     hand_written_bibliography,
 )
 
@@ -41,18 +42,25 @@ def _record(
     return record.model_copy(update={"content_sha256": digest(record.content())})
 
 
-def test_a_key_is_author_year_and_title_word():
-    assert base_key(_record()) == "perelman2002entropy"
+def test_a_key_reads_as_author_year_and_title_word():
+    assert cite_key(_record()).startswith("perelman2002entropy-")
 
 
 def test_a_surname_written_either_way_round_gives_one_key():
-    assert base_key(_record(authors=("Perelman, Grigori",))) == "perelman2002entropy"
+    assert cite_key(_record(authors=("Perelman, Grigori",))) == cite_key(_record())
+
+
+def test_a_key_is_a_function_of_the_paper_and_nothing_else():
+    """No store, no order, no collision handling.
+
+    Two runs, two workspaces, either order, anything else cited beside it:
+    the same paper is the same key.
+    """
+    assert cite_key(_record()) == cite_key(_record())
 
 
 def test_a_key_ignores_a_leading_stopword():
-    assert base_key(_record(title="On the classification of finite groups")).endswith(
-        "classification"
-    )
+    assert "classification" in base_key(_record(title="On the classification of finite groups"))
 
 
 def test_the_year_never_comes_from_the_identifier():
@@ -64,11 +72,11 @@ def test_citing_writes_the_store_and_the_generated_file(tmp_path: Path):
     bibliography = Bibliography(tmp_path)
     entry, added = bibliography.cite(_record())
     assert added
-    assert entry.key == "perelman2002entropy"
+    assert entry.key == cite_key(_record())
     assert (tmp_path / "bibliography.json").is_file()
     rendered = (tmp_path / "tex" / "references.tex").read_text(encoding="utf-8")
     assert "\\begin{thebibliography}" in rendered
-    assert "\\bibitem{perelman2002entropy}" in rendered
+    assert f"\\bibitem{{{entry.key}}}" in rendered
 
 
 def test_the_same_paper_twice_is_one_entry(tmp_path: Path):
@@ -91,37 +99,34 @@ def test_a_paper_reached_by_two_routes_is_one_entry(tmp_path: Path):
     assert "doi:10.1090/s0002" in second.identities
 
 
-def test_two_different_papers_never_share_a_key(tmp_path: Path):
+def test_two_papers_wanting_one_readable_key_still_get_two_keys(tmp_path: Path):
+    """Same first author, same year, same first title word."""
     bibliography = Bibliography(tmp_path)
     first, _ = bibliography.cite(_record(arxiv_id="math.DG/0211159v1"))
     second, added = bibliography.cite(_record(arxiv_id="math.DG/0303109v1"))
     assert added
     assert second.key != first.key
-    assert second.key.startswith(first.key)
+    assert base_key(_record()) in first.key
+    assert base_key(_record()) in second.key
     assert len(bibliography.entries()) == 2
 
 
-def test_a_collision_suffix_does_not_depend_on_the_order_they_arrived(tmp_path: Path):
-    """A counter would renumber the moment two runs cited in another order.
+def test_neither_key_depends_on_which_was_cited_first(tmp_path: Path):
+    """The guarantee the digest in the key buys.
 
-    The first to claim the base key keeps it -- an already-compiled `\\cite`
-    depends on that -- and the other's suffix comes from its own identity, so
-    it is the same suffix whichever order they were cited in.
+    Before it, the first of two colliding papers took the readable key and
+    the second took a suffix -- so citing the same pair in the opposite order
+    in a fresh workspace changed BOTH keys, and a document carrying one of
+    them stopped resolving.
     """
     one = _record(arxiv_id="math.DG/0211159v1")
     two = _record(arxiv_id="math.DG/0303109v1")
     forwards = Bibliography(tmp_path / "a")
-    first_in = forwards.cite(one)[0]
-    displaced = forwards.cite(two)[0]
+    forwards_keys = (forwards.cite(one)[0].key, forwards.cite(two)[0].key)
     backwards = Bibliography(tmp_path / "b")
-    assert backwards.cite(two)[0].key == first_in.key
-    # Whoever arrives second is displaced, and the two are displaced onto
-    # different keys: the suffix is a function of the paper, not of the slot.
-    assert backwards.cite(one)[0].key != displaced.key
-    # And the same paper displaced again lands on the same key it did before.
-    third = Bibliography(tmp_path / "c")
-    third.cite(one)
-    assert third.cite(two)[0].key == displaced.key
+    backwards_two = backwards.cite(two)[0].key
+    backwards_one = backwards.cite(one)[0].key
+    assert (backwards_one, backwards_two) == forwards_keys
 
 
 def test_an_existing_entry_keeps_its_key_when_it_is_cited_again(tmp_path: Path):

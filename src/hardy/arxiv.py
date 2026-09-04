@@ -208,12 +208,20 @@ class PaperLibrary:
     can still be told which bytes a citation was made against.
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, throttle: Path | None = None) -> None:
         self.root = root
         self.records = root / "records"
         self.queries = root / "queries"
-        self.state_path = root / "state.json"
-        self.lock_path = root / "state.lock"
+        # The records and the cache belong to a project root; the request
+        # clock does not. arXiv sees one caller per machine however many
+        # project roots that machine holds, so a clock kept beside the cache
+        # gave two sessions on two roots two budgets and the machine-wide
+        # promise was not kept. Defaulted to the library's own root, which is
+        # what a test wants and what a caller who has not thought about it
+        # gets; `paper_tools.build_runtime` passes the user-level directory.
+        self.throttle = throttle if throttle is not None else root
+        self.state_path = self.throttle / "state.json"
+        self.lock_path = self.throttle / "state.lock"
 
     def path_for(self, identifier: ArxivId) -> Path:
         return self.records / identifier.storage_name
@@ -238,6 +246,10 @@ class PaperLibrary:
         """Read one library file through the same proof a write gets."""
         return read_text(self.root, relative)
 
+    def _throttle_guard(self) -> tuple[Any, str]:
+        """A guard for one file in the throttle directory, proven as any other."""
+        return guard_for(self.throttle.parent, f"{self.throttle.name}/state", create=True)
+
     def lock_target(self) -> Path:
         """The throttle lock's path, with the directory holding it proven.
 
@@ -248,8 +260,8 @@ class PaperLibrary:
         removing a stranger's file before any guarded call had a chance to
         refuse the symlink. Proven first, so there is nothing to point at.
         """
-        guard, name = self._guard("state.lock")
-        return guard.path(name)
+        guard, _ = self._throttle_guard()
+        return guard.path("state.lock")
 
     def holds(self, identifier: ArxivId) -> bool:
         return identifier.versioned and (self.path_for(identifier) / "record.json").is_file()
@@ -364,7 +376,13 @@ class PaperLibrary:
             body = str(payload["body"])
         except (OSError, ValueError, KeyError, TypeError):
             return None
-        if now - fetched > ttl:
+        age = now - fetched
+        # A negative age is a clock that moved backwards, and it used to pass
+        # this check -- so the entry stayed "fresh" for however long the clock
+        # had jumped, well past the day it promises, and an unversioned fetch
+        # went on resolving to a version arXiv had already superseded. The
+        # throttle treats the same jump as "no idea"; so does this.
+        if age < 0 or age > ttl:
             return None
         return body.encode("utf-8")
 
@@ -394,7 +412,7 @@ class PaperLibrary:
 
     def last_request(self) -> float:
         try:
-            return float(json.loads(self._read("state.json"))["last_request"])
+            return float(json.loads(read_text(self.throttle, "state.json"))["last_request"])
         except (OSError, ValueError, KeyError, TypeError):
             return 0.0
 
@@ -405,8 +423,8 @@ class PaperLibrary:
         run of failures hammer arXiv at whatever rate the failures come back
         -- which is the moment a service least wants to be hammered.
         """
-        guard, name = self._guard("state.json")
-        guard.write_bytes(name, json.dumps({"last_request": when}).encode("utf-8"))
+        guard, _ = self._throttle_guard()
+        guard.write_bytes("state.json", json.dumps({"last_request": when}).encode("utf-8"))
 
 
 Transport = Callable[[str, float], bytes]

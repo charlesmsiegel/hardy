@@ -144,11 +144,11 @@ def test_citing_returns_a_key_and_writes_the_bibliography(tmp_path: Path):
     runtime = _runtime(tmp_path)
     runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
     payload = _json(runtime.call("cite_paper", {"paper_id": "math.DG/0211159v1"}))
-    assert payload["cite_key"] == "perelman2002entropy"
+    assert payload["cite_key"].startswith("perelman2002entropy-")
     assert payload["added"]
     assert "\\input" in payload["note"]
     rendered = (tmp_path / "problem" / "tex" / "references.tex").read_text(encoding="utf-8")
-    assert "\\bibitem{perelman2002entropy}" in rendered
+    assert f"\\bibitem{{{payload['cite_key']}}}" in rendered
 
 
 def test_citing_the_same_paper_twice_adds_one_entry(tmp_path: Path):
@@ -245,3 +245,32 @@ def test_a_filesystem_failure_is_a_tool_result_rather_than_a_traceback(tmp_path:
     result = runtime.call("cite_paper", {"paper_id": "math.DG/0211159v1"})
     assert not result.ok
     assert "could not be written" in result.output
+
+
+def test_a_search_answer_fits_even_when_the_metadata_alone_is_huge(tmp_path: Path):
+    """A collaboration author list is metadata, and metadata can be enormous.
+
+    Dropping abstracts and returning without another size check left the
+    bound a claim rather than a fact.
+    """
+    authors = "".join(f"<author><name>Author {n}</name></author>" for n in range(2_000))
+    feed = FEED.format(
+        identifier="math.DG/0211159v1", title="T" * 4_000, abstract="a" * 4_000
+    ).replace("<author><name>Grigori Perelman</name></author>", authors)
+    runtime = _runtime(tmp_path, feed.encode("utf-8"), observation_bytes=2_048)
+    result = runtime.call("search_papers", {"query": "ricci flow"})
+    assert result.ok
+    assert len(result.output.encode("utf-8")) <= 2_048
+    payload = _json(result)
+    # Every paper survives, whatever else does not: a shortened list is
+    # indistinguishable from a search that found fewer.
+    assert [item["paper_id"] for item in payload["results"]] == ["math.DG/0211159v1"]
+
+
+def test_the_throttle_is_shared_across_project_roots(tmp_path: Path):
+    """arXiv sees one caller per machine, not one per project directory."""
+    first = build_runtime(tmp_path / "one" / "problem", tmp_path / "one")
+    second = build_runtime(tmp_path / "two" / "problem", tmp_path / "two")
+    assert first.library.root != second.library.root
+    assert first.library.state_path == second.library.state_path
+    assert first.library.lock_path == second.library.lock_path

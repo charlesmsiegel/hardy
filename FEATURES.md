@@ -902,12 +902,12 @@ Priority labels are sequencing hints:
   exists Hardy fetches metadata and abstracts only, and never a source bundle.
 - **Now (implemented):** one canonical bibliography per problem in
   `bibliography.json`, deduplicated by versioned arXiv ID and DOI together, with
-  cite keys derived from the paper itself — author, year, first real title word —
-  so they are the same in every run; a collision leaves the base key with whoever
-  claimed it first and gives the newcomer a suffix drawn from its own identity
-  rather than from arrival order. `Bibliography.cite` is the only code path that
-  writes it, and it regenerates `tex/references.tex` whole from the store, so a
-  hand edit to the generated file is undone rather than merged.
+  a cite key that is a function of the paper and of nothing else — author, year,
+  first real title word, and a digest of the paper's identity — so the same paper
+  is the same key in every run, in every workspace, whatever order it was cited
+  in. `Bibliography.cite` is the only code path that writes it, and it
+  regenerates `tex/references.tex` whole from the store, so a hand edit to the
+  generated file is undone rather than merged.
 - **Now (implemented):** `search_papers`, `fetch_paper`, `read_paper` and
   `cite_paper` on the interactive surface. A citation is possible only for a paper
   `fetch_paper` actually stored: the tool takes an identifier and nothing else, so
@@ -915,11 +915,14 @@ Priority labels are sequencing hints:
   writeup `\input{references}` once and cites by the returned key, and a citation
   that does not resolve fails the compile.
 - **Now (implemented):** the document may not write its own bibliography either.
-  A `\bibitem`, a `thebibliography` environment, a `\bibliography` or a
-  `\addbibresource` in a saved writeup file is refused at the save, and the
-  generated `tex/references.tex` may be neither written nor deleted by hand — a
-  reference nobody fetched resolves perfectly well, so the reference check alone
-  would pass it and publish it.
+  Every reference the compiler actually created — read from the `\bibcite`
+  entries it wrote into `writeup.aux`, the same evidence the label gate uses —
+  must be a key `cite_paper` put in the store, so a `\bibitem` reached through
+  `\csname`, a macro, or any other expansion is refused along with one spelled
+  out. A `\bibitem`, a `thebibliography`, a `\bibliography` or an
+  `\addbibresource` in any saved writeup file is additionally refused at the
+  check and at the save, where the refusal can say something useful; and the
+  generated `tex/references.tex` may be neither written nor deleted by hand.
 
 ## Assumed-paper libraries
 

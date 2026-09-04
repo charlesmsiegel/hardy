@@ -86,6 +86,13 @@ REFERENCING = re.compile(
     r"|\\hyperref\s*\[([^\]]*)\]"
 )
 LABEL = re.compile(r"\\label\s*\{([^}]*)\}")
+#: What LaTeX writes into the `.aux` for every `\bibitem` it actually ran.
+#: The compiler's own record, which is why it is read instead of the source:
+#: a `\bibitem` can be spelled `\csname bibitem\endcsname`, hidden behind a
+#: macro, or produced by any amount of expansion, and none of those look like
+#: a `\bibitem` to a reader of the text. All of them look like a `\bibcite`
+#: here.
+BIBCITE = re.compile(r"\\bibcite\s*\{([^}]*)\}")
 
 
 @dataclass(frozen=True)
@@ -233,6 +240,16 @@ def unreferenced_labels(sources: Mapping[str, str]) -> tuple[str, ...]:
         if label and label not in referenced and label not in ordered:
             ordered.append(label)
     return tuple(ordered)
+
+
+def bibcites(aux: str) -> tuple[str, ...]:
+    r"""Every reference the compiler really created, in the order it made them.
+
+    Read from `writeup.aux`, the same file `completion.py` reads `\newlabel`
+    out of and for the same reason: what a document *says* and what LaTeX
+    *did* are different questions, and only the second one is evidence.
+    """
+    return tuple(dict.fromkeys(name.strip() for name in BIBCITE.findall(aux) if name.strip()))
 
 
 def report(findings: tuple[Unresolved, ...], labels: tuple[str, ...] = ()) -> str:

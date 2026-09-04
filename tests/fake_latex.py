@@ -17,6 +17,11 @@ LABEL = re.compile(r"\\label\{([^}]*)\}")
 REF = re.compile(r"\\(?:page|eq)?ref\{([^}]*)\}")
 CITE = re.compile(r"\\cite\{([^}]*)\}")
 BIBITEM = re.compile(r"\\bibitem\{([^}]*)\}")
+# `\csname bibitem\endcsname{key}` is a `\bibitem{key}` by the time TeX runs
+# it. The stand-in expands the form before looking for commands, so a test can
+# show that Hardy judges what the compiler DID rather than what the source
+# spells.
+CSNAME = re.compile(r"\\csname\s*([a-zA-Z@]+)\s*\\endcsname")
 VERB = re.compile(r"\\verb(.)(.*?)\1", re.DOTALL)
 
 
@@ -90,7 +95,7 @@ if "\\begin{document}" in source and "\\end{document}" in source:
     # tell a label the compiler made from one that only appears in the text --
     # inside a comment, or inside \verb.
     body = "".join(text for _, text in [(None, source)] + [(t, t.read_text()) for t in sorted(seen)])
-    executed = _uncommented(body)
+    executed = CSNAME.sub(lambda found: "\\" + found.group(1), _uncommented(body))
     aux = pathlib.Path("writeup.aux")
     # What the PREVIOUS pass wrote down. Cross-references resolve out of the
     # .aux and not out of the text, which is why one pass can never resolve

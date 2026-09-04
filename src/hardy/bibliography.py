@@ -11,14 +11,21 @@ DOI, both when it has both. The same paper reached by a search and then by a
 DOI is one entry with two aliases, not two entries with two cite keys and two
 numbers in the reference list.
 
-**Stable keys.** A cite key is derived from the entry itself -- first author,
-year, first real word of the title -- so the same paper gets the same key in
-every run. When two different papers derive the same key, the first one to
-claim it keeps it and the second takes a suffix drawn from its own identity,
-recorded in the store. Both halves matter: a suffix drawn from insertion order
-would renumber the moment two runs cited in a different order, and reassigning
-the base key to a later arrival would silently change what an already-compiled
-`\cite` points at.
+**Stable keys.** A cite key is a function of the paper and of nothing else:
+first author, year, first real word of the title, and a digest of the paper's
+own identity. No store is consulted to mint one, so the same paper gets the
+same key in every run, in every workspace, whatever order it was cited in and
+whatever else is cited beside it.
+
+The digest is the part that looks like clutter and is not. Without it a key is
+`perelman2002entropy`, and two papers can want that -- same first author, same
+year, same first title word -- at which point one of them has to take
+something else, and *which* one depends on who was cited first. That is an
+order-dependent key, which is the thing this section promises not to have; the
+alternatives are reassigning a key an already-compiled `\cite` points at, or
+admitting the guarantee holds only until a collision. Five extra characters
+buys the guarantee unconditionally, and the key is a token the model is handed
+rather than a name anyone has to remember.
 
 The generated file is a `thebibliography` environment, not a `.bib`. That is a
 deliberately small choice with a large consequence: a `\bibitem` resolves under
@@ -158,10 +165,10 @@ def base_year(record: PaperRecord) -> str:
 
 
 def base_key(record: PaperRecord) -> str:
-    """The key this paper wants: author, year, first real title word.
+    """The readable half of a key: author, year, first real title word.
 
-    Derived from the paper and nothing else, so two runs that cite the same
-    paper in a different order still produce the same key.
+    Not a key on its own -- two papers can want the same one. `cite_key` adds
+    what makes it unique.
     """
     author = ""
     if record.authors:
@@ -179,6 +186,19 @@ def base_key(record: PaperRecord) -> str:
             break
     key = f"{author}{year}{word}" or record.arxiv_id
     return SAFE_KEY.sub("", key) or "ref"
+
+
+def cite_key(record: PaperRecord) -> str:
+    """The cite key for this paper. A pure function of the paper.
+
+    No store, no order, no collision handling: the readable stem plus a digest
+    of the identity that stem could otherwise be shared with. Ten hex
+    characters over a versioned arXiv identifier makes two papers colliding on
+    author, year, title word AND digest something that will not happen, and if
+    it ever did the store would hold two entries wanting one key -- which
+    `_assign` still notices and refuses rather than quietly conflating.
+    """
+    return f"{base_key(record)}-{hashlib.sha256(identities_of(record)[0].encode()).hexdigest()[:10]}"
 
 
 class Bibliography:
@@ -362,28 +382,23 @@ class Bibliography:
         return None
 
     def _assign(self, record: PaperRecord, store: Store) -> str:
-        """A key for a new entry: the one it wants, or a stable variant.
+        """This paper's key, having checked nothing else already holds it.
 
-        The suffix is four hex characters of the entry's own identity, not a
-        counter. A counter is a function of the order the papers arrived in,
-        so two sessions citing the same pair in opposite orders would produce
-        two different assignments of the same two keys -- and a key that
-        depends on arrival order is not a stable key.
+        The key itself owes nothing to the store -- that is the point of
+        `cite_key` -- so this is a consistency check rather than an
+        allocation: an entry already holding it would be a second paper
+        colliding on author, year, title word and a ten-hex digest at once.
+        Refused rather than conflated, because a citation quietly pointing at
+        somebody else's paper is the failure this whole module is against.
         """
-        wanted = base_key(record)
-        taken = {entry.key for entry in store.entries}
-        if wanted not in taken:
-            return wanted
-        suffix = hashlib.sha256(identities_of(record)[0].encode("utf-8")).hexdigest()[:4]
-        candidate = f"{wanted}-{suffix}"
-        # Two distinct papers whose identities collide in four hex characters
-        # as well as in author, year and title word. Vanishingly unlikely and
-        # still answered, because "vanishingly unlikely" is how a citation
-        # ends up pointing at somebody else's paper.
-        while candidate in taken:
-            suffix = hashlib.sha256(f"{suffix}{candidate}".encode()).hexdigest()[:4]
-            candidate = f"{wanted}-{suffix}"
-        return candidate
+        wanted = cite_key(record)
+        for entry in store.entries:
+            if entry.key == wanted:
+                raise BibliographyError(
+                    f"{record.arxiv_id} wants the cite key {wanted}, which already belongs "
+                    f"to {entry.arxiv_id or entry.identities[0]}"
+                )
+        return wanted
 
     def _write(self, store: Store) -> None:
         """Store and generated file, or neither.

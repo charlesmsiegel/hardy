@@ -3493,7 +3493,13 @@ class MathematicsSession:
         refusal = self._bibliography_refusal(relative, source)
         if refusal:
             return ToolResult(False, refusal, source)
-        return self.latex.check(source, path=relative, tree=self.tex_root, stamp=self._stamp())
+        return self.latex.check(
+            source,
+            path=relative,
+            tree=self.tex_root,
+            stamp=self._stamp(),
+            vouched=self._vouched_references,
+        )
 
     def _save_latex(self, path: str, source: str) -> ToolResult:
         resolved = self._tex_path(path)
@@ -3552,6 +3558,7 @@ class MathematicsSession:
                 aux_dir=self.workspace / BUILD_DIR_TEX,
                 commit=_write,
                 stamp=self._stamp(),
+                vouched=self._vouched_references,
             )
         except WriteupNotSaved as error:
             return ToolResult(False, str(error), source)
@@ -3608,6 +3615,34 @@ class MathematicsSession:
         if not root.is_file():
             return ""
         return read_text(self.tex_root, ROOT_DOCUMENT)
+
+    def _vouched_references(self, keys: tuple[str, ...]) -> str:
+        r"""Why the reference list the compiler built may not stand, or "".
+
+        The authority, with `hand_written_bibliography` in front of it as a
+        courtesy. Reading the source for `\bibitem` catches the ordinary
+        mistake and says something useful about it, but it is lexical, and TeX
+        is a macro language: `\csname bibitem\endcsname`, a `\newcommand`
+        wrapping it, or any other expansion produces a reference list that no
+        reader of the text would recognise as one. What every spelling has in
+        common is the `\bibcite` the compiler writes into the `.aux` -- so
+        that is what is checked, and every key in it has to be one
+        `cite_paper` put in the store.
+
+        The same move `completion.py` makes for labels: ask the compiler what
+        it did, not the document what it says.
+        """
+        known = {entry.key for entry in self.papers.bibliography.entries()}
+        invented = [key for key in keys if key not in known]
+        if not invented:
+            return ""
+        return (
+            f"the compiled document defines {len(invented)} bibliography entry(s) Hardy "
+            f"cannot vouch for: {', '.join(invented)}. Every reference a reader sees must "
+            "come from cite_paper, which can only cite a paper fetch_paper actually "
+            "stored; \\input{references} is the only reference list this document may "
+            "carry."
+        )
 
     def _bibliography_refusal(self, relative: str, source: str) -> str:
         r"""Why this compile may not proceed on bibliography grounds, or "".
