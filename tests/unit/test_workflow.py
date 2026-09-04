@@ -1464,3 +1464,39 @@ def test_a_press_between_the_approval_and_the_reader_buys_no_faithfulness_turn(
     # never asked, so nothing is billed.
     assert [stage for stage, _prompt in state.prompts if stage == 'faithfulness'] == []
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+
+
+def test_a_press_before_the_writeup_buys_no_writeup_turn(tmp_path, monkeypatch) -> None:
+    """A stage, so the same guarantee covers it as covers the reader.
+
+    `stop` sets the workflow's flag inline and arms the runtime on a teardown
+    thread, and `run_structured` reads the runtime's flag -- so without a check
+    here the writeup exchange could be opened and billed in the gap.
+
+    Pressed from the `Grades` constructor, which is the only call inside the
+    window: the check after verification runs before it, so a press from the
+    verifier or the terminal would be caught there and prove nothing about this
+    guard.
+    """
+    domain = importlib.import_module('hardy.domain')
+    workflow, _, controller, state = _scripted_controller(tmp_path)
+
+    real_grades = workflow.Grades
+
+    def press_then_grade(*arguments, **keywords):
+        made = real_grades(*arguments, **keywords)
+        # Only the grades built for the writeup: `Grades` is also constructed
+        # in the faithfulness section, and pressing there lands before a check
+        # that already exists, which would pass whatever this guard does.
+        if 'formal' in keywords:
+            controller.cancel()
+        return made
+
+    monkeypatch.setattr(workflow, 'Grades', press_then_grade)
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='Two equals two.', model='gpt-test'), Terminal()
+    )
+
+    assert [stage for stage, _prompt in state.prompts if stage == 'writeup'] == []
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION

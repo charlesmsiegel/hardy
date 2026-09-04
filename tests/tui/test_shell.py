@@ -766,3 +766,23 @@ def test_a_second_escape_reaches_the_commands_own_escalation(settings):
 
     assert "esc again" in said[0]
     assert "killed what had not stopped" in said[1], "the second press said the same thing"
+
+
+async def test_a_goal_that_cannot_be_saved_is_a_line_not_a_traceback(ui, settings):
+    """`plain.run` has no catch around a command, so an unwritable workspace
+    ended the whole session. And the in-memory goal is restored, so what the
+    user is told is true of the session as well as of the file."""
+    from types import SimpleNamespace
+
+    from hardy.tui import handlers
+    from hardy.tui.ports import State
+
+    def refuse(_text):
+        raise OSError("read-only file system")
+
+    session = SimpleNamespace(goal=lambda: "the old goal", set_goal=refuse)
+    state = State(config=settings, session=session)
+
+    assert await handlers.handle_goal(ui, "a new goal", state) is state
+    assert "Could not save the goal" in ui.text
+    assert "read-only file system" in ui.text

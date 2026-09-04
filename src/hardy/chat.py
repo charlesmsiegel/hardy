@@ -3008,8 +3008,25 @@ class MathematicsSession:
         return str(self.state.get("goal") or "")
 
     def set_goal(self, text: str) -> None:
+        """Set the goal, or leave it exactly as it was.
+
+        The write can fail -- an unwritable workspace, a full disk, a refused
+        record -- and the in-memory value was being changed first. A session
+        that then went on answering about a goal `session.json` does not carry
+        is a session whose own record disagrees with it, which is the one thing
+        this class is for. So the previous value is put back before the failure
+        is passed on.
+        """
+        previous = self.state.get("goal")
         self.state["goal"] = text.strip()
-        self._save_state()
+        try:
+            self._save_state()
+        except BaseException:
+            if previous is None:
+                self.state.pop("goal", None)
+            else:
+                self.state["goal"] = previous
+            raise
 
     def has_theorems(self) -> bool:
         """Whether anything here could be reported at all.

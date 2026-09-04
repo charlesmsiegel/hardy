@@ -434,7 +434,15 @@ async def handle_goal(ui: Ui, argument: str, state: State) -> State:
         current = session.goal()
         ui.write(f"Goal: {current}" if current else "No goal set. /goal <text> sets one.")
         return state
-    session.set_goal(argument)
+    try:
+        session.set_goal(argument)
+    except Exception as error:  # noqa: BLE001 - never lose the session over a file
+        # The plain session has no catch around a command, so an unwritable
+        # workspace ended it on a traceback. `set_goal` puts the old value back
+        # before raising, so what the user is told here is true of the session
+        # as well as of the file.
+        ui.write(f"Could not save the goal: {error}", style="error")
+        return state
     ui.write(f"Goal: {argument}")
     return state
 
