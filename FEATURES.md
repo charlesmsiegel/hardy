@@ -651,8 +651,11 @@ Priority labels are sequencing hints:
   transport and a run on the other are not the same experimental condition.
 - **Now (implemented):** cheap Lean closers before a model turn is spent —
   `hardy batch --closers` tries `rfl`, `trivial`, `simp`, `omega`, `decide`,
-  `aesop` and `exact?` (or a comma-separated list of your own) against the
-  statement, and a run whose ladder closes it never asks a provider anything.
+  `aesop` and `exact?` against the statement — or a ladder of your own, one
+  tactic per repeated `--closers`, since `simp [Nat.add_comm, Nat.add_left_comm]`
+  is a single tactic and nothing here parses Lean well enough to say which
+  commas separate two — and a run whose ladder closes it never asks a provider
+  anything.
   Each tactic's proof goes in through `submit_proof` exactly as a model's
   would, so the axiom audit, the deadline and the trajectory apply to it
   unchanged; the ladder is a decision about whose turn it is, never a second

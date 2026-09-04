@@ -260,9 +260,14 @@ def test_symbols_are_not_counted_as_though_they_were_prose() -> None:
     symbols = compaction.estimate_text("∀" * 350)
 
     assert prose == 100
-    # A bound rather than a guess: one token per code point at least.
-    assert symbols >= 350
+    # A real bound, not a nearly-right guess: a BPE token covers at least one
+    # byte, so a string can never cost more tokens than it has bytes. One token
+    # per code point was the earlier attempt and is not a bound -- an emoji is
+    # several tokens on its own.
+    assert symbols == len("∀".encode()) * 350
     assert symbols > prose
+    emoji = compaction.estimate_text("🔥" * 10)
+    assert emoji == len("🔥".encode()) * 10 > 10
 
     mixed = compaction.estimate_text("a" * 350 + "∀" * 350)
     assert mixed == prose + symbols

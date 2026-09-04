@@ -134,13 +134,28 @@ def sketch_section(sketch: dict[str, Any]) -> str:
     to the section title alone.
     """
     holes = sketch["holes"]
-    where = ", ".join(f"{item['keyword']} at line {item['line']}" for item in holes) or "none recorded"
-    return (
-        f"\n{SKETCH_HEADING}\n\nThe run left an elaborating skeleton with "
-        f"{len(holes)} hole(s) in it ({where}). Lean accepted its structure and nothing "
-        f"else: a hole closes any goal, so this is not evidence for the claim and is not "
-        f"verified.\n\n```lean\n{sketch['proof']}\n```\n"
-    )
+    if holes:
+        where = ", ".join(f"{item['keyword']} at line {item['line']}" for item in holes)
+        body = (
+            f"The run left an elaborating skeleton with {len(holes)} hole(s) in it "
+            f"({where}). Lean accepted its structure and nothing else: a hole closes any "
+            "goal, so this is not evidence for the claim and is not verified."
+        )
+    else:
+        # A hole-free body `sketch_proof` accepted, on a run that ended before
+        # it was submitted. The sentence above is false about it -- there is no
+        # hole, and saying one closes the goal would be a reason that does not
+        # apply to the artifact underneath it. What *is* true is narrower and
+        # is the whole of why it is not a result: nothing audited what it rests
+        # on, because `submit_proof` is the only thing that runs that audit and
+        # this was never submitted.
+        body = (
+            "The run left a complete candidate: Lean elaborated it with no hole in its "
+            "own proof body, and the run ended before it was submitted. "
+            + "Nothing has audited what it rests on -- only `submit_proof` runs the "
+            "axiom report -- so this is not verified and is not a result."
+        )
+    return f"\n{SKETCH_HEADING}\n\n{body}\n\n```lean\n{sketch['proof']}\n```\n"
 
 
 def _limits(runtime: Any, max_turns: int, wall_seconds: float, elapsed: float) -> dict[str, Any]:
