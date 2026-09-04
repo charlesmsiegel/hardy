@@ -482,3 +482,60 @@ async def test_a_press_before_the_workflow_exists_does_not_end_the_session(
 
     assert state is not None, "the handler let the interrupt end the session"
     assert any("cancelled before it started" in line for line in said)
+
+
+async def test_one_press_before_the_run_starts_is_not_an_escalation(settings, monkeypatch):
+    """`_pressing`'s handler presses before it raises, so pressing again in the
+    handler counted a single Ctrl+C as the documented SECOND press -- one
+    interrupt killed the identification child instead of asking it to stop."""
+    from hardy.tui import prove
+    from hardy.tui.plain import PlainUi
+
+    killed: list[str] = []
+    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: 1)
+    monkeypatch.setattr(
+        "hardy.tui.handlers.process.stop_children", lambda: killed.append("killed") or 1
+    )
+    monkeypatch.setattr("hardy.tui.handlers.process.resume_children", lambda: None)
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        import os
+        import signal
+
+        os.kill(os.getpid(), signal.SIGINT)   # one press, while the build runs
+
+    monkeypatch.setattr(prove, "run", run)
+
+    await handlers.handle_prove(
+        PlainUi(lambda line: None, lambda prompt: ""),
+        "a claim",
+        State(config=settings, session=None),
+    )
+
+    assert killed == [], "one press escalated straight to killing the child"
+
+
+async def test_a_cancelled_run_does_not_leave_later_commands_stopped(
+    ui, settings, monkeypatch
+):
+    """`interrupt_children` sets a process-wide stop level cleared only when a
+    model turn starts, so a cancelled `/prove` left every later `/doctor`,
+    `/import` or `/prove` killing its own first child on sight."""
+    from hardy.tui import prove
+
+    recorder = Recorder()
+    lifted: list[str] = []
+    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: 1)
+    monkeypatch.setattr(
+        "hardy.tui.handlers.process.resume_children", lambda: lifted.append("lifted")
+    )
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        ready(recorder)
+        ui.stopper()
+        return recorder.run(SimpleNamespace(text=claim, model=config.model), terminal)
+
+    monkeypatch.setattr(prove, "run", run)
+    await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+
+    assert lifted == ["lifted"], "the stop outlived the command it belonged to"

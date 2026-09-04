@@ -32,6 +32,7 @@ def material(**overrides):
         "lean": {},
         "tex": {},
         "imported": [],
+        "automation": {},
         "obligations": [],
         "document": "No compiled document was found in this workspace.",
         "usage": [],
@@ -727,3 +728,19 @@ def test_a_report_carries_the_statement_it_was_about():
     assert "theorem sylow : True" in page
     assert "resting on big" in page
     assert "as it was at the time of the report" in page
+
+
+def test_a_theorem_one_tactic_closed_says_so_beside_its_verdict():
+    """The compiled document's banner carries this and the export embeds no
+    PDF, so the page was dropping a warning the workspace holds about the very
+    result it presents."""
+    page = build(
+        theorems={"sylow": "theorem sylow : True"},
+        audit={"A": audit_record("sylow", ["propext"])},
+        automation={"sylow": "aesop"},
+    )
+    shown = results(page)
+    assert "Closed by a single automation call" in shown
+    assert "aesop" in shown
+    # Still kernel-verified: what one tactic closes the kernel still checked.
+    assert 'class="badge verified"' in shown

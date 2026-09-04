@@ -323,3 +323,22 @@ def test_a_lemma_that_shares_a_theorems_name_still_collides(tmp_path: Path):
     chat.lean_workspace.sources = two_modules
 
     assert "hardyBasic" in chat.export_material()["shared"]
+
+
+def test_the_automation_disclosure_reads_the_same_tree_the_results_do(tmp_path: Path):
+    """`_automation_closed` compares a stored statement against the tree; read
+    from a later tree it can attach a warning to a statement that is not the
+    one shown, or drop one that belongs to it."""
+    chat = built(tmp_path)
+    seen: list[object] = []
+    original = chat._automation_closed
+
+    def watching(sources=None):
+        seen.append(sources)
+        return original(sources)
+
+    chat._automation_closed = watching
+    material = chat.export_material()
+
+    assert seen and seen[0] is not None, "the flags were read from their own tree"
+    assert material["automation"] == {}
