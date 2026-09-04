@@ -142,7 +142,12 @@ def load_sources(root: Path) -> dict[str, dict]:
     path = root / "sources.json"
     if not path.exists():
         return {}
-    return json.loads(path.read_text(encoding="utf-8"))["sources"]
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    # Same lesson as the registry above: `[]` parses, and indexing it raises
+    # `TypeError`, which the gathering path does not catch.
+    if not isinstance(payload, dict) or not isinstance(payload.get("sources"), dict):
+        raise CorpusError(f"{path.name}: 'sources' must map ids to source records")
+    return payload["sources"]
 
 
 def source_issues(problems: ProblemSet, sources: dict[str, dict]) -> list[str]:
@@ -164,7 +169,10 @@ def load_tombstones(root: Path) -> dict[str, str]:
     path = root / "tombstones.json"
     if not path.exists():
         raise CorpusError(f"missing id registry: {path}")
-    issued = json.loads(path.read_text(encoding="utf-8")).get("issued")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise CorpusError(f"{path.name} is not a JSON object")
+    issued = payload.get("issued")
     # Checked rather than trusted: `issued: null` or a number returned straight
     # from here made `tombstone_issues` raise `TypeError` on iteration, which
     # `check_issues` does not catch -- a traceback out of the command asked to

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -122,3 +123,64 @@ def test_a_split_class_resolves_by_section_before_class():
     assert arxiv_of("12E05") == "math.NT", "and the class default still applies"
     # One reporting group regardless: the split is about archives, not fields.
     assert {group_of(c) for c in ("12F10", "12J10", "12K05", "12L12")} == {"field-theory"}
+
+
+def test_the_vendoring_script_records_the_bytes_it_read_not_only_the_url(tmp_path, monkeypatch):
+    """The script takes a path, so the bytes may be a stale download, a
+    hand-edited copy, or the wrong file. It writes a manifest-bound taxonomy
+    into a published corpus whose entries are classified by these codes, so
+    naming only the official URL would let any of those be published as the
+    official release. The digest is what makes the claim checkable.
+    """
+    import hashlib
+    import importlib.util
+
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("vendor", root / "scripts" / "vendor_msc2020.py")
+    vendor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vendor)
+
+    out = tmp_path / "taxonomy"
+    out.mkdir()
+    monkeypatch.setattr(vendor, "TAXONOMY", out)
+    csv_path = tmp_path / "MSC_2020.csv"
+    header = "code\ttext\tdescription\r\n"
+    rows = "".join(f"{k}-XX\tField {k}\t\r\n" for k in sorted(vendor.ARXIV_BY_CLASS))
+    csv_path.write_bytes((header + rows).encode("latin-1"))
+
+    assert vendor.main(["vendor_msc2020.py", str(csv_path)]) == 0
+    digest = hashlib.sha256(csv_path.read_bytes()).hexdigest()
+    codes = json.loads((out / "msc2020.json").read_text(encoding="utf-8"))
+    mapping = json.loads((out / "msc-to-arxiv.json").read_text(encoding="utf-8"))
+    assert codes["source"] == {"url": vendor.SOURCE, "sha256": digest}
+    # `arxiv` and `groups` are this script's own editorial judgement; only
+    # `fields` comes from the CSV, so only it names a source.
+    assert mapping["fields_source"] == {"url": vendor.SOURCE, "sha256": digest}
+    assert "source" not in mapping
+
+
+def test_the_recorded_digest_follows_the_file_that_was_actually_read(tmp_path, monkeypatch):
+    """One byte different is a different table, and must say so."""
+    import hashlib
+    import importlib.util
+
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("vendor", root / "scripts" / "vendor_msc2020.py")
+    vendor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vendor)
+
+    out = tmp_path / "taxonomy"
+    out.mkdir()
+    monkeypatch.setattr(vendor, "TAXONOMY", out)
+    header = "code\ttext\tdescription\r\n"
+    seen = set()
+    for label in ("Field", "Feild"):
+        csv_path = tmp_path / "MSC_2020.csv"
+        csv_path.write_bytes(
+            (header + "".join(f"{k}-XX\t{label} {k}\t\r\n" for k in sorted(vendor.ARXIV_BY_CLASS)))
+            .encode("latin-1"))
+        assert vendor.main(["vendor_msc2020.py", str(csv_path)]) == 0
+        recorded = json.loads((out / "msc2020.json").read_text(encoding="utf-8"))["source"]["sha256"]
+        assert recorded == hashlib.sha256(csv_path.read_bytes()).hexdigest()
+        seen.add(recorded)
+    assert len(seen) == 2, "a typo in the source table left the digest unchanged"

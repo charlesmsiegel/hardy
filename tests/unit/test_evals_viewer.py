@@ -303,3 +303,18 @@ def test_the_witness_pane_agrees_with_the_count_in_the_header():
     page = PAGE.read_text(encoding="utf-8")
     witness = page[page.index("const witness ="):page.index("const review =")]
     assert "e.unwitnessed" in witness, "the pane branches on the stored field, not on A6's verdict"
+
+
+@pytest.mark.parametrize("name", ["sources.json", "tombstones.json",
+                                  "taxonomy/msc2020.json", "taxonomy/msc-to-arxiv.json"])
+def test_a_sidecar_of_the_wrong_json_shape_still_renders_the_page(tmp_path, name):
+    """`[]` parses, so the objection has to come from a shape check.
+
+    The viewer's fallbacks all sit *after* `check_issues`, so a `TypeError`
+    raised inside it took down the response before any of them ran.
+    """
+    root = write_corpus(tmp_path / "corpus", (_entry(),))
+    (root / name).write_text("[]", encoding="utf-8")
+    got = payload(root)
+    assert got["issues"], "the objection must reach the page"
+    assert isinstance(got["sources"], dict)
