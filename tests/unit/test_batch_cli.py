@@ -1,5 +1,6 @@
 import importlib
 import json
+import threading
 
 import pytest
 
@@ -113,7 +114,11 @@ def test_an_infinite_wall_clock_is_refused_rather_than_waited_for(tmp_path, monk
     config_module = importlib.import_module('hardy.config')
     parser = cli.build_parser()
 
-    for value in ('inf', '-inf', 'nan'):
+    # `1e20` is finite and still above `threading.TIMEOUT_MAX`, where
+    # `Thread.join` raises the same `OverflowError` an infinity does -- so the
+    # finite-only check let it walk into exactly the failure the check exists
+    # to prevent.
+    for value in ('inf', '-inf', 'nan', '1e20'):
         # `--wall-seconds=-inf` rather than two arguments: argparse reads a
         # leading `-` as the start of another flag.
         args = parser.parse_args([
@@ -142,3 +147,13 @@ def test_an_infinite_wall_clock_is_refused_rather_than_waited_for(tmp_path, monk
     cli._batch(args, _config(config_module, tmp_path), parser)
     assert seen['wall_seconds'] == 30.0
     assert seen['context_window'] == config_module.DEFAULT_CONTEXT_WINDOW
+
+    # And the largest value the platform can actually wait for is still a bound
+    # somebody may ask for, so the rule refuses what cannot be waited for
+    # rather than rounding the limit down to a number nobody chose.
+    args = parser.parse_args([
+        'batch', str(_request(tmp_path, 'theorem T : True')),
+        f'--wall-seconds={threading.TIMEOUT_MAX:.0f}',
+    ])
+    cli._batch(args, _config(config_module, tmp_path), parser)
+    assert seen['wall_seconds'] == float(f'{threading.TIMEOUT_MAX:.0f}')

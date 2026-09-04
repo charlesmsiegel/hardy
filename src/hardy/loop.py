@@ -28,6 +28,7 @@ can be tested against a scripted provider with no network at all.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -124,6 +125,19 @@ class ProviderTurn:
     #: than one that says nothing.
     usage: dict[str, Any] | None = None
     stop_reason: str | None = None
+
+
+def reasoning_digest(block: Any) -> str:
+    """The digest contribution of one opaque reasoning block.
+
+    Hashed rather than transcribed, so nothing here writes down what Hardy has
+    decided not to publish, and *recorded* rather than merely consumed: the
+    compaction digests cover these blocks because the provider is sent them,
+    and a hash a reader cannot recompute is not an audit trail. One definition,
+    used by the loop that records the contribution and by the digest that
+    consumes it, so the two cannot drift into disagreeing.
+    """
+    return hashlib.sha256(repr(block).encode("utf-8")).hexdigest()
 
 
 class Provider(Protocol):
@@ -251,7 +265,11 @@ class AgentLoop:
         #: Indices of tool results still holding their placeholder answer. The
         #: teardown reads them, so an exchange nobody drained still says which
         #: calls it never made.
-        self._pending: list[int] = []
+        #: Tool calls answered in advance and not yet run, as
+        #: `(message index, arguments)`. The arguments ride along because the
+        #: placeholder message cannot carry them and the abandonment event is
+        #: the last place they can be written down.
+        self._pending: list[tuple[int, dict[str, Any]]] = []
 
     def set_gate(self, before_turn: Callable[[Sequence[Message]], str | None]) -> None:
         """Install the hook asked before every provider call. See `before_turn`."""
@@ -391,6 +409,20 @@ class AgentLoop:
             # came back with no tool calls would return normally, and the run
             # would be recorded as having finished rather than as having run
             # out of time.
+            #
+            # The reply is written down first, for the reason the cancel below
+            # gives: it was produced and it was billed for. Raising over it
+            # left the run graded `wall_clock_limit` with the usage folded in
+            # and no account anywhere of the answer that usage paid for --
+            # while the same answer arriving a moment later, under a cancel,
+            # was recorded in full. Two ways of ending the same turn cannot
+            # leave two different amounts of evidence behind.
+            if budget.expired():
+                self._observe({
+                    "type": "discarded",
+                    "why": "the wall-clock budget expired while this reply was in flight",
+                    "message": {"role": "assistant", "content": turn.text},
+                })
             self._deadline(budget)
             if self._cancelled:
                 # The request was already in flight when the cancel arrived and
@@ -418,8 +450,18 @@ class AgentLoop:
                 "assistant", text=turn.text, tool_calls=turn.tool_calls, reasoning=turn.reasoning
             ))
             placeholders = self._preanswer(turn.tool_calls)
-            if turn.thinking:
-                self._observe({"type": "thinking"})
+            if turn.thinking or turn.reasoning:
+                # The blocks by digest, not by content. They are opaque
+                # provider state Hardy does not publish -- but they are *sent*,
+                # so a compaction digest covers them, and a transcript that
+                # said only "thinking happened" left that digest impossible to
+                # recompute from the record it exists to be checked against.
+                # The condition reads `reasoning` too, so no block can enter a
+                # digest without an event naming it.
+                self._observe({
+                    "type": "thinking",
+                    "blocks": [reasoning_digest(block) for block in turn.reasoning],
+                })
                 yield TurnEvent("thinking")
             # Recorded for every assistant turn, including one that said
             # nothing and only asked for tools. Without it the transcript is a
@@ -513,7 +555,7 @@ class AgentLoop:
         by a real result a moment later, and recording each in advance would
         fill the transcript with cancellations that never happened.
         """
-        for index in self._pending:
+        for index, arguments in self._pending:
             message = self.messages[index] if index < len(self.messages) else None
             if message is None or message.text != ABANDONED:
                 continue
@@ -521,6 +563,7 @@ class AgentLoop:
                 "type": "abandoned_tool",
                 "name": message.name,
                 "call_id": message.call_id,
+                "input": arguments,
                 "why": ABANDONED,
             })
         self._pending = []
@@ -545,7 +588,15 @@ class AgentLoop:
                 Message("tool_result", text=ABANDONED, call_id=call.id, name=call.name, ok=False)
             )
             placeholders.append(len(self.messages) - 1)
-        self._pending.extend(placeholders)
+            # The arguments travel with the index, because the placeholder does
+            # not carry them and the abandonment event is the only place they
+            # can still be recorded. A call that reaches `_call_tools` gets a
+            # `tool_use` event with its input; one abandoned before that got a
+            # name and an id, while the assistant message Hardy keeps -- and
+            # sends on every later request -- held arguments the transcript
+            # never saw. A reader could not then rebuild the context that was
+            # sent, nor the compaction digests taken over it.
+            self._pending.append((len(self.messages) - 1, dict(call.arguments)))
         return placeholders
 
     def _call_tools(self, calls: Sequence[ToolCall], placeholders: Sequence[int], budget: Budget) -> Iterator[TurnEvent]:
