@@ -243,6 +243,13 @@ async def test_a_second_escape_escalates_from_interrupt_to_kill(settings):
 
 
 async def test_a_second_escape_with_nothing_left_running_says_so(settings):
+    # `until`, for the reason the sibling above passes it and `blast` spells
+    # out: this notice is drawn on the escalation path *after* the turn
+    # settles, so a loaded runner can exit the app with it still unflushed --
+    # a failure whose message is about the notice while the behaviour it
+    # reports demonstrably happened, which `session.escalated` proves one line
+    # up. `_wait_for_render` is silent on timeout, so an escalation that
+    # really stopped saying this still fails the assertion below.
     session = InterruptibleSession(running=0)
     _, written = await blast(
         settings, session, "prove something\r\x1b \x1b \x03", until="nothing left to stop"
