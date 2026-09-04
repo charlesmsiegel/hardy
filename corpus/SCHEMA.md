@@ -77,6 +77,19 @@ have no witness in this form. Such an entry records `witness: null` with a
 non-vacuity check did not run, and nothing but the human read stands between a
 vacuous statement and a field headline.
 
+## Looking at it
+
+```
+hardy evals corpus serve
+```
+
+opens a local page on `127.0.0.1:8765` that renders every entry the way a
+reviewer needs to judge it: the statement with its LaTeX rendered, the
+assembled Lean beside it, and the classification with MSC2020 *names* rather
+than bare codes. It re-reads from disk on every request, so an entry added by
+hand appears on the next refresh — and if a shard is malformed, the page says
+so instead of showing nothing. Nothing is written back.
+
 ## Classification
 
 `taxonomy/msc2020.json` is the whole of MSC2020 as published at
