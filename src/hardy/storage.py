@@ -18,7 +18,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
@@ -102,6 +102,11 @@ class FileLock:
         self.required = required
         self._sleep = sleep
         self.held = False
+        #: What this lock wrote into the file it created. An inode number is
+        #: not an identity -- a filesystem hands the number of a file just
+        #: unlinked straight to the next one created -- so what it removes is
+        #: recognised by content it alone could have written.
+        self._token: bytes | None = None
 
     def __enter__(self) -> FileLock:
         deadline = time.monotonic() + self.timeout
@@ -119,9 +124,19 @@ class FileLock:
             self._sleep(0.05)
 
     def __exit__(self, *_: object) -> None:
+        """Release, and only what this lock actually took.
+
+        Not an unconditional unlink. A holder slower than `stale_after` has
+        its lock broken and a new holder claims a fresh one at the same path;
+        the slow holder then finishes and, removing the path by name, deletes
+        the *new* holder's lock -- and a third process claims immediately,
+        putting two writers in the critical section. Deleting by identity
+        instead makes a broken lock the breaker's problem alone.
+        """
         if self.held:
-            self.path.unlink(missing_ok=True)
+            self._unlink_instance(self.path, self._token)
             self.held = False
+            self._token = None
 
     def _claim(self) -> bool:
         """Take the lock, or say why not. A stale one is taken from its holder."""
@@ -138,8 +153,9 @@ class FileLock:
             return False
         except OSError:
             return False
+        token = f"{os.getpid()} {uuid4().hex}".encode()
         try:
-            os.write(handle, str(os.getpid()).encode())
+            os.write(handle, token)
         except OSError:
             # The exclusive create succeeded and writing into it did not -- a
             # quota or a full disk, reached while allocating the lock's first
@@ -149,7 +165,47 @@ class FileLock:
             self.path.unlink(missing_ok=True)
             return False
         os.close(handle)
+        self._token = token
         return True
+
+    @staticmethod
+    def _instance(path: Path) -> tuple[bytes, float] | None:
+        """What the file at `path` says it is, and how old it is -- or None.
+
+        Both out of one descriptor, so the age judged and the file removed are
+        the same file rather than the same name read twice.
+        """
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            handle = os.open(path, flags)
+        except OSError:
+            return None
+        try:
+            return os.read(handle, 256), os.fstat(handle).st_mtime
+        except OSError:
+            return None
+        finally:
+            os.close(handle)
+
+    @classmethod
+    def _unlink_instance(cls, path: Path, token: bytes | None) -> None:
+        """Remove `path`, but only while it still holds `token`.
+
+        A lock file is a name, and every process racing for one races for the
+        same name; what a holder or a breaker may remove is the particular
+        lock it saw, and only a token written into the file can say whether
+        that is what is there now. Reading and unlinking are two calls and no
+        POSIX primitive unlinks by content, so a lock replaced between them is
+        still removed; what this closes is the far wider window in which a
+        decision taken earlier is carried out later against whatever has since
+        answered to the name.
+        """
+        if token is None:
+            return
+        found = cls._instance(path)
+        if found is None or found[0] != token:
+            return
+        path.unlink(missing_ok=True)
 
     def _break_if_stale(self) -> None:
         """Take a lock its holder cannot still be using, if anyone may.
@@ -186,9 +242,13 @@ class FileLock:
         try:
             # Re-checked under the mutex: the holder may have finished and a
             # new one taken the lock while this process was getting here, and
-            # that lock is not stale and not this one's to remove.
-            if self._stale(self.path):
-                self.path.unlink(missing_ok=True)
+            # that lock is not stale and not this one's to remove. The file
+            # judged stale here is also the file removed -- one stat decides
+            # both, so a lock replaced between them keeps its own age rather
+            # than inheriting the verdict passed on its predecessor.
+            found = self._instance(self.path)
+            if found is not None and time.time() - found[1] > self.stale_after:
+                self._unlink_instance(self.path, found[0])
         finally:
             breaking.unlink(missing_ok=True)
 
