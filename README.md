@@ -326,7 +326,10 @@ endpoint are in every record.
 
 The cheap Lean closers need no such loop and do not use one. `hardy batch
 --closers` tries `rfl`, `trivial`, `simp`, `omega`, `decide`, `aesop` and
-`exact?` against the statement before any runtime is built, so it works on
+`exact?` against the statement before any runtime is built — repeat the flag,
+one tactic each, for a ladder of your own, since `simp [Nat.add_comm,
+Nat.add_left_comm]` is one tactic and nothing here parses Lean well enough to
+say which commas separate two — so it works on
 every backend and a subscription user needs no API key for it; a statement one
 of them closes never reaches a model. Each tactic's proof goes in through
 `submit_proof` like any other, so the axiom audit refuses a bad one in the same
@@ -360,7 +363,9 @@ messages start, what the summary said, and the window it was all planned
 against — `context_window`, 200K by default and settable, because the window
 belongs to the endpoint and not to Hardy. Which endpoint that was is recorded
 too, with any credentials in it stripped: a gateway URL carrying a token in its
-userinfo or its query would otherwise be committed beside the experiment. `DESIGN.md` records the full
+userinfo, its query or its path would otherwise be committed beside the
+experiment. The path is fingerprinted rather than kept, so two endpoints on one
+host are still told apart without republishing any of it. `DESIGN.md` records the full
 argument, including how much of it the SDK's own `PreCompact` hook might
 recover on the backends where the loop is still not Hardy's.
 

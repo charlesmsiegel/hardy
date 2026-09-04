@@ -625,3 +625,65 @@ def test_every_tool_call_is_answered_even_if_nobody_drains_the_stream() -> None:
     assert results[0].call_id == "c1"
     assert results[0].ok is False
     assert "abandoned" in results[0].text
+
+
+def test_every_call_of_an_abandoned_batch_is_answered_not_just_the_first() -> None:
+    """The assistant message carries the whole batch, and the API refuses an
+    incomplete one as firmly as an empty one. Answering each call as its turn
+    came left every later call of the same response unanswered when the
+    consumer stopped at the first."""
+    loop, _, _ = _loop([
+        ProviderTurn(tool_calls=(
+            ToolCall("c1", "check_proof", {}),
+            ToolCall("c2", "check_proof", {}),
+            ToolCall("c3", "check_proof", {}),
+        )),
+        ProviderTurn(text="never reached"),
+    ])
+
+    stream = loop.run("prove it")
+    for event in stream:
+        # After the first call has actually run, which is the sharper case: the
+        # batch is now part-answered rather than wholly unanswered, and an
+        # incomplete batch is refused just as firmly as an empty one.
+        if event.kind == "tool_result":
+            break
+    stream.close()
+
+    results = [message for message in loop.messages if message.role == "tool_result"]
+    assert [message.call_id for message in results] == ["c1", "c2", "c3"]
+    assert [message.ok for message in results] == [True, False, False]
+    assert all("abandoned" in message.text for message in results[1:])
+
+
+def test_a_batch_abandoned_before_anything_ran_is_answered_too() -> None:
+    loop, _, _ = _loop([
+        ProviderTurn(tool_calls=(ToolCall("c1", "check_proof", {}), ToolCall("c2", "check_proof", {}))),
+        ProviderTurn(text="never reached"),
+    ])
+
+    stream = loop.run("prove it")
+    for event in stream:
+        if event.kind == "tool_use":
+            break
+    stream.close()
+
+    results = [message for message in loop.messages if message.role == "tool_result"]
+    assert [message.call_id for message in results] == ["c1", "c2"]
+    assert not any(message.ok for message in results)
+
+
+def test_a_drained_batch_keeps_every_real_result() -> None:
+    """The placeholders are replaced, not appended beside: a batch nobody
+    abandoned must read exactly as it did before they existed."""
+    loop, _, _ = _loop([
+        ProviderTurn(tool_calls=(ToolCall("c1", "check_proof", {}), ToolCall("c2", "check_proof", {}))),
+        ProviderTurn(text="done"),
+    ])
+
+    _drain(loop, "prove it")
+
+    results = [message for message in loop.messages if message.role == "tool_result"]
+    assert [message.call_id for message in results] == ["c1", "c2"]
+    assert all(message.ok for message in results)
+    assert not any("abandoned" in message.text for message in results)
