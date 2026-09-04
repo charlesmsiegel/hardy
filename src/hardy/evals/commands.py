@@ -89,12 +89,17 @@ def add_parser(subparsers: Any) -> None:
     corpus_verbs = corpus.add_subparsers(dest="corpus_verb", required=True)
     for verb, helptext in (("check", "report every mechanical objection to the corpus on disk"),
                            ("report", "coverage by group, status, difficulty and source"),
-                           ("serve", "browse the corpus in a local page, re-read on every refresh")):
+                           ("serve", "browse the corpus in a local page, re-read on every refresh"),
+                           ("release", "bump every shard and write the changelog head it binds")):
         sub = corpus_verbs.add_parser(verb, help=helptext)
         sub.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
         if verb == "serve":
             sub.add_argument("--port", type=int, default=8765)
             sub.add_argument("--host", default="127.0.0.1")
+        if verb == "release":
+            sub.add_argument("--version", required=True, help="three numbers, greater than the last")
+            sub.add_argument("--note", action="append", default=[],
+                             help="a changelog bullet citing the ids that moved; repeatable")
         if verb == "check":
             sub.add_argument(
                 "--since-registry", type=Path, default=None,
@@ -230,6 +235,20 @@ def main(args: argparse.Namespace, config: Any) -> int:
                 issues.extend(registry_issues(load_tombstones(args.corpus), prior))
             for issue in issues:
                 print(issue, file=sys.stderr)
+            return 1 if issues else 0
+        if args.corpus_verb == "release":
+            from datetime import date
+
+            from .corpus import CorpusError, release
+
+            try:
+                issues = release(args.corpus, args.version, args.note, today=date.today().isoformat())
+            except CorpusError as error:
+                print(f"Refused: {error}", file=sys.stderr)
+                return 2
+            for issue in issues:
+                print(issue, file=sys.stderr)
+            print(f"corpus {args.version} written to {args.corpus / 'CHANGELOG.md'}")
             return 1 if issues else 0
         if args.corpus_verb == "serve":
             from .viewer import serve
