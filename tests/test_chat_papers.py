@@ -413,3 +413,48 @@ def test_a_forged_reference_list_is_rewritten_before_the_compile(session) -> Non
     restored = generated.read_text(encoding="utf-8")
     assert "Grigori Perelman" in restored
     assert "Somebody Else" not in restored
+
+
+def test_a_bibliography_hidden_in_a_non_tex_file_is_refused(session) -> None:
+    r"""TeX will `\input` a file of any name, and the compiler gets the tree.
+
+    A `tex/fake.bbl` pulled in by the root was copied for the compiler and
+    never shown to the bibliography check, which listed `.tex` only. Defining
+    a fabricated entry there under a key `cite_paper` had already recorded
+    left the auxiliary-file check seeing nothing but a legitimate key.
+    """
+    session._tool(
+        "save_latex",
+        {"source": "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n"},
+    )
+    (session.workspace / "tex" / "fake.bbl").write_text(
+        "\\begin{thebibliography}{9}\n\\bibitem{invented2020} Nobody.\n"
+        "\\end{thebibliography}\n",
+        encoding="utf-8",
+    )
+    result = session._tool(
+        "check_latex",
+        {
+            "source": "\\documentclass{article}\n\\begin{document}\n"
+            "\\input{fake.bbl}\n\\end{document}\n"
+        },
+    )
+    assert not result.ok
+    assert "fake.bbl" in result.output
+    assert "writes its own bibliography" in result.output
+
+
+def test_a_binary_file_in_the_tree_is_not_read_as_commands(session) -> None:
+    """A figure that happens to carry the bytes of a command is not a command."""
+    session._tool(
+        "save_latex",
+        {"source": "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n"},
+    )
+    (session.workspace / "tex" / "figure.png").write_bytes(
+        b"\x89PNG\r\n\x1a\n\x00\\bibitem{invented2020}\x00"
+    )
+    result = session._tool(
+        "check_latex",
+        {"source": "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n"},
+    )
+    assert result.ok, result.output

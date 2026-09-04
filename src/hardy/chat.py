@@ -3683,17 +3683,39 @@ class MathematicsSession:
         refusal = hand_written_bibliography(relative, source)
         if refusal:
             return refusal
-        for path in self._tex_paths():
+        for path in self._compilable_paths():
             if path == relative or is_generated_bibliography(path):
                 continue
             try:
                 text = read_text(self.tex_root, path, errors="replace")
             except (OSError, ValueError):
                 continue
+            if "\x00" in text:
+                # Not something TeX reads as text. A binary that happens to
+                # contain the bytes of a command is not a command.
+                continue
             found = hand_written_bibliography(path, text)
             if found:
                 return f"{path} is part of this document, and {found}"
         return ""
+
+    def _compilable_paths(self) -> list[str]:
+        r"""Every file under `tex/`, not only the `.tex` ones.
+
+        `_copy_tree` hands the compiler the whole tree, and TeX will `\input`
+        a file of any name -- so a `tex/fake.bbl` pulled in by the root was
+        copied for the compiler and never shown to the bibliography check. If
+        it defined a fabricated entry under a key `cite_paper` had already
+        recorded, the auxiliary-file check saw only that legitimate key and
+        the document was published. What the compiler may read is what has to
+        be read here.
+        """
+        if not self.tex_root.is_dir():
+            return []
+        try:
+            return [relative.as_posix() for relative in files_under(self.tex_root, "")]
+        except (OSError, ValueError):
+            return self._tex_paths()
 
     def _tex_path(self, path: str) -> tuple[str, Path] | ToolResult:
         """The workspace-relative writeup path, and where it lives on disk."""
