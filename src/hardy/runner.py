@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
-from . import audit
+from . import audit, compaction
 from . import closers as closer_ladder
 from .chat import provenance
 from .claude_runtime import TurnLimitReached
@@ -176,7 +176,7 @@ def sketch_section(sketch: dict[str, Any]) -> str:
     return f"\n{SKETCH_HEADING}\n\n{body}\n\n{fence}lean\n{sketch['proof']}\n{fence}\n"
 
 
-def _limits(runtime: Any, max_turns: int, wall_seconds: float, elapsed: float) -> dict[str, Any]:
+def _limits(runtime: Any, max_turns: int, wall_seconds: float, elapsed: float, context_window: int, compacted: bool) -> dict[str, Any]:
     """The bounds a run declared, and who actually applied each of them.
 
     Asked of the runtime rather than stated here. A trajectory that names a
@@ -195,13 +195,19 @@ def _limits(runtime: Any, max_turns: int, wall_seconds: float, elapsed: float) -
         "turns_enforced_by": enforcement.get("turns", "provider sdk"),
         "wall_clock_enforced_by": enforcement.get("wall_clock", "hardy"),
         "elapsed_seconds": elapsed,
+        # The window the run was planned against, whether or not this backend
+        # let Hardy do the planning. A bound that shaped the experiment and
+        # went unrecorded is the same omission `turns_enforced_by` exists to
+        # close, one field along.
+        "context_window": context_window,
+        "compacted_by": "hardy" if compacted else "nobody: the SDK owns the loop",
     }
     if limits["turns_enforced_by"] != "hardy":
         limits["note"] = "the SDK owns the loop; see issue #23"
     return limits
 
 
-def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools, output_dir: Path, *, max_turns: int = 8, wall_seconds: float = 300, toolchain: dict[str, Any] | None = None, closers: Sequence[str] | None = None) -> RunResult:
+def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools, output_dir: Path, *, max_turns: int = 8, wall_seconds: float = 300, toolchain: dict[str, Any] | None = None, closers: Sequence[str] | None = None, context_window: int = compaction.CONTEXT_WINDOW) -> RunResult:
     """One unattended attempt at `request`, and everything it is recorded by.
 
     `closers` is the cheap Lean ladder from issue #23, tried before the model
@@ -400,8 +406,80 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     # nothing and would make the declared bound and the applied one differ for
     # no reason.
     remaining = wall_seconds - float(ladder["seconds"])
+    def compact(messages: list[compaction.Message]) -> list[compaction.Message] | None:
+        """Batch's own compaction, assembled the way the interactive one is.
+
+        Same rule, same cut, a narrower set of facts: an unattended run has no
+        naming registry and no approved assumptions, but it has the claim it
+        was given, the skeleton it is holding, and every failed attempt in
+        Lean's own words -- which is the heading that looked like it needed a
+        model. Wired here because a batch aimed at a smaller gateway, or given
+        a raised turn limit, otherwise kept appending messages until the
+        endpoint refused the request: the window was a setting the interactive
+        surface honoured and this one did not.
+
+        Offered to the runtime rather than assumed: a backend whose SDK owns
+        the loop has no place to put it, and `limits.compacted_by` says which
+        of the two happened.
+        """
+        overhead = compaction.overhead(system, TOOLS)
+        outcome = compaction.plan(
+            messages,
+            context_window=context_window,
+            reserve_tokens=compaction.RESERVE_TOKENS,
+            keep_tokens=compaction.RECENT_TOKENS,
+            overhead_tokens=overhead,
+            output_tokens=int(getattr(runtime, "output_limit", None) or 0),
+        )
+        if not outcome.needed:
+            return None
+        facts = compaction.Facts(
+            goal=request.informal_claim,
+            assumptions=[],
+            proved=[found["proof"]] if found["proof"] else [],
+            open_declarations=[str(item.get("keyword")) for item in sketched["holes"]],
+            names=[],
+            attempts=compaction.failed_attempts(events),
+            next_steps=[],
+            modules=list(request.imports),
+        )
+        summarised = compaction.summarize(facts)
+        settled = compaction.plan(
+            messages,
+            context_window=context_window,
+            reserve_tokens=compaction.RESERVE_TOKENS,
+            keep_tokens=compaction.RECENT_TOKENS,
+            summary_tokens=compaction.estimate_tokens([compaction.Message("user", text=summarised.render())]),
+            overhead_tokens=overhead,
+            output_tokens=int(getattr(runtime, "output_limit", None) or 0),
+        )
+        if not settled.needed:
+            return None
+        events.append({
+            "type": "compaction",
+            "summarized_messages": settled.cut,
+            "kept_messages": len(messages) - settled.cut,
+            "estimated_tokens": {
+                "before": settled.before,
+                "after": settled.after,
+                "available": settled.available,
+                "fits": settled.fits,
+            },
+            "context_window": context_window,
+            "text": summarised.render(),
+        })
+        return compaction.compacted(messages, settled.cut, summarised)
+
     runtime = make_runtime(system_prompt=system, specs=TOOLS, dispatch=dispatch, cwd=output_dir, observe=observe,
                            max_turns=max_turns, wall_seconds=max(remaining, 0.0))
+    # Offered rather than passed in, and only to a runtime that says it can
+    # take one -- the same rule `MathematicsSession._build` follows, and for
+    # the same reason: handing a compactor to a backend that would drop it
+    # would leave the record claiming a compaction Hardy never got to make.
+    attach = getattr(runtime, "attach_compactor", None)
+    compacted = attach is not None
+    if attach is not None:
+        attach(compact)
     # Whether a provider was asked anything at all. A ladder that closed the
     # statement means Hardy declined to spend a turn, which is a fact about the
     # run and not an absence of one -- and it is what keeps the ledger below
@@ -509,6 +587,6 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     if sketch is not None:
         writeup += sketch_section(sketch)
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
-    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": _limits(runtime, max_turns, wall_seconds, elapsed), "usage": spent.summary(), "sketch": sketch, "closers": ladder, "events": events, "terminal_reason": reason})
+    _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": _limits(runtime, max_turns, wall_seconds, elapsed, context_window, compacted), "usage": spent.summary(), "sketch": sketch, "closers": ladder, "events": events, "terminal_reason": reason})
     _write_json(output_dir / "result.json", result.as_dict())
     return result

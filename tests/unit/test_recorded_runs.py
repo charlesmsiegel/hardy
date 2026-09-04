@@ -1179,3 +1179,94 @@ def test_a_ladder_that_kept_going_past_a_success_is_refused(tmp_path) -> None:
     issues = acceptance.validate_batch_consistency(output)
 
     assert any('went on past' in issue for issue in issues)
+
+
+def test_a_batch_run_records_the_window_it_was_planned_against(tmp_path) -> None:
+    """The window is a setting the interactive surface honoured and this one
+    did not: a batch aimed at a smaller gateway kept appending messages until
+    the endpoint refused, and its trajectory did not even say which window had
+    shaped the experiment."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _batch(tmp_path, [], name='windowed')
+
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    limits = trajectory['limits']
+    assert limits['context_window'] == importlib.import_module('hardy.compaction').CONTEXT_WINDOW
+    # And who did the compacting, in the same terms `turns_enforced_by` uses:
+    # a backend whose SDK owns the loop has nowhere to put a compactor, and
+    # the record says that rather than leaving it to be assumed.
+    assert limits['compacted_by'] == 'nobody: the SDK owns the loop'
+    assert acceptance.validate_batch_consistency(output) == ()
+
+
+def test_a_batch_on_a_loop_hardy_owns_is_given_the_compactor(tmp_path) -> None:
+    runner = importlib.import_module('hardy.runner')
+    models = importlib.import_module('hardy.models')
+    lean_module = importlib.import_module('hardy.lean')
+    request = models.Request.from_dict(
+        {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+    )
+    offered = []
+
+    class Compacting(_Runtime):
+        def attach_compactor(self, compact):
+            offered.append(compact)
+
+    output = tmp_path / 'compacting'
+    runner.run(
+        request,
+        lambda model=None, **context: Compacting([], **context),
+        lean_module.LeanTools(request, (sys.executable, str(FAKE_LEAN))),
+        output,
+        max_turns=3,
+        wall_seconds=300.0,
+        toolchain=IDENTITY,
+    )
+
+    assert len(offered) == 1
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    assert trajectory['limits']['compacted_by'] == 'hardy'
+
+
+def test_the_batch_compactor_summarises_what_the_run_knows(tmp_path) -> None:
+    """The same rule and the same cut as the interactive one, on a narrower set
+    of facts: an unattended run has no naming registry and no approved
+    assumptions, but it has the claim it was given and every failed attempt in
+    Lean's own words."""
+    compaction = importlib.import_module('hardy.compaction')
+    runner = importlib.import_module('hardy.runner')
+    models = importlib.import_module('hardy.models')
+    lean_module = importlib.import_module('hardy.lean')
+    request = models.Request.from_dict(
+        {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+    )
+    held = []
+
+    class Compacting(_Runtime):
+        def attach_compactor(self, compact):
+            held.append(compact)
+
+    runner.run(
+        request,
+        lambda model=None, **context: Compacting([('check_proof', {'proof': 'by nonsense'})], **context),
+        lean_module.LeanTools(request, (sys.executable, str(FAKE_LEAN))),
+        tmp_path / 'summarised',
+        max_turns=3,
+        wall_seconds=300.0,
+        toolchain=IDENTITY,
+        context_window=20_000,
+    )
+
+    compact = held[0]
+    # A conversation far past a 20,000-token window, in a form the cut is legal
+    # anywhere in.
+    conversation = [compaction.Message('user', text='x' * 30_000) for _ in range(4)]
+    rebuilt = compact(conversation)
+
+    assert rebuilt is not None
+    assert rebuilt[0].text.startswith(compaction.PREAMBLE)
+    assert 'True is true.' in rebuilt[0].text
+    # And the failed check reaches it, in Lean's words rather than a narration.
+    assert 'check_proof' in rebuilt[0].text
+    # A short conversation needs none of this.
+    assert compact([compaction.Message('user', text='short')]) is None

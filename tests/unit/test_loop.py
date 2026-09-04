@@ -774,3 +774,37 @@ def test_a_drained_exchange_records_no_abandonment() -> None:
     _drain(loop, "prove it")
 
     assert not [item for item in observed if item["type"] == "abandoned_tool"]
+
+
+def test_which_tools_one_turn_asked_for_together_is_recorded() -> None:
+    """A flat run of `tool_use` events cannot say which of them the model asked
+    for in one breath: `a,b` then `c` and `a` then `b,c` leave identical events
+    and the same turn count while being two different provider histories -- and
+    two different compaction digests, which is what made the omission matter.
+    """
+    loop, _, observed = _loop([
+        ProviderTurn(tool_calls=(ToolCall("a", "check_proof", {}), ToolCall("b", "check_proof", {}))),
+        ProviderTurn(tool_calls=(ToolCall("c", "check_proof", {}),)),
+        ProviderTurn(text="done"),
+    ])
+
+    _drain(loop, "prove it")
+
+    assistant = [item for item in observed if item["type"] == "assistant"]
+    assert [item["tool_calls"] for item in assistant] == [["a", "b"], ["c"], []]
+
+
+def test_a_turn_that_only_asked_for_tools_is_still_recorded() -> None:
+    """It used to be written only when there was text to write, so a tool-only
+    turn left no assistant event at all."""
+    loop, _, observed = _loop([
+        ProviderTurn(tool_calls=(ToolCall("a", "check_proof", {}),)),
+        ProviderTurn(text="done"),
+    ])
+
+    _drain(loop, "prove it")
+
+    assistant = [item for item in observed if item["type"] == "assistant"]
+    assert len(assistant) == 2
+    assert assistant[0]["message"]["content"] == ""
+    assert assistant[0]["tool_calls"] == ["a"]

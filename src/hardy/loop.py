@@ -404,9 +404,20 @@ class AgentLoop:
             if turn.thinking:
                 self._observe({"type": "thinking"})
                 yield TurnEvent("thinking")
+            # Recorded for every assistant turn, including one that said
+            # nothing and only asked for tools. Without it the transcript is a
+            # flat run of `tool_use` events, and which of them the model asked
+            # for together is unrecoverable: `a,b` then `c` and `a` then `b,c`
+            # leave identical events and the same turn count while being two
+            # different provider histories -- and two different compaction
+            # digests, which is what made the omission matter.
+            self._observe({
+                "type": "assistant",
+                "message": {"role": "assistant", "content": turn.text},
+                "tool_calls": [call.id for call in turn.tool_calls],
+            })
             if turn.text:
                 spoken.append(turn.text)
-                self._observe({"type": "assistant", "message": {"role": "assistant", "content": turn.text}})
                 yield TurnEvent("text", text=turn.text)
             # Said before the tools run, not only when there are none. A reply
             # that ended on `max_tokens` *with* a tool call in it is the case
