@@ -345,6 +345,25 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     def _dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
         if closed.is_set():
             return ToolResult(False, "the run's budget expired before this tool call was made")
+        # The run is over, and the calls still queued behind the one that ended
+        # it do not get to change what it decided. Declining the next provider
+        # turn does not reach these: one response can ask for two submissions,
+        # and the second is dispatched from the same batch as the first -- so
+        # the later one replaced the proof the artifacts were already going to
+        # carry, with the audit and the writeup built from whichever arrived
+        # last. Refused here rather than in the loop, because the runner is
+        # what knows a run has its result, and this way the rule holds on the
+        # backends whose SDK owns the loop as well.
+        if found["result"] is not None:
+            why = "the run's proof was accepted before this tool call was made"
+            # Recorded rather than silently refused. A call the model made and
+            # Hardy would not run is a fact about the run, and a trajectory
+            # that simply lacks the second submission cannot be told from one
+            # where the model never asked for it. Its own type, so nothing that
+            # counts submissions or grades attempts reads a refusal Lean never
+            # saw as one of them.
+            events.append({"type": "refused_tool", "name": name, "arguments": arguments, "why": why})
+            return ToolResult(False, why)
         # Bound before the try, because the event below is written on the way
         # out of both the body and the `except`: a `submit_proof` whose
         # arguments would not parse never reaches the assignment inside, and

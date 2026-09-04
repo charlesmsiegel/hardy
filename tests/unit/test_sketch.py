@@ -638,3 +638,67 @@ def test_a_forged_submitted_flag_is_refused(tmp_path: Path, proof_request: Reque
         "whether it was submitted" in issue
         for issue in acceptance.validate_batch_consistency(tmp_path)
     )
+
+
+def test_a_second_submission_in_one_batch_does_not_replace_the_proof(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """Declining the next provider turn does not reach the calls already queued.
+
+    One response can ask for two submissions, and the second is dispatched from
+    the same batch as the first -- so the later one replaced the proof the
+    artifacts were already going to carry, with the audit and the writeup built
+    from whichever arrived last. Refused in the runner rather than in the loop,
+    so the rule holds on the backends whose SDK owns the loop too.
+    """
+    result = run(
+        proof_request,
+        factory([
+            call("submit_proof", {"proof": "by exact True.intro"}),
+            call("submit_proof", {"proof": "by exact trivial"}),
+        ]),
+        lean,
+        tmp_path,
+    )
+
+    assert result.terminal_reason == "verified"
+    assert result.proof == "by exact True.intro"
+    assert "by exact trivial" not in (tmp_path / "proof.lean").read_text(encoding="utf-8")
+    # And the call the model made is in the record, refused rather than absent:
+    # a trajectory simply missing it cannot be told from one where the model
+    # never asked.
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text(encoding="utf-8"))
+    refused = [event for event in trajectory["events"] if event.get("type") == "refused_tool"]
+    assert [event["arguments"]["proof"] for event in refused] == ["by exact trivial"]
+    assert "accepted before this tool call was made" in refused[0]["why"]
+
+
+def test_a_quotation_in_a_verified_proof_survives_recorded_acceptance(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """`submit_proof` lets a syntax quotation through; the validator must too.
+
+    A quotation builds a piece of syntax Lean never runs, so the token inside it
+    is data -- and `axiom` is one of the tokens the offline scan forbids.
+    Scanned with `strip_comments` alone, `hardy accept --recorded` read the
+    quoted keyword and rejected Hardy's own verified artifact: the same lexical
+    rule wrong in a second place, which is the mismatch this closes.
+    """
+    import importlib
+
+    acceptance = importlib.import_module("hardy.acceptance")
+    proof = "by have _ := `(command| axiom bad : False); exact True.intro"
+    result = run(
+        proof_request,
+        factory([call("submit_proof", {"proof": proof})]),
+        lean,
+        tmp_path,
+        toolchain={
+            "lean_version": "4.32.0",
+            "lean_commit": "a" * 40,
+            "mathlib_revision": "b" * 40,
+            "lake_manifest_sha256": "c" * 64,
+        },
+    )
+
+    assert result.terminal_reason == "verified"
+    assert acceptance.validate_batch_consistency(tmp_path) == ()
+    # And the same scan still refuses the token when it is not quoted, so this
+    # is a narrower rule rather than a weaker one.
+    assert acceptance.FORBIDDEN_TOKEN.search(acceptance.scannable("by exact (axiom bad)"))

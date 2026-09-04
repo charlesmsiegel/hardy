@@ -617,7 +617,13 @@ Priority labels are sequencing hints:
   provider call outright, and `hardy batch` uses it to end a run at its first
   kept submission — the writeup is built from the artifacts rather than from
   anything said afterwards, so a further turn is billed for, buys nothing, and
-  could replace the proof the artifact was already going to carry; and the conversation is a list Hardy owns rather than
+  could replace the proof the artifact was already going to carry. The calls
+  already queued behind that submission are refused by the runner rather than
+  by the loop, since one response can ask for two submissions and only the
+  runner knows a run has its result — which also makes the rule hold on the
+  backends whose SDK owns the loop. A refused call is recorded, not dropped: a
+  trajectory simply missing it could not be told from one where the model never
+  asked; and the conversation is a list Hardy owns rather than
   a thread the provider resumes; `/model` hands it to the replacement runtime,
   so a switch means the same thing on both transports. That has a cost stated
   rather than discovered: there is no provider thread, so the conversation ends
@@ -1751,7 +1757,11 @@ then a commit of the scoreboard directory).
   its verifier environment, persisted, and read back before it is proved against.
 - **Now (implemented) — Independent final verification:** the theorem is rebuilt
   from the frozen claim and rechecked by a fresh Lean; nothing the model reported
-  is trusted. A changed signature or a forbidden token ends the run.
+  is trusted. A changed signature or a forbidden token ends the run — read over the
+  same comment-, string-, escaped-name- and quotation-blanked text `submit_proof`
+  reads, since the three surfaces that scan for one have to agree about what counts:
+  a proof Lean accepted and Hardy submitted must not be refused offline for a `sorry`
+  that is a declaration's own name or a piece of syntax the proof only builds.
 - **Now (implemented) — Controlled documents:** the model supplies prose and Hardy
   writes the LaTeX, escaping every field into a fixed template and compiling with
   a checksum-pinned Tectonic bundle. A failed compile is stored saying so.
