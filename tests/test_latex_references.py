@@ -291,3 +291,21 @@ def test_a_compile_that_writes_no_aux_does_not_leave_the_last_ones_labels(
     assert not (aux_dir / "writeup.aux").exists(), (
         "the previous document's labels survived a compile that recorded none"
     )
+
+
+def test_the_diagnostic_is_inside_the_output_limit_too(tmp_path: Path):
+    r"""The compiler's output was capped and the verdict appended after it.
+
+    A document with thousands of unresolved references makes an arbitrarily
+    long report, so the answer sailed past the cap the limit exists to be.
+    """
+    missing = "".join(f"See \\ref{{thm:missing{n}}}.\n" for n in range(2_000))
+    result = LatexTools(COMMAND, output_limit=4_000).check(
+        PREAMBLE + missing + END, tree=_tree(tmp_path)
+    )
+    assert not result.ok
+    assert len(result.output) <= 4_000 + len("exit=0 elapsed=0.000s\n") + 8
+    # The exit status survives the cut, and what is kept is Hardy's verdict
+    # rather than TeX's chatter.
+    assert result.output.startswith("exit=")
+    assert "did not resolve" in result.output or "thm:missing" in result.output

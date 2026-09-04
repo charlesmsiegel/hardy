@@ -386,3 +386,27 @@ def test_a_paged_read_stays_inside_the_configured_budget(tmp_path: Path):
     more = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "start_line": line})
     assert more.ok, more.output
     assert len(more.output.encode("utf-8")) <= 2048
+
+
+def test_a_query_longer_than_the_budget_does_not_come_back_whole(tmp_path: Path):
+    """Shedding detail cannot help with the part of the answer that is not detail.
+
+    Every level of detail echoes the query, so a query longer than the limit
+    made all of them oversized -- and the last was returned anyway.
+    """
+    runtime = _runtime(tmp_path, observation_bytes=2048)
+    result = runtime.call("search_papers", {"query": "ricci " * 5_000})
+    assert result.ok, result.output
+    assert len(result.output.encode("utf-8")) <= 2048
+
+
+def test_an_empty_result_does_not_echo_an_unbounded_query(tmp_path: Path):
+    empty = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+    )
+    runtime = _runtime(tmp_path, empty, observation_bytes=2048)
+    result = runtime.call("search_papers", {"query": "ricci " * 5_000})
+    assert result.ok, result.output
+    assert len(result.output.encode("utf-8")) <= 2048
+    assert "matched nothing" in result.output
