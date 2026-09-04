@@ -163,7 +163,12 @@ can take. Owning the loop is also what lets the wall clock reach *inside* a
 request rather than only between them: the remaining seconds are handed to the
 transport as its own timeout and the deadline is re-checked afterwards, so a
 reply that overran the budget ends the run as a timeout rather than as one that
-finished. The closers spend that same clock; the model is handed what they left. The price is the thing the SDK backends exist to avoid: an API key
+finished. The closers spend that same clock; the model is handed what they left. What
+owning the loop does *not* buy is the power to abort a request already in
+flight: the SDK backend can interrupt one and this transport cannot, so a
+cancel that arrives mid-request lets the reply come back — recorded as
+discarded, because it was produced and billed for, and never handed to a user
+who has been told the turn stopped. The price is the thing the SDK backends exist to avoid: an API key
 instead of a subscription, and a conversation that ends with the process
 because there is no thread to resume. So it is opt-in, and which transport
 carried a run is part of that run's recorded identity — the two are not the

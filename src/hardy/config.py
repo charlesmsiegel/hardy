@@ -69,6 +69,21 @@ PROJECT_SETTINGS = frozenset({"project"})
 BACKENDS = ("claude", "api")
 DEFAULT_BACKEND = "claude"
 
+#: How each backend is paid for, in the words a session banner and the model
+#: picker use. Stated once because both of them tell a user which credentials
+#: are about to be spent, and "Claude Code subscription" over a metered API key
+#: is not a cosmetic error -- it is the wrong answer to the question the line
+#: exists to answer.
+AUTHENTICATION = {
+    "claude": "Claude Code subscription",
+    "api": "Anthropic API key (metered)",
+}
+
+
+def authentication(backend: str) -> str:
+    """What a session on `backend` is billed against."""
+    return AUTHENTICATION.get(backend, backend)
+
 CAS_BACKENDS = ("sympy", "singular", "macaulay2")
 DEFAULT_CAS_BACKEND = "sympy"
 

@@ -224,10 +224,15 @@ export ANTHROPIC_API_KEY=...   # hardy doctor checks for it when this backend is
 
 `/model` inside a session lists the catalogued Claude models, switches the live
 session, records the change in the transcript, and can save the choice as your
-default. The conversation carries across a switch through the provider's own
-session thread, which also survives closing and reopening the workspace. A model
-not in the catalog can be typed in directly — that is the escape hatch for a
-release this list has not caught up with.
+default. The conversation carries across the switch on both backends, by
+different means and with different reach: on the subscription backend it rides
+the provider's own session thread, which also survives closing and reopening
+the workspace; on the `api` backend Hardy holds the conversation itself and
+hands it to the replacement runtime, and it ends with the process, because
+there is no thread to resume. The banner and `/model` name which credentials a
+session spends, so an API-key session is never described as running on a
+subscription. A model not in the catalog can be typed in directly — that is the
+escape hatch for a release this list has not caught up with.
 
 `hardy doctor` checks whichever backend is configured, and only that one: on
 the subscription backend it reports whether the SDK, the CLI, and the login are

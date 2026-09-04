@@ -10,7 +10,6 @@ from typing import Any, Protocol
 
 from . import audit
 from . import closers as closer_ladder
-from .acceptance import SKETCH_HEADING
 from .chat import provenance
 from .claude_runtime import TurnLimitReached
 from .latency import manifest_binds
@@ -112,6 +111,35 @@ def describe_toolchain(toolchain: dict[str, Any] | None) -> str:
         f"- Lean: {toolchain.get('lean_version')} (commit {toolchain.get('lean_commit')})\n"
         f"- Mathlib: {toolchain.get('mathlib_revision')}\n"
         f"- Lake manifest SHA-256: {toolchain.get('lake_manifest_sha256')}"
+    )
+
+
+#: The heading a kept sketch is written under. Exported because the audit has
+#: to look for exactly what the writer wrote.
+SKETCH_HEADING = "## Sketch (not a proof)"
+
+
+def sketch_section(sketch: dict[str, Any]) -> str:
+    """The `writeup.md` section a kept sketch is reported in.
+
+    One function, used by the writer and required verbatim by the audit. Split
+    between the two, the human-facing copy could say "0 holes" over a record
+    that says one -- and the writeup is the artifact a reader actually opens,
+    so that is where a partial result would most usefully conceal its remaining
+    work.
+
+    Named a sketch in the heading and again in the sentence under it. A partial
+    development in a file called `writeup.md` is exactly the thing a hurried
+    reader mistakes for a result, so the two words that stop them are not left
+    to the section title alone.
+    """
+    holes = sketch["holes"]
+    where = ", ".join(f"{item['keyword']} at line {item['line']}" for item in holes) or "none recorded"
+    return (
+        f"\n{SKETCH_HEADING}\n\nThe run left an elaborating skeleton with "
+        f"{len(holes)} hole(s) in it ({where}). Lean accepted its structure and nothing "
+        f"else: a hole closes any goal, so this is not evidence for the claim and is not "
+        f"verified.\n\n```lean\n{sketch['proof']}\n```\n"
     )
 
 
@@ -252,7 +280,12 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         # about whose turn it is, never a second route to a verdict.
         def submit(proof: str) -> tuple[bool, str]:
             outcome = dispatch("submit_proof", {"proof": proof})
-            return outcome.ok, outcome.output
+            # Whether the run *kept* the submission, not whether Lean
+            # eventually accepted it. A check that began inside the deadline
+            # and finished outside it is discarded by `dispatch` and leaves
+            # `found` unset -- and reporting that tactic in `closed_by` would
+            # name a closer for a run that terminates with no verified proof.
+            return found["result"] is not None, outcome.output
 
         outcome = closer_ladder.close(
             submit,
@@ -365,18 +398,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     if not final:
         writeup += f"\nNo completed artifact was produced. Terminal reason: `{reason}`.\n"
     if sketch is not None:
-        # Named a sketch in the heading and again in the sentence under it. A
-        # partial development in a file called `writeup.md` is exactly the
-        # thing a hurried reader mistakes for a result, so the two words that
-        # stop them are not left to the section title alone.
-        holes = sketch["holes"]
-        where = ", ".join(f"line {item['line']}" for item in holes) or "none recorded"
-        writeup += (
-            f"\n{SKETCH_HEADING}\n\nThe run left an elaborating skeleton with "
-            f"{len(holes)} hole(s) in it ({where}). Lean accepted its structure and nothing "
-            f"else: a hole closes any goal, so this is not evidence for the claim and is not "
-            f"verified.\n\n```lean\n{sketch['proof']}\n```\n"
-        )
+        writeup += sketch_section(sketch)
     (output_dir / "writeup.md").write_text(writeup, encoding="utf-8")
     _write_json(output_dir / "trajectory.json", {"schema_version": 1, **provenance(runtime), "lean_command": list(lean.lean_command), "lean_project": str(lean.project) if lean.project else None, "toolchain": toolchain, "request": {"declaration": request.declaration, "informal_claim": request.informal_claim, "imports": list(request.imports)}, "limits": _limits(runtime, max_turns, wall_seconds, elapsed), "usage": spent.summary(), "sketch": sketch, "closers": ladder, "events": events, "terminal_reason": reason})
     _write_json(output_dir / "result.json", result.as_dict())
