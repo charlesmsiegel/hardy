@@ -414,6 +414,45 @@ class Bibliography:
         lines.append("\\end{thebibliography}")
         return "\n".join(lines) + "\n"
 
+    def regenerate(self) -> bool:
+        """Bring the generated file back to what the store says, if it drifted.
+
+        The key check reads what the compiler put in the reference list and
+        asks whether `cite_paper` recorded it. That covers the keys and
+        nothing else, so an edited or stale `tex/references.tex` -- hand-edited
+        despite the refusal, arrived from a clone, or merged from a branch
+        whose store has since moved -- could keep a vouched key and change the
+        authors, the title, or the year under it, and every gate passed. The
+        source-level check cannot catch it either: it exempts this path by
+        name, because Hardy writes it.
+
+        Regenerated rather than refused, deliberately. This file is the one a
+        model may not repair, and the refusal that would be honest here --
+        "this is not the file I generated" -- would leave a workspace with no
+        move: the file cannot be edited and cannot be deleted. Rewriting it is
+        also exactly what the file's own header promises happens.
+
+        The read is unlocked and the write is not: a file that already agrees
+        with the store is the ordinary case and must not queue behind another
+        session's citation.
+        """
+        wanted = self.render()
+        try:
+            if read_text(self.tex, GENERATED) == wanted:
+                return False
+        except (OSError, LayoutError):
+            # Unreadable or absent, which the write below settles either way.
+            pass
+        with FileLock(self._lock_target(), timeout=self.lock_timeout):
+            # Re-rendered under the lock: another session may have cited
+            # between the comparison above and here, and writing the stale
+            # render would undo its citation.
+            self.tex.mkdir(parents=True, exist_ok=True)
+            WriteGuard(self.tex, create=True).write_bytes(
+                GENERATED, self.render().encode("utf-8")
+            )
+        return True
+
     def _match(self, record: PaperRecord, store: Store) -> Entry | None:
         """The entry this record already is, or None.
 

@@ -18,7 +18,7 @@ from typing import Any, Protocol
 from . import audit, completion, ingest, process
 from . import summary as summary_module
 from .bibliography import GENERATED as GENERATED_BIBLIOGRAPHY
-from .bibliography import hand_written_bibliography
+from .bibliography import BibliographyError, hand_written_bibliography
 from .bibliography import is_generated as is_generated_bibliography
 from .cas import CasError
 from .cas_export import export_session
@@ -54,6 +54,7 @@ from .project_context import (
 )
 from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt, chat_project_context_prompt
 from .search_tools import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
+from .storage import LockTimeout
 from .truncation import truncate
 from .usage import Usage
 from .workspace import (
@@ -3667,6 +3668,18 @@ class MathematicsSession:
         cannot be read is skipped rather than guessed at: one unreadable
         fragment must not stop every save in a workspace.
         """
+        # First, because the compile below reads this file. The key check
+        # asks whether every key the compiler used was recorded; it says
+        # nothing about the authors or the title printed under one, so a
+        # `references.tex` that arrived stale from a clone or was edited past
+        # the refusal could publish fabricated metadata under a vouched key.
+        # Rewritten from the store rather than refused: see
+        # `Bibliography.regenerate` for why a refusal here would leave the
+        # workspace with no move.
+        try:
+            self.papers.bibliography.regenerate()
+        except (BibliographyError, LockTimeout, OSError, LayoutError) as error:
+            return f"the generated reference list could not be brought up to date: {error}"
         refusal = hand_written_bibliography(relative, source)
         if refusal:
             return refusal

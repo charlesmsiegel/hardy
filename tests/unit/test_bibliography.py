@@ -497,3 +497,36 @@ def test_only_the_generated_file_at_the_tree_root_is_reserved():
     reserved = hand_written_bibliography("references.tex", "\\section{Notes}\n")
     assert "written by Hardy" in reserved
     assert hand_written_bibliography("sections/references.tex", "\\section{Notes}\n") == ""
+
+
+def test_a_generated_file_that_drifted_from_the_store_is_rewritten(tmp_path: Path):
+    r"""The key check covers keys, and nothing else about the entry.
+
+    An edited or stale `tex/references.tex` keeping a vouched key while
+    changing the authors or the title under it passed every gate: the key was
+    recorded, and the source-level check exempts this path by name because
+    Hardy writes it.
+    """
+    bibliography = Bibliography(tmp_path)
+    entry, _ = bibliography.cite(_record())
+    generated = tmp_path / "tex" / "references.tex"
+    forged = generated.read_text(encoding="utf-8").replace(
+        "Grigori Perelman", "Somebody Else"
+    )
+    generated.write_text(forged, encoding="utf-8")
+    assert bibliography.regenerate() is True
+    restored = generated.read_text(encoding="utf-8")
+    assert "Grigori Perelman" in restored
+    assert "Somebody Else" not in restored
+    assert f"\\bibitem{{{entry.key}}}" in restored
+    # And a file that already agrees is left alone, and says so.
+    assert bibliography.regenerate() is False
+
+
+def test_a_missing_generated_file_is_put_back(tmp_path: Path):
+    bibliography = Bibliography(tmp_path)
+    bibliography.cite(_record())
+    generated = tmp_path / "tex" / "references.tex"
+    generated.unlink()
+    assert bibliography.regenerate() is True
+    assert generated.is_file()

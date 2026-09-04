@@ -366,3 +366,23 @@ def test_the_session_builds_its_paper_runtime_on_the_configured_budget(tmp_path:
         observation_bytes=4096,
     )
     assert session.papers.observation_bytes == 4096
+
+
+def test_a_paged_read_stays_inside_the_configured_budget(tmp_path: Path):
+    """The note is part of the answer, so it is part of the budget.
+
+    Letting `truncate` spend the whole limit and then prepending the paper
+    id, the summary and the continuation line put every truncated window over
+    the configured ceiling -- by a little, on every long read.
+    """
+    runtime = _runtime(tmp_path, _feed(abstract="word " * 20_000), observation_bytes=2048)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1"})
+    assert result.ok, result.output
+    assert len(result.output.encode("utf-8")) <= 2048
+    assert "start_line=" in result.output
+    # And the continuation it offers is itself inside the budget.
+    line = int(result.output.split("start_line=")[1].split(" ")[0].rstrip("."))
+    more = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "start_line": line})
+    assert more.ok, more.output
+    assert len(more.output.encode("utf-8")) <= 2048

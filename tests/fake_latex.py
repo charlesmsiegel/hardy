@@ -93,13 +93,21 @@ if SLOW:
     time.sleep(float(SLOW.group(1)))
 
 if "\\begin{document}" in source and "\\end{document}" in source:
-    pathlib.Path("writeup.pdf").write_bytes(b"%PDF-fake")
+    # `-draftmode`, or `\pdfdraftmode` in the source: everything runs, the
+    # log is written, the exit status is zero, and no PDF appears. Modelled
+    # because a compile that produces no document is the case Hardy has to
+    # refuse rather than report as a success nobody can read.
+    if not re.search(r"%\s*draftmode", source):
+        pathlib.Path("writeup.pdf").write_bytes(b"%PDF-fake")
     # Real LaTeX records the labels it created in an .aux file, and Hardy reads
     # that rather than the source text. Modelling it here is what lets a test
     # tell a label the compiler made from one that only appears in the text --
     # inside a comment, or inside \verb.
     body = "".join(text for _, text in [(None, source)] + [(t, t.read_text()) for t in sorted(seen)])
     executed = CSNAME.sub(lambda found: "\\" + found.group(1), _uncommented(body))
+    # `\nofiles` suppresses every auxiliary file while still producing the
+    # PDF, so a later pass has no record of the labels this one created.
+    nofiles = "\\nofiles" in _uncommented(body)
     aux = pathlib.Path("writeup.aux")
     # What the PREVIOUS pass wrote down. Cross-references resolve out of the
     # .aux and not out of the text, which is why one pass can never resolve
@@ -121,7 +129,10 @@ if "\\begin{document}" in source and "\\end{document}" in source:
     # refuse rather than publish with whatever numbers the last pass produced.
     if re.search(r"%\s*unstable", source):
         record += f"\\newlabel{{pass}}{{{{{len(previous)}}}{{1}}}}\n"
-    aux.write_text(record, encoding="utf-8")
+    if nofiles:
+        aux.unlink(missing_ok=True)
+    else:
+        aux.write_text(record, encoding="utf-8")
     for name in INCLUDE.findall(executed):
         target = path.parent / name
         if not target.suffix:
@@ -159,7 +170,9 @@ if "\\begin{document}" in source and "\\end{document}" in source:
     # reference nothing defines never resolves, so a stand-in that asked
     # forever would make every missing label look like a compile that merely
     # needed one more go.
-    if record != previous:
+    # With no auxiliary file there is nothing to compare against and nothing
+    # a further pass could read, so a real LaTeX does not ask for one.
+    if record != previous and not nofiles:
         print("LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.")
     print("Output written on writeup.pdf")
     raise SystemExit(0)

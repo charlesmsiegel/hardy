@@ -363,22 +363,39 @@ class PaperToolRuntime:
         record = self._held(paper_id)
         content = record.content()
         start = max(1, start_line)
-        cut = truncation.truncate(
-            content, keep="head", byte_limit=self.observation_bytes, start_line=start
-        )
-        if not cut.truncated and start == 1:
-            return ToolResult(True, cut.text)
-        if not cut.text and start > cut.total_lines:
-            return ToolResult(
-                False,
-                f"{record.arxiv_id} has {cut.total_lines} lines; start_line={start} is past the end",
+        # The note is part of the answer, so it is part of the budget. Letting
+        # `truncate` spend the whole limit and then prepending the paper id,
+        # the summary and the continuation line put every long window over the
+        # configured ceiling -- by a little, on every truncated read, which is
+        # the shape of overrun nobody notices.
+        #
+        # Measured rather than reserved by guess: the note's length depends on
+        # the summary and the next line number, which are what the truncation
+        # returns. Two passes settle it in practice and the loop is bounded
+        # anyway, since a smaller budget can only shorten the text.
+        budget = self.observation_bytes
+        for _ in range(3):
+            cut = truncation.truncate(
+                content, keep="head", byte_limit=budget, start_line=start
             )
-        rest = (
-            f" Call read_paper again with start_line={cut.next_line} for the rest."
-            if cut.next_line is not None
-            else ""
-        )
-        return ToolResult(True, f"{record.arxiv_id}: {cut.summary}.{rest}\n\n{cut.text}")
+            if not cut.truncated and start == 1:
+                return ToolResult(True, cut.text)
+            if not cut.text and start > cut.total_lines:
+                return ToolResult(
+                    False,
+                    f"{record.arxiv_id} has {cut.total_lines} lines; start_line={start} is past the end",
+                )
+            rest = (
+                f" Call read_paper again with start_line={cut.next_line} for the rest."
+                if cut.next_line is not None
+                else ""
+            )
+            payload = f"{record.arxiv_id}: {cut.summary}.{rest}\n\n{cut.text}"
+            over = len(payload.encode("utf-8")) - self.observation_bytes
+            if over <= 0 or budget <= over:
+                return ToolResult(True, payload)
+            budget -= over
+        return ToolResult(True, payload)
 
     def cite(self, paper_id: str) -> ToolResult:
         record = self._held(paper_id)
