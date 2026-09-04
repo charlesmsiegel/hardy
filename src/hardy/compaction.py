@@ -219,19 +219,34 @@ def overhead(system_prompt: str, specs: Sequence[Mapping[str, Any]]) -> int:
     return estimate_text(system_prompt) + sum(estimate_text(repr(spec)) for spec in specs)
 
 
+#: What one message costs beyond its own text: a role, the framing of a
+#: content block, and the punctuation the transport wraps them in. Small and
+#: deliberately generous -- a conversation of many short turns is where an
+#: estimate that counted only text drifted furthest, and drifted in the
+#: direction that sends a request the provider refuses.
+FRAMING_PER_MESSAGE = 8
+
+
 def estimate_tokens(messages: Sequence[Message]) -> int:
     """About how large this conversation is, by `CHARACTERS_PER_TOKEN`.
 
     An estimate and named as one. Nothing on Hardy's transports will count a
     conversation before it is sent, so a compaction that insisted on an exact
     figure would be a compaction that never ran.
+
+    Everything that reaches the wire is counted, not only the prose: the ids
+    that pair a tool call with its result, the tool names on both ends, and a
+    per-message allowance for the role and block framing. A tool-heavy session
+    is mostly those, and counting only text made the estimate lightest exactly
+    where the conversation was heaviest.
     """
     characters = 0
     for message in messages:
-        characters += len(message.text)
+        characters += len(message.text) + len(message.role)
         for call in message.tool_calls:
-            characters += len(call.name) + len(repr(call.arguments))
-    return int(characters / CHARACTERS_PER_TOKEN)
+            characters += len(call.name) + len(call.id) + len(repr(call.arguments))
+        characters += len(message.call_id) + len(message.name)
+    return int(characters / CHARACTERS_PER_TOKEN) + FRAMING_PER_MESSAGE * len(messages)
 
 
 @dataclass(frozen=True)

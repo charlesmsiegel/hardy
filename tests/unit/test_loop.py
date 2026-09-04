@@ -481,3 +481,18 @@ def test_a_compactor_that_eats_the_budget_is_caught_by_the_same_check() -> None:
         _drain(loop, "prove it")
 
     assert provider.calls == 0
+
+
+def test_a_counter_this_exchange_did_not_state_is_not_restated() -> None:
+    """`usage.Usage` reads a field it is handed as reported, and advances that
+    field's coverage count. A figure repeated from an earlier exchange would
+    make the meter claim to cover turns it never measured."""
+    loop, _, observed = _loop([ProviderTurn(text="one", usage={"input_tokens": 10, "cache_read_input_tokens": 400})])
+    _drain(loop, "first")
+    loop._provider.script = [ProviderTurn(text="two", usage={"input_tokens": 30})]
+    _drain(loop, "second")
+
+    reports = [item for item in observed if item["type"] == "result"]
+    assert reports[0]["usage"] == {"cache_read_input_tokens": 400, "input_tokens": 10}
+    # The cache counter is absent, not repeated at its stale value.
+    assert reports[1]["usage"] == {"input_tokens": 40}

@@ -219,9 +219,13 @@ class AgentLoop:
         #: per-exchange report climbing past its predecessor would be counted
         #: as the difference and undercount every exchange after the first.
         self._totals: dict[str, int] = {}
-        #: Whether *this* exchange reported any counter, so a report can tell
-        #: silence from a repeat of the running total.
-        self._counted = False
+        #: Which counters *this* exchange stated. A report publishes the
+        #: running total for these and no others: `usage.Usage` reads a field
+        #: it is handed as reported, and a stale figure repeated from an
+        #: earlier exchange would advance that field's coverage count for an
+        #: exchange that never mentioned it -- a spend meter claiming to cover
+        #: turns it did not measure.
+        self._stated: set[str] = set()
         #: What ended this exchange badly, if anything. Read by `_report`,
         #: which runs from a `finally` and cannot otherwise tell.
         self._failure: str | None = None
@@ -254,7 +258,7 @@ class AgentLoop:
         sequenced the turn, not on whichever thread first iterates it.
         """
         self._cancelled = False
-        self._counted, self._failure = False, None
+        self._stated, self._failure = set(), None
         self.turns = None
         self.messages.append(Message("user", text=text))
         budget = Budget(self.max_turns, self.wall_seconds)
@@ -445,7 +449,7 @@ class AgentLoop:
         for key, value in usage.items():
             if isinstance(value, int) and not isinstance(value, bool):
                 self._totals[str(key)] = self._totals.get(str(key), 0) + value
-                self._counted = True
+                self._stated.add(str(key))
 
     def _report(self, budget: Budget) -> None:
         self._observe({
@@ -456,12 +460,13 @@ class AgentLoop:
             # from a token count and a published rate would be Hardy's
             # arithmetic wearing the provider's authority.
             "cost_usd": None,
-            # The running total, but only when this exchange contributed to
-            # it. An exchange that reported nothing -- one that ended on a
-            # provider error before any answer arrived -- would otherwise hand
-            # back the previous exchange's cumulative figures as though it had
-            # stated them itself.
-            "usage": dict(self._totals) if self._counted else None,
+            # The running total, for the counters this exchange actually
+            # stated and no others. An exchange that reported nothing -- one
+            # that ended on a provider error before any answer arrived --
+            # reports None rather than handing back the previous exchange's
+            # figures as though it had stated them itself; and one that stated
+            # some but not all of them does not silently vouch for the rest.
+            "usage": {key: self._totals[key] for key in sorted(self._stated)} or None,
             "is_error": self._failure is not None,
             **({"error": self._failure} if self._failure else {}),
             # Who kept the bounds this exchange ran under. Recorded beside the
