@@ -563,3 +563,49 @@ def test_an_import_is_visible_at_the_point_it_happened():
         },
     ])
     assert "Hardy did not write it" in page
+
+
+def test_a_failed_write_does_not_destroy_the_export_it_was_replacing(tmp_path, monkeypatch):
+    """A full disk part way through an O_TRUNC write left half a page of HTML
+    that still opens in a browser and still looks like a report."""
+    import os
+
+    import pytest
+
+    destination = tmp_path / "report.html"
+    destination.write_text("<html>last week's report</html>", encoding="utf-8")
+    opened = os.fdopen
+
+    class Full:
+        """A stream that runs out of disk on its first write."""
+
+        def __init__(self, stream):
+            self._stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *failure):
+            self._stream.close()
+            return False
+
+        def write(self, text):
+            raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "fdopen", lambda *a, **k: Full(opened(*a, **k)))
+    with pytest.raises(OSError):
+        export.write(material(), destination)
+
+    assert destination.read_text(encoding="utf-8") == "<html>last week's report</html>"
+    assert list(tmp_path.iterdir()) == [destination], "a temporary file was left behind"
+
+
+def test_a_successful_write_replaces_the_previous_export(tmp_path):
+    destination = tmp_path / "report.html"
+    destination.write_text("<html>old</html>", encoding="utf-8")
+
+    landed = export.write(material(), destination)
+
+    assert landed == destination.parent.resolve() / destination.name
+    assert "<!doctype html>" in destination.read_text(encoding="utf-8")
+    assert list(tmp_path.iterdir()) == [destination]

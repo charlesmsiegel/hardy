@@ -55,11 +55,22 @@ class PlainUi:
             mark = "*" if number - 1 == current else " "
             note = f"  {row.note}" if row.note else ""
             self._out(f"  {mark} {number:>3}  {row.label}{note}")
-        answer = (self.ask_line_now("Choice (number, or blank to cancel): ") or "").strip()
-        if not answer.isdigit():
-            return None
-        index = int(answer)
-        return rows[index - 1] if 1 <= index <= len(rows) else None
+        # A typo is not an answer, and it is not a cancellation either. Blank
+        # cancels, because the prompt says so; anything else that is not a row
+        # is reported and asked again, which is what the console terminal does
+        # with a mistyped word. Collapsing the two mattered the moment an
+        # abandoned selector began cancelling the run: `/prove` discarded a
+        # staged run over one stray keystroke.
+        while True:
+            answer = self.ask_line_now("Choice (number, or blank to cancel): ")
+            if answer is None:
+                return None
+            answer = answer.strip()
+            if not answer:
+                return None
+            if answer.isdigit() and 1 <= int(answer) <= len(rows):
+                return rows[int(answer) - 1]
+            self._out(f"  {answer!r} is not one of 1-{len(rows)}. Blank cancels.")
 
     def ask_line_now(self, prompt: str) -> str | None:
         try:

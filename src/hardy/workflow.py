@@ -374,6 +374,15 @@ class ProveWorkflow:
                         FormalizationProposal,
                     )
                 except ValueError as error:
+                    # An interrupted exchange comes back empty, and an empty
+                    # answer is exactly what "no structured response" means --
+                    # so a press during this turn arrives here looking like the
+                    # model returning nonsense. `continue` reaches the check at
+                    # the top of the loop, but only if there is another
+                    # proposal left: on the last one the loop ended and the run
+                    # was graded MALFORMED_MODEL_OUTPUT, blaming the model for
+                    # the interruption.
+                    self._refuse_if_cancelled()
                     store.append(
                         "formalization.malformed",
                         {"proposal": proposal_number, "message": str(error)},

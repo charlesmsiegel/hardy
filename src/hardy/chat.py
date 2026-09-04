@@ -2654,7 +2654,7 @@ class MathematicsSession:
             )
         return found
 
-    def _saved_statements(self) -> dict[str, str]:
+    def _saved_statements(self, sources: dict[str, str] | None = None) -> dict[str, str]:
         """The closed ones, which is what the writeup obligations are about.
 
         A theorem whose proof still has a hole is not a result yet; demanding
@@ -2664,10 +2664,10 @@ class MathematicsSession:
         the moment the hole closes -- or at a report that names it, which asks
         for the carrying directly.
         """
-        opened = self._open_theorems()
+        opened = self._open_theorems(sources)
         return {
             name: text
-            for name, text in self._theorem_statements().items()
+            for name, text in self._theorem_statements(sources).items()
             if name not in opened
         }
 
@@ -2853,7 +2853,7 @@ class MathematicsSession:
         except Exception:  # noqa: BLE001 - a status line must never end a turn
             return ""
 
-    def _used_assumptions(self) -> set[str]:
+    def _used_assumptions(self, sources: dict[str, str] | None = None) -> set[str]:
         """Approved axioms the saved tree actually rests on.
 
         Both ways one can be reached: written into a workspace file, or
@@ -2863,31 +2863,43 @@ class MathematicsSession:
         has to rule out by hand.
         """
         used: set[str] = set()
-        for source in self.lean_workspace.sources().values():
+        snapshot = self.lean_workspace.sources() if sources is None else sources
+        for source in snapshot.values():
             used.update(name for name, _ in assumptions(source))
         for record in self.state.get("audit", {}).values():
             used.update(str(name) for name in record.get("assumed", ()))
         return used
 
-    def _obligations(self) -> tuple[completion.Obligation, ...]:
+    def _obligations(
+        self, sources: dict[str, str] | None = None, tex: dict[str, str] | None = None
+    ) -> tuple[completion.Obligation, ...]:
         """What the workspace still owes, derived from the artifacts alone.
 
         Never stored. A flag saying the work was finished would outlive the
         file it described -- and the one thing this must not do is report a
         theorem as written up because it *was*, before the statement changed.
+
+        A caller holding a snapshot of the trees passes it in, and everything
+        below is derived from that one moment. `/export` is why: it prints the
+        results from a snapshot and these obligations beside them, and editing
+        a `.lean` file behind Hardy is supported. A later read that no longer
+        declares an undocumented theorem answers "nothing outstanding" next to
+        that same theorem's statement, which reads as a page saying the work is
+        written up. A later read can ask for LESS, not only for more.
         """
+        written = self._tex_sources() if tex is None else tex
         owed = completion.outstanding(
-            theorems=self._saved_statements(),
+            theorems=self._saved_statements(sources),
             registry=self.state["names"],
             labels=self._labels(),
             assumptions=self.state["assumptions"],
-            used=self._used_assumptions(),
-            tex=self._tex_sources(),
+            used=self._used_assumptions(sources),
+            tex=written,
             # Open theorems owe nothing, but they are still saved theorems: they
             # back a `\begin{theorem}` the document asserts, and they decide
             # whether a leaf name is unambiguous. Left out, a document asserting
             # one read as backed by nothing.
-            saved=self._theorem_statements(),
+            saved=self._theorem_statements(sources),
         )
         # Ahead of the rest: while two modules answer to one name, every
         # obligation below is about whichever of them was read last.
@@ -2907,13 +2919,13 @@ class MathematicsSession:
                 "stand for both in the registry, the label, or the statement the writeup "
                 "quotes. Put one of them in a namespace.",
             )
-            for name, modules in sorted(self._shared_names().items())
+            for name, modules in sorted(self._shared_names(sources).items())
         ]
         # `_audit_gaps` is asked only about closed theorems. An open one has a
         # current audit record -- being current is how Hardy knows it is open --
         # so it has no gap to report, and reporting it would say the same thing
         # the `open` obligation beside it already says.
-        opened = self._open_theorems()
+        opened = self._open_theorems(sources)
         holes = tuple(
             completion.Obligation("open", name, "still open -- rests on a hole")
             for name in sorted(opened)
@@ -2921,8 +2933,8 @@ class MathematicsSession:
         return (
             *holes,
             *shared,
-            *self._audit_gaps(self._saved_theorems() - opened),
-            *self._stale_writeup(),
+            *self._audit_gaps(self._saved_theorems(sources) - opened, sources),
+            *self._stale_writeup(sources, written),
             *owed,
         )
 
@@ -3034,6 +3046,7 @@ class MathematicsSession:
         was never about.
         """
         sources = self.lean_workspace.sources()
+        tex = self._tex_sources()
         return summary_module.assemble(
             goal=self.goal(),
             assumptions=list(self.state["assumptions"]),
@@ -3041,7 +3054,7 @@ class MathematicsSession:
             audit=self._current_audit(sources),
             theorems=self._theorem_statements(sources),
             open_theorems=self._open_theorems(sources),
-            obligations=self._obligations(),
+            obligations=self._obligations(sources, tex),
             failed=summary_module.attempts(self._recorded()),
             modules=sorted(sources),
             # Already computed for the obligations, and needed here for the
@@ -3081,6 +3094,7 @@ class MathematicsSession:
         is a supported thing for a user to do.
         """
         sources = self.lean_workspace.sources()
+        tex = self._tex_sources()
         document = self.workspace / "writeup.pdf"
         # Not through a link. `is_file` and `stat` both follow one, so a
         # checked-out `writeup.pdf -> /etc/passwd` would have the export state
@@ -3099,14 +3113,14 @@ class MathematicsSession:
             "open": sorted(self._open_theorems(sources)),
             "shared": self._shared_names(sources),
             "lean": sources,
-            "tex": self._tex_sources(),
+            "tex": tex,
             # What arrived from outside rather than being written here. The
             # sources above carry no trace of it, so without this the page
             # presents an imported module exactly like one Hardy authored, and
             # the origin path and arriving digest -- the only things that let a
             # reader check it against the file it came from -- are lost.
             "imported": list(self.state.get("imported", [])),
-            "obligations": [str(item) for item in self._obligations()],
+            "obligations": [str(item) for item in self._obligations(sources, tex)],
             "document": (
                 f"{document.name} was compiled ({document.stat().st_size} bytes). "
                 "It is not embedded here: this file carries no external assets."
@@ -4684,7 +4698,13 @@ class MathematicsSession:
             text += f"\\\\ Goal, as stated by the user: {self._tex_ascii(goal)}"
         return text
 
-    def _tex_signature(self, open_names: Sequence[str] | None = None) -> str:
+    def _tex_signature(
+        self,
+        open_names: Sequence[str] | None = None,
+        *,
+        sources: dict[str, str] | None = None,
+        tex: dict[str, str] | None = None,
+    ) -> str:
         """What the writeup tree hashes to, as a whole.
 
         `open_names` substitutes an open set for the one the workspace has now,
@@ -4692,7 +4712,7 @@ class MathematicsSession:
         if only that had not moved. Everything else is read live.
         """
         digest = hashlib.sha256()
-        for path, source in sorted(self._tex_sources().items()):
+        for path, source in sorted((self._tex_sources() if tex is None else tex).items()):
             digest.update(path.encode("utf-8"))
             digest.update(b"\0")
             digest.update(source.encode("utf-8"))
@@ -4707,11 +4727,15 @@ class MathematicsSession:
         # `_stamp` asks for the obligations, `_stale_writeup` is one of them,
         # and it asks for this signature. Everything the banner is computed from
         # is either hashed above (the tex sources) or listed here.
-        digest.update(json.dumps(self._stamp_inputs(open_names), sort_keys=True).encode("utf-8"))
+        digest.update(
+            json.dumps(self._stamp_inputs(open_names, sources), sort_keys=True).encode("utf-8")
+        )
         digest.update(b"\0")
         return digest.hexdigest()
 
-    def _stamp_inputs(self, open_names: Sequence[str] | None = None) -> dict[str, Any]:
+    def _stamp_inputs(
+        self, open_names: Sequence[str] | None = None, sources: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         """The banner inputs a stale PDF would *overstate*, and only those.
 
         Not everything `_stamp` reads. The distinction is which direction a
@@ -4744,7 +4768,9 @@ class MathematicsSession:
             # costs nothing, because a theorem that has just closed owes the
             # document a label and its statement anyway, so it was going to be
             # recompiled regardless.
-            "open": sorted(self._open_theorems()) if open_names is None else sorted(open_names),
+            "open": (
+                sorted(self._open_theorems(sources)) if open_names is None else sorted(open_names)
+            ),
         }
 
     def _stamp_writeup(self) -> None:
@@ -4774,7 +4800,9 @@ class MathematicsSession:
             return False
         return bool(stamped == self._tex_signature(self.state.get("tex_open", [])))
 
-    def _stale_writeup(self) -> list[completion.Obligation]:
+    def _stale_writeup(
+        self, sources: dict[str, str] | None = None, tex: dict[str, str] | None = None
+    ) -> list[completion.Obligation]:
         """Whether the labels on hand describe the documents on hand.
 
         `_labels` reads the `.aux` the last successful compile wrote, and
@@ -4786,7 +4814,8 @@ class MathematicsSession:
         reason; this is that, for the half a reader actually holds.
         """
         stamped = self.state.get("tex_signature")
-        if not self._tex_sources() or stamped == self._tex_signature():
+        written = self._tex_sources() if tex is None else tex
+        if not written or stamped == self._tex_signature(sources=sources, tex=written):
             return []
         return [
             completion.Obligation(
@@ -4857,7 +4886,9 @@ class MathematicsSession:
         """
         return self._open_declarations(sources) & self._saved_theorems(sources)
 
-    def _audit_gaps(self, names: Iterable[str]) -> list[completion.Obligation]:
+    def _audit_gaps(
+        self, names: Iterable[str], snapshot: dict[str, str] | None = None
+    ) -> list[completion.Obligation]:
         """Claimed theorems with no current audit behind them.
 
         A save audits what it wrote and stamps the verdict with the build
@@ -4870,11 +4901,11 @@ class MathematicsSession:
         from text alone.
         """
         try:
-            signatures = self.lean_workspace.current_signatures()
+            signatures = self.lean_workspace.current_signatures(snapshot)
         except ImportCycle as error:
             return [completion.Obligation("lean", "", f"the workspace does not order: {error}")]
         stored = self.state.get("audit", {})
-        sources = self.lean_workspace.sources()
+        sources = self.lean_workspace.sources() if snapshot is None else snapshot
         gaps: list[completion.Obligation] = []
         for name in sorted(names):
             covering = [

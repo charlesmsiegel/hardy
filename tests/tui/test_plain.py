@@ -121,3 +121,28 @@ def test_ctrl_c_mid_turn_is_recorded_not_left_to_escape_as_a_traceback(settings)
     code, _, _ = run(settings, ["prove something"], session=session)
     assert code == 0
     assert session.cancelled == ["keyboard_interrupt"]
+
+
+def test_a_mistyped_choice_is_asked_again_rather_than_read_as_a_cancellation():
+    """Blank cancels, because the prompt says so. A typo is neither an answer
+    nor a cancellation -- and once an abandoned selector began cancelling the
+    run, collapsing the two discarded a staged `/prove` over one keystroke."""
+    from hardy.tui.plain import PlainUi
+    from hardy.tui.ports import Choice
+
+    said: list[str] = []
+    answers = iter(["x", "9", "2"])
+    ui = PlainUi(said.append, lambda prompt: next(answers, ""))
+
+    picked = ui.choose_now("Pick", [Choice("a", "A"), Choice("b", "B")])
+
+    assert picked is not None and picked.value == "b"
+    assert any("not one of 1-2" in line for line in said)
+
+
+def test_a_blank_choice_still_cancels():
+    from hardy.tui.plain import PlainUi
+    from hardy.tui.ports import Choice
+
+    ui = PlainUi(lambda line: None, lambda prompt: "")
+    assert ui.choose_now("Pick", [Choice("a", "A")]) is None
