@@ -22,6 +22,8 @@ class ScriptedUi:
         self.lines = list(lines or [])
         self.confirmations = list(confirmations or [])
         self.written: list[tuple[str, str]] = []
+        #: What the running command published for Esc to reach, if anything.
+        self.stopper = None
         self.asked: list[str] = []
         self.subtitles: list[str] = []
 
@@ -42,6 +44,9 @@ class ScriptedUi:
     async def confirm(self, question: str) -> bool:
         self.asked.append(question)
         return self.confirmations.pop(0) if self.confirmations else False
+
+    def stopping(self, cancel) -> None:
+        self.stopper = cancel
 
     @property
     def from_thread(self):

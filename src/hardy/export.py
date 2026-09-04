@@ -41,6 +41,7 @@ from typing import Any
 # restated so one list decides what counts as a credential for both.
 from .audit import DeclarationStatus, declaration_status
 from .storage import _redact as redact_payload
+from .truncation import truncate
 
 #: Token shapes worth removing from free text. Deliberately narrow: a pattern
 #: broad enough to catch "anything that looks random" would eat the sha256
@@ -247,6 +248,10 @@ SPEAKERS = {
 #: file, and an export that repeated every one of them would be several copies
 #: of a tree this page already prints once, in full, above.
 OUTPUT = 4000
+#: Roughly the same budget in lines, so a result that is thousands of short
+#: lines is cut too. Both are passed to `truncation.truncate`, which cuts on
+#: line boundaries and says what it dropped.
+OUTPUT_LINES = 120
 
 
 def _message(event: Mapping[str, Any]) -> str:
@@ -260,6 +265,39 @@ def _message(event: Mapping[str, Any]) -> str:
                 str(part.get("text", "")) for part in content if isinstance(part, Mapping)
             )
     return str(event.get("text", ""))
+
+
+def _tail(text: str, limit: int = 200) -> str:
+    """The last `limit` characters of a failure, flattened to one line.
+
+    The END, for `_output`'s reason and more sharply here: every entry in this
+    list is a call that was refused, so the sentence saying why is the last
+    thing in it. A head slice of a refusal is the one part of it that carries
+    no information.
+    """
+    flattened = " ".join(text.split())
+    return flattened if len(flattened) <= limit else "…" + flattened[-(limit - 1) :]
+
+
+def _output(text: str) -> str:
+    """One tool result, cut from the right end and saying that it was cut.
+
+    Through `truncation`, and keeping the TAIL, because that is where the
+    answer is: Lean and Tectonic print their setup first and the diagnostic
+    that actually failed the call last. A plain head slice produced an export
+    in which a refused `save_lean` showed a page of imports and not one word of
+    why Lean rejected it -- while looking like the whole recorded result, which
+    is the part that makes it a misrepresentation rather than merely a loss.
+
+    A cut is always stated. The reader of an export cannot go and look at the
+    transcript; if this page does not say the middle is missing, nothing does.
+    """
+    cut = truncate(text, keep="tail", line_limit=OUTPUT_LINES, byte_limit=OUTPUT)
+    if not cut.truncated:
+        return _block(cut.text)
+    return _block(cut.text) + (
+        f'<p class="tool">Showing the end of this result: {_escape(cut.summary)}.</p>'
+    )
 
 
 def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
@@ -307,7 +345,7 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
             parts.append(
                 f'<div class="turn"><div class="who">Tool</div>'
                 f'<p class="{style}"><code>{_escape(event.get("name", "?"))}</code>'
-                f" — {'ok' if ok else 'refused'}</p>{_block(str(output)[:OUTPUT])}</div>"
+                f" — {'ok' if ok else 'refused'}</p>{_output(str(output))}</div>"
             )
         elif kind == "obligations":
             # What Hardy told the user at the end of a turn, which is the half
@@ -343,8 +381,7 @@ def _withheld(material: Mapping[str, Any]) -> str:
         if event.get("type") == "model"
     ]
     refused = [
-        f"{event.get('name')}: "
-        f"{str((event.get('result') or {}).get('output', ''))[:200]}"
+        f"{event.get('name')}: {_tail(str((event.get('result') or {}).get('output', '')))}"
         for event in material.get("transcript", ())
         if event.get("type") == "tool"
         and isinstance(event.get("result"), Mapping)

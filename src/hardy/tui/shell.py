@@ -247,6 +247,10 @@ class Shell:
         # interrupts, the second gives up and kills. Reset when the first
         # command starts, not when any does, for the same reason.
         self._command_stopping = False
+        # What Esc should reach for the command in flight, published by the
+        # handler through `stopping`. None whenever no command owns work of its
+        # own -- which is every command but `/prove` today.
+        self._command_cancel: Any = None
         # Requests from `_FromThread`, each an (already-created, not-yet-
         # awaited) coroutine paired with the `concurrent.futures.Future` a
         # tool thread is blocked on. Never touched from that thread beyond
@@ -483,6 +487,10 @@ class Shell:
     async def confirm(self, question: str) -> bool:
         picked = await self.choose(question, [Choice("no", "No"), Choice("yes", "Yes")], current=0)
         return picked is not None and picked.value == "yes"
+
+    def stopping(self, cancel: Any) -> None:
+        """See `Ui.stopping`. Held on the shell, read by `_stop_command`."""
+        self._command_cancel = cancel
 
     @property
     def from_thread(self) -> _FromThread:
@@ -894,6 +902,16 @@ class Shell:
         reopening = getattr(self._state.reopen, "cancel", None)
         if reopening is not None and reopening():
             self.write("stopped opening the project; the one you are in is unchanged")
+            return
+        # Then the command's own work, if it published any. `/prove` is the
+        # case: its staged run owns a provider call and a stage loop, neither
+        # of which is a tracked child, so `interrupt_work` below reaches its
+        # Lean and Tectonic processes and leaves the run itself going. Asked
+        # before the session for the same reason the reopen is -- the work in
+        # front of the user is the work they meant to stop.
+        stopper = self._command_cancel
+        if stopper is not None and stopper():
+            self.write("stopping the staged run; it will finalize and say how it ended")
             return
         session = self._state.session
         if self._command_stopping:
