@@ -214,8 +214,33 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         if event.get("type") == "result":
             spend["total"] = spend["total"].record(event)
 
+    # One tool call at a time. `claude_runtime._wrap` hands each call to
+    # `asyncio.to_thread`, so a response asking for several runs them on
+    # several threads at once -- and every branch of `_dispatch` decides
+    # something about the run (which skeleton is retained, whether a submission
+    # was kept, whether either landed after the deadline) and then appends the
+    # event that says so. Those two steps are one fact. Interleaved, the
+    # artifacts can retain one call's sketch while the events say the last
+    # accepted one was another's, and `hardy accept --recorded` refuses an
+    # honest run for a disagreement the run never made.
+    #
+    # Serialised whole rather than around the bookkeeping alone, because the
+    # trajectory is a linear record of what Hardy did and a linear record of
+    # overlapping work is not one: two Lean checks whose events straddle each
+    # other cannot be read back as the sequence they are written as.
+    one_at_a_time = threading.Lock()
+
     def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
-        """Hardy runs every proof check, whoever decided to ask for one."""
+        """Hardy runs every proof check, whoever decided to ask for one.
+
+        Serialised: see `one_at_a_time` above. The budget check inside is read
+        after the wait rather than before it, so a call that queued while the
+        clock ran out is refused for the reason that is true when it runs.
+        """
+        with one_at_a_time:
+            return _dispatch(name, arguments)
+
+    def _dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
         if closed.is_set():
             return ToolResult(False, "the run's budget expired before this tool call was made")
         try:

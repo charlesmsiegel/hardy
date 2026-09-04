@@ -3537,6 +3537,12 @@ class MathematicsSession:
                 "available": outcome.available,
                 "fits": outcome.fits,
             },
+            # The window the cut was planned against, not only what was left
+            # of it. `available` is the window less the reserve and the
+            # request's own overhead, so two records with different windows can
+            # show the same `available` -- and a transcript that does not state
+            # the window cannot say which endpoint's limit the cuts were for.
+            "context_window": self.context_window,
             "sections": summarised.as_dict(),
             "text": summarised.render(),
         })

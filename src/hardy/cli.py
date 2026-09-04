@@ -552,6 +552,7 @@ class ProjectOpener:
                 search_detail=self._search_detail,
                 project_context=config.project_context,
                 limits=config.limits,
+                context_window=config.context_window,
             )
         except BaseException:
             # The kernel this call started, and only that one. The session the
@@ -715,6 +716,7 @@ def _chat(
                 search=search,
                 search_detail=search_detail,
                 project_context=config.project_context,
+                context_window=config.context_window,
                 fresh_thread=fresh,
                 limits=config.limits,
             )
@@ -985,10 +987,15 @@ def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _c
     """Discover the pinned toolchain, offer to install what is missing, record it."""
     from .installers import download_file, install_elan, install_tectonic, prepare_mathlib
     from .process import run_process
-    from .setup import discover_environment
+    from .setup import backend_probe, discover_environment
 
     config, config_path = _load_config_argument(getattr(args, "config", None))
-    report = discover_environment(config, common_locations=_common_locations())
+    # The probe for the backend this machine is configured to use. Left to the
+    # default, `hardy setup` graded every machine on the Claude CLI and its
+    # exit status answered a question about a transport the user may not have
+    # selected.
+    probe = backend_probe(config.backend)
+    report = discover_environment(config, backend_probe=probe, common_locations=_common_locations())
     statuses = {item.name: item for item in report.tools}
     if not statuses["elan"].healthy:
         winget = shutil.which("winget")
@@ -1021,7 +1028,7 @@ def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _c
                 "tectonic was not found. Install it from your package manager or "
                 "https://tectonic-typesetting.github.io, then rerun `hardy setup`."
             )
-    rediscovered = discover_environment(config, common_locations=_common_locations())
+    rediscovered = discover_environment(config, backend_probe=probe, common_locations=_common_locations())
     tools = {item.name: item for item in rediscovered.tools}
     for setting in ("elan", "lake", "tectonic"):
         found = tools[setting].path
@@ -1036,8 +1043,9 @@ def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _c
                 runner=run_process,
             ).manual_instructions
         )
+    reloaded = configuration.load(config_path)
     final = discover_environment(
-        configuration.load(config_path), common_locations=_common_locations()
+        reloaded, backend_probe=backend_probe(reloaded.backend), common_locations=_common_locations()
     )
     _print_report(final)
     print(f"Configuration saved to {config_path}")

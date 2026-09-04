@@ -241,3 +241,68 @@ def test_a_sketch_that_elaborates_after_the_deadline_is_discarded(tmp_path: Path
         for event in trajectory["events"]
     )
     assert "## Sketch" not in (tmp_path / "writeup.md").read_text(encoding="utf-8")
+
+
+def test_two_tool_calls_from_one_response_do_not_overlap(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """The SDK hands each tool call to its own thread, so a response asking for
+    two runs them at once. Every branch of the runner's dispatch decides
+    something about the run -- which skeleton is retained, whether a submission
+    was kept, whether either landed late -- and then appends the event that
+    says so. Interleaved, the artifacts can hold one call's sketch while the
+    events say the last accepted one was another's, and `hardy accept
+    --recorded` refuses an honest run for a disagreement the run never made.
+
+    Checked by watching the Lean calls rather than by racing for the bug: the
+    sleep makes an unserialised pair overlap essentially every time, and a
+    serialised one cannot overlap at all.
+    """
+    import threading
+    import time
+
+    order: list[tuple[str, str]] = []
+    guard = threading.Lock()
+
+    class Watched(LeanTools):
+        def sketch_proof(self, proof: str):
+            with guard:
+                order.append(("enter", proof))
+            time.sleep(0.05)
+            result = super().sketch_proof(proof)
+            with guard:
+                order.append(("exit", proof))
+            return result
+
+    watched = Watched(proof_request, lean.lean_command)
+
+    class Concurrent:
+        model, backend, endpoint = "fake-model@test", "claude", "fake"
+
+        def __init__(self, **context):
+            self.context = context
+
+        def ask(self, text: str) -> str:
+            dispatch = self.context["dispatch"]
+            threads = [
+                threading.Thread(target=dispatch, args=("sketch_proof", {"proof": body}))
+                for body in ("by\n  sorry", "by\n  trivial")
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            return ""
+
+    run(
+        proof_request,
+        lambda model=None, **context: Concurrent(**context),
+        watched,
+        tmp_path / "concurrent",
+        max_turns=2,
+        wall_seconds=300.0,
+        toolchain={"lean": "x", "mathlib": "y"},
+    )
+
+    assert len(order) == 4
+    # Never "enter A, enter B": each call finishes before the next begins.
+    assert [step for step, _ in order] == ["enter", "exit", "enter", "exit"]
+    assert order[0][1] == order[1][1] and order[2][1] == order[3][1]
