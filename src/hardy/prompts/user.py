@@ -269,6 +269,19 @@ def load(root: Path, *, reserved: frozenset[str] | set[str] = frozenset()) -> tu
             # `O_NONBLOCK` so a fifo cannot hang the open itself; the type
             # check below refuses it a moment later either way.
             #
+            # The ancestors are checked by path, not held as descriptors, so a
+            # process that replaces `.hardy` or `prompts` with a link between
+            # the walk and this open is followed. That is deliberate and it is
+            # `layout.WriteGuard`'s stated threat model, not an oversight: what
+            # Hardy defends against here is a symlink SHIPPED IN A REPOSITORY,
+            # because a clone is a hostile artifact opened before any human has
+            # read it. A concurrent local attacker is explicitly out of scope
+            # there -- "an adversary who can race Hardy on its own filesystem
+            # can simply read the source it is about to run" -- and closing it
+            # needs `openat` traversal this file has no more right to invent
+            # than `WriteGuard` did. The leaf is still opened no-follow, which
+            # is what closes the window that matters for a checked-out link.
+            #
             # `_NOFOLLOW` is 0 on Windows, which has no equivalent flag --
             # `layout` states the same thing for the same reason. Naming
             # `os.O_NOFOLLOW` directly raised `AttributeError` there, and this

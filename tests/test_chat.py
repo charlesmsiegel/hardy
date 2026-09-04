@@ -548,3 +548,27 @@ def test_a_problem_directory_that_leaves_its_root_is_refused_when_the_session_op
     (root / "linked").symlink_to(elsewhere, target_is_directory=True)
     with pytest.raises(layout.LayoutError):
         session(root / "linked", FakeChatRuntime([]))
+
+
+def test_a_goal_that_cannot_be_saved_leaves_the_old_one_in_place(tmp_path, monkeypatch):
+    """The write can fail, and the in-memory value was moving first.
+
+    A session that then went on answering about a goal `session.json` does not
+    carry is a session whose own record disagrees with it, which is the one
+    thing this class is for.
+    """
+    import pytest
+
+    runtime = FakeChatRuntime([{"role": "assistant", "content": "ok"}])
+    chat = session(tmp_path, runtime)
+    chat.set_goal("the goal that was saved")
+
+    def refuse():
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(chat, "_save_state", refuse)
+
+    with pytest.raises(OSError):
+        chat.set_goal("the goal that was not")
+
+    assert chat.goal() == "the goal that was saved"

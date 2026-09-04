@@ -734,6 +734,12 @@ class ProveWorkflow:
                 verification_sha256=(verification.verification_sha256 if verified else None),
                 verification_evidence=(verification.evidence if verified else None),
             )
+            # A stage, so the same guarantee covers it as covers the reader:
+            # `stop` sets the workflow's flag inline and arms the runtime on a
+            # teardown thread, and `run_structured` reads the runtime's flag --
+            # so without this the writeup exchange could be opened and billed
+            # in the gap between the two.
+            self._refuse_if_cancelled()
             try:
                 content = runtime.run_structured(
                     active_thread,

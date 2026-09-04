@@ -1020,7 +1020,7 @@ def test_a_wall_of_denials_cannot_hide_the_failure_that_stopped_the_work():
     assert listed.count("<li>") <= 50
     assert "save59" in listed, "the newest failure was pushed out by older denials"
     assert "not a Hardy tool" in listed, "the denials were pushed out by newer failures"
-    assert "not listed here" in listed
+    assert "are not listed" in listed
 
 
 def test_an_outstanding_obligation_is_the_sentence_the_user_was_shown():
@@ -1228,7 +1228,7 @@ def test_a_clipped_refusal_list_says_it_was_clipped():
     page = build(transcript=transcript)
     listed = page.split("<h2>Tool calls Hardy refused</h2>", 1)[1].split("<h2>", 1)[0]
     assert "Bash: not a Hardy tool" in listed
-    assert "further failed tool calls were recorded" in listed
+    assert "older failed tool calls are not listed" in listed
     # The newest failures survive; the oldest are what is cut.
     assert "save_lean59" in listed
     assert "save_lean0:" not in listed
@@ -1241,7 +1241,7 @@ def test_an_unclipped_refusal_list_claims_no_omission():
         ]
     )
     listed = page.split("<h2>Tool calls Hardy refused</h2>", 1)[1].split("<h2>", 1)[0]
-    assert "not listed here" not in listed
+    assert "are not listed" not in listed
 
 
 def test_a_partial_report_names_which_theorems_were_still_open():
@@ -1343,3 +1343,24 @@ def test_a_shared_module_named_like_a_credential_key_is_not_replaced_wholesale()
     """
     page = build(shared_sources={"Password": "theorem helper : True := trivial"})
     assert "theorem helper : True := trivial" in page
+
+
+def test_the_clip_notice_names_both_kinds_it_dropped():
+    """A notice that misdescribes what it clipped is worse than the clip.
+
+    The floor caps the denials too, so a run with fifty denials and ten
+    failures drops ten denials -- and the notice used to say every SDK refusal
+    was shown. `refused_tool` appears nowhere else on the page, so a reader
+    checking for host access would take that sentence as the answer.
+    """
+    transcript = [{"type": "refused_tool", "name": f"Bash{index}"} for index in range(50)] + [
+        {"type": "tool", "name": f"save{index}", "result": {"ok": False, "output": "no"}}
+        for index in range(10)
+    ]
+    listed = (
+        build(transcript=transcript)
+        .split("<h2>Tool calls Hardy refused</h2>", 1)[1]
+        .split("<h2>", 1)[0]
+    )
+    assert "SDK-refused requests are not listed" in listed
+    assert "Every call the SDK refused outright is shown" not in listed

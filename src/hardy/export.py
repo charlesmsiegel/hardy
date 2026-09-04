@@ -879,11 +879,29 @@ def _refusals(material: Mapping[str, Any]) -> str:
     shown = _list(kept, "Nothing was refused.")
     if not dropped:
         return shown
+    # Both categories, counted separately. The floor above caps the denials at
+    # `50 - floor`, so a run with fifty denials and ten failures drops ten
+    # denials -- and the notice used to say every SDK refusal was shown. A
+    # clipping notice that misdescribes what it clipped is worse than the clip:
+    # a reader who checks this section for host access would take its silence
+    # as an answer. `refused_tool` appears nowhere else on the page, so this
+    # sentence is the only thing that can tell them.
+    lost_denials = len(denials) - len(kept_denials)
+    lost_failures = len(failures) - len(kept_failures)
+    parts = []
+    if lost_denials:
+        parts.append(
+            f"{lost_denials} older SDK-refused "
+            f"{'request is' if lost_denials == 1 else 'requests are'} not listed"
+        )
+    if lost_failures:
+        parts.append(
+            f"{lost_failures} older failed tool "
+            f"{'call is' if lost_failures == 1 else 'calls are'} not listed"
+        )
     return shown + (
-        f'<p class="tool">{dropped} further failed tool '
-        f"{'call was' if dropped == 1 else 'calls were'} recorded and are not "
-        "listed here. Every call the SDK refused outright is shown above; what "
-        "is cut is the oldest of the calls that ran and failed.</p>"
+        f'<p class="tool">{_escape(" and ".join(parts))}. The newest of each '
+        "kind is kept; what is cut is the oldest.</p>"
     )
 
 
@@ -1098,6 +1116,14 @@ def write(material: Mapping[str, Any], path: Path, *, now: datetime | None = Non
     # device node unlinks it and puts an HTML file where it was -- so
     # `/export /tmp/report.html` over another process's IPC endpoint destroys
     # it silently. A destination that exists must be a file Hardy may replace.
+    #
+    # Checked by path and replaced by path, so a process that swaps the entry
+    # in between is followed. Deliberately, on `layout.WriteGuard`'s stated
+    # threat model: the artifact this defends against is one committed to a
+    # repository -- `report.html -> ~/.bashrc` in a fresh clone -- and a
+    # concurrent local attacker is out of scope there for a reason that applies
+    # here unchanged. Someone who can race this can read the Lean Hardy is
+    # about to run.
     with contextlib.suppress(OSError):
         existing = os.lstat(path)
         if not stat.S_ISREG(existing.st_mode):
