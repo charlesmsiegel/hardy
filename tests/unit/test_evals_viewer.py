@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -100,3 +101,26 @@ def test_an_edit_is_visible_on_the_next_request(running, tmp_path):
     write_corpus(tmp_path / "corpus", (_entry(), _entry(id="second", name="Second")))
     with urllib.request.urlopen(f"{running}/api/corpus") as api:
         assert {e["id"] for e in json.loads(api.read())["entries"]} == {"odd-squares", "second"}
+
+
+# The globals the page's CDN scripts install on `window`. A top-level
+# declaration of any of these in the page's own script silently replaces the
+# library: `function katex(el)` shadowed KaTeX itself, and
+# `renderMathInElement` then died with "katex is not a function". The failure
+# is invisible wherever the CDN is unreachable -- the page degrades to raw
+# LaTeX either way -- so a browser is the wrong place to catch it.
+CDN_GLOBALS = {"katex", "renderMathInElement"}
+TOP_LEVEL = re.compile(r"^(?:function|const|let|var)\s+([A-Za-z_$][\w$]*)", re.MULTILINE)
+
+
+def test_the_page_shadows_none_of_the_globals_it_loads():
+    declared = set(TOP_LEVEL.findall(PAGE.read_text(encoding="utf-8")))
+    assert declared, "no top-level declarations found; the regex has drifted"
+    assert not declared & CDN_GLOBALS, sorted(declared & CDN_GLOBALS)
+
+
+def test_every_cdn_global_this_guards_is_one_the_page_actually_loads():
+    """Otherwise the guard above rots into a list of names nobody uses."""
+    page = PAGE.read_text(encoding="utf-8")
+    assert "katex.min.js" in page and "auto-render.min.js" in page
+    assert "renderMathInElement" in page
