@@ -157,8 +157,46 @@ def _scannable(source: str) -> str:
     one. Blanked rather than removed, because every position this feeds is
     reported against the original text.
     """
-    blanked = strip_comments(source)
-    return ESCAPED_NAME.sub(lambda match: " " * len(match.group(0)), blanked)
+    blanked = ESCAPED_NAME.sub(lambda match: " " * len(match.group(0)), strip_comments(source))
+    return _blank_quotations(blanked)
+
+
+def _blank_quotations(text: str) -> str:
+    """`text` with Lean's syntax quotations blanked, offsets kept.
+
+    A quotation is data, not execution: `` `(tactic| sorry) `` builds a piece
+    of syntax that Lean never runs, so a proof entitled to construct one was
+    being told it had a hole -- refused by `submit_proof` before the kernel
+    ever saw it, and recorded by `sketch_proof` as work that does not exist.
+
+    Scanned by counting parentheses rather than matched by a pattern, because
+    a quotation nests and a regular expression cannot follow it. Strings and
+    comments are already gone by the time this runs, so a parenthesis here is
+    a parenthesis.
+    """
+    out = list(text)
+    index = 0
+    while index < len(out) - 1:
+        if text[index] == "`" and text[index + 1] == "(":
+            depth = 0
+            for position in range(index + 1, len(text)):
+                if text[position] == "(":
+                    depth += 1
+                elif text[position] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        for blank in range(index, position + 1):
+                            if out[blank] != "\n":
+                                out[blank] = " "
+                        index = position
+                        break
+            else:
+                # An unbalanced quotation is not something this can bound, and
+                # blanking to the end of the proof would hide a real hole after
+                # it. Left alone: Lean will refuse the body anyway.
+                break
+        index += 1
+    return "".join(out)
 
 
 class Hole(FrozenModel):

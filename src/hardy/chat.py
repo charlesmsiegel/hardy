@@ -857,6 +857,7 @@ class MathematicsSession:
         # the fresh session takes the same road every first-ever session takes.
         self.runtime = self._build(session_id=self._carried_thread())
         self._sync_provenance()
+        self._sync_fresh_context()
         self._sync_project_context()
 
     def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
@@ -1077,6 +1078,30 @@ class MathematicsSession:
         self._save_state()
         if started:
             self._record({"type": "model", "reason": "session_resumed", "previous": previous, **current})
+
+    def _sync_fresh_context(self) -> None:
+        """Say when a session starts with no memory of the record it continues.
+
+        A backend that resumes a provider thread carries the earlier turns into
+        the next request. One that does not -- the `api` transport, whose
+        conversation is the loop's own list and ends with the process -- starts
+        empty every time, and `_sync_provenance` sees the same model and the
+        same backend and records nothing. Later events then land in a
+        `transcript.jsonl` that reads as one unbroken conversation while every
+        request omitted everything above this point, so an auditor cannot say
+        what context the model actually had.
+
+        Only where there is a record to be continued: on a workspace's first
+        open there is nothing above the boundary and nothing to disclose, which
+        is the same rule `_discard_thread` follows about a thread it never had.
+        """
+        # Asked of the backend, not of this instance. A runtime that resumes
+        # has no thread *yet* on a workspace nobody has spoken to, and reading
+        # `session_id` alone would announce a fresh context on every first turn
+        # of every backend.
+        if getattr(self.runtime, "resumes_conversation", True) or not self._transcript_end():
+            return
+        self._record({"type": "thread", "reason": "fresh context: this backend resumes nothing"})
 
     def _sync_project_context(self) -> None:
         """Make the record say which project instructions this run was given.

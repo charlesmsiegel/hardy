@@ -184,10 +184,11 @@ def test_the_api_probe_asks_for_the_sdk_and_the_key_and_prints_neither(monkeypat
     the test honest about what it is checking: the probe's own logic, not this
     machine's package list.
     """
-    from importlib import metadata
+    import sys
+    from types import SimpleNamespace
 
     setup = importlib.import_module('hardy.setup')
-    monkeypatch.setattr(metadata, 'version', lambda name: '0.40.0' if name == 'anthropic' else '1.0')
+    monkeypatch.setitem(sys.modules, 'anthropic', SimpleNamespace(__version__='0.40.0'))
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-ant-not-a-real-key')
 
     ok, detail = setup.probe_api()
@@ -204,13 +205,37 @@ def test_the_api_probe_asks_for_the_sdk_and_the_key_and_prints_neither(monkeypat
     assert 'sk-ant' not in why
 
 
-def test_the_api_probe_reports_an_absent_sdk_rather_than_raising() -> None:
-    from importlib import metadata
+def test_the_api_probe_imports_the_sdk_rather_than_reading_its_metadata(monkeypatch) -> None:
+    """Distribution metadata survives a partial installation and says nothing
+    about whether the package will load: a missing runtime dependency leaves
+    the version readable and the import broken. `hardy setup` reports its final
+    health from this probe, so it would have called an unusable installation
+    ready and left the failure for the first provider turn."""
+    import builtins
 
     setup = importlib.import_module('hardy.setup')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-ant-not-a-real-key')
+    real_import = builtins.__import__
+
+    def broken(name, *args, **kwargs):
+        if name == 'anthropic':
+            raise ImportError("No module named 'httpx'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', broken)
+
+    ok, detail = setup.probe_api()
+
+    assert ok is False
+    assert 'not importable' in detail
+    assert 'httpx' in detail
+
+
+def test_the_api_probe_reports_an_absent_sdk_rather_than_raising() -> None:
+    setup = importlib.import_module('hardy.setup')
     try:
-        metadata.version('anthropic')
-    except metadata.PackageNotFoundError:
+        import anthropic  # noqa: F401
+    except ImportError:
         pass
     else:  # pragma: no cover - only when the optional extra is installed here
         import pytest
@@ -220,4 +245,4 @@ def test_the_api_probe_reports_an_absent_sdk_rather_than_raising() -> None:
     ok, detail = setup.probe_api()
 
     assert ok is False
-    assert 'not installed' in detail
+    assert 'not importable' in detail

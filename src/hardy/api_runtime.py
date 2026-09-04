@@ -427,6 +427,12 @@ class ApiRuntime:
     """
 
     backend = BACKEND
+    #: Nothing here resumes. The conversation is the loop's own message list
+    #: and ends with the process, so reopening a workspace starts empty --
+    #: which `MathematicsSession._sync_fresh_context` writes into the record,
+    #: because a transcript that read as one unbroken conversation would be
+    #: describing requests that omitted everything above the join.
+    resumes_conversation = False
 
     def __init__(
         self,
