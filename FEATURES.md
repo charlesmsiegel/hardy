@@ -687,7 +687,16 @@ Priority labels are sequencing hints:
   silence. It is still sent — the estimate bounds from above, so over it is not
   necessarily over the endpoint's own count, and refusing on Hardy's arithmetic
   would end runs the provider would have answered — but a rejection now has an
-  entry to be read against. The output
+  entry to be read against — and it is recorded on the cheap first pass, which
+  is where the uncuttable case actually leaves. The block order the digest
+  covers is written into the assistant event in the form the digest reads, so
+  an auditor holding `transcript.jsonl` has every input to it: a public block
+  contributes its identity and position, since what it says is already in the
+  record, and only a block Hardy will not transcribe contributes a digest of
+  itself. `proof.lean` is cleared on a run that verified nothing rather than
+  merely not written, since an output directory is reusable and a stale one
+  left a checked proof of an earlier statement beside a result saying no
+  artifact was produced. The output
   cap each reply is generated under is recorded in the run's provenance
   alongside model, backend and endpoint: change it and the same model gets a
   different amount of room to reach a submission, which is a different

@@ -159,6 +159,33 @@ def _discarded_message(turn: ProviderTurn) -> dict[str, Any]:
     }
 
 
+def block_order(blocks: Sequence[Any]) -> tuple[str, ...]:
+    """The turn's block sequence, in a form the transcript can carry.
+
+    The order is the fact worth digesting: what the blocks *say* is already in
+    `Message.as_dict`, and hashing the provider objects again put the
+    representation of public text and tool blocks into a digest no reader could
+    reproduce, since the record holds the normalised text and calls rather than
+    those objects. So each public block contributes its identity and position
+    -- a text block that it was there, a tool call which call -- and only a
+    block Hardy will not transcribe contributes a digest of itself.
+
+    Written into the assistant event, so an auditor holding `transcript.jsonl`
+    has every input the digest was taken over.
+    """
+    order: list[str] = []
+    for block in blocks:
+        kind = str(block.get("type", "") if isinstance(block, dict) else getattr(block, "type", ""))
+        if kind == "text":
+            order.append("text")
+        elif kind == "tool_use":
+            ident = block.get("id", "") if isinstance(block, dict) else getattr(block, "id", "")
+            order.append(f"tool_use:{ident}")
+        else:
+            order.append(f"{kind or 'block'}:{reasoning_digest(block)}")
+    return tuple(order)
+
+
 def reasoning_digest(block: Any) -> str:
     """The digest contribution of one opaque reasoning block.
 
@@ -510,11 +537,19 @@ class AgentLoop:
             # provider's history and in no record, with the `thinking` event
             # and the abandoned calls left describing a turn the transcript
             # never named.
-            self._observe({
+            assistant: dict[str, Any] = {
                 "type": "assistant",
                 "message": {"role": "assistant", "content": turn.text},
                 "tool_calls": [call.id for call in turn.tool_calls],
-            })
+            }
+            if turn.blocks:
+                # The arrangement the model chose, which the fields above
+                # cannot express: they group by kind, and this turn is sent
+                # back in its own order. Recorded because the compaction
+                # digests cover it -- a hash a reader cannot recompute is not
+                # an audit trail.
+                assistant["blocks"] = list(block_order(turn.blocks))
+            self._observe(assistant)
             if turn.thinking or turn.reasoning:
                 # The blocks by digest, not by content. They are opaque
                 # provider state Hardy does not publish -- but they are *sent*,
