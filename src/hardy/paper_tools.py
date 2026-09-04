@@ -283,14 +283,22 @@ class PaperToolRuntime:
         # in a way that says what to do: the one thing that must never happen
         # here is quietly returning fewer papers than were found, because a
         # shortened list is indistinguishable from a search that found fewer.
-        return ToolResult(
-            False,
+        # The refusal is an observation too. Written to say the whole thing
+        # when there is room and the number when there is not -- what a caller
+        # must not lose is that papers were found and this is not that list.
+        for refusal in (
             f"arXiv matched {len(found)} papers and the reply does not fit the "
             f"{self.observation_bytes}-byte observation budget even as bare identifiers. "
             "Ask for fewer results, or raise limits.model_observation_bytes; the list is "
             "not shortened here, because a shortened list reads exactly like a smaller "
             "answer.",
-        )
+            f"{len(found)} matched; no room to list them. Ask for fewer, or raise "
+            "limits.model_observation_bytes.",
+            f"{len(found)} matched; no room.",
+        ):
+            if len(refusal.encode("utf-8")) <= self.observation_bytes:
+                return ToolResult(False, refusal)
+        return ToolResult(False, str(len(found)))
 
     def _results(self, found: Any, query: str, note: str, level: SearchDetail) -> str:
         """One search answer at one level of detail."""
@@ -428,10 +436,22 @@ class PaperToolRuntime:
             )
             payload = f"{record.arxiv_id}: {cut.summary}.{rest}\n\n{cut.text}"
             over = len(payload.encode("utf-8")) - self.observation_bytes
-            if over <= 0 or budget <= over:
+            if over <= 0:
                 return ToolResult(True, payload)
+            if budget <= over:
+                break
             budget -= over
-        return ToolResult(True, payload)
+        # No window fits. Returning the oversized one anyway put it in the
+        # context the budget exists to protect -- and worse, the clipped first
+        # line counts as consumed, so the `start_line` offered next would skip
+        # the part that was cut. A refusal names the limit instead of handing
+        # back a page that cannot be turned.
+        return ToolResult(
+            False,
+            f"a window of {record.arxiv_id} does not fit the "
+            f"{self.observation_bytes}-byte observation budget once the continuation "
+            "line is counted; raise limits.model_observation_bytes to read this record.",
+        )
 
     def cite(self, paper_id: str) -> ToolResult:
         record = self._held(paper_id)

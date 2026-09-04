@@ -420,11 +420,15 @@ def test_a_result_set_that_cannot_be_represented_is_refused_not_shrunk(tmp_path:
     protect. Refusing says so; shortening the list would read exactly like a
     search that found fewer papers.
     """
-    runtime = _runtime(tmp_path, observation_bytes=64)
-    result = runtime.call("search_papers", {"query": "ricci flow"})
-    assert not result.ok
-    assert "observation budget" in result.output
-    assert "not shortened" in result.output
+    for budget in (64, 120, 200):
+        runtime = _runtime(tmp_path, observation_bytes=budget)
+        result = runtime.call("search_papers", {"query": "ricci flow"})
+        assert not result.ok, budget
+        # The refusal is an observation too, so it is measured like the rest.
+        assert len(result.output.encode("utf-8")) <= budget, budget
+        # And whatever survives the shedding still says papers were found and
+        # that this is not the list of them.
+        assert "1 matched" in result.output, budget
 
 
 def test_a_fetch_answer_fits_the_budget_even_when_the_identity_does_not(tmp_path: Path):
@@ -467,3 +471,16 @@ def test_a_citation_answer_is_measured_and_never_loses_its_key(tmp_path: Path):
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 96
     assert json.loads(result.output)["cite_key"]
+
+
+def test_a_window_that_cannot_fit_is_refused_not_returned_oversized(tmp_path: Path):
+    """Returning it anyway put it in the context the budget protects.
+
+    And worse: the clipped first line counts as consumed, so the `start_line`
+    offered next skips the part that was cut -- a page that cannot be turned.
+    """
+    runtime = _runtime(tmp_path, _feed(abstract="word " * 5_000), observation_bytes=96)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1"})
+    assert not result.ok
+    assert "observation budget" in result.output

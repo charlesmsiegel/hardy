@@ -818,8 +818,21 @@ class ArxivClient:
                 return False
             return True
 
-        if not self._throttle(_already_answered):
-            return served[0]
+        # A reservation is a claim on the next slot, and it is only worth
+        # anything if the request that claimed it is the next one out. A
+        # process descheduled between reserving and transporting lets another
+        # reserve and fire in front of it, and the two real requests then land
+        # closer together than the interval both of them waited out. So the
+        # claim is checked at the moment it is used: if somebody else has
+        # reserved since, this one queues again rather than firing on a slot
+        # that is no longer its own. Bounded, because losing the race twice is
+        # a reason to be late rather than to keep giving way.
+        for _ in range(3):
+            reserved = self._throttle(_already_answered)
+            if reserved is None:
+                return served[0]
+            if self.library.last_request() == reserved:
+                break
         body = self._transport(url, self._timeout)
         now = self._clock()
         # Parsed before it is cached, so the refusal below leaves nothing
@@ -828,13 +841,16 @@ class ArxivClient:
         self.library.cache_query(key, body, now=now)
         return found, body
 
-    def _throttle(self, answered: Callable[[], bool] | None = None) -> bool:
+    def _throttle(self, answered: Callable[[], bool] | None = None) -> float | None:
         """Wait out arXiv's interval, and say whether a request is still wanted.
 
         `answered` is asked once, under the lock, after the wait and before
         the reservation: it is the caller's chance to notice that somebody
         else answered the same question while this process was asleep. True
-        means no request is made and no slot is claimed.
+        means no request is made and no slot is claimed, and None comes back.
+
+        Otherwise the timestamp reserved comes back, so the caller can check
+        at the moment it transports that the slot is still its own.
 
         The clock is on disk, so two Hardy processes on one machine share one
         budget -- but a timestamp on disk is not on its own a mutex, and
@@ -869,9 +885,10 @@ class ArxivClient:
             if wait > 0:
                 self._sleep(wait)
             if answered is not None and answered():
-                return False
-            self.library.note_request(self._clock())
-        return True
+                return None
+            reserved = self._clock()
+            self.library.note_request(reserved)
+        return reserved
 
 
 def _narrow(response: Any, seconds: float) -> None:
@@ -1001,6 +1018,26 @@ def _entry(
         for category in entry.findall(f"{ATOM}category")
         if category.get("term")
     )
+    # A well-formed id is not a well-formed entry. Each of these was read with
+    # a `""` fallback, so a truncated or half-written response produced a
+    # record with a blank title and no byline that `fetch_paper` stored and
+    # `cite_paper` would put in front of a reader -- a citation to a paper
+    # nothing describes. An answer that cannot be interpreted is reported as
+    # that rather than filed as a paper.
+    missing = [
+        name
+        for name, value in (
+            ("title", title),
+            ("summary", abstract),
+            ("author", tuple(one for one in authors if one)),
+        )
+        if not value
+    ]
+    if missing:
+        raise ArxivError(
+            f"the arXiv entry for {identifier} has no {', '.join(missing)}; "
+            "refusing to store a record of a paper it does not describe"
+        )
     record = PaperRecord(
         arxiv_id=str(identifier),
         title=title,

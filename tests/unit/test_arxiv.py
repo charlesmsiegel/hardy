@@ -865,3 +865,48 @@ def test_a_field_the_content_does_not_render_is_still_re_derived(tmp_path: Path)
         held.write_text(moved.model_dump_json(), encoding="utf-8")
         with pytest.raises(arxiv.ArxivError, match="not what its own response says"):
             library.read(record.identifier)
+
+
+def test_an_entry_with_no_title_or_authors_is_not_a_paper(tmp_path: Path):
+    """A well-formed id is not a well-formed entry.
+
+    Each field was read with an empty fallback, so a truncated response
+    produced a record with a blank title and no byline that `fetch_paper`
+    stored and `cite_paper` would put in front of a reader.
+    """
+    bare = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<feed xmlns="http://www.w3.org/2005/Atom">'
+        b"<entry><id>http://arxiv.org/abs/math.DG/0211159v1</id>"
+        b"<published>2002-11-11T18:00:00Z</published>"
+        b"<updated>2002-11-11T18:00:00Z</updated></entry></feed>"
+    )
+    client, _, _ = _client(tmp_path, Recorder(bare))
+    with pytest.raises(arxiv.ArxivError, match="no title, summary, author"):
+        client.fetch("math.DG/0211159v1")
+
+
+def test_a_slot_taken_by_someone_else_is_not_fired_on(tmp_path: Path):
+    """A reservation is only worth anything if its own request is next out.
+
+    A process descheduled between reserving and transporting lets another
+    reserve and fire in front of it, and the two real requests then land
+    closer together than the interval both of them waited out.
+    """
+    clock = Clock()
+    transport = Recorder(_feed())
+    client, library, _ = _client(tmp_path, transport, clock)
+    taken: list[float] = []
+    original = library.note_request
+
+    def _stolen(when: float) -> None:
+        original(when)
+        # A neighbour reserves the moment this one lets go of the lock.
+        if not taken:
+            taken.append(when)
+            original(when + 1.0)
+
+    library.note_request = _stolen
+    client.search("ricci flow")
+    # It waited again rather than firing on a slot that was no longer its own.
+    assert clock.slept, "the request went out on a reservation somebody else had taken"
