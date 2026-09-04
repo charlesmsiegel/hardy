@@ -237,21 +237,29 @@ class PaperToolRuntime:
         # transcript whole, from a tool whose answer is meant to be a list of
         # leads.
         if not found:
-            return ToolResult(
-                True,
-                json.dumps(
-                    {
-                        "query": echoed,
-                        "results": [],
-                        "note": (
-                            "arXiv matched nothing. This is a report about the query, not "
-                            "about the literature: try other terms before concluding a "
-                            "result does not exist."
-                        ),
-                    },
-                    ensure_ascii=False,
-                ),
-            )
+            # Measured like every other representation. Clipping the echo
+            # bounded the query and not the answer: with a small budget the
+            # clip plus the fixed note still overran it, on the one branch
+            # that has no papers to shed. Nothing here is load-bearing except
+            # the fact that the search found nothing, so the note goes and
+            # then the echo goes.
+            for empty in (
+                {
+                    "query": echoed,
+                    "results": [],
+                    "note": (
+                        "arXiv matched nothing. This is a report about the query, not "
+                        "about the literature: try other terms before concluding a "
+                        "result does not exist."
+                    ),
+                },
+                {"query": echoed, "results": [], "note": "arXiv matched nothing."},
+                {"results": [], "note": "arXiv matched nothing."},
+            ):
+                payload = json.dumps(empty, ensure_ascii=False)
+                if len(payload.encode("utf-8")) <= self.observation_bytes:
+                    return ToolResult(True, payload)
+            return ToolResult(True, payload)
         note = (
             "Nothing here is recorded yet. fetch_paper pins one of these versions "
             "before it can be read or cited."

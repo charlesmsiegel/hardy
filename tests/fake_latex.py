@@ -92,6 +92,12 @@ if SLOW:
         pathlib.Path(READY.group(1)).write_text("ready", encoding="utf-8")
     time.sleep(float(SLOW.group(1)))
 
+# `% list-inputs` makes the stand-in say what it was actually handed, so a
+# test can assert an artifact was left out of the scratch tree rather than
+# assert the compile merely succeeded -- which it would either way.
+if re.search(r"%\s*list-inputs", source):
+    print("inputs: " + " ".join(sorted(p.name for p in pathlib.Path().iterdir())))
+
 if "\\begin{document}" in source and "\\end{document}" in source:
     # `-draftmode`, or `\pdfdraftmode` in the source: everything runs, the
     # log is written, the exit status is zero, and no PDF appears. Modelled

@@ -627,3 +627,19 @@ def test_a_verb_written_inside_a_comment_is_not_a_verb():
     )
     assert refusal
     assert "writes its own bibliography" in refusal
+
+
+def test_an_escaped_backslash_does_not_open_a_verbatim_region():
+    r"""TeX reads `\\begin{verbatim}` as `\\` and then the word "begin".
+
+    Searching for the opener in text the scan had already cleaned found one
+    starting at the SECOND backslash, opening a region TeX never opens -- so
+    a real bibliography on the following lines was removed from inspection
+    while the compiler executed it.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "Text.\\\\begin{verbatim}\n\\bibitem{known2020} Fake.\n% \\end{verbatim}\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal
