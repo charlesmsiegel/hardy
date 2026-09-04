@@ -672,7 +672,7 @@ from a bad answer. Where that matters, look for the traceback.
 | `--config PATH` | `~/.hardy/config.toml`, or `$HARDY_CONFIG` | Which settings file to read. |
 | `--model IDENTITY` | `$HARDY_MODEL`, else `model` in the config file, else the built-in `claude-opus-5` | Who does the work. That order is how every setting resolves: the flag beats the environment, which beats the file. A fresh checkout that has configured nothing still has a model, and it is billable. |
 | `--lean-command CMD` | `lake env lean` | The command that elaborates a Lean file. |
-| `--lean-project PATH` | unset — Lean runs in the current directory | The Lake project whose imports Lean should resolve; the installer points this at the shared Mathlib project. |
+| `--lean-project PATH` | unset — `chat`, `doctor`, `batch` and `latency` then run Lean in the current directory | The Lake project whose imports Lean should resolve; the installer points this at the shared Mathlib project. Leaving it unset is not an option everywhere: `prove`, a live `accept`, and `evals baseline`/`run` freeze their work against a pinned toolchain, so they refuse outright — "a pinned Lean environment needs lean_project set to a built Lake project" — rather than falling back to the working directory, however valid a Lake project it is. |
 | `--latex-command CMD` | `pdflatex -interaction=nonstopmode -halt-on-error` | The command that compiles a LaTeX file. |
 | `--plain` | off | Use the line-based session with no terminal control. Implied by a pipe on either end, `TERM=dumb`, or `HARDY_PLAIN=1`. |
 | `--no-project-context` | off | Do not read the project's `AGENTS.md` or `HARDY.md` (equivalently `project_context = false`, or `HARDY_PROJECT_CONTEXT=0`). |
@@ -694,11 +694,12 @@ staged preflight is `hardy doctor`'s check set, so `prove` and `accept` still
 require the configured `latex_command` (`pdflatex` by default) on `PATH` even
 though they build the document with Tectonic. Tectonic without pdflatex halts
 at setup; pdflatex without Tectonic passes setup and fails later, at the
-document. `prove`, `accept`, and `setup`
-re-read the settings file and the `HARDY_*` variables themselves, and see only
-`--config` and `--model` from the command line: pass
-`--lean-command`, `--lean-project`, or `--latex-command` to one of those three
-and it is accepted and then ignored, so a staged run against a different Lake
+document. `prove`, `accept`, and `setup` re-read the settings file and the
+`HARDY_*` variables themselves. `prove` and `accept` see `--config` and
+`--model` from the command line; `setup` sees `--config` alone, so `hardy
+--model X setup` accepts the flag and neither uses nor records `X`. Pass
+`--lean-command`, `--lean-project`, or `--latex-command` to any of the three and
+it is accepted and then ignored, so a staged run against a different Lake
 project needs `lean_project` in the config file or `HARDY_LEAN_PROJECT` in the
 environment. `--plain`, `--no-project-context`, and `--fresh-thread` govern the
 interactive session alone.
@@ -714,7 +715,7 @@ terminal on both ends asks which to open rather than silently creating a third.
 | Option | Default | What it does |
 | --- | --- | --- |
 | `--root PATH` | `$HARDY_ROOT`, else `root` in the config file, else the current directory | The directory holding one or more problems. |
-| `--project SLUG` | `$HARDY_PROJECT`, else `project` in `<root>/.hardy/config.toml` or the settings file, else `main` | Which problem to open. |
+| `--project SLUG` | `$HARDY_PROJECT`, else `project` in `<root>/.hardy/config.toml` or the settings file, else the sole recorded problem where the root holds exactly one, else `main` | Which problem to open. `main` is the answer for an empty root, or for an ambiguity a launch off a TTY cannot ask about. |
 | `--register-lakefile` | ask, where a host `lakefile.toml` exists *and* both streams are a TTY | Add this problem's `lean/` to the host `lakefile.toml` as a `lean_lib`. Off a TTY there is no question and no registration — a piped or `--plain` launch needs this flag to register at all. |
 | `--no-register-lakefile` | — | Never touch the host `lakefile.toml`. Hardy's own resolution does not depend on registration. |
 
@@ -751,9 +752,14 @@ Stages a single claim: Hardy proposes a formalization, you approve or revise
 it, the approved statement is frozen under a hash, an independent reader checks
 that the frozen Lean says what you said before any proof search starts, a proof
 is sought against that frozen statement, and an independent verifier rebuilds
-and rechecks the result before anything is graded. Artifacts — request, frozen
-claim, trajectory, Lean source, verification, paper, manifest, and
-`faithfulness.json` — are written under `runs_root`.
+and rechecks the result before anything is graded. A run that goes all the way
+through leaves, under `runs_root`: the request, the frozen claim, the
+trajectory, the Lean source, the verification, the paper, the manifest, and
+`faithfulness.json`. A run that stops earlier — a declined unsafe-execution
+acknowledgement, a failed preflight, a cancelled formalization, a faithfulness
+gate that disagreed — is finalized where it stopped and carries only what it
+reached. A later artifact missing from such a run is the record working, not a
+corrupted one; the manifest's phase and terminal reason say where it stopped.
 
 ```sh
 hardy prove "every prime above two is odd"
@@ -802,7 +808,7 @@ hardy batch examples/true.json --output hardy-output
 | `request` (positional) | required | Path to the request JSON. `examples/sqrt-two-plus-sqrt-three.json` is the nontrivial problem the recorded acceptance runs used. |
 | `--output PATH` | `hardy-output` | Where the run's artifacts are written. |
 | `--max-turns N` | `8` | Model turns the loop may take. |
-| `--wall-seconds S` | `300` | Wall-clock budget for the run. |
+| `--wall-seconds S` | `300` | Wall-clock budget for the run. Unvalidated here, unlike `evals run`'s: `0` and `inf` are both accepted and both mean *no* deadline, since the runtime reads a falsy budget as unbounded and `inf` never elapses. Pass a positive, finite number. |
 
 ### `hardy evals`
 
