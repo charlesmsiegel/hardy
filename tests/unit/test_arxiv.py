@@ -933,3 +933,105 @@ def test_a_bad_cache_entry_is_dropped_by_the_process_that_read_it(tmp_path: Path
     # The unqualified drop still removes whatever is there.
     library.drop_query(key)
     assert library.cached_query(key, now=1_000_000.0) is None
+
+
+def test_losing_the_race_three_times_still_spaces_the_request(tmp_path: Path):
+    """Giving way is a reason to be late, not a reason to stop waiting.
+
+    The reservation loop is bounded at three attempts so a busy machine
+    cannot starve one process forever -- but falling out of it used to
+    transport immediately, which is the one thing the whole dance exists to
+    prevent: the request that lost three races went out right behind the one
+    that won it, closer together than the interval either had waited.
+    """
+    clock = Clock()
+    transport = Recorder(_feed())
+    client, library, _ = _client(tmp_path, transport, clock)
+    fired: list[float] = []
+    original = library.note_request
+
+    def _stolen(when: float) -> None:
+        original(when)
+        # A neighbour reserves and fires a moment later, every single time,
+        # so all three attempts are lost and the give-way path is the one
+        # that runs.
+        clock.now += 0.5
+        original(clock.now)
+
+    def _watched(url: str, timeout: float) -> bytes:
+        fired.append(clock.now - library.last_request())
+        return transport(url, timeout)
+
+    library.note_request = _stolen
+    client._transport = _watched
+    client.search("ricci flow")
+    assert fired, "no request was made"
+    # Measured at the moment it went out, against whoever held the slot then.
+    assert fired[0] >= arxiv.MIN_INTERVAL_SECONDS, (
+        "the request fired without waiting out the interval it had lost"
+    )
+
+
+def _consistent(record: arxiv.PaperRecord) -> dict[str, object]:
+    """The digest and the length an edited record needs to look untouched.
+
+    An editor who changes a rendered field and stops at the content digest is
+    caught by the whole-model comparison, which covers `content_bytes` too.
+    These tests are about what an editor who does not stop there gets away
+    with, so they do the arithmetic the same way the library does.
+    """
+    return {
+        "content_sha256": arxiv.digest(record.content()),
+        "content_bytes": len(record.content().encode("utf-8")),
+    }
+
+
+def test_a_source_the_record_re_derives_itself_from_is_still_checked(tmp_path: Path):
+    r"""The two fields the feed does not carry are not proved by the reparse.
+
+    `read` re-derives the record from `response.xml` and compares the whole
+    model, which is what catches fabricated authors -- but the reparse is
+    handed `source_url` and `fetched_at` out of the record being checked, so
+    those two are compared with themselves. An editor who rewrites the source,
+    rewrites `content.txt` to match and recomputes the content digest passes
+    every one of those checks with a record claiming arXiv's metadata came
+    from somewhere that is not arXiv.
+    """
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    held = library.path_for(record.identifier)
+    forged = record.model_copy(update={"source_url": "https://example.invalid/made-up"})
+    forged = forged.model_copy(update=_consistent(forged))
+    (held / "record.json").write_text(forged.model_dump_json(), encoding="utf-8")
+    (held / "content.txt").write_bytes(forged.content().encode("utf-8"))
+    with pytest.raises(arxiv.ArxivError, match="not arXiv's API"):
+        library.read(record.identifier)
+
+
+def test_a_retrieval_time_that_is_not_a_time_is_refused(tmp_path: Path):
+    """Same gap, the other field. A record has to say WHEN, not merely say."""
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    held = library.path_for(record.identifier)
+    forged = record.model_copy(update={"fetched_at": "whenever"})
+    forged = forged.model_copy(update=_consistent(forged))
+    (held / "record.json").write_text(forged.model_dump_json(), encoding="utf-8")
+    (held / "content.txt").write_bytes(forged.content().encode("utf-8"))
+    with pytest.raises(arxiv.ArxivError, match="is not a timestamp"):
+        library.read(record.identifier)
+
+
+def test_a_clock_behind_arxivs_does_not_refuse_a_record_it_fetched(tmp_path: Path):
+    """Coherence, not a comparison against this machine's wall clock.
+
+    Checking that `fetched_at` falls after the version's own date would catch
+    a hand-edited stamp only when the editor got the year wrong, and would
+    make reading a stored record depend on this machine's clock agreeing with
+    arXiv's -- so a container with no battery-backed clock would be refused
+    papers it had fetched itself, with every digest agreeing.
+    """
+    clock = Clock(now=1.0)
+    client, library, _ = _client(tmp_path, Recorder(_feed()), clock)
+    record, _ = client.fetch("math.DG/0211159v1")
+    assert record.fetched_at < record.published
+    assert library.read(record.identifier) == record

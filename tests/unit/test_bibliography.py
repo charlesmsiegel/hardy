@@ -664,6 +664,32 @@ def test_a_macro_body_cannot_open_a_verbatim_region():
     assert "writes its own bibliography" in refusal
 
 
+def test_a_definition_printed_inside_verbatim_does_not_open_a_body():
+    r"""The other half of the same decision, and it used to be lost.
+
+    The macro bodies were found by a pass over the raw source, run BEFORE
+    anything knew where the verbatim regions were. So a document that PRINTS
+    a definition -- a paper about LaTeX, showing `\newcommand{\x}{` in a
+    `verbatim` block -- opened a body there, and the closing brace was hunted
+    for in live source: the block's own `\end{verbatim}` fell inside that
+    span and was blanked, the region never closed, and everything after it
+    dropped out of the check, a hand-written bibliography included.
+
+    Neither pass could run first, because each needed the other's answer.
+    Both are decided in one left-to-right scan now, in the order TeX meets
+    them, which is what the comment and `\verb` handling already needed.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "To define one, write:\n"
+        "\\begin{verbatim}\n\\newcommand{\\x}{\n\\end{verbatim}\n"
+        "\\begin{thebibliography}{1}\n\\bibitem{known2020} Fake.\n"
+        "\\end{thebibliography}\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal
+
+
 def test_a_bibitem_written_into_a_macro_body_is_still_caught():
     r"""Only the delimiters are defused; the body is still read.
 

@@ -10,10 +10,13 @@ resolved on its second.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
+from hardy import latex
 from hardy.latex import LatexTools
+from hardy.process import GuardedResult
 
 COMMAND = (sys.executable, str(Path(__file__).with_name("fake_latex.py")))
 PREAMBLE = "\\documentclass{article}\n\\begin{document}\n"
@@ -438,3 +441,48 @@ def test_a_citation_its_own_reference_list_defines_is_accepted(tmp_path: Path):
         vouched=lambda keys: "",
     )
     assert result.ok, result.output
+
+
+def test_a_runaway_log_is_read_bounded(tmp_path: Path, monkeypatch):
+    r"""The one output nothing was measuring.
+
+    The subprocess guard bounds what the compiler says on the terminal and
+    `output_limit` bounds what Hardy says back -- and `writeup.log` sits
+    between them, written by the document rather than by either, and was read
+    whole on every pass. A `\typeout` in a loop is enough to hand the process
+    a file larger than memory.
+
+    The tail is what is kept: a compile's account of itself ends with what it
+    concluded, and the terminal output is appended after it, so a run that
+    said something the log lost still has it.
+    """
+    monkeypatch.setattr(latex, "MAX_LOG_BYTES", 1_024)
+    (tmp_path / "writeup.log").write_text(
+        "opening line\n" + "x" * 100_000 + "\nclosing line\n", encoding="utf-8"
+    )
+    text = latex._diagnostics(
+        tmp_path, GuardedResult(returncode=0, stdout="terminal\n", stderr="")
+    )
+    assert "closing line" in text
+    assert "opening line" not in text
+    assert len(text.encode("utf-8")) <= 1_024 + len("terminal\n")
+
+
+def test_a_timeout_is_measured_in_the_bytes_it_costs(tmp_path: Path):
+    """`output_limit` is a byte budget, and this path was slicing characters.
+
+    A compiler that says a lot in a script with multibyte characters and then
+    hangs came back several times the limit -- the same mismatch every other
+    truncation in this file already had fixed.
+    """
+    tools = LatexTools(COMMAND, output_limit=200)
+    error = subprocess.TimeoutExpired(COMMAND, 1.0, output="é" * 10_000, stderr="")
+
+    def _explode(*args, **kwargs):
+        raise error
+
+    tools._passes = _explode
+    result = tools.check(PREAMBLE + "Text.\n" + END, tree=_tree(tmp_path))
+    assert not result.ok
+    assert result.output.startswith("timeout after")
+    assert len(result.output.encode("utf-8")) <= 200

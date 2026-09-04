@@ -481,9 +481,23 @@ def test_a_window_that_cannot_fit_is_refused_not_returned_oversized(tmp_path: Pa
     """
     runtime = _runtime(tmp_path, _feed(abstract="word " * 5_000), observation_bytes=96)
     runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
-    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1"})
+    refused = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1"})
+    assert not refused.ok
+    assert "does not fit" in refused.output
+    # And the refusal is measured like the answer it declined to give. It was
+    # not: the budget that made the window too big is the same budget the
+    # explanation has to fit in, and this one quotes both the identifier --
+    # an unbounded tool argument -- and the limit back.
+    assert len(refused.output.encode("utf-8")) <= 96
+
+
+def test_a_start_line_past_the_end_is_refused_within_the_budget(tmp_path: Path):
+    """The other refusal `read_paper` writes, measured the same way."""
+    runtime = _runtime(tmp_path, _feed(), observation_bytes=96)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "start_line": 9_999})
     assert not result.ok
-    assert "observation budget" in result.output
+    assert len(result.output.encode("utf-8")) <= 96
 
 
 def test_a_refusal_is_measured_like_an_answer(tmp_path: Path):

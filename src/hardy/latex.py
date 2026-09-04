@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import tempfile
@@ -25,6 +26,11 @@ ROOT_DOCUMENT = "writeup.tex"
 # looped over. Each pass is bounded by the same `timeout` as before, so the
 # worst case here is three times what one compile could take.
 MAX_PASSES = 3
+#: How much of `writeup.log` is read. Generous for the log of a real document
+#: and small enough that one looping `\typeout` cannot take the process with
+#: it -- the compiler's own output is already bounded by the subprocess guard,
+#: and this is the file that was not.
+MAX_LOG_BYTES = 8 * 1024 * 1024
 BEGIN_DOCUMENT = re.compile(r"\\begin\{document\}")
 
 
@@ -276,33 +282,6 @@ def _drop_macro_bodies(text: str) -> str:
     return "".join(kept)
 
 
-def _defused(text: str) -> str:
-    r"""`text` with verbatim delimiters inside macro bodies made inert.
-
-    A definition that merely *stores* an opener -- `\newcommand{\x}{\begin
-    {verbatim}}` -- does not open anything: TeX runs nothing until `\x` is
-    expanded. The scan is stateful, though, so meeting one put it into
-    verbatim mode and every following line was suppressed until a closer,
-    which a commented `\end{verbatim}` supplies quite happily. A real
-    `thebibliography` in between was then never inspected.
-
-    Only the delimiters go. The rest of the body is left exactly where it is,
-    because a `\bibitem` written into a macro body is still a `\bibitem` this
-    check means to catch -- the same reason `\csname` is refused by rule
-    rather than chased through expansion.
-    """
-    spans = _macro_bodies(text)
-    if not spans:
-        return text
-    characters = list(text)
-    for opening, closing in spans:
-        body = text[opening:closing]
-        for found in VERBATIM_DELIMITER.finditer(body):
-            for offset in range(opening + found.start(), opening + found.end()):
-                characters[offset] = " "
-    return "".join(characters)
-
-
 VERBATIM_ENVIRONMENT = re.compile(
     r"\\begin\s*\{(?P<env>verbatim\*?|Verbatim|lstlisting|minted)\}"
 )
@@ -310,15 +289,103 @@ VERBATIM_ENVIRONMENT = re.compile(
 #: letter, a star or a space -- `%` very much included, which is the whole
 #: reason this is matched during the comment scan rather than after it.
 INLINE_VERBATIM = re.compile(r"\\verb\*?(?P<mark>[^*\sa-zA-Z])")
-#: Either end of a verbatim environment, for `_defused` to blank inside a
-#: macro body -- the closer as well as the opener, so a definition storing one
-#: cannot end a region either.
-VERBATIM_DELIMITER = re.compile(
-    r"\\(?:begin|end)\s*\{(?:verbatim\*?|Verbatim|lstlisting|minted)\}"
-)
 
 
-def _executed_line(line: str) -> tuple[str, str | None, str]:
+class _MacroState:
+    r"""Where a left-to-right scan has got to inside a macro definition.
+
+    Carried across lines by `typeset`, and stepped only over text TeX would
+    execute -- so a `\newcommand` written inside a comment, inside a `\verb`
+    span or inside a verbatim block never starts one.
+
+    That last case is why this exists at all. The bodies used to be found by
+    a separate pass over the raw source, before anything knew where the
+    verbatim regions were, and a literal `\newcommand{\x}{` printed inside a
+    real `verbatim` block therefore opened a body whose closing brace was
+    hunted for in live source: the block's own `\end{verbatim}` was inside
+    that span and was blanked, the region never closed, and every line after
+    it -- a hand-written `thebibliography` included -- dropped out of the
+    check. Two scans over the same text, each needing the other's answer.
+    Deciding both in one pass, in the order TeX meets them, is the same fix
+    the comment and `\verb` handling already needed.
+
+    The phases follow the shape of a definition: `\newcommand` and friends
+    take a name, then optional brackets or parameter text, then a body;
+    `\newenvironment` takes two bodies, and text written into either is as
+    unexecuted as the first.
+    """
+
+    __slots__ = ("phase", "depth", "bodies")
+
+    def __init__(self) -> None:
+        self.phase = "idle"
+        self.depth = 0
+        self.bodies = 0
+
+    @property
+    def storing(self) -> bool:
+        """Whether what is being read now is a macro body rather than live text."""
+        return self.phase == "body"
+
+    def defines(self, environment: bool) -> None:
+        """A definition keyword was just executed."""
+        if self.phase != "idle":
+            # A definition inside a body. The outer body already suppresses
+            # everything this would, and tracking it would need a stack to no
+            # end -- `_macro_bodies` skips over the whole outer span for the
+            # same reason.
+            return
+        self.phase = "name"
+        self.depth = 0
+        self.bodies = 2 if environment else 1
+
+    def escape(self) -> None:
+        r"""A control sequence or escaped character was executed.
+
+        It ends a name argument written bare -- `\def\x{...}` -- and means
+        nothing anywhere else. Its characters are deliberately NOT stepped:
+        `\{` is an escaped brace and does not group.
+        """
+        if self.phase == "name":
+            self.phase = "args"
+
+    def step(self, character: str) -> None:
+        """One executed character."""
+        if self.phase == "name":
+            if character.isspace():
+                return
+            if character == "{":
+                self.phase = "naming"
+                self.depth = 1
+                return
+            self.phase = "args"
+        if self.phase == "naming":
+            if character == "{":
+                self.depth += 1
+            elif character == "}":
+                self.depth -= 1
+                if self.depth == 0:
+                    self.phase = "args"
+            return
+        if self.phase == "args":
+            # Brackets and `\def`'s parameter text are skipped rather than
+            # parsed: the body is the next brace group whatever stands in
+            # front of it.
+            if character == "{":
+                self.phase = "body"
+                self.depth = 1
+            return
+        if self.phase == "body":
+            if character == "{":
+                self.depth += 1
+            elif character == "}":
+                self.depth -= 1
+                if self.depth == 0:
+                    self.bodies -= 1
+                    self.phase = "args" if self.bodies > 0 else "idle"
+
+
+def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str]:
     r"""One line as TeX reads it, up to any verbatim environment it opens.
 
     Returns the text TeX would run, the environment opened (or None), and
@@ -352,11 +419,28 @@ def _executed_line(line: str) -> tuple[str, str | None, str]:
             if found is not None:
                 closed = line.find(found.group("mark"), found.end())
                 kept.append(" ")
+                state.escape()
                 index = len(line) if closed < 0 else closed + 1
                 continue
             opener = VERBATIM_ENVIRONMENT.match(line, index)
             if opener is not None:
+                if state.storing:
+                    # Stored, not opened. `\newcommand{\x}{\begin{verbatim}}`
+                    # runs nothing until `\x` is expanded, and nothing here
+                    # expands macros -- but the scan is stateful, so honouring
+                    # it put every following line inside a region that a
+                    # commented `\end{verbatim}` would happily close, taking a
+                    # real `thebibliography` in between out of the check.
+                    kept.append(" ")
+                    index = opener.end()
+                    continue
                 return "".join(kept), opener.group("env"), line[opener.end() :]
+            definition = _MACRO_DEF.match(line, index)
+            if definition is not None:
+                kept.append(definition.group(0))
+                state.defines(bool(definition.group("env")))
+                index = definition.end()
+                continue
             # An escaped backslash is dropped rather than carried through.
             # `\\` is TeX's line break and means nothing to any of the
             # patterns run over this text -- but leaving the pair intact left
@@ -367,11 +451,13 @@ def _executed_line(line: str) -> tuple[str, str | None, str]:
             # class rather than each pattern in turn, which is what the last
             # two rounds of this kept failing to do.
             kept.append(" " if line[index : index + 2] == "\\\\" else line[index : index + 2])
+            state.escape()
             index += 2
             continue
         if character == "%":
             break
         kept.append(character)
+        state.step(character)
         index += 1
     return "".join(kept), None, ""
 
@@ -388,10 +474,17 @@ def typeset(source: str) -> str:
     So the state is carried line by line: outside a region each line is
     scanned once for comments, `\verb` and an opener together; inside one,
     `%` is an ordinary character and only the literal closer ends the region.
+
+    Macro bodies are tracked in that same scan, for the same reason one more
+    time. A definition that merely *stores* an opener does not open anything,
+    and a definition PRINTED inside a verbatim block is not a definition --
+    each is invisible to a pass that runs before the other, so neither runs
+    first and both are decided here, in the order TeX meets them.
     """
     kept: list[str] = []
     closing: str | None = None
-    for raw in _defused(source).splitlines():
+    state = _MacroState()
+    for raw in source.splitlines():
         line = raw
         if closing is not None:
             _, marker, rest = line.partition(closing)
@@ -399,7 +492,7 @@ def typeset(source: str) -> str:
                 continue
             line, closing = rest, None
         while True:
-            text, environment, rest = _executed_line(line)
+            text, environment, rest = _executed_line(line, state)
             kept.append(text)
             if environment is None:
                 break
@@ -623,7 +716,18 @@ def _diagnostics(work: Path, outcome: GuardedResult) -> str:
     text = ""
     log = work / "writeup.log"
     if log.is_file() and not log.is_symlink():
-        text = log.read_text(encoding="utf-8", errors="replace")
+        # Bounded. Nothing else constrains this file: the subprocess guard
+        # bounds what the compiler says on the terminal and `output_limit`
+        # bounds what Hardy says back, and a document looping over `\typeout`
+        # writes a log between them that is read whole on every pass. The tail
+        # is kept because a compile's own account of itself ends with what it
+        # concluded, and the terminal output is appended after, so a run that
+        # said something the log lost still has it.
+        with log.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - MAX_LOG_BYTES))
+            text = handle.read().decode("utf-8", errors="replace")
     return text + outcome.stdout + outcome.stderr
 
 
@@ -756,8 +860,12 @@ class LatexTools:
             try:
                 outcome, terminal, log = self._passes(work, root)
             except subprocess.TimeoutExpired as error:
-                output = ((error.stdout or "") + (error.stderr or ""))[-self.output_limit :]
-                return ToolResult(False, f"timeout after {self.timeout:.1f}s\n{output}", source)
+                head = f"timeout after {self.timeout:.1f}s\n"
+                output = _tail(
+                    (error.stdout or "") + (error.stderr or ""),
+                    self.output_limit - len(head),
+                )
+                return ToolResult(False, head + output, source)
             except FileNotFoundError:
                 return ToolResult(False, f"LaTeX executable not found: {self.command[0]}", source)
             # The terminal output is what a reader is shown; `log` is what
