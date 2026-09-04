@@ -463,22 +463,81 @@ def test_a_session_with_no_kernel_says_none_rather_than_staying_silent(tmp_path:
     assert "none" in chat.export_material()["settings"]["Computer algebra"]
 
 
-def test_the_export_carries_the_shared_modules_the_workspace_can_import(tmp_path: Path):
-    """Read through the same guard the shared digest uses, and keyed by module
-    name -- which is how a saved theorem refers to one and what a recipient
-    matches their own copy against.
+def _with_shared(tmp_path: Path, saved: str):
+    """A session whose saved Lean is `saved`, with a shared tree beside it.
 
     The tree has to exist before the session opens: `_discover_shared` runs at
-    construction, which is also why `built` is called after it is written.
+    construction.
     """
     workspace = tmp_path / "problem"
     shared = tmp_path / ".hardy" / "lean"
     shared.mkdir(parents=True)
     (shared / "Helper.lean").write_text("theorem helper : True := trivial\n", encoding="utf-8")
+    (shared / "Unrelated.lean").write_text(
+        'def token : String := "Bearer abc123def456"\n', encoding="utf-8"
+    )
+    runtime = FakeChatRuntime([{"role": "assistant", "content": "Nothing to do."}])
+    chat = session(workspace, runtime, registered=("hardyBasic",))
+    chat.set_goal("Establish the basics")
+    # Written into the tree rather than saved through the tool: the fake Lean
+    # refuses an import it cannot resolve, and what this is about is which
+    # shared modules the gatherer follows from a source that imports them --
+    # not whether the fixture's Lean will accept the import.
+    lean = Path(chat.workspace) / "lean"
+    lean.mkdir(parents=True, exist_ok=True)
+    (lean / "Basic.lean").write_text(saved, encoding="utf-8")
+    return chat
 
-    chat = built(workspace)
+
+def test_the_export_carries_the_shared_modules_the_workspace_imports(tmp_path: Path):
+    """Keyed by module name -- which is how a saved theorem refers to one and
+    what a recipient matches their own copy against."""
+    chat = _with_shared(tmp_path, "import Mathlib\nimport Helper\n" + BASIC.split("\n", 1)[1])
     assert chat.shared_roots, "the fixture did not place a shared tree the session can see"
 
     carried = chat.export_material()["shared_sources"]
     assert "Helper" in carried
     assert "theorem helper : True := trivial" in carried["Helper"]
+
+
+def test_a_shared_module_nothing_imports_is_not_published(tmp_path: Path):
+    """`~/.hardy/lean` is a personal library shared by every project on the
+    machine. Copying all of it into a shareable report would disclose an
+    unrelated body of work -- rendered verbatim, with the credential filter
+    deliberately off, because these are audited sources. Exporting one project
+    must not publish another.
+    """
+    chat = _with_shared(tmp_path, "import Mathlib\nimport Helper\n" + BASIC.split("\n", 1)[1])
+
+    carried = chat.export_material()["shared_sources"]
+    assert "Unrelated" not in carried
+    assert not any("Bearer abc123def456" in text for text in carried.values())
+
+
+def test_the_project_copy_wins_when_two_shared_trees_define_a_module(tmp_path: Path):
+    """`shared_roots` is project-first and Lean resolves to the first match.
+
+    Taking the later one would put a different source in the page from the one
+    the kernel elaborated and the audit graded -- which is the exact failure
+    carrying the shared sources at all is meant to prevent.
+
+    Asserted against `_shared_sources` rather than through `export_material`:
+    that path calls `_refresh_shared_identity` first, which rediscovers
+    `shared_roots` from the layout and would throw away a second root a test
+    appended -- so the collision would never be exercised at all.
+    """
+    workspace = tmp_path / "problem"
+    project = tmp_path / ".hardy" / "lean"
+    project.mkdir(parents=True)
+    (project / "Helper.lean").write_text("theorem helper : True := trivial\n", encoding="utf-8")
+
+    runtime = FakeChatRuntime([{"role": "assistant", "content": "Nothing to do."}])
+    chat = session(workspace, runtime)
+
+    personal = tmp_path / "personal"
+    personal.mkdir()
+    (personal / "Helper.lean").write_text("theorem helper : False := sorry\n", encoding="utf-8")
+    chat.shared_roots = (*chat.shared_roots, (personal, personal))
+
+    carried = chat._shared_sources({"Basic": "import Helper\n"})
+    assert carried["Helper"] == "theorem helper : True := trivial\n"

@@ -1304,3 +1304,15 @@ def test_shared_lean_is_printed_verbatim_like_the_audited_sources():
     rewriting them makes the page's own identity claim uncheckable."""
     page = build(shared_sources={"Shared.Keys": 'def k : String := "Bearer abc123"'})
     assert "Bearer abc123" in page
+
+
+def test_a_shared_module_named_like_a_credential_key_is_not_replaced_wholesale():
+    """`prepare` descends into name-keyed maps unless they are exempt.
+
+    A module called `Password` or `Secret` had its entire body replaced with
+    `[REDACTED]`, so the page omitted the exact local dependency its displayed
+    audit was established against -- while rendering the section as an audited
+    source.
+    """
+    page = build(shared_sources={"Password": "theorem helper : True := trivial"})
+    assert "theorem helper : True := trivial" in page

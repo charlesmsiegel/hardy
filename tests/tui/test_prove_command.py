@@ -587,3 +587,42 @@ async def test_a_second_press_does_not_interrupt_the_finalization_the_first_one_
     )
 
     assert finalized == ["manifest written"]
+
+
+def test_the_revision_prompt_refuses_before_it_asks_when_the_run_is_abandoned():
+    """Esc can land between the approval check and this prompt attaching.
+
+    The shell's stopper sets the run's flag and consumes the key. Without a
+    check here the terminal opened a blocking read anyway, so a user who had
+    already walked away was asked for a second input -- and the workflow could
+    not observe its own flag until they gave one.
+    """
+    import threading
+
+    import pytest
+
+    from hardy.tui import prove
+
+    asked: list[str] = []
+
+    class Recording:
+        def write(self, line, style=None):
+            pass
+
+        def ask_line(self, prompt):
+            asked.append(prompt)
+            return "revise it"
+
+    terminal = prove.UiTerminal(Recording())
+
+    class Workflow:
+        _cancelled = threading.Event()
+
+    terminal.watch(Workflow())
+    assert terminal.revision_text() == "revise it"
+    assert len(asked) == 1
+
+    Workflow._cancelled.set()
+    with pytest.raises(KeyboardInterrupt):
+        terminal.revision_text()
+    assert len(asked) == 1, "the prompt was posted to a run that had been abandoned"

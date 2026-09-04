@@ -65,6 +65,7 @@ from .workspace import (
     module_name,
     module_path,
     normalise_lean,
+    parse_imports,
     safe_relative,
     statements,
     strip_comments,
@@ -3190,7 +3191,7 @@ class MathematicsSession:
             # map, not the source. Locally authored, so a recipient has no other
             # copy to compare against: without this the export is not standalone
             # for exactly the workspaces that wrote their own library.
-            "shared_sources": self._shared_sources(),
+            "shared_sources": self._shared_sources(sources),
             # The disclosure the compiled document's banner carries. The export
             # embeds no PDF, so without this a theorem Hardy knows closes with
             # one `simp` reads as kernel-verified and nothing more -- the page
@@ -4893,26 +4894,63 @@ class MathematicsSession:
             ),
         }
 
-    def _shared_sources(self) -> dict[str, str]:
-        """Every shared Lean module this session can see, by module name.
+    def _shared_sources(self, sources: dict[str, str] | None = None) -> dict[str, str]:
+        """The shared Lean this workspace actually imports, by module name.
+
+        The import CLOSURE of the saved sources, not every module the machine
+        happens to offer. `~/.hardy/lean` is a personal library shared by every
+        project on the machine, and copying all of it into a shareable report
+        would disclose an unrelated body of work -- rendered verbatim, with the
+        credential filter deliberately off, because these are audited sources.
+        Exporting one project must not publish another. It would also have made
+        the section's own heading false: it says "imports", and it meant "was
+        lying around".
+
+        Resolved project tree first, matching `shared_roots`' documented order.
+        Lean takes the first module of a given name it finds on that path, so
+        the export has to keep the same one -- otherwise the page carries a
+        different source from the one the kernel elaborated and the audit
+        graded, which is the failure this whole section exists to prevent.
 
         Read through the same guard `_shared_digest` uses, so a link anywhere in
-        the tree is refused rather than followed -- the export must not be the
-        one reader that resolves what every other pass declined to.
-
-        Keyed by module name rather than by path: that is how a saved theorem
-        refers to it in an `import`, and it is what a recipient checking whether
-        their copy is the same one needs to match on. An unreadable file is left
-        out rather than taking the export down, and the page says which tree the
-        names came from.
+        the tree is refused rather than followed. Keyed by module name because
+        that is how a theorem refers to one and what a recipient matches their
+        own copy against. An unreadable file is left out rather than taking the
+        export down.
         """
-        found: dict[str, str] = {}
+        offered: dict[str, Path] = {}
+        roots: dict[str, Path] = {}
         for source, _build in self.shared_roots:
             for name, path in self._modules_under(source):
-                try:
-                    found[name] = read_text(source, path.relative_to(source), errors="replace")
-                except OSError:
-                    continue
+                # `setdefault` semantics: the project tree comes first in
+                # `shared_roots` and Lean resolves to the first match, so a name
+                # the personal tree also defines must not overwrite it.
+                if name not in offered:
+                    offered[name] = path
+                    roots[name] = source
+        if not offered:
+            return {}
+        mine = self.lean_workspace.sources() if sources is None else sources
+        found: dict[str, str] = {}
+        seen: set[str] = set()
+        # One worklist, seeded from the saved sources and extended by each
+        # shared module's own imports: a shared module may import another, and
+        # a page that stopped at the first level would still be missing source
+        # the verdict rests on.
+        pending = [name for text in mine.values() for name in parse_imports(text)]
+        while pending:
+            name = pending.pop()
+            if name in seen or name not in offered:
+                continue
+            seen.add(name)
+            try:
+                text = read_text(
+                    roots[name], offered[name].relative_to(roots[name]), errors="replace"
+                )
+            except OSError:
+                continue
+            found[name] = text
+            pending.extend(parse_imports(text))
         return found
 
     def _effective_settings(self) -> dict[str, str]:

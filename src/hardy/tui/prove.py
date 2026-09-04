@@ -22,6 +22,7 @@ can be wrong.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from ..cli import ConsoleTerminal
@@ -42,11 +43,21 @@ class UiTerminal(ConsoleTerminal):
     the event loop that has to read the answers if it ran on it.
     """
 
-    def __init__(self, ui: BlockingUi) -> None:
+    def __init__(self, ui: BlockingUi, abandoned: Callable[[], bool] | None = None) -> None:
         self._ui = ui
         # Set only around the revision prompt. See `revision_text`.
         self._abandoning_cancels = False
+        # Whether the run has already been told to stop. The terminal cannot
+        # see the workflow otherwise, and there is one window where it has to:
+        # see `revision_text`.
+        self._abandoned = abandoned or (lambda: False)
         super().__init__(input_fn=self._read, output=self._write)
+
+    def watch(self, workflow: Any) -> None:
+        """Learn which run this terminal is asking questions on behalf of."""
+        cancelled = getattr(workflow, "_cancelled", None)
+        if cancelled is not None:
+            self._abandoned = cancelled.is_set
 
     def _write(self, text: str) -> None:
         # Split rather than passed whole: the staged wording opens sections with
@@ -76,6 +87,14 @@ class UiTerminal(ConsoleTerminal):
         says has to be the same sentence on both surfaces, so this flags the
         read rather than asking the question a second time.
         """
+        # Before posting it, as well as after it returns. Esc can land between
+        # the workflow's approval check and this prompt attaching: the shell's
+        # stopper sets the run's flag and consumes the key, and then this opened
+        # a blocking read anyway -- so a user who had already walked away was
+        # asked for a second input, and the workflow could not observe its own
+        # flag until they gave one.
+        if self._abandoned():
+            raise KeyboardInterrupt
         self._abandoning_cancels = True
         try:
             return super().revision_text()
@@ -137,6 +156,12 @@ def run(
     from ..workflow import ProveRequest
 
     workflow = build_prove_workflow(config, config.config_path, backend=backend)
+    # The terminal asks the workflow whether the run is still wanted. Attached
+    # here rather than at construction because the workflow does not exist
+    # until now, and the terminal is built by the caller.
+    attach = getattr(terminal, "watch", None)
+    if attach is not None:
+        attach(workflow)
     if ready is not None:
         ready(workflow)
     return workflow.run(
