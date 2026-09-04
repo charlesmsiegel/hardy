@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import http.client
 import json
+import math
 import os
 import re
 import shutil
@@ -144,7 +145,8 @@ class PaperRecord(FrozenModel):
     record of a moving target, which is the one thing this file exists to
     stop. `content_sha256` is the digest of `content.txt` -- the bytes
     `read_paper` serves and `cite_paper` vouches for -- so a bibliography
-    entry carrying it is a claim someone else can check.
+    entry carrying it is a claim someone else can check. What it covers
+    includes where the bytes came from and when: see `content`.
     """
 
     schema_version: Literal[1] = 1
@@ -190,6 +192,22 @@ class PaperRecord(FrozenModel):
             head.extend(_wrapped(f"DOI: {self.doi}"))
         if self.journal_ref:
             head.extend(_wrapped(f"Journal reference: {self.journal_ref}"))
+        # Provenance goes INSIDE the digested text, not merely beside it in
+        # `record.json`. `content_sha256` is the claim a bibliography entry
+        # carries off to another machine, and until these were part of what
+        # it covers, a restored or edited record could say the bytes came
+        # from somewhere else, or at another time, and every check still
+        # passed: the paper fields were untouched, so both content digests
+        # matched, and `response.xml` was untouched, so its digest matched
+        # too. A record that is checkable about its mathematics and
+        # unfalsifiable about where it came from is not what the digest is
+        # for.
+        if self.source_url:
+            head.extend(_wrapped(f"Source: {self.source_url}"))
+        if self.fetched_at:
+            head.append(f"Retrieved: {self.fetched_at}")
+        if self.response_sha256:
+            head.append(f"Response digest: sha256:{self.response_sha256}")
         # EVERY line is wrapped, metadata included, and wrapped HERE rather
         # than where it is displayed, so the digest covers the text a reader
         # is served. `read_paper` pages by line: a line too long for one
@@ -307,6 +325,21 @@ class PaperLibrary:
             stored = read_bytes(self.root, f"{held}/content.txt")
         except (OSError, ValueError) as error:
             raise ArxivError(f"the stored record for {identifier} could not be read: {error}") from error
+        # Asked before the digests, so that a record carrying no response
+        # digest is told it carries none. It is also covered BY the content
+        # digest now, which would otherwise catch a blanked field first and
+        # report the generic "this has been edited" -- true, but less use to
+        # whoever has to work out what is wrong with the file.
+        #
+        # Required, not merely compared when present. An empty digest was an
+        # opt-out: blank the field in `record.json` and any `response.xml`
+        # became acceptable, leaving a record that reads and cites without the
+        # provenance it claims to carry.
+        if not record.response_sha256:
+            raise ArxivError(
+                f"the record stored under {identifier} carries no response digest, so "
+                "nothing says which bytes its metadata was read from"
+            )
         # BOTH have to match the digest, and checking only the first was a
         # hole: `read_paper` serves `record.content()`, regenerated from the
         # record's own fields, so an edit to the title or the abstract in
@@ -346,15 +379,6 @@ class PaperLibrary:
             raise ArxivError(
                 f"the stored response for {identifier} could not be read: {error}"
             ) from error
-        # Required, not merely compared when present. An empty digest was an
-        # opt-out: blank the field in `record.json` and any `response.xml`
-        # became acceptable, leaving a record that reads and cites without the
-        # provenance it claims to carry.
-        if not record.response_sha256:
-            raise ArxivError(
-                f"the record stored under {identifier} carries no response digest, so "
-                "nothing says which bytes its metadata was read from"
-            )
         if hashlib.sha256(response).hexdigest() != record.response_sha256:
             raise ArxivError(
                 f"the stored response for {identifier} does not match its recorded digest; "
@@ -450,6 +474,14 @@ class PaperLibrary:
             fetched = float(payload["fetched_at"])
             body = str(payload["body"])
         except (OSError, ValueError, KeyError, TypeError):
+            return None
+        # `json.loads` accepts a bare `NaN`, and `float` keeps it. Every
+        # comparison against a NaN is false, so a corrupted entry passed both
+        # freshness tests as fresh and `_stamp` then raised `ValueError` --
+        # which is not the `ArxivError` the caller catches, so the entry was
+        # never dropped and every search or fetch for that URL failed
+        # identically forever after.
+        if not math.isfinite(fetched):
             return None
         age = now - fetched
         # A negative age is a clock that moved backwards, and it used to pass

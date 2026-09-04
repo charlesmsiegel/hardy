@@ -711,7 +711,14 @@ class MathematicsSession:
         # a directory under the root and the bibliography is a file beside the
         # record, so a caller cannot get this wrong and none of them is asked
         # to.
-        self.papers: PaperToolRuntime = build_paper_runtime(workspace, self.root)
+        # The operator's configured budget, not the module default. `cas` and
+        # `search` are handed in already built against
+        # `limits.model_observation_bytes`; this one is built here, and being
+        # built here is exactly how it came to keep its own 32 KiB while a
+        # workspace configured for less had every other tool respect that.
+        self.papers: PaperToolRuntime = build_paper_runtime(
+            workspace, self.root, observation_bytes=self.limits.model_observation_bytes
+        )
         self._lean_command = lean_command
         self._lean_project = lean_project
         # Resolved lazily and once: it costs a subprocess, and a session that
