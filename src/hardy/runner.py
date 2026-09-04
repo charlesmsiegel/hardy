@@ -497,6 +497,25 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     # nothing and would make the declared bound and the applied one differ for
     # no reason.
     remaining = wall_seconds - float(ladder["seconds"])
+    def _record_overflow(plan: compaction.Plan) -> None:
+        """Say that a request the window has no room for is going out anyway.
+
+        There is no compaction to perform, and that is not the same fact as a
+        request that fits. It is still sent -- `estimate_tokens` bounds from
+        above, so over the estimate is not necessarily over the endpoint's own
+        count -- and this is what a rejection is read against. Asked on both
+        passes, because the uncuttable case leaves on the first one and never
+        reaches the second.
+        """
+        if not plan.overflow:
+            return
+        events.append({
+            "type": "overflow",
+            "estimated_tokens": {"before": plan.before, "available": plan.available},
+            "context_window": context_window,
+            "why": "the request is over the window and no legal cut is above the kept tail",
+        })
+
     def compact(messages: list[compaction.Message]) -> list[compaction.Message] | None:
         """Batch's own compaction, assembled the way the interactive one is.
 
@@ -523,21 +542,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             output_tokens=int(getattr(runtime, "output_limit", None) or 0),
         )
         if not outcome.needed:
-            # A request the window has no room for, with nothing above the
-            # tail that may legally be cut. There is no compaction to perform,
-            # and that is not the same fact as a conversation that fits: left
-            # to `needed` alone, the record showed nothing at all where an
-            # oversized request was about to go out. It still goes --
-            # `estimate_tokens` bounds from above, so over the estimate is not
-            # necessarily over the endpoint's own count -- and if the provider
-            # refuses it, this is the entry that says why.
-            if outcome.overflow:
-                events.append({
-                    "type": "overflow",
-                    "estimated_tokens": {"before": outcome.before, "available": outcome.available},
-                    "context_window": context_window,
-                    "why": "the request is over the window and no legal cut is above the kept tail",
-                })
+            _record_overflow(outcome)
             return None
         facts = compaction.Facts(
             goal=request.informal_claim,
@@ -574,6 +579,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             output_tokens=int(getattr(runtime, "output_limit", None) or 0),
         )
         if not settled.needed:
+            _record_overflow(settled)
             return None
         events.append({
             "type": "compaction",
@@ -726,6 +732,17 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     result = RunResult(reason, formal, informal, proof if final else None, final.output if final else "No hole-free proof was accepted.", axioms, turns, spent.summary(), [WARNING], toolchain, sketch)
     if final and proof:
         (output_dir / "proof.lean").write_text(lean.source(proof, audit=True), encoding="utf-8")
+    else:
+        # Removed rather than merely not written. An output directory is
+        # reusable -- `hardy-output` is the default and is reused by anyone who
+        # does not pass one -- so a failed run following a verified one left
+        # the earlier `proof.lean` sitting beside a `result.json` saying no
+        # completed artifact was produced. The directory then showed a checked
+        # proof of the previous run's statement as though it belonged to this
+        # one, and `hardy accept --recorded` refused the record for the
+        # contradiction. A conditional artifact is written or cleared, never
+        # left over.
+        (output_dir / "proof.lean").unlink(missing_ok=True)
     # The grade and what it rests on, together. "kernel verified" beside a
     # silent axiom section is the claim this gate exists to stop being made.
     stands_on = (

@@ -452,3 +452,35 @@ def test_the_compaction_digest_notices_reasoning_the_transcript_omits(tmp_path: 
     assert _digest(plain) != _digest(thinking)
     # And nothing about the block is transcribed by the digest itself.
     assert len(_digest(thinking)) == 64
+
+
+def test_an_uncuttable_oversized_request_is_recorded_as_an_overflow(tmp_path: Path) -> None:
+    """The case leaves on the cheap first pass and never reaches the summary.
+
+    Handled only after the summary was built, the overflow branch could not be
+    arrived at at all for the one case it was written for -- so Hardy sent an
+    oversized request with nothing in the record to read a rejection against.
+    """
+    chat = session(tmp_path, FakeChatRuntime([]))
+    chat.context_window = 60_000
+    # One message: `first_legal_cut` can only land at 0, so there is nothing
+    # above the tail to summarise and no compaction to perform.
+    messages = [Message("user", text="x" * 400_000)]
+
+    assert chat.compact(messages) is None
+
+    recorded = [item for item in events(tmp_path) if item.get("type") == "overflow"]
+    assert len(recorded) == 1
+    assert recorded[0]["context_window"] == 60_000
+    assert recorded[0]["estimated_tokens"]["before"] > recorded[0]["estimated_tokens"]["available"]
+    # And no compaction is claimed, because none happened.
+    assert not [item for item in events(tmp_path) if item.get("type") == "compaction"]
+
+
+def test_a_conversation_that_fits_records_no_overflow(tmp_path: Path) -> None:
+    """The converse, so `overflow` means what it says rather than "no cut"."""
+    chat = session(tmp_path, FakeChatRuntime([]))
+
+    assert chat.compact([Message("user", text="short")]) is None
+
+    assert not [item for item in events(tmp_path) if item.get("type") == "overflow"]

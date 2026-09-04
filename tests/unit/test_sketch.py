@@ -817,3 +817,43 @@ def test_a_mid_exchange_decline_is_not_read_as_a_closer(tmp_path: Path, proof_re
         path.write_text(json.dumps(record), encoding="utf-8")
         issues = acceptance.validate_batch_consistency(tmp_path)
         assert any("closers are recorded as disabled" in issue for issue in issues)
+
+
+def test_a_failed_run_clears_the_previous_run_s_proof(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """An output directory is reusable, and `hardy-output` is the default.
+
+    A failed run following a verified one left the earlier `proof.lean` beside
+    a `result.json` saying no completed artifact was produced -- the directory
+    showing a checked proof of the previous run's statement as though it
+    belonged to this one, which the audit then refused the record for.
+    """
+    import importlib
+
+    acceptance = importlib.import_module("hardy.acceptance")
+    toolchain = {
+        "lean_version": "4.32.0",
+        "lean_commit": "a" * 40,
+        "mathlib_revision": "b" * 40,
+        "lake_manifest_sha256": "c" * 64,
+    }
+    verified = run(
+        proof_request,
+        factory([call("submit_proof", {"proof": "by exact True.intro"})]),
+        lean,
+        tmp_path,
+        toolchain=toolchain,
+    )
+    assert verified.terminal_reason == "verified"
+    assert (tmp_path / "proof.lean").exists()
+
+    failed = run(
+        proof_request,
+        factory([call("check_proof", {"proof": "by exact True.intro"})]),
+        lean,
+        tmp_path,
+        toolchain=toolchain,
+    )
+
+    assert failed.terminal_reason == "no_proof_submitted"
+    assert not (tmp_path / "proof.lean").exists()
+    assert acceptance.validate_batch_consistency(tmp_path) == ()

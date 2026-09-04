@@ -36,7 +36,7 @@ from .layout import (
     read_text,
 )
 from .lean import DECLARATION_NAME, LeanTools
-from .loop import Message, reasoning_digest
+from .loop import Message, block_order, reasoning_digest
 from .models import Request, ToolResult, TurnEvent
 from .modules import ModuleIndex
 from .project_context import (
@@ -653,13 +653,20 @@ def _digest(messages: Sequence[Message]) -> str:
         # `thinking` event records -- so nothing here transcribes what it will
         # not publish and a reader holding the transcript can still recompute
         # what this covered.
-        # The ordered blocks when the transport kept them, since they are what
-        # is sent and they subsume the reasoning; the reasoning alone
-        # otherwise. Two turns differing only in the order of their text and
-        # calls are two different requests, and hashing the regrouped view
-        # could not tell them apart.
-        for block in message.blocks or message.reasoning:
-            running.update(reasoning_digest(block).encode("utf-8"))
+        # The block *order* when the transport kept it -- two turns differing
+        # only in the arrangement of their text and calls are two different
+        # requests, and the fields above group by kind and cannot tell them
+        # apart. Through `block_order`, which is what the assistant event
+        # records: hashing the provider objects instead put the representation
+        # of public text and tool blocks into a digest no reader could
+        # reproduce from the transcript. Where there are no blocks the
+        # reasoning still contributes on its own, since it is sent and
+        # `as_dict` leaves it out.
+        carried = block_order(message.blocks) if message.blocks else tuple(
+            reasoning_digest(block) for block in message.reasoning
+        )
+        for entry in carried:
+            running.update(entry.encode("utf-8"))
             running.update(b"\x1f")
         running.update(b"\x1e")
     return running.hexdigest()
@@ -3130,6 +3137,26 @@ class MathematicsSession:
         """
         return compaction.summarize(self.facts()).render()
 
+    def _record_overflow(self, plan: compaction.Plan) -> None:
+        """Say that a request the window has no room for is going out anyway.
+
+        There is no compaction to perform -- summarising nothing and keeping
+        everything is not one -- and that is not the same fact as a request
+        that fits. It is still sent: `estimate_tokens` bounds from above, one
+        token per UTF-8 byte, so over the estimate is not necessarily over the
+        endpoint's own count, and refusing on Hardy's arithmetic would end
+        sessions the provider would have answered. What this buys is that a
+        rejection has an entry to be read against.
+        """
+        if not plan.overflow:
+            return
+        self._record({
+            "type": "overflow",
+            "estimated_tokens": {"before": plan.before, "available": plan.available},
+            "context_window": self.context_window,
+            "why": "the request is over the window and no legal cut is above the kept tail",
+        })
+
     def compact(self, messages: list[Message]) -> list[Message] | None:
         """Hardy's compaction, for a loop Hardy owns.
 
@@ -3151,14 +3178,22 @@ class MathematicsSession:
         # latency in the terminal. The first pass costs an arithmetic sweep of
         # the messages.
         overhead = self._request_overhead()
-        if not compaction.plan(
+        first = compaction.plan(
             messages,
             context_window=self.context_window,
             reserve_tokens=compaction.RESERVE_TOKENS,
             keep_tokens=compaction.RECENT_TOKENS,
             overhead_tokens=overhead,
             output_tokens=self._output_cap(),
-        ).needed:
+        )
+        if not first.needed:
+            # Reported from here as well as below, because this is where the
+            # uncuttable case actually leaves: a request the window has no room
+            # for, with no legal cut above the tail, is `needed=False` on this
+            # pass and never reaches the summary. Handled only after the
+            # summary was built, the branch could not be arrived at at all for
+            # the one case it was written for.
+            self._record_overflow(first)
             return None
         # Now it is worth the read. Rendered before the plan is settled, not
         # after: the summary is prepended to whatever the plan keeps, so what
@@ -3185,13 +3220,7 @@ class MathematicsSession:
             # `estimate_tokens` bounds from above, so over the estimate is not
             # necessarily over the endpoint's own count -- and if the provider
             # refuses it, this is the entry that says why.
-            if outcome.overflow:
-                self._record({
-                    "type": "overflow",
-                    "estimated_tokens": {"before": outcome.before, "available": outcome.available},
-                    "context_window": self.context_window,
-                    "why": "the request is over the window and no legal cut is above the kept tail",
-                })
+            self._record_overflow(outcome)
             return None
         self._record({
             "type": "compaction",
