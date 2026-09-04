@@ -809,12 +809,19 @@ def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]], rea
     if not isinstance(attempts, list):
         return ["trajectory closers states no attempts list"]
     enabled, closed_by = ladder.get("enabled"), ladder.get("closed_by")
+    declined = [event for event in events if event.get("type") == "declined_turn"]
     if enabled is False:
         # Nothing ran, so nothing may be recorded as having run.
         if recorded:
             issues.append("closers are recorded as disabled beside a closers event")
         if attempts or ladder.get("tactics") or closed_by is not None:
             issues.append("closers are recorded as disabled beside a ladder that ran")
+        # And nothing may be recorded as having been declined for it. Returning
+        # here without this let a closer-produced record be relabelled as the
+        # no-closer condition by blanking the block and deleting one event,
+        # while the decline it could not have made stayed behind.
+        if declined:
+            issues.append("a turn was declined on a run whose closers are recorded as disabled")
         return issues
     if enabled is not True:
         return [f"trajectory closers state an unreadable enabled flag: {enabled!r}"]
@@ -863,7 +870,6 @@ def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]], rea
     # both directions. Asking only "if a turn was declined, does the rest agree"
     # let the decline itself be deleted, which took the provider-exchange check
     # down with it.
-    declined = [event for event in events if event.get("type") == "declined_turn"]
     exchanges = [event for event in events if event.get("type") == "result"]
     if closed_by is not None:
         # `closed_by` is set only for a submission the run kept, which is

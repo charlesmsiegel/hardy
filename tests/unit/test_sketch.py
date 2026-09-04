@@ -209,3 +209,24 @@ def test_the_last_accepted_sketch_is_the_one_kept(tmp_path: Path, proof_request:
 
     assert result.sketch is not None
     assert result.sketch["proof"] == "by\n  admit"
+
+
+def test_a_sketch_that_elaborates_after_the_deadline_is_discarded(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """A skeleton that began inside the deadline and finished outside it is
+    work the budget did not buy. Kept, it put a partial artifact produced
+    outside the recorded bound into a `wall_clock_limit` run's writeup."""
+    result = run(
+        proof_request,
+        factory([call("sketch_proof", {"proof": "by sorry"})]),
+        lean,
+        tmp_path,
+        wall_seconds=0.0001,
+    )
+
+    assert result.sketch is None
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text(encoding="utf-8"))
+    assert any(
+        event.get("type") == "discarded" and event.get("name") == "sketch_proof"
+        for event in trajectory["events"]
+    )
+    assert "## Sketch" not in (tmp_path / "writeup.md").read_text(encoding="utf-8")
