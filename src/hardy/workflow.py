@@ -218,6 +218,23 @@ class ProveWorkflow:
             if stop is not None:
                 stop(thread)
 
+    def escalate(self) -> int:
+        """The second press, for the child the tracked register cannot reach.
+
+        `process.stop_children()` walks that register; a persistent CAS kernel
+        is deliberately not in it, because only its session knows whether a
+        cell is in flight. So a `cas_run` out when Esc was pressed took neither
+        press and ran to its own `cas_cell_seconds` -- while the terminal said
+        the second press kills what did not take the hint.
+
+        Only this run's kernel. The interactive session's is a different object
+        with a different namespace, and taking it would cost the user state
+        that has nothing to do with the run they stopped.
+        """
+        runtime = self._runtime_in_flight
+        escalate = getattr(runtime, "escalate_cas", None)
+        return 1 if escalate is not None and escalate() else 0
+
     def abandon(self) -> None:
         """Refuse every further stage, and return at once. Any thread.
 

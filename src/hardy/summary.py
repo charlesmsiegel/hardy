@@ -202,9 +202,9 @@ def _assumption_line(record: Mapping[str, Any]) -> str:
     # function is not given the current goal to compare against, and a line
     # that appeared only sometimes would read as a warning rather than as a
     # field.
-    at_approval = str(record.get("goal_at_approval", "")).strip()
-    if at_approval:
-        parts.append(f"    goal at approval: {at_approval}")
+    if "goal_at_approval" in record:
+        at_approval = str(record.get("goal_at_approval") or "").strip()
+        parts.append(f"    goal at approval: {at_approval or 'none was set'}")
     return "\n".join(parts)
 
 

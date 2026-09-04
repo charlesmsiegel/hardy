@@ -445,6 +445,16 @@ class ClaudeStagedRuntime:
         stop rather than killed. This waits for it either way -- that is what
         taking the gate below is for -- so a finished Lean check is recorded
         before the manifest is written rather than lost.
+
+        "Asked" has to include the CAS kernel, and asking it is a separate call
+        from everything else. Lean and Tectonic register with `process.tracked`
+        and are reached by the handler's `interrupt_children`; a persistent CAS
+        kernel deliberately is not in that register, because only its session
+        knows whether a cell is in flight and how to read what comes back --
+        which is why `MathematicsSession.interrupt_work` asks it by hand too.
+        Without the same call here, a `cas_run` in flight held `_gate` and this
+        method waited out `cas_cell_seconds` -- a minute by default -- while
+        the terminal told the user the press had reached what was running.
         """
         # Under `_starting`, which is what makes this atomic with opening a
         # turn: see `run_structured`. Held for the arming only -- the waiting
@@ -459,10 +469,15 @@ class ClaudeStagedRuntime:
             cancel = getattr(thread.runtime, "cancel", None)
             if cancel is not None:
                 cancel()
+        # The staged run's own CAS kernel, which nothing else reaches. Outside
+        # `_starting` because it can block briefly on the session's own lock,
+        # and there is nothing to serialize it against: a cell that finishes on
+        # its own between the two is exactly what the gate below waits for.
+        self.interrupt_cas()
         # Taking the gate is how this thread learns that no tool is running.
-        # Bounded by the tools' own timeouts, not by a guess here: interrupting
-        # a Lean or CAS subprocess is exactly what the paragraph above says
-        # Hardy will not do.
+        # Bounded by the tools' own timeouts once every child has been asked to
+        # stop -- asked, not killed, which is what the docstring above promises
+        # and what the second press is for.
         with self._gate:
             pass
         # And then the provider's own thread, which is what reports a finished
@@ -476,6 +491,27 @@ class ClaudeStagedRuntime:
             # its last event where that read happened, not in a phase the run
             # had not entered.
             self._seal(thread.phase)
+
+    def interrupt_cas(self) -> bool:
+        """Ask this run's CAS kernel to stop the cell it is in, if any.
+
+        Separate from `cancel` so the terminal's escalation path can reach it
+        too: `process.stop_children()` walks the tracked register, and the
+        persistent kernel is not in it.
+        """
+        if self._cas is None:
+            return False
+        return bool(self._cas.session.interrupt())
+
+    def escalate_cas(self) -> bool:
+        """The second press, for the one child the register cannot reach.
+
+        Costs what killing a kernel costs -- the namespace goes with it --
+        which is why it is not what the first press does.
+        """
+        if self._cas is None:
+            return False
+        return bool(self._cas.session.escalate())
 
     def close(self) -> None:
         # The workflow calls this in a `finally`; without it every staged run

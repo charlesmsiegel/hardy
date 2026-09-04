@@ -3199,7 +3199,7 @@ class MathematicsSession:
             "document": (
                 f"{document.name} was compiled by Hardy ({document.stat().st_size} bytes). "
                 "It is not embedded here: this file carries no external assets."
-                if compiled and self.state.get("tex_signature")
+                if compiled and self._document_is_hardys(document)
                 # A regular file is not evidence that Hardy made it. A clone
                 # carries whatever `writeup.pdf` was committed, and a user may
                 # drop one in; "was compiled" then credited Hardy with a
@@ -3208,8 +3208,9 @@ class MathematicsSession:
                 # stamped only by `_stamp_writeup`, after a compile Hardy ran,
                 # so its absence settles the question.
                 else f"{document.name} is present ({document.stat().st_size} bytes), but "
-                "Hardy has no record of compiling it: it came with the workspace or was "
-                "put there by hand. It is not embedded here either."
+                "these are not bytes Hardy is recorded as having produced: the file came "
+                "with the workspace, was put there by hand, or replaced one Hardy built. "
+                "It is not embedded here either."
                 if compiled
                 else f"{document.name} is a symlink; Hardy did not read it, so nothing "
                 "here reports on a compiled document. That is a refusal, not a finding "
@@ -4488,9 +4489,12 @@ class MathematicsSession:
             # never asked about. Hardy sets `proposal["goal"]` from its own
             # state rather than taking the model's word for it, so this is the
             # workspace's goal at the moment the user said yes.
-            approved_goal = str(proposal.get("goal") or "").strip()
-            if approved_goal:
-                record["goal_at_approval"] = approved_goal
+            # Written unconditionally, empty string included. Dropping the key
+            # when no goal was set made "the user approved this with no goal in
+            # front of them" indistinguishable from "this record predates the
+            # field" -- and the renderers say different things about those. The
+            # key's presence is the evidence that the question was asked.
+            record["goal_at_approval"] = str(proposal.get("goal") or "").strip()
             # When a human said yes, in UTC. Additive, so `schema_version`
             # stays 2 for the reason `goal` gives: a record written before
             # this existed simply lacks the key, and every reader of it says
@@ -4873,6 +4877,30 @@ class MathematicsSession:
             ),
         }
 
+    def _document_is_hardys(self, document: Path) -> bool:
+        """Whether the PDF on disk is the one Hardy's last compile produced.
+
+        A truthy `tex_signature` says only that Hardy compiled something in
+        this workspace at some point. It says nothing about the bytes now at
+        `writeup.pdf`, which a user may have replaced afterwards -- and an
+        export that reads the signature alone credited Hardy with a document it
+        never made. The digest stamped by `_stamp_writeup` is what answers the
+        question actually being asked.
+
+        A workspace stamped before the digest existed has the signature and no
+        digest. That reads as "not established" rather than as "Hardy's": the
+        page can say what it does not know, and must not guess in the direction
+        of a stronger claim.
+        """
+        stamped = str(self.state.get("writeup_sha256") or "")
+        if not stamped:
+            return False
+        try:
+            return hashlib.sha256(document.read_bytes()).hexdigest() == stamped
+        except OSError:
+            # Unreadable is not evidence of authorship either.
+            return False
+
     def _stamp_writeup(self) -> None:
         """Record what this compile was made against.
 
@@ -4884,6 +4912,17 @@ class MathematicsSession:
         """
         self.state["tex_signature"] = self._tex_signature()
         self.state["tex_open"] = sorted(self._open_theorems())
+        # And what the compile actually produced. A signature says only that
+        # Hardy compiled *something* here once; a user who then drops another
+        # `writeup.pdf` over it leaves the signature truthy and the bytes
+        # someone else's, and the export would still credit Hardy with them.
+        # Additive like the two above, and absent for a workspace stamped
+        # before it existed -- which the reader is told rather than guessed at.
+        document = self.workspace / "writeup.pdf"
+        if document.is_file() and not document.is_symlink():
+            self.state["writeup_sha256"] = hashlib.sha256(
+                document.read_bytes()
+            ).hexdigest()
         self._save_state()
 
     def _stale_only_from_holes(self) -> bool:

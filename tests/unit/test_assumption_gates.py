@@ -281,6 +281,23 @@ def test_the_goal_the_user_was_asked_under_is_written_into_the_record(
     assert session.state["assumptions"][0]["goal_at_approval"] == "Prove the density theorem"
 
 
+def test_an_approval_with_no_goal_set_records_that_it_had_none(
+    session, approvals, fake_lean
+) -> None:
+    """Written even when empty.
+
+    Dropping the key when no goal was set made "the user approved this with no
+    goal in front of them" indistinguishable from "this record predates the
+    field", and the renderers say different things about those. The key's
+    presence is the evidence that the question was asked at all.
+    """
+    session._tool("request_assumption", _request())
+
+    stored = session.state["assumptions"][0]
+    assert "goal_at_approval" in stored
+    assert stored["goal_at_approval"] == ""
+
+
 def test_a_lean_that_fails_without_readable_diagnostics_is_a_caveat(
     session, monkeypatch
 ) -> None:

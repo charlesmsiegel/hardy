@@ -608,7 +608,15 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
             # tracked children -- the staged run's Lean and Tectonic -- and not
             # the session's own escalation, which would take the interactive
             # CAS kernel and its state with it for no reason.
-            return bool(process.stop_children())
+            stopped = process.stop_children()
+            # The staged run's OWN CAS kernel, though, which is persistent and
+            # therefore not in that register at all. Without this the one child
+            # a `cas_run` stage is actually waiting on took neither press and
+            # ran to its cell timeout, while this branch reported a kill.
+            harder = getattr(running.get("workflow"), "escalate", None)
+            if harder is not None:
+                stopped += harder()
+            return bool(stopped)
         abandoned.set()
         workflow = running.get("workflow")
         # The workflow's own flag first, inline: it is an `Event`, so it costs
