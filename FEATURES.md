@@ -448,9 +448,10 @@ Priority labels are sequencing hints:
 - **Now (implemented):** tools to check a complete proof, inspect a goal after a tactic prefix, and
   search available declarations.
 - **Now (implemented):** preserve the original statement and reject completed artifacts that use
-  `sorry` or `admit`. "Completed" is the operative word: `prove` and `batch` reject
-  a hole outright, and an interactive workspace keeps one — see the sketch entry
-  below.
+  `sorry` or `admit`. "Completed" is the operative word: a submission carrying a
+  hole is refused on every surface, and an unfinished development carrying one is
+  kept on every surface — `sketch_proof` unattended, an ordinary save
+  interactively. See the two sketch entries below.
 - **Now (implemented):** audit `#print axioms` on all three surfaces, through one
   shared parser and one shared allowlist, and let the grade follow the audited
   axiom set rather than a process exit code. Standard axioms, holes
@@ -473,7 +474,21 @@ Priority labels are sequencing hints:
   that an artifact is not *accidentally* unsound; it is not a defence against a
   source written to subvert elaboration, and cannot be one while Lean runs
   unconfined. Closing it belongs with the deferred process isolation, not here.
-- **Now (implemented) — `sorry`-backed sketches:** an interactive save may carry a
+- **Now (implemented) — `sorry`-backed sketches, unattended:** `hardy prove` and
+  `hardy batch` offer `sketch_proof`, which elaborates a skeleton whose holes are
+  deliberate and reports how many are left and where. An error is still a
+  failure — a skeleton Lean rejects is not a partial proof of anything, and the
+  result says so in those words rather than reporting the holes as what is
+  missing. The accepted skeleton is kept, so a run continues from it instead of
+  rebuilding the development on every check, and the last one survives into
+  `result.json`, `trajectory.json`, and a `## Sketch (not a proof)` section of
+  `writeup.md` when the run ends with nothing verified. It is never a
+  submission: `submit_proof` still refuses every hole, the grade stays "not
+  formalized", no `proof.lean` is written, and a verified run records no sketch
+  beside its proof. The refusal audit (`acceptance.refusal_issues`) reads a
+  hole-free skeleton Lean accepted exactly as it reads a `check_proof` — a
+  sketch is exempt for as long as it has a hole in it and no longer.
+- **Now (implemented) — `sorry`-backed sketches, interactive:** an interactive save may carry a
   hole. The file must still elaborate; only the hole is forgiven, and the audit
   records which declarations rest on `sorryAx` rather than refusing the save for
   it. A theorem resting on a hole — its own, or one reached through an import —
