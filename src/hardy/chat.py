@@ -3163,7 +3163,8 @@ class MathematicsSession:
         # that Hardy compiled a document and report that file's size. The Lean
         # and TeX reads already refuse a link and so does the publisher; this
         # is the same rule for the one path that was reading a leaf directly.
-        compiled = document.is_file() and not document.is_symlink()
+        linked = document.is_symlink()
+        compiled = document.is_file() and not linked
         return {
             "project": self.workspace.name,
             "workspace": str(self.workspace),
@@ -3189,10 +3190,20 @@ class MathematicsSession:
             # results it is presenting.
             "automation": self._automation_closed(sources),
             "obligations": [str(item) for item in self._obligations(sources, tex)],
+            # A refusal is not an absence. Reporting the link as "no document
+            # was found" told the reader something false about the workspace --
+            # the file is there, and Hardy declined to read it. Everywhere else
+            # a link raises and takes the export with it; this leaf is reported
+            # instead, because a document Hardy never embeds is not worth
+            # losing the whole page over.
             "document": (
                 f"{document.name} was compiled ({document.stat().st_size} bytes). "
                 "It is not embedded here: this file carries no external assets."
                 if compiled
+                else f"{document.name} is a symlink; Hardy did not read it, so nothing "
+                "here reports on a compiled document. That is a refusal, not a finding "
+                "that none exists."
+                if linked
                 else "No compiled document was found in this workspace."
             ),
             "usage": self.usage.lines(),

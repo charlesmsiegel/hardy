@@ -138,13 +138,28 @@ def test_the_summary_and_the_export_gather_under_the_session_gate(tmp_path: Path
 def test_a_linked_writeup_is_not_reported_as_a_compiled_document(tmp_path: Path):
     """`is_file` and `stat` both follow a link, so a checked-out
     `writeup.pdf -> <any file>` had the page state that Hardy compiled a
-    document and report that file's size. Hardy compiled nothing."""
+    document and report that file's size. Hardy compiled nothing.
+
+    And it says which of the two happened. Reporting the refusal as "no
+    compiled document was found" is a different false statement in the other
+    direction: the file is there and Hardy declined to read it, which a reader
+    deciding whether a writeup exists needs to be able to tell apart.
+    """
     chat = built(tmp_path)
     elsewhere = tmp_path / "not-ours.pdf"
     elsewhere.write_bytes(b"%PDF-not-hardys")
     (Path(chat.workspace) / "writeup.pdf").symlink_to(elsewhere)
 
-    assert "No compiled document" in chat.export_material()["document"]
+    said = chat.export_material()["document"]
+    assert "was compiled" not in said
+    assert "symlink" in said
+    assert "not a finding that none exists" in said
+
+
+def test_an_absent_writeup_is_reported_as_absent(tmp_path: Path):
+    """The other half of the pair: nothing there really is nothing there."""
+    chat = built(tmp_path)
+    assert "No compiled document was found" in chat.export_material()["document"]
 
 
 def test_the_audit_and_the_statement_come_from_one_read_of_the_tree(tmp_path: Path):
