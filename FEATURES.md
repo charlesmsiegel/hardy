@@ -674,7 +674,20 @@ Priority labels are sequencing hints:
   response, so a consumer that stops at the first one cannot leave a turn in
   the provider's history and in no record. Hardy's two kinds of decline name
   the stage they belong to — the ladder's, before any model turn, and the
-  loop's, mid-exchange — since only the first is evidence about the closers. The output
+  loop's, mid-exchange — since only the first is evidence about the closers.
+  That decline is asked *before* the turn bound is declared reached, since a
+  run with nothing left to do has not reached one: a submission accepted on the
+  last permitted call otherwise recorded a turn limit for a run that already
+  had its result. On the `api` transport an assistant turn is handed back in
+  the provider's own order rather than regrouped by kind, so a turn whose text
+  followed its tool call is continued from the message the model actually
+  wrote; the compaction digest covers that order for the same reason.
+  A request the window has no room for, with nothing above the kept tail that
+  may legally be cut, is recorded as an overflow rather than passed over in
+  silence. It is still sent — the estimate bounds from above, so over it is not
+  necessarily over the endpoint's own count, and refusing on Hardy's arithmetic
+  would end runs the provider would have answered — but a rejection now has an
+  entry to be read against. The output
   cap each reply is generated under is recorded in the run's provenance
   alongside model, backend and endpoint: change it and the same model gets a
   different amount of room to reach a submission, which is a different

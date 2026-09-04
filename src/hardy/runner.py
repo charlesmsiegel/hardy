@@ -523,6 +523,21 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             output_tokens=int(getattr(runtime, "output_limit", None) or 0),
         )
         if not outcome.needed:
+            # A request the window has no room for, with nothing above the
+            # tail that may legally be cut. There is no compaction to perform,
+            # and that is not the same fact as a conversation that fits: left
+            # to `needed` alone, the record showed nothing at all where an
+            # oversized request was about to go out. It still goes --
+            # `estimate_tokens` bounds from above, so over the estimate is not
+            # necessarily over the endpoint's own count -- and if the provider
+            # refuses it, this is the entry that says why.
+            if outcome.overflow:
+                events.append({
+                    "type": "overflow",
+                    "estimated_tokens": {"before": outcome.before, "available": outcome.available},
+                    "context_window": context_window,
+                    "why": "the request is over the window and no legal cut is above the kept tail",
+                })
             return None
         facts = compaction.Facts(
             goal=request.informal_claim,

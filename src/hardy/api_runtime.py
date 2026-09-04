@@ -133,11 +133,20 @@ def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
             else:
                 out.append({"role": "user", "content": [{"type": "text", "text": message.text}]})
             continue
+        # The turn as the provider sent it, when the transport kept it. Every
+        # block verbatim and in its own order: the thinking blocks the API
+        # requires back unchanged and first, and the text and tool calls in the
+        # arrangement the model chose. Rebuilt by kind instead, a turn whose
+        # text followed its tool call came back with the text moved in front,
+        # so the continuation asked the model to carry on from a message it had
+        # not written.
+        if message.blocks:
+            out.append({"role": "assistant", "content": [_block(item) for item in message.blocks]})
+            continue
+        # And the reconstruction, for a message that carries no blocks: one
+        # adopted from another backend, or replayed from a record. Reasoning
+        # first, because the API requires it first in the turn it belongs to.
         content: list[dict[str, Any]] = []
-        # First, because the API requires them first in the assistant turn they
-        # belong to. Passed back exactly as they arrived -- the signature is
-        # part of what is verified, so anything that rebuilt them from their
-        # fields would be handing back a different block.
         content.extend(_block(item) for item in message.reasoning)
         if message.text:
             content.append({"type": "text", "text": message.text})
@@ -379,7 +388,8 @@ class AnthropicProvider:
         calls: list[ToolCall] = []
         reasoning: list[Any] = []
         thinking = False
-        for block in getattr(reply, "content", None) or []:
+        content = list(getattr(reply, "content", None) or [])
+        for block in content:
             kind = getattr(block, "type", "")
             if kind == "text":
                 text.append(str(getattr(block, "text", "")))
@@ -406,6 +416,10 @@ class AnthropicProvider:
             tool_calls=tuple(calls),
             thinking=thinking,
             reasoning=tuple(reasoning),
+            # The turn as it arrived, so the continuation hands back the
+            # message the provider produced rather than Hardy's regrouping of
+            # it. The fields above stay what the loop dispatches and records.
+            blocks=tuple(content),
             usage=_usage(getattr(reply, "usage", None)),
             stop_reason=getattr(reply, "stop_reason", None),
         )

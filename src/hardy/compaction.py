@@ -323,6 +323,17 @@ class Plan:
     #: What the request actually had to fit inside: `context_window` less the
     #: reserve. Carried so `fits` can answer the question its name asks.
     available: int = 0
+    #: The request is already over the window and nothing above the tail could
+    #: be cut legally. `needed` is False -- there is no compaction to perform,
+    #: since summarising nothing and keeping everything is not one -- but that
+    #: is not the same fact as a request that fits, and a caller reading only
+    #: `needed` sent an oversized request believing the window was fine. The
+    #: request still goes: `estimate_tokens` is an upper bound, one token per
+    #: UTF-8 byte, so over the estimate is not necessarily over the endpoint's
+    #: own count, and refusing on Hardy's arithmetic would end runs the
+    #: provider would have answered. What changes is that the record says so,
+    #: and a rejection has something to be read against.
+    overflow: bool = False
 
     @property
     def fits(self) -> bool:
@@ -406,7 +417,9 @@ def plan(
 
     A cut of 0 means nothing above the tail could be dropped legally, and the
     plan says it is not needed rather than performing a compaction that
-    summarises nothing and keeps everything.
+    summarises nothing and keeps everything. It sets `overflow` when it says
+    that over a request the window has no room for, which is a different fact
+    from a request that fits and has to be recorded as one.
     """
     before = overhead_tokens + estimate_tokens(messages)
     available = max(context_window - _reserve(context_window, reserve_tokens, output_tokens), 0)
@@ -426,7 +439,7 @@ def plan(
         keep += 1
     cut = first_legal_cut(messages, keep)
     if cut <= 0:
-        return Plan(False, before=before, after=before, available=available)
+        return Plan(False, before=before, after=before, available=available, overflow=True)
     # The summary is part of what will be sent, so it is part of what `after`
     # says will be sent. A figure that counted only the tail would understate
     # the compacted request by exactly the thing the compaction added.

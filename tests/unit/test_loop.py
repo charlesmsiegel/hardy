@@ -990,3 +990,45 @@ def test_the_assistant_turn_is_recorded_before_the_first_event() -> None:
     # transcript meets the turn before anything that belongs to it.
     kinds = [event["type"] for event in observed]
     assert kinds.index("assistant") < kinds.index("thinking")
+
+
+def test_a_run_with_nothing_left_to_do_has_not_reached_its_turn_bound() -> None:
+    """A gate that declines is asked before the bound is declared reached.
+
+    A submission accepted on the `max_turns`-th call left the next iteration
+    raising first: the record said a bound had ended a run that already had its
+    result, and the decline that actually ended it was missing. The call that
+    submits asks for a tool, so the loop comes back around -- which is exactly
+    where the two checks meet.
+    """
+    finished = {"yes": False}
+
+    def gate(messages) -> str | None:
+        return "the run has its result" if finished["yes"] else None
+
+    def submit() -> ProviderTurn:
+        finished["yes"] = True
+        return ProviderTurn(tool_calls=(ToolCall("c1", "check_proof", {"proof": "by rfl"}),))
+
+    loop, _, observed = _loop([submit], max_turns=1)
+    loop.set_gate(gate)
+
+    list(loop.run("asked"))
+
+    kinds = [event["type"] for event in observed]
+    assert "declined_turn" in kinds
+    assert "turn_limit" not in kinds
+
+
+def test_a_run_with_work_left_still_reaches_its_turn_bound() -> None:
+    """The converse: a gate returning None must not swallow the bound."""
+    loop, _, observed = _loop(
+        [ProviderTurn(tool_calls=(ToolCall("c1", "check_proof", {}),)), ProviderTurn(text="two")],
+        max_turns=1,
+    )
+    loop.set_gate(lambda messages: None)
+
+    with pytest.raises(TurnLimitReached):
+        list(loop.run("asked"))
+
+    assert "turn_limit" in [event["type"] for event in observed]
