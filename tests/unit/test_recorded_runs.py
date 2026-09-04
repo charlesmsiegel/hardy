@@ -1270,3 +1270,72 @@ def test_the_batch_compactor_summarises_what_the_run_knows(tmp_path) -> None:
     assert 'check_proof' in rebuilt[0].text
     # A short conversation needs none of this.
     assert compact([compaction.Message('user', text='short')]) is None
+
+
+def test_a_malformed_arguments_value_is_a_finding_rather_than_a_crash(tmp_path) -> None:
+    """`or {}` is not a guard: a truthy non-mapping passes through it and
+    raises `AttributeError` on `.get`, turning "this record is invalid" into a
+    crash -- which is the one answer a validator may not give."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _sketched(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    for event in trajectory['events']:
+        if event.get('type') == 'tool' and event.get('name') == 'sketch_proof':
+            event['arguments'] = 'by sorry'
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert issues
+    assert any('last skeleton Lean accepted' in issue for issue in issues)
+
+
+def test_the_batch_summary_carries_the_statement_and_the_skeleton(tmp_path) -> None:
+    """A cut discards the task message that stated the frozen declaration, and
+    a batch writes no workspace file for a partial development -- so prose
+    alone would leave the model writing candidates that cannot type-check, with
+    no way back to the skeleton the record says Hardy is holding."""
+    compaction = importlib.import_module('hardy.compaction')
+    runner = importlib.import_module('hardy.runner')
+    models = importlib.import_module('hardy.models')
+    lean_module = importlib.import_module('hardy.lean')
+    request = models.Request.from_dict(
+        {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+    )
+    held = []
+
+    class Compacting(_Runtime):
+        def attach_compactor(self, compact):
+            held.append(compact)
+
+    runner.run(
+        request,
+        lambda model=None, **context: Compacting([('sketch_proof', {'proof': 'by\n  sorry'})], **context),
+        lean_module.LeanTools(request, (sys.executable, str(FAKE_LEAN))),
+        tmp_path / 'carried',
+        max_turns=3,
+        wall_seconds=300.0,
+        toolchain=IDENTITY,
+        context_window=20_000,
+    )
+
+    rebuilt = held[0]([compaction.Message('user', text='x' * 30_000) for _ in range(4)])
+
+    assert rebuilt is not None
+    summary = rebuilt[0].text
+    assert 'theorem HardyTarget : True' in summary
+    assert 'by\n  sorry' in summary
+    assert 'sorry at line 2 of the retained skeleton' in summary
+
+
+def test_a_summary_with_nothing_held_has_no_development_heading() -> None:
+    """Absent on a whole surface rather than for a particular run: an
+    interactive workspace keeps its Lean on disk, so a heading saying "none"
+    would answer a question that surface does not ask."""
+    compaction = importlib.import_module('hardy.compaction')
+
+    rendered = compaction.summarize(compaction.Facts(goal="Show it.")).render()
+
+    assert 'Development in hand' not in rendered
+    assert 'Statement' not in rendered
+    assert '## Goal' in rendered

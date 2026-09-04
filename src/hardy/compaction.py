@@ -97,6 +97,18 @@ class Facts:
     next_steps: Sequence[str] = ()
     #: Lean modules in the workspace, so the summary says where work lives.
     modules: Sequence[str] = ()
+    #: The statement being proved, exactly as it was frozen. Carried because a
+    #: cut discards the message that stated it, and prose is not a Lean
+    #: signature: a model working from the informal claim alone will write
+    #: candidates that cannot type-check against the declaration it was
+    #: forbidden to change.
+    declaration: str = ""
+    #: The development being held, when it lives only in the conversation.
+    #: An interactive workspace keeps its Lean on disk and needs nothing here;
+    #: an unattended run's skeleton exists in the transcript alone, so a cut
+    #: that dropped the `sketch_proof` message would leave the model unable to
+    #: continue from the development Hardy says it retained.
+    development: str = ""
 
 
 @dataclass(frozen=True)
@@ -161,14 +173,27 @@ def summarize(facts: Facts) -> Summary:
     Goal first because everything else is subordinate to it; standing
     assumptions second because a later turn that contradicts one has invented
     a result; then what is settled, what is not, and what to do next.
+
+    Two sections appear only when there is something to put in them, against
+    the "an empty heading says none" rule the others follow. That rule exists
+    so a reader cannot mistake an omission for an absence -- but these two are
+    absent on a whole *surface* rather than for a particular run: an
+    interactive workspace keeps its Lean on disk and its statement in
+    `session.json`, so a heading saying "none" would be answering a question
+    that surface does not ask.
     """
     sections: list[tuple[str, tuple[str, ...]]] = [
         ("Goal", (facts.goal,) if facts.goal else ()),
+        # Beside the goal rather than under it: the prose says what is meant
+        # and the declaration says what must type-check, and only the second
+        # can be written against.
+        *([("Statement", (facts.declaration,))] if facts.declaration else []),
         ("Standing assumptions", tuple(_assumption(item) for item in facts.assumptions)),
         ("Proved", tuple(sorted(facts.proved))),
         ("Open", tuple(sorted(facts.open_declarations))),
         ("Naming registry", tuple(_name(item) for item in facts.names)),
         ("Workspace", tuple(sorted(facts.modules))),
+        *([("Development in hand", (facts.development,))] if facts.development else []),
         ("Failed attempts", tuple(item.line() for item in facts.attempts)),
         ("Next steps", tuple(facts.next_steps)),
     ]
