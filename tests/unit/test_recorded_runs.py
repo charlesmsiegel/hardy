@@ -824,3 +824,20 @@ def test_a_closer_whose_submission_was_refused_may_not_be_credited(tmp_path) -> 
     issues = acceptance.validate_batch_consistency(output)
 
     assert any('no submission that was accepted and kept' in issue for issue in issues)
+
+
+def test_a_closer_solve_relabelled_as_the_no_closer_condition_is_refused(tmp_path) -> None:
+    """Blanking the block and deleting one event is all it took: the disabled
+    branch returned before the decline check, leaving the signature of a closer
+    solve inside a record certified as the no-closer experimental condition."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    closers = importlib.import_module('hardy.closers')
+    output = _with_closers(tmp_path)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    trajectory['closers'] = dict(closers.DISABLED)
+    trajectory['events'] = [e for e in trajectory['events'] if e.get('type') != 'closers']
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('declined on a run whose closers are recorded as disabled' in issue for issue in issues)

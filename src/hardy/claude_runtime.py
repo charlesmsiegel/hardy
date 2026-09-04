@@ -192,8 +192,14 @@ class ClaudeAgentRuntime:
         self._system_prompt, self._specs, self._dispatch = system_prompt, specs, dispatch
         self._cwd = cwd
         self._observe = observe or (lambda event: None)
-        self._sdk = load_sdk()
-        self._server = build_server(self._sdk, specs, dispatch)
+        # Loaded on the first turn, not here. A run whose cheap closers close
+        # the statement asks this backend nothing -- and loading the SDK
+        # eagerly meant such a run died on a machine without it *after* Lean
+        # had accepted the proof, writing none of the artifacts it had earned.
+        # The identity below is still readable without it, so the record still
+        # names the backend a run was configured for.
+        self._sdk: Any | None = None
+        self._server: Any | None = None
         # The turn in flight, if any. `cancel` reads all three from whatever
         # thread it is called on, so nothing here is ever mutated except by
         # `stream` starting a turn and `_exchange` running one.
@@ -211,8 +217,20 @@ class ClaudeAgentRuntime:
         self._drawn: list[str] = []
         self._drawing: int | None = None
 
+    def _loaded(self) -> Any:
+        """The SDK, and the tool server built on it, on first use.
+
+        Deferred rather than optimised away: nothing that never happens should
+        be able to fail, and a `hardy batch --closers` run that reaches a proof
+        without a provider is exactly a turn that never happens.
+        """
+        if self._sdk is None:
+            self._sdk = load_sdk()
+            self._server = build_server(self._sdk, self._specs, self._dispatch)
+        return self._sdk
+
     def _options(self) -> Any:
-        return self._sdk.ClaudeAgentOptions(
+        return self._loaded().ClaudeAgentOptions(
             model=self.model,
             system_prompt=self._system_prompt,
             mcp_servers={SERVER: self._server},
@@ -251,9 +269,9 @@ class ClaudeAgentRuntime:
         refused, whatever it is called.
         """
         if name.startswith(f"mcp__{SERVER}__"):
-            return self._sdk.PermissionResultAllow(behavior="allow")
+            return self._loaded().PermissionResultAllow(behavior="allow")
         self._observe({"type": "refused_tool", "name": name})
-        return self._sdk.PermissionResultDeny(behavior="deny", message="Hardy runs its own tools only.")
+        return self._loaded().PermissionResultDeny(behavior="deny", message="Hardy runs its own tools only.")
 
     def ask(self, text: str) -> str:
         """One exchange, for a caller with nothing to draw it on."""
@@ -411,7 +429,7 @@ class ClaudeAgentRuntime:
 
     async def _ask(self, text: str, outbox: queue.Queue, spoken: list[str]) -> None:
         """The exchange itself, so `_exchange` can settle what it drew."""
-        async with self._sdk.ClaudeSDKClient(options=self._options()) as client:
+        async with self._loaded().ClaudeSDKClient(options=self._options()) as client:
             # Published only once the client is connected: `cancel` reaches for
             # it from another thread and must never find a half-built one.
             self._client = client

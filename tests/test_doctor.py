@@ -250,3 +250,14 @@ def test_the_subscription_backend_still_checks_the_cli(tmp_path: Path, project: 
     names = [check.name for check in checks]
     assert "claude sdk" in names
     assert "anthropic key" not in names
+
+
+def test_the_codex_backend_gets_its_own_checks(tmp_path: Path, project: Path) -> None:
+    """A Codex-only machine was rejected for lacking Claude credentials it does
+    not use -- and a Claude machine with no `openai-codex` passed and failed
+    only when the runtime was built, which is the worse direction."""
+    checks = doctor.run_checks(configuration(tmp_path, lean_project=project), backend="codex")
+
+    names = [check.name for check in checks]
+    assert "codex sdk" in names
+    assert "claude cli" not in names and "anthropic key" not in names

@@ -101,7 +101,7 @@ def _toolchain_pin_check(config: Config) -> Check:
 
 
 def _backend_checks(backend: str) -> list[Check]:
-    """What the *configured* transport needs, and nothing else.
+    """What the *selected* transport needs, and nothing else.
 
     Asked of the setting rather than assumed. Reporting a correctly configured
     API-only machine as unusable is the obvious failure; the quieter one runs
@@ -110,7 +110,25 @@ def _backend_checks(backend: str) -> list[Check]:
     """
     if backend == "api":
         return _api_checks()
+    if backend == "codex":
+        return _codex_checks()
     return _subscription_checks()
+
+
+def _codex_checks() -> list[Check]:
+    """The Codex backend: its own SDK, signed in with its own subscription.
+
+    A separate branch rather than a fallback to Claude's. `hardy prove
+    --backend codex` on a Codex-only machine was being rejected for lacking
+    credentials it does not use -- and a machine with Claude configured but no
+    `openai-codex` passed the doctor and failed when the runtime was built,
+    which is the worse direction.
+    """
+    try:
+        import openai_codex
+    except ImportError:
+        return [Check("codex sdk", False, "not installed; pip install 'hardy-prover[codex]'")]
+    return [Check("codex sdk", True, f"openai-codex {getattr(openai_codex, '__version__', 'unknown')}")]
 
 
 def _api_checks() -> list[Check]:

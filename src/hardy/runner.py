@@ -228,7 +228,15 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             elif name == "sketch_proof":
                 proof = str(arguments["proof"])
                 result = lean.sketch_proof(proof)
-                if result.ok:
+                # The same clock a submission is judged against. A skeleton
+                # that began inside the deadline and elaborated after it is
+                # work the run's budget did not buy, and keeping it would put
+                # a partial artifact produced outside the recorded bound into
+                # a `wall_clock_limit` run's writeup.
+                late = closed.is_set() or time.monotonic() > deadline.get("at", float("inf"))
+                if result.ok and late:
+                    events.append({"type": "discarded", "name": name, "why": "completed after the wall-clock budget expired"})
+                elif result.ok:
                     # Overwritten rather than accumulated: the sketch is the
                     # development's current state, and the transcript already
                     # holds every earlier one.
