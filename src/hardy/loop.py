@@ -311,6 +311,15 @@ class AgentLoop:
             # transport a timeout of zero as though that were a bound somebody
             # chose.
             self._deadline(budget)
+            # And for the same reason, the cancel. The check at the top of the
+            # loop was read before the hooks ran, and a summary that scans the
+            # workspace or a ladder that elaborates Lean is exactly long enough
+            # for the user to press Escape during one. Without this, the turn
+            # they stopped still opens a request -- and this transport cannot
+            # abort one, so they wait out a whole model call for a reply that
+            # is then discarded, having been billed for.
+            if self._cancelled:
+                return
             # Counted before the call, not after. A request that raised was
             # still a provider call: it may have been billed for, it consumed
             # a turn of the bound, and a trajectory that showed zero turns

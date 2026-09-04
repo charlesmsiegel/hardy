@@ -997,3 +997,70 @@ def test_rewriting_a_closer_diagnostic_is_refused(tmp_path) -> None:
     issues = acceptance.validate_batch_consistency(output)
 
     assert any('reports output its submission did not produce' in issue for issue in issues)
+
+
+def test_a_closer_that_landed_late_is_not_a_record_at_odds_with_itself(tmp_path) -> None:
+    """A tactic whose check began inside the deadline and finished outside it.
+
+    `runner.submit` reports it as having failed, because the run did not keep
+    the proof -- while the `submit_proof` event beside it still carries Lean's
+    own `ok: true` behind the runner's discard marker. Compared against that
+    raw flag rather than against whether the submission was kept, the checks
+    refused an honest `wall_clock_limit` artifact as inconsistent with itself.
+    """
+    import time
+
+    acceptance = importlib.import_module('hardy.acceptance')
+    models = importlib.import_module('hardy.models')
+    lean_module = importlib.import_module('hardy.lean')
+    runner = importlib.import_module('hardy.runner')
+    request = models.Request.from_dict(
+        {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+    )
+
+    class Slow(lean_module.LeanTools):
+        def check_proof(self, proof, *, final=False):
+            # Long enough that the check starts inside the budget below and
+            # cannot possibly finish inside it.
+            time.sleep(0.6)
+            return super().check_proof(proof, final=final)
+
+    class Unasked(_Runtime):
+        # The ladder uses the whole budget here, so the runtime is never asked
+        # anything. `_Runtime` declares two turns whatever happens; a real one
+        # that was never asked has no count to give, and on a backend whose SDK
+        # owns the loop the count rides on a final result that never arrives.
+        turns = None
+
+    lean = Slow(request, (sys.executable, str(FAKE_LEAN)))
+    output = tmp_path / 'late-closer'
+    runner.run(
+        request,
+        lambda model=None, **context: Unasked([], **context),
+        lean,
+        output,
+        max_turns=3,
+        wall_seconds=0.3,
+        toolchain=IDENTITY,
+        closers=('exact True.intro',),
+    )
+
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    # The run really did produce the shape this is about: an attempt the ladder
+    # reports as failed, beside a submission Lean accepted and the deadline
+    # discarded. Asserted rather than assumed, so a change that stopped
+    # producing it would fail here instead of quietly passing the check below.
+    assert trajectory['closers']['attempts'] == [
+        {'tactic': 'exact True.intro', 'ok': False, 'output': trajectory['closers']['attempts'][0]['output']}
+    ]
+    assert trajectory['closers']['closed_by'] is None
+    submissions = [
+        (index, event) for index, event in enumerate(trajectory['events'])
+        if event.get('type') == 'tool' and event.get('name') == 'submit_proof'
+    ]
+    assert len(submissions) == 1
+    index, event = submissions[0]
+    assert event['result']['ok'] is True
+    assert trajectory['events'][index - 1]['type'] == 'discarded'
+
+    assert acceptance.validate_batch_consistency(output) == ()
