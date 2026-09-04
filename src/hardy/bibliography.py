@@ -49,7 +49,7 @@ from pydantic import field_validator
 
 from .arxiv import PaperRecord
 from .domain import FrozenModel
-from .latex import typeset
+from .latex import typeset, unfinished_definition
 from .layout import LOCAL_DIR, LayoutError, WriteGuard, read_text
 from .storage import FileLock, LockTimeout, LockUnavailable
 
@@ -193,11 +193,19 @@ class Entry(FrozenModel):
         an arXiv response with no title, summary or authors, so no entry this
         code writes can lack them, and one that does was not written by it.
         """
-        if not value:
-            name = getattr(info, "field_name", "field")
+        name = getattr(info, "field_name", "field")
+        # Every element, not only the tuple. `authors=[""]` and
+        # `identities=[""]` are not empty tuples, and a whitespace-only title
+        # is not an empty string -- all three regenerate as a `\bibitem` with
+        # nothing readable in it and a key `_vouched_references` accepts,
+        # which is the whole of what this refuses. An entry is blank if it has
+        # no non-blank content, wherever the blankness sits.
+        parts = (value,) if isinstance(value, str) else value
+        if not parts or not all(part.strip() for part in parts):
             raise ValueError(
-                f"{name} must not be empty: an entry with none is a `\\bibitem` "
-                "with nothing in it, and a key vouched for a paper nobody can read"
+                f"{name} must not be empty or blank: an entry with nothing readable "
+                "in it is a `\\bibitem` with nothing in it, and a key vouched for a "
+                "paper nobody can read"
             )
         return value
 
@@ -720,6 +728,20 @@ def hand_written_bibliography(path: str, source: str) -> str:
             "\\bibitem resolves whether or not the paper exists. Fetch the paper with "
             "fetch_paper, record it with cite_paper, and \\input{references} -- which "
             "Hardy generates -- instead."
+        )
+    # LAST of the three, because the other two are more specific and their
+    # findings are real either way: a `\csname` or a `\bibitem` this scan can
+    # SEE is one the file contains, whatever state the scan started in. What
+    # an unfinished definition costs is what the scan might have MISSED.
+    if unfinished_definition(source):
+        return (
+            "this file ends with a macro definition that has no body yet, so its "
+            "body would come from whatever includes it. Hardy reads each writeup "
+            "file on its own, and a definition split across an \\input is one it "
+            "cannot follow -- which is also how a dormant \\begin{verbatim} in the "
+            "other half would be read as opening a region and hide the rest of "
+            "this document from the check. Finish the definition in the file that "
+            "starts it."
         )
     return ""
 

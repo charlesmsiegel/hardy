@@ -517,3 +517,36 @@ def test_an_auxiliary_file_larger_than_the_bound_refuses_rather_than_truncates(
     assert not result.ok
     assert "auxiliary file larger than" in result.output
     assert seen == [], "vouched for citations it had not finished reading"
+
+
+def test_a_tex_file_the_compiler_wrote_is_not_read_back(tmp_path: Path, monkeypatch):
+    r"""What the compiler was HANDED, not what it left behind.
+
+    A document can write `.tex` files while it compiles -- a loop over a write
+    stream makes one as large as the disk allows -- and re-listing the tree
+    afterwards read and decoded every one of them before any verdict came
+    back. It is also the wrong question: this asks whether the SOURCE resolves
+    its references, and a file the compiler wrote is not source.
+
+    Asserted on the READ rather than on the verdict, because the verdict does
+    not move: an orphan is dropped from the scan a moment after being loaded,
+    so the old code reached the same answer having first pulled the whole file
+    into memory. What is under test is that it is never opened.
+    """
+    read: list[str] = []
+    original = latex.read_bytes
+
+    def _watched(base, relative):
+        read.append(str(relative))
+        return original(base, relative)
+
+    monkeypatch.setattr(latex, "read_bytes", _watched)
+    result = LatexTools(COMMAND).check(
+        PREAMBLE + "% write-tex: generated.tex\nText \\label{a}\\ref{a}.\n" + END,
+        tree=_tree(tmp_path),
+    )
+    assert result.ok, result.output
+    # The stand-in really did write one, so this is about the file being left
+    # out of the scan rather than about it never existing.
+    assert "wrote generated.tex" in result.output
+    assert "generated.tex" not in read, read

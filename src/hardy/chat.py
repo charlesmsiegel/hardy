@@ -3533,6 +3533,10 @@ class MathematicsSession:
         # Read before the compiler is handed the tree, and checked again at
         # the stamp: see `_stamp_writeup`.
         compiled_against = self._bibliography_identity()
+        # The rest of the tree as the compiler will get it, for the same
+        # reason and checked in the same place. Excludes the candidate, which
+        # is the one file this save is about to change.
+        compiled_tree = self._tex_tree_digest(relative)
 
         def _write() -> None:
             # `guard_for`, not a bare write to `target`. `_tex_path` proves the
@@ -3585,7 +3589,21 @@ class MathematicsSession:
         # the fragment is sound and nothing about the writeup -- stamping that
         # would mark the tree established on the strength of a document nobody
         # will read.
-        if compiles_document(self._tex_sources(), relative):
+        if compiles_document(self._tex_sources(), relative) and self._tex_tree_digest(
+            relative
+        ) == compiled_tree:
+            # And only when the tree the compiler READ is still the tree on
+            # disk. `check` copies the writeup into a scratch directory and
+            # compiles that; the signature stamped below is taken from the
+            # live files. Another session saving in between -- or an editor --
+            # left the stamp describing source the published PDF was not built
+            # from, and `report_result` accepts a stamped writeup. The
+            # candidate is excluded because it is the one file this save is
+            # entitled to have changed.
+            #
+            # Not stamping is the failure mode, which is the safe one: the
+            # writeup reads stale, which is what it is, and the next compile
+            # settles it.
             self._stamp_writeup(compiled_against)
         # Advisory rather than a refusal. With the save_lean ratchet in place a
         # hard gate here would deadlock: Lean blocked for want of a writeup,
@@ -5106,6 +5124,29 @@ class MathematicsSession:
         if goal:
             text += f"\\\\ Goal, as stated by the user: {self._tex_ascii(goal)}"
         return text
+
+    def _tex_tree_digest(self, without: str | None = None) -> str:
+        """What the files the compiler reads hash to, ignoring one of them.
+
+        Narrower than `_tex_signature` on purpose. That one also covers the
+        banner's inputs and the bibliography, both of which a save legitimately
+        moves -- so it cannot answer "did anything ELSE change while the
+        compiler was running", which is the question `_save_latex` has to ask.
+        The one file it excludes is the candidate, the only one this save is
+        entitled to have changed.
+        """
+        digest = hashlib.sha256()
+        for path in self._compilable_paths():
+            if path == without:
+                continue
+            digest.update(path.encode("utf-8"))
+            digest.update(b"\0")
+            try:
+                digest.update(read_bytes(self.tex_root, path))
+            except (OSError, ValueError):
+                digest.update(b"<unreadable>")
+            digest.update(b"\0")
+        return digest.hexdigest()
 
     def _tex_signature(
         self,

@@ -655,3 +655,46 @@ def test_a_citation_landing_during_the_hash_does_not_get_stamped(session) -> Non
     assert session.state.get("tex_signature", "") == "", (
         "a signature was stamped for a bibliography the compile never saw"
     )
+
+
+def test_a_neighbouring_save_during_the_compile_leaves_the_writeup_stale(session) -> None:
+    """The compiler reads a snapshot; the stamp read the live tree.
+
+    `check` copies the writeup into a scratch directory and compiles that. A
+    file changed after the copy -- by another session, or an editor -- left
+    the stamped signature describing source the published PDF was not built
+    from, and `report_result` accepts a stamped writeup.
+
+    The candidate is excluded from the comparison, because it is the one file
+    the save is entitled to have changed.
+    """
+    tex = session.workspace / "tex"
+    tex.mkdir(parents=True, exist_ok=True)
+    (tex / "writeup.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    (tex / "other.tex").write_text("Untouched.\n", encoding="utf-8")
+    session._stamp_writeup()
+    stale = session.state["tex_signature"]
+
+    original = session.latex.check
+
+    def _meddled(*args, **kwargs):
+        result = original(*args, **kwargs)
+        # A neighbour saves a different fragment while this compile runs.
+        (tex / "other.tex").write_text("Changed underneath.\n", encoding="utf-8")
+        return result
+
+    session.latex.check = _meddled
+    result = session._tool(
+        "save_latex",
+        {
+            "path": "writeup.tex",
+            "source": "\\documentclass{article}\n\\begin{document}\nMore.\n\\end{document}\n",
+        },
+    )
+    assert result.ok, result.output
+    assert session.state["tex_signature"] == stale, (
+        "a signature was stamped for a tree the compiler never read"
+    )

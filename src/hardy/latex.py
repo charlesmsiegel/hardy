@@ -512,15 +512,22 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str,
                 # executing it, so honouring it as an opener put every line
                 # after into a region TeX never entered.
                 #
-                # Only the MEANING is erased. The first operand is the name
-                # being redefined, and it is still a command this file's
-                # readers need to see: erasing both took `\let\bibitem
-                # \wrapper` out of the source-level check entirely, which is
-                # a document rewriting `\bibitem` and saying so in as many
-                # words. It is kept, and not matched against as an opener --
-                # what it means is being assigned here, not run.
+                # NEITHER operand is erased -- only the verbatim-state
+                # transition is suppressed. Erasing them lost a real command
+                # name each time: erasing both took `\let\bibitem\wrapper`
+                # out of the source-level check, and erasing the copied
+                # meaning alone took `\let\entry\bibitem` out of it, which
+                # is the same document with the alias pointing the other way.
+                # Three aliases -- `\thebibliography`, `\bibitem`,
+                # `\endthebibliography` -- and a reference list can be
+                # written with none of the forbidden names left in the text.
+                #
+                # What `\let` actually does is copy a token WITHOUT running
+                # it, and that is exactly one thing: it cannot open a region.
+                # So the text stays and the opener match is skipped, which is
+                # the whole of the rule and none of the erasure.
                 after = _skip_command(line, index)
-                kept.append(line[index:after] if state.letting == 2 else " ")
+                kept.append(line[index:after])
                 state.swallowed()
                 index = after
                 continue
@@ -578,7 +585,29 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str,
     return "".join(kept), None, "", False
 
 
-def typeset(source: str) -> str:
+def unfinished_definition(source: str) -> bool:
+    r"""Whether `source` ends with a macro definition still waiting for a body.
+
+    A file is not a complete TeX input. `\newcommand{\x}` at the end of one
+    takes its body from whatever the including file has next, and a scan that
+    reads each file from a standing start therefore reads that body as live
+    text -- so a `\begin{verbatim}` in it opens a region TeX never enters,
+    and everything after it, a real `thebibliography` included, drops out of
+    the check.
+
+    Answered rather than chased. Following the body across the `\input` would
+    mean scanning in TeX's inclusion order, which is a document-wide question
+    the per-file sweep is not built to ask and which has no answer at all for
+    a file nothing includes. A definition split across files is pathological
+    in a writeup; saying so is both cheaper and more honest than pretending
+    to have read it.
+    """
+    state = _MacroState()
+    typeset(source, carried=state)
+    return state.phase != "idle" or state.letting > 0
+
+
+def typeset(source: str, *, carried: _MacroState | None = None) -> str:
     r"""`source` reduced to what TeX would actually execute.
 
     Comments dropped and verbatim content removed, decided together and in
@@ -599,7 +628,7 @@ def typeset(source: str) -> str:
     """
     kept: list[str] = []
     closing: str | None = None
-    state = _MacroState()
+    state = carried if carried is not None else _MacroState()
     # What goes in front of the next piece. A newline everywhere except after
     # a line a comment ended, where TeX joins the two halves with nothing at
     # all: `\bib%` and then `item{key}` is a `\bibitem` it runs and this
@@ -971,6 +1000,10 @@ class LatexTools:
             candidate = work / path
             candidate.parent.mkdir(parents=True, exist_ok=True)
             candidate.write_text(source, encoding="utf-8")
+            # Listed BEFORE the compiler runs: these are the files it is
+            # given, and anything `.tex` in the tree afterwards it wrote
+            # itself. See `_references`.
+            given = files_under(work, ".tex")
             root = work / ROOT_DOCUMENT
             if not root.is_file():
                 if path != ROOT_DOCUMENT:
@@ -1033,7 +1066,7 @@ class LatexTools:
             # prescribes would become impossible.
             broken, labels = ("", ())
             if actual and outcome.returncode == 0:
-                broken, labels = self._references(work, log)
+                broken, labels = self._references(work, log, given)
             # What the compiler REALLY put in the reference list, which is a
             # different question from what the source spells. A caller that
             # owns the bibliography (the interactive session does) is handed
@@ -1196,16 +1229,28 @@ class LatexTools:
         assert outcome is not None  # MAX_PASSES is at least one
         return outcome, terminal, log
 
-    def _references(self, work: Path, log: str) -> tuple[str, tuple[str, ...]]:
+    def _references(
+        self, work: Path, log: str, given: tuple[PurePosixPath, ...]
+    ) -> tuple[str, tuple[str, ...]]:
         """What the log and the compiled tree say about references, in words.
 
         Returns the refusal (empty when everything resolved) and the labels
         nothing points at, which are a note rather than a refusal -- see
         `references` for why Hardy may not fail a compile over one.
+
+        `given` is the `.tex` files the compiler was HANDED, listed before it
+        ran. Re-listing the tree afterwards read whatever the run left behind
+        as well, and a document can write `.tex` files while it compiles -- a
+        loop over a write stream makes one as large as the disk allows, read
+        and decoded in full here before any verdict came back. It is also the
+        wrong question: what this asks is whether the SOURCE resolves its
+        references, and a file the compiler wrote is not source. The same
+        distinction the artifact exclusion draws, one directory along.
         """
         sources = {
             relative.as_posix(): read_bytes(work, relative).decode("utf-8", errors="replace")
-            for relative in files_under(work, ".tex")
+            for relative in given
+            if (work / relative).is_file()
         }
         # A fragment nothing includes is not part of the document, so its
         # labels are not labels this compile created.
