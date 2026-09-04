@@ -10,12 +10,21 @@ network, which is the point of keeping the transport out of this module.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
 import pytest
 
-from hardy.loop import AgentLoop, Message, ProviderTurn, ToolCall, TurnLimitReached, first_legal_cut
+from hardy.loop import (
+    AgentLoop,
+    Message,
+    ProviderTurn,
+    ToolCall,
+    TurnLimitReached,
+    first_legal_cut,
+    reasoning_digest,
+)
 from hardy.models import ToolResult
 
 
@@ -850,3 +859,75 @@ def test_a_stream_stopped_after_one_event_is_still_a_turn() -> None:
 
     assert provider.calls == 1
     assert loop.messages[0].text == "asked"
+
+
+def test_an_abandoned_tool_call_records_what_it_was_asked() -> None:
+    """The arguments are the only part a dropped call had nowhere else to put.
+
+    A call that reaches `_call_tools` gets a `tool_use` event carrying its
+    input. One abandoned before that got a name and an id, while the assistant
+    message Hardy keeps -- and sends on every later request -- held arguments
+    the transcript never saw, so a reader could rebuild neither the context
+    that was sent nor the compaction digests taken over it.
+    """
+    loop, _, observed = _loop([
+        ProviderTurn(tool_calls=(
+            ToolCall("c1", "check_proof", {"proof": "by rfl"}),
+            ToolCall("c2", "check_proof", {"proof": "by simp"}),
+        )),
+    ])
+
+    stream = loop.run("asked")
+    next(stream)
+    stream.close()
+
+    abandoned = [event for event in observed if event["type"] == "abandoned_tool"]
+    assert [(event["call_id"], event["input"]) for event in abandoned] == [
+        ("c1", {"proof": "by rfl"}),
+        ("c2", {"proof": "by simp"}),
+    ]
+    # And the arguments recorded are the ones still standing in the messages
+    # the next request would carry.
+    assert [call.arguments for call in loop.messages[-3].tool_calls] == [
+        event["input"] for event in abandoned
+    ]
+
+
+def test_a_reply_that_arrives_past_the_deadline_is_recorded() -> None:
+    """It was produced and it was billed for, so it goes in the record.
+
+    Raising over it left the run graded `wall_clock_limit` with the usage
+    folded in and no account anywhere of the answer that usage paid for --
+    while the same answer arriving a moment later, under a cancel, was recorded
+    in full. Two ways of ending one turn cannot leave two different amounts of
+    evidence behind.
+    """
+    def slow() -> ProviderTurn:
+        time.sleep(0.05)
+        return ProviderTurn(text="took too long", usage={"input_tokens": 11})
+
+    loop, _, observed = _loop([slow], wall_seconds=0.01)
+
+    with pytest.raises(TimeoutError):
+        list(loop.run("asked"))
+
+    discarded = [event for event in observed if event["type"] == "discarded"]
+    assert discarded and discarded[0]["message"]["content"] == "took too long"
+    assert "wall-clock budget expired" in discarded[0]["why"]
+    # The limit is still what ended the run, and the spend is still counted.
+    assert any(event["type"] == "wall_clock_limit" for event in observed)
+
+
+def test_a_reasoning_block_records_the_digest_it_contributes() -> None:
+    """The blocks are opaque and are still sent, so the record has to carry
+    enough to recompute a digest taken over them -- and no more than that."""
+    block = object()
+    loop, _, observed = _loop([ProviderTurn(text="done", thinking=True, reasoning=(block,))])
+
+    list(loop.run("asked"))
+
+    thinking = [event for event in observed if event["type"] == "thinking"]
+    assert thinking == [{"type": "thinking", "blocks": [reasoning_digest(block)]}]
+    # A digest, not the block: nothing here writes down what Hardy declines to
+    # publish.
+    assert repr(block) not in json.dumps(observed)

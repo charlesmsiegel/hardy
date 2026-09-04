@@ -600,7 +600,18 @@ Priority labels are sequencing hints:
   first event leaves the conversation exactly as it found it, since a
   generator's body — and so the bookkeeping that answers for an abandoned turn
   — does not run until then, and a prompt appended earlier would have been sent
-  ahead of the next one as though the user had said both. The output
+  ahead of the next one as though the user had said both. What an abandoned
+  call was *asked* is recorded with it, since the assistant message Hardy keeps
+  and re-sends carries arguments that would otherwise appear in no record at
+  all. A reply that arrives at or past the deadline is written down before the
+  timeout is raised, for the same reason a cancelled one is: it was produced
+  and it was billed for, and two ways of ending one turn must not leave two
+  different amounts of evidence. Reasoning blocks are recorded by digest —
+  never transcribed, because they are opaque provider state Hardy does not
+  publish, and never omitted, because they are sent and the compaction digests
+  cover them: a hash a reader cannot recompute is not an audit trail.
+  `--wall-seconds` is refused when it is not finite *or* is longer than the
+  platform can wait for, since a bound nothing can wait for is not a bound. The output
   cap each reply is generated under is recorded in the run's provenance
   alongside model, backend and endpoint: change it and the same model gets a
   different amount of room to reach a submission, which is a different

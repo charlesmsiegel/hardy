@@ -702,3 +702,37 @@ def test_a_quotation_in_a_verified_proof_survives_recorded_acceptance(tmp_path: 
     # And the same scan still refuses the token when it is not quoted, so this
     # is a narrower rule rather than a weaker one.
     assert acceptance.FORBIDDEN_TOKEN.search(acceptance.scannable("by exact (axiom bad)"))
+
+
+def test_a_request_that_is_not_an_object_is_a_finding_not_a_crash(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """`or {}` forgave a falsy request and kept a truthy one of any type.
+
+    A hand-edited or half-merged trajectory whose `request` is a string took
+    the validator down with an `AttributeError` two lines later. "This record
+    is invalid" is the finding; a crash is the one answer a validator may not
+    give.
+    """
+    import importlib
+
+    acceptance = importlib.import_module("hardy.acceptance")
+    run(
+        proof_request,
+        factory([call("submit_proof", {"proof": "by exact True.intro"})]),
+        lean,
+        tmp_path,
+        toolchain={
+            "lean_version": "4.32.0",
+            "lean_commit": "a" * 40,
+            "mathlib_revision": "b" * 40,
+            "lake_manifest_sha256": "c" * 64,
+        },
+    )
+    assert acceptance.validate_batch_consistency(tmp_path) == ()
+
+    path = tmp_path / "trajectory.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["request"] = "theorem HardyTarget : True"
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    issues = acceptance.validate_batch_consistency(tmp_path)
+    assert any("request is not an object" in issue for issue in issues)

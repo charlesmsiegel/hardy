@@ -36,7 +36,7 @@ from .layout import (
     read_text,
 )
 from .lean import DECLARATION_NAME, LeanTools
-from .loop import Message
+from .loop import Message, reasoning_digest
 from .models import Request, ToolResult, TurnEvent
 from .modules import ModuleIndex
 from .project_context import (
@@ -649,9 +649,12 @@ def _digest(messages: Sequence[Message]) -> str:
         # them back in the turn they belong to, so two contexts differing only
         # in them are two different requests, and a digest that could not tell
         # them apart could not answer the question it exists for. Hashed
-        # through `repr` so nothing here transcribes what it will not publish.
+        # through `loop.reasoning_digest` -- the same contribution the
+        # `thinking` event records -- so nothing here transcribes what it will
+        # not publish and a reader holding the transcript can still recompute
+        # what this covered.
         for block in message.reasoning:
-            running.update(repr(block).encode("utf-8"))
+            running.update(reasoning_digest(block).encode("utf-8"))
             running.update(b"\x1f")
         running.update(b"\x1e")
     return running.hexdigest()

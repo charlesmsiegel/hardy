@@ -843,6 +843,17 @@ def _batch(args: argparse.Namespace, config: configuration.Config, parser: argpa
     # bound, and the place to say so is where the flag is read.
     if not math.isfinite(args.wall_seconds):
         parser.error(f"--wall-seconds must be a finite number of seconds, not {args.wall_seconds}")
+    # And small enough to wait for. `threading.Thread.join` raises
+    # `OverflowError` above `threading.TIMEOUT_MAX` exactly as it does on an
+    # infinity, so `--wall-seconds 1e20` walked past the finite check into the
+    # same failure: the run written as a `runtime_error` at once, for a daemon
+    # request that carries on and may yet be billed for. The same rule, stated
+    # against the same limit, in the same place.
+    if args.wall_seconds > threading.TIMEOUT_MAX:
+        parser.error(
+            f"--wall-seconds must be at most {threading.TIMEOUT_MAX:g} seconds, "
+            f"which is the longest this platform can wait for, not {args.wall_seconds:g}"
+        )
     closers = _closer_ladder(args.closers)
     result = run(request, runtime_factory(str(config.model), config.backend), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds, closers=closers, context_window=config.context_window)
     print(json.dumps(result.as_dict(), indent=2))

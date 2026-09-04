@@ -1174,7 +1174,15 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     reason = result.get("terminal_reason")
     if trajectory.get("terminal_reason") != reason:
         issues.append("terminal reason differs between result.json and trajectory.json")
-    request = trajectory.get("request") or {}
+    # A mapping or nothing. `or {}` forgave a falsy value and kept a truthy
+    # one of any type, so a hand-edited or half-merged trajectory whose
+    # `request` is a string took the validator down with an `AttributeError`
+    # two lines later. "This record is invalid" is the finding; a crash is the
+    # one answer a validator may not give.
+    recorded = trajectory.get("request")
+    request = recorded if isinstance(recorded, dict) else {}
+    if recorded is not None and not isinstance(recorded, dict):
+        issues.append("the trajectory's request is not an object")
     declaration = str(request.get("declaration", ""))
     head = DECLARATION_HEAD.match(declaration)
     name = declared_name(head.group(1)) if head else None
