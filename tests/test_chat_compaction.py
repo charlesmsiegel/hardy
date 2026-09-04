@@ -244,11 +244,15 @@ def test_the_prompt_and_tool_schemas_are_charged_against_the_window(tmp_path: Pa
     assert overhead > 0
     # And it is what the plan is told about: a conversation that would fit on
     # its own does not, once the request it travels in is counted.
-    conversation = [Message("user", text="x" * 1_000), Message("assistant", text="y" * 1_000)]
+    # Large enough that the reply allowance is the flat `RESERVE_TOKENS` rather
+    # than the quarter-of-the-window a small configured one is scaled to, so
+    # the arithmetic below is the arithmetic being tested.
+    conversation = [Message("user", text="x" * 90_000), Message("assistant", text="y" * 90_000)]
     room = compaction.estimate_tokens(conversation)
     # A window with room for the conversation and nothing else. Counted alone
     # it fits exactly; counted inside the request that carries it, it does not.
     chat.context_window = compaction.RESERVE_TOKENS + room
+    assert chat.context_window // 4 >= compaction.RESERVE_TOKENS
 
     assert not compaction.plan(
         conversation,
@@ -320,3 +324,28 @@ def test_the_facts_are_not_rebuilt_for_a_conversation_that_needs_no_compaction(t
 
     assert chat.compact([Message("user", text="hello")]) is None
     assert calls == []
+
+
+def test_the_overhead_is_the_prompt_the_runtime_actually_holds(tmp_path: Path) -> None:
+    """The runtime is handed its system prompt once and keeps it for the life
+    of the conversation. Rebuilding the estimate from the state as it stands
+    now made it describe a prompt nobody was sending -- and in the direction
+    that matters: change the state so the *current* context is shorter than the
+    frozen one, and the arithmetic that decides whether to compact undercounts
+    the prompt the provider is actually charging for.
+    """
+    chat = session(tmp_path, FakeChatRuntime([]))
+    frozen = chat.runtime.context["system_prompt"]
+    assert chat._system_prompt == frozen
+
+    before = chat._request_overhead()
+    chat.set_goal("Show that " + "the same long statement " * 400)
+
+    # Unchanged, because the prompt the runtime holds is unchanged: it was
+    # built before the goal was set and has not been rebuilt.
+    assert chat._request_overhead() == before
+    assert chat._system_prompt == frozen
+    # And the live context really has moved, so this is not a test that would
+    # pass whatever the implementation did.
+    assert chat._context() != frozen[len(frozen) - len(chat._context()):]
+    assert "the same long statement" in chat._context()

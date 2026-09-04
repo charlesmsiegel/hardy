@@ -27,6 +27,7 @@ import uuid
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from .chat import final_text
 from .loop import AgentLoop, Message, ProviderTurn, ToolCall
@@ -76,6 +77,18 @@ def tool_schema(specs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return tools
 
 
+def _block(item: Any) -> Any:
+    """One provider block, in whatever shape the transport can send back.
+
+    The SDK hands back model objects rather than dictionaries, and the same
+    client accepts either -- but a caller may also have injected plain
+    dictionaries, and a test certainly does. So an object that knows how to
+    render itself is asked to, and anything else is passed through untouched.
+    """
+    dump = getattr(item, "model_dump", None)
+    return dump() if callable(dump) else item
+
+
 def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
     """Hardy's conversation, in the shape the Messages API asks for.
 
@@ -120,6 +133,11 @@ def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
                 out.append({"role": "user", "content": [{"type": "text", "text": message.text}]})
             continue
         content: list[dict[str, Any]] = []
+        # First, because the API requires them first in the assistant turn they
+        # belong to. Passed back exactly as they arrived -- the signature is
+        # part of what is verified, so anything that rebuilt them from their
+        # fields would be handing back a different block.
+        content.extend(_block(item) for item in message.reasoning)
         if message.text:
             content.append({"type": "text", "text": message.text})
         for call in message.tool_calls:
@@ -128,6 +146,38 @@ def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
             out.append({"role": "assistant", "content": content})
     flush()
     return out
+
+
+def redacted(url: str) -> str:
+    """A base URL fit to write into a record that gets committed.
+
+    `provenance()` puts the endpoint into `session.json` and into every batch
+    trajectory, and those are versioned files -- so a gateway configured as
+    `https://token@gateway.example/v1` or with the key in a query parameter
+    would have committed that credential beside the experiment. Which endpoint
+    answered is the fact the field exists for, and it survives: the scheme,
+    the host, the port and the path are what identify a transport. The
+    userinfo and the query are dropped whole rather than pattern-matched for
+    likely secret names -- a gateway may call its key anything, and a redactor
+    that has to recognise the name is one that fails silently on the parameter
+    nobody thought of.
+
+    Unparseable input is reported as such rather than passed through: a value
+    this cannot read is a value it cannot promise anything about.
+    """
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return "unreadable endpoint"
+    if not parsed.scheme and not parsed.netloc:
+        # Not a URL at all. Nothing here can say which part of it is a secret,
+        # so nothing here republishes it.
+        return "unreadable endpoint"
+    host = parsed.hostname or ""
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    kept = urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+    return f"{kept} (query redacted)" if parsed.query else kept
 
 
 def timed_out(error: BaseException) -> bool:
@@ -222,7 +272,7 @@ class AnthropicProvider:
         """
         base = getattr(self._client, "base_url", None) if self._client is not None else None
         base = base or os.environ.get("ANTHROPIC_BASE_URL")
-        return f"messages api ({base})" if base else "messages api"
+        return f"messages api ({redacted(str(base))})" if base else "messages api"
 
     def _within(self, request: dict[str, Any], timeout: float | None) -> Any:
         """The request, under a deadline the loop can actually rely on.
@@ -302,6 +352,7 @@ class AnthropicProvider:
             raise
         text: list[str] = []
         calls: list[ToolCall] = []
+        reasoning: list[Any] = []
         thinking = False
         for block in getattr(reply, "content", None) or []:
             kind = getattr(block, "type", "")
@@ -315,12 +366,21 @@ class AnthropicProvider:
                 ))
             elif kind in ("thinking", "redacted_thinking"):
                 # Reported as having happened and never transcribed, which is
-                # the rule the SDK backend keeps too.
+                # the rule the SDK backend keeps too. Kept as well as reported,
+                # though: on a tool continuation the API requires the thinking
+                # blocks of the turn that asked back, unchanged and in order,
+                # signature included. A boolean cannot be given back, so a
+                # request built from a summarised turn is one the API refuses
+                # -- and it would fail only in the configuration that asked for
+                # thinking, which is exactly the configuration nobody tests
+                # first.
                 thinking = True
+                reasoning.append(block)
         return ProviderTurn(
             text="\n\n".join(part for part in text if part),
             tool_calls=tuple(calls),
             thinking=thinking,
+            reasoning=tuple(reasoning),
             usage=_usage(getattr(reply, "usage", None)),
             stop_reason=getattr(reply, "stop_reason", None),
         )

@@ -247,3 +247,59 @@ def test_fits_is_measured_against_the_window_and_not_against_the_old_size() -> N
     assert outcome.needed
     assert outcome.after < outcome.before  # what the old test would have accepted
     assert not outcome.fits                # and what the window actually says
+
+
+def test_symbols_are_not_counted_as_though_they_were_prose() -> None:
+    """`CHARACTERS_PER_TOKEN` is an English-prose ratio and this is a theorem
+    prover: a transcript is full of `∀`, `∈` and `⟨⟩`, and a session may be
+    conducted in a language not written in ASCII at all. Divided by 3.5, those
+    conversations were understated exactly where Hardy is used -- and an
+    understated conversation is one the planner says fits while the provider
+    refuses it."""
+    prose = compaction.estimate_text("a" * 350)
+    symbols = compaction.estimate_text("∀" * 350)
+
+    assert prose == 100
+    # A bound rather than a guess: one token per code point at least.
+    assert symbols >= 350
+    assert symbols > prose
+
+    mixed = compaction.estimate_text("a" * 350 + "∀" * 350)
+    assert mixed == prose + symbols
+
+
+def test_a_small_configured_window_still_leaves_room_to_compact_into() -> None:
+    """`context_window` is settable because the window belongs to the endpoint.
+    Configured below four times the flat reserve, the whole window was reserved:
+    `available` became zero, every plan reported that nothing legal could be
+    kept, and a request that would have fitted went out with no compaction."""
+    conversation = [
+        Message("user", text="x" * 20_000),
+        Message("assistant", text="y" * 20_000),
+        Message("user", text="the recent part"),
+    ]
+
+    outcome = compaction.plan(
+        conversation,
+        context_window=8_192,
+        reserve_tokens=compaction.RESERVE_TOKENS,
+        keep_tokens=compaction.RECENT_TOKENS,
+    )
+
+    assert outcome.available > 0
+    assert outcome.needed
+    assert outcome.cut > 0
+
+
+def test_a_window_large_enough_keeps_the_flat_reserve() -> None:
+    """The scaling is a floor for small windows, not a new rule for every one."""
+    conversation = [Message("user", text="x" * 1_000_000)]
+
+    outcome = compaction.plan(
+        conversation,
+        context_window=200_000,
+        reserve_tokens=compaction.RESERVE_TOKENS,
+        keep_tokens=compaction.RECENT_TOKENS,
+    )
+
+    assert outcome.available == 200_000 - compaction.RESERVE_TOKENS

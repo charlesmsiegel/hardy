@@ -203,8 +203,23 @@ def _name(item: Mapping[str, Any]) -> str:
 
 
 def estimate_text(text: str) -> int:
-    """About how large one piece of text is, by `CHARACTERS_PER_TOKEN`."""
-    return int(len(text) / CHARACTERS_PER_TOKEN)
+    """About how large one piece of text is, and never confidently under.
+
+    `CHARACTERS_PER_TOKEN` is an English-prose ratio, and this is a theorem
+    prover: a transcript is full of `∀`, `∈`, `≤` and `⟨⟩`, and a session may
+    be conducted in a language that is not written in ASCII at all. Those
+    characters are one token each at best and several at worst, so dividing
+    every code point by 3.5 understates exactly the conversations Hardy is
+    for -- and an understated conversation is one the planner says fits while
+    the provider refuses it, which is the failure this module exists to
+    prevent. The two directions are not symmetric: compacting a little early
+    costs some kept context, and compacting too late costs the request.
+
+    So ASCII is charged at the prose ratio and everything else at one token
+    per code point, which is a bound rather than a guess.
+    """
+    ascii_characters = sum(1 for character in text if character.isascii())
+    return int(ascii_characters / CHARACTERS_PER_TOKEN) + (len(text) - ascii_characters)
 
 
 def overhead(system_prompt: str, specs: Sequence[Mapping[str, Any]]) -> int:
@@ -240,13 +255,18 @@ def estimate_tokens(messages: Sequence[Message]) -> int:
     is mostly those, and counting only text made the estimate lightest exactly
     where the conversation was heaviest.
     """
-    characters = 0
+    tokens = 0
     for message in messages:
-        characters += len(message.text) + len(message.role)
+        tokens += estimate_text(message.text) + estimate_text(message.role)
         for call in message.tool_calls:
-            characters += len(call.name) + len(call.id) + len(repr(call.arguments))
-        characters += len(message.call_id) + len(message.name)
-    return int(characters / CHARACTERS_PER_TOKEN) + FRAMING_PER_MESSAGE * len(messages)
+            tokens += estimate_text(call.name) + estimate_text(call.id) + estimate_text(repr(call.arguments))
+        # Reasoning blocks are sent back with the turn they belong to, so the
+        # provider charges for them and so does this. Measured through `repr`
+        # because they are opaque to Hardy by design -- their text and their
+        # signature are in it, which is the bulk of what they cost.
+        tokens += sum(estimate_text(repr(block)) for block in message.reasoning)
+        tokens += estimate_text(message.call_id) + estimate_text(message.name)
+    return tokens + FRAMING_PER_MESSAGE * len(messages)
 
 
 @dataclass(frozen=True)
@@ -286,6 +306,22 @@ class Plan:
         return self.available > 0 and self.after <= self.available
 
 
+def _reserve(context_window: int, reserve_tokens: int) -> int:
+    """Room kept for the reply, scaled to a window that cannot spare the flat one.
+
+    The reserve is an allowance for what the model is about to write, and
+    `RESERVE_TOKENS` is sized for the 200K window. A gateway correctly
+    configured with a smaller one -- `context_window` is settable precisely
+    because the window belongs to the endpoint -- would have the whole of it
+    reserved: `available` became zero, every plan reported that nothing legal
+    could be kept, and a request that would have fitted went out with no
+    compaction behind it. Capped at a quarter of the window so the allowance
+    stays proportional, which on any window at or above 65,536 is the flat
+    figure unchanged.
+    """
+    return min(reserve_tokens, max(context_window // 4, 0))
+
+
 def plan(
     messages: Sequence[Message],
     *,
@@ -323,7 +359,7 @@ def plan(
     summarises nothing and keeps everything.
     """
     before = overhead_tokens + estimate_tokens(messages)
-    available = max(context_window - reserve_tokens, 0)
+    available = max(context_window - _reserve(context_window, reserve_tokens), 0)
     if before <= available:
         return Plan(False, before=before, after=before, available=available)
     # Never more recent context than the window has room for, and never more
