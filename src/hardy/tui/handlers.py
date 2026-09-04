@@ -580,6 +580,8 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
     abandoned = threading.Event()
 
     presses: list[int] = []
+    #: Set by `_pressing`'s handler, which presses before it raises.
+    interrupted: list[int] = []
 
     def stop() -> bool:
         """Esc, and it must return at once.
@@ -666,7 +668,7 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
             # begins even if the raise lands somewhere the workflow re-enters,
             # then `KeyboardInterrupt` into the workflow, which has handled it
             # since long before `/prove` existed.
-            with _pressing(stop):
+            with _pressing(lambda: bool(interrupted.append(1)) or stop()):
                 manifest = staged.run(state.config, claim, terminal, ready=ready)
     except asyncio.CancelledError:
         # Ctrl+C and `/exit`, which cancel the task rather than pressing Esc.
@@ -681,7 +683,14 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
         # not an `Exception`, so the clause below does not see it and it went
         # on to end the whole session: a press meant to stop one command took
         # the conversation with it, and left no manifest saying why.
-        stop()
+        #
+        # Pressed again only if something OTHER than `_pressing` raised it. Its
+        # handler has already pressed once, and pressing a second time here
+        # counted the single Ctrl+C as the documented second press -- so one
+        # interrupt killed the identification child outright instead of asking
+        # it to stop and giving it the grace the first press promises.
+        if not interrupted:
+            stop()
         ui.write("The staged run was cancelled before it started.", style="warning")
         return state
     except Exception as error:  # noqa: BLE001 - a failed run is not a lost session
@@ -690,6 +699,13 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
     finally:
         if stopping is not None:
             stopping(None)
+        # `interrupt_children` sets a process-wide stop level, and nothing here
+        # lifted it. It is otherwise cleared only when a model turn starts, so
+        # a cancelled `/prove` left every later `/doctor`, `/import` or
+        # `/prove` killing its own first child on sight -- the command simply
+        # failed, and the way out was to send the model an ordinary message.
+        if presses:
+            process.resume_children()
     ui.write(f"Artifacts: {state.config.runs_root}")
     if getattr(manifest, "phase", None) is not None and manifest.phase.value != "completed":
         ui.write(f"  The run ended in {manifest.phase.value}, not completed.")

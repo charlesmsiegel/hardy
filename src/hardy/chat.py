@@ -1680,7 +1680,7 @@ class MathematicsSession:
             )
         return "".join(f"\n\n{note}" for note in notes)
 
-    def _automation_closed(self) -> dict[str, str]:
+    def _automation_closed(self, sources: dict[str, str] | None = None) -> dict[str, str]:
         """Saved theorems one automation call closes: name to the tactic.
 
         Read from the recorded probe verdicts, and only while the statement a
@@ -1697,7 +1697,7 @@ class MathematicsSession:
         stored = self.state.get("automation", {})
         if not stored:
             return {}
-        current = self._theorem_statements()
+        current = self._theorem_statements(sources)
         environment = self._probe_environment()
         return {
             name: str(record.get("tactic"))
@@ -3107,7 +3107,7 @@ class MathematicsSession:
             # Under the same gate as everything else here, for the reason the
             # obligations are: read separately, this disclosure could name a
             # theorem the sections beside it do not have.
-            automation=self._automation_closed(),
+            automation=self._automation_closed(sources),
         )
 
     def export_material(self) -> dict[str, Any]:
@@ -3173,6 +3173,12 @@ class MathematicsSession:
             # the origin path and arriving digest -- the only things that let a
             # reader check it against the file it came from -- are lost.
             "imported": list(self.state.get("imported", [])),
+            # The disclosure the compiled document's banner carries. The export
+            # embeds no PDF, so without this a theorem Hardy knows closes with
+            # one `simp` reads as kernel-verified and nothing more -- the page
+            # would be dropping a warning the workspace holds about the very
+            # results it is presenting.
+            "automation": self._automation_closed(sources),
             "obligations": [str(item) for item in self._obligations(sources, tex)],
             "document": (
                 f"{document.name} was compiled ({document.stat().st_size} bytes). "

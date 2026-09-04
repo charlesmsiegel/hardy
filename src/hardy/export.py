@@ -233,6 +233,7 @@ def _results(material: Mapping[str, Any]) -> str:
     approvals = {
         str(item.get("formal_name")): item for item in material.get("assumptions", ())
     }
+    automation: Mapping[str, str] = material.get("automation", {}) or {}
     if not theorems:
         return (
             "<p>No theorem is saved in this workspace. Nothing in this export is a "
@@ -252,6 +253,18 @@ def _results(material: Mapping[str, Any]) -> str:
                 f"<p class='fail'>{_escape(', '.join(status.modules))} each declare this "
                 "name. The statement above is whichever one was read last, and no "
                 "verdict here can be attributed to it.</p>"
+            )
+        if name in automation:
+            # The same disclosure the compiled document's banner prints, and
+            # deliberately not a limitation on the verdict: what one tactic
+            # closes is still kernel-verified. What it may not be is what its
+            # name suggests, and that is the reader's to weigh -- which they
+            # cannot do if the page does not say it.
+            detail += (
+                f"<p class='tool'>Closed by a single automation call "
+                f"(<code>{_escape(automation[name])}</code>). The kernel checked it; "
+                "whether the statement asserts what its name suggests is for a "
+                "reader to judge.</p>"
             )
         if status.kind == "stale":
             detail += (
