@@ -109,7 +109,17 @@ def test_the_approval_question_uses_the_selector_rather_than_a_typed_word(ui):
 
 
 def test_an_abandoned_approval_prompt_cancels_rather_than_approves(ui):
-    """Nothing may freeze a claim nobody read."""
+    """Nothing may freeze a claim nobody read -- and walking away from the
+    question is not the same as reading it and refusing it, which is the
+    "Cancel" row and is recorded as a rejection."""
+    import pytest as _pytest
+
+    with _pytest.raises(KeyboardInterrupt):
+        UiTerminal(ui.from_thread).choose_approval()
+
+
+def test_the_cancel_row_is_still_a_judgement_rather_than_an_abandonment(ui):
+    ui.choices = [2]                                    # "Cancel"
     assert UiTerminal(ui.from_thread).choose_approval() == "cancel"
 
 
@@ -241,17 +251,23 @@ async def test_prove_can_actually_be_used_in_a_plain_session(settings, monkeypat
     from hardy.tui.plain import PlainUi
 
     said: list[str] = []
-    answers = iter(["I UNDERSTAND", "approve"])
+    # "1" is the Approve row. The plain selector asks for a number, and an
+    # earlier version of this test answered "approve": not a digit, so the
+    # selector returned None, the terminal read that as a cancellation, and the
+    # assertion below accepted it because it allowed any of the three words.
+    answers = iter(["I UNDERSTAND", "1"])
+    picked: list[str] = []
 
     def run(config, claim, terminal, *, backend="claude", ready=None):
         # What the staged workflow does first, through the same facade.
         assert terminal.acknowledge_unsafe_execution() is True
-        assert terminal.choose_approval() in {"approve", "revise", "cancel"}
+        picked.append(terminal.choose_approval())
         return SimpleNamespace(phase=SimpleNamespace(value="completed"))
 
     monkeypatch.setattr(prove, "run", run)
     ui = PlainUi(said.append, lambda prompt: next(answers, ""))
     await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+    assert picked == ["approve"], "the plain selector did not take the answer"
     assert any("Artifacts" in line for line in said)
 
 

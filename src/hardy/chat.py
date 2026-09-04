@@ -2685,8 +2685,21 @@ class MathematicsSession:
         holders: dict[str, list[str]] = {}
         snapshot = self.lean_workspace.sources() if sources is None else sources
         for module, source in sorted(snapshot.items()):
-            for name in declarations(source)["theorem"]:
-                holders.setdefault(name, []).append(module)
+            found = declarations(source)
+            # Lemmas too, not only theorems. The audit records every
+            # declaration a module has, and a verdict is looked up BY NAME: an
+            # audited `lemma result` in one module answers for an unaudited
+            # `theorem result` in another, and the page would print the second
+            # statement as kernel-verified on the strength of the first. What
+            # collides is the name, so what is counted is every declaration
+            # that can carry one.
+            for name in (*found["theorem"], *found["lemma"]):
+                modules = holders.setdefault(name, [])
+                # Once per module: Lean will not let one module declare a name
+                # twice, and counting a repeat as a collision would report a
+                # module as ambiguous with itself.
+                if module not in modules:
+                    modules.append(module)
         return {name: found for name, found in holders.items() if len(found) > 1}
 
     def _tex_sources(self) -> dict[str, str]:
@@ -3087,6 +3100,12 @@ class MathematicsSession:
             "shared": self._shared_names(sources),
             "lean": sources,
             "tex": self._tex_sources(),
+            # What arrived from outside rather than being written here. The
+            # sources above carry no trace of it, so without this the page
+            # presents an imported module exactly like one Hardy authored, and
+            # the origin path and arriving digest -- the only things that let a
+            # reader check it against the file it came from -- are lost.
+            "imported": list(self.state.get("imported", [])),
             "obligations": [str(item) for item in self._obligations()],
             "document": (
                 f"{document.name} was compiled ({document.stat().st_size} bytes). "

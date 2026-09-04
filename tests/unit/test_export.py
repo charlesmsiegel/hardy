@@ -31,6 +31,7 @@ def material(**overrides):
         "open": [],
         "lean": {},
         "tex": {},
+        "imported": [],
         "obligations": [],
         "document": "No compiled document was found in this workspace.",
         "usage": [],
@@ -526,3 +527,39 @@ def test_a_tool_call_with_no_arguments_renders_without_an_empty_block():
     ])
     assert "list_lean" in page
     assert "<p class=\"tool\"></p>" not in page
+
+
+def test_imported_work_is_not_presented_as_work_authored_here():
+    """The sources section shows an imported module exactly like one Hardy
+    wrote. The origin and the arriving digest are the only things that let a
+    reader check it against the file it came from."""
+    page = build(
+        imported=[
+            {
+                "kind": "lean",
+                "path": "Sylow.lean",
+                "origin": "/home/someone/mathlib-notes/Sylow.lean",
+                "sha256": "b" * 64,
+            }
+        ],
+    )
+    assert "Sylow.lean" in page
+    assert "/home/someone/mathlib-notes/Sylow.lean" in page
+    assert "b" * 64 in page
+
+
+def test_a_session_that_imported_nothing_says_so():
+    assert "Nothing was imported" in build()
+
+
+def test_an_import_is_visible_at_the_point_it_happened():
+    page = build(transcript=[
+        {
+            "type": "imported",
+            "kind": "lean",
+            "path": "Sylow.lean",
+            "origin": "/elsewhere/Sylow.lean",
+            "sha256": "c" * 64,
+        },
+    ])
+    assert "Hardy did not write it" in page

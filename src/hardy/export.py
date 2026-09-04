@@ -392,6 +392,28 @@ def _arguments(arguments: Any) -> str:
     return "".join(parts)
 
 
+def _imported(entries: Iterable[Mapping[str, Any]]) -> str:
+    """Files that arrived from outside, with where from and what arrived.
+
+    The sources section shows them exactly like anything Hardy wrote, and the
+    honest statement about them is different in kind: this was not authored
+    here. The digest is over the arriving bytes, before any normalisation, so
+    a reader can check the page against the file it came from -- which is the
+    whole of the provenance and is nowhere else on this page.
+    """
+    rows = [
+        (
+            f"{entry.get('kind', 'file')} {entry.get('path', '?')}",
+            f"from {entry.get('origin', '?')} — sha256 {entry.get('sha256', '?')}",
+        )
+        for entry in entries
+        if isinstance(entry, Mapping)
+    ]
+    if not rows:
+        return "<p>Nothing was imported: everything below was written in this session.</p>"
+    return _rows(rows)
+
+
 def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
     parts = []
     for event in events:
@@ -471,6 +493,18 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
                 '<p class="fail">The provider conversation was discarded here '
                 f"({_escape(event.get('reason', 'reset'))}); nothing above this point "
                 "was in the model's context afterwards.</p>"
+            )
+        elif kind == "imported":
+            # Where a file entered the workspace from outside. In the
+            # conversation as well as in its own section, because the reader
+            # following what happened needs to see it at the point it happened.
+            parts.append(
+                '<p class="tool">'
+                f"{_escape(event.get('kind', 'A file'))} "
+                f"<code>{_escape(event.get('path', '?'))}</code> was imported from "
+                f"<code>{_escape(event.get('origin', '?'))}</code> "
+                f"(sha256 {_escape(event.get('sha256', '?'))}); Hardy did not write it."
+                "</p>"
             )
         elif kind == "obligations":
             # What Hardy told the user at the end of a turn, which is the half
@@ -570,6 +604,9 @@ proof: read the conversation below before sharing it.</p>
     ],
     "Nothing is registered.",
 )}
+
+<h2>Imported, not authored here</h2>
+{_imported(material.get("imported", ()))}
 
 <h2>Lean sources</h2>
 {_sources(material.get("lean", {}), "No Lean module is saved.")}

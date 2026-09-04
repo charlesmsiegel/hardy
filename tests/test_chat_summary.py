@@ -176,3 +176,37 @@ def test_the_audit_and_the_statement_come_from_one_read_of_the_tree(tmp_path: Pa
     assert "1 = 1" not in "".join(material["lean"].values()), (
         "the page prints a source the verdict beside it is not about"
     )
+
+
+def test_the_export_carries_what_arrived_from_outside(tmp_path: Path):
+    """An imported module is indistinguishable from an authored one in the
+    sources, so the origin and arriving digest have to travel with it."""
+    chat = built(tmp_path)
+    chat.state.setdefault("imported", []).append(
+        {
+            "kind": "lean",
+            "path": "Sylow.lean",
+            "origin": "/elsewhere/Sylow.lean",
+            "sha256": "d" * 64,
+        }
+    )
+
+    material = chat.export_material()
+
+    assert material["imported"][0]["origin"] == "/elsewhere/Sylow.lean"
+
+
+def test_a_lemma_elsewhere_cannot_lend_its_verdict_to_a_theorem(tmp_path: Path):
+    """The audit records every declaration and a verdict is looked up by name,
+    so an audited `lemma result` answers for an unaudited `theorem result`."""
+    chat = built(tmp_path)
+    read = chat.lean_workspace.sources
+
+    def two_modules():
+        found = dict(read())
+        found["Other"] = "import Mathlib\nlemma hardyBasic : True := by exact True.intro\n"
+        return found
+
+    chat.lean_workspace.sources = two_modules
+
+    assert "hardyBasic" in chat.export_material()["shared"]
