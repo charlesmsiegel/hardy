@@ -151,8 +151,21 @@ Losing the loop costs real things, and they are recorded rather than glossed:
 turn limits become the SDK's to enforce, cheap Lean closers cannot run before a
 model turn is spent, and token budgets have no decision point. The wall clock is
 kept by Hardy, because nothing in the SDK bounds a stalled request, and the
-trajectory states which of the two enforced what. Issue #23 tracks reclaiming
-the loop without giving up subscription authentication.
+trajectory states which of the two enforced what.
+
+There is now a second transport where none of that is lost. The `api` backend
+calls the Messages API directly and runs the loop in `hardy/loop.py`: it counts
+provider calls itself, measures its own wall clock, holds the conversation as a
+list rather than as a provider thread, and is asked before every provider call
+whether to make one at all — which is what makes the cheap Lean closers
+possible, since declining a turn is a decision only something inside the loop
+can take. The price is the thing the SDK backends exist to avoid: an API key
+instead of a subscription, and a conversation that ends with the process
+because there is no thread to resume. So it is opt-in, and which transport
+carried a run is part of that run's recorded identity — the two are not the
+same experimental condition, and a scoreboard that could not tell them apart
+would be comparing a harness against itself. Issue #23 tracks carrying the same
+control back to the subscription backends, where the SDK still owns the loop.
 
 The quietest cost is the strongest argument for reclaiming it: compaction.
 Hardy has none of its own — grepping for it finds only `usage._compact`, a
