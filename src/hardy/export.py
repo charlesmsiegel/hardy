@@ -51,13 +51,17 @@ from .truncation import truncate
 #: broad enough to catch "anything that looks random" would eat the sha256
 #: digests Hardy records on purpose, and an export missing its own provenance
 #: is a worse artifact than one that names the limits of its redaction.
-SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"), "[REDACTED-KEY]"),
-    (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"), "[REDACTED-KEY]"),
-    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), "[REDACTED-KEY]"),
-    (re.compile(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}"), "[REDACTED-KEY]"),
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED-KEY]"),
-    (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}"), "[REDACTED-KEY]"),
+#: Each entry is (pattern, replacement, structural). `structural` marks a rule
+#: that reads a `name: value` PAIR rather than recognising a token by its own
+#: shape -- those are the ones `redact(keys=False)` drops for audited source,
+#: because Lean writes a type ascription with the same colon. See `redact`.
+SECRETS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
+    (re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"), "[REDACTED-KEY]", False),
+    (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"), "[REDACTED-KEY]", False),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), "[REDACTED-KEY]", False),
+    (re.compile(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}"), "[REDACTED-KEY]", False),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED-KEY]", False),
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}"), "[REDACTED-KEY]", False),
     # A short token is still a token, and length was never the right question:
     # 16 let `Bearer abc123` through, 8 let the same six-character example
     # through while a comment right here claimed otherwise, and no floor at all
@@ -73,6 +77,9 @@ SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
             r"|[A-Za-z0-9._\-]{16,})"
         ),
         "Bearer [REDACTED-KEY]",
+        # A shape, not a pair: `Bearer <token>` names no key. It stays on for
+        # audited source too, where it cannot occur by accident.
+        False,
     ),
     # `Authorization: Basic dXNlcjpwYXNz` -- a pasted header, and the shape the
     # generic rule below gets exactly backwards: its unquoted alternative
@@ -92,6 +99,7 @@ SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
             r"(?:\\.|[^\r\n])*?\3"
         ),
         r"\1\2\3\4[REDACTED-KEY]\3",
+        True,
     ),
     #
     # The value runs to the end of the line rather than to the next quote or
@@ -110,6 +118,7 @@ SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
             r"(basic|bearer|digest|negotiate|token|apikey)\s+[^\r\n]+"
         ),
         r"\1\2\3 [REDACTED-KEY]",
+        True,
     ),
     # `api_key = "..."`, `password: ...`, `authorization=...` in prose or in a
     # pasted config. The key names are `storage.SECRET_KEY`'s, so one list
@@ -139,6 +148,7 @@ SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
             r"(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\S+)"
         ),
         r"\1\2[REDACTED]",
+        True,
     ),
 )
 
@@ -168,9 +178,24 @@ STATUS_STYLES = {
 STYLE = resources.files(__package__).joinpath("export.css").read_text(encoding="utf-8")
 
 
-def redact(text: str) -> str:
-    """Remove the credential shapes `SECRETS` names. See the module docstring."""
-    for pattern, replacement in SECRETS:
+def redact(text: str, *, keys: bool = True) -> str:
+    """Remove the credential shapes `SECRETS` names. See the module docstring.
+
+    `keys=False` drops the rules that read a `name: value` pair, keeping only
+    the ones that recognise a token by its own shape. That is the difference
+    between free text and AUDITED SOURCE. Lean spells a type ascription with a
+    colon, so `theorem secret : Nat` and `password : String` are ordinary Lean
+    that the key/value rule rewrote to `[REDACTED]` -- and both `_results` and
+    `_sources` print audited code, so the page displayed and badged a statement
+    that was not the one the kernel checked. A page whose whole purpose is to
+    say what was proved may not alter what was proved.
+
+    The shape rules stay on everywhere: `sk-...`, `ghp_...` and the rest cannot
+    occur in valid Lean by accident, so keeping them costs the source nothing.
+    """
+    for pattern, replacement, structural in SECRETS:
+        if structural and not keys:
+            continue
         text = pattern.sub(replacement, text)
     return text
 
@@ -179,8 +204,18 @@ def _escape(value: Any) -> str:
     return html.escape(redact(str(value)), quote=True)
 
 
+def _verbatim(value: Any) -> str:
+    """Escape without the key/value rules: for source the kernel has graded."""
+    return html.escape(redact(str(value), keys=False), quote=True)
+
+
 def _block(text: str) -> str:
     return f"<pre>{_escape(text)}</pre>"
+
+
+def _source_block(text: str) -> str:
+    """A `<pre>` for audited code, kept byte-for-byte. See `redact`."""
+    return f"<pre>{_verbatim(text)}</pre>"
 
 
 def _rows(pairs: Iterable[tuple[str, Any]]) -> str:
@@ -273,7 +308,8 @@ def _results(material: Mapping[str, Any]) -> str:
             )
         parts.append(
             f'<div class="result"><p>{_badge(status.kind)} <code>{_escape(name)}</code></p>'
-            f"{_block(theorems[name])}{detail}</div>"
+            # The statement the kernel graded, byte for byte: see `redact`.
+            f"{_source_block(theorems[name])}{detail}</div>"
         )
     return "".join(parts)
 
@@ -324,8 +360,11 @@ def _assumptions(records: Sequence[Mapping[str, Any]]) -> str:
 def _sources(sources: Mapping[str, str], empty: str) -> str:
     if not sources:
         return f"<p>{_escape(empty)}</p>"
+    # `_source_block`: this is the audited tree, and altering it would make the
+    # page disagree with what Lean checked. See `redact`.
     return "".join(
-        f"<h3>{_escape(name)}</h3>{_block(text)}" for name, text in sorted(sources.items())
+        f"<h3>{_escape(name)}</h3>{_source_block(text)}"
+        for name, text in sorted(sources.items())
     )
 
 
@@ -526,6 +565,18 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
                 f"({_escape(event.get('reason', 'reset'))}); nothing above this point "
                 "was in the model's context afterwards.</p>"
             )
+        elif kind == "model":
+            # Where the identity changed, in the conversation rather than only
+            # in a list at the end. The Identity section names the model the
+            # session finished on; without this the reader cannot tell which
+            # turns above came from which model.
+            previous = (event.get("previous") or {}).get("model") or "unset"
+            parts.append(
+                '<p class="tool">The model changed here: '
+                f"{_escape(previous)} → {_escape(event.get('model', '?'))} "
+                f"({_escape(event.get('reason', 'changed'))}). Turns below came from "
+                "the second.</p>"
+            )
         elif kind == "report":
             # What was reported, as it stood when it was reported. The Results
             # section shows the statement the tree has NOW, and a source edited
@@ -596,11 +647,20 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
             # out -- and the half that contradicts a reply claiming the work is
             # done.
             owed = event.get("outstanding") or []
-            said = (
-                "Nothing outstanding."
-                if not owed
-                else "\n".join(f"- {item}" for item in owed)
-            )
+            # An empty list means two different things, and the wrong one here
+            # turns Hardy's warning into apparent completion -- most misleading
+            # exactly where it matters, under a reply claiming the theorem is
+            # proved. `saved_theorems: 0` is the workspace saying there is
+            # nothing to owe an obligation ABOUT.
+            if not owed and not event.get("saved_theorems", 1):
+                said = (
+                    "No theorem is saved in this workspace, so nothing here is "
+                    "reportable. Anything above rests on the conversation alone."
+                )
+            elif not owed:
+                said = "Nothing outstanding."
+            else:
+                said = "\n".join(f"- {item}" for item in owed)
             parts.append(
                 '<div class="turn"><div class="who">Hardy (what the workspace still owed)'
                 f"</div>{_block(said)}</div>"
@@ -629,6 +689,16 @@ def _withheld(material: Mapping[str, Any]) -> str:
         if event.get("type") == "tool"
         and isinstance(event.get("result"), Mapping)
         and not event["result"].get("ok")
+    ]
+    # And the ones the SDK never got to call. A request for `Read` or `Bash` is
+    # recorded as `refused_tool` rather than as a failed `tool`, so a filter
+    # looking only at results printed "Nothing was refused" over a run in which
+    # the model had reached for the host -- the single most interesting thing
+    # this section can report.
+    refused += [
+        f"{event.get('name')}: not a Hardy tool; the request never ran"
+        for event in material.get("transcript", ())
+        if event.get("type") == "refused_tool"
     ]
     return (
         "<h3>Spend</h3>"
@@ -724,15 +794,32 @@ opened.</footer>
 """
 
 
+#: Material whose dictionaries are keyed by DECLARATION or PATH rather than by
+#: field name, and whose values are the audited artifacts themselves. The
+#: key-name rule must not run over these: `theorems["secret"]` is a theorem
+#: called `secret`, not a credential under a key called `secret`, and replacing
+#: its statement makes the page disagree with what the kernel checked. The
+#: text-level pass still sees them, minus the key/value rules -- see `redact`.
+VERBATIM = frozenset({"theorems", "lean", "tex"})
+
+
 def prepare(material: Mapping[str, Any]) -> dict[str, Any]:
     """`material` with credential-shaped values removed from every nested key.
 
     Runs before the page is built, so the key-name rule that governs a
     trajectory (`storage._redact`) governs an export too. The text-level pass
     is `redact`, applied by every escaper on the way out.
+
+    `VERBATIM` is exempt, for the reason stated there: those maps are keyed by
+    the names of the things they carry, so a theorem or a file that happens to
+    be called `secret` is not a secret.
     """
     return {
-        key: redact_payload(value) if isinstance(value, (dict, list, tuple)) else value
+        key: (
+            redact_payload(value)
+            if isinstance(value, (dict, list, tuple)) and key not in VERBATIM
+            else value
+        )
         for key, value in material.items()
     }
 
