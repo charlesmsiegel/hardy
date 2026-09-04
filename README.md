@@ -222,8 +222,12 @@ usable, asking `claude auth status` rather than assuming an installed binary
 means a signed-in one.
 
 Hardy is described as model-agnostic in the sense that nothing in the harness's
-design depends on a particular provider; in practice the only backend wired up
-today is Claude through the agent SDK. Other model providers will be added once
+design depends on a particular provider. In practice the interactive session is
+Claude through the agent SDK and nothing else; the staged path is the one place
+a second provider is wired up, where `hardy prove --backend codex` and `hardy
+accept --backend codex` run against the Codex SDK instead — with the weaker
+isolation for the faithfulness reader that the section above describes. Other
+model providers, and the interactive session on any of them, will be added once
 the core loop has been validated.
 
 ### What the SDK does not get to do
@@ -635,14 +639,18 @@ is.
 Exit codes are uniform: `0` when the command answered and the answer was good,
 `1` when it answered and the answer was bad — a failed check, an unverified
 proof, an inconsistent artifact, a withheld verdict — and `2` when the
-invocation itself was refused before doing any work.
+invocation itself was refused before doing any work. `hardy evals run` is the
+exception, and deliberately so: it exits `0` once the set ran and the scoreboard
+was written, whatever the rows say, because an unsolved entry or a twin a model
+proved is a measurement and not a failure of the command. Read the scoreboard,
+or gate CI on `hardy evals check`, rather than on that status.
 
 ### Global options
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `--config PATH` | `~/.hardy/config.toml`, or `$HARDY_CONFIG` | Which settings file to read. |
-| `--model IDENTITY` | `model` in the config file, or `$HARDY_MODEL` | Who does the work. |
+| `--model IDENTITY` | `model` in the config file, else `$HARDY_MODEL`, else the built-in `claude-opus-5` | Who does the work. A fresh checkout that has configured nothing still has a model, and it is billable. |
 | `--lean-command CMD` | `lake env lean` | The command that elaborates a Lean file. |
 | `--lean-project PATH` | unset — Lean runs in the current directory | The Lake project whose imports Lean should resolve; the installer points this at the shared Mathlib project. |
 | `--latex-command CMD` | `pdflatex -interaction=nonstopmode -halt-on-error` | The command that compiles a LaTeX file. |
@@ -653,10 +661,14 @@ invocation itself was refused before doing any work.
 `prove`, `accept`, and `evals run` also accept `--model` *after* the subcommand;
 omitting it there leaves the global one alone rather than overwriting it.
 
-Not every command sees every flag. `chat`, `doctor`, `latency`, `batch`, and
-`evals` resolve the whole configuration, command line included. `prove`,
-`accept`, and `setup` re-read the settings file and the `HARDY_*` variables
-themselves, and see only `--config` and `--model` from the command line: pass
+Not every command sees every flag. `chat`, `doctor`, `latency`, and `batch`
+resolve the whole configuration, command line included. `evals` resolves it too
+but pins its own Lean: the sweep, the toolchain identity it records, and every
+batch row all invoke `lake env lean`, so `--lean-command` is ignored there on
+purpose — a row checked under a compiler other than the one the scoreboard and
+the baseline name would be measuring nothing. `prove`, `accept`, and `setup`
+re-read the settings file and the `HARDY_*` variables themselves, and see only
+`--config` and `--model` from the command line: pass
 `--lean-command`, `--lean-project`, or `--latex-command` to one of those three
 and it is accepted and then ignored, so a staged run against a different Lake
 project needs `lean_project` in the config file or `HARDY_LEAN_PROJECT` in the
@@ -796,7 +808,7 @@ and writes a scoreboard under a label.
 | Option | Default | What it does |
 | --- | --- | --- |
 | `--label NAME` | required | Names the scoreboard this run writes. |
-| `--mode {batch,staged}` | `batch` | Which path each entry is run through. |
+| `--mode {batch,staged}` | `batch` | Which path each entry is run through — with one exception: a twin (an entry expected to be false) always runs batch, even under `--mode staged`, because the staged loop grades every unverified run partial (#23). Its budget is the separately recorded `twin_max_turns`/`twin_wall_seconds` pair. |
 | `--backend {claude,codex}` | `claude` | Claude only, in practice: the batch runner, the canonical reader, and staged tool-event counting are Claude-shaped, so `codex` is refused rather than recorded as a condition it is not. |
 | `--model IDENTITY` | the global `--model` | Who does the work. |
 | `--repeats N` | `1` | Times each entry is run. Must be at least 1 — a zero-row run would still write a scoreboard that `evals check` would pass. |
@@ -843,8 +855,10 @@ hardy evals corpus serve          # http://127.0.0.1:8765, re-read on every refr
 JSON: each entry rendered with its Lean beside it and its MSC codes under their
 names, the objections `corpus check` would raise shown against the entries that
 earned them, and the whole page re-read from disk on every refresh, so a shard
-edited in an editor shows up — correct or broken — on the next reload. It is
-bound to loopback, because a working corpus is not a published site.
+edited in an editor shows up — correct or broken — on the next reload. It binds
+`127.0.0.1` by default, because a working corpus is not a published site; the
+page is unauthenticated, so `--host 0.0.0.0` really does hand the whole corpus
+to anything that can reach the machine.
 
 It is a viewer and not an editor: nothing is written back. The `review` record
 that promotes an entry to `active` has to be bound to that entry's digests, and
