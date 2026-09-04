@@ -844,3 +844,24 @@ def test_a_query_answered_during_the_wait_costs_no_reservation(tmp_path: Path):
     assert transport.urls == []
     # The slot was never claimed, because no request was made in it.
     assert library.last_request() == reserved
+
+
+def test_a_field_the_content_does_not_render_is_still_re_derived(tmp_path: Path):
+    """`content()` renders most of a record, and the check was on its digest.
+
+    `primary_category`, `abs_url` and `content_bytes` are not in it, so those
+    could be edited with every digest still agreeing -- a record serving
+    fields it had not re-derived from anything, which is the one thing the
+    provenance comparison exists to rule out.
+    """
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    held = library.path_for(record.identifier) / "record.json"
+    for moved in (
+        record.model_copy(update={"primary_category": "cs.CR"}),
+        record.model_copy(update={"abs_url": "https://example.invalid/paper"}),
+        record.model_copy(update={"content_bytes": 1}),
+    ):
+        held.write_text(moved.model_dump_json(), encoding="utf-8")
+        with pytest.raises(arxiv.ArxivError, match="not what its own response says"):
+            library.read(record.identifier)

@@ -425,3 +425,17 @@ def test_a_result_set_that_cannot_be_represented_is_refused_not_shrunk(tmp_path:
     assert not result.ok
     assert "observation budget" in result.output
     assert "not shortened" in result.output
+
+
+def test_a_fetch_answer_fits_the_budget_even_when_the_identity_does_not(tmp_path: Path):
+    """"Always fits" was a claim about the identity being short, not a measurement.
+
+    A 64-character digest and a sentence do not fit in 256 bytes, and nothing
+    puts a floor under the configured limit -- so the documented-as-bounded
+    path was the one that overran it.
+    """
+    runtime = _runtime(tmp_path, observation_bytes=128)
+    result = runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    assert result.ok, result.output
+    assert len(result.output.encode("utf-8")) <= 128
+    assert "math.DG/0211159v1" in result.output
