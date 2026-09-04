@@ -17,6 +17,7 @@ import pytest
 
 from hardy import arxiv
 from hardy.layout import LayoutError
+from hardy.storage import FileLock
 
 FEED = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
@@ -413,8 +414,11 @@ def test_the_throttle_serialises_across_processes(tmp_path: Path):
     client, library, _ = _client(tmp_path, Recorder(_feed()), clock)
     client.search("ricci flow")
     # Taken for the read-wait-reserve sequence and released afterwards, so the
-    # next process is not left waiting on a lock nobody holds.
-    assert not library.lock_path.exists()
+    # next process is not left waiting on a lock nobody holds. The file stays
+    # -- releasing is closing the descriptor, not unlinking -- so what proves
+    # it is that the lock can be taken again.
+    with FileLock(library.lock_path, timeout=0.2) as lock:
+        assert lock.held
 
 
 def test_a_stuck_lock_slows_the_throttle_rather_than_stopping_a_fetch(tmp_path: Path):

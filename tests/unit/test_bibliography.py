@@ -20,7 +20,9 @@ from hardy.bibliography import (
     base_key,
     cite_key,
     hand_written_bibliography,
+    is_generated,
 )
+from hardy.storage import FileLock
 
 
 def _record(
@@ -261,22 +263,37 @@ def test_the_generated_file_may_not_be_written_by_hand():
 
 def test_a_citation_needs_the_lock_it_cannot_get(tmp_path: Path):
     """A lost citation is silent, so the refusal must not be."""
-    held = tmp_path / ".local" / "bibliography.lock"
-    held.parent.mkdir(parents=True)
-    held.write_text("999999", encoding="utf-8")
     bibliography = Bibliography(tmp_path, lock_timeout=0.2)
-    with pytest.raises(BibliographyError, match="another session"):
+    with (
+        FileLock(tmp_path / ".local" / "bibliography.lock"),
+        pytest.raises(BibliographyError, match="another session"),
+    ):
         bibliography.cite(_record(), now=None)
+
+
+def test_a_lock_file_nobody_holds_does_not_refuse_a_citation(tmp_path: Path):
+    """The file outlives its holder; the lock does not.
+
+    A session killed mid-citation leaves the file behind, and under the
+    earlier design the next citation had to wait out a staleness window
+    before it could take it -- or, with a clock stepped backwards, never.
+    """
+    lock = tmp_path / ".local" / "bibliography.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("999999", encoding="utf-8")
+    assert Bibliography(tmp_path, lock_timeout=0.2).cite(_record())[1]
 
 
 def test_the_lock_is_released_when_a_citation_finishes(tmp_path: Path):
     bibliography = Bibliography(tmp_path)
     bibliography.cite(_record())
-    # In `.local/`, which is machine-local and ignored -- a lock left by a
-    # killed process must not be committable.
-    assert not (tmp_path / ".local" / "bibliography.lock").exists()
-    assert not (tmp_path / "bibliography.lock").exists()
+    # Released by the kernel, not by deleting the file: what proves it is that
+    # the next citation gets the lock, not that the path is gone.
     assert bibliography.cite(_record(arxiv_id="2401.00002v1"))[1]
+    # And it lives in `.local/`, which is machine-local and ignored, so the
+    # file it does leave behind is never committed.
+    assert (tmp_path / ".local" / "bibliography.lock").exists()
+    assert not (tmp_path / "bibliography.lock").exists()
 
 
 def test_a_symlinked_store_is_refused_rather_than_followed(tmp_path: Path):
@@ -438,3 +455,45 @@ def test_an_accented_name_keeps_its_letters(tmp_path: Path):
     assert "Erd\\H{o}s" in generated
     assert 'G\\"{o}del' in generated
     assert "H\\o{}rmander" in generated
+
+
+def test_a_writeup_may_quote_the_commands_it_may_not_use():
+    r"""A section explaining why references are generated has to be writable.
+
+    TeX sets `\verb` and a `verbatim` block as literal text and creates no
+    entry from either, so refusing the document over one is refusing text no
+    compiler runs -- and the one document most likely to contain it is a
+    writeup describing this very rule.
+    """
+    quoted = (
+        "Hardy generates the reference list, so a \\verb|\\bibitem{x}| written\n"
+        "by hand is refused.\n"
+        "\\begin{verbatim}\n\\begin{thebibliography}{9}\n\\bibitem{x} No.\n"
+        "\\end{thebibliography}\n\\end{verbatim}\n"
+        "\\begin{lstlisting}\n\\bibliography{refs}\n\\end{lstlisting}\n"
+    )
+    assert hand_written_bibliography("writeup.tex", quoted) == ""
+
+
+def test_quoting_one_bibitem_does_not_excuse_writing_another():
+    r"""Only what is inside the verbatim is literal text."""
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "A \\verb|\\bibitem{quoted}| is text.\n\\bibitem{executed} But this is not.\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal
+
+
+def test_only_the_generated_file_at_the_tree_root_is_reserved():
+    """`references.tex` is a name a workspace is entitled to use elsewhere.
+
+    Reserved on the basename, an ordinary `sections/references.tex` was
+    Hardy's file: refused at the check, refused at the save, and undeletable.
+    """
+    assert is_generated("references.tex")
+    assert not is_generated("sections/references.tex")
+    assert not is_generated("appendix/references.tex")
+    reserved = hand_written_bibliography("references.tex", "\\section{Notes}\n")
+    assert "written by Hardy" in reserved
+    assert hand_written_bibliography("sections/references.tex", "\\section{Notes}\n") == ""

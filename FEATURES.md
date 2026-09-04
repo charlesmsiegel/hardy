@@ -933,8 +933,13 @@ Priority labels are sequencing hints:
   say something useful; so is building a control sequence by name (`\csname`,
   `\expandafter`, `\@namedef`), since a command assembled at run time is a
   command no reader of the source can see and chasing spellings through a macro
-  language is not a rule anyone can state. The generated `tex/references.tex`
-  may be neither written nor deleted by hand. What this does *not* claim is
+  language is not a rule anyone can state. The lexical half reads what TeX
+  would execute, so a command quoted inside `\verb` or a `verbatim` block is
+  text rather than a reference — a writeup explaining why its references are
+  generated has every reason to quote the commands it may not use. The
+  generated `tex/references.tex` may be neither written nor deleted by hand;
+  that is the one file at the root of the writeup tree, so an ordinary
+  `sections/references.tex` remains the workspace's own. What this does *not* claim is
   protection from a model that means to forge a citation: Hardy runs TeX
   unsandboxed by design, and a determined one has easier routes than these.
   What it does is make an invented reference impossible to arrive at by

@@ -325,3 +325,32 @@ def test_deleting_a_fragment_is_gated_like_a_save(session) -> None:
     assert "refs.tex" in result.output
     # Refused before anything was removed, so nothing has to be put back.
     assert (tex / "spare.tex").is_file()
+
+
+def test_a_writeup_file_merely_named_references_is_the_workspaces_own(session) -> None:
+    """Only the generated file at the tree root is Hardy's.
+
+    Reserved on the basename, `sections/references.tex` was refused at the
+    check, refused at the save, and undeletable -- a name the workspace is
+    entitled to use, taken by accident.
+    """
+    root = session._tool(
+        "save_latex",
+        {
+            "source": "\\documentclass{article}\n\\begin{document}\nText.\n"
+            "\\end{document}\n"
+        },
+    )
+    assert root.ok, root.output
+    body = "\\section{Further reading}\nNothing cited here yet.\n"
+    saved = session._tool("save_latex", {"path": "sections/references.tex", "source": body})
+    assert saved.ok, saved.output
+    assert (session.workspace / "tex" / "sections" / "references.tex").is_file()
+    removed = session._tool("delete_file", {"path": "sections/references.tex"})
+    assert removed.ok, removed.output
+
+
+def test_the_generated_file_is_still_reserved_at_the_tree_root(session) -> None:
+    refused = session._tool("save_latex", {"path": "references.tex", "source": "x\n"})
+    assert not refused.ok
+    assert "written by Hardy" in refused.output

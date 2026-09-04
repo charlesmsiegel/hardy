@@ -254,18 +254,17 @@ class Bibliography:
         self.tex = problem / "tex"
         # How long a citation waits for another session to finish one. Long
         # enough that an ordinary write is never refused, short enough that a
-        # session is not left hanging on a lock nobody will release; a lock
-        # older than `FileLock`'s staleness window is taken rather than waited
-        # on, so this only bounds the wait for a process that is genuinely
-        # alive and busy.
+        # session is not left hanging. A lock nobody holds is not waited on
+        # at all -- the operating system releases it when its holder dies --
+        # so this only bounds the wait for a process that is genuinely alive
+        # and busy.
         self.lock_timeout = lock_timeout
 
     def _lock_target(self) -> Path:
         """The lock's path, with the problem directory proven first.
 
-        `FileLock` creates its parent and, on a stale lock, deletes the file
-        it finds -- neither of which may happen through a symlinked problem
-        directory.
+        `FileLock` creates its parent, which may not happen through a
+        symlinked problem directory.
         """
         return WriteGuard(self.problem / LOCAL_DIR, create=True).path(LOCK)
 
@@ -523,6 +522,18 @@ LETTERS = {
 #: `\textback` followed by the word `slash`.
 ATOM = re.compile(r"\\[a-zA-Z]+|\\.|.", re.DOTALL)
 
+#: What TeX sets as literal text rather than executing. A writeup is allowed
+#: to talk *about* LaTeX -- `\verb|\bibitem{x}|` in a section explaining why
+#: references are generated is exactly the document this rule most wants to
+#: be readable -- and a lexical check that refused it would be refusing text
+#: no compiler ever runs.
+VERBATIM = re.compile(
+    r"\\verb\*?(?P<mark>[^*\sa-zA-Z])(?:(?!(?P=mark)).)*(?P=mark)"
+    r"|\\begin\s*\{(?P<env>verbatim\*?|Verbatim|alltt|lstlisting|minted)\}"
+    r".*?\\end\s*\{(?P=env)\}",
+    re.DOTALL,
+)
+
 #: Every character that means something to TeX, and what it becomes. Applied
 #: in ONE pass: replacing the backslash first and the braces afterwards turns
 #: `\textbackslash{}` into `\textbackslash\{\}`, which is a title that reads
@@ -548,22 +559,33 @@ def hand_written_bibliography(path: str, source: str) -> str:
     what a reader ends up looking at, not about what `bibliography.json`
     holds. `cite_paper` cannot be talked into an invented reference -- it
     takes an identifier and nothing else -- but `save_latex` takes arbitrary
-    LaTeX, so a `ibitem{invented2020}` written straight into `writeup.tex`
+    LaTeX, so a `\bibitem{invented2020}` written straight into `writeup.tex`
     resolves, compiles, and is published with nothing behind it. The
     generated file is reserved for the same reason: overwriting it with
     invented entries would defeat the store without touching it.
 
-    Checked against the source with its comments dropped: a `ibitem` inside
-    a `%` comment is not a reference, and refusing a document over one would
-    be refusing text TeX never reads.
+    Checked against what TeX would actually execute: a `\bibitem` inside a
+    `%` comment or inside `\verb` is not a reference, and refusing a document
+    over one would be refusing text no compiler runs -- a writeup explaining
+    why its references are generated has every reason to quote the commands
+    it may not use.
+
+    Verbatim is stripped before comments, because `%` is an ordinary
+    character inside it. That order is wrong for the reverse case -- a
+    `\begin{verbatim}` appearing only inside a comment opens a region here
+    that TeX would never open -- and it is the right way round to be wrong.
+    This check is a courtesy that can say something useful about the ordinary
+    mistake before a compile runs; what enforces the rule is the `\bibcite`
+    record the compiler itself writes, which counts what was executed however
+    it was spelled.
     """
-    if PurePosixPath(str(path).replace("\\", "/")).name == GENERATED:
+    if is_generated(path):
         return (
             f"{GENERATED} is written by Hardy from bibliography.json and is regenerated "
             "whole on every citation, so an edit here would be undone by the next one. "
             "Use cite_paper to add a reference."
         )
-    executed = uncommented(source)
+    executed = uncommented(VERBATIM.sub(" ", source))
     constructed = CONSTRUCTED.search(executed)
     if constructed:
         return (
@@ -583,6 +605,18 @@ def hand_written_bibliography(path: str, source: str) -> str:
             "Hardy generates -- instead."
         )
     return ""
+
+
+def is_generated(path: str) -> bool:
+    """Whether `path` names Hardy's own reference list.
+
+    The whole tree-relative path, not its last component. On the basename an
+    ordinary `sections/references.tex` was Hardy's file: refused at the check,
+    refused at the save, and undeletable -- a name a workspace is entitled to
+    use, reserved by accident. There is exactly one generated file, and it
+    sits at the root of the writeup tree.
+    """
+    return PurePosixPath(str(path).replace("\\", "/")).as_posix() == GENERATED
 
 
 def _escaped(text: str) -> str:

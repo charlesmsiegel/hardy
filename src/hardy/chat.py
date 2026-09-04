@@ -19,6 +19,7 @@ from . import audit, completion, ingest, process
 from . import summary as summary_module
 from .bibliography import GENERATED as GENERATED_BIBLIOGRAPHY
 from .bibliography import hand_written_bibliography
+from .bibliography import is_generated as is_generated_bibliography
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
@@ -3649,7 +3650,7 @@ class MathematicsSession:
 
         The candidate AND the tree it is compiled with. Checking the candidate
         alone was half a rule: `LatexTools.check` compiles the whole saved
-        `tex/` tree, so a `ibitem{invented}` in a fragment saved before this
+        `tex/` tree, so a `\bibitem{invented}` in a fragment saved before this
         gate existed, edited outside Hardy, or brought in from somewhere else
         would be pulled into a clean root and published with it -- the
         refusal has to cover every file the compiler will read, not only the
@@ -3663,7 +3664,7 @@ class MathematicsSession:
         if refusal:
             return refusal
         for path in self._tex_paths():
-            if path == relative or PurePosixPath(path).name == GENERATED_BIBLIOGRAPHY:
+            if path == relative or is_generated_bibliography(path):
                 continue
             try:
                 text = read_text(self.tex_root, path, errors="replace")
@@ -3862,7 +3863,7 @@ class MathematicsSession:
         if not target.is_file():
             return ToolResult(False, f"no such workspace file: {path}")
         if kind == "tex":
-            if PurePosixPath(str(path).replace("\\", "/")).name == GENERATED_BIBLIOGRAPHY:
+            if is_generated_bibliography(path):
                 # Hardy's file, not the workspace's. Deleting it leaves every
                 # `\input{references}` in the writeup unresolvable until the
                 # next citation puts it back, which is a broken document
