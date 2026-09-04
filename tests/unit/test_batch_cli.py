@@ -59,3 +59,45 @@ def test_batch_still_runs_a_named_theorem(tmp_path, monkeypatch, capsys) -> None
     assert cli._batch(args, _config(config_module, tmp_path), parser) == 0
     assert reached == ['theorem HardyTarget : True']
     assert json.loads(capsys.readouterr().out)['axioms'] == {'status': 'clean'}
+
+
+def test_a_tactic_with_a_comma_in_it_is_one_tactic() -> None:
+    """`simp [Nat.add_comm, Nat.add_left_comm]` is a single Lean tactic.
+
+    Splitting every comma turned it into `simp [Nat.add_comm` and
+    `Nat.add_left_comm]` -- two tactics Lean cannot parse. The ladder then
+    recorded two spurious failures and spent the model turn it existed to save,
+    on a request whose tactic would have closed the theorem.
+    """
+    cli = importlib.import_module('hardy.cli')
+    parser = cli.build_parser()
+
+    args = parser.parse_args(
+        ['batch', 'request.json', '--closers', 'simp [Nat.add_comm, Nat.add_left_comm]']
+    )
+
+    assert cli._closer_ladder(args.closers) == ('simp [Nat.add_comm, Nat.add_left_comm]',)
+
+
+def test_the_flag_repeats_for_several_tactics_and_keeps_their_order() -> None:
+    cli = importlib.import_module('hardy.cli')
+    parser = cli.build_parser()
+
+    args = parser.parse_args(['batch', 'request.json', '--closers', 'omega', '--closers', 'aesop'])
+
+    assert cli._closer_ladder(args.closers) == ('omega', 'aesop')
+
+
+def test_a_bare_flag_is_still_the_standard_ladder_and_no_flag_is_still_off() -> None:
+    cli = importlib.import_module('hardy.cli')
+    closers = importlib.import_module('hardy.closers')
+    parser = cli.build_parser()
+
+    bare = parser.parse_args(['batch', 'request.json', '--closers'])
+    off = parser.parse_args(['batch', 'request.json'])
+
+    assert cli._closer_ladder(bare.closers) == closers.CLOSERS
+    assert cli._closer_ladder(off.closers) is None
+    # And the sentinel is never mistaken for a tactic somebody asked for.
+    mixed = parser.parse_args(['batch', 'request.json', '--closers', '--closers', 'omega'])
+    assert cli._closer_ladder(mixed.closers) == (*closers.CLOSERS, 'omega')

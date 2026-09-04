@@ -21,6 +21,7 @@ performs every Lean check and every write.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import uuid
@@ -176,7 +177,18 @@ def redacted(url: str) -> str:
     host = parsed.hostname or ""
     if parsed.port is not None:
         host = f"{host}:{parsed.port}"
-    kept = urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+    kept = urlunsplit((parsed.scheme, host, "", "", ""))
+    # The path goes the same way the userinfo and the query do. A gateway can
+    # put its key in it -- `https://gateway.example/token/<secret>/v1` -- and
+    # keeping `/v1` while dropping the rest would mean deciding which segments
+    # are secret, which is the guessing this avoids everywhere else. What the
+    # path is worth keeping *for* is telling two endpoints on one host apart,
+    # and a digest of it does that without republishing any of it: the same
+    # path always fingerprints the same way, and no fingerprint can be read
+    # back. Trailing slashes and the empty path are nothing to fingerprint.
+    path = parsed.path.rstrip("/")
+    if path:
+        kept = f"{kept} (path #{hashlib.sha256(path.encode('utf-8')).hexdigest()[:12]})"
     return f"{kept} (query redacted)" if parsed.query else kept
 
 

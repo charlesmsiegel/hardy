@@ -372,19 +372,41 @@ def test_a_gateway_credential_never_reaches_the_record() -> None:
     batch trajectory, and both are versioned files. A gateway configured with
     its key in the userinfo or the query would have committed that credential
     beside the experiment."""
-    assert redacted("https://tok3n@gateway.example/v1") == "https://gateway.example/v1"
+    assert redacted("https://tok3n@gateway.example/v1").startswith("https://gateway.example (path #")
     with_port = redacted("https://user:tok3n@gateway.example:8443/v1")
     assert "tok3n" not in with_port
-    assert with_port == "https://gateway.example:8443/v1"
+    assert with_port.startswith("https://gateway.example:8443 (path #")
     # The query goes whole rather than by the names Hardy happens to know: a
     # gateway may call its key anything, and a redactor that has to recognise
     # the name fails silently on the parameter nobody thought of.
-    assert redacted("https://gateway.example/v1?api_key=tok3n") == (
-        "https://gateway.example/v1 (query redacted)"
-    )
+    with_query = redacted("https://gateway.example/v1?api_key=tok3n")
+    assert "tok3n" not in with_query
+    assert with_query.endswith("(query redacted)")
     # And which endpoint answered survives, because that is the fact the field
     # exists to record.
     assert redacted("https://api.anthropic.com") == "https://api.anthropic.com"
+    assert redacted("https://api.anthropic.com/") == "https://api.anthropic.com"
+
+
+def test_a_credential_in_the_path_is_fingerprinted_rather_than_kept() -> None:
+    """A gateway can put its key in the path as easily as in the userinfo.
+
+    Keeping `/v1` while dropping the rest would mean deciding which segments
+    are secret, which is exactly the guessing the userinfo and query rules
+    avoid. What the path is worth keeping for is telling two endpoints on one
+    host apart, and a digest does that without republishing any of it.
+    """
+    secret = redacted("https://gateway.example/token/s3cr3t/v1")
+
+    assert "s3cr3t" not in secret
+    assert secret.startswith("https://gateway.example (path #")
+    # Same path, same fingerprint: the field still distinguishes conditions.
+    assert secret == redacted("https://gateway.example/token/s3cr3t/v1")
+    assert secret != redacted("https://gateway.example/token/other/v1")
+    # Even an innocuous path goes, because nothing here can tell the two apart.
+    assert redacted("https://api.anthropic.com/v1").startswith(
+        "https://api.anthropic.com (path #"
+    )
 
 
 def test_the_recorded_endpoint_is_the_redacted_one(monkeypatch) -> None:

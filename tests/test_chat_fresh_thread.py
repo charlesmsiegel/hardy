@@ -171,3 +171,47 @@ def test_the_flag_is_per_run_and_top_level(tmp_path, monkeypatch):
     assert parser.parse_args(["--fresh-thread"]).fresh_thread is True
     assert parser.parse_args(["--fresh-thread", "chat"]).fresh_thread is True
     assert not any("fresh" in key for key in configuration.SETTINGS)
+
+
+class ThreadlessRuntime(FakeChatRuntime):
+    """A backend with no provider thread to resume, as the `api` one is.
+
+    `FakeChatRuntime.stream` stamps a thread id on its way out, the way the
+    SDK backend does; this one clears it, because `ApiRuntime.session_id` is
+    always None -- the conversation is the loop's own message list and there
+    is nothing to resume.
+    """
+
+    def stream(self, text: str):
+        yield from super().stream(text)
+        self.session_id = None
+
+
+def test_a_backend_with_no_thread_drops_the_one_it_cannot_account_for(tmp_path: Path):
+    """Claude, then the API backend, then Claude again.
+
+    The thread is bound to the transcript by a *prefix* check, so a thread
+    recorded before the API turns still validated against the transcript they
+    were appended to. Switching back resumed a Claude conversation with no
+    memory of anything that happened in between, and nothing in the record
+    marked the join.
+    """
+    session(tmp_path).send("Remember this question.")
+    assert local(tmp_path)["provider_session"] == "thread-1"
+
+    session(tmp_path, runtime_class=ThreadlessRuntime).send("And this one.")
+
+    assert "provider_session" not in local(tmp_path)
+    # The boundary is in the record, where a reader can see it: turns above it
+    # were produced on a conversation the turns below have no memory of.
+    assert [item["reason"] for item in recorded(tmp_path)] == ["no thread on this backend"]
+    # And a later Claude session starts fresh rather than resuming the stale one.
+    assert session(tmp_path).runtime.context["session_id"] is None
+
+
+def test_a_backend_with_no_thread_and_nothing_to_drop_says_nothing(tmp_path: Path):
+    """A workspace that never had a thread has no boundary to mark, and a
+    record that gained an event on every open would be noise."""
+    session(tmp_path, runtime_class=ThreadlessRuntime).send("First question.")
+
+    assert recorded(tmp_path) == []

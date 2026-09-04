@@ -7095,6 +7095,21 @@ class MathematicsSession:
         """
         thread = getattr(self.runtime, "session_id", None)
         if not thread:
+            # A backend with no thread to remember has just appended a turn the
+            # stored one cannot account for. Dropped rather than left: the
+            # binding is a *prefix* check, so a Claude thread recorded before
+            # these turns still validates against the transcript they were
+            # added to -- and switching back to Claude would then resume a
+            # conversation with no memory of anything that happened here, with
+            # nothing in the record marking the join.
+            if self.local.get(THREAD_KEY):
+                for key in (THREAD_KEY, "transcript_length", "transcript_digest"):
+                    self.local.pop(key, None)
+                self._save_local()
+                # Cleared first and recorded second, for the reason
+                # `_discard_thread` gives: interrupted between the two, this
+                # way loses only the event.
+                self._record({"type": "thread", "reason": "no thread on this backend"})
             return
         identity = self._transcript_identity()
         if self.local.get(THREAD_KEY) == thread and self.local.get("transcript_length") == identity["transcript_length"]:
