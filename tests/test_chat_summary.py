@@ -73,3 +73,24 @@ def test_a_real_session_exports_a_page_that_states_its_own_verdicts(tmp_path: Pa
     # And the conversation, under the heading that says it proves nothing.
     assert "Save something." in page
     assert "None of it is evidence" in page
+
+
+def test_a_verdict_the_session_has_expired_is_handed_out_as_expired(tmp_path: Path):
+    """`/status --full` and `/export` must not read `state["audit"]` raw: the
+    session already expires a verdict whose toolchain, source or dependencies
+    moved, and a page that ignored that would call a theorem kernel-verified
+    beside its own "no longer established"."""
+    chat = built(tmp_path)
+    assert "hardyBasic: kernel-verified" in chat.summary().text()
+
+    # What `_still_current` is for: the build signature no longer matches.
+    for record in chat.state["audit"].values():
+        record["signature"] = "moved"
+    chat._save_state()
+
+    text = chat.summary().text()
+    assert "kernel-verified" not in text
+    assert "hardyBasic: no longer established" in text
+    assert all(
+        record.get("stale") for record in chat.export_material()["audit"].values()
+    )

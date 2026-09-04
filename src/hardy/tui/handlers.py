@@ -514,17 +514,31 @@ async def handle_prove(ui: Ui, argument: str, state: State) -> State:
         ui.write("A nonempty theorem statement is required.", style="error")
         return state
     terminal = staged.UiTerminal(ui.from_thread)
+    # Filled in on the worker the moment the workflow exists. Cancelling the
+    # `await` below does not reach into the worker, so the handle has to come
+    # back out: without it the only stop was `process.interrupt_children()`,
+    # which reaches Lean and LaTeX and not the provider call -- so an Esc left
+    # the staged run billing and still writing itself.
+    running: dict[str, Any] = {}
     try:
         # On a thread because the workflow is synchronous end to end -- it runs
         # Lean, LaTeX and several provider threads, and asks the user questions
         # in between. Run inline it would block the loop that has to deliver
         # those answers, which is the deadlock the `Ui` port exists to rule out.
-        manifest = await asyncio.to_thread(staged.run, state.config, claim, terminal)
+        manifest = await asyncio.to_thread(
+            staged.run, state.config, claim, terminal, ready=lambda w: running.update(workflow=w)
+        )
     except asyncio.CancelledError:
-        # Cancelling the await does not stop the worker; the subprocesses it
-        # owns are what a Ctrl+C would otherwise leave running. Same treatment
-        # `/doctor` and `/import` give their own, and the same limit: a call
-        # already inside Lean is left to finish rather than torn out halfway.
+        # The workflow first: it stops the provider call in flight, refuses
+        # every queued tool call, and lets the run finalize as a cancellation
+        # rather than as a runtime failure. Then the children, for the
+        # subprocesses a Ctrl+C would otherwise leave running -- the same
+        # treatment `/doctor` and `/import` give their own, and the same limit:
+        # a call already inside Lean is left to finish rather than torn out.
+        workflow = running.get("workflow")
+        stop = getattr(workflow, "cancel", None)
+        if stop is not None:
+            stop()
         process.interrupt_children()
         raise
     except Exception as error:  # noqa: BLE001 - a failed run is not a lost session

@@ -75,18 +75,34 @@ def problem_slug(claim: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", claim.lower()).strip("-")[:48] or "theorem"
 
 
-def run(config: Any, claim: str, terminal: Any, *, backend: str = "claude") -> Any:
+def run(
+    config: Any,
+    claim: str,
+    terminal: Any,
+    *,
+    backend: str = "claude",
+    ready: Any = None,
+) -> Any:
     """One staged run, on this session's live configuration. Blocking, by design.
 
     `config` is `State.config` and not what the process launched with: `/model`
     moves the former and not the latter, and a `/prove` that ran on the model
     the user has already moved off would be the whole reason this exists,
     inverted.
+
+    `ready` is handed the workflow the moment it exists, before anything is
+    run. That is how Esc reaches it: this whole function runs on a worker, and
+    cancelling the caller's `await` cannot raise inside a worker -- so the
+    caller needs the object itself to call `cancel()` on. Published before the
+    first stage rather than returned at the end, because the run is exactly
+    what there is to cancel.
     """
     from ..cli import build_prove_workflow
     from ..workflow import ProveRequest
 
     workflow = build_prove_workflow(config, config.config_path, backend=backend)
+    if ready is not None:
+        ready(workflow)
     return workflow.run(
         ProveRequest(
             text=claim, model=str(config.model), problem_slug=problem_slug(claim)

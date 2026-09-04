@@ -102,6 +102,13 @@ typed acknowledgement that generated code runs without isolation. A staged run
 writes its own run directory and leaves your workspace and your conversation
 untouched.
 
+Esc reaches the run itself, not only the subprocesses under it: the provider
+call in flight is stopped, no further stage begins, and the run finalizes as a
+cancellation rather than as a runtime failure — so an abandoned `/prove` is not
+billed for stages nobody waited for, and its manifest says why it stopped. What
+was already inside Lean is left to finish rather than torn out halfway, as
+everywhere else.
+
 That faithfulness check is the one gate a green kernel cannot stand in for:
 Lean's acceptance says a statement was proved and nothing about whether it is
 the claim you made. The reader is asked from a conversation of its own, with no
@@ -610,6 +617,13 @@ sent. `$1`…`$n` are the words typed after the command, `$@` is all of them, an
 `$$` is a literal dollar so a body can carry LaTeX. Quoting groups one argument;
 backslashes survive, because a mathematician's argument is full of them.
 
+Nothing is read through a link, and nothing that is not an ordinary file is
+read at all. A template's body is *sent*, so a checkout shipping
+`.hardy/prompts/notes.md -> ~/.ssh/id_rsa` would otherwise turn `/notes` into a
+command that mails a host file to the provider; a link to a device would hang
+startup instead. Both are refused with a line saying so, and a file too large
+to be prose is refused as well.
+
 Two rules make a shared record readable. A placeholder with nothing to fill it
 is a refusal rather than an empty string — a prompt that quietly lost half its
 sentence still looks entirely ordinary. And **the expansion is what is recorded**:
@@ -651,6 +665,17 @@ different things and are rendered as three different things, with the axiom, its
 source, the stated reason and the approval date printed beside the theorem
 resting on it. The conversation appears under a heading saying plainly that
 nothing in it is evidence for anything above it.
+
+Two finer distinctions the page keeps, because getting either wrong would
+overstate the work. An axiom is attributed to the declarations that actually
+use it, read from each one's own axiom report — a stored verdict grades a
+*module*, and its approved-axiom list is the union over everything the module
+declares, so attributing that union to each theorem would say one resting on
+nothing but `propext` rests on an assumption because its neighbour does. And a
+verdict expires: if the toolchain, the source, or a dependency has moved since
+the audit, the theorem reads "audit no longer established" rather than
+"kernel-verified", the same way `/status` already reports it. A proof that is
+both unfinished *and* resting on an approved axiom names both.
 
 Credentials matching known token shapes, and values under credential-shaped key
 names, are removed before the file is written. That is a filter and not a proof,

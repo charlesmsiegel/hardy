@@ -147,6 +147,8 @@ def _scripted_controller(
     limits=None,
     monotonic=None,
     interrupt_stage=None,
+    cancel_stage=None,
+    cancel_quietly_at=None,
     reviews=None,
 ):
     config_module = importlib.import_module('hardy.config')
@@ -165,8 +167,25 @@ def _scripted_controller(
     reviews = list(reviews or [])
     state = SimpleNamespace(
         starts=[], isolation=[], deadlines=[], handles=[], prompts=[],
-        verifier_calls=0, cancelled=None
+        verifier_calls=0, cancelled=None, controller=None
     )
+
+    def _cancel_from_elsewhere(stage):
+        """What `/prove`'s Esc does: `cancel()` from another thread, and the
+        stage in flight then fails because its client was interrupted.
+
+        Deliberately not `KeyboardInterrupt`: that is the Ctrl+C path, which
+        only exists inside the workflow's own thread. The whole point of
+        `ProveWorkflow.cancel` is that the terminal cannot raise there.
+        """
+        if cancel_quietly_at == stage:
+            # Cancelled while a stage was between calls: it answers normally,
+            # and nothing after it may begin.
+            state.controller.cancel()
+            return
+        if cancel_stage == stage:
+            state.controller.cancel()
+            raise RuntimeError('the provider client was interrupted')
 
     class Runtime:
         backend = 'fixture-backend'
@@ -184,6 +203,7 @@ def _scripted_controller(
 
         def run_structured(self, thread, stage, prompt, output_type):
             state.prompts.append((stage, prompt))
+            _cancel_from_elsewhere(stage)
             if stage == interrupt_stage:
                 raise KeyboardInterrupt
             if stage == 'faithfulness':
@@ -202,6 +222,7 @@ def _scripted_controller(
 
         def run_proof(self, thread, prompt):
             state.prompts.append(('proof', prompt))
+            _cancel_from_elsewhere('proof')
             if interrupt_stage == 'proof':
                 raise KeyboardInterrupt
             return codex_runtime.ProofSubmission(
@@ -284,6 +305,7 @@ def _scripted_controller(
         monotonic=monotonic or (lambda: 0.0),
         uuid_factory=lambda: RUN_ID,
     )
+    state.controller = controller
     return workflow, domain, controller, state
 
 
@@ -996,3 +1018,35 @@ def test_a_run_that_opened_no_provider_thread_records_no_spend(tmp_path) -> None
 
     assert manifest.terminal_reason is domain.TerminalReason.SETUP_FAILURE
     assert manifest.usage == {}
+
+
+def test_cancel_from_another_thread_stops_the_run_and_grades_it_as_cancelled(tmp_path) -> None:
+    """`/prove` runs the whole workflow on a worker, so its Esc cannot raise
+    `KeyboardInterrupt` inside it. Without a handle from outside, the provider
+    call went on billing and the run went on writing itself; and the failure
+    the interrupted stage raises must not be graded as a runtime failure, which
+    would put the wrong terminal reason in every abandoned run's manifest."""
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path, cancel_stage='proof'
+    )
+    terminal = Terminal()
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), terminal
+    )
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    # The proving thread, not the formalizing one: cancelling the wrong handle
+    # leaves the live one appending after the manifest is hashed.
+    assert state.cancelled is state.handles[-1]
+
+
+def test_a_cancelled_run_starts_no_further_stage(tmp_path) -> None:
+    """Cancelled between calls, so nothing raises on its own: the stage loops
+    have to notice, or the run spends its whole budget after the press."""
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path, cancel_quietly_at='formalization'
+    )
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert 'proof' not in [stage for stage, _ in state.prompts]

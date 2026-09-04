@@ -18,11 +18,15 @@ class Recorder:
         self.requests: list = []
         self.terminals: list = []
         self._phase = phase
+        self.cancelled = 0
 
     def run(self, request, terminal):
         self.requests.append(request)
         self.terminals.append(terminal)
         return SimpleNamespace(phase=SimpleNamespace(value=self._phase))
+
+    def cancel(self):
+        self.cancelled += 1
 
 
 @pytest.fixture
@@ -30,8 +34,13 @@ def staged(monkeypatch):
     from hardy.tui import prove
 
     recorder = Recorder()
-    monkeypatch.setattr(prove, "run", lambda config, claim, terminal, backend="claude":
-                        recorder.run(SimpleNamespace(text=claim, model=config.model), terminal))
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        if ready is not None:
+            ready(recorder)
+        return recorder.run(SimpleNamespace(text=claim, model=config.model), terminal)
+
+    monkeypatch.setattr(prove, "run", run)
     return recorder
 
 
@@ -119,3 +128,47 @@ def test_a_refused_acknowledgement_is_not_an_acknowledgement(ui):
 
 def test_an_escaped_acknowledgement_prompt_refuses(ui):
     assert UiTerminal(ui.from_thread).acknowledge_unsafe_execution() is False
+
+
+async def test_cancelling_prove_stops_the_staged_workflow_itself(ui, settings, monkeypatch):
+    """Cancelling the await cannot raise inside the worker, so the handle has to
+    come back out: otherwise the provider call goes on billing for a run nobody
+    is waiting for, and only Lean and LaTeX ever hear about the Esc."""
+    import asyncio
+
+    from hardy.tui import prove
+
+    recorder = Recorder()
+    started = asyncio.Event()
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        ready(recorder)
+        started.set()
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(prove, "run", run)
+    interrupted: list[int] = []
+    monkeypatch.setattr(
+        "hardy.tui.handlers.process.interrupt_children", lambda: interrupted.append(1)
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+    assert recorder.cancelled == 1
+    assert interrupted == [1]                 # and the children, as before
+
+
+async def test_a_workflow_too_old_to_be_cancelled_does_not_break_the_press(
+    ui, settings, monkeypatch
+):
+    import asyncio
+
+    from hardy.tui import prove
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        ready(SimpleNamespace())              # no `cancel`
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(prove, "run", run)
+    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
+    with pytest.raises(asyncio.CancelledError):
+        await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))

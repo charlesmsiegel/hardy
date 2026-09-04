@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -139,6 +140,18 @@ class ProveWorkflow:
         # run cost. Per run: `run` sets it as soon as a runtime exists and
         # clears it on the way out.
         self._runtime_in_flight: Any | None = None
+        # And the thread inside it, because `cancel` needs both. Published on
+        # the workflow rather than kept as `_run`'s local so that a caller on
+        # ANOTHER thread can reach it: `/prove` runs this whole workflow on a
+        # worker, and cancelling that worker's `await` cannot raise inside it.
+        # Without a handle from outside, the only stop was `KeyboardInterrupt`
+        # raised in the workflow's own thread -- which the terminal has no way
+        # to produce -- so a cancelled `/prove` left the provider call billing
+        # and the run still writing itself.
+        self._thread_in_flight: Any | None = None
+        # Set by `cancel`, read at every stage boundary. An Event because the
+        # setter and the reader are different threads by construction.
+        self._cancelled = threading.Event()
 
     def _usage(self) -> dict[str, Any]:
         """What the provider said this run cost, or `{}` when no thread was opened.
@@ -153,10 +166,57 @@ class ProveWorkflow:
 
     def run(self, request: ProveRequest, terminal: Terminal) -> RunManifest:
         self._runtime_in_flight = None
+        self._thread_in_flight = None
+        self._cancelled.clear()
         try:
             return self._run(request, terminal)
         finally:
             self._runtime_in_flight = None
+            self._thread_in_flight = None
+
+    def cancel(self) -> None:
+        """Stop the run from outside its own thread. Safe from any thread.
+
+        `/prove` runs the workflow on a worker so the terminal stays live, and
+        cancelling that worker's `await` does not reach into it: the worker
+        never sees `KeyboardInterrupt`, so the stage loops below would go on
+        spending the budget and the provider would go on billing for a run
+        nobody is waiting for.
+
+        Two things happen, in this order. The runtime is told to stop, which is
+        what reaches the provider call actually in flight -- `ClaudeStagedRuntime.cancel`
+        interrupts the client, refuses every queued tool call, and waits for
+        the one already inside Lean, exactly as the Ctrl+C path does. Then the
+        flag stands, so that whatever the interrupted stage raises, `_run`
+        finalizes the run as a cancellation rather than as a runtime failure,
+        and no further stage begins.
+
+        The boundary is the documented one: no further tool call runs, and one
+        already inside a subprocess is left to finish rather than torn out.
+        """
+        self._cancelled.set()
+        runtime, thread = self._runtime_in_flight, self._thread_in_flight
+        if runtime is not None and thread is not None:
+            stop = getattr(runtime, "cancel", None)
+            if stop is not None:
+                stop(thread)
+
+    def _track(self, thread: Any) -> Any:
+        """Publish the thread `cancel` should reach, and hand it back."""
+        self._thread_in_flight = thread
+        return thread
+
+    def _refuse_if_cancelled(self) -> None:
+        """Raise at a stage boundary once `cancel` has been called.
+
+        `KeyboardInterrupt` deliberately: the run's cancellation path is
+        already written for it, tested, and does the right things -- cancel the
+        runtime, finalize with `USER_CANCELLATION`, hash the directory once
+        nothing is still writing. A second path beside it would be a second
+        chance to get that ordering wrong.
+        """
+        if self._cancelled.is_set():
+            raise KeyboardInterrupt
 
     def _run(self, request: ProveRequest, terminal: Terminal) -> RunManifest:
         created_at = self._now()
@@ -241,11 +301,12 @@ class ProveWorkflow:
             # staged runtime never hears about that phase, so its provider thread
             # is still live -- and can still append -- while `_finalize` hashes
             # the run directory.
-            active_thread = formal_thread = runtime.start(
-                model=request.model, run_dir=store.path, claim=None
+            active_thread = formal_thread = self._track(
+                runtime.start(model=request.model, run_dir=store.path, claim=None)
             )
             revision = ""
             for proposal_number in range(self._config.limits.formalization_proposals):
+                self._refuse_if_cancelled()
                 active_elapsed = self._monotonic() - active_started - user_wait
                 if active_elapsed >= self._config.limits.active_seconds:
                     terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
@@ -371,7 +432,7 @@ class ProveWorkflow:
                     # provider thread behind it, and cancelling the wrong one
                     # leaves it appending after the manifest is hashed.
                     nonlocal active_thread
-                    active_thread = thread
+                    active_thread = self._track(thread)
 
                 verdict = review_translation(
                     approved_claim,
@@ -456,13 +517,14 @@ class ProveWorkflow:
                     approved_claim,
                 )
 
-            active_thread = runtime.start(
-                model=request.model, run_dir=store.path, claim=approved_claim
+            active_thread = self._track(
+                runtime.start(model=request.model, run_dir=store.path, claim=approved_claim)
             )
             proof_started = self._monotonic()
             proof_request = proof_prompt(approved_claim)
             last_submission = None
             for attempt in range(self._config.limits.official_checks):
+                self._refuse_if_cancelled()
                 active_elapsed = self._monotonic() - active_started - user_wait
                 proof_elapsed = self._monotonic() - proof_started
                 if (
@@ -570,6 +632,32 @@ class ProveWorkflow:
                 approved_claim,
             )
         except Exception as error:
+            if self._cancelled.is_set():
+                # A stage that was in flight when `cancel` reached the runtime
+                # fails on the way out -- the client was interrupted, so the
+                # structured answer never arrives. That is the cancellation,
+                # not a runtime failure, and grading it as one would put the
+                # wrong terminal reason in the manifest for every `/prove` a
+                # user walked away from.
+                store.append(
+                    "workflow.cancelled",
+                    {"type": type(error).__name__, "message": str(error)},
+                    phase=state.phase,
+                )
+                if runtime is not None and active_thread is not None:
+                    runtime.cancel(active_thread)
+                return self._finalize(
+                    request,
+                    terminal,
+                    store,
+                    state,
+                    created_at,
+                    active_started,
+                    user_wait,
+                    grades,
+                    TerminalReason.USER_CANCELLATION,
+                    approved_claim,
+                )
             store.append(
                 "workflow.error",
                 {"type": type(error).__name__, "message": str(error)},
