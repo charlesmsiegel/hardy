@@ -1152,3 +1152,62 @@ def test_an_approval_without_a_recorded_goal_says_the_page_cannot_tell():
     )
     assert "not recorded" in page
     assert "may not be the one it was given for" in page
+
+
+def test_an_approval_made_with_no_goal_says_that_rather_than_nothing():
+    """Three states, not two.
+
+    An absent key means the record predates the field; an empty one means the
+    user was asked with no goal set. Collapsing them made a genuine "no goal"
+    approval read as an unrecorded one, and the page says different things
+    about those for good reason.
+    """
+    page = build(
+        goal="Classify the Sylow subgroups",
+        assumptions=[
+            {
+                "formal_name": "early",
+                "lean_statement": "True",
+                "informal_statement": "approved before a goal was set",
+                "source": "s",
+                "reason": "r",
+                "latex_name": "early",
+                "status": "user-approved",
+                "goal_at_approval": "",
+            }
+        ],
+    )
+    assert "no goal was set when this was approved" in page
+    assert "predates the field" not in page
+
+
+def test_a_clipped_refusal_list_says_it_was_clipped():
+    """A silent slice let an export show no evidence the model reached for the
+    host: `refused_tool` is not rendered in the conversation either, so there
+    was nowhere else to find it. The denials are kept whatever the count, and
+    the cut is stated."""
+    transcript = [{"type": "refused_tool", "name": "Bash"}] + [
+        {
+            "type": "tool",
+            "name": f"save_lean{index}",
+            "result": {"ok": False, "output": "no"},
+        }
+        for index in range(60)
+    ]
+    page = build(transcript=transcript)
+    listed = page.split("<h2>Tool calls Hardy refused</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "Bash: not a Hardy tool" in listed
+    assert "further failed tool calls were recorded" in listed
+    # The newest failures survive; the oldest are what is cut.
+    assert "save_lean59" in listed
+    assert "save_lean0:" not in listed
+
+
+def test_an_unclipped_refusal_list_claims_no_omission():
+    page = build(
+        transcript=[
+            {"type": "tool", "name": "save_lean", "result": {"ok": False, "output": "no"}}
+        ]
+    )
+    listed = page.split("<h2>Tool calls Hardy refused</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "not listed here" not in listed

@@ -402,9 +402,17 @@ def _assumptions(records: Sequence[Mapping[str, Any]]) -> str:
                     # asking now.
                     (
                         "Goal at approval",
-                        str(record.get("goal_at_approval", "")).strip()
-                        or "not recorded — this approval predates the field, so the "
-                        "goal shown above may not be the one it was given for",
+                        # Three states, not two. The key being absent means the
+                        # record predates it; the key being empty means the
+                        # user was asked with no goal set, which is a fact
+                        # about the approval rather than a gap in the record.
+                        str(record.get("goal_at_approval") or "").strip()
+                        or (
+                            "no goal was set when this was approved"
+                            if "goal_at_approval" in record
+                            else "not recorded — this approval predates the field, so "
+                            "the goal shown above may not be the one it was given for"
+                        ),
                     ),
                 )
             )
@@ -828,7 +836,27 @@ def _refusals(material: Mapping[str, Any]) -> str:
                 )
         elif kind == "refused_tool":
             refused.append(f"{event.get('name')}: not a Hardy tool; the request never ran")
-    return _list(refused[-50:], "Nothing was refused.")
+    # Clipped, and the clip is stated. A silent `[-50:]` dropped an early
+    # `Read` or `Bash` denial behind fifty later Lean failures and left the
+    # page reading as a complete list -- so an export could show no evidence
+    # that the model had reached for the host, which is the single most
+    # interesting thing this section reports. `refused_tool` is not rendered in
+    # the conversation either, so there was nowhere else for a reader to find
+    # it. The SDK denials are kept whatever the count: there are never many,
+    # and they are the ones a reader is here for.
+    denials = [item for item in refused if item.endswith("the request never ran")]
+    failures = [item for item in refused if not item.endswith("the request never ran")]
+    kept = denials + failures[-max(0, 50 - len(denials)):] if denials else failures[-50:]
+    dropped = len(refused) - len(kept)
+    shown = _list(kept, "Nothing was refused.")
+    if not dropped:
+        return shown
+    return shown + (
+        f'<p class="tool">{dropped} further failed tool '
+        f"{'call was' if dropped == 1 else 'calls were'} recorded and are not "
+        "listed here. Every call the SDK refused outright is shown above; what "
+        "is cut is the oldest of the calls that ran and failed.</p>"
+    )
 
 
 def build(material: Mapping[str, Any], *, now: datetime | None = None) -> str:

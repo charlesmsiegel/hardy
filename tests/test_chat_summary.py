@@ -382,20 +382,57 @@ def test_a_writeup_hardy_never_compiled_is_not_credited_to_hardy(tmp_path: Path)
     A clone carries whatever `writeup.pdf` was committed and a user may drop
     one in. "was compiled" then credited Hardy with a document it never
     produced -- beside an outstanding section that may still be asking for the
-    compile. `tex_signature` is stamped only after a compile Hardy ran.
+    compile. The digest of what Hardy's own compile produced is stamped only
+    after a compile Hardy ran, so a file it never made cannot match it.
     """
     chat = built(tmp_path)
     (Path(chat.workspace) / "writeup.pdf").write_bytes(b"%PDF-someone-elses")
 
     said = chat.export_material()["document"]
     assert "was compiled by Hardy" not in said
-    assert "no record of compiling it" in said
+    assert "not bytes Hardy is recorded as having produced" in said
 
 
 def test_a_writeup_hardy_did_compile_is_reported_as_compiled(tmp_path: Path):
     """The other half: the claim is available when the record supports it."""
+    import hashlib
+
     chat = built(tmp_path)
-    (Path(chat.workspace) / "writeup.pdf").write_bytes(b"%PDF-hardys")
+    document = Path(chat.workspace) / "writeup.pdf"
+    document.write_bytes(b"%PDF-hardys")
     chat.state["tex_signature"] = "whatever this compile was made against"
+    chat.state["writeup_sha256"] = hashlib.sha256(b"%PDF-hardys").hexdigest()
 
     assert "was compiled by Hardy" in chat.export_material()["document"]
+
+
+def test_a_writeup_replaced_after_the_compile_is_not_attributed_to_hardy(tmp_path: Path):
+    """A signature says Hardy compiled *something* here once.
+
+    It says nothing about the bytes now on disk. A user who compiles and then
+    drops another PDF over the result leaves the signature truthy, and reading
+    it alone credited Hardy with a document it never made. The digest stamped
+    at compile time is what answers the question actually being asked.
+    """
+    import hashlib
+
+    chat = built(tmp_path)
+    document = Path(chat.workspace) / "writeup.pdf"
+    chat.state["tex_signature"] = "whatever this compile was made against"
+    chat.state["writeup_sha256"] = hashlib.sha256(b"%PDF-hardys").hexdigest()
+    document.write_bytes(b"%PDF-somebody-elses")
+
+    said = chat.export_material()["document"]
+    assert "was compiled by Hardy" not in said
+    assert "not bytes Hardy is recorded as having produced" in said
+
+
+def test_a_workspace_stamped_before_digests_does_not_claim_authorship(tmp_path: Path):
+    """The signature without a digest reads as "not established", not as
+    Hardy's: the page may say what it does not know and must not guess towards
+    the stronger claim."""
+    chat = built(tmp_path)
+    (Path(chat.workspace) / "writeup.pdf").write_bytes(b"%PDF-older-workspace")
+    chat.state["tex_signature"] = "stamped before the digest existed"
+
+    assert "was compiled by Hardy" not in chat.export_material()["document"]

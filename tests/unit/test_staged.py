@@ -432,3 +432,89 @@ def test_cancellation_is_armed_under_that_same_lock():
 
     assert held == [True], "cancellation was armed outside the lock"
     assert runtime._cancelled.is_set()
+
+
+class _CountingCasSession:
+    """A CAS session that records which press reached it."""
+
+    def __init__(self):
+        self.interrupted = 0
+        self.escalated = 0
+
+    def interrupt(self) -> bool:
+        self.interrupted += 1
+        return True
+
+    def escalate(self) -> bool:
+        self.escalated += 1
+        return True
+
+    def close(self) -> None:
+        pass
+
+
+class _CasRuntime:
+    def __init__(self, session):
+        self.session = session
+
+
+def test_cancelling_a_staged_run_asks_its_cas_kernel_to_stop() -> None:
+    """The one child `process.interrupt_children` cannot reach.
+
+    Lean and Tectonic register with `process.tracked`; a persistent CAS kernel
+    deliberately does not, because only its session knows whether a cell is in
+    flight -- which is why `MathematicsSession.interrupt_work` asks it by hand
+    too. Without the same call here a `cas_run` in flight held the tool gate
+    and `cancel` waited out `cas_cell_seconds`, a minute by default, while the
+    terminal told the user the press had reached what was running.
+    """
+    staged = importlib.import_module('hardy.staged')
+
+    session = _CountingCasSession()
+    runtime = staged.ClaudeStagedRuntime(
+        store=None,
+        lean_runtime_factory=lambda claim: None,
+        cas_runtime=_CasRuntime(session),
+    )
+
+    class _Thread:
+        runtime = None
+        phase = 'proving'
+
+    runtime.cancel(_Thread())
+
+    assert session.interrupted == 1
+    assert session.escalated == 0
+
+
+def test_the_second_press_escalates_the_staged_cas_kernel() -> None:
+    """An interrupt is a request; this is the way out of waiting on one.
+
+    `process.stop_children()` walks the tracked register, so it never reached
+    this kernel either -- and the terminal says the second press kills what did
+    not take the hint.
+    """
+    staged = importlib.import_module('hardy.staged')
+
+    session = _CountingCasSession()
+    runtime = staged.ClaudeStagedRuntime(
+        store=None,
+        lean_runtime_factory=lambda claim: None,
+        cas_runtime=_CasRuntime(session),
+    )
+
+    assert runtime.escalate_cas() is True
+    assert session.escalated == 1
+
+
+def test_a_staged_run_without_cas_is_not_an_error_to_cancel() -> None:
+    """`cas_runtime` is optional: a run that never discovered one has nothing
+    to ask, and cancellation must not raise over its absence."""
+    staged = importlib.import_module('hardy.staged')
+
+    runtime = staged.ClaudeStagedRuntime(
+        store=None, lean_runtime_factory=lambda claim: None, cas_runtime=None
+    )
+
+    assert runtime.interrupt_cas() is False
+    assert runtime.escalate_cas() is False

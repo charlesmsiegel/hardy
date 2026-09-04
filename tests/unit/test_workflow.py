@@ -1378,3 +1378,36 @@ def test_a_press_while_the_formalization_is_being_shown_does_not_open_the_select
 
     assert asked == []
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+
+
+def test_the_second_press_reaches_the_runs_own_cas_kernel(tmp_path) -> None:
+    """`process.stop_children()` walks the tracked register; a persistent CAS
+    kernel is deliberately not in it. So a `cas_run` out when Esc was pressed
+    took neither press and ran to its own cell timeout, while the terminal said
+    the second press kills what did not take the hint."""
+    workflow = importlib.import_module('hardy.workflow')
+
+    class _Runtime:
+        def __init__(self):
+            self.escalated = 0
+
+        def escalate_cas(self):
+            self.escalated += 1
+            return True
+
+    run = workflow.ProveWorkflow.__new__(workflow.ProveWorkflow)
+    runtime = _Runtime()
+    run._runtime_in_flight = runtime
+
+    assert run.escalate() == 1
+    assert runtime.escalated == 1
+
+
+def test_escalating_a_run_with_no_runtime_in_flight_is_quiet(tmp_path) -> None:
+    """The press may land before a stage has opened one."""
+    workflow = importlib.import_module('hardy.workflow')
+
+    run = workflow.ProveWorkflow.__new__(workflow.ProveWorkflow)
+    run._runtime_in_flight = None
+
+    assert run.escalate() == 0
