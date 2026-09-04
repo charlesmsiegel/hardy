@@ -613,9 +613,13 @@ artifact. One number it reports is a measurement limit rather than a gap:
 
 `hardy` is one executable with a handful of subcommands. The global options go
 **before** the subcommand, because they resolve the configuration every command
-shares; each also has a `HARDY_*` environment variable and a config-file key
-behind it, and a flag outranks both. Running `hardy` with no subcommand is the
-interactive session, exactly as `hardy chat` is.
+shares; most of them have a `HARDY_*` environment variable and a config-file
+key behind them too, and a flag outranks both. Two do not: `--plain` is read
+from `HARDY_PLAIN` but is not a setting, and `--fresh-thread` is neither. Do not
+write either into the config file — an unrecognised key is refused when the file
+is read, which stops every command rather than only the one you meant. Running
+`hardy` with no subcommand is the interactive session, exactly as `hardy chat`
+is.
 
 | Command | What it does |
 | --- | --- |
@@ -649,6 +653,16 @@ invocation itself was refused before doing any work.
 `prove`, `accept`, and `evals run` also accept `--model` *after* the subcommand;
 omitting it there leaves the global one alone rather than overwriting it.
 
+Not every command sees every flag. `chat`, `doctor`, `latency`, `batch`, and
+`evals` resolve the whole configuration, command line included. `prove`,
+`accept`, and `setup` re-read the settings file and the `HARDY_*` variables
+themselves, and see only `--config` and `--model` from the command line: pass
+`--lean-command`, `--lean-project`, or `--latex-command` to one of those three
+and it is accepted and then ignored, so a staged run against a different Lake
+project needs `lean_project` in the config file or `HARDY_LEAN_PROJECT` in the
+environment. `--plain`, `--no-project-context`, and `--fresh-thread` govern the
+interactive session alone.
+
 ### `hardy chat`
 
 Opens the durable terminal session described above. `--root` and `--project`
@@ -677,11 +691,17 @@ required check failed.
 
 ### `hardy setup`
 
-Discovers the pinned toolchain, offers to install what is missing — elan,
-Tectonic, and the shared Mathlib project — verifying the Tectonic download
-against its recorded digest before installing it, and writes the paths it found
-into the config file. Takes no options of its own; `--config` selects the file
-it writes. Exits `1` if the environment is still not healthy afterwards.
+Discovers the pinned toolchain, records the paths it found in the config file,
+and prints what is still missing. What it will install for you depends on the
+platform: the shared Mathlib project wherever `lake` is present and a
+`lean_project` is configured, elan where `winget` is (so, Windows), and Tectonic
+on Windows only — that download is the one verified against its recorded digest
+before it is installed. On Linux and macOS a missing elan or Tectonic is
+reported with instructions rather than installed, so a POSIX user who needs them
+wants `scripts/install.sh`. Takes no
+options of its own; `--config` selects the file it writes, and the other global
+flags do not reach it. Exits `1` if the environment is still not healthy
+afterwards.
 
 ### `hardy prove`
 
@@ -714,7 +734,7 @@ against document. Exits `1` if any run failed its audit.
 | --- | --- | --- |
 | `--backend {claude,codex}` | `claude` | As for `prove`. |
 | `--model IDENTITY` | the global `--model` | Who does the work. |
-| `--faithfulness-model IDENTITY` | the run's own model | Who reads the translation back. |
+| `--faithfulness-model IDENTITY` | `faithfulness_model`, else the run's own model | Who reads the translation back. Resolved exactly as in `prove`, and worth passing on a `--backend codex` run whose config names a Claude reviewer. |
 | `--force-budget-exhaustion-test` | off | Run the deterministic no-model path instead and check its artifacts — the whole pipeline with no model, no network, and no toolchain. |
 | `--recorded RUN_DIR [RUN_DIR ...]` | — | Cross-check these recorded run directories (batch or staged) and run nothing: the manifest against the trajectory against the Lean source against the document, the axiom line Lean printed against the graded verdict, the toolchain named by revision. This is how `acceptance/recorded/` is rechecked without being re-run. |
 
@@ -747,15 +767,22 @@ hardy batch examples/true.json --output hardy-output
 The fixed problem set. The corpus (`corpus/`), the tier file
 (`evals/baseline.json`), and the scoreboards (`evals/scoreboards/`) are
 repository evidence read relative to the current directory, so these commands
-want a source checkout — a released wheel carries none of it, and a default path
-resolved outside a checkout is refused with a sentence rather than a bare
-`FileNotFoundError`.
+want a source checkout: a released wheel carries none of it. `baseline`, `run`,
+and `check` say so in a sentence — they check the paths they were given before
+doing anything. The `corpus` verbs do not all have that guard: `check` reports a
+missing taxonomy table as an ordinary objection, while `report` and `release`
+run outside a checkout raise instead, so a traceback there means the corpus was
+not where the command looked.
 
 **`hardy evals baseline`** sweeps a committed tactic set over every canonical
 statement and writes the tier file, which is what says how much of each result
-automation already closes. Entries whose environment identity did not move are
-carried forward rather than re-elaborated. Exits `1` if the sweep found problems
-with the corpus.
+automation already closes. Rows are carried forward from the existing tier file
+rather than re-elaborated, but only under all three digests: the environment
+identity and the procedure digest must match the prior baseline — a Mathlib
+upgrade or a change to the sweep code invalidates every row at once — and then
+each entry is reused only where its own statement digest is unchanged, so a
+corrected statement re-sweeps that entry and nothing else. Exits `1` if the
+sweep found problems with the corpus.
 
 | Option | Default | What it does |
 | --- | --- | --- |
