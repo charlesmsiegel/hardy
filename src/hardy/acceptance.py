@@ -701,6 +701,17 @@ def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]], rea
         # where they were -- certifying a different experimental condition from
         # the one that ran.
         issues.extend(_attempt_issues(attempts, events))
+    # The ladder's shape, which `closers.close` fixes: it returns on the first
+    # submission the run keeps, so exactly one attempt succeeds and it is the
+    # last. Any other arrangement -- a success in the middle, two successes --
+    # is a record no run could have produced, and without this a hand-edited or
+    # merged trajectory could certify a ladder order and a cost that never
+    # happened.
+    kept = [index for index, item in enumerate(attempts) if isinstance(item, dict) and item.get("ok") is True]
+    if len(kept) > 1:
+        issues.append("the closers block records more than one attempt the run kept")
+    elif kept and kept[0] != len(attempts) - 1:
+        issues.append("the closers block records a kept attempt the ladder went on past")
     if closed_by is not None:
         if not any(item.get("tactic") == closed_by and item.get("ok") is True for item in attempts if isinstance(item, dict)):
             issues.append(f"closers claim `{closed_by}` closed the statement with no attempt saying so")
@@ -1132,7 +1143,8 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
         (
             event.get("type") == "limit"
             and event.get("limit") == "wall_seconds"
-            and "no model turn was spent" in str(event.get("detail", ""))
+            and ("no model turn was spent" in str(event.get("detail", ""))
+             or "before a model turn could be spent" in str(event.get("detail", "")))
         )
         or (
             event.get("type") == "declined_turn"

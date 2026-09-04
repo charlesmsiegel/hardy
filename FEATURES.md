@@ -693,9 +693,13 @@ Priority labels are sequencing hints:
   derived from the model identity, because Hardy sends no long-context beta and
   a window guessed too large is the direction that cannot recover, the
   compactor never running while the provider refuses every request. The reply
-  allowance is capped at a quarter of whatever window is configured, so a
-  gateway correctly set below four times the flat reserve still leaves room to
-  compact into rather than reserving the whole of itself.
+  allowance is capped at a quarter of whatever window is configured — and
+  floored at what the transport says it may write, since a window with room for
+  the request and none for the answer is not a window the request fits in. So a
+  gateway set below four times the flat reserve still leaves room to compact
+  into rather than reserving the whole of itself, and one set at or below the
+  8,192-token output cap is refused where the config is read rather than
+  planned against as though it could work.
 - **Next:** carry the same three back to the subscription backends, where the
   SDK still owns the loop — Hardy's own turn bound, the closers, and the
   compaction above — whether through the SDK's `can_use_tool` and `PreCompact`
