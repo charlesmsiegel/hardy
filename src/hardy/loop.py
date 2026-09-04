@@ -532,7 +532,15 @@ class AgentLoop:
         answer is.
         """
         for placeholder, call in zip(placeholders, calls, strict=True):
-            self._observe({"type": "tool_use", "name": call.name, "input": call.arguments})
+            # The id goes in the record, because the digests a compaction
+            # writes are computed over messages that carry it: a reader given
+            # the name and the arguments alone cannot rebuild the messages the
+            # digest was taken of, and so cannot check it. Opaque and
+            # provider-generated, which is exactly why it has to be written
+            # down rather than reconstructed.
+            self._observe({
+                "type": "tool_use", "name": call.name, "call_id": call.id, "input": call.arguments,
+            })
             yield TurnEvent("tool_use", name=call.name, call_id=call.id)
             if self._cancelled:
                 # The model asked and Hardy declined; the provider still needs
@@ -558,6 +566,12 @@ class AgentLoop:
             self.messages[placeholder] = (
                 Message("tool_result", text=result.output, call_id=call.id, name=call.name, ok=result.ok)
             )
+            # Identity, not content: what the tool said is already in the
+            # `tool` event the caller's own dispatch records, and writing it
+            # twice would double the transcript of a tool-heavy session. What
+            # is missing without this is the pairing -- which answer belongs to
+            # which call -- and that is what a digest over the messages needs.
+            self._observe({"type": "tool_result", "name": call.name, "call_id": call.id, "ok": result.ok})
             yield TurnEvent("tool_result", name=call.name, ok=result.ok, call_id=call.id)
 
     def _fold(self, usage: Mapping[str, Any] | None) -> None:

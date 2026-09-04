@@ -731,16 +731,20 @@ Priority labels are sequencing hints:
   that quietly claimed to be enough. A compaction that left no trace is
   the invisible loss the feature exists to prevent. A backend whose SDK owns
   the loop is not offered a compactor at all, rather than handed one it would
-  silently drop. The estimate charges ASCII at a prose ratio and everything
-  else at its UTF-8 byte count, and the framing allowance per *content block*
-  rather than per message — a turn asking for six tools is seven blocks. Both
-  are bounds rather than guesses: a BPE token covers at least one byte, so
-  nothing costs more tokens than it has bytes. A transcript full of `∀` and
-  `⟨⟩` — or a session not conducted in ASCII at all — is exactly where
-  dividing every character by 3.5 understated the conversation, and
-  understating it is the direction that loses the request rather than some
-  context. It overshoots for CJK, which is nearer one token per character than
-  three, and that is the trade taken deliberately. The window
+  silently drop. The estimate is one token per UTF-8 byte, plus a framing
+  allowance per *content block* rather than per message — a turn asking for six
+  tools is seven blocks. A bound rather than a guess: a BPE token covers at
+  least one byte, so nothing costs more tokens than it has bytes, and that is
+  the only bound available without the provider's tokenizer, which Hardy cannot
+  run offline and consults the planner far too often to ask over the network.
+  Every ratio tried here was an average dressed as a rule — an English-prose
+  `1/3.5` against a transcript full of `∀` and `⟨⟩`, a session not conducted in
+  ASCII at all, or ASCII that is a hash or a wall of JSON and tokenizes near
+  one token per character. The cost is real and worth stating: on ordinary
+  prose this charges about three and a half times what the text costs, so a
+  session compacts at roughly a third of the window rather than at its edge.
+  That is the direction to be wrong in, and a real tokenizer is what would buy
+  the difference back. The window
   itself is `context_window` (or
   `HARDY_CONTEXT_WINDOW`), defaulting to 200K and recorded in the compaction
   event: it is a property of the endpoint rather than of Hardy — a gateway
