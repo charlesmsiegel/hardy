@@ -74,12 +74,22 @@ def payload(root: Path) -> dict[str, Any]:
     # The tables are cached per root and this process outlives many edits, so
     # without this a code added to the taxonomy stays rejected until restart.
     taxonomy.forget()
+    issues = check_issues(root)
+    empty = {"generated_at": generated, "issues": issues, "entries": [],
+             "corpus_version": None, "counts": {}, "sources": {}}
     try:
         problems = load_corpus(root)
     except CorpusError as error:
-        return {"generated_at": generated, "issues": [str(error)], "entries": [],
-                "corpus_version": None, "counts": {}, "sources": {}}
-    entries = [_classified(e, root) for e in problems.entries]
+        return empty | {"issues": issues or [str(error)]}
+    try:
+        entries = [_classified(e, root) for e in problems.entries]
+    except (taxonomy.MalformedTaxonomy, taxonomy.UnknownCode) as error:
+        # `load_corpus` checks only that a full MSC code exists, so a class
+        # missing from `fields`, `groups` or `arxiv` -- an ordinary state for
+        # `msc-to-arxiv.json` mid-edit -- loads fine and fails here, the one
+        # place that asks for the roll-up. `check_issues` already named it;
+        # raising would take down the response that has to show it.
+        return empty | {"issues": issues or [f"taxonomy: {error}"]}
     counts = {
         "entries": len(entries),
         "twins": sum(1 for e in entries if e["expected"] == "false"),
@@ -103,7 +113,7 @@ def payload(root: Path) -> dict[str, Any]:
         # response, so the page could not show the objection it exists to show.
         sources = {}
     return {
-        "generated_at": generated, "issues": check_issues(root), "entries": entries,
+        "generated_at": generated, "issues": issues, "entries": entries,
         "corpus_version": version, "counts": counts, "sources": sources,
     }
 

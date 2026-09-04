@@ -182,7 +182,14 @@ def test_no_corpus_field_reaches_the_page_unescaped():
     """
     page = PAGE.read_text(encoding="utf-8")
     script = page[page.index("<script>\nlet DATA"):]
-    holes = re.findall(r"\$\{([^{}]*)\}", script)
+    # Holes nest -- a ternary whose branch is another template literal -- so
+    # collect them innermost-first, blanking each one before looking again.
+    # A single pass would see only the innermost of a nested pair and skip the
+    # expression wrapped around it.
+    holes, rest = [], script
+    while (found := re.findall(r"\$\{([^{}]*)\}", rest)):
+        holes.extend(found)
+        rest = re.sub(r"\$\{[^{}]*\}", "_", rest)
     assert holes, "no template interpolations found; the regex has drifted"
     values = [h for h in holes
               if "===" not in h and "?" not in h and not h.strip().endswith(".length")]
@@ -265,3 +272,34 @@ def test_the_first_load_draws_the_list_before_anything_is_selected():
     assert "renderList()" in early, "the nothing-selected branch leaves #items untouched"
     boot = page[page.index("async function load()"):]
     assert "renderDetail();" in boot, "load() must reach the renderer at all"
+
+
+def test_a_taxonomy_missing_a_rollup_is_reported_rather_than_raised(tmp_path):
+    """`load_corpus` checks only that a full MSC code exists.
+
+    A class temporarily removed from `fields`, `groups` or `arxiv` -- the
+    ordinary state of `msc-to-arxiv.json` mid-edit -- therefore loads fine and
+    then blows up in `_classified`, which is the one place that asks for the
+    roll-up. That killed the response before `check_issues` could report it,
+    so the page went blank on exactly the malformed taxonomy it promises to
+    render.
+    """
+    root = write_corpus(tmp_path / "corpus", (_entry(),))
+    table = root / "taxonomy" / "msc-to-arxiv.json"
+    mapping = json.loads(table.read_text(encoding="utf-8"))
+    for name in ("fields", "groups", "arxiv"):
+        mapping[name].pop("11", None)
+    table.write_text(json.dumps(mapping), encoding="utf-8")
+    got = payload(root)
+    assert got["issues"], "the objection must reach the page"
+    assert any("11" in issue for issue in got["issues"])
+    assert got["entries"] == [], "an entry that cannot be classified is not shown as classified"
+
+
+def test_the_witness_pane_agrees_with_the_count_in_the_header():
+    """A binderless entry storing a term is unwitnessed however the field
+    reads, so a detail pane that renders the term as evidence contradicts the
+    header two panels away -- and A6 never ran on it either way."""
+    page = PAGE.read_text(encoding="utf-8")
+    witness = page[page.index("const witness ="):page.index("const review =")]
+    assert "e.unwitnessed" in witness, "the pane branches on the stored field, not on A6's verdict"

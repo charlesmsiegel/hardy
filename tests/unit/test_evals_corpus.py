@@ -477,3 +477,24 @@ def test_a_release_reports_what_check_would_have_said(tmp_path):
     _registry(tmp_path, {})
     _changelog(tmp_path, "0.1.0")
     assert any("not registered" in i for i in release(tmp_path, "0.2.0", ["x"], today="2026-09-04"))
+
+
+def test_a_release_writes_nothing_when_any_shard_is_unreadable(tmp_path):
+    """`_shards` is sorted, so a bad `20.json` is reached after `13.json` is
+    already rewritten. Failing halfway leaves the shards disagreeing about
+    their version with no changelog entry for either -- the half-written
+    authoring state this tooling exists to report, created by the tooling.
+    """
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])], version="0.1.0")
+    _write(tmp_path, "20", [_entry(id="b", name="B", msc=["20Dxx"])], version="0.1.0")
+    (tmp_path / "problems" / "20.json").write_text("{ not json", encoding="utf-8")
+    _registry(tmp_path, {"a": "2026-09-03", "b": "2026-09-03"})
+    _changelog(tmp_path, "0.1.0")
+    before = {p.name: p.read_bytes() for p in sorted((tmp_path / "problems").iterdir())}
+    changelog = (tmp_path / "CHANGELOG.md").read_bytes()
+
+    with pytest.raises(CorpusError) as raised:
+        release(tmp_path, "0.2.0", ["x"], today="2026-09-04")
+    assert "20.json" in str(raised.value)
+    assert {p.name: p.read_bytes() for p in sorted((tmp_path / "problems").iterdir())} == before
+    assert (tmp_path / "CHANGELOG.md").read_bytes() == changelog

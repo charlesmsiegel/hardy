@@ -354,11 +354,23 @@ def release(root: Path, version: str, notes: list[str], *, today: str) -> list[s
             f"{version} does not follow {current}: a corpus version only ever goes up. "
             "Correcting entries is a patch, adding them a minor, breaking the schema a major"
         )
+    # Read and stamp every shard before writing any of them. `_shards` is
+    # sorted, so failing partway through would leave the earlier shards on the
+    # new version and the later ones on the old, with no changelog entry for
+    # either -- the half-written authoring state the rest of this module exists
+    # to report, manufactured by the tool meant to prevent it.
+    stamped: list[tuple[Path, str]] = []
     for shard in _shards(root):
-        payload = json.loads(shard.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(shard.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise CorpusError(f"{shard.name}: {error}. No shard was rewritten") from error
+        if not isinstance(payload, dict):
+            raise CorpusError(f"{shard.name}: not a shard envelope. No shard was rewritten")
         payload["corpus_version"] = version
-        shard.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-                         encoding="utf-8", newline="\n")
+        stamped.append((shard, json.dumps(payload, indent=2, ensure_ascii=False) + "\n"))
+    for shard, text in stamped:
+        shard.write_text(text, encoding="utf-8", newline="\n")
 
     changelog = root / "CHANGELOG.md"
     text = changelog.read_text(encoding="utf-8")
