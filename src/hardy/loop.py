@@ -253,6 +253,10 @@ class AgentLoop:
         #: calls it never made.
         self._pending: list[int] = []
 
+    def set_gate(self, before_turn: Callable[[Sequence[Message]], str | None]) -> None:
+        """Install the hook asked before every provider call. See `before_turn`."""
+        self._before_turn = before_turn
+
     def attach_compactor(
         self, compact: Callable[[list[Message]], list[Message] | None] | None
     ) -> None:

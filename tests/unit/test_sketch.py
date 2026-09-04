@@ -521,3 +521,120 @@ def test_an_axiom_refused_submission_replaces_the_stale_sketch(tmp_path: Path, p
     assert result.sketch["holes"] == []
     writeup = (tmp_path / "writeup.md").read_text(encoding="utf-8")
     assert "by sorry" not in writeup
+
+
+def test_a_refused_submission_is_not_reported_as_unaudited(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """The retained candidate came through `submit_proof`, so the section that
+    reports it may not say nothing has audited what it rests on.
+
+    The wording written for a hole-free skeleton is false twice over about a
+    submitted one: it *was* submitted, and the axiom report is exactly what
+    refused it. A reader told the remaining work is an audit nobody ran would
+    look for the wrong thing.
+    """
+    result = run(
+        proof_request,
+        factory([
+            call("sketch_proof", {"proof": "by sorry"}),
+            call("submit_proof", {"proof": "by exact True.intro -- axioms: badAxiom"}),
+        ]),
+        lean,
+        tmp_path,
+    )
+
+    assert result.terminal_reason == "axioms_rejected"
+    assert result.sketch is not None
+    assert result.sketch["submitted"] is True
+    writeup = (tmp_path / "writeup.md").read_text(encoding="utf-8")
+    assert "the run submitted it" in writeup
+    assert "The axiom report refused what it rests on" in writeup
+    # The sentence that belongs to a candidate nobody submitted, and does not
+    # belong to this one.
+    assert "Nothing has audited what it rests on" not in writeup
+    assert "the run ended before it was submitted" not in writeup
+
+
+def test_a_sketch_no_submission_touched_still_says_nothing_audited_it(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """And the other branch keeps its own wording.
+
+    The pair is the point: one sentence is true of a candidate the axiom report
+    refused and the other of one it never saw, and a section that used either
+    for both would be wrong about half the runs it describes.
+    """
+    result = run(
+        proof_request,
+        factory([call("sketch_proof", {"proof": "by exact True.intro"})]),
+        lean,
+        tmp_path,
+    )
+
+    assert result.sketch is not None
+    assert result.sketch["submitted"] is False
+    writeup = (tmp_path / "writeup.md").read_text(encoding="utf-8")
+    assert "the run ended before it was submitted" in writeup
+    assert "Nothing has audited what it rests on" in writeup
+    assert "The axiom report refused what it rests on" not in writeup
+
+
+def test_the_audit_accepts_a_candidate_a_refused_submission_produced(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """The record of that run has to survive `hardy accept --recorded`.
+
+    A submission is the third door a retained candidate comes through, and the
+    one the audit could not see: the axiom report rewrites the event's `ok`, so
+    a body Lean accepted reaches the trajectory looking exactly like one it
+    refused. Left there, the fix that keeps the newest development produced an
+    honest artifact the validator rejected as a skeleton tied to no Lean run.
+    """
+    import importlib
+
+    acceptance = importlib.import_module("hardy.acceptance")
+    run(
+        proof_request,
+        factory([
+            call("sketch_proof", {"proof": "by sorry"}),
+            call("submit_proof", {"proof": "by exact True.intro -- axioms: badAxiom"}),
+        ]),
+        lean,
+        tmp_path,
+        toolchain={
+            "lean_version": "4.32.0",
+            "lean_commit": "a" * 40,
+            "mathlib_revision": "b" * 40,
+            "lake_manifest_sha256": "c" * 64,
+        },
+    )
+
+    assert acceptance.validate_batch_consistency(tmp_path) == ()
+
+
+def test_a_forged_submitted_flag_is_refused(tmp_path: Path, proof_request: Request, lean: LeanTools) -> None:
+    """`submitted` chooses the writeup's wording, so it is checked rather than
+    believed. A record that set it either way could report a candidate nobody
+    submitted as one the axiom report refused."""
+    import importlib
+
+    acceptance = importlib.import_module("hardy.acceptance")
+    run(
+        proof_request,
+        factory([call("sketch_proof", {"proof": "by exact True.intro"})]),
+        lean,
+        tmp_path,
+        toolchain={
+            "lean_version": "4.32.0",
+            "lean_commit": "a" * 40,
+            "mathlib_revision": "b" * 40,
+            "lake_manifest_sha256": "c" * 64,
+        },
+    )
+    assert acceptance.validate_batch_consistency(tmp_path) == ()
+
+    for name in ("result.json", "trajectory.json"):
+        path = tmp_path / name
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["sketch"]["submitted"] = True
+        path.write_text(json.dumps(record), encoding="utf-8")
+
+    assert any(
+        "whether it was submitted" in issue
+        for issue in acceptance.validate_batch_consistency(tmp_path)
+    )

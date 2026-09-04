@@ -534,6 +534,20 @@ class ApiRuntime:
         """
         self._loop.messages = list(messages)
 
+    def attach_gate(
+        self, gate: Callable[[Sequence[Message]], str | None]
+    ) -> None:
+        """Let a caller decline a provider call before it is made.
+
+        The `before_turn` hook, published the way `attach_compactor` is and for
+        the same reason: only a backend that owns its loop can honour one, and
+        a caller offering it has to be able to find out which. Issue #23 asks
+        for exactly this -- that Hardy decide when a provider call is made and
+        be able to decline -- and a turn nobody needed is the cheapest kind to
+        save.
+        """
+        self._loop.set_gate(gate)
+
     def attach_compactor(
         self, compact: Callable[[list[Message]], list[Message] | None]
     ) -> None:

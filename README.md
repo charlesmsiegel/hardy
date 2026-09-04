@@ -311,7 +311,9 @@ There is one alternative, and it is the mirror image. `backend = "api"` (or
 `HARDY_BACKEND=api`) calls the Messages API directly and *does* need a key —
 which is exactly why it is not the default. What it buys is the turn loop:
 Hardy decides when a provider call is made, keeps both bounds itself, and can
-decline a call outright. See **What it does get to do** below.
+decline a call outright — which is how a `hardy batch` run there stops at the
+submission it keeps rather than paying for a turn that has nothing left to do.
+See **What it does get to do** below.
 
 ```sh
 pip install 'hardy-prover[api]'
