@@ -911,6 +911,22 @@ Priority labels are sequencing hints:
   sets; regression tracking for prompts, tools, runtimes, and strategies.
 - **Later:** compare variants contemporaneously under identical environments and
   budgets rather than against stale historical numbers.
+- **Now (implemented):** the workaround passages in the interactive prompt —
+  the split-writeup save order, the spilled-CAS inspection recipe, the
+  `#print axioms` prohibition — are marked as workarounds rather than
+  principles, in comments the renderer strips, so a reader can tell the two
+  apart without re-deriving the distinction (issue #108).
+- **Next:** re-test those passages at each model change rather than assume
+  them: remove one, run the acceptance set under both prompts contemporaneously,
+  compare kernel-verified outcomes per problem. The `#print axioms` passage is
+  exempt from removal: the audit refuses a duplicated report by design, so only
+  the cost of the refusal is measurable. Waits on the comparison mode below
+  (issue #108).
+- **Next:** a comparison mode — `hardy accept --compare` or an `evals/`
+  harness — that runs the same problems under two configurations (prompt set by
+  hash, model, later tool set) and reports per-problem outcomes with cost and
+  turns, never only a mean; the acceptance set has to grow with it, since a
+  delta over a handful of correlated problems is noise (issue #102).
 
 ## Retrieval and memory
 
@@ -1006,6 +1022,14 @@ Priority labels are sequencing hints:
 
 - **Now (implemented):** prominently warn that the experimental path executes only trusted model
   output in a disposable local environment.
+- **Now (policy):** no extension surface, and the boundary one would have to
+  respect is fixed before one exists: an extension may observe, propose, and
+  render, never verify, audit, or write the record. The axiom audit, the
+  verifier and save gate, the transcript, the session state and run manifest,
+  and every refusal decision are closed to any hook; user-supplied text —
+  `AGENTS.md`, `.hardy/prompts/` commands — is input, recorded as such, never
+  evidence. Revisited only against a concrete use case the rule blocks
+  (issue #107; `DESIGN.md`, "Extension boundary").
 - **Next:** deterministic timeouts, bounded outputs, durable/atomic result writes,
   and redaction of secrets from provider configuration and trajectories.
 - **Later, before untrusted or shared use:** restore isolation for Lean, TeX, paper

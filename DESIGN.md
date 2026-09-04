@@ -385,6 +385,35 @@ only possible if the field is recorded with the statement rather than inferred
 afterwards. Ids are permanent and retirement is a tombstone, so a figure
 published against one version can still be traced when the corpus has moved on.
 
+The instructions a model is given are a measured condition too, and the
+interactive prompt (`prompts/chat.md.j2`) carries two kinds of sentence that age
+differently. Most of it is standard of evidence — elaborating is not
+verification, a LaTeX compile is not mathematical verification, nothing computed
+is evidence, do not run ahead of the user — and that material does not decay,
+because a better model does not make "only the kernel verifies anything" less
+true. A few passages are workarounds for a specific model failure: the order in
+which a split writeup is saved, the recipe for inspecting a spilled computer
+algebra result, the instruction not to write `#print axioms`. Each is a bet that
+the failure still happens, and that kind of instruction is the half of a harness
+that depreciates: it costs context on every turn, it is invisible once it stops
+being needed, and a stale one can stop a capable model doing the obvious thing
+while the output still looks fine. So the template marks each of them as a
+workaround rather than a principle, in a comment the renderer strips, and the
+policy is that they are re-tested at each model change rather than assumed:
+remove the passage, run the acceptance set under both prompts contemporaneously,
+compare kernel-verified outcomes problem by problem, and keep or drop it on
+that. The comparison mode that makes this a measurement rather than a guess is
+the one FEATURES.md lists under evaluation; until it exists the passages stay,
+marked. One of them is not the model's to earn away: the audit refuses a
+duplicated `#print axioms` report on purpose, because choosing a winner by
+position would make the audit depend on output order rather than on Lean, so
+the parser stays fail-closed and the instruction stays with it — what the
+re-test can measure there is only how often a model pays the refused save. The
+conditional assembly already in place is the same discipline for tools: the
+computer algebra paragraph is appended only when a backend was actually found,
+so a session never describes tools it does not have, and a second optional
+subsystem gets the same treatment.
+
 ### 9. Installation and configuration
 
 Hardy is only useful when Lean, LaTeX, and a model are all reachable, so getting
@@ -515,6 +544,66 @@ Before accepting
 untrusted inputs, multi-user execution, or autonomous network access, restore
 process isolation, filesystem and network confinement, resource quotas, timeouts,
 and hostile-input tests.
+
+## Extension boundary
+
+Hardy has no plugin surface, and this section is the decision that it will not
+grow one by accident. It is written down before anything needs it, because the
+features the interactive session keeps acquiring — project commands in
+`.hardy/prompts/`, `/export`, the `/status --full` summary, whatever compaction
+becomes once #23 is settled — are each an individually reasonable hook, and a
+plugin surface is what a series of individually reasonable hooks turns into. The
+boundary is far easier to state before that starts than after.
+
+The comparison is with coding agents whose headline feature is
+self-extensibility: modules that run with the user's full permissions, register
+tools and commands, intercept tool calls, render interface, persist session
+entries, and supply their own compaction summary. For a coding agent that is a
+fair trade, because the worst case is bad code and the user reads the diff.
+Hardy's worst case is different in kind. An extension that can register a tool,
+sit on a tool result, or write a summary can manufacture a proof: it can make
+the record say that `#print axioms` was read through the one parser when it was
+not, that the `FinalVerifier` rebuilt and rechecked the artifact when it did
+not, that a theorem resting on `sorryAx` rests on nothing. Hardy's whole product
+is that the report is true, and anything that can stand between the kernel and
+the record destroys that silently — the failure mode every other section of
+this document exists to prevent.
+
+So the rule, as a standing constraint rather than an open question:
+
+**Extensions may observe, propose, and render. They may never verify, audit, or
+write the record.**
+
+Closed permanently, to any extension mechanism Hardy ever grows: the axiom
+audit path (`audit.py` and the `#print axioms` probe that feeds it), the
+`FinalVerifier` and the interactive save gate, `transcript.jsonl`, `session.json`
+and the run manifest, the faithfulness reader's isolation, and every decision
+about whether a save or a report is refused. The test for a proposed hook is
+whether its worst case is a refusal or a fabrication. A hook of the shape "may
+this tool call proceed — no, and here is why" is admissible, because refusing is
+always safe: the artifacts stay as they were and the record says what was
+refused. A hook of the shape "here is the summary of what happened" is not,
+because fabricating history is never safe, and a summary is history. Reading
+the record is fine; rendering it another way is fine; proposing the next step
+is fine. Deciding what the record says is not.
+
+The corollary is for text rather than code. `AGENTS.md` or `HARDY.md`, a
+project command in `.hardy/prompts/`, a prompt template, a playbook, any
+statement of intent a later feature reads — all of it is **input**, and it is
+recorded as input: the full text in the transcript, its hash in the session
+state, rendered to the model as the user's own words under a stated precedence
+that Hardy's constraints outrank. None of it is ever evidence. A file cannot
+license a hole, an unapproved axiom, a statement quietly weakened to pass, or a
+claim of verification the kernel did not make; and the prompt-set hash a graded
+run records does not move when such a file changes, because that hash names the
+instructions Hardy gave and a user's file is not one of them.
+
+The SDK posture already in place is the same rule seen from the other side, and
+it should not drift: anything that is not a Hardy tool is denied by default
+rather than by a list, and no ambient configuration is inherited. This section
+is revisited only against a concrete use case the rule blocks, and the revision
+would have to say which closed path it opens and what then keeps the record
+true.
 
 ## Build order
 

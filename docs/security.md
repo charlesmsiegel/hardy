@@ -38,6 +38,10 @@ What Hardy does control:
   with the whole file's SHA-256. That read is on by default and can be turned
   off (`--no-project-context`, `project_context = false`, or
   `HARDY_PROJECT_CONTEXT=0`); graded runs read none.
+- **No extension surface.** Nothing can register a tool, intercept a tool
+  result, or supply a summary of the session. The boundary a future one would
+  have to respect is fixed in `DESIGN.md` ("Extension boundary"): observe,
+  propose, and render, never verify, audit, or write the record.
 - **A faithfulness reader with no tools.** On the default Claude backend the
   independent reader is offered no tools at all and the runtime refuses
   filesystem access by default; under `--backend codex` that isolation cannot

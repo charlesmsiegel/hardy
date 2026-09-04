@@ -267,6 +267,15 @@ a list that would have to anticipate every tool the CLI grows. Your own Claude
 Code settings and `CLAUDE.md` files are not inherited either, so a run is the run
 its record claims.
 
+There is no extension surface either, and the "Extension boundary" section of
+`DESIGN.md` is the decision that there will not be one by accident. Whatever
+Hardy ever lets an extension do, it may observe, propose, and render, and may
+never verify, audit, or write the record: the axiom audit, the verifier,
+`transcript.jsonl`, the run manifest, and every refusal decision stay closed,
+because a hook that can sit between the kernel and the record can manufacture a
+proof, and would do so silently. Your own text — `AGENTS.md`, the commands in
+`.hardy/prompts/` — is input, recorded as input, and never evidence.
+
 What replaces them is **one file, read and written down**. An interactive session
 reads `AGENTS.md` from the project root — or `HARDY.md`, which replaces it
 outright where a repository's `AGENTS.md` is aimed at a coding agent rather than
