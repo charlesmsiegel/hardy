@@ -691,3 +691,51 @@ def test_a_remembered_press_is_spent_once(settings):
     built.stopping(None)
     built.stopping(lambda: stopped.append(True) or True)
     assert stopped == [True], "a spent press fired against the next command"
+
+
+async def test_a_command_that_finishes_after_a_switch_does_not_revert_it(settings):
+    """`/status --full` is safe in flight, so it can begin during a
+    `/project switch` and suspend while the switch completes. Assigning its
+    answer back put the shell on the problem the user had just left, holding a
+    computer algebra kernel the opener had already closed."""
+    import dataclasses as dc
+
+    from hardy.tui import dispatch
+    from hardy.tui.commands import Command
+    from hardy.tui.ports import State
+
+    built = shell.Shell(settings, SimpleNamespace(), handlers.build_registry())
+    switched = State(config=dc.replace(settings, project="burnside"), session="new")
+
+    async def slow(ui, argument, state):
+        # The switch lands while this command is awaiting.
+        built._state = switched
+        return state                          # its own, now-stale answer
+
+    outcome = dispatch.Outcome(
+        "command", command=Command("slow", "", slow, safe_in_flight=True), argument=""
+    )
+    built._commands_running = 1
+    await built._run_command(outcome)
+
+    assert built.state.config.project == "burnside"
+    assert built.state.session == "new"
+
+
+async def test_a_command_that_finishes_normally_still_installs_its_state(settings):
+    from hardy.tui import dispatch
+    from hardy.tui.commands import Command
+
+    built = shell.Shell(settings, SimpleNamespace(), handlers.build_registry())
+
+    async def changing(ui, argument, state):
+        import dataclasses as dc
+
+        return dc.replace(state, session="replaced")
+
+    outcome = dispatch.Outcome(
+        "command", command=Command("changing", "", changing, safe_in_flight=True), argument=""
+    )
+    built._commands_running = 1
+    await built._run_command(outcome)
+    assert built.state.session == "replaced"
