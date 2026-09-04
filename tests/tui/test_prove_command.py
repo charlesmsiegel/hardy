@@ -227,6 +227,30 @@ async def test_the_stopper_is_cleared_even_when_the_run_fails(ui, settings, monk
     assert ui.stopper is None
 
 
+async def test_prove_can_actually_be_used_in_a_plain_session(settings, monkeypatch):
+    """The test below asserts which thread the workflow runs on, and that is all
+    it asserts -- so it passed while `/prove` raised `RuntimeError` at the first
+    prompt in every plain session, because the fake never touched the terminal.
+    This one drives the real facade, which is the thing that broke.
+    """
+    from hardy.tui import prove
+    from hardy.tui.plain import PlainUi
+
+    said: list[str] = []
+    answers = iter(["I UNDERSTAND", "approve"])
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        # What the staged workflow does first, through the same facade.
+        assert terminal.acknowledge_unsafe_execution() is True
+        assert terminal.choose_approval() in {"approve", "revise", "cancel"}
+        return SimpleNamespace(phase=SimpleNamespace(value="completed"))
+
+    monkeypatch.setattr(prove, "run", run)
+    ui = PlainUi(said.append, lambda prompt: next(answers, ""))
+    await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+    assert any("Artifacts" in line for line in said)
+
+
 async def test_the_plain_session_runs_the_workflow_inline(settings, monkeypatch):
     """A worker's `input()` cannot be unblocked by a Ctrl+C delivered to the
     main thread, and the plain terminal facade reads with `input()`: the

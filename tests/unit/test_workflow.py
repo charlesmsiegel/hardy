@@ -1085,3 +1085,28 @@ def test_a_run_cancelled_during_verification_does_not_open_the_writeup_turn(tmp_
     )
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
     assert 'writeup' not in [stage for stage, _ in state.prompts]
+
+
+def test_a_run_cancelled_during_a_rejecting_verification_is_not_graded_completed(
+    tmp_path,
+) -> None:
+    """The check lived on the verified branch alone. A rejection on the last
+    attempt then went to writeup with cancellation set: the runtime refused the
+    turn, the writeup fallback caught that, compiled TeX, and called an
+    abandoned run `completed`."""
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path, proof_results=[False]
+    )
+    verify = controller._verifier.verify
+
+    def cancelling(claim, proof_body, store):
+        result = verify(claim, proof_body, store)
+        controller.cancel()
+        return result
+
+    controller._verifier = SimpleNamespace(verify=cancelling)
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert 'writeup' not in [stage for stage, _ in state.prompts]

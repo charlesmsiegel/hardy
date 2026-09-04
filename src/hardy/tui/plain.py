@@ -37,7 +37,14 @@ class PlainUi:
         for line in transcript.notice_lines(text, WIDTH) or [""]:
             self._out(line)
 
-    async def choose(
+    # Every one of these is synchronous underneath: this session reads with
+    # `input()` and writes with `print()`, and the coroutines below exist only
+    # because the `Ui` port is written for a terminal that has an event loop to
+    # protect. Keeping the bodies here, as ordinary functions, is what lets
+    # `_Straight` be a real blocking facade rather than one that re-enters the
+    # loop -- see its docstring.
+
+    def choose_now(
         self, title, rows: Sequence[Choice], *, current=0, subtitle=""
     ) -> Choice | None:
         self._out("")
@@ -48,21 +55,32 @@ class PlainUi:
             mark = "*" if number - 1 == current else " "
             note = f"  {row.note}" if row.note else ""
             self._out(f"  {mark} {number:>3}  {row.label}{note}")
-        answer = (await self.ask_line("Choice (number, or blank to cancel): ") or "").strip()
+        answer = (self.ask_line_now("Choice (number, or blank to cancel): ") or "").strip()
         if not answer.isdigit():
             return None
         index = int(answer)
         return rows[index - 1] if 1 <= index <= len(rows) else None
 
-    async def ask_line(self, prompt: str) -> str | None:
+    def ask_line_now(self, prompt: str) -> str | None:
         try:
             return self._read(prompt)
         except (EOFError, KeyboardInterrupt):
             return None
 
-    async def confirm(self, question: str) -> bool:
-        answer = await self.ask_line(f"{question} [y/N] ")
+    def confirm_now(self, question: str) -> bool:
+        answer = self.ask_line_now(f"{question} [y/N] ")
         return (answer or "").strip().lower() in {"y", "yes"}
+
+    async def choose(
+        self, title, rows: Sequence[Choice], *, current=0, subtitle=""
+    ) -> Choice | None:
+        return self.choose_now(title, rows, current=current, subtitle=subtitle)
+
+    async def ask_line(self, prompt: str) -> str | None:
+        return self.ask_line_now(prompt)
+
+    async def confirm(self, question: str) -> bool:
+        return self.confirm_now(question)
 
     def stopping(self, cancel: Any) -> None:
         """Accepted and dropped: a line-based session has no Esc to route.
@@ -78,6 +96,21 @@ class PlainUi:
 
 
 class _Straight:
+    """The blocking face of `PlainUi`, and genuinely blocking.
+
+    It used to wrap each coroutine in `asyncio.run`, which is correct only for
+    a caller on a thread with no loop of its own. `plain.run` invokes a command
+    handler through `asyncio.run`, so a handler that reaches this facade
+    *inline* -- which `/prove` now does in the line-based session, deliberately
+    -- was calling `asyncio.run` from inside a running loop. That raises
+    `RuntimeError` at the first prompt, which is the unsafe-execution
+    acknowledgement, so `/prove` could not be used in a plain session at all.
+
+    There was never anything to await here: this session reads with `input()`.
+    So these call the synchronous bodies directly and there is no loop to
+    re-enter, whichever thread the caller is on.
+    """
+
     def __init__(self, ui: PlainUi):
         self._ui = ui
 
@@ -85,13 +118,13 @@ class _Straight:
         self._ui.write(text, style=style)
 
     def choose(self, title, rows, *, current=0, subtitle=""):
-        return asyncio.run(self._ui.choose(title, rows, current=current, subtitle=subtitle))
+        return self._ui.choose_now(title, rows, current=current, subtitle=subtitle)
 
     def ask_line(self, prompt: str):
-        return asyncio.run(self._ui.ask_line(prompt))
+        return self._ui.ask_line_now(prompt)
 
     def confirm(self, question: str) -> bool:
-        return asyncio.run(self._ui.confirm(question))
+        return self._ui.confirm_now(question)
 
 
 def run(

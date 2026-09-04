@@ -554,14 +554,17 @@ class ProveWorkflow:
                 verification = self._verifier.verify(
                     approved_claim, last_submission.proof_body, store
                 )
+                # After the verifier, whatever it said. It runs Lean over the
+                # whole claim and can take minutes, so a press very plausibly
+                # lands inside it -- and BOTH branches below leave this loop for
+                # the writeup without passing the check at its top again. Put
+                # only on the verified branch, the rejecting one on the last
+                # attempt went to writeup with cancellation set: the runtime
+                # refused the turn, the writeup fallback caught that, compiled
+                # TeX, and graded an abandoned run `completed`.
+                self._refuse_if_cancelled()
                 if verification.verified:
                     state.transition(RunPhase.WRITEUP)
-                    # Checked here as well as at the top of the loop: the
-                    # verifier runs Lean over the whole claim and can take
-                    # minutes, so a press very plausibly lands inside it -- and
-                    # this branch leaves the loop for the writeup turn without
-                    # passing the check above again.
-                    self._refuse_if_cancelled()
                     break
                 if attempt + 1 >= self._config.limits.official_checks:
                     state.transition(RunPhase.WRITEUP)

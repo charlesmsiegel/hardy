@@ -884,7 +884,26 @@ class Shell:
         # input batch could be resolved. Doing it here would undo that press.
         try:
             before = self._state.config.layout.local
-            self._state = await outcome.command.handler(self, outcome.argument, self._state)
+            started = self._state
+            result = await outcome.command.handler(self, outcome.argument, started)
+            if self._state is started:
+                self._state = result
+            else:
+                # Something else replaced the state while this command was
+                # awaiting. `/status --full` is the case: it is safe in flight,
+                # so it can begin during a `/project switch` and suspend on a
+                # thread while the switch completes -- and assigning its answer
+                # back put the shell on the problem the user had just left, with
+                # the computer algebra kernel the opener had already closed,
+                # while the history and the recorded active project pointed at
+                # the new one.
+                #
+                # A safe-in-flight command changes nothing about the state but
+                # `done`, so that is what is carried across; the rest of what it
+                # returned describes a session that no longer exists.
+                self._state = dataclasses.replace(
+                    self._state, done=self._state.done or result.done
+                )
             # Keyed on the directory the history lives in, not on the config
             # object: `/model` also returns a replaced config, and retargeting
             # for it would drop the history already loaded and clear the box
