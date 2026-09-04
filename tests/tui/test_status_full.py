@@ -85,3 +85,43 @@ async def test_status_full_against_a_session_that_has_no_summary(ui, settings):
     state = State(config=settings, session=SimpleNamespace(usage=Usage()))
     await handlers.handle_status(ui, "--full", state)
     assert "No workspace summary is available" in ui.text
+
+
+async def test_the_work_line_and_the_summary_describe_one_workspace(ui, settings):
+    """`/status` is safe in flight, so a `save_lean` landing between two reads
+    had one command print "Nothing outstanding" and then list the new debt
+    under `Next steps` a few lines below."""
+    assembled = summary.assemble(
+        goal="",
+        assumptions=[],
+        registry=[],
+        audit={},
+        theorems={"sylow": "theorem sylow : True"},
+        open_theorems=(),
+        obligations=("sylow: the writeup does not quote its Lean statement",),
+    )
+
+    def moved():
+        raise AssertionError("the obligations were read a second time")
+
+    state = State(
+        config=settings,
+        session=session(summary=lambda: assembled, obligations=moved),
+    )
+    await handlers.handle_status(ui, "--full", state)
+
+    assert "Nothing outstanding" not in ui.text
+    assert "the writeup does not quote its Lean statement" in ui.text
+
+
+async def test_a_plain_status_still_asks_the_session_for_its_obligations(ui, settings):
+    """Only `--full` gathers a summary, and the ordinary line must not start
+    paying for one."""
+    asked: list[int] = []
+    state = State(
+        config=settings,
+        session=session(obligations=lambda: asked.append(1) or ()),
+    )
+    await handlers.handle_status(ui, "", state)
+
+    assert asked == [1]
