@@ -93,6 +93,11 @@ def add_parser(subparsers: Any) -> None:
         sub.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
         if verb == "check":
             sub.add_argument(
+                "--since-registry", type=Path, default=None,
+                help="the previous release's tombstones.json; the registry is append-only, "
+                     "which only a comparison can establish. CI passes the merge base's copy.",
+            )
+            sub.add_argument(
                 "--since", type=Path, default=None,
                 help="the previous release's CHANGELOG.md (its head carries the version and the "
                      "manifest digest it bound); refuses content that moved under a version "
@@ -214,6 +219,11 @@ def main(args: argparse.Namespace, config: Any) -> int:
             issues = check_issues(args.corpus)
             if getattr(args, "since", None) is not None:
                 issues.extend(release_issues(args.corpus, args.since.read_text(encoding="utf-8")))
+            if getattr(args, "since_registry", None) is not None:
+                from .corpus import load_tombstones, registry_issues
+
+                prior = json.loads(args.since_registry.read_text(encoding="utf-8"))["issued"]
+                issues.extend(registry_issues(load_tombstones(args.corpus), prior))
             for issue in issues:
                 print(issue, file=sys.stderr)
             return 1 if issues else 0

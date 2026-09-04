@@ -32,7 +32,12 @@ jobs:
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
           if git show "origin/${{ github.base_ref }}:corpus/CHANGELOG.md" > /tmp/base-changelog.md 2>/dev/null; then
-            uv run hardy evals corpus check --since /tmp/base-changelog.md
+            # The registry is append-only, which no single tree can show:
+            # deleting an entry *and* its key leaves live and issued matching.
+            git show "origin/${{ github.base_ref }}:corpus/tombstones.json" > /tmp/base-tombstones.json
+            uv run hardy evals corpus check \
+              --since /tmp/base-changelog.md \
+              --since-registry /tmp/base-tombstones.json
           else
             echo "no corpus on the base branch yet; nothing to anchor against"
           fi

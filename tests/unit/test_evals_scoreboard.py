@@ -155,7 +155,7 @@ def test_aggregates_are_counts_and_medians_per_tier():
     assert agg.headline.n == 3 and agg.headline.solved == 2      # tiers 2 and 3 true rows
     assert agg.headline.interval[0] < agg.headline.solve_rate < agg.headline.interval[1]
     assert agg.floor == {"entries": 5, "tier_0": 1, "tier_1": 0, "tier_2": 1, "tier_3": 3,
-                         "single_tactic_closes": 1, "active": 5}
+                         "single_tactic_closes": 1, "active": 5, "active_unwitnessed": 5}
 
 
 def test_medians_over_solved_rows_only_and_unreported_costs_are_counted_not_zeroed():
@@ -558,3 +558,16 @@ def test_an_active_entry_does_reach_the_headline():
     baseline = _baseline({"t": 3})
     assert scoreboard.aggregate(rows, baseline, active_ids=set()).headline.n == 0
     assert scoreboard.aggregate(rows, baseline, active_ids={reviewed.id}).headline.n == 1
+
+
+def test_the_headline_discloses_how_many_of_its_statements_lack_a_witness():
+    """An `active` entry may still be `unwitnessed` -- every migrated entry is.
+    Such a statement rests on the human read alone, since A3 cannot see
+    vacuity, and the spec requires that reported rather than hidden."""
+    baseline = _baseline({"a": 2, "b": 3})
+    witnessed = baseline.model_copy(update={"entries": {
+        "a": baseline.entries["a"].model_copy(update={"witness": "witnessed"}),
+        "b": baseline.entries["b"],
+    }})
+    floor = scoreboard.aggregate([], witnessed, active_ids={"a", "b"}).floor
+    assert floor["active"] == 2 and floor["active_unwitnessed"] == 1

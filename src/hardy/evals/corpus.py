@@ -164,7 +164,37 @@ def load_tombstones(root: Path) -> dict[str, str]:
     path = root / "tombstones.json"
     if not path.exists():
         raise CorpusError(f"missing id registry: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))["issued"]
+    issued = json.loads(path.read_text(encoding="utf-8")).get("issued")
+    # Checked rather than trusted: `issued: null` or a number returned straight
+    # from here made `tombstone_issues` raise `TypeError` on iteration, which
+    # `check_issues` does not catch -- a traceback out of the command asked to
+    # report the malformed corpus.
+    if not isinstance(issued, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in issued.items()
+    ):
+        raise CorpusError(f"{path.name}: 'issued' must map ids to dates")
+    return issued
+
+
+def registry_issues(issued: dict[str, str], prior_issued: dict[str, str]) -> list[str]:
+    """The registry is append-only, which only a comparison can establish.
+
+    Deleting an entry *and* its registry key leaves the current tree
+    self-consistent -- live and issued still match -- so a file-level check
+    sees nothing. An id that vanishes takes an external citation with it, and
+    a date that moves rewrites when an id was issued (spec §2.2).
+    """
+    issues = [
+        f"{id!r} was in the registry and is now gone: ids are issued once and never withdrawn"
+        for id in prior_issued
+        if id not in issued
+    ]
+    issues.extend(
+        f"{id!r} was issued on {prior_issued[id]} and now reads {issued[id]}: an issue date is history"
+        for id in prior_issued
+        if id in issued and issued[id] != prior_issued[id]
+    )
+    return sorted(issues)
 
 
 def tombstone_issues(problems: ProblemSet, issued: dict[str, str]) -> list[str]:
@@ -244,7 +274,20 @@ def release_issues(root: Path, prior_changelog: str) -> list[str]:
             f"now {manifest[:12]}…) but {version} is still the declared version: a released "
             "version must denote one content, so bump it and add a changelog entry citing the ids"
         ]
+    if _parts(version) < _parts(prior_version):
+        # Rejecting only an *unchanged* version would let 0.1.1 be replaced by
+        # 0.0.1: the chronology moves backward, and patch/minor/major stops
+        # telling a consumer anything about what changed between two numbers.
+        return [
+            f"the declared version {version} is below the released {prior_version}: a corpus "
+            "version only ever goes up"
+        ]
     return []
+
+
+def _parts(version: str) -> tuple[int, int, int]:
+    major, minor, patch = version.split(".")
+    return int(major), int(minor), int(patch)
 
 
 def corpus_version(root: Path) -> str:
