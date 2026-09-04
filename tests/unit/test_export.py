@@ -947,3 +947,83 @@ def test_a_real_credential_inside_a_transcript_event_is_still_redacted():
         material(transcript=[{"type": "tool", "password": "hunter2"}])
     )
     assert prepared["transcript"][0]["password"] == "[REDACTED]"
+
+
+def test_the_page_says_the_formal_sources_are_exempt_from_redaction():
+    """The header cannot promise a filter it deliberately does not apply.
+
+    An audited Lean source is rendered with nothing rewritten, on purpose: a
+    page whose Lean no longer hashes to what the kernel saw is worse than one
+    carrying a string that was never a credential. That is a real exception to
+    the sentence above it, and a reader deciding whether an export is safe to
+    share has to be told about it rather than left to infer it.
+    """
+    page = build()
+    exemption = page.split("That is a filter", 1)[1].split("<h2>Goal</h2>", 1)[0]
+    assert "exempt" in exemption
+    assert "Lean" in exemption and "TeX" in exemption
+    assert "reaches this file intact" in exemption
+
+
+def test_a_recent_refusal_is_not_pushed_out_by_older_denials():
+    """Order first, clip second.
+
+    Gathering failed tool calls and SDK denials in two passes and concatenating
+    them put every denial after every failure whatever the times were, so the
+    newest-fifty slice kept the newest fifty of a list that was not in time
+    order -- and the failure the reader most needs went missing.
+    """
+    transcript = [
+        {"type": "refused_tool", "name": f"Bash{index}"} for index in range(50)
+    ]
+    transcript.append(
+        {
+            "type": "tool",
+            "name": "save_lean",
+            "result": {"ok": False, "output": "Lean rejected the proof"},
+        }
+    )
+    page = build(transcript=transcript)
+    # The section itself, not the page: the same call is also rendered in the
+    # conversation below, which would answer for this assertion without the
+    # withheld section listing it at all.
+    listed = page.split("<h3>Refused tool calls</h3>", 1)[1].split("<h2>", 1)[0]
+    assert "save_lean" in listed
+    assert "Lean rejected the proof" in listed
+
+
+def test_an_outstanding_obligation_is_the_sentence_the_user_was_shown():
+    """The event carries `Obligation.as_dict`, not its string."""
+    page = build(
+        transcript=[
+            {
+                "type": "obligations",
+                "outstanding": [
+                    {"kind": "open", "subject": "sylow", "detail": "the proof has a hole"}
+                ],
+            }
+        ]
+    )
+    assert "sylow: the proof has a hole" in page
+    assert "'kind'" not in page
+    assert "&#x27;kind&#x27;" not in page
+
+
+def test_the_project_instructions_are_exported_whole():
+    """Not through the tool-result clipper.
+
+    `project_context` bounds itself at 50,000 bytes from the head; the clipper
+    keeps 4,000 from the tail. Sending one through the other showed the reader
+    the middle of the file, labelled as its end -- and the text is the system
+    prompt, so an export that cannot reproduce it cannot be used to judge the
+    replies made under it.
+    """
+    text = "\n".join(f"instruction line {index}" for index in range(2000))
+    page = build(
+        transcript=[
+            {"type": "project_context", "reason": "read", "file": "AGENTS.md", "text": text}
+        ]
+    )
+    assert "instruction line 0" in page
+    assert "instruction line 1999" in page
+    assert "Showing the end of this result" not in page

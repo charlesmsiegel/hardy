@@ -765,7 +765,8 @@ async def handle_export(ui: Ui, argument: str, state: State) -> State:
     ui.write("  One file, no external assets. Results carry their own verdicts;")
     ui.write("  the conversation in it is not evidence for any of them.")
     ui.write("  Credentials matching known shapes were removed -- that is a filter,")
-    ui.write("  not a proof. Read it before you share it.")
+    ui.write("  not a proof, and the Lean and TeX are exempt from it so they still")
+    ui.write("  hash to what was checked. Read it before you share it.")
     return state
 
 
