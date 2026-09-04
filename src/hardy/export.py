@@ -205,8 +205,20 @@ def _escape(value: Any) -> str:
 
 
 def _verbatim(value: Any) -> str:
-    """Escape without the key/value rules: for source the kernel has graded."""
-    return html.escape(redact(str(value), keys=False), quote=True)
+    """Escape an audited artifact. NOTHING is rewritten -- see below.
+
+    An earlier version of this kept the token-shape rules on, reasoning that
+    `sk-...` or `Bearer ...` could not occur in valid Lean by accident. It can:
+    `theorem t : "Bearer abc123" = "Bearer abc123" := rfl` is a proposition
+    about a string literal, and rewriting it exports a DIFFERENT proposition
+    from the one the kernel checked. There is no shape a formal artifact
+    cannot contain, so there is no rule that is safe to run over one.
+
+    What guards the reader instead is the page's own header, which says the
+    redaction is a filter and not a proof, and the fact that this text is the
+    workspace's own audited tree rather than anything Hardy pasted into it.
+    """
+    return html.escape(str(value), quote=True)
 
 
 def _block(text: str) -> str:
@@ -338,7 +350,13 @@ def _assumptions(records: Sequence[Mapping[str, Any]]) -> str:
         parts.append(
             '<div class="result">'
             f"<p>{_badge('assumed')} <code>{_escape(record.get('formal_name', '?'))}</code></p>"
-            + _block(f"axiom {record.get('formal_name', '?')} : {record.get('lean_statement', '')}")
+            # The declaration the results above rest on, exactly: `axiom secret
+            # : True` is a valid axiom named `secret`, and the key/value rule
+            # rewrote it to `[REDACTED]` -- misstating the assumption the page
+            # says its verified-modulo results depend on.
+            + _source_block(
+                f"axiom {record.get('formal_name', '?')} : {record.get('lean_statement', '')}"
+            )
             + _rows(
                 (
                     ("In prose", record.get("informal_statement", "not stated")),
@@ -357,14 +375,19 @@ def _assumptions(records: Sequence[Mapping[str, Any]]) -> str:
     return "".join(parts)
 
 
-def _sources(sources: Mapping[str, str], empty: str) -> str:
+def _sources(sources: Mapping[str, str], empty: str, *, audited: bool = False) -> str:
+    """The tree as text. `audited` marks Lean, which is never rewritten.
+
+    Only Lean. A `.tex` file is prose the user wrote, not something the kernel
+    graded, so a credential pasted into one is a credential and the page said
+    it removes those. Exempting the writeup along with the Lean turned the
+    fidelity fix into a leak.
+    """
     if not sources:
         return f"<p>{_escape(empty)}</p>"
-    # `_source_block`: this is the audited tree, and altering it would make the
-    # page disagree with what Lean checked. See `redact`.
+    body = _source_block if audited else _block
     return "".join(
-        f"<h3>{_escape(name)}</h3>{_source_block(text)}"
-        for name, text in sorted(sources.items())
+        f"<h3>{_escape(name)}</h3>{body(text)}" for name, text in sorted(sources.items())
     )
 
 
@@ -747,7 +770,13 @@ proof: read the conversation below before sharing it.</p>
 {_assumptions(material.get("assumptions", ()))}
 
 <h2>Still outstanding</h2>
-{_list(material.get("obligations", ()), "Nothing outstanding: every saved theorem is written up.")}
+{_list(
+    material.get("obligations", ()),
+    "Nothing outstanding: every saved theorem is written up."
+    if material.get("theorems")
+    else "No theorem is saved, so nothing here is reportable. An empty workspace owes "
+    "nothing because there is nothing in it, which is not the same as being finished.",
+)}
 
 <h2>Naming registry</h2>
 {_list(
@@ -763,7 +792,7 @@ proof: read the conversation below before sharing it.</p>
 {_imported(material.get("imported", ()))}
 
 <h2>Lean sources</h2>
-{_sources(material.get("lean", {}), "No Lean module is saved.")}
+{_sources(material.get("lean", {}), "No Lean module is saved.", audited=True)}
 
 <h2>Writeup</h2>
 <p>{_escape(material.get("document", "No compiled document was found."))}</p>
@@ -800,7 +829,7 @@ opened.</footer>
 #: called `secret`, not a credential under a key called `secret`, and replacing
 #: its statement makes the page disagree with what the kernel checked. The
 #: text-level pass still sees them, minus the key/value rules -- see `redact`.
-VERBATIM = frozenset({"theorems", "lean", "tex"})
+VERBATIM = frozenset({"theorems", "lean"})
 
 
 def prepare(material: Mapping[str, Any]) -> dict[str, Any]:

@@ -274,3 +274,12 @@ def test_a_long_refusal_keeps_the_end_where_the_diagnostic_is():
 
     assert "unknown identifier 'foo'" in found[0].detail
     assert found[0].detail.startswith("…")
+
+
+def test_a_tool_the_sdk_refused_counts_as_a_failed_attempt():
+    """"The transcript records no refused tool call" over a run in which the
+    model reached for `Bash` is the most misleading line this section has."""
+    found = summary.attempts([{"type": "refused_tool", "name": "Bash"}])
+
+    assert found and found[0].tool == "Bash"
+    assert "never ran" in found[0].detail

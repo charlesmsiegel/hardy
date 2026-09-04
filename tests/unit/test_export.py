@@ -761,11 +761,31 @@ def test_audited_lean_is_shown_exactly_as_the_kernel_checked_it():
     assert "[REDACTED]" not in results(page)
 
 
-def test_a_token_shape_is_still_removed_from_a_lean_source():
-    """Only the key/value rules step aside for source; a token cannot occur in
-    valid Lean by accident."""
-    page = build(lean={"Work": "-- key sk-abcdefghijklmnopqrstuv\n"})
-    assert "sk-abcdefghijklmnopqrstuv" not in page
+def test_an_audited_source_is_exported_with_nothing_rewritten():
+    """An earlier version of this test asserted the opposite, on the reasoning
+    that a token shape could not occur in valid Lean by accident. It can:
+    `theorem t : "Bearer abc123" = "Bearer abc123" := rfl` is a proposition
+    ABOUT a string literal, and rewriting it exports a different proposition
+    from the one the kernel checked.
+
+    The cost is stated rather than hidden: a credential a user pastes into
+    their own `.lean` file travels with the export, and the page's header says
+    the redaction is a filter and not a proof. Altering what Lean checked is
+    the worse failure -- it is the one thing the page exists to get right.
+    """
+    statement = 'theorem t : "Bearer abc123" = "Bearer abc123" := rfl'
+    page = build(theorems={"t": statement}, lean={"Work": statement})
+
+    assert page.count("Bearer abc123") >= 2
+    assert "[REDACTED-KEY]" not in results(page)
+
+
+def test_a_writeup_source_is_not_an_audited_artifact():
+    """`.tex` is prose the user wrote, not something the kernel graded, so a
+    credential in one is a credential -- exempting the writeup along with the
+    Lean turned the fidelity fix into a leak."""
+    page = build(tex={"tex/paper.tex": "% password: hunter2\n"})
+    assert "hunter2" not in page
 
 
 def test_a_turn_with_no_saved_theorem_keeps_its_warning():
@@ -809,3 +829,29 @@ def test_a_real_credential_key_is_still_redacted_structurally():
     """The exemption is only for the maps keyed by declaration or path."""
     prepared = export.prepare(material(transcript=[{"type": "tool", "password": "hunter2"}]))
     assert prepared["transcript"][0]["password"] == "[REDACTED]"
+
+
+def test_an_approved_axiom_is_stated_exactly_as_it_was_approved():
+    """`axiom secret : True` is a valid axiom named `secret`, and the key/value
+    rule rewrote it -- misstating the assumption the page says its
+    verified-modulo results depend on."""
+    page = build(
+        assumptions=[
+            {
+                "formal_name": "secret",
+                "lean_statement": "True",
+                "source": "Aschbacher 1.2",
+                "reason": "Mathlib does not expose it",
+                "status": "user-approved",
+            }
+        ],
+    )
+    assert "axiom secret : True" in page
+
+
+def test_an_empty_workspace_is_not_reported_as_finished():
+    """"Nothing outstanding: every saved theorem is written up" over a
+    workspace with no theorem presents emptiness as completion."""
+    page = build(theorems={}, obligations=[])
+    assert "nothing here is reportable" in page
+    assert "every saved theorem is written up" not in page
