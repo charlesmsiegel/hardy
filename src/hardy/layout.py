@@ -396,7 +396,19 @@ TOOLING_HEADER = (
 # typed at the prompt whether or not it was sent (`input-history`). Not
 # migrating that data is a deliberate decision and it stands -- but the
 # decision was to leave it alone, not to hand it to the next `git add -A`.
-TOOLING_RULES = ("/.build/", "/.local/", "/session.json", "/transcript.jsonl", "/input-history")
+# `/papers/` is the arXiv library: third-party bytes this machine downloaded,
+# shared by every problem in the root. What travels with a clone is each
+# problem's `bibliography.json`, which carries the digest of what was read --
+# so a clone with no library can still say which bytes a citation was made
+# against, and nobody commits somebody else's papers to get there.
+TOOLING_RULES = (
+    "/.build/",
+    "/.local/",
+    "/papers/",
+    "/session.json",
+    "/transcript.jsonl",
+    "/input-history",
+)
 
 
 def resolve_named_child(path: Path, parent: Path) -> Path:

@@ -7,13 +7,24 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path, PurePosixPath
 
+from . import references
 from .layout import WriteGuard, files_under, guard_for, read_bytes
 from .models import ToolResult
-from .process import run_guarded
+from .process import GuardedResult, run_guarded
 
 # Fragments are `\input` from one document, and that document is what a
 # compiler is ever pointed at.
 ROOT_DOCUMENT = "writeup.tex"
+# How many times one check may run the compiler. A document with any `\ref` in
+# it needs two passes to resolve one -- LaTeX writes the numbers into the
+# `.aux` on the way through and reads them on the pass after -- and a
+# `thebibliography` cited from the text needs the same. The third is for the
+# case where resolving a reference moved a page number and moved a reference
+# with it; TeX distributions converge in three in practice, and a document
+# that has not converged by then is reported on the last pass rather than
+# looped over. Each pass is bounded by the same `timeout` as before, so the
+# worst case here is three times what one compile could take.
+MAX_PASSES = 3
 BEGIN_DOCUMENT = re.compile(r"\\begin\{document\}")
 
 
@@ -458,36 +469,35 @@ class LatexTools:
             if stamp:
                 root.write_text(stamped(root.read_text(encoding="utf-8"), stamp), encoding="utf-8")
             try:
-                # `run_guarded` rather than `run_process`: a TeX installation
-                # needs the environment Hardy was started with, and
-                # `run_process` deliberately hands a child only the few
-                # variables a toolchain needs to find itself. Everything else
-                # -- the group, the register, the grace, the escalation -- is
-                # the same ladder every other child walks.
-                outcome = run_guarded(
-                    [*self.command, root.name], cwd=work, timeout=self.timeout
-                )
-                if outcome.timed_out:
-                    raise subprocess.TimeoutExpired(
-                        self.command, self.timeout, outcome.stdout, outcome.stderr
-                    )
+                outcome, log = self._passes(work, root)
             except subprocess.TimeoutExpired as error:
                 output = ((error.stdout or "") + (error.stderr or ""))[-self.output_limit :]
                 return ToolResult(False, f"timeout after {self.timeout:.1f}s\n{output}", source)
             except FileNotFoundError:
                 return ToolResult(False, f"LaTeX executable not found: {self.command[0]}", source)
-            output = (outcome.stdout + outcome.stderr).strip()[-self.output_limit :]
+            output = log.strip()[-self.output_limit :]
             elapsed = time.monotonic() - started
             if outcome.interrupted:
                 # Stopped, not judged. A compile nobody let finish has no
                 # verdict about the source, and reporting its exit status as
                 # one would read as LaTeX rejecting the document.
                 return ToolResult(False, f"interrupted after {elapsed:.3f}s\n{output}", source)
+            # An exit status of 0 is not the whole verdict: LaTeX resolves a
+            # missing `\ref` to `??` and a missing `\cite` to `[?]` and exits
+            # successfully either way. Only for the real document -- a
+            # fragment compiled through a probe root cannot see the labels its
+            # siblings create, so every cross-fragment reference would be
+            # "undefined" there and the fragment-first order the prompt
+            # prescribes would become impossible.
+            broken, labels = ("", ())
+            if actual and outcome.returncode == 0:
+                broken, labels = self._references(work, log)
+            resolved = outcome.returncode == 0 and not broken
             # Before a single byte leaves the scratch tree, and deliberately
             # allowed to raise: see the note on `commit` above. A fragment
             # compiled through a probe still has to be saved, so this does not
             # wait on `actual` the way publication does.
-            if outcome.returncode == 0 and commit is not None:
+            if resolved and commit is not None:
                 commit()
             pdf = work / "writeup.pdf"
             # Published only from the real document. A probe's output was
@@ -495,10 +505,77 @@ class LatexTools:
             # became a page holding one fragment -- and its `.aux` was
             # handing the completion gate labels that the writeup does not
             # create, from a document nobody will ever read.
-            if actual and outcome.returncode == 0 and output_dir is not None and pdf.exists():
+            if actual and resolved and output_dir is not None and pdf.exists():
                 _publish(work, output_dir, aux_dir)
+            report = broken or references.note(labels)
             return ToolResult(
-                outcome.returncode == 0,
-                f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n{output}",
+                resolved,
+                f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n{output}"
+                + (f"\n{report}" if report else ""),
                 source,
             )
+
+    def _passes(self, work: Path, root: Path) -> tuple[GuardedResult, str]:
+        r"""Run the compiler until another pass would not change the answer.
+
+        One pass cannot resolve a single `\ref`: the numbers are written into
+        the `.aux` on the way through and read on the pass after, so a
+        one-pass check calls every reference in a sound document undefined.
+        Hardy read only the exit status before, so nobody noticed; the moment
+        the log is read, the second pass stops being an optimisation and
+        becomes the difference between a report about the document and a
+        report about how many times it was compiled.
+
+        Bounded by `MAX_PASSES` and stopped early on a failing pass, because a
+        document TeX rejected has nothing left to converge.
+        """
+        outcome = None
+        log = ""
+        previous: tuple[references.Unresolved, ...] | None = None
+        for _ in range(MAX_PASSES):
+            # `run_guarded` rather than `run_process`: a TeX installation
+            # needs the environment Hardy was started with, and
+            # `run_process` deliberately hands a child only the few
+            # variables a toolchain needs to find itself. Everything else
+            # -- the group, the register, the grace, the escalation -- is
+            # the same ladder every other child walks.
+            outcome = run_guarded([*self.command, root.name], cwd=work, timeout=self.timeout)
+            if outcome.timed_out:
+                raise subprocess.TimeoutExpired(
+                    self.command, self.timeout, outcome.stdout, outcome.stderr
+                )
+            log = outcome.stdout + outcome.stderr
+            if outcome.returncode != 0 or outcome.interrupted:
+                break
+            if not references.rerun_requested(log):
+                break
+            # "There were undefined references" is itself a rerun request, and
+            # a reference nothing defines never stops making it -- so a broken
+            # document would pay for every pass the cap allows. Two passes
+            # reporting the same set have converged on that set: the `.aux` is
+            # not moving any more and a third would say what the second did.
+            unresolved = references.unresolved(log)
+            if previous is not None and unresolved == previous:
+                break
+            previous = unresolved
+        assert outcome is not None  # MAX_PASSES is at least one
+        return outcome, log
+
+    def _references(self, work: Path, log: str) -> tuple[str, tuple[str, ...]]:
+        """What the log and the compiled tree say about references, in words.
+
+        Returns the refusal (empty when everything resolved) and the labels
+        nothing points at, which are a note rather than a refusal -- see
+        `references` for why Hardy may not fail a compile over one.
+        """
+        sources = {
+            relative.as_posix(): read_bytes(work, relative).decode("utf-8", errors="replace")
+            for relative in files_under(work, ".tex")
+        }
+        # A fragment nothing includes is not part of the document, so its
+        # labels are not labels this compile created.
+        for orphan in unreached_fragments(sources):
+            sources.pop(orphan, None)
+        executed = {path: _executed(text) for path, text in sources.items()}
+        labels = references.unreferenced_labels(executed)
+        return references.report(references.unresolved(log), labels), labels
