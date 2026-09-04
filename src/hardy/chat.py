@@ -657,6 +657,23 @@ def _vacuity_source(stripped: str, *, include_probes: bool = True) -> tuple[str,
     return source, tactics
 
 
+def _digest(messages: Sequence[Message]) -> str:
+    """A digest over a run of conversation messages, in order.
+
+    The point of recording one is that a compaction says what it dropped in
+    terms an auditor can check. Counts cannot: two different conversations of
+    the same length agree on every number in the entry. `Message.as_dict` is
+    the serialisation the transcript already uses for the messages it carries,
+    so the same reconstruction that would be compared against the record is
+    the one this digests.
+    """
+    running = hashlib.sha256()
+    for message in messages:
+        running.update(json.dumps(message.as_dict(), sort_keys=True, ensure_ascii=False).encode("utf-8"))
+        running.update(b"\x1e")
+    return running.hexdigest()
+
+
 class MathematicsSession:
     def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, limits: RunLimits | None = None, context_window: int = compaction.CONTEXT_WINDOW):
         self.workspace = workspace
@@ -3534,9 +3551,26 @@ class MathematicsSession:
             return None
         self._record({
             "type": "compaction",
+            # Counts of *conversation messages*, which are not transcript
+            # events: one assistant turn can produce an assistant event, a
+            # tool_use, a tool_result, a result and an obligation, and Hardy's
+            # own steering events have no message at all. So these locate the
+            # cut in the list the loop holds -- which ends with the process --
+            # and nothing more. The digests below are what an auditor can
+            # actually check a reconstruction against.
             "summarized_messages": outcome.cut,
             "kept_from": outcome.cut,
             "kept_messages": len(messages) - outcome.cut,
+            # What was dropped and what was kept, each as a digest over the
+            # messages themselves. A count cannot identify a conversation and
+            # an index into a list nobody else has cannot be followed, so a
+            # reader with a candidate reconstruction had no way to tell whether
+            # it was the context later calls actually ran on. These say so.
+            "summarized_digest": _digest(messages[: outcome.cut]),
+            "kept_digest": _digest(messages[outcome.cut :]),
+            # And where in `transcript.jsonl` this happened, so the event
+            # locates itself in the record rather than only in the run.
+            "transcript_length": self._transcript_end(),
             # `after` counts the summary as well as the kept tail, because
             # both are sent, and `fits` compares it against the window rather
             # than against the conversation it replaced -- compacting is still

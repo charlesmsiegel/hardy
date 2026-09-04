@@ -215,11 +215,21 @@ def estimate_text(text: str) -> int:
     prevent. The two directions are not symmetric: compacting a little early
     costs some kept context, and compacting too late costs the request.
 
-    So ASCII is charged at the prose ratio and everything else at one token
-    per code point, which is a bound rather than a guess.
+    So ASCII is charged at the prose ratio and everything else at its UTF-8
+    byte count. That is a real bound rather than a nearly-right guess: a BPE
+    token covers at least one byte, so a string can never cost more tokens than
+    it has bytes. One token per code point was the earlier attempt and is not a
+    bound -- an emoji or a rarer symbol is several tokens on its own, and the
+    conversations that would have exceeded it are the ones this exists for.
+
+    It overshoots for CJK, which is nearer one token per character than three.
+    Deliberately: the cost of overshooting is compacting sooner than strictly
+    necessary, and the cost of undershooting is a request the provider refuses.
     """
     ascii_characters = sum(1 for character in text if character.isascii())
-    return int(ascii_characters / CHARACTERS_PER_TOKEN) + (len(text) - ascii_characters)
+    # Every byte of the string, less the ASCII ones, which are one byte each.
+    other_bytes = len(text.encode("utf-8")) - ascii_characters
+    return int(ascii_characters / CHARACTERS_PER_TOKEN) + other_bytes
 
 
 def overhead(system_prompt: str, specs: Sequence[Mapping[str, Any]]) -> int:

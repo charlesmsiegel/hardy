@@ -168,15 +168,21 @@ def redacted(url: str) -> str:
     """
     try:
         parsed = urlsplit(url)
+        if not parsed.scheme and not parsed.netloc:
+            # Not a URL at all. Nothing here can say which part of it is a
+            # secret, so nothing here republishes it.
+            return "unreadable endpoint"
+        # Inside the `try`, because `urlsplit` is lazy: it parses the netloc
+        # only when `hostname` or `port` is read, and `:notaport` raises
+        # there rather than above. `provenance()` reads this property while
+        # writing `result.json`, so an exception here lost the whole record of
+        # a run whose Lean had already succeeded -- a closer-only batch that
+        # never contacted the provider included.
+        host = parsed.hostname or ""
+        if parsed.port is not None:
+            host = f"{host}:{parsed.port}"
     except ValueError:
         return "unreadable endpoint"
-    if not parsed.scheme and not parsed.netloc:
-        # Not a URL at all. Nothing here can say which part of it is a secret,
-        # so nothing here republishes it.
-        return "unreadable endpoint"
-    host = parsed.hostname or ""
-    if parsed.port is not None:
-        host = f"{host}:{parsed.port}"
     kept = urlunsplit((parsed.scheme, host, "", "", ""))
     # The path goes the same way the userinfo and the query do. A gateway can
     # put its key in it -- `https://gateway.example/token/<secret>/v1` -- and
