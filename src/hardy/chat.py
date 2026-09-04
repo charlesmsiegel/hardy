@@ -2692,6 +2692,7 @@ class MathematicsSession:
         asked to put one in a namespace.
         """
         holders: dict[str, list[str]] = {}
+        theorems: set[str] = set()
         snapshot = self.lean_workspace.sources() if sources is None else sources
         for module, source in sorted(snapshot.items()):
             found = declarations(source)
@@ -2712,13 +2713,29 @@ class MathematicsSession:
             for name in (*found["theorem"], *found["lemma"]):
                 if name in hidden:
                     continue
+                if name in found["theorem"]:
+                    # Which names a THEOREM answers to somewhere. A lemma is
+                    # scaffolding: two disconnected modules both spelling one
+                    # `step` collide with nothing a report, a registry entry or
+                    # a label can name, and the obligation below -- which says
+                    # they "each declare a theorem" -- was both false and
+                    # impossible to satisfy.
+                    theorems.add(name)
                 modules = holders.setdefault(name, [])
                 # Once per module: Lean will not let one module declare a name
                 # twice, and counting a repeat as a collision would report a
                 # module as ambiguous with itself.
                 if module not in modules:
                     modules.append(module)
-        return {name: found for name, found in holders.items() if len(found) > 1}
+        # A lemma is still counted above, because a lemma in one module and a
+        # theorem in another DO collide -- the audit records both and a verdict
+        # is looked up by name. What is dropped is a collision no theorem is
+        # part of.
+        return {
+            name: found
+            for name, found in holders.items()
+            if len(found) > 1 and name in theorems
+        }
 
     def _tex_sources(self) -> dict[str, str]:
         """The writeup tree as text, keyed by workspace-relative path.

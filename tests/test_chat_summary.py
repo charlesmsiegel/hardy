@@ -288,3 +288,38 @@ def test_a_private_theorem_cannot_answer_for_a_public_one_of_the_same_name(tmp_p
     chat.lean_workspace.sources = two_modules
 
     assert "1 = 1" not in chat.export_material()["theorems"]["hardyBasic"]
+
+
+def test_two_modules_sharing_only_a_lemma_name_owe_nothing(tmp_path: Path):
+    """A lemma is scaffolding: two disconnected modules both spelling one
+    `step` collide with nothing a report, a registry entry or a label can name,
+    and the obligation said they "each declare a theorem"."""
+    chat = built(tmp_path)
+    read = chat.lean_workspace.sources
+
+    def two_modules():
+        found = dict(read())
+        helper = "import Mathlib\nlemma step : True := by exact True.intro\n"
+        found["First"] = helper
+        found["Second"] = helper
+        return found
+
+    chat.lean_workspace.sources = two_modules
+
+    assert "step" not in chat.export_material()["shared"]
+
+
+def test_a_lemma_that_shares_a_theorems_name_still_collides(tmp_path: Path):
+    """The half that must survive: the audit records both and a verdict is
+    looked up by name, so an audited lemma answers for an unaudited theorem."""
+    chat = built(tmp_path)
+    read = chat.lean_workspace.sources
+
+    def two_modules():
+        found = dict(read())
+        found["Other"] = "import Mathlib\nlemma hardyBasic : True := by exact True.intro\n"
+        return found
+
+    chat.lean_workspace.sources = two_modules
+
+    assert "hardyBasic" in chat.export_material()["shared"]
