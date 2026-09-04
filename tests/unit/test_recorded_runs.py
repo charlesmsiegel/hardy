@@ -841,3 +841,46 @@ def test_a_closer_solve_relabelled_as_the_no_closer_condition_is_refused(tmp_pat
     issues = acceptance.validate_batch_consistency(output)
 
     assert any('declined on a run whose closers are recorded as disabled' in issue for issue in issues)
+
+
+def _late_sketch(tmp_path: Path, name: str = 'late') -> Path:
+    return _batch(tmp_path, [('sketch_proof', {'proof': 'by sorry'})], wall_seconds=0.0001, name=name)
+
+
+def test_a_run_whose_sketch_was_discarded_is_self_consistent(tmp_path) -> None:
+    """The audit must not refuse the honest artifact. A skeleton that
+    elaborated after the deadline carries the runner's discard marker and is
+    not part of the result; counted as accepted, a truthful timeout was
+    rejected for "accepting a sketch no record carries"."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _late_sketch(tmp_path)
+
+    assert json.loads((output / 'result.json').read_text(encoding='utf-8'))['sketch'] is None
+    assert acceptance.validate_batch_consistency(output) == ()
+
+
+def test_a_sketch_swapped_for_another_skeleton_is_refused(tmp_path) -> None:
+    """Every other comparison is the record against itself. The tool result's
+    `source` is the one thing in the trajectory that came out of Lean."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    runner = importlib.import_module('hardy.runner')
+    output = _sketched(tmp_path)
+    swapped = {'proof': 'by\n  admit', 'holes': [{'keyword': 'admit', 'line': 2, 'column': 2}]}
+    for name in ('result.json', 'trajectory.json'):
+        _rewrite(output / name, sketch=swapped)
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    for event in trajectory['events']:
+        if event.get('name') == 'sketch_proof':
+            event['arguments']['proof'] = swapped['proof']
+            event['result']['holes'] = swapped['holes']
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+    writeup = output / 'writeup.md'
+    text = writeup.read_text(encoding='utf-8')
+    writeup.write_text(
+        text[: text.index(runner.SKETCH_HEADING)] + runner.sketch_section(swapped), encoding='utf-8'
+    )
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('not the source Lean was given' in issue for issue in issues)
+    assert any('does not hash to the source Lean recorded' in issue for issue in issues)

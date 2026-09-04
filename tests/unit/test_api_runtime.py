@@ -319,3 +319,25 @@ def test_an_existing_client_still_answers_for_itself(monkeypatch: pytest.MonkeyP
     provider = AnthropicProvider("claude-test", client=FakeClient([]))
 
     assert provider.endpoint == "messages api (https://api.anthropic.test)"
+
+
+def test_the_client_is_built_without_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every retry is handed the same timeout -- the whole remaining budget --
+    so a request with five minutes left could spend that three times over,
+    plus backoff, while the trajectory claimed Hardy kept the bound."""
+    import hardy.api_runtime as module
+
+    seen: dict[str, object] = {}
+
+    class Sdk:
+        @staticmethod
+        def Anthropic(**options):
+            seen.update(options)
+            return FakeClient([Reply([Block(type="text", text="ok")])])
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setattr(module, "load_sdk", lambda: Sdk)
+
+    module.AnthropicProvider("claude-test").client()
+
+    assert seen["max_retries"] == 0

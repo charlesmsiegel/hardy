@@ -742,6 +742,25 @@ def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]], rea
     return issues
 
 
+def _sketch_source(trajectory: dict[str, Any], proof: str) -> str | None:
+    """The file a `sketch_proof` on `proof` would have handed Lean.
+
+    Rebuilt from the request the trajectory records, the same way the verified
+    path rebuilds `proof.lean`. None when the request is not readable enough to
+    rebuild from, which is reported by its own check rather than by a
+    comparison against a guess.
+    """
+    request = trajectory.get("request")
+    if not isinstance(request, dict):
+        return None
+    declaration = str(request.get("declaration") or "")
+    imports = request.get("imports")
+    if not declaration or not isinstance(imports, list) or not imports:
+        return None
+    header = "\n".join(f"import {name}" for name in imports)
+    return f"{header}\n\n{declaration} := {proof.strip()}\n"
+
+
 def _sketch_issues(
     result: dict[str, Any],
     trajectory: dict[str, Any],
@@ -765,12 +784,18 @@ def _sketch_issues(
     if result.get("sketch") != trajectory.get("sketch"):
         issues.append("the kept sketch differs between result.json and trajectory.json")
     sketch = result.get("sketch")
+    # `_discarded` for the same reason submission validation uses it: a
+    # skeleton that elaborated after the deadline carries the runner's discard
+    # marker and is not part of the run's result. Counted as accepted, an
+    # honest timeout was refused for "accepting a sketch no record carries" --
+    # the record was right and the audit was wrong.
     accepted = [
-        event for event in events
+        event for index, event in enumerate(events)
         if event.get("type") == "tool"
         and event.get("name") == "sketch_proof"
         and isinstance(event.get("result"), dict)
         and event["result"].get("ok") is True
+        and not _discarded(events, index)
     ]
     from .runner import SKETCH_HEADING, sketch_section
 
@@ -807,6 +832,18 @@ def _sketch_issues(
             issues.append("the kept sketch is not the last skeleton Lean accepted")
         if last["result"].get("holes") != sketch.get("holes"):
             issues.append("the kept sketch's holes are not the ones Lean reported")
+        # And the file Lean actually elaborated. Everything above compares the
+        # record against itself; this compares it against the one thing in the
+        # trajectory that came out of Lean -- the source it was given and the
+        # hash of it. A skeleton swapped consistently through every artifact
+        # still leaves this describing the program that was really checked.
+        rebuilt = _sketch_source(trajectory, str(sketch.get("proof", "")))
+        recorded = str(last["result"].get("source") or "")
+        if rebuilt is not None and recorded and rebuilt != recorded:
+            issues.append("the kept sketch is not the source Lean was given")
+        digest = last["result"].get("source_sha256")
+        if rebuilt is not None and digest and hashlib.sha256(rebuilt.encode("utf-8")).hexdigest() != digest:
+            issues.append("the kept sketch does not hash to the source Lean recorded")
     if not carried:
         issues.append("writeup.md does not carry the sketch the record kept")
     elif sketch_section(sketch) not in writeup:
