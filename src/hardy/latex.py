@@ -549,11 +549,15 @@ class LatexTools:
                 break
             if not references.rerun_requested(log):
                 break
-            # "There were undefined references" is itself a rerun request, and
-            # a reference nothing defines never stops making it -- so a broken
-            # document would pay for every pass the cap allows. Two passes
-            # reporting the same set have converged on that set: the `.aux` is
-            # not moving any more and a third would say what the second did.
+            if references.unconverged(log):
+                # The numbers themselves are still moving, which is what
+                # another pass is for. Nothing here can be concluded yet.
+                continue
+            # Only the undefined-references summary is left, and a reference
+            # nothing defines never stops making it -- so a broken document
+            # would pay for every pass the cap allows. Two passes reporting
+            # the same set have converged on that set: the `.aux` is not
+            # moving any more and a third would say what the second did.
             unresolved = references.unresolved(log)
             if previous is not None and unresolved == previous:
                 break
@@ -578,4 +582,12 @@ class LatexTools:
             sources.pop(orphan, None)
         executed = {path: _executed(text) for path, text in sources.items()}
         labels = references.unreferenced_labels(executed)
-        return references.report(references.unresolved(log), labels), labels
+        findings = list(references.unresolved(log))
+        if references.unconverged(log):
+            # Every pass has been spent and the compiler is still asking for
+            # another one, so whatever numbers are in this PDF are not the
+            # numbers the document settles on. Accepting it because nothing
+            # was reported *undefined* publishes exactly the wrong-number
+            # document the log warned about.
+            findings.append(references.Unresolved(kind="unconverged", name=str(MAX_PASSES)))
+        return references.report(tuple(findings), labels), labels

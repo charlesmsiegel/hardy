@@ -13,6 +13,8 @@ import os
 import re
 import tempfile
 import threading
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
@@ -57,6 +59,96 @@ def atomic_write_bytes(target: Path, content: bytes) -> None:
     finally:
         if temporary_name is not None:
             Path(temporary_name).unlink(missing_ok=True)
+
+
+class LockTimeout(RuntimeError):
+    """A lock somebody else was holding for longer than the caller would wait."""
+
+
+class FileLock:
+    """One exclusively-created file, standing in for a cross-process mutex.
+
+    Two Hardy processes on one machine share a paper library and a problem
+    directory, and both of the promises made about those -- "one request every
+    three seconds from this machine", "citing two papers at once loses
+    neither" -- are read-modify-write sequences. An atomic write makes each
+    step whole; it does nothing about two processes interleaving their steps,
+    and the second promise is precisely about that.
+
+    `O_CREAT | O_EXCL` is the whole mechanism, and it is chosen over `fcntl` or
+    `msvcrt` because it is the same code on every platform Hardy installs on.
+    Its one weakness is a holder that died: the file outlives the process. So
+    a lock older than `stale_after` is taken from it rather than waited on
+    forever, and `stale_after` must be comfortably longer than any hold.
+
+    `required` says what a caller loses if the lock cannot be had. The
+    bibliography loses a citation, so it raises; the arXiv throttle loses only
+    politeness, and refusing to fetch because another process is slow would
+    trade a real failure for an imagined one.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        timeout: float = 30.0,
+        stale_after: float = 300.0,
+        required: bool = True,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.path = path
+        self.timeout = timeout
+        self.stale_after = stale_after
+        self.required = required
+        self._sleep = sleep
+        self.held = False
+
+    def __enter__(self) -> FileLock:
+        deadline = time.monotonic() + self.timeout
+        while True:
+            if self._claim():
+                self.held = True
+                return self
+            if time.monotonic() >= deadline:
+                if self.required:
+                    raise LockTimeout(
+                        f"{self.path} was held by another process for more than "
+                        f"{self.timeout:g}s; refusing to write without it"
+                    )
+                return self
+            self._sleep(0.05)
+
+    def __exit__(self, *_: object) -> None:
+        if self.held:
+            self.path.unlink(missing_ok=True)
+            self.held = False
+
+    def _claim(self) -> bool:
+        """Take the lock, or say why not. A stale one is taken from its holder."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            # `O_EXCL` refuses an existing path of any kind, a symlink
+            # included, so a lock file shipped in a repository as a link
+            # cannot be written through -- it is simply never claimed, and the
+            # staleness check below removes it.
+            handle = os.open(self.path, flags, 0o600)
+        except FileExistsError:
+            self._break_if_stale()
+            return False
+        except OSError:
+            return False
+        os.write(handle, str(os.getpid()).encode())
+        os.close(handle)
+        return True
+
+    def _break_if_stale(self) -> None:
+        try:
+            age = time.time() - self.path.stat().st_mtime
+        except OSError:
+            return
+        if age > self.stale_after:
+            self.path.unlink(missing_ok=True)
 
 
 class RunStore:

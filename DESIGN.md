@@ -375,10 +375,14 @@ claim rather than a proof.
 The reason citation is a tool rather than an instruction is that a model asked to
 cite from memory fabricates references. `cite_paper` takes an identifier and
 nothing else, and refuses one the library does not hold, so the bibliography
-cannot contain a paper Hardy did not go and get. The document side closes the
-same loop from the other end: a `\cite` with no entry, like a `\ref` with no
-label, fails the compile instead of resolving to `[?]` in a PDF that looks
-finished.
+cannot contain a paper Hardy did not go and get. That is only half of it, and the
+half that is easy to mistake for the whole: what a reader sees is the document,
+not the store, and a `\bibitem` written straight into the writeup resolves as
+well as a real one. So the writeup may not declare references at all — the save
+refuses one that does, and the generated reference list is Hardy's file rather
+than the workspace's. The document side then closes the loop from the other end:
+a `\cite` with no entry, like a `\ref` with no label, fails the compile instead
+of resolving to `[?]` in a PDF that looks finished.
 
 ### 7. Critique, repair, retrieval, and memory
 

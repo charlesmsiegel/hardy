@@ -47,19 +47,32 @@ from typing import Literal
 # `LaTeX Warning:` and a spurious join cannot invent one.
 WRAP_WIDTH = 79
 
+# Who is speaking. LaTeX's own warnings say "LaTeX Warning:", but a citation
+# package answers for `\cite` and says so in its own name -- natbib reports a
+# missing key as "Package natbib Warning: Citation `x' on page 1 undefined",
+# in LaTeX's exact wording behind a different prefix. Matching only LaTeX's
+# prefix meant a document using natbib had every undefined citation reported
+# by nobody and published with `[?]` in it.
+WARNING = r"(?:LaTeX|Package [A-Za-z@]+) Warning:"
 UNDEFINED = re.compile(
-    r"LaTeX Warning: (Reference|Citation) [`']([^']*)' on page [^ ]+ undefined"
+    WARNING + r" (Reference|Citation) [`']([^']*)' on page [^ ]+ undefined"
     r"(?: on input line (\d+))?"
 )
 # pdfTeX and LuaTeX both say "multiply defined"; the surrounding wording has
 # moved between releases, so only the two fixed parts are matched.
-DUPLICATE = re.compile(r"LaTeX Warning: Label [`']([^']*)' multiply defined")
-# What the compiler itself says when a further pass would change the answer.
-# Both spellings appear: the first from LaTeX's cross-reference bookkeeping,
-# the second from `rerunfilecheck` and friends.
-RERUN = re.compile(
+DUPLICATE = re.compile(WARNING + r" Label [`']([^']*)' multiply defined")
+# The compiler's own summary, which every engine and every citation package
+# emits in some form even when the individual warnings are worded differently.
+# It is the backstop for a package this file has never seen: it says something
+# did not resolve without saying what, which is still a refusal.
+SUMMARY = re.compile(r"There were undefined (references|citations)")
+# What the compiler says when the numbers themselves are still moving, as
+# opposed to being permanently absent. Kept apart from `SUMMARY` because they
+# call for opposite responses: this one is answered by compiling again, and
+# the summary never is.
+UNCONVERGED = re.compile(
     r"(Rerun to get cross-references right|Please \(re\)run|Rerun LaTeX|"
-    r"There were undefined references)"
+    r"Label\(s\) may have changed)"
 )
 
 #: Every command that consumes a label. `\ref` and `\pageref` are LaTeX's own,
@@ -79,7 +92,7 @@ LABEL = re.compile(r"\\label\s*\{([^}]*)\}")
 class Unresolved:
     """One reference the compiler could not resolve, named."""
 
-    kind: Literal["reference", "citation", "label"]
+    kind: Literal["reference", "citation", "label", "unnamed", "unconverged"]
     name: str
     # The input line TeX blamed, when it said one. `None` is honest silence:
     # a duplicate-label warning carries no line at all.
@@ -96,6 +109,17 @@ class Unresolved:
             return (
                 f"\\cite{{{self.name}}}{where} resolves to `[?]`: the bibliography has no "
                 f"entry `{self.name}`"
+            )
+        if self.kind == "unnamed":
+            return (
+                f"the compiler reports undefined {self.name} without naming them; the "
+                "package reporting this is not one Hardy can read warnings from, so read "
+                "the log above for the keys"
+            )
+        if self.kind == "unconverged":
+            return (
+                f"the compiler still asks to be run again after {self.name} passes, so its "
+                "cross-reference numbers have not settled and the PDF's would be wrong"
             )
         return (
             f"\\label{{{self.name}}}{where} is defined more than once, so every \\ref to it "
@@ -145,19 +169,42 @@ def unresolved(log: str) -> tuple[Unresolved, ...]:
             continue
         seen.add(("Label", name))
         found.append(Unresolved(kind="label", name=name))
+    if not found:
+        # The summary with nothing named. A citation package Hardy does not
+        # know the warning format of still emits this, and treating "I could
+        # not parse a name" as "nothing is wrong" is how a `[?]` gets
+        # published: the compile is refused, and the log says the rest.
+        for kind in dict.fromkeys(SUMMARY.findall(text)):
+            found.append(Unresolved(kind="unnamed", name=kind))
     return tuple(found)
 
 
 def rerun_requested(log: str) -> bool:
-    r"""Whether the compiler said another pass would change the answer.
+    r"""Whether another pass could change what this log says.
 
     A single pass cannot resolve any `\ref` at all: LaTeX writes the numbers
     into the `.aux` on the way through and only reads them on the pass after.
     So a one-pass check reports every reference in a perfectly sound document
     as undefined, and the honest way to tell that apart from a genuinely
     missing label is to run the compiler again -- which is what this answers.
+
+    True for both kinds of unfinished business: numbers still moving, and
+    references still missing. The second stops being worth another pass once
+    it repeats, which is `latex._passes`'s business rather than this one's.
     """
-    return RERUN.search(unwrapped(log)) is not None
+    text = unwrapped(log)
+    return UNCONVERGED.search(text) is not None or SUMMARY.search(text) is not None
+
+
+def unconverged(log: str) -> bool:
+    """Whether the compiler says its cross-reference numbers are still moving.
+
+    Separate from `rerun_requested` because the two end differently. A
+    document whose numbers have not settled after every pass Hardy will run
+    has a PDF whose numbers are wrong, and accepting it because no reference
+    was reported *undefined* publishes exactly that.
+    """
+    return UNCONVERGED.search(unwrapped(log)) is not None
 
 
 def unreferenced_labels(sources: Mapping[str, str]) -> tuple[str, ...]:

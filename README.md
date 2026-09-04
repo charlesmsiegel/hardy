@@ -80,7 +80,11 @@ version arXiv reported with a digest of what it holds, `read_paper` serves a
 bounded window of that, and `cite_paper` records it in the problem's one
 canonical bibliography and hands back a cite key. Nothing else may write that
 bibliography, and `cite_paper` takes an identifier and nothing else — no title,
-no author, no year — so a reference Hardy never fetched has no way in. Fetching
+no author, no year — so a reference Hardy never fetched has no way in. The
+writeup may not declare references itself either: a `\bibitem` or a
+`thebibliography` in a saved file is refused, and the generated
+`tex/references.tex` is Hardy's rather than the workspace's, because an invented
+`\bibitem` resolves exactly as well as a real one. Fetching
 is polite: one request every three seconds, throttled through a timestamp on
 disk so two Hardy processes share the budget, every query cached for a day, and
 a paper already held never fetched again. What is stored is arXiv's metadata and

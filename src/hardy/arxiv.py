@@ -50,7 +50,8 @@ from pathlib import Path
 from typing import Literal
 
 from .domain import FrozenModel
-from .storage import atomic_write_bytes
+from .layout import LayoutError, guard_for, read_text
+from .storage import FileLock
 
 ENDPOINT = "https://export.arxiv.org/api/query"
 #: arXiv's own request: one call every three seconds from a given caller.
@@ -212,9 +213,30 @@ class PaperLibrary:
         self.records = root / "records"
         self.queries = root / "queries"
         self.state_path = root / "state.json"
+        self.lock_path = root / "state.lock"
 
     def path_for(self, identifier: ArxivId) -> Path:
         return self.records / identifier.storage_name
+
+    def _guard(self, relative: str):
+        """A write guard for one file in the library, proven component by
+        component from the tooling directory down.
+
+        `Layout.ensure` proves `.hardy` and stops there, because it cannot
+        know what a tool will put inside it. So `papers/`, `records/` and
+        every directory below them are proven here instead, at the moment of
+        the write -- a repository that ships `.hardy/papers -> /etc` or
+        `.hardy/papers/records -> ~` would otherwise have a `mkdir` and a
+        `write` follow the link and land downloaded bytes outside the project.
+        Chained from `self.root.parent` rather than from `self.root`, because
+        a guard on a directory can only speak for that directory's own name:
+        proving `papers` needs `.hardy` above it.
+        """
+        return guard_for(self.root.parent, f"{self.root.name}/{relative}", create=True)
+
+    def _read(self, relative: str) -> str:
+        """Read one library file through the same proof a write gets."""
+        return read_text(self.root, relative)
 
     def holds(self, identifier: ArxivId) -> bool:
         return identifier.versioned and (self.path_for(identifier) / "record.json").is_file()
@@ -230,18 +252,23 @@ class PaperLibrary:
         """
         if not identifier.versioned:
             raise ArxivError(f"{identifier} names no version; nothing can be held under it")
-        directory = self.path_for(identifier)
+        held = f"records/{identifier.storage_name}"
         try:
-            record = PaperRecord.model_validate_json(
-                (directory / "record.json").read_text(encoding="utf-8")
-            )
-            content = (directory / "content.txt").read_text(encoding="utf-8")
+            record = PaperRecord.model_validate_json(self._read(f"{held}/record.json"))
+            content = self._read(f"{held}/content.txt")
         except (OSError, ValueError) as error:
             raise ArxivError(f"the stored record for {identifier} could not be read: {error}") from error
-        if digest(content) != record.content_sha256:
+        # BOTH have to match the digest, and checking only the first was a
+        # hole: `read_paper` serves `record.content()`, regenerated from the
+        # record's own fields, so an edit to the title or the abstract in
+        # `record.json` changed what a reader is served while `content.txt`
+        # went on matching its digest untouched. The digest is a claim about
+        # what Hardy will hand back, so it is checked against what Hardy will
+        # hand back.
+        if digest(content) != record.content_sha256 or digest(record.content()) != record.content_sha256:
             raise ArxivError(
-                f"the stored content for {identifier} does not match its recorded digest; "
-                "the library has been edited and this record can no longer be cited"
+                f"the stored record for {identifier} does not match its recorded digest; "
+                "the library has been edited and this record can no longer be read or cited"
             )
         return record
 
@@ -253,7 +280,7 @@ class PaperLibrary:
             sorted(
                 child.name.replace("_", "/")
                 for child in self.records.iterdir()
-                if (child / "record.json").is_file()
+                if not child.is_symlink() and (child / "record.json").is_file()
             )
         )
 
@@ -278,8 +305,12 @@ class PaperLibrary:
         target = self.path_for(identifier)
         if (target / "record.json").is_file():
             return self.read(identifier)
-        self.records.mkdir(parents=True, exist_ok=True)
-        staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=self.records))
+        # Proven before anything is created, and the guard's own directory is
+        # what the staging tree is made in -- so a `records` that is a symlink
+        # is refused here rather than followed by the `mkdtemp` below.
+        guard, name = self._guard(f"records/{identifier.storage_name}")
+        target = guard.reserve(name)
+        staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=guard.directory))
         try:
             (staging / "content.txt").write_text(record.content(), encoding="utf-8")
             (staging / "response.xml").write_bytes(response)
@@ -302,9 +333,8 @@ class PaperLibrary:
 
     def cached_query(self, key: str, *, now: float, ttl: float = QUERY_TTL_SECONDS) -> bytes | None:
         """The stored answer to this query, if it is still fresh."""
-        path = self.queries / f"{key}.json"
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(self._read(f"queries/{key}.json"))
             fetched = float(payload["fetched_at"])
             body = str(payload["body"])
         except (OSError, ValueError, KeyError, TypeError):
@@ -314,17 +344,32 @@ class PaperLibrary:
         return body.encode("utf-8")
 
     def cache_query(self, key: str, body: bytes, *, now: float) -> None:
-        atomic_write_bytes(
-            self.queries / f"{key}.json",
+        guard, name = self._guard(f"queries/{key}.json")
+        guard.write_bytes(
+            name,
             json.dumps(
                 {"fetched_at": now, "body": body.decode("utf-8", errors="replace")},
                 ensure_ascii=False,
             ).encode("utf-8"),
         )
 
+    def drop_query(self, key: str) -> None:
+        """Forget one cached answer.
+
+        For a body that turned out not to be an answer at all. A cached
+        maintenance page would otherwise be served for the whole TTL, so every
+        retry of a search would fail identically for a day after arXiv had
+        recovered.
+        """
+        try:
+            guard, name = self._guard(f"queries/{key}.json")
+            guard.unlink(name, missing_ok=True)
+        except (OSError, LayoutError):
+            return
+
     def last_request(self) -> float:
         try:
-            return float(json.loads(self.state_path.read_text(encoding="utf-8"))["last_request"])
+            return float(json.loads(self._read("state.json"))["last_request"])
         except (OSError, ValueError, KeyError, TypeError):
             return 0.0
 
@@ -335,9 +380,8 @@ class PaperLibrary:
         run of failures hammer arXiv at whatever rate the failures come back
         -- which is the moment a service least wants to be hammered.
         """
-        atomic_write_bytes(
-            self.state_path, json.dumps({"last_request": when}).encode("utf-8")
-        )
+        guard, name = self._guard("state.json")
+        guard.write_bytes(name, json.dumps({"last_request": when}).encode("utf-8"))
 
 
 Transport = Callable[[str, float], bytes]
@@ -358,18 +402,31 @@ def _http(url: str, timeout: float) -> bytes:
         raise ArxivError(f"arXiv answered HTTP {error.code} {error.reason}") from error
     except OSError as error:
         raise ArxivError(f"arXiv could not be reached: {error}") from error
+    # The read loop needs its own handler, not only `urlopen`'s. A connection
+    # that times out, resets, or is closed mid-body raises after the response
+    # object exists, and that `OSError` escaped every caller: the tool
+    # dispatcher catches `ArxivError` and argument errors, so an ordinary
+    # network failure halfway through a response ended the turn instead of
+    # coming back as a failed tool call.
     with opened as response:
         chunks: list[bytes] = []
         received = 0
         wanted = MAX_RESPONSE_BYTES + 1
-        while received < wanted:
-            if time.monotonic() >= deadline:
-                raise ArxivError(f"arXiv exceeded its {timeout:g}s deadline with {received} bytes read")
-            chunk = response.read(min(READ_CHUNK_BYTES, wanted - received))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            received += len(chunk)
+        try:
+            while received < wanted:
+                if time.monotonic() >= deadline:
+                    raise ArxivError(
+                        f"arXiv exceeded its {timeout:g}s deadline with {received} bytes read"
+                    )
+                chunk = response.read(min(READ_CHUNK_BYTES, wanted - received))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                received += len(chunk)
+        except OSError as error:
+            raise ArxivError(
+                f"the arXiv response failed after {received} bytes: {error}"
+            ) from error
     body = b"".join(chunks)
     if len(body) > MAX_RESPONSE_BYTES:
         raise ArxivError(f"the arXiv response exceeds {MAX_RESPONSE_BYTES} bytes")
@@ -394,6 +451,7 @@ class ArxivClient:
         sleep: Callable[[float], None] = time.sleep,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         interval: float = MIN_INTERVAL_SECONDS,
+        lock_timeout: float | None = None,
     ) -> None:
         self.library = library
         self._transport = transport
@@ -401,6 +459,11 @@ class ArxivClient:
         self._sleep = sleep
         self._timeout = timeout
         self._interval = interval
+        # Long enough for another process to finish one interval and hand the
+        # lock over, and never shorter than that: a timeout under the interval
+        # would give up exactly when the other process was doing the waiting
+        # this lock exists to coordinate.
+        self._lock_timeout = lock_timeout if lock_timeout is not None else interval * 4 + 5
 
     def search(self, query: str, limit: int = 10) -> tuple[PaperRecord, ...]:
         """Papers matching `query`, newest first, from cache when possible.
@@ -423,7 +486,8 @@ class ArxivClient:
                 "sortOrder": "descending",
             }
         )
-        return _entries(self._get(url), url, self._stamp())[:bounded]
+        found, _ = self._entries_for(url)
+        return found[:bounded]
 
     def fetch(self, raw: str) -> tuple[PaperRecord, bool]:
         """The immutable record for `raw`, and whether it was already held.
@@ -439,13 +503,16 @@ class ArxivClient:
         if self.library.holds(identifier):
             return self.library.read(identifier), True
         url = self._url({"id_list": str(identifier), "max_results": "1"})
-        body = self._get(url)
-        found = _entries(body, url, self._stamp())
+        found, body = self._entries_for(url)
         if not found:
             raise ArxivError(f"arXiv returned no paper for {identifier}")
         record = found[0]
         resolved = record.identifier
         if identifier.versioned and str(resolved) != str(identifier):
+            # Not an answer to this question, so not an answer worth keeping
+            # for a day: dropped from the cache before the refusal, or every
+            # retry would reuse the same wrong response.
+            self.library.drop_query(_key(url))
             raise ArxivError(
                 f"asked arXiv for {identifier} and it answered with {resolved}; "
                 "refusing to store one paper under another's identifier"
@@ -460,36 +527,74 @@ class ArxivClient:
     def _url(self, parameters: dict[str, str]) -> str:
         return f"{ENDPOINT}?{urllib.parse.urlencode(parameters)}"
 
-    def _get(self, url: str) -> bytes:
-        """The body for `url`, from the cache or from arXiv at a polite pace."""
-        key = hashlib.sha256(url.encode("utf-8")).hexdigest()
-        now = self._clock()
-        cached = self.library.cached_query(key, now=now)
+    def _entries_for(self, url: str) -> tuple[tuple[PaperRecord, ...], bytes]:
+        """The records for `url`, and the bytes they were read out of.
+
+        A body is admitted to the cache only once it has been established to
+        be an answer. Caching first and parsing afterwards was the bug: a
+        maintenance page, a proxy error, or a truncated feed was stored under
+        the query's key and served for the full day, so every retry failed
+        identically long after arXiv had recovered. A cached body that no
+        longer parses is dropped for the same reason and asked again.
+        """
+        key = _key(url)
+        stamp = self._stamp()
+        cached = self.library.cached_query(key, now=self._clock())
         if cached is not None:
-            return cached
+            try:
+                return _entries(cached, url, stamp), cached
+            except ArxivError:
+                self.library.drop_query(key)
         self._throttle()
         body = self._transport(url, self._timeout)
+        # Parsed before it is cached, so the refusal below leaves nothing
+        # behind to be served again.
+        found = _entries(body, url, stamp)
         self.library.cache_query(key, body, now=self._clock())
-        return body
+        return found, body
 
     def _throttle(self) -> None:
         """Wait out arXiv's interval, counting from the last request anywhere.
 
         The clock is on disk, so two Hardy processes on one machine share one
-        budget. A clock that has jumped backwards -- the file written under a
+        budget -- but a timestamp on disk is not on its own a mutex, and
+        reading it, waiting, and writing it back as three separate steps let
+        two idle processes both read the old value, both compute no wait, and
+        both fire at once. The whole read-wait-reserve sequence therefore
+        happens under a lock file, which is what makes the spacing hold
+        between processes rather than only within one.
+
+        The lock is not required: if another process is holding it for longer
+        than the timeout, this falls back to the unsynchronised sequence
+        rather than refusing to fetch. What is at stake here is politeness,
+        and trading a real failure for a possible discourtesy is the wrong way
+        round.
+
+        A clock that has jumped backwards -- the file written under a
         different wall clock, or by a machine whose time was corrected -- is
         treated as "no idea", which waits the full interval rather than
         sleeping until a timestamp in the future.
         """
-        now = self._clock()
-        since = now - self.library.last_request()
-        if since < 0 or since >= self._interval:
-            wait = 0.0 if since >= self._interval else self._interval
-        else:
-            wait = self._interval - since
-        if wait > 0:
-            self._sleep(wait)
-        self.library.note_request(self._clock())
+        with FileLock(
+            self.library.lock_path,
+            timeout=self._lock_timeout,
+            stale_after=max(60.0, self._interval * 20),
+            required=False,
+        ):
+            now = self._clock()
+            since = now - self.library.last_request()
+            if since < 0 or since >= self._interval:
+                wait = 0.0 if since >= self._interval else self._interval
+            else:
+                wait = self._interval - since
+            if wait > 0:
+                self._sleep(wait)
+            self.library.note_request(self._clock())
+
+
+def _key(url: str) -> str:
+    """The cache key for one request URL."""
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
 def _entries(body: bytes, source_url: str, fetched_at: str) -> tuple[PaperRecord, ...]:

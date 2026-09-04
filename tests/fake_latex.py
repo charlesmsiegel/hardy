@@ -102,6 +102,12 @@ if "\\begin{document}" in source and "\\end{document}" in source:
     written = [f"\\newlabel{{{name}}}{{{{1}}{{1}}}}" for name in LABEL.findall(executed)]
     written += [f"\\bibcite{{{name}}}{{1}}" for name in BIBITEM.findall(executed)]
     record = "\n".join(written) + "\n"
+    # `% unstable` models the document whose numbers never settle: a reference
+    # that moves a page number that moves a reference. A real one converges in
+    # two or three passes; this one never does, which is the case Hardy has to
+    # refuse rather than publish with whatever numbers the last pass produced.
+    if re.search(r"%\s*unstable", source):
+        record += f"\\newlabel{{pass}}{{{{{len(previous)}}}{{1}}}}\n"
     aux.write_text(record, encoding="utf-8")
 
     undefined = False

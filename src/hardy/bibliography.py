@@ -34,13 +34,14 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from .arxiv import PaperRecord
 from .domain import FrozenModel
+from .latex import uncommented
 from .layout import WriteGuard
-from .storage import atomic_write_bytes
+from .storage import FileLock, LockTimeout, atomic_write_bytes
 
 #: The canonical store, beside the session record: versioned, hand-readable,
 #: and never the file LaTeX reads.
@@ -48,7 +49,23 @@ STORE = "bibliography.json"
 #: What `\input{references}` pulls in. Generated whole from the store on every
 #: write, so an edit to it is undone by the next citation rather than merged.
 GENERATED = "references.tex"
+#: Held for the whole read-modify-write of a citation. Two sessions on one
+#: problem is an ordinary thing to have, and without this both read the same
+#: store, append their own entry, and the second write drops the first
+#: citation -- silently, with a `\cite` key already in somebody's document.
+LOCK = "bibliography.lock"
 CURRENT_SCHEMA = 1
+
+#: Every way a document can declare a reference for itself. `cite_paper` is
+#: the only path that may put one in front of a reader, and a rule stated only
+#: in a tool description is a rule a model can simply not follow: a
+#: hand-written `\bibitem{invented2020}` resolves perfectly well, so the
+#: reference checker would accept and publish a document whose bibliography
+#: nothing vouches for. Refused at the save instead, where it is enforceable.
+HAND_WRITTEN = re.compile(
+    r"\\(?:bibitem|bibliography|addbibresource|printbibliography|nocite)\b"
+    r"|\\begin\s*\{thebibliography\}"
+)
 
 #: Words that say nothing about which paper this is.
 STOPWORDS = frozenset(
@@ -172,10 +189,17 @@ class Bibliography:
     one of them overwriting the other's entries from a stale copy in memory.
     """
 
-    def __init__(self, problem: Path) -> None:
+    def __init__(self, problem: Path, *, lock_timeout: float = 30.0) -> None:
         self.problem = problem
         self.path = problem / STORE
         self.tex = problem / "tex"
+        # How long a citation waits for another session to finish one. Long
+        # enough that an ordinary write is never refused, short enough that a
+        # session is not left hanging on a lock nobody will release; a lock
+        # older than `FileLock`'s staleness window is taken rather than waited
+        # on, so this only bounds the wait for a process that is genuinely
+        # alive and busy.
+        self.lock_timeout = lock_timeout
 
     def read(self) -> Store:
         """What the store says, or an empty one when there is nothing yet."""
@@ -216,12 +240,27 @@ class Bibliography:
         identity it was missing, so a paper first met without a DOI and later
         reached by one stays a single entry.
         """
+        try:
+            with FileLock(self.problem / LOCK, timeout=self.lock_timeout):
+                return self._cite(record, now)
+        except LockTimeout as error:
+            raise BibliographyError(
+                f"another session is writing this bibliography: {error}"
+            ) from error
+
+    def _cite(self, record: PaperRecord, now: datetime | None) -> tuple[Entry, bool]:
+        """`cite`'s body, run with the store's lock held.
+
+        Split out so the lock covers the whole sequence -- read, match,
+        assign a key, write both files -- rather than each half of it.
+        Reading afresh per call is what makes two sessions see each other's
+        entries; it is not what makes them converge, because between this
+        read and the write below another process can do the same and the
+        second write would drop the first citation.
+        """
         store = self.read()
         names = identities_of(record)
-        existing = {
-            name.lower(): entry for entry in store.entries for name in entry.identities
-        }
-        held = next((existing[name.lower()] for name in names if name.lower() in existing), None)
+        held = self._match(record, store)
         if held is not None:
             merged = tuple(dict.fromkeys((*held.identities, *names)))
             if merged == held.identities:
@@ -272,6 +311,38 @@ class Bibliography:
         lines.extend(entry.rendered() for entry in entries)
         lines.append("\\end{thebibliography}")
         return "\n".join(lines) + "\n"
+
+    def _match(self, record: PaperRecord, store: Store) -> Entry | None:
+        """The entry this record already is, or None.
+
+        The arXiv identity settles it outright: it names one version, and a
+        version is what a citation has to be about.
+
+        A DOI does not, and treating it as though it did was wrong in a way
+        that quietly falsified the record. Two versions of one preprint
+        usually carry the same DOI, so citing v1 and then v2 found v1's entry
+        through the DOI and merely added `arxiv:...v2` to its identities --
+        handing back a cite key whose entry still described v1, with v1's
+        digest, for a paper the reader had read at v2. So a DOI match is
+        accepted only when it cannot be about a different version: when
+        neither side names an arXiv paper, or when both name the same one.
+        """
+        for entry in store.entries:
+            if f"arxiv:{record.arxiv_id}".lower() in {name.lower() for name in entry.identities}:
+                return entry
+        if not record.doi:
+            return None
+        doi = f"doi:{record.doi.strip().lower()}"
+        for entry in store.entries:
+            if doi not in {name.lower() for name in entry.identities}:
+                continue
+            if entry.arxiv_id in (None, record.arxiv_id):
+                return entry
+        # A DOI shared with a different version. Deliberately not a match, and
+        # deliberately not an error either: it is a second entry, for the
+        # second version, which is what a reader who read the second version
+        # is owed.
+        return None
 
     def _assign(self, record: PaperRecord, store: Store) -> str:
         """A key for a new entry: the one it wants, or a stable variant.
@@ -329,6 +400,40 @@ TEX_ESCAPES = {
     "~": "\\textasciitilde{}",
     "^": "\\textasciicircum{}",
 }
+
+
+def hand_written_bibliography(path: str, source: str) -> str:
+    r"""Why this writeup file may not be saved, or "".
+
+    Two rules, and both exist because the anti-fabrication promise is about
+    what a reader ends up looking at, not about what `bibliography.json`
+    holds. `cite_paper` cannot be talked into an invented reference -- it
+    takes an identifier and nothing else -- but `save_latex` takes arbitrary
+    LaTeX, so a `ibitem{invented2020}` written straight into `writeup.tex`
+    resolves, compiles, and is published with nothing behind it. The
+    generated file is reserved for the same reason: overwriting it with
+    invented entries would defeat the store without touching it.
+
+    Checked against the source with its comments dropped: a `ibitem` inside
+    a `%` comment is not a reference, and refusing a document over one would
+    be refusing text TeX never reads.
+    """
+    if PurePosixPath(str(path).replace("\\", "/")).name == GENERATED:
+        return (
+            f"{GENERATED} is written by Hardy from bibliography.json and is regenerated "
+            "whole on every citation, so an edit here would be undone by the next one. "
+            "Use cite_paper to add a reference."
+        )
+    found = HAND_WRITTEN.search(uncommented(source))
+    if found:
+        return (
+            f"this writeup writes its own bibliography ({found.group(0)}), and a "
+            "hand-written reference is exactly what Hardy cannot vouch for: a "
+            "\\bibitem resolves whether or not the paper exists. Fetch the paper with "
+            "fetch_paper, record it with cite_paper, and \\input{references} -- which "
+            "Hardy generates -- instead."
+        )
+    return ""
 
 
 def _escaped(text: str) -> str:

@@ -123,3 +123,43 @@ def test_unreferenced_labels_are_a_note_and_not_a_finding():
     assert references.unresolved("") == ()
     assert "sec:one" in references.note(("sec:one",))
     assert references.note(()) == ""
+
+
+def test_a_citation_package_warning_is_read_too():
+    """natbib answers for `\\cite` and warns in its own name.
+
+    Matching only `LaTeX Warning:` meant a document using natbib had every
+    undefined citation reported by nobody and published with `[?]` in it.
+    """
+    log = (
+        "Package natbib Warning: Citation `perelman2002' on page 1 undefined on input line 9.\n"
+    )
+    assert [(item.kind, item.name) for item in references.unresolved(log)] == [
+        ("citation", "perelman2002")
+    ]
+
+
+def test_a_summary_with_nothing_named_is_still_a_finding():
+    """A package Hardy cannot read warnings from still says something broke.
+
+    Reading "I could not parse a name" as "nothing is wrong" is how a `[?]`
+    reaches a published PDF.
+    """
+    found = references.unresolved("LaTeX Warning: There were undefined citations.\n")
+    assert [item.kind for item in found] == ["unnamed"]
+    assert "citations" in found[0].sentence()
+
+
+def test_a_named_warning_is_not_also_reported_unnamed():
+    log = UNDEFINED_CITATION + "LaTeX Warning: There were undefined references.\n"
+    assert [item.kind for item in references.unresolved(log)] == ["citation"]
+
+
+def test_numbers_still_moving_is_told_apart_from_a_missing_reference():
+    """The two call for opposite responses: compile again, or refuse."""
+    moving = "LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.\n"
+    assert references.unconverged(moving)
+    assert references.rerun_requested(moving)
+    missing = "LaTeX Warning: There were undefined references.\n"
+    assert not references.unconverged(missing)
+    assert references.rerun_requested(missing)
