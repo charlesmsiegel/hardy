@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from hardy.storage import FileLock, LockTimeout
+from hardy.storage import FileLock, LockTimeout, LockUnavailable
 
 
 def test_a_lock_is_taken_and_released(tmp_path: Path):
@@ -113,9 +113,48 @@ def test_a_symlinked_lock_file_is_never_written_through(tmp_path: Path):
     outside.write_text("mine", encoding="utf-8")
     path = tmp_path / "x.lock"
     path.symlink_to(outside)
-    with pytest.raises(LockTimeout), FileLock(path, timeout=0.05):
+    with pytest.raises(LockUnavailable), FileLock(path, timeout=0.05):
         pass
     assert outside.read_text(encoding="utf-8") == "mine"
+
+
+def test_a_lock_that_cannot_be_opened_is_not_reported_as_contention(tmp_path: Path):
+    """A fault a person can fix, told apart from a wait that ends on its own.
+
+    Folding an unopenable lock into "somebody else holds it" made a citation
+    sit out its whole timeout and then name a session that does not exist,
+    while the real cause -- a read-only checkout, a directory nobody may
+    write -- went unsaid.
+    """
+    path = tmp_path / "x.lock"
+    path.mkdir()  # a directory where the lock file should be
+    started = time.monotonic()
+    with pytest.raises(LockUnavailable, match="could not be locked"), FileLock(path, timeout=30.0):
+        pass
+    # Reported at once rather than waited out: contention is what the timeout
+    # is for, and this is not contention.
+    assert time.monotonic() - started < 5.0
+
+
+def test_a_caller_that_may_do_without_the_lock_survives_an_unopenable_one(
+    tmp_path: Path,
+):
+    """The arXiv throttle loses politeness; it must not lose the fetch."""
+    path = tmp_path / "x.lock"
+    path.mkdir()
+    with FileLock(path, timeout=0.05, required=False) as lock:
+        assert not lock.held
+
+
+def test_an_unopenable_lock_is_still_caught_by_a_caller_watching_for_a_timeout(
+    tmp_path: Path,
+):
+    """`LockUnavailable` is a `LockTimeout`, so nothing that only wants to
+    know it did not get the lock has to learn a second exception."""
+    path = tmp_path / "x.lock"
+    path.mkdir()
+    with pytest.raises(LockTimeout), FileLock(path, timeout=0.05):
+        pass
 
 
 def test_a_lock_held_by_another_process_is_seen_across_the_process_boundary(

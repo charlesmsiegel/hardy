@@ -49,7 +49,7 @@ from .arxiv import PaperRecord
 from .domain import FrozenModel
 from .latex import uncommented
 from .layout import LOCAL_DIR, LayoutError, WriteGuard, read_text
-from .storage import FileLock, LockTimeout
+from .storage import FileLock, LockTimeout, LockUnavailable
 
 #: The canonical store, beside the session record: versioned, hand-readable,
 #: and never the file LaTeX reads.
@@ -318,6 +318,13 @@ class Bibliography:
         try:
             with FileLock(self._lock_target(), timeout=self.lock_timeout):
                 return self._cite(record, now)
+        except LockUnavailable as error:
+            # Not contention, and saying it was would send someone looking for
+            # a session that does not exist while the real cause -- a
+            # read-only checkout, a directory nobody may write -- goes unread.
+            raise BibliographyError(
+                f"this bibliography's lock could not be taken: {error}"
+            ) from error
         except LockTimeout as error:
             raise BibliographyError(
                 f"another session is writing this bibliography: {error}"
