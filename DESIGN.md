@@ -165,6 +165,16 @@ before any runtime is built, so it works on every backend, and a subscription
 user needs no API key to use it. What it cannot do from there is decline a turn
 partway through an exchange, which is what the decision point above would buy.
 
+The first thing it buys is the end of a run. `hardy batch` declines every turn
+after the submission it keeps: the writeup is assembled from the artifacts
+rather than from whatever the model says once it has finished, so a further
+exchange is billed for and buys nothing — and it is not inert, since the tools
+stay live and a second accepted submission would replace the proof the run had
+already earned. On a backend whose SDK owns the loop there is no moment to ask,
+and the run continues as before; the decline is recorded either way, because
+Hardy choosing not to spend a turn is a fact about a run rather than an absence
+of one.
+
 Owning the loop is what lets the wall clock reach every place the loop can
 block, rather than only the gap between exchanges. There are four such places
 and they were found one at a time, which is the honest way to record it:
@@ -280,7 +290,15 @@ original statement, rejects `sorry` in completed proofs, and audits dependencies
 sketch: `sketch_proof` elaborates a skeleton whose holes are deliberate,
 reports which are left in the body it was handed, and is never graded. That
 list is not offered as exhaustive — nothing about a sketch audits what it
-imports, and only the axiom report a submission runs can say what it rests on. An interactive session keeps a
+imports, and only the axiom report a submission runs can say what it rests on.
+What `batch` keeps is the newest development Lean accepted, whichever door it
+came through, including a submission the axiom report went on to refuse: the
+holes were the run's remaining work two events ago and the axiom is its
+remaining work now, and an artifact naming the older one names the wrong one.
+The two are reported in different words for the same reason — a candidate the
+audit refused is not one nothing has audited — which is why the record says
+which door a candidate came through and why the trajectory records Lean's own
+answer to a submission beside the audit's. An interactive session keeps a
 hole in an ordinary save and says so. The staged `prove` path has neither —
 its tools and its artifacts are its own, and carrying sketches into it is
 separate work. Wherever a sketch is kept, only the final grade requires a
