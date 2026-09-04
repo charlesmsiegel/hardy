@@ -276,9 +276,7 @@ class AgentLoop:
         while True:
             if self._cancelled:
                 return
-            if budget.expired():
-                self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds})
-                raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget")
+            self._deadline(budget)
             if budget.exhausted():
                 self._observe({"type": "turn_limit", "turns": budget.spent, "max_turns": self.max_turns})
                 raise TurnLimitReached(f"the exchange reached its {self.max_turns}-turn bound")
@@ -299,6 +297,14 @@ class AgentLoop:
                 compacted = self._compact(self.messages)
                 if compacted is not None:
                     self.messages = compacted
+            # Again, because the two hooks above are where a caller spends real
+            # time -- `before_turn` is where a cheap-closer ladder runs, and
+            # running Lean is exactly the thing that eats a budget. Left to the
+            # check at the top of the loop, a hook that used the last of it
+            # would still open a request, and `remaining_seconds` would hand the
+            # transport a timeout of zero as though that were a bound somebody
+            # chose.
+            self._deadline(budget)
             # Counted before the call, not after. A request that raised was
             # still a provider call: it may have been billed for, it consumed
             # a turn of the bound, and a trajectory that showed zero turns
@@ -325,9 +331,7 @@ class AgentLoop:
             # came back with no tool calls would return normally, and the run
             # would be recorded as having finished rather than as having run
             # out of time.
-            if budget.expired():
-                self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds})
-                raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget")
+            self._deadline(budget)
             if self._cancelled:
                 # The request was already in flight when the cancel arrived and
                 # this transport cannot abort one, so the answer came back
@@ -353,6 +357,26 @@ class AgentLoop:
                 yield from self._settle(turn)
                 return
             yield from self._call_tools(turn.tool_calls, budget)
+
+    def _deadline(self, budget: Budget) -> None:
+        """Stop if the wall clock has run out. Asked at every point that blocks.
+
+        There are four of them, and they were found one at a time -- which is
+        worth writing down rather than repeating: between exchanges, before a
+        provider call (the hooks above it spend real seconds), after one (the
+        request itself blocks), and before each tool call of a batch. A bound
+        binds only where it is checked, and each of those is somewhere the loop
+        can sit for minutes.
+
+        The fifth is not checkable here and is stated instead: a tool call
+        already running is not interrupted. Hardy asks Lean with its own process
+        timeout and waits for the answer, which is the same limit
+        `MathematicsSession.cancel` states about cancelling one.
+        """
+        if not budget.expired():
+            return
+        self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds})
+        raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget")
 
     def _settle(self, turn: ProviderTurn) -> Iterator[TurnEvent]:
         """Say so when a turn ended for a reason other than having finished.

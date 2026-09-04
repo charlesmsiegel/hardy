@@ -445,3 +445,39 @@ def test_the_budget_is_read_again_before_each_tool_call() -> None:
     answered = [message for message in loop.messages if message.role == "tool_result"]
     assert len(answered) == 4
     assert [message.ok for message in answered] == [True, False, False, False]
+
+
+def test_a_hook_that_eats_the_budget_does_not_get_to_open_a_request() -> None:
+    """`before_turn` is where a cheap-closer ladder runs, and running Lean is
+    exactly the thing that eats a budget. Checked only at the top of the loop,
+    a hook that spent the last of it still opened a request -- with a timeout
+    of zero handed to the transport as though that were a bound somebody
+    chose."""
+    def slow_hook(messages):
+        time.sleep(0.12)
+        return None
+
+    loop, provider, observed = _loop(
+        [ProviderTurn(text="never asked")], wall_seconds=0.1, before_turn=slow_hook
+    )
+
+    with pytest.raises(TimeoutError):
+        _drain(loop, "prove it")
+
+    assert provider.calls == 0
+    assert any(item["type"] == "wall_clock_limit" for item in observed)
+
+
+def test_a_compactor_that_eats_the_budget_is_caught_by_the_same_check() -> None:
+    def slow_compactor(messages):
+        time.sleep(0.12)
+        return None
+
+    loop, provider, _ = _loop(
+        [ProviderTurn(text="never asked")], wall_seconds=0.1, compact=slow_compactor
+    )
+
+    with pytest.raises(TimeoutError):
+        _drain(loop, "prove it")
+
+    assert provider.calls == 0
