@@ -438,8 +438,19 @@ def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> None:
     # -- a `\label` inside `\verb` or a discarded branch is written down but
     # never created.
     aux = work / "writeup.aux"
-    if aux_dir is not None and aux.exists():
-        WriteGuard(aux_dir, create=True).write_bytes("writeup.aux", aux.read_bytes())
+    if aux_dir is not None:
+        if aux.exists():
+            WriteGuard(aux_dir, create=True).write_bytes("writeup.aux", aux.read_bytes())
+        else:
+            # This compile made no auxiliary file -- `\nofiles` suppresses it,
+            # and a PDF is still produced -- so there is nothing to publish
+            # and the previously published one must go. Leaving it meant the
+            # save stamped the new source as current while `_labels` went on
+            # crediting the labels of a document that no longer exists, and
+            # `report_result` accepted a writeup that had dropped the
+            # registered theorem's label. No record is the truth here: the
+            # compiler created no labels.
+            WriteGuard(aux_dir, create=True).unlink("writeup.aux", missing_ok=True)
 
 
 class LatexTools:
@@ -560,6 +571,21 @@ class LatexTools:
             # passes `vouched` and nothing changes for them.
             if actual and outcome.returncode == 0 and not broken and vouched is not None:
                 broken = self._cited(work, vouched) or broken
+            pdf = work / "writeup.pdf"
+            # A compile of the real document that made no PDF is not a compile
+            # that succeeded, whatever it exited with. `-draftmode`, or
+            # `\pdfdraftmode` in the source, runs everything and writes no
+            # file: publication was simply skipped, `check` still said yes,
+            # and the save recorded the tree as freshly compiled -- leaving
+            # whatever `writeup.pdf` was there before presented as the current
+            # document, or none at all. Judged before `resolved`, so it takes
+            # the commit with it rather than only the publish.
+            if actual and outcome.returncode == 0 and not broken and not pdf.exists():
+                broken = (
+                    "the compiler exited successfully but wrote no writeup.pdf, so there "
+                    "is no document to publish. A draft-mode compiler setting will do "
+                    "this, as will \\pdfdraftmode in the source."
+                )
             resolved = outcome.returncode == 0 and not broken
             # Before a single byte leaves the scratch tree, and deliberately
             # allowed to raise: see the note on `commit` above. A fragment
@@ -567,7 +593,6 @@ class LatexTools:
             # wait on `actual` the way publication does.
             if resolved and commit is not None:
                 commit()
-            pdf = work / "writeup.pdf"
             # Published only from the real document. A probe's output was
             # being written over `writeup.pdf` -- so the file a human opens
             # became a page holding one fragment -- and its `.aux` was

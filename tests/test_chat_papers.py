@@ -383,3 +383,33 @@ def test_a_deletion_that_cannot_be_judged_still_keeps_the_fragment(session) -> N
     assert not result.ok
     assert fragment.is_file(), "the fragment was lost by a deletion that reported failure"
     assert fragment.read_text(encoding="utf-8") == "Text.\n"
+
+
+def test_a_forged_reference_list_is_rewritten_before_the_compile(session) -> None:
+    """Vouching for the keys does not vouch for what is printed under them.
+
+    A `references.tex` that arrived stale from a clone, or was edited past
+    the save refusal, could keep a key `cite_paper` recorded and change the
+    authors beneath it -- and every gate passed, because the key check reads
+    keys and the source check exempts this file by name.
+    """
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    key = json.loads(
+        session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"}).output
+    )["cite_key"]
+    generated = session.workspace / "tex" / "references.tex"
+    generated.write_text(
+        generated.read_text(encoding="utf-8").replace("Grigori Perelman", "Somebody Else"),
+        encoding="utf-8",
+    )
+    result = session._tool(
+        "check_latex",
+        {
+            "source": "\\documentclass{article}\n\\begin{document}\n"
+            f"As shown in \\cite{{{key}}}.\n\\input{{references}}\n\\end{{document}}\n"
+        },
+    )
+    assert result.ok, result.output
+    restored = generated.read_text(encoding="utf-8")
+    assert "Grigori Perelman" in restored
+    assert "Somebody Else" not in restored

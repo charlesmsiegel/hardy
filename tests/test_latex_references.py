@@ -234,3 +234,60 @@ def test_a_fragment_reached_through_another_fragment_is_the_real_document(tmp_pa
     )
     assert not result.ok, result.output
     assert "thm:missing" in result.output
+
+
+def test_a_compile_that_writes_no_pdf_is_not_a_success(tmp_path: Path):
+    r"""Exit zero and no document is not a document.
+
+    A draft-mode compiler setting, or `\pdfdraftmode` in the source, runs
+    everything and writes no file. Publication was simply skipped while the
+    check still said yes, so the save recorded the tree as freshly compiled
+    and whatever `writeup.pdf` was there before stayed, presented as current.
+    """
+    committed = []
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "writeup.pdf").write_bytes(b"%PDF-older")
+    result = LatexTools(COMMAND).check(
+        PREAMBLE + "% draftmode\nText.\n" + END,
+        tree=_tree(tmp_path),
+        output_dir=output,
+        commit=lambda: committed.append(True),
+    )
+    assert not result.ok
+    assert "no writeup.pdf" in result.output
+    assert committed == []
+    assert output.joinpath("writeup.pdf").read_bytes() == b"%PDF-older"
+
+
+def test_a_compile_that_writes_no_aux_does_not_leave_the_last_ones_labels(
+    tmp_path: Path,
+):
+    r"""`\nofiles` suppresses the auxiliary file and still produces the PDF.
+
+    The published `.aux` was left untouched, so the save stamped the new
+    source as current while the completion gate went on crediting labels from
+    a document that no longer exists.
+    """
+    tree = _tree(tmp_path)
+    output = tmp_path / "out"
+    aux_dir = tmp_path / "build"
+    tools = LatexTools(COMMAND)
+    first = tools.check(
+        PREAMBLE + "Theorem \\label{thm:main}. See \\ref{thm:main}.\n" + END,
+        tree=tree,
+        output_dir=output,
+        aux_dir=aux_dir,
+    )
+    assert first.ok, first.output
+    assert "thm:main" in (aux_dir / "writeup.aux").read_text(encoding="utf-8")
+    again = tools.check(
+        PREAMBLE + "\\nofiles\nText with no labels at all.\n" + END,
+        tree=tree,
+        output_dir=output,
+        aux_dir=aux_dir,
+    )
+    assert again.ok, again.output
+    assert not (aux_dir / "writeup.aux").exists(), (
+        "the previous document's labels survived a compile that recorded none"
+    )
