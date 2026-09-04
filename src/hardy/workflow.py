@@ -633,6 +633,13 @@ class ProveWorkflow:
                     proof_text=informal or "No complete informal proof was produced.",
                     known_gaps=gaps,
                 )
+            # Before Tectonic, because a cancelled run has no reason to
+            # compile anything -- and because the writeup fallback just above
+            # catches `RuntimeError`, which is exactly what the staged runtime
+            # raises when it refuses a turn on a cancelled run. Without this,
+            # a press during the writeup turn was swallowed by that fallback
+            # and the run went on to build a document for a run nobody wanted.
+            self._refuse_if_cancelled()
             document = self._writeup_builder(
                 approved_claim,
                 content,
@@ -643,6 +650,14 @@ class ProveWorkflow:
                 limits=self._config.limits,
             )
             grades = grades.model_copy(update={"document": document.status})
+            # And after it. Tectonic is a tracked child, so a press reaches it
+            # and the build comes back TEX_FAILED -- which without this check
+            # became the terminal reason, and the abandoned run was recorded
+            # as a completed experiment whose document failed to compile. It
+            # did fail to compile, and the grade below says so; the reason the
+            # run ended is still the user. Kept after the grade so the
+            # manifest carries both facts rather than losing the first.
+            self._refuse_if_cancelled()
             if document.status is DocumentStatus.TEX_FAILED:
                 terminal_reason = TerminalReason.TEX_COMPILATION_FAILURE
             state.transition(RunPhase.COMPLETED)

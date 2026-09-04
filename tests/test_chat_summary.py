@@ -133,3 +133,15 @@ def test_the_summary_and_the_export_gather_under_the_session_gate(tmp_path: Path
     chat.summary()
     chat.export_material()
     assert held == ["enter", "exit", "enter", "exit"]
+
+
+def test_a_linked_writeup_is_not_reported_as_a_compiled_document(tmp_path: Path):
+    """`is_file` and `stat` both follow a link, so a checked-out
+    `writeup.pdf -> <any file>` had the page state that Hardy compiled a
+    document and report that file's size. Hardy compiled nothing."""
+    chat = built(tmp_path)
+    elsewhere = tmp_path / "not-ours.pdf"
+    elsewhere.write_bytes(b"%PDF-not-hardys")
+    (Path(chat.workspace) / "writeup.pdf").symlink_to(elsewhere)
+
+    assert "No compiled document" in chat.export_material()["document"]

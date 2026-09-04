@@ -3051,6 +3051,12 @@ class MathematicsSession:
     def _export_material(self) -> dict[str, Any]:
         """`export_material`'s body, with the gate already held."""
         document = self.workspace / "writeup.pdf"
+        # Not through a link. `is_file` and `stat` both follow one, so a
+        # checked-out `writeup.pdf -> /etc/passwd` would have the export state
+        # that Hardy compiled a document and report that file's size. The Lean
+        # and TeX reads already refuse a link and so does the publisher; this
+        # is the same rule for the one path that was reading a leaf directly.
+        compiled = document.is_file() and not document.is_symlink()
         return {
             "project": self.workspace.name,
             "workspace": str(self.workspace),
@@ -3067,7 +3073,7 @@ class MathematicsSession:
             "document": (
                 f"{document.name} was compiled ({document.stat().st_size} bytes). "
                 "It is not embedded here: this file carries no external assets."
-                if document.is_file()
+                if compiled
                 else "No compiled document was found in this workspace."
             ),
             "usage": self.usage.lines(),
