@@ -225,6 +225,12 @@ class PaperToolRuntime:
     def search(self, query: str, limit: int = 10) -> ToolResult:
         bounded = max(1, min(limit, MAX_SEARCH_RESULTS))
         found = self.client.search(query, bounded)
+        # The echo is bounded too. The tool schema puts no ceiling on the
+        # query, and every level of detail below repeats it, so a query longer
+        # than the budget made every level oversized -- and the last one was
+        # returned anyway. Shedding detail cannot help with the one part of
+        # the answer that is not detail.
+        echoed = _clipped(query, max(64, self.observation_bytes // 4))
         # Bounded like every other observation. `read_paper` was bounded and
         # this was not, so twenty-five abstracts -- a feed may approach the
         # response cap on its own -- went into the model's context and the
@@ -235,7 +241,7 @@ class PaperToolRuntime:
                 True,
                 json.dumps(
                     {
-                        "query": query,
+                        "query": echoed,
                         "results": [],
                         "note": (
                             "arXiv matched nothing. This is a report about the query, not "
@@ -259,7 +265,7 @@ class PaperToolRuntime:
         # fetch, and it is bounded by `MAX_SEARCH_RESULTS` identifiers however
         # large the feed was.
         for level in SEARCH_DETAIL:
-            payload = self._results(found, query, note + level.note, level)
+            payload = self._results(found, echoed, note + level.note, level)
             if len(payload.encode("utf-8")) <= self.observation_bytes:
                 return ToolResult(True, payload)
         return ToolResult(True, payload)

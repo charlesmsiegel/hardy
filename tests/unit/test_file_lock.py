@@ -223,3 +223,28 @@ def test_a_lock_held_by_another_process_is_seen_across_the_process_boundary(
     # And killing it releases the lock, with nothing to clean up by hand.
     with FileLock(path, timeout=5.0) as lock:
         assert lock.held
+
+
+def test_the_descriptor_is_closed_even_when_the_unlock_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Closing releases the lock, so it must happen either way.
+
+    Skipping it leaked a descriptor that went on holding the kernel lock for
+    the life of the process: the citation reported as failed, and every later
+    one in that workspace waiting out its whole timeout on a lock nobody
+    could release.
+    """
+    path = tmp_path / "x.lock"
+
+    def _refuse(handle: int) -> None:
+        raise OSError("unlock refused")
+
+    monkeypatch.setattr("hardy.storage._unlock", _refuse)
+    lock = FileLock(path)
+    lock.__enter__()
+    with pytest.raises(OSError, match="unlock refused"):
+        lock.__exit__()
+    monkeypatch.undo()
+    with FileLock(path, timeout=0.2) as after:
+        assert after.held, "the lock outlived the holder that failed to unlock it"

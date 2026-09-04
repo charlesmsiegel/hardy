@@ -530,3 +530,35 @@ def test_a_missing_generated_file_is_put_back(tmp_path: Path):
     generated.unlink()
     assert bibliography.regenerate() is True
     assert generated.is_file()
+
+
+def test_alltt_is_not_verbatim():
+    r"""It keeps line breaks; it does not stop TeX reading commands.
+
+    `alltt` leaves the backslash and the braces active, so a `\bibitem`
+    inside one is executed and lands in the compiler's own record. Exempting
+    it turned a verbatim-looking block into a way to put a fabricated entry
+    in front of a reader under a key `cite_paper` had already vouched for.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "\\begin{alltt}\n\\begin{thebibliography}{9}\n"
+        "\\bibitem{perelman2002entropy-abcdef0123} Somebody Else.\n"
+        "\\end{thebibliography}\n\\end{alltt}\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal
+
+
+def test_a_comparison_in_a_title_is_not_typeset_as_punctuation(tmp_path: Path):
+    r"""Under OT1 a bare `<` sets as an inverted exclamation mark.
+
+    So the entry compiled and showed the reader a different title -- silently
+    wrong, which is what this escape table exists to prevent rather than
+    merely avoiding errors.
+    """
+    bibliography = Bibliography(tmp_path)
+    bibliography.cite(_record(title="Bounds for 0 < x < 1"))
+    generated = (tmp_path / "tex" / "references.tex").read_text(encoding="utf-8")
+    assert "\\textless{}" in generated
+    assert "0 <" not in generated

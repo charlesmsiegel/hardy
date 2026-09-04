@@ -201,8 +201,18 @@ class FileLock:
         fresh checkout to wait out.
         """
         if self.held and self._handle is not None:
-            _unlock(self._handle)
-            self.held = False
+            try:
+                _unlock(self._handle)
+            finally:
+                # Closing releases the lock too, so the descriptor must go
+                # even when the explicit unlock fails. Skipping it leaked a
+                # descriptor that went on holding the kernel lock for the life
+                # of the process -- the citation reported as failed, and every
+                # later one in that workspace waiting out its whole timeout on
+                # a lock nobody could release.
+                self.held = False
+                self._close()
+            return
         self._close()
 
     def _close(self) -> None:

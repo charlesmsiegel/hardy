@@ -856,30 +856,48 @@ def _parsed(text: str) -> ElementTree.Element:
         raise ArxivError(f"the arXiv response was not valid XML: {error}") from error
 
 
+#: The `<id>` arXiv gives the entry it returns instead of a paper. That entry
+#: is an answer, not a malformed one, which is why it is the only thing
+#: `_entry` is allowed to drop.
+ERROR_ID = "/api/errors"
+
+
 def _entry(
     entry: ElementTree.Element,
     source_url: str,
     fetched_at: str,
     response_digest: str,
 ) -> PaperRecord | None:
-    """One `<entry>` as a record, or None when it is not a paper.
+    """One `<entry>` as a record, or None when arXiv said there is no paper.
 
     arXiv answers a query for a malformed id with an entry whose `id` is an
-    error URL and whose title is "Error". Reading that as a paper would put a
-    record named `api/errors` in the library, so an entry whose id is not an
-    arXiv identifier is dropped -- the caller reports "no paper", which is
-    what happened.
+    error URL and whose title is "Error". That is an answer -- "no such
+    paper" -- so it is dropped and the caller reports exactly that.
+
+    Anything else that cannot be read raises. Dropping it silently reported a
+    shorter list as the whole result, or "arXiv matched nothing" when every
+    entry was rejected, and a search that quietly omits what it could not
+    interpret is the conflation this module refuses everywhere else: a
+    shortened list is indistinguishable from a search that found fewer.
     """
     raw_id = _text(entry.find(f"{ATOM}id"))
+    if ERROR_ID in raw_id:
+        return None
     try:
         identifier = parse_id(raw_id)
-    except ArxivError:
-        return None
+    except ArxivError as error:
+        raise ArxivError(
+            f"the arXiv response contains an entry whose id {raw_id!r} is not an arXiv "
+            "identifier; refusing to report the rest as the whole answer"
+        ) from error
     if not identifier.versioned:
         # arXiv's `<id>` is always versioned. One that is not means the feed
         # is not what this code was written against, and guessing a version
         # would put a record under an identifier arXiv never used.
-        return None
+        raise ArxivError(
+            f"the arXiv response contains an entry whose id {raw_id!r} names no version; "
+            "refusing to report the rest as the whole answer"
+        )
     title = _collapsed(_text(entry.find(f"{ATOM}title")))
     authors = tuple(
         _collapsed(_text(author.find(f"{ATOM}name")))

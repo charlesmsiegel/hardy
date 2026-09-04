@@ -738,3 +738,35 @@ def test_a_query_whose_cache_entry_is_corrupt_reaches_arxiv_again(tmp_path: Path
     for entry in library.queries.glob("*.json"):
         entry.write_text('{"fetched_at": NaN, "body": "<feed/>"}', encoding="utf-8")
     assert client.search("ricci flow"), "the corrupt entry was skipped and arXiv asked again"
+
+
+def test_an_entry_that_cannot_be_read_fails_the_search(tmp_path: Path):
+    """A shorter list is indistinguishable from a search that found fewer.
+
+    A malformed entry beside valid ones was dropped without a word, so the
+    tool reported the remainder as the whole answer -- the same conflation
+    this module refuses everywhere else.
+    """
+    feed = _feed().replace(
+        b"</feed>",
+        b"<entry><id>not-an-arxiv-id</id><title>Something</title>"
+        b"<published>2002-11-11T18:00:00Z</published>"
+        b"<updated>2002-11-11T18:00:00Z</updated><summary>x</summary></entry></feed>",
+    )
+    client, _, _ = _client(tmp_path, Recorder(feed))
+    with pytest.raises(arxiv.ArxivError, match="not an arXiv identifier"):
+        client.search("ricci flow")
+
+
+def test_arxivs_own_error_entry_is_still_a_report_that_nothing_matched(tmp_path: Path):
+    """That entry IS the answer, so it stays the one thing that may be dropped."""
+    feed = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<feed xmlns="http://www.w3.org/2005/Atom">'
+        b"<entry><id>http://arxiv.org/api/errors#incorrect_id_format</id>"
+        b"<title>Error</title><summary>bad id</summary>"
+        b"<published>2002-11-11T18:00:00Z</published>"
+        b"<updated>2002-11-11T18:00:00Z</updated></entry></feed>"
+    )
+    client, _, _ = _client(tmp_path, Recorder(feed))
+    assert client.search("ricci flow") == ()

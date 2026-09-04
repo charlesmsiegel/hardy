@@ -601,12 +601,19 @@ class LatexTools:
             if actual and resolved and output_dir is not None and pdf.exists():
                 _publish(work, output_dir, aux_dir)
             report = broken or references.note(labels)
-            return ToolResult(
-                resolved,
-                f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n{output}"
-                + (f"\n{report}" if report else ""),
-                source,
-            )
+            # Bounded after the report is added, not only before. The
+            # compiler's own output was cut to `output_limit` and then an
+            # unbounded diagnostic appended -- and that diagnostic names every
+            # unresolved reference and every unreferenced label, so a document
+            # with thousands of them flooded the transcript past the cap the
+            # limit exists to be.
+            head = f"exit={outcome.returncode} elapsed={elapsed:.3f}s\n"
+            body = output + (f"\n{report}" if report else "")
+            # The tail is kept, so what survives a document with thousands of
+            # unresolved labels is Hardy's own verdict rather than TeX's
+            # chatter; the exit status is held out of the cut because it is
+            # one line and it is the first thing a reader looks for.
+            return ToolResult(resolved, head + body[-max(0, self.output_limit - len(head)) :], source)
 
     def _cited(self, work: Path, vouched: Callable[[tuple[str, ...]], str]) -> str:
         r"""Hand every key the compile touched to `vouched`, and report its answer.

@@ -573,9 +573,15 @@ ATOM = re.compile(r"\\[a-zA-Z]+|\\.|.", re.DOTALL)
 #: references are generated is exactly the document this rule most wants to
 #: be readable -- and a lexical check that refused it would be refusing text
 #: no compiler ever runs.
+#:
+#: `alltt` is deliberately NOT here, though it looks like it belongs: it
+#: keeps line breaks and spaces but leaves the backslash and the braces
+#: active, so a `\bibitem` inside one is executed. Exempting it turned a
+#: verbatim-looking block into a way to put a fabricated entry in front of a
+#: reader under a key `cite_paper` had already vouched for.
 VERBATIM = re.compile(
     r"\\verb\*?(?P<mark>[^*\sa-zA-Z])(?:(?!(?P=mark)).)*(?P=mark)"
-    r"|\\begin\s*\{(?P<env>verbatim\*?|Verbatim|alltt|lstlisting|minted)\}"
+    r"|\\begin\s*\{(?P<env>verbatim\*?|Verbatim|lstlisting|minted)\}"
     r".*?\\end\s*\{(?P=env)\}",
     re.DOTALL,
 )
@@ -593,6 +599,12 @@ TEX_ESCAPES = {
     "_": "\\_",
     "{": "\\{",
     "}": "\\}",
+    # Not an error and not harmless: under the default OT1 encoding `<` and
+    # `>` typeset as inverted punctuation, so a title with a comparison in it
+    # compiles perfectly and shows the reader something else. Silently wrong
+    # is the failure this table exists to prevent.
+    "<": "\\textless{}",
+    ">": "\\textgreater{}",
     "~": "\\textasciitilde{}",
     "^": "\\textasciicircum{}",
 }
