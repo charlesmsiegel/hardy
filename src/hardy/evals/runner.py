@@ -181,7 +181,8 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     problems = load_corpus(problems_path)
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
     issues = staleness(baseline, statement_digests={e.id: e.statement_digest() for e in problems.entries}, environment=environment,
-                       problem_ids=[entry.id for entry in problems.entries], host=host_info())
+                       problem_ids=[entry.id for entry in problems.entries], host=host_info(),
+                       expectations={e.id: e.expected for e in problems.entries})
     if issues:
         raise RefusedRun("; ".join(issues))
     out = scoreboards_root / label

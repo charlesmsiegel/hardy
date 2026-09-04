@@ -284,7 +284,8 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
     # must ask whether the baseline was fresh for the run that produced it, not
     # whether it is fresh for whoever is running `hardy evals check` today.
     for issue in staleness(baseline, statement_digests={e.id: e.statement_digest() for e in problems.entries}, environment=board.environment,
-                           problem_ids=[e.id for e in problems.entries], host=baseline.host):
+                           problem_ids=[e.id for e in problems.entries], host=baseline.host,
+                           expectations={e.id: e.expected for e in problems.entries}):
         issues.append(f"baseline: {issue}")
     # Rows are samples: a duplicated (id, repeat) key or a run_dir reused
     # across rows would let one run be counted as more than one independent

@@ -135,7 +135,7 @@ def _baseline(tiers: dict[str, int], twins_false: set[str] = frozenset()) -> swe
                                            closed_by=("nlinarith",) if k in twins_false else ()) if k.startswith("f") else None)
                for k, t in tiers.items()}
     return sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256="p" * 64, environment=identity, heartbeat_budget=200000,
-                          environment_digest=sweep.environment_digest_of(identity, HOST), procedure_digest=sweep.procedure_digest_of(),
+                          environment_digest=sweep.environment_digest_of(identity, HOST), procedure_digest=sweep.procedure_digest_of(600.0),
                           wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host=HOST, problems=(), entries=entries)
 
 

@@ -1,6 +1,7 @@
 """The corpus directory: sharded loading, the id registry, the manifest, checks."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -189,6 +190,22 @@ def test_the_changelog_head_must_match_the_corpus_version(tmp_path):
 
     _changelog(tmp_path, "0.1.0")
     assert version_issues(tmp_path) == []
+
+
+def test_the_manifest_names_paths_the_same_way_on_every_platform(tmp_path):
+    """`str(Path)` is `problems\\11.json` on Windows and `problems/11.json`
+    elsewhere, so an unchanged corpus would hash differently per platform: the
+    committed changelog would fail `corpus check` on Windows, and a scoreboard
+    made there could not carry the same corpus identity anywhere else.
+    """
+    _write(tmp_path, "13", [_entry(id="a", name="A", msc=["13A15"])])
+    digest = manifest_digest(tmp_path)
+
+    hasher = hashlib.sha256()
+    for path in sorted(p for p in tmp_path.rglob("*.json") if p.name != "tombstones.json"):
+        hasher.update(path.relative_to(tmp_path).as_posix().encode("utf-8"))
+        hasher.update(path.read_bytes())
+    assert digest == hasher.hexdigest(), "the manifest must hash posix-shaped relative paths"
 
 
 def test_the_changelog_head_binds_the_manifest_digest(tmp_path):
