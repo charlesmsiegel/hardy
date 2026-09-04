@@ -539,3 +539,25 @@ def test_an_escaped_backslash_does_not_make_an_inclusion_edge():
     # And a real one still does.
     genuine = dict(sources, **{"a.tex": "\\input{appendix}\n"})
     assert "appendix.tex" in reached_fragments(genuine)
+
+
+def test_a_newenvironment_body_does_not_reach_a_fragment():
+    r"""`\newenvironment{box}{...}{...}` has two bodies and runs neither.
+
+    An `\input` written into either runs when the environment is used, not
+    when it is defined -- and only `\newcommand` and friends were recognised,
+    so both looked live. That is the dangerous direction: a fragment nothing
+    reaches judged part of the document is compiled by running the unchanged
+    root, which never reads it.
+    """
+    sources = {
+        "writeup.tex": "\\documentclass{article}\n\\begin{document}\n"
+        "\\input{a}\n\\end{document}\n",
+        "a.tex": "\\newenvironment{box}{\\input{part}}{\\input{other}}\n",
+        "part.tex": "Text.\n",
+        "other.tex": "Text.\n",
+    }
+    reached = reached_fragments(sources)
+    assert "a.tex" in reached
+    assert "part.tex" not in reached
+    assert "other.tex" not in reached

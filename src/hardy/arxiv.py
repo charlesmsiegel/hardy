@@ -519,6 +519,18 @@ class PaperLibrary:
             shutil.rmtree(staging, ignore_errors=True)
         return self.read(identifier)
 
+    def _cached_body(self, key: str) -> bytes | None:
+        """The bytes stored under `key`, whatever their age, or None.
+
+        Age-blind on purpose: this answers "is this still the entry I read",
+        which an expiry check would confuse with "is it still worth serving".
+        """
+        try:
+            payload = json.loads(self._read(f"queries/{key}.json"))
+            return str(payload["body"]).encode("utf-8")
+        except (OSError, ValueError, KeyError, TypeError, LayoutError):
+            return None
+
     def cached_query(
         self, key: str, *, now: float, ttl: float = QUERY_TTL_SECONDS
     ) -> tuple[bytes, float] | None:
@@ -565,15 +577,24 @@ class PaperLibrary:
             ).encode("utf-8"),
         )
 
-    def drop_query(self, key: str) -> None:
-        """Forget one cached answer.
+    def drop_query(self, key: str, *, body: bytes | None = None) -> None:
+        """Forget one cached answer, or the particular one that was bad.
 
         For a body that turned out not to be an answer at all. A cached
         maintenance page would otherwise be served for the whole TTL, so every
         retry of a search would fail identically for a day after arXiv had
         recovered.
+
+        `body` names which bytes were judged unreadable. Without it the
+        deletion is of whatever is at the key now, and two processes meeting
+        the same bad entry raced: the first dropped it, fetched, and cached a
+        good answer; the second -- still holding the bad bytes it had parsed
+        -- then deleted that, and went to the network for something already on
+        disk. A bad entry is dropped once, by the process that read it.
         """
         try:
+            if body is not None and self._cached_body(key) not in (None, body):
+                return
             guard, name = self._guard(f"queries/{key}.json")
             guard.unlink(name, missing_ok=True)
         except (OSError, LayoutError):
@@ -788,7 +809,7 @@ class ArxivClient:
                 # from and when, and both have to be true.
                 return _entries(body, url, _stamp(fetched)), body
             except ArxivError:
-                self.library.drop_query(key)
+                self.library.drop_query(key, body=body)
         # Asked again on the way out of the wait, and asked INSIDE the lock,
         # between the waiting and the reservation. Two processes wanting the
         # same uncached query both miss above and both queue on the throttle;
@@ -814,7 +835,7 @@ class ArxivClient:
             try:
                 served.append((_entries(body, url, _stamp(fetched)), body))
             except ArxivError:
-                self.library.drop_query(key)
+                self.library.drop_query(key, body=body)
                 return False
             return True
 

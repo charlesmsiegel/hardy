@@ -910,3 +910,26 @@ def test_a_slot_taken_by_someone_else_is_not_fired_on(tmp_path: Path):
     client.search("ricci flow")
     # It waited again rather than firing on a slot that was no longer its own.
     assert clock.slept, "the request went out on a reservation somebody else had taken"
+
+
+def test_a_bad_cache_entry_is_dropped_by_the_process_that_read_it(tmp_path: Path):
+    """And not by one still holding the bytes somebody else has replaced.
+
+    Two processes meeting the same unreadable entry raced: the first dropped
+    it, fetched, and cached a good answer; the second -- still holding the bad
+    bytes it had parsed -- deleted that, and went to the network for something
+    already on disk.
+    """
+    library = arxiv.PaperLibrary(tmp_path / "papers")
+    key = "k" * 64
+    library.cache_query(key, b"<not-a-feed/>", now=1_000_000.0)
+    # A neighbour replaces it with a real answer.
+    library.cache_query(key, _feed(), now=1_000_000.0)
+    # This process drops what IT read, which is no longer what is there.
+    library.drop_query(key, body=b"<not-a-feed/>")
+    held = library.cached_query(key, now=1_000_000.0)
+    assert held is not None, "a good answer was deleted by a stale reader"
+    assert held[0] == _feed()
+    # The unqualified drop still removes whatever is there.
+    library.drop_query(key)
+    assert library.cached_query(key, now=1_000_000.0) is None

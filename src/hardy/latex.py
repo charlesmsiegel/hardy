@@ -141,7 +141,11 @@ _CONDITIONAL = re.compile(r"\\(if[a-zA-Z]*|fi)(?![a-zA-Z])")
 # untouched and reachable. The lookahead used in its place asks the same
 # question `\b` was for -- "not a letter next" -- without depending on `*`
 # counting as a word character.
-_MACRO_DEF = re.compile(r"\\(?:newcommand|renewcommand|providecommand)\*?(?![a-zA-Z])|\\def\b")
+_MACRO_DEF = re.compile(
+    r"\\(?P<env>new|renew)environment\*?(?![a-zA-Z])"
+    r"|\\(?:newcommand|renewcommand|providecommand)\*?(?![a-zA-Z])"
+    r"|\\def\b"
+)
 
 
 def _skip_balanced(text: str, index: int, opener: str, closer: str) -> int:
@@ -192,8 +196,9 @@ def _drop_iffalse(text: str) -> str:
 
 
 def _macro_bodies(text: str) -> list[tuple[int, int]]:
-    r"""The span of every `\newcommand`/`\renewcommand`/`\providecommand`/`\def`
-    body in `text`, as `(start, end)` over its braces.
+    r"""The span of every macro-definition body in `text`, as `(start, end)`
+    over its braces -- `\newcommand`, `\renewcommand`, `\providecommand`,
+    `\def`, and both bodies of `\newenvironment`/`\renewenvironment`.
 
     One walk, two questions. What is inside a macro body is not executed until
     the macro is expanded, and nothing here expands macros -- so the body is
@@ -235,7 +240,18 @@ def _macro_bodies(text: str) -> list[tuple[int, int]]:
         # bracket, so it is skipped over rather than parsed.
         while pos < length and text[pos] != "{":
             pos += 1
-        if pos < length and text[pos] == "{":
+        # `\newenvironment{name}{begin}{end}` has TWO bodies, and the second
+        # is as unexecuted as the first: an `\input` written into either runs
+        # when the environment is used, not when it is defined. Recognising
+        # only `\newcommand` and friends left both of them looking live, which
+        # is the dangerous direction -- a fragment nothing reaches judged part
+        # of the document is compiled by running the unchanged root, which
+        # never reads it.
+        for _ in range(2 if keyword.group("env") else 1):
+            while pos < length and text[pos].isspace():
+                pos += 1
+            if pos >= length or text[pos] != "{":
+                break
             body = _skip_balanced(text, pos, "{", "}")
             spans.append((pos, body))
             pos = body
@@ -830,12 +846,30 @@ class LatexTools:
         smuggled in by some route that produces no `\bibcite` still leaves the
         citation itself in plain sight.
         """
-        keys: list[str] = []
+        defined: list[str] = []
+        cited: list[str] = []
         for relative in files_under(work, ".aux"):
             text = read_bytes(work, relative).decode("utf-8", errors="replace")
-            keys.extend(references.bibcites(text))
-            keys.extend(references.citations(text))
-        return vouched(tuple(dict.fromkeys(keys)))
+            defined.extend(references.bibcites(text))
+            cited.extend(references.citations(text))
+        # A key the text cited and the reference list never defined renders as
+        # `[?]`. The log usually says so, and `_references` refuses on that --
+        # but a package can silence the warning, and then the only remaining
+        # evidence was that the key happened to be one `cite_paper` recorded,
+        # which it is: citing a vouched paper without `\input{references}`
+        # produced a `\citation` and no `\bibcite`, and the document was
+        # accepted and published with `[?]` on the page. Asked of the
+        # compiler's own records instead of its prose, so a silenced warning
+        # changes nothing.
+        undefined = [key for key in dict.fromkeys(cited) if key not in set(defined)]
+        if undefined:
+            return (
+                f"the compiled document cites {len(undefined)} key(s) its reference list "
+                f"never defined: {', '.join(undefined)}. They render as `[?]`. A writeup "
+                "that cites anything must \\input{references} once, before "
+                "\\end{document}."
+            )
+        return vouched(tuple(dict.fromkeys([*defined, *cited])))
 
     def _passes(self, work: Path, root: Path) -> tuple[GuardedResult, str, str]:
         r"""Run the compiler until another pass would not change the answer.
