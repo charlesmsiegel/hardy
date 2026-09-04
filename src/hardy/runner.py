@@ -614,7 +614,17 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     closed_by_ladder = bool(found["result"] and ladder["closed_by"])
     asked = not closed_by_ladder and remaining > 0
     if closed_by_ladder:
-        events.append({"type": "declined_turn", "why": f"closed by `{ladder['closed_by']}` before a model turn was spent"})
+        # Named by stage, because there are now two kinds of decline and only
+        # this one belongs to the ladder. `hardy accept --recorded` reads the
+        # closers block against the declines beside it, and a mid-exchange
+        # decline -- the run has its proof and needs no further turn -- was
+        # being counted as evidence that a ladder ran, which refused an
+        # otherwise verified record.
+        events.append({
+            "type": "declined_turn",
+            "stage": "closers",
+            "why": f"closed by `{ladder['closed_by']}` before a model turn was spent",
+        })
     elif not asked:
         # Out of time before the model was asked anything. Reported as the
         # limit it is, not as a model that submitted nothing.

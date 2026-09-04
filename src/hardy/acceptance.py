@@ -669,7 +669,16 @@ def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]], rea
     if not isinstance(attempts, list):
         return ["trajectory closers states no attempts list"]
     enabled, closed_by = ladder.get("enabled"), ladder.get("closed_by")
-    declined = [event for event in events if event.get("type") == "declined_turn"]
+    # The ladder's own declines, not every decline. A run whose submission was
+    # accepted mid-exchange declines the next provider turn too, and counting
+    # that as a closer event made this refuse an otherwise verified record --
+    # either as a decline on a run with closers disabled, or as one for a
+    # ladder that closed nothing. Absent `stage` reads as `closers`, which is
+    # what every decline in a record from before the gate existed was.
+    declined = [
+        event for event in events
+        if event.get("type") == "declined_turn" and event.get("stage", "closers") == "closers"
+    ]
     if enabled is False:
         # Nothing ran, so nothing may be recorded as having run.
         if recorded:
@@ -1183,6 +1192,17 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     request = recorded if isinstance(recorded, dict) else {}
     if recorded is not None and not isinstance(recorded, dict):
         issues.append("the trajectory's request is not an object")
+    # The event list, once, before anything walks it. Every traversal below
+    # calls `.get` on each entry, so a truncated or hand-edited trajectory
+    # whose `events` is a string -- iterating one yields characters -- or holds
+    # a bare number took the validator down with an `AttributeError` rather
+    # than reporting the run invalid. Checked here rather than at each
+    # traversal, because the shape is one fact and a dozen guards is a dozen
+    # chances to forget one.
+    listed = trajectory.get("events")
+    events = listed if isinstance(listed, list) and all(isinstance(item, dict) for item in listed) else []
+    if listed is not None and not events and listed != []:
+        issues.append("the trajectory's events are not a list of objects")
     declaration = str(request.get("declaration", ""))
     head = DECLARATION_HEAD.match(declaration)
     name = declared_name(head.group(1)) if head else None
@@ -1216,8 +1236,7 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     # happened leaves a `result` event whatever it reported. Both are required,
     # so a `declined_turn` from a mid-exchange decline on a loop Hardy owns --
     # where turns really were spent -- does not reach this.
-    recorded_events = trajectory.get("events") or []
-    unasked = not any(event.get("type") == "result" for event in recorded_events) and any(
+    unasked = not any(event.get("type") == "result" for event in events) and any(
         (
             event.get("type") == "limit"
             and event.get("limit") == "wall_seconds"
@@ -1226,9 +1245,10 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
         )
         or (
             event.get("type") == "declined_turn"
+            and event.get("stage", "closers") == "closers"
             and "before a model turn was spent" in str(event.get("why", ""))
         )
-        for event in recorded_events
+        for event in events
     )
     if unasked:
         if result.get("turns") != 0:
@@ -1250,7 +1270,6 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
             issues.append(f"trajectory limits do not state {field}")
     if not trajectory.get("model") or not trajectory.get("backend"):
         issues.append("trajectory does not name the model and backend that ran")
-    events = trajectory.get("events") or []
     issues.extend(_closer_issues(trajectory, events, reason))
     issues.extend(_sketch_issues(result, trajectory, events, writeup, reason))
 
