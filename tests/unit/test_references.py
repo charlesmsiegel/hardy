@@ -163,3 +163,29 @@ def test_numbers_still_moving_is_told_apart_from_a_missing_reference():
     missing = "LaTeX Warning: There were undefined references.\n"
     assert not references.unconverged(missing)
     assert references.rerun_requested(missing)
+
+
+def test_a_warning_wrapped_across_three_lines_is_still_read():
+    """The join has to key on the previous PHYSICAL line's width.
+
+    Keying on the accumulated logical line stopped joining after the first
+    continuation -- it is past the wrap width by then -- so the last third of
+    a long warning stayed on a line of its own and the fixed phrase it
+    carried matched nothing.
+    """
+    name = "thm:" + "a-really-rather-long-label-name" * 4
+    whole = f"LaTeX Warning: Label `{name}' multiply defined."
+    wrapped = "\n".join(whole[index : index + 79] for index in range(0, len(whole), 79))
+    assert len(wrapped.splitlines()) > 2
+    assert [item.name for item in references.unresolved(wrapped)] == [name]
+
+
+def test_the_keys_a_document_cited_are_read_from_the_aux():
+    r"""`\bibcite` says what the list defined; `\citation` says what was cited.
+
+    A definition smuggled in by a route that produces no `\bibcite` still
+    leaves the `\cite` itself recorded here.
+    """
+    aux = "\\citation{perelman2002}\n\\citation{a,b}\n\\bibcite{perelman2002}{1}\n"
+    assert references.citations(aux) == ("perelman2002", "a", "b")
+    assert references.bibcites(aux) == ("perelman2002",)

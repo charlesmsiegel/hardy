@@ -302,13 +302,17 @@ class PaperToolRuntime:
 
     def fetch(self, paper_id: str) -> ToolResult:
         record, held = self.client.fetch(paper_id)
+        # Bounded like the other two. A title or an author list can be
+        # enormous -- a collaboration paper carries thousands of names -- and
+        # this was the one answer that put whatever arrived straight into the
+        # model's context and the transcript.
         return ToolResult(
             True,
             json.dumps(
                 {
                     "paper_id": record.arxiv_id,
-                    "title": record.title,
-                    "authors": list(record.authors),
+                    "title": _clipped(record.title, SEARCH_DETAIL[0].title),
+                    "authors": _authors(record.authors, self.observation_bytes),
                     "doi": record.doi,
                     "content_sha256": record.content_sha256,
                     "already_held": held,
@@ -392,6 +396,14 @@ class PaperToolRuntime:
                 "it. Call fetch_paper first."
             )
         return self.library.read(identifier)
+
+
+def _authors(authors: tuple[str, ...], budget: int) -> list[str]:
+    """Author names, cut to a count the observation bound can carry."""
+    room = max(1, min(len(authors), budget // 64))
+    if len(authors) <= room:
+        return list(authors)
+    return [*authors[:room], f"... and {len(authors) - room} more"]
 
 
 def _clipped(text: str, limit: int) -> str:

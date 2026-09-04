@@ -302,6 +302,22 @@ class PaperLibrary:
         # `read_paper(A)` serves B and `cite_paper(A)` records B under A's
         # name. The identifier a record is filed under has to be the
         # identifier it claims.
+        # The response the record was parsed out of, checked against the
+        # digest the record carries for it. Without this the record could go
+        # on claiming its metadata came from one untouched API response while
+        # that file was edited or deleted underneath it -- a provenance claim
+        # nothing stood behind.
+        try:
+            response = (self.path_for(identifier) / "response.xml").read_bytes()
+        except OSError as error:
+            raise ArxivError(
+                f"the stored response for {identifier} could not be read: {error}"
+            ) from error
+        if record.response_sha256 and hashlib.sha256(response).hexdigest() != record.response_sha256:
+            raise ArxivError(
+                f"the stored response for {identifier} does not match its recorded digest; "
+                "this record no longer says where its metadata came from"
+            )
         if str(record.identifier) != str(identifier):
             raise ArxivError(
                 f"the record stored under {identifier} says it is {record.arxiv_id}; "

@@ -204,12 +204,13 @@ def test_the_generated_file_does_not_refuse_the_document_it_is_part_of(session) 
 
 
 def test_a_bibliography_built_by_expansion_is_still_refused(session) -> None:
-    r"""Lexical detection is not the gate; the compiler's own record is.
+    r"""TeX is a macro language, so a `\bibitem` need not look like one.
 
-    TeX is a macro language: `\csname bibitem\endcsname` is a `\bibitem` that
-    no reader of the source would recognise as one, and it resolves a
-    citation just as well. What every spelling has in common is the
-    `\bibcite` the compiler writes into the `.aux`.
+    `\csname bibitem\endcsname` runs a `\bibitem` that no reader of the
+    source would recognise. Rather than chase spellings, the writeup may not
+    build control sequences by name at all -- a mathematical document has no
+    use for it, and the compiler's own `\bibcite`/`\citation` record backs
+    the rule up for whatever this misses.
     """
     source = (
         "\\documentclass{article}\n\\begin{document}\n"
@@ -221,8 +222,7 @@ def test_a_bibliography_built_by_expansion_is_still_refused(session) -> None:
     )
     result = session._tool("save_latex", {"source": source})
     assert not result.ok
-    assert "invented2020" in result.output
-    assert "cite_paper" in result.output
+    assert "\\csname" in result.output
     assert not (session.workspace / "tex" / "writeup.tex").exists()
 
 
@@ -240,3 +240,23 @@ def test_the_reference_list_cite_paper_generated_is_vouched_for(session) -> None
         },
     )
     assert result.ok, result.output
+
+
+def test_a_citation_no_paper_backs_is_refused_from_the_compilers_own_record(session) -> None:
+    r"""The backstop, exercised where the lexical rules cannot reach.
+
+    `_vouched_references` is handed every key the compile touched -- what the
+    reference list defined and what the text cited, from every `.aux` the
+    compilation wrote. A key no `cite_paper` recorded refuses the document
+    however it got there.
+    """
+    assert session._vouched_references(()) == ""
+    refusal = session._vouched_references(("invented2020",))
+    assert "invented2020" in refusal
+    assert "cite_paper" in refusal
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    key = json.loads(
+        session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"}).output
+    )["cite_key"]
+    assert session._vouched_references((key,)) == ""
+    assert "invented2020" in session._vouched_references((key, "invented2020"))

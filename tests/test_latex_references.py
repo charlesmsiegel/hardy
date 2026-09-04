@@ -158,3 +158,34 @@ def test_an_unsettled_document_is_not_published(tmp_path: Path):
     assert not result.ok
     assert committed == []
     assert not (output / "writeup.pdf").exists()
+
+
+def test_keys_are_collected_from_every_auxiliary_file(tmp_path: Path):
+    r"""`\include` gives a fragment its own `.aux`.
+
+    A reference list executed inside one writes its `\bibcite` records where
+    a reader of `writeup.aux` never sees them, and the citation resolves
+    anyway -- so the whole auxiliary tree is read, not the root's alone.
+    """
+    tree = _tree(tmp_path)
+    (tree / "part.aux").write_text("\\bibcite{hidden2020}{1}\n", encoding="utf-8")
+    seen: list[tuple[str, ...]] = []
+    LatexTools(COMMAND).check(
+        PREAMBLE + "Text.\n" + END,
+        tree=tree,
+        vouched=lambda keys: seen.append(keys) or "",
+    )
+    assert seen and "hidden2020" in seen[0]
+
+
+def test_a_refused_reference_list_takes_the_save_with_it(tmp_path: Path):
+    committed = []
+    result = LatexTools(COMMAND).check(
+        PREAMBLE + "Text \\label{a}\\ref{a}.\n" + END,
+        tree=_tree(tmp_path),
+        commit=lambda: committed.append(True),
+        vouched=lambda keys: "no.",
+    )
+    assert not result.ok
+    assert "no." in result.output
+    assert committed == []
