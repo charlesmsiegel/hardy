@@ -151,31 +151,98 @@ Losing the loop costs real things, and they are recorded rather than glossed:
 turn limits become the SDK's to enforce, cheap Lean closers cannot run before a
 model turn is spent, and token budgets have no decision point. The wall clock is
 kept by Hardy, because nothing in the SDK bounds a stalled request, and the
-trajectory states which of the two enforced what. Issue #23 tracks reclaiming
-the loop without giving up subscription authentication.
+trajectory states which of the two enforced what.
 
-The quietest cost is the strongest argument for reclaiming it: compaction.
-Hardy has none of its own — grepping for it finds only `usage._compact`, a
-number formatter — so when a long session outgrows the context window, what
-survives is decided by the provider's rules, invisibly, and `transcript.jsonl`
-does not record what was dropped. For a long mathematical session that is a
+There is now a second transport where none of that is lost. The `api` backend
+calls the Messages API directly and runs the loop in `hardy/loop.py`: it counts
+provider calls itself, measures its own wall clock, holds the conversation as a
+list rather than as a provider thread, and is asked before every provider call
+whether to make one at all — the decision point that token budgets and a
+mid-conversation closer ladder both need, and that no SDK-driven loop offers.
+
+The `hardy batch --closers` ladder is deliberately *not* one of those: it runs
+before any runtime is built, so it works on every backend, and a subscription
+user needs no API key to use it. What it cannot do from there is decline a turn
+partway through an exchange, which is what the decision point above would buy.
+
+The first thing it buys is the end of a run. `hardy batch` declines every turn
+after the submission it keeps, and the runner refuses the calls already queued
+behind it — one response can ask for two submissions, and declining the *next*
+provider turn does not reach the second of them. That half lives in the runner
+rather than the loop, because the runner is what knows a run has its result,
+and so it holds on every backend: the writeup is assembled from the artifacts
+rather than from whatever the model says once it has finished, so a further
+exchange is billed for and buys nothing — and it is not inert, since the tools
+stay live and a second accepted submission would replace the proof the run had
+already earned. On a backend whose SDK owns the loop there is no moment to ask,
+and the run continues as before; the decline is recorded either way, because
+Hardy choosing not to spend a turn is a fact about a run rather than an absence
+of one.
+
+Owning the loop is what lets the wall clock reach every place the loop can
+block, rather than only the gap between exchanges. There are four such places
+and they were found one at a time, which is the honest way to record it:
+between exchanges; before a provider call, because the hooks that run there —
+a cheap-closer ladder above all — spend real seconds; after one, because the
+request itself blocks and a reply that overran the budget must end the run as a
+timeout rather than as one that finished; and before each tool call of a batch,
+because one response can ask for several Lean checks and each can run to its
+own process timeout. A bound binds only where it is checked. The fifth place is
+not checkable and is stated instead: a tool call already running is not
+interrupted, which is the same limit `MathematicsSession.cancel` states about
+cancelling one. The closers spend that same clock; the model is handed what they left. What
+owning the loop does *not* buy is the power to abort a request already in
+flight: the SDK backend can interrupt one and this transport cannot, so a
+cancel that arrives mid-request lets the reply come back — recorded as
+discarded, because it was produced and billed for, and never handed to a user
+who has been told the turn stopped. The price is the thing the SDK backends exist to avoid: an API key
+instead of a subscription, and a conversation that ends with the process
+because there is no thread to resume. So it is opt-in, and which transport
+carried a run is part of that run's recorded identity — the two are not the
+same experimental condition, and a scoreboard that could not tell them apart
+would be comparing a harness against itself. Issue #23 tracks carrying the same
+control back to the subscription backends, where the SDK still owns the loop.
+
+The quietest cost was the strongest argument for reclaiming it: compaction.
+On a backend whose SDK owns the loop, when a long session outgrows the context
+window what survives is decided by the provider's rules, invisibly, and
+`transcript.jsonl` does not record what was dropped. For a long mathematical session that is a
 record-integrity problem, not a convenience problem: the compaction decides
 what endures about which lemmas were proved, which axioms are standing, and
 which attempts failed and why, and Hardy neither chooses it nor writes it
-down. The positive half matters more. A mathematical compaction summary is
-largely mechanical — the naming registry, the approved assumptions, and the
-audit verdicts are already in `session.json`, and the declaration list is
-already what `read_workspace` returns — so almost every heading is derivable
-from the workspace rather than narrated by a model, which makes it checkable
-in a way no coding agent's summary can be. Only "what was tried and why it
-failed" needs the model. Whether building it requires owning the loop outright
-is the question issue #23 already poses as "hooks as a control surface": the
-pinned SDK exposes a `PreCompact` hook — the compaction's trigger and the
-provider transcript path — which may be enough to persist the mechanical
-summary and mark the boundary in `transcript.jsonl` without reclaiming
-anything. What the hook cannot do is decide what the surviving context
-contains; establishing what it can and cannot provide comes before concluding
-that a harness-owned loop is required.
+down. The positive half matters more and is what `hardy/compaction.py` is:
+a mathematical summary is largely mechanical — the naming registry, the
+approved assumptions and the audit verdicts are already in `session.json`, and
+the declaration list is already what `read_workspace` returns — so almost
+every heading is derived from the workspace rather than narrated by a model,
+which makes it checkable in a way no coding agent's summary can be. Even "what
+was tried and why it failed", the heading that looked like it needed a model,
+turned out not to: Hardy records every tool call and what came back, so the
+failures are in the transcript in Lean's own words.
+
+Two of its rules are load-bearing rather than tidy. The cut is walked
+backwards until it lands on a message a conversation may legally resume from,
+because a tool result separated from the call it answers is not a smaller
+context but an invalid one. And the compaction is written into
+`transcript.jsonl` — what was summarised, where the kept messages start, and
+what the summary said — because a compaction that leaves no trace is precisely
+the invisible loss this exists to prevent. `/status --full` prints the same
+summary at any time, which is what makes it checkable by a human and not only
+by Hardy.
+
+Two headings exist for a specific reason, and it is the mechanism by which a
+long session degrades: "Standing assumptions" and "Naming registry" were
+established early, so they are the oldest thing in the window and the first a
+naive compaction drops — and they are exactly what a later turn must not
+contradict. Deriving them beats remembering them.
+
+The summary is backend-independent; only the moment to insert it is not. On
+the SDK backends there is no such moment, so no compactor is offered to them
+at all rather than one they would silently drop — and whether the SDK's
+`PreCompact` hook, which exposes the trigger and the provider transcript path,
+is enough to persist the summary and mark the boundary there is the open half
+of issue #23. What the hook cannot do is decide what the surviving context
+contains.
 
 ### 3. Tool layer
 
@@ -223,8 +290,23 @@ The initial path invokes Lean directly in a temporary directory. Persistent sess
 incremental state, and proof-state snapshots are optimizations to add when measured
 latency warrants them. Each run begins from a known environment, preserves the
 original statement, rejects `sorry` in completed proofs, and audits dependencies.
-`prove` and `batch` reject a hole outright, having nobody to hold a partial
-result for; an interactive session keeps it and says so.
+`prove` and `batch` reject a hole in a *submission*, and `batch` keeps one in a
+sketch: `sketch_proof` elaborates a skeleton whose holes are deliberate,
+reports which are left in the body it was handed, and is never graded. That
+list is not offered as exhaustive — nothing about a sketch audits what it
+imports, and only the axiom report a submission runs can say what it rests on.
+What `batch` keeps is the newest development Lean accepted, whichever door it
+came through, including a submission the axiom report went on to refuse: the
+holes were the run's remaining work two events ago and the axiom is its
+remaining work now, and an artifact naming the older one names the wrong one.
+The two are reported in different words for the same reason — a candidate the
+audit refused is not one nothing has audited — which is why the record says
+which door a candidate came through and why the trajectory records Lean's own
+answer to a submission beside the audit's. An interactive session keeps a
+hole in an ordinary save and says so. The staged `prove` path has neither —
+its tools and its artifacts are its own, and carrying sketches into it is
+separate work. Wherever a sketch is kept, only the final grade requires a
+hole-free proof.
 
 That condition is now measurable rather than rhetorical. `hardy latency` times the
 **prelude** — process start plus `import Mathlib`, elaborated with no proof body, so

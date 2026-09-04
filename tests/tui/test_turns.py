@@ -239,8 +239,17 @@ async def test_a_second_escape_escalates_from_interrupt_to_kill(settings):
 
 
 async def test_a_second_escape_with_nothing_left_running_says_so(settings):
+    # `until`, for the reason the sibling above passes it and `blast` spells
+    # out: this notice is drawn on the escalation path *after* the turn
+    # settles, so a loaded runner can exit the app with it still unflushed --
+    # a failure whose message is about the notice while the behaviour it
+    # reports demonstrably happened, which `session.escalated` proves one line
+    # up. `_wait_for_render` is silent on timeout, so an escalation that
+    # really stopped saying this still fails the assertion below.
     session = InterruptibleSession(running=0)
-    _, written = await blast(settings, session, "prove something\r\x1b \x1b \x03")
+    _, written = await blast(
+        settings, session, "prove something\r\x1b \x1b \x03", until="nothing left to stop"
+    )
     assert session.escalated == 1
     assert "nothing left to stop" in written
 
@@ -249,7 +258,9 @@ async def test_escape_does_not_escalate_a_session_that_cannot(settings):
     """A session with no `escalate` is not an error and not a crash -- the
     press simply reports that there is nothing more to do."""
     session = SlowSession()
-    _, written = await blast(settings, session, "prove something\r\x1b \x1b \x03")
+    _, written = await blast(
+        settings, session, "prove something\r\x1b \x1b \x03", until="nothing left to stop"
+    )
     assert "nothing left to stop" in written
 
 
@@ -322,7 +333,16 @@ async def test_status_is_allowed_while_a_turn_is_in_flight(settings):
     refusal instead of actually running the command.
     """
     session = SlowSession()
-    _, written = await blast(settings, session, "prove something\r\x1b/status\r\x03")
+    # `until`, for the reason `blast` gives: `wait_for_turn_to_settle` waits
+    # for the *turn*, and `/status` draws while that turn is still in flight.
+    # The release timer can therefore settle the turn and let the trailing
+    # Ctrl+C exit the app with this line still unflushed -- which is how this
+    # went red on a loaded CI runner while passing everywhere else. Waiting on
+    # the render weakens nothing: `_wait_for_render` is silent on timeout, so
+    # a status handler that really stopped printing this still fails below.
+    _, written = await blast(
+        settings, session, "prove something\r\x1b/status\r\x03", until="A turn is still running."
+    )
     assert "A turn is still running." in written
     assert str(settings.layout.problem) in written
 

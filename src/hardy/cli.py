@@ -21,6 +21,7 @@ from . import config as configuration
 from .cas import CasError
 from .cas_export import export_session
 from .chat import MathematicsSession, SchemaError
+from .closers import CLOSERS
 from .lean import LeanTools
 from .models import Request
 from .runner import WARNING, run
@@ -152,10 +153,22 @@ def _config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> config
         parser.error(str(error))
 
 
-def runtime_factory(default_model: str) -> Callable[..., Any]:
-    """A way for the session to build its runtime once it can offer the tools."""
+def runtime_factory(default_model: str, backend: str = configuration.DEFAULT_BACKEND) -> Callable[..., Any]:
+    """A way for the session to build its runtime once it can offer the tools.
+
+    `backend` chooses the transport, and with it who owns the turn loop. The
+    default authenticates through the Claude Code agent SDK and needs no API
+    key, at the cost of the SDK running the loop (issue #23); `api` runs the
+    loop in Hardy and needs `ANTHROPIC_API_KEY`. Imported where it is chosen
+    rather than at module scope, so a machine with neither the Anthropic SDK
+    nor a key installed still starts on the default.
+    """
 
     def make(model: str | None = None, **context: Any) -> Any:
+        if backend == "api":
+            from .api_runtime import ApiRuntime
+
+            return ApiRuntime(model or default_model, **context)
         return claude_runtime.ClaudeAgentRuntime(model or default_model, **context)
 
     return make
@@ -521,7 +534,7 @@ class ProjectOpener:
             # to be.
             session = MathematicsSession(
                 config.layout.problem,
-                runtime_factory(str(config.model)),
+                runtime_factory(str(config.model), config.backend),
                 config.lean_command,
                 config.latex_command,
                 confirm,
@@ -532,6 +545,7 @@ class ProjectOpener:
                 search=search,
                 search_detail=self._search_detail,
                 project_context=config.project_context,
+                context_window=config.context_window,
             )
         except BaseException:
             # The kernel this call started, and only that one. The session the
@@ -684,7 +698,7 @@ def _chat(
         try:
             session = MathematicsSession(
                 config.layout.problem,
-                runtime_factory(str(config.model)),
+                runtime_factory(str(config.model), config.backend),
                 config.lean_command,
                 config.latex_command,
                 confirm,
@@ -695,6 +709,7 @@ def _chat(
                 search=search,
                 search_detail=search_detail,
                 project_context=config.project_context,
+                context_window=config.context_window,
                 fresh_thread=fresh,
             )
         except BaseException:
@@ -820,9 +835,61 @@ def _batch(args: argparse.Namespace, config: configuration.Config, parser: argpa
     # costs a whole billable model run to reach a conclusion available now.
     if lean.target_name is None:
         parser.error(f"batch needs a named theorem or lemma to audit, not: {request.declaration!r}")
-    result = run(request, runtime_factory(str(config.model)), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds)
+    # Finite, because the bound is enforced by waiting for it. `argparse`
+    # accepts `inf` and `nan` as floats, and an infinite join raises
+    # `OverflowError` while the daemon request carries on in the background --
+    # the run written as a `runtime_error` immediately, for a request that may
+    # yet finish and be billed for. A bound nothing can wait for is not a
+    # bound, and the place to say so is where the flag is read.
+    if not math.isfinite(args.wall_seconds):
+        parser.error(f"--wall-seconds must be a finite number of seconds, not {args.wall_seconds}")
+    # And small enough to wait for. `threading.Thread.join` raises
+    # `OverflowError` above `threading.TIMEOUT_MAX` exactly as it does on an
+    # infinity, so `--wall-seconds 1e20` walked past the finite check into the
+    # same failure: the run written as a `runtime_error` at once, for a daemon
+    # request that carries on and may yet be billed for. The same rule, stated
+    # against the same limit, in the same place.
+    if args.wall_seconds > threading.TIMEOUT_MAX:
+        parser.error(
+            f"--wall-seconds must be at most {threading.TIMEOUT_MAX:g} seconds, "
+            f"which is the longest this platform can wait for, not {args.wall_seconds:g}"
+        )
+    closers = _closer_ladder(args.closers)
+    result = run(request, runtime_factory(str(config.model), config.backend), lean, args.output, max_turns=args.max_turns, wall_seconds=args.wall_seconds, closers=closers, context_window=config.context_window)
     print(json.dumps(result.as_dict(), indent=2))
     return 0 if result.terminal_reason == "verified" else 1
+
+
+#: What a bare `--closers` stands for. A sentinel rather than the tactic list
+#: itself, so `--closers` and `--closers rfl` can be told apart by a value
+#: nobody would type as a tactic.
+DEFAULT_LADDER = "\x00default"
+
+
+def _closer_ladder(requested: list[str | None] | None) -> tuple[str, ...] | None:
+    """The tactics `--closers` asked for, in order, without splitting any of them.
+
+    One tactic per flag. Commas used to separate them, which is wrong for the
+    language: `simp [Nat.add_comm, Nat.add_left_comm]` is a single tactic, and
+    splitting on the comma inside its bracket submitted two invalid ones --
+    recording spurious failures and then spending the model turn the ladder was
+    there to save. Nothing here parses Lean, so nothing here decides which
+    commas are separators.
+
+    A bare `--closers` expands to the standard ladder wherever it appears, so
+    `--closers --closers omega` is the standard ladder followed by `omega`.
+    """
+    if not requested:
+        return None
+    tactics: list[str] = []
+    for item in requested:
+        if item is None or item == DEFAULT_LADDER:
+            tactics.extend(CLOSERS)
+            continue
+        tactic = item.strip()
+        if tactic:
+            tactics.append(tactic)
+    return tuple(tactics) or None
 
 
 class ConsoleTerminal:
@@ -963,10 +1030,15 @@ def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _c
     """Discover the pinned toolchain, offer to install what is missing, record it."""
     from .installers import download_file, install_elan, install_tectonic, prepare_mathlib
     from .process import run_process
-    from .setup import discover_environment
+    from .setup import backend_probe, discover_environment
 
     config, config_path = _load_config_argument(getattr(args, "config", None))
-    report = discover_environment(config, common_locations=_common_locations())
+    # The probe for the backend this machine is configured to use. Left to the
+    # default, `hardy setup` graded every machine on the Claude CLI and its
+    # exit status answered a question about a transport the user may not have
+    # selected.
+    probe = backend_probe(config.backend)
+    report = discover_environment(config, backend_probe=probe, common_locations=_common_locations())
     statuses = {item.name: item for item in report.tools}
     if not statuses["elan"].healthy:
         winget = shutil.which("winget")
@@ -999,7 +1071,7 @@ def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _c
                 "tectonic was not found. Install it from your package manager or "
                 "https://tectonic-typesetting.github.io, then rerun `hardy setup`."
             )
-    rediscovered = discover_environment(config, common_locations=_common_locations())
+    rediscovered = discover_environment(config, backend_probe=probe, common_locations=_common_locations())
     tools = {item.name: item for item in rediscovered.tools}
     for setting in ("elan", "lake", "tectonic"):
         found = tools[setting].path
@@ -1014,8 +1086,9 @@ def run_setup(args: argparse.Namespace, *, confirmer: Callable[[str], bool] = _c
                 runner=run_process,
             ).manual_instructions
         )
+    reloaded = configuration.load(config_path)
     final = discover_environment(
-        configuration.load(config_path), common_locations=_common_locations()
+        reloaded, backend_probe=backend_probe(reloaded.backend), common_locations=_common_locations()
     )
     _print_report(final)
     print(f"Configuration saved to {config_path}")
@@ -1138,7 +1211,11 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
         )
 
     def staged_doctor(value: configuration.Config) -> Any:
-        checks = doctor.run_checks(value)
+        # The backend this workflow is actually building, not the one the
+        # global config names for interactive and batch work. They are
+        # different settings and a staged run is entitled to have its own
+        # credentials checked rather than somebody else's.
+        checks = doctor.run_checks(value, backend=backend)
         return SimpleNamespace(
             healthy=all(check.ok for check in checks if check.required),
             authenticated=all(check.ok for check in checks if "login" in check.name.lower()),
@@ -1586,6 +1663,22 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--output", type=Path, default=Path("hardy-output"))
     batch.add_argument("--max-turns", type=int, default=8)
     batch.add_argument("--wall-seconds", type=float, default=300)
+    batch.add_argument(
+        "--closers",
+        action="append",
+        nargs="?",
+        const=DEFAULT_LADDER,
+        default=None,
+        metavar="TACTIC",
+        help=(
+            "try this Lean tactic against the statement before spending a model turn; "
+            f"repeat the flag for more (bare flag means {', '.join(CLOSERS)}). One tactic "
+            "per flag, never a comma-separated list: `simp [Nat.add_comm, Nat.add_left_comm]` "
+            "is one tactic and splitting it would submit two invalid ones. Off by default: "
+            "a result a tactic ladder reached and a result a model reached are not the same "
+            "experiment, and the trajectory records which it was either way."
+        ),
+    )
 
     from .evals.commands import add_parser as add_evals_parser
 

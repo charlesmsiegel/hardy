@@ -155,3 +155,94 @@ def test_confirmed_codex_login_waits_for_sdk_success() -> None:
 
     assert success
     assert waited == [True]
+
+
+def test_the_setup_probe_follows_the_configured_backend(monkeypatch) -> None:
+    """`hardy setup` graded every machine on the Claude CLI.
+
+    Its exit status is what a script reads, and it was answering a question
+    about a transport the user may not have selected: an API-only machine with
+    a good key was reported broken for lacking `claude`, and a Claude-configured
+    machine passed without the key the `api` runtime needs and failed at its
+    first request instead.
+    """
+    setup = importlib.import_module('hardy.setup')
+
+    assert setup.backend_probe('claude') is setup.probe_claude
+    assert setup.backend_probe('api') is setup.probe_api
+    # An identity the config loader would have refused. Falling back to the
+    # subscription probe is the conservative half of the pair: it can report a
+    # machine unready, never a machine ready on credentials nobody has.
+    assert setup.backend_probe('something-else') is setup.probe_claude
+
+
+def test_the_api_probe_asks_for_the_sdk_and_the_key_and_prints_neither(monkeypatch) -> None:
+    """Both halves, and the key itself in neither answer.
+
+    `anthropic` is an optional extra and is not installed in this environment,
+    so the installed case is arranged rather than assumed -- which also keeps
+    the test honest about what it is checking: the probe's own logic, not this
+    machine's package list.
+    """
+    import sys
+    from types import SimpleNamespace
+
+    setup = importlib.import_module('hardy.setup')
+    monkeypatch.setitem(sys.modules, 'anthropic', SimpleNamespace(__version__='0.40.0'))
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-ant-not-a-real-key')
+
+    ok, detail = setup.probe_api()
+
+    assert ok is True
+    assert 'anthropic 0.40.0' in detail
+    # A setup report is pasted into issues. The key is asked about, never shown.
+    assert 'sk-ant-not-a-real-key' not in detail
+
+    monkeypatch.delenv('ANTHROPIC_API_KEY')
+    missing, why = setup.probe_api()
+    assert missing is False
+    assert 'ANTHROPIC_API_KEY' in why
+    assert 'sk-ant' not in why
+
+
+def test_the_api_probe_imports_the_sdk_rather_than_reading_its_metadata(monkeypatch) -> None:
+    """Distribution metadata survives a partial installation and says nothing
+    about whether the package will load: a missing runtime dependency leaves
+    the version readable and the import broken. `hardy setup` reports its final
+    health from this probe, so it would have called an unusable installation
+    ready and left the failure for the first provider turn."""
+    import builtins
+
+    setup = importlib.import_module('hardy.setup')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-ant-not-a-real-key')
+    real_import = builtins.__import__
+
+    def broken(name, *args, **kwargs):
+        if name == 'anthropic':
+            raise ImportError("No module named 'httpx'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', broken)
+
+    ok, detail = setup.probe_api()
+
+    assert ok is False
+    assert 'not importable' in detail
+    assert 'httpx' in detail
+
+
+def test_the_api_probe_reports_an_absent_sdk_rather_than_raising() -> None:
+    setup = importlib.import_module('hardy.setup')
+    try:
+        import anthropic  # noqa: F401
+    except ImportError:
+        pass
+    else:  # pragma: no cover - only when the optional extra is installed here
+        import pytest
+
+        pytest.skip('anthropic is installed in this environment')
+
+    ok, detail = setup.probe_api()
+
+    assert ok is False
+    assert 'not importable' in detail

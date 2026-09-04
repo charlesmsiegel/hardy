@@ -200,9 +200,10 @@ rather than as a claim the writeup ratchet will then demand a paragraph for.
 
 ## Models and authentication
 
-Hardy talks to Claude through the Claude Code agent SDK, so it runs on your
-**Claude Max subscription**. There is no API key to configure and no endpoint to
-point at: the credentials belong to the signed-in CLI.
+By default Hardy talks to Claude through the Claude Code agent SDK, so it runs
+on your **Claude Max subscription**. On that backend there is no API key to
+configure and no endpoint to point at: the credentials belong to the signed-in
+CLI.
 
 ```sh
 pip install claude-agent-sdk
@@ -210,20 +211,43 @@ npm install -g @anthropic-ai/claude-code
 claude login
 ```
 
+There is one alternative, and it is the mirror image. `backend = "api"` (or
+`HARDY_BACKEND=api`) calls the Messages API directly and *does* need a key —
+which is exactly why it is not the default. What it buys is the turn loop:
+Hardy decides when a provider call is made, keeps both bounds itself, and can
+decline a call outright — which is how a `hardy batch` run there stops at the
+submission it keeps rather than paying for a turn that has nothing left to do.
+See **What it does get to do** below.
+
+```sh
+pip install 'hardy-prover[api]'
+export ANTHROPIC_API_KEY=...   # hardy doctor checks for it when this backend is selected
+```
+
 `/model` inside a session lists the catalogued Claude models, switches the live
 session, records the change in the transcript, and can save the choice as your
-default. The conversation carries across a switch through the provider's own
-session thread, which also survives closing and reopening the workspace. A model
-not in the catalog can be typed in directly — that is the escape hatch for a
-release this list has not caught up with.
+default. The conversation carries across the switch on both backends, by
+different means and with different reach: on the subscription backend it rides
+the provider's own session thread, which also survives closing and reopening
+the workspace; on the `api` backend Hardy holds the conversation itself and
+hands it to the replacement runtime, and it ends with the process, because
+there is no thread to resume. The banner and `/model` name which credentials a
+session spends, so an API-key session is never described as running on a
+subscription. A model not in the catalog can be typed in directly — that is the
+escape hatch for a release this list has not caught up with.
 
-`hardy doctor` reports whether the SDK, the CLI, and the login are actually
+`hardy doctor` checks whichever backend is configured, and only that one: on
+the subscription backend it reports whether the SDK, the CLI, and the login are
 usable, asking `claude auth status` rather than assuming an installed binary
-means a signed-in one.
+means a signed-in one; on the API backend it reports whether the Anthropic SDK
+is installed and a key is set. Checking the other backend's requirements would
+call a correctly configured machine broken, and — worse — call a machine ready
+on credentials it is not going to use.
 
 Hardy is described as model-agnostic in the sense that nothing in the harness's
-design depends on a particular provider; in practice the only backend wired up
-today is Claude through the agent SDK. Other model providers will be added once
+design depends on a particular provider. Three backends are wired up today:
+Claude through the agent SDK, Codex for a ChatGPT subscription (the optional
+`codex` extra), and the Messages API above. Other providers will be added once
 the core loop has been validated.
 
 ### What the SDK does not get to do
@@ -277,11 +301,11 @@ conversation the flag is a quiet no-op that records nothing.
 
 ### What it does get to do, and why that matters
 
-**The SDK owns the turn loop.** Hardy no longer decides when a model call
-happens, so `--max-turns` is passed to the SDK and enforced there. The wall clock
-stays Hardy's, because nothing in the SDK bounds a stalled request. The
-trajectory says which of the two applied rather than implying the harness did
-both:
+**On the subscription backends, the SDK owns the turn loop.** Hardy does not
+decide when a model call happens there, so `--max-turns` is passed to the SDK
+and enforced there. The wall clock stays Hardy's, because nothing in the SDK
+bounds a stalled request. The trajectory says which of the two applied rather
+than implying the harness did both:
 
 ```json
 "limits": {
@@ -291,19 +315,61 @@ both:
 }
 ```
 
+**There is a backend where Hardy owns it.** Set `backend = "api"` (or
+`HARDY_BACKEND=api`), install the `api` extra, and supply `ANTHROPIC_API_KEY`:
+the Messages API is called directly and the loop runs here. `max_turns` then
+counts provider calls Hardy made, `wall_seconds` is measured here, the
+conversation is a list Hardy holds rather than a thread the provider resumes,
+and the same `limits` block reads `"turns_enforced_by": "hardy"` with no note
+under it, because there is nothing left to point at. It is opt-in because it is
+the one transport that needs an API key rather than a subscription — and
+because it is a different experimental condition, which is why the backend and
+endpoint are in every record.
+
+The cheap Lean closers need no such loop and do not use one. `hardy batch
+--closers` tries `rfl`, `trivial`, `simp`, `omega`, `decide`, `aesop` and
+`exact?` against the statement before any runtime is built — repeat the flag,
+one tactic each, for a ladder of your own, since `simp [Nat.add_comm,
+Nat.add_left_comm]` is one tactic and nothing here parses Lean well enough to
+say which commas separate two — so it works on
+every backend and a subscription user needs no API key for it; a statement one
+of them closes never reaches a model. Each tactic's proof goes in through
+`submit_proof` like any other, so the axiom audit refuses a bad one in the same
+words; the ladder is off unless asked for, and the trajectory's `closers` block
+names every tactic tried either way. A result a tactic ladder reached and a
+result a model reached are not the same experiment. What owning the loop adds
+on top is the decision point *inside* an exchange — declining a provider call
+partway through one, which is where a token budget or a mid-conversation ladder
+would have to live.
+
 Issue #23 records why this is worth reversing: bounded experiments, trajectory
 fidelity, cheap Lean closers before model tokens, and token budgets all live in
 the loop, and Hardy cannot make those decisions while it does not run one. So
-does compaction, and that reason is stronger than the four: Hardy has no
-compaction of its own, so when a long session outgrows the context window the
+does compaction, and that reason is stronger than the four: on a backend whose
+SDK owns the loop, when a long session outgrows the context window the
 provider decides, invisibly, what survives about which lemmas were proved,
 which axioms are standing, and which attempts failed — and `transcript.jsonl`
-does not record what was dropped. Most of a useful mathematical summary is
-already in `session.json` and `read_workspace`, mechanical and therefore
-checkable in a way no coding agent's summary can be; only "what was tried and
-why it failed" needs the model. `DESIGN.md` records the full argument,
-including how much of it the SDK's own `PreCompact` hook could recover
-without reclaiming the loop.
+does not record what was dropped.
+
+On the `api` backend it does not. Hardy assembles the summary itself, and
+almost none of it is narration: the goal, the approved assumptions and the
+naming registry come from `session.json`, what is proved and what is still
+open come from the stored audit verdicts, the modules from the Lean tree, and
+even "what was tried and why it failed" comes from the tool results the
+transcript already holds, in Lean's own words. So the summary is checkable
+against the things it was read off, which is what no coding agent's summary
+can offer. `/status --full` prints it at any time. When it is used to compact,
+the cut never lands between a tool call and its result, and the compaction
+goes into `transcript.jsonl` saying what was summarised, where the kept
+messages start, what the summary said, and the window it was all planned
+against — `context_window`, 200K by default and settable, because the window
+belongs to the endpoint and not to Hardy. Which endpoint that was is recorded
+too, with any credentials in it stripped: a gateway URL carrying a token in its
+userinfo, its query or its path would otherwise be committed beside the
+experiment. The path is fingerprinted rather than kept, so two endpoints on one
+host are still told apart without republishing any of it. `DESIGN.md` records the full
+argument, including how much of it the SDK's own `PreCompact` hook might
+recover on the backends where the loop is still not Hardy's.
 
 ## Install
 
@@ -559,7 +625,13 @@ Esc cancels an in-flight turn: the model stops, no further tool call runs, and
 the Lean, LaTeX, or computer algebra process it started is interrupted rather
 than left running to its timeout — with one exception: the fresh kernel and the
 script an export runs to check itself belong to a session built for that export,
-and are bounded only by their own limits. A computer algebra cell that answers
+and are bounded only by their own limits. "The model stops" is exact on the
+subscription backends, whose SDK can interrupt a turn. On `backend = "api"` it
+means Hardy stops: a request already in flight cannot be aborted, so it runs to
+its answer and is billed for, and the reply is recorded as discarded rather than
+shown — being told a turn was cancelled and then handed its answer is worse than
+no answer. No tool call runs and the turn ends either way; what differs is
+whether the provider was also stopped. A computer algebra cell that answers
 the interrupt costs only itself: the kernel survives, and with it everything the
 earlier cells put in the namespace. What an interrupted cell had already changed
 before it was stopped stays changed — nothing is rolled back — which is why such

@@ -42,6 +42,20 @@ def test_a_verified_batch_run_is_a_solved_row(tmp_path):
     assert row.lean_checks == 1 and row.search_calls == 1 and row.wall_seconds is not None
 
 
+def test_a_sketch_counts_as_the_lean_call_it_is(tmp_path):
+    """`sketch_proof` elaborates exactly as the other two do. Left out of the
+    metric, a run that developed its proof as a sketch reported fewer Lean
+    calls than it made, and the solved-row median stopped measuring what it is
+    named for."""
+    output = _batch(
+        tmp_path,
+        [("sketch_proof", {"proof": "by sorry"}), ("submit_proof", {"proof": "by exact True.intro"})],
+        name="runs/t/batch-0",
+    )
+
+    assert scoreboard.batch_row(TRUE, 3, output, tmp_path, repeat=0).lean_checks == 2
+
+
 def test_a_run_that_gave_up_is_unsolved(tmp_path):
     output = _batch(tmp_path, [("check_proof", {"proof": "by sorry"})], name="runs/t/batch-0")
     assert scoreboard.batch_row(TRUE, 3, output, tmp_path, repeat=0).outcome == "unsolved"

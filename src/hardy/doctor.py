@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -99,6 +100,76 @@ def _toolchain_pin_check(config: Config) -> Check:
     return Check("toolchain pin", True, f"{LEAN_TOOLCHAIN} with Mathlib {MATHLIB_REVISION}", required=False)
 
 
+def _backend_checks(backend: str) -> list[Check]:
+    """What the *selected* transport needs, and nothing else.
+
+    Asked of the setting rather than assumed. Reporting a correctly configured
+    API-only machine as unusable is the obvious failure; the quieter one runs
+    the other way, and is worse -- a machine with no key at all would be called
+    ready because the checks it passed were for a backend it is not using.
+    """
+    if backend == "api":
+        return _api_checks()
+    if backend == "codex":
+        return _codex_checks()
+    return _subscription_checks()
+
+
+def _codex_checks() -> list[Check]:
+    """The Codex backend: its own SDK, signed in with its own subscription.
+
+    A separate branch rather than a fallback to Claude's. `hardy prove
+    --backend codex` on a Codex-only machine was being rejected for lacking
+    credentials it does not use -- and a machine with Claude configured but no
+    `openai-codex` passed the doctor and failed when the runtime was built,
+    which is the worse direction.
+    """
+    try:
+        import openai_codex  # noqa: F401 - presence is the check
+    except ImportError:
+        return [Check("codex sdk", False, "not installed; pip install 'hardy-prover[codex]'")]
+    # An installed SDK is not a signed-in one, and `staged_doctor` reads
+    # authentication off a check whose name carries "login" -- so a branch that
+    # stopped at the import reported a logged-out machine as ready and failed
+    # at the first request instead. `setup.probe_codex` already asks the SDK
+    # whether an account is present; this is that answer, named so the staged
+    # workflow can see it.
+    from .setup import probe_codex
+
+    try:
+        authenticated, detail = probe_codex()
+    except Exception as error:  # noqa: BLE001 - a doctor check reports, it does not raise
+        return [Check("codex login", False, f"could not ask the Codex SDK: {error}")]
+    return [
+        Check("codex sdk", True, detail),
+        Check(
+            "codex login",
+            authenticated,
+            "signed in" if authenticated else "not signed in; run `hardy setup` to sign in to ChatGPT",
+        ),
+    ]
+
+
+def _api_checks() -> list[Check]:
+    """The API backend: an SDK and a key, both of them here rather than in a CLI."""
+    checks = []
+    try:
+        import anthropic
+    except ImportError:
+        checks.append(Check("anthropic sdk", False, "not installed; pip install 'hardy-prover[api]'"))
+    else:
+        checks.append(Check("anthropic sdk", True, f"anthropic {getattr(anthropic, '__version__', 'unknown')}"))
+    # Whether one is set, never what it is. A doctor report is pasted into
+    # issues, and a key printed there is a key that has been disclosed.
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    checks.append(Check(
+        "anthropic key",
+        bool(key),
+        "ANTHROPIC_API_KEY is set" if key else "ANTHROPIC_API_KEY is unset; the api backend cannot start without it",
+    ))
+    return checks
+
+
 def _subscription_checks() -> list[Check]:
     """Hardy authenticates as Claude Code does, so this is what it needs.
 
@@ -176,8 +247,17 @@ def _cas_check(config: Config) -> Check:
     return Check("cas", runtime is not None, detail, required=required)
 
 
-def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
-    """Report whether this machine can actually run an interactive Hardy session."""
+def run_checks(config: Config, *, deep: bool = False, backend: str | None = None) -> list[Check]:
+    """Report whether this machine can actually run the Hardy session asked for.
+
+    `backend` is what the *caller* is about to build, which is not always what
+    the config's own setting says: `hardy prove` and `hardy accept` take a
+    `--backend` of their own and construct that one. Reading the global setting
+    for them would block an otherwise usable staged run on a missing API key,
+    and -- the direction that matters more -- would report a machine ready on
+    credentials the run is not going to use.
+    """
+    selected = backend or config.backend
     checks = [
         Check("python", sys.version_info >= (3, 11), f"{sys.version.split()[0]} at {sys.executable}"),
         _lean_project_check(config),
@@ -200,7 +280,8 @@ def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
 
     checks.append(_cas_check(config))
     checks.append(Check("model", bool(config.model), config.model or "unset; set model in the config file or HARDY_MODEL"))
-    checks.extend(_subscription_checks())
+    checks.append(Check("backend", True, selected, required=False))
+    checks.extend(_backend_checks(selected))
 
     if deep:
         checks.append(_mathlib_check(config))

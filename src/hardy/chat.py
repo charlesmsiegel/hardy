@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
-from . import audit, completion, ingest, process
+from . import audit, compaction, completion, ingest, process
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
@@ -36,6 +36,7 @@ from .layout import (
     read_text,
 )
 from .lean import DECLARATION_NAME, LeanTools
+from .loop import Message, block_order, reasoning_digest
 from .models import Request, ToolResult, TurnEvent
 from .modules import ModuleIndex
 from .project_context import (
@@ -104,6 +105,11 @@ NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")
 # which saved statements one tactic closes checked against the tree in front of
 # it, and the stored verdicts include entries whose statement has since moved.
 WITHHELD = ("audit", "automation", PROJECT_CONTEXT_KEY)
+#: Provenance keys a runtime states only when it has one to state. They are
+#: dropped rather than merged over when the runtime changes: a value left
+#: behind by the backend that stated it describes turns that never ran under
+#: it, which is exactly what recording provenance exists to prevent.
+OPTIONAL_PROVENANCE = ("output_limit",)
 USAGE_KEY = "usage"
 #: How far into `transcript.jsonl` the stored ledger has been brought up to
 #: date. Hardy's own bookkeeping, and no more the model's business than the
@@ -212,8 +218,19 @@ def provenance(runtime: Any) -> dict[str, Any]:
     The same `claude-opus-5` answered by Anthropic and by an OpenAI-compatible
     gateway are different experimental conditions, and a transcript that records
     only the identity cannot tell them apart afterwards.
+
+    `output_limit` is here for the same reason and only where a runtime states
+    one: a cap on how much a turn may write changes where a reply truncates and
+    how much room a run has to reach a submission, so two values of it are two
+    conditions. Absent, rather than `null`, on a backend that imposes none of
+    its own -- a key that is present and empty would claim a measurement about
+    a transport that made none.
     """
-    return {"model": runtime.model, "backend": getattr(runtime, "backend", None), "endpoint": getattr(runtime, "endpoint", None)}
+    stated = {"model": runtime.model, "backend": getattr(runtime, "backend", None), "endpoint": getattr(runtime, "endpoint", None)}
+    limit = getattr(runtime, "output_limit", None)
+    if limit is not None:
+        stated["output_limit"] = limit
+    return stated
 
 
 def _toolchain_identity(lean_command: tuple[str, ...], lean_project: Path | None) -> str:
@@ -613,8 +630,50 @@ def _vacuity_source(stripped: str, *, include_probes: bool = True) -> tuple[str,
     return source, tactics
 
 
+def _digest(messages: Sequence[Message]) -> str:
+    """A digest over a run of conversation messages, in order.
+
+    The point of recording one is that a compaction says what it dropped in
+    terms an auditor can check. Counts cannot: two different conversations of
+    the same length agree on every number in the entry. `Message.as_dict` is
+    the serialisation the transcript already uses for the messages it carries,
+    so the same reconstruction that would be compared against the record is
+    the one this digests.
+    """
+    running = hashlib.sha256()
+    for message in messages:
+        running.update(json.dumps(message.as_dict(), sort_keys=True, ensure_ascii=False).encode("utf-8"))
+        # And the reasoning blocks, which `as_dict` deliberately leaves out --
+        # a transcript is a record of what was said, and these are opaque
+        # provider state. They are still *sent*, though: `as_messages` puts
+        # them back in the turn they belong to, so two contexts differing only
+        # in them are two different requests, and a digest that could not tell
+        # them apart could not answer the question it exists for. Hashed
+        # through `loop.reasoning_digest` -- the same contribution the
+        # `thinking` event records -- so nothing here transcribes what it will
+        # not publish and a reader holding the transcript can still recompute
+        # what this covered.
+        # The block *order* when the transport kept it -- two turns differing
+        # only in the arrangement of their text and calls are two different
+        # requests, and the fields above group by kind and cannot tell them
+        # apart. Through `block_order`, which is what the assistant event
+        # records: hashing the provider objects instead put the representation
+        # of public text and tool blocks into a digest no reader could
+        # reproduce from the transcript. Where there are no blocks the
+        # reasoning still contributes on its own, since it is sent and
+        # `as_dict` leaves it out.
+        carried = block_order(message.blocks) if message.blocks else tuple(
+            reasoning_digest(block) for block in message.reasoning
+        )
+        for entry in carried:
+            running.update(entry.encode("utf-8"))
+            running.update(b"\x1f")
+        running.update(b"\x1e")
+    return running.hexdigest()
+
+
 class MathematicsSession:
-    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False):
+    def __init__(self, workspace: Path, make_runtime: Callable[..., ChatRuntime], lean_command: tuple[str, ...], latex_command: tuple[str, ...], confirm: Callable[[dict[str, Any]], bool], lean_project: Path | None = None, lean_timeout: float = 180.0, cas: CasToolRuntime | None = None, cas_detail: str = "", search: SearchToolRuntime | None = None, search_detail: str = "", root: Path | None = None, project_context: bool = True, fresh_thread: bool = False, context_window: int = compaction.CONTEXT_WINDOW):
         self.workspace = workspace
         self.confirm = confirm
         # None when no backend was discovered. Nothing downstream advertises a
@@ -722,6 +781,15 @@ class MathematicsSession:
         self._shared_observed: dict[str, Any] = {"shadowed": {}, "unbuildable": []}
         self._shared_failures: tuple[str, ...] = ()
         self._make_runtime = make_runtime
+        # The system prompt the current runtime was built with. Set by
+        # `_build`; empty only in the window before the first one exists, which
+        # nothing that reads it can reach.
+        self._system_prompt = ""
+        # What a compaction is trying to fit inside. A default rather than a
+        # measurement: no transport here will count a conversation before it is
+        # sent, so a caller that knows its model's real window is the one that
+        # should say so.
+        self.context_window = context_window
         # The SDK may call several tools at once, each on its own thread, but
         # these run Lean, rewrite session.json, and stop to ask a human for
         # approval. None of that is safe to interleave.
@@ -804,6 +872,7 @@ class MathematicsSession:
         # the fresh session takes the same road every first-ever session takes.
         self.runtime = self._build(session_id=self._carried_thread())
         self._sync_provenance()
+        self._sync_fresh_context()
         self._sync_project_context()
 
     def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
@@ -827,15 +896,31 @@ class MathematicsSession:
         prompt = SYSTEM_PROMPT
         if self.cas is not None:
             prompt += "\n\n" + chat_cas_prompt(self.cas.session.backend.name)
-        return self._make_runtime(
+        # Kept, because the runtime is handed it once and keeps it for the
+        # life of the conversation. `_request_overhead` used to rebuild it from
+        # the state as it stands now, so a goal shortened mid-session made the
+        # estimate describe a prompt nobody was sending -- undercounting the
+        # long one the runtime still holds, and letting `plan` conclude that a
+        # request the provider then refuses needed no compaction.
+        self._system_prompt = prompt + self._context()
+        runtime = self._make_runtime(
             model=model,
-            system_prompt=prompt + self._context(),
+            system_prompt=self._system_prompt,
             specs=CHAT_TOOLS + (CAS_TOOLS if self.cas is not None else []),
             dispatch=self._dispatch,
             cwd=self.workspace,
             session_id=session_id,
             observe=self._observed,
         )
+        # Offered rather than passed in, and only to a runtime that says it can
+        # take it. A backend whose SDK owns the loop cannot let Hardy choose
+        # what a compaction keeps (issue #23), and handing it a compactor it
+        # would silently drop would leave the record claiming a compaction
+        # Hardy never got to make.
+        attach = getattr(runtime, "attach_compactor", None)
+        if attach is not None:
+            attach(self.compact)
+        return runtime
 
     def _observed(self, event: dict[str, Any]) -> None:
         """What the runtime reports, recorded and acted on.
@@ -888,12 +973,44 @@ class MathematicsSession:
         The transcript records the change because which model produced which
         turn is part of the experiment's identity, not a UI detail. The provider
         thread is carried over, so the new model inherits the conversation.
+
+        A backend that has no provider thread carries the conversation itself,
+        so it is handed over here explicitly. Without that, switching model on
+        such a backend would discard every turn the session had taken while
+        the thread-carrying backends kept theirs -- the same act meaning two
+        different things depending on the transport.
         """
-        previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint")}
+        previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint", *OPTIONAL_PROVENANCE)}
+        carried = getattr(self.runtime, "conversation", None)
         self.runtime = self._build(model=model, session_id=self._carried_thread())
-        self.state.update(provenance(self.runtime))
+        current = provenance(self.runtime)
+        # The same drop `_sync_provenance` makes, for the same reason: a switch
+        # to a backend that states no output cap must not leave the old one
+        # standing in the record.
+        #
+        # And the prompt is rebuilt over the corrected record rather than left
+        # holding the old one. `_build` freezes the state manifest into the
+        # system prompt and hands it to the runtime once, for the life of the
+        # conversation -- so a key dropped only from `self.state` left
+        # `session.json` and the switch event naming the uncapped condition
+        # while every later request still told the model it was generating
+        # under the cap that had just been retired. Building twice is the price
+        # of learning the new runtime's shape before the prompt is frozen, and
+        # it is paid only on the switch that actually changes it: a runtime is
+        # bookkeeping until its first turn, when the SDK is loaded.
+        stale = [key for key in OPTIONAL_PROVENANCE if key not in current and key in self.state]
+        for key in stale:
+            self.state.pop(key, None)
+        if stale:
+            self.runtime = self._build(model=model, session_id=self._carried_thread())
+        # Handed over after the last build, so a rebuilt runtime is not left
+        # holding the empty conversation its replacement was given.
+        adopt = getattr(self.runtime, "adopt_conversation", None)
+        if adopt is not None and carried is not None:
+            adopt(carried)
+        self.state.update(current)
         self._save_state()
-        self._record({"type": "model", "reason": "switched", "previous": previous, **provenance(self.runtime)})
+        self._record({"type": "model", "reason": "switched", "previous": previous, **current})
 
     def _read_state(self) -> dict[str, Any]:
         """The record, refusing anything this version does not read.
@@ -975,14 +1092,52 @@ class MathematicsSession:
         attributed to the model that produced the earlier ones.
         """
         current = provenance(self.runtime)
-        if all(self.state.get(key) == value for key, value in current.items()):
+        stale = [key for key in OPTIONAL_PROVENANCE if key not in current and key in self.state]
+        if not stale and all(self.state.get(key) == value for key, value in current.items()):
             return
-        previous = {key: self.state.get(key) for key in current}
+        previous = {key: self.state.get(key) for key in (*current, *stale)}
         started = any(previous.values())
+        # Dropped, not merged over. A workspace opened once on the API backend
+        # carries `output_limit`; reopened on a backend that states none, a
+        # plain `update` left the old cap in the record and in the manifest the
+        # system prompt embeds -- so subscription turns read as though they had
+        # run under an API-only generation limit.
+        for key in stale:
+            self.state.pop(key, None)
         self.state.update(current)
         self._save_state()
+        if stale:
+            # Reopening is the other half of the same bug: `_build` ran above
+            # this call and froze the manifest from the record as it stood on
+            # disk, cap and all. See `switch_model` for why the prompt is
+            # rebuilt rather than only the record corrected.
+            self.runtime = self._build(session_id=self._carried_thread())
         if started:
             self._record({"type": "model", "reason": "session_resumed", "previous": previous, **current})
+
+    def _sync_fresh_context(self) -> None:
+        """Say when a session starts with no memory of the record it continues.
+
+        A backend that resumes a provider thread carries the earlier turns into
+        the next request. One that does not -- the `api` transport, whose
+        conversation is the loop's own list and ends with the process -- starts
+        empty every time, and `_sync_provenance` sees the same model and the
+        same backend and records nothing. Later events then land in a
+        `transcript.jsonl` that reads as one unbroken conversation while every
+        request omitted everything above this point, so an auditor cannot say
+        what context the model actually had.
+
+        Only where there is a record to be continued: on a workspace's first
+        open there is nothing above the boundary and nothing to disclose, which
+        is the same rule `_discard_thread` follows about a thread it never had.
+        """
+        # Asked of the backend, not of this instance. A runtime that resumes
+        # has no thread *yet* on a workspace nobody has spoken to, and reading
+        # `session_id` alone would announce a fresh context on every first turn
+        # of every backend.
+        if getattr(self.runtime, "resumes_conversation", True) or not self._transcript_end():
+            return
+        self._record({"type": "thread", "reason": "fresh context: this backend resumes nothing"})
 
     def _sync_project_context(self) -> None:
         """Make the record say which project instructions this run was given.
@@ -2938,6 +3093,203 @@ class MathematicsSession:
         be shown the first when the second is true.
         """
         return bool(self._saved_theorems())
+
+    def facts(self) -> compaction.Facts:
+        """The mechanical parts of a summary, each read off something checkable.
+
+        Nothing here is remembered. The goal, the approved assumptions and the
+        naming registry come from `session.json`; what is proved and what is
+        still open come from the stored audit verdicts, which expire when the
+        build inputs beneath them move; the modules come from the Lean tree;
+        and the failed attempts come from the tool results the transcript
+        already holds, in Lean's own words. That is the whole argument for
+        Hardy compacting its own sessions rather than asking a model to
+        remember them -- a summary assembled this way can be checked.
+
+        Deliberately without the spend ledger and its cursor. They are Hardy's
+        bookkeeping and no more the model's business in a summary than in the
+        workspace listing; a summary is not a loophole into the context.
+        """
+        try:
+            modules = sorted(self.lean_workspace.sources())
+        except ImportCycle:
+            # A tree that does not order is reported by the obligations below.
+            # Listing no modules for it is honest; raising out of a summary is
+            # not, since the summary is what a stuck session is read by.
+            modules = []
+        return compaction.Facts(
+            goal=self.goal(),
+            assumptions=list(self.state.get("assumptions", ())),
+            proved=sorted(self._settled_declarations()),
+            open_declarations=sorted(self._open_declarations()),
+            names=list(self.state.get("names", ())),
+            attempts=compaction.failed_attempts(self._recorded()),
+            next_steps=[str(item) for item in self._obligations()],
+            modules=modules,
+        )
+
+    def summary(self) -> str:
+        """The workspace-derived summary, rendered.
+
+        The same text a compaction would insert, available without one: it is
+        worth having as an answer to "what is going on in here" whether or not
+        a conversation has grown long enough to need cutting.
+        """
+        return compaction.summarize(self.facts()).render()
+
+    def _record_overflow(self, plan: compaction.Plan) -> None:
+        """Say that a request the window has no room for is going out anyway.
+
+        There is no compaction to perform -- summarising nothing and keeping
+        everything is not one -- and that is not the same fact as a request
+        that fits. It is still sent: `estimate_tokens` bounds from above, one
+        token per UTF-8 byte, so over the estimate is not necessarily over the
+        endpoint's own count, and refusing on Hardy's arithmetic would end
+        sessions the provider would have answered. What this buys is that a
+        rejection has an entry to be read against.
+        """
+        if not plan.overflow:
+            return
+        self._record({
+            "type": "overflow",
+            "estimated_tokens": {"before": plan.before, "available": plan.available},
+            "context_window": self.context_window,
+            "why": "the request is over the window and no legal cut is above the kept tail",
+        })
+
+    def compact(self, messages: list[Message]) -> list[Message] | None:
+        """Hardy's compaction, for a loop Hardy owns.
+
+        Returns None when nothing needs doing, which is most turns. When
+        something does, the conversation becomes the summary plus a tail cut
+        at a point a conversation may legally resume from -- `loop`'s rule,
+        which never separates a tool result from the call it answers.
+
+        The event goes into `transcript.jsonl` before the new conversation is
+        handed back, and it carries what was summarised, where the kept
+        messages start, and what the summary said. A compaction that left no
+        trace would be exactly the invisible loss this exists to prevent.
+        """
+        # Asked twice, cheaply first. This runs before *every* provider call,
+        # and assembling the facts scans the Lean tree, the stored audits and
+        # the whole of `transcript.jsonl` -- so rendering a summary to find out
+        # that a short conversation needs none made an ordinary turn re-read an
+        # ever-growing record, which is quadratic over a session and felt as
+        # latency in the terminal. The first pass costs an arithmetic sweep of
+        # the messages.
+        overhead = self._request_overhead()
+        first = compaction.plan(
+            messages,
+            context_window=self.context_window,
+            reserve_tokens=compaction.RESERVE_TOKENS,
+            keep_tokens=compaction.RECENT_TOKENS,
+            overhead_tokens=overhead,
+            output_tokens=self._output_cap(),
+        )
+        if not first.needed:
+            # Reported from here as well as below, because this is where the
+            # uncuttable case actually leaves: a request the window has no room
+            # for, with no legal cut above the tail, is `needed=False` on this
+            # pass and never reaches the summary. Handled only after the
+            # summary was built, the branch could not be arrived at at all for
+            # the one case it was written for.
+            self._record_overflow(first)
+            return None
+        # Now it is worth the read. Rendered before the plan is settled, not
+        # after: the summary is prepended to whatever the plan keeps, so what
+        # it costs has to be charged against the same budget the kept tail is.
+        # Costed by rendering it once and measuring, rather than by an
+        # allowance -- a workspace with fifty registered names has a summary an
+        # allowance would badly misjudge.
+        summarised = compaction.summarize(self.facts())
+        outcome = compaction.plan(
+            messages,
+            context_window=self.context_window,
+            reserve_tokens=compaction.RESERVE_TOKENS,
+            keep_tokens=compaction.RECENT_TOKENS,
+            summary_tokens=compaction.estimate_tokens([Message("user", text=summarised.render())]),
+            overhead_tokens=overhead,
+            output_tokens=self._output_cap(),
+        )
+        if not outcome.needed:
+            # A request the window has no room for, with nothing above the
+            # tail that may legally be cut. There is no compaction to perform,
+            # and that is not the same fact as a conversation that fits: left
+            # to `needed` alone, the record showed nothing at all where an
+            # oversized request was about to go out. It still goes --
+            # `estimate_tokens` bounds from above, so over the estimate is not
+            # necessarily over the endpoint's own count -- and if the provider
+            # refuses it, this is the entry that says why.
+            self._record_overflow(outcome)
+            return None
+        self._record({
+            "type": "compaction",
+            # Counts of *conversation messages*, which are not transcript
+            # events: one assistant turn can produce an assistant event, a
+            # tool_use, a tool_result, a result and an obligation, and Hardy's
+            # own steering events have no message at all. So these locate the
+            # cut in the list the loop holds -- which ends with the process --
+            # and nothing more. The digests below are what an auditor can
+            # actually check a reconstruction against.
+            "summarized_messages": outcome.cut,
+            "kept_from": outcome.cut,
+            "kept_messages": len(messages) - outcome.cut,
+            # What was dropped and what was kept, each as a digest over the
+            # messages themselves. A count cannot identify a conversation and
+            # an index into a list nobody else has cannot be followed, so a
+            # reader with a candidate reconstruction had no way to tell whether
+            # it was the context later calls actually ran on. These say so.
+            "summarized_digest": _digest(messages[: outcome.cut]),
+            "kept_digest": _digest(messages[outcome.cut :]),
+            # And where in `transcript.jsonl` this happened, so the event
+            # locates itself in the record rather than only in the run.
+            "transcript_length": self._transcript_end(),
+            # `after` counts the summary as well as the kept tail, because
+            # both are sent, and `fits` compares it against the window rather
+            # than against the conversation it replaced -- compacting is still
+            # the best move available when it does not fit, and saying so beats
+            # a record that implies it was enough.
+            "estimated_tokens": {
+                "before": outcome.before,
+                "after": outcome.after,
+                "available": outcome.available,
+                "fits": outcome.fits,
+            },
+            # The window the cut was planned against, not only what was left
+            # of it. `available` is the window less the reserve and the
+            # request's own overhead, so two records with different windows can
+            # show the same `available` -- and a transcript that does not state
+            # the window cannot say which endpoint's limit the cuts were for.
+            "context_window": self.context_window,
+            "sections": summarised.as_dict(),
+            "text": summarised.render(),
+        })
+        return compaction.compacted(messages, outcome.cut, summarised)
+
+    def _output_cap(self) -> int:
+        """What the runtime says it may write, charged against the same window.
+
+        Zero when it states none -- a backend that imposes no cap of its own
+        has nothing to reserve for beyond the proportional allowance, and a
+        key that is present and empty would claim a measurement nobody made.
+        """
+        return int(getattr(self.runtime, "output_limit", None) or 0)
+
+    def _request_overhead(self) -> int:
+        """What every request carries before a message is added.
+
+        The system prompt and the tool schemas are charged against the same
+        window the conversation is. Left out, a workspace whose `AGENTS.md` is
+        in the prompt -- up to 50 KB of it, which Hardy supports on purpose --
+        could be told no compaction was needed for a request the provider then
+        refuses.
+        """
+        specs = CHAT_TOOLS + (CAS_TOOLS if self.cas is not None else [])
+        # The prompt the runtime was actually built with, not the one the
+        # current state would produce. They differ the moment anything in
+        # `_context()` changes -- a goal, an assumption, a registered name --
+        # and the provider charges for the one it was sent.
+        return compaction.overhead(self._system_prompt, specs)
 
     def obligations(self) -> tuple[completion.Obligation, ...]:
         """What the workspace owes, for the human rather than the model.
@@ -5214,6 +5566,21 @@ class MathematicsSession:
         """
         thread = getattr(self.runtime, "session_id", None)
         if not thread:
+            # A backend with no thread to remember has just appended a turn the
+            # stored one cannot account for. Dropped rather than left: the
+            # binding is a *prefix* check, so a Claude thread recorded before
+            # these turns still validates against the transcript they were
+            # added to -- and switching back to Claude would then resume a
+            # conversation with no memory of anything that happened here, with
+            # nothing in the record marking the join.
+            if self.local.get(THREAD_KEY):
+                for key in (THREAD_KEY, "transcript_length", "transcript_digest"):
+                    self.local.pop(key, None)
+                self._save_local()
+                # Cleared first and recorded second, for the reason
+                # `_discard_thread` gives: interrupted between the two, this
+                # way loses only the event.
+                self._record({"type": "thread", "reason": "no thread on this backend"})
             return
         identity = self._transcript_identity()
         if self.local.get(THREAD_KEY) == thread and self.local.get("transcript_length") == identity["transcript_length"]:

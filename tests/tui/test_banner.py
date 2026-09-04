@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 from hardy import config as configuration
@@ -133,3 +134,15 @@ def test_the_project_instructions_line_appears_only_when_there_are_some(tmp_path
 
     rows = banner.lines(config, project_context="AGENTS.md (412 bytes)")
     assert ("hint", "Project instructions: AGENTS.md (412 bytes)") in rows
+
+
+def test_the_banner_names_which_credentials_a_session_spends(tmp_path: Path):
+    """"Claude Code subscription" over a metered API key is not a cosmetic
+    error: it is the wrong answer to the question the line exists to answer."""
+    rendered = "\n".join(text for _, text in banner.lines(settings(tmp_path)))
+    assert "Claude Code subscription" in rendered
+
+    on_api = dataclasses.replace(settings(tmp_path), backend="api")
+    rendered = "\n".join(text for _, text in banner.lines(on_api))
+    assert "Anthropic API key (metered)" in rendered
+    assert "subscription" not in rendered

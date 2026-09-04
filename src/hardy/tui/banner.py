@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..config import DEFAULT_BACKEND, authentication
 from ..runner import WARNING
 
 
@@ -44,7 +45,7 @@ def lines(config: Any, *, cas: Any = None, cas_detail: str = "", project_context
         (
             "hint",
             f"{status_line(config)}    Model: {config.model}  "
-            f"(Claude Code subscription)",
+            f"({authentication(getattr(config, 'backend', DEFAULT_BACKEND))})",
         ),
         ("hint", f"Lean project: {lean_project}"),
     ]

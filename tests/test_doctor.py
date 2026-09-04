@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -205,3 +206,74 @@ def test_an_unreadable_pin_file_is_a_named_check_not_a_traceback(tmp_path: Path)
 
     assert not check.ok and not check.required
     assert "could not be read" in check.detail
+
+
+def test_doctor_checks_the_api_backend_when_that_is_the_one_configured(tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A correctly configured API-only machine must not be called broken.
+
+    The quieter failure runs the other way and is worse: a machine with no key
+    at all would be reported ready, because the checks it passed were for a
+    backend it is not using.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    checks = doctor.run_checks(configuration(tmp_path, lean_project=project, backend="api"))
+
+    names = [check.name for check in checks]
+    assert "anthropic key" in names
+    assert named(checks, "anthropic key").ok
+    # And not the other backend's requirements, which this machine does not need.
+    assert "claude cli" not in names
+    assert "claude login" not in names
+    assert named(checks, "backend").detail == "api"
+
+
+def test_the_api_backend_without_a_key_is_a_named_failure(tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    checks = doctor.run_checks(configuration(tmp_path, lean_project=project, backend="api"))
+
+    key = named(checks, "anthropic key")
+    assert not key.ok
+    assert "ANTHROPIC_API_KEY" in key.detail
+
+
+def test_the_key_itself_is_never_printed(tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A doctor report is pasted into issues. A key printed there is a key that
+    # has been disclosed.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret-value")
+    checks = doctor.run_checks(configuration(tmp_path, lean_project=project, backend="api"))
+
+    assert "sk-secret-value" not in "\n".join(doctor.describe(checks))
+
+
+def test_the_subscription_backend_still_checks_the_cli(tmp_path: Path, project: Path) -> None:
+    checks = doctor.run_checks(configuration(tmp_path, lean_project=project))
+
+    names = [check.name for check in checks]
+    assert "claude sdk" in names
+    assert "anthropic key" not in names
+
+
+def test_the_codex_backend_gets_its_own_checks(tmp_path: Path, project: Path) -> None:
+    """A Codex-only machine was rejected for lacking Claude credentials it does
+    not use -- and a Claude machine with no `openai-codex` passed and failed
+    only when the runtime was built, which is the worse direction."""
+    checks = doctor.run_checks(configuration(tmp_path, lean_project=project), backend="codex")
+
+    names = [check.name for check in checks]
+    assert "codex sdk" in names
+    assert "claude cli" not in names and "anthropic key" not in names
+
+
+def test_the_codex_backend_is_asked_whether_it_is_signed_in(tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An installed SDK is not a signed-in one, and the staged workflow reads
+    authentication off a check whose name carries "login"."""
+    from hardy import doctor as doctor_module
+
+    monkeypatch.setattr(doctor_module, "_codex_checks", doctor_module._codex_checks)
+    monkeypatch.setitem(sys.modules, "openai_codex", types.ModuleType("openai_codex"))
+    monkeypatch.setattr("hardy.setup.probe_codex", lambda: (False, "openai-codex 1.0"))
+
+    checks = doctor.run_checks(configuration(tmp_path, lean_project=project), backend="codex")
+
+    login = named(checks, "codex login")
+    assert not login.ok and "not signed in" in login.detail

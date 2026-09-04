@@ -32,6 +32,11 @@ if TYPE_CHECKING:
     from .modules import ModuleIndex
 
 HOLE = re.compile(r"\b(sorry|admit)\b")
+#: A Lean escaped identifier, `«like this»`. Its contents are a *name*, not
+#: syntax, so `«sorry»` is an ordinary lemma somebody may legitimately call --
+#: and `\b` matches inside the guillemets, so an unblanked scan reported a hole
+#: in a proof that has none and kept a complete candidate as a partial one.
+ESCAPED_NAME = re.compile(r"«[^»\n]*»")
 # Lean's report for an import it cannot resolve. It names the `.olean` first,
 # which is why it reads as a damaged installation rather than as a wrong path.
 MISSING_MODULE = re.compile(r"object file '[^']*' of module ([\w.'!?«»]+) does not exist")
@@ -142,6 +147,77 @@ class LeanDiagnostic(FrozenModel):
     column: int | None = None
 
 
+def scannable(source: str) -> str:
+    """`source` with everything a hole cannot hide in blanked out, offsets kept.
+
+    Comments and string literals first, for the reason `has_holes` gives, and
+    then Lean's escaped identifiers: `«sorry»` is a name, and a proof entitled
+    to call a lemma so named was being told it had a hole it does not have --
+    which then kept a complete candidate in the record as an explicitly partial
+    one. Blanked rather than removed, because every position this feeds is
+    reported against the original text.
+
+    Public because the three surfaces that scan Lean for a forbidden token
+    have to agree about what counts as one. `hardy accept --recorded` and the
+    staged verifier read `FORBIDDEN_TOKEN` over the same text this returns, so
+    a proof `submit_proof` was right to accept is not refused offline for a
+    `sorry` that is a piece of quoted syntax or a declaration's own name.
+    """
+    blanked = ESCAPED_NAME.sub(lambda match: " " * len(match.group(0)), strip_comments(source))
+    return _blank_quotations(blanked)
+
+
+def _blank_quotations(text: str) -> str:
+    """`text` with Lean's syntax quotations blanked, offsets kept.
+
+    A quotation is data, not execution: `` `(tactic| sorry) `` builds a piece
+    of syntax that Lean never runs, so a proof entitled to construct one was
+    being told it had a hole -- refused by `submit_proof` before the kernel
+    ever saw it, and recorded by `sketch_proof` as work that does not exist.
+
+    Scanned by counting parentheses rather than matched by a pattern, because
+    a quotation nests and a regular expression cannot follow it. Strings and
+    comments are already gone by the time this runs, so a parenthesis here is
+    a parenthesis.
+    """
+    out = list(text)
+    index = 0
+    while index < len(out) - 1:
+        if text[index] == "`" and text[index + 1] == "(":
+            depth = 0
+            for position in range(index + 1, len(text)):
+                if text[position] == "(":
+                    depth += 1
+                elif text[position] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        for blank in range(index, position + 1):
+                            if out[blank] != "\n":
+                                out[blank] = " "
+                        index = position
+                        break
+            else:
+                # An unbalanced quotation is not something this can bound, and
+                # blanking to the end of the proof would hide a real hole after
+                # it. Left alone: Lean will refuse the body anyway.
+                break
+        index += 1
+    return "".join(out)
+
+
+class Hole(FrozenModel):
+    """One `sorry` or `admit`, and where it stands in the source.
+
+    Positions are 1-based lines and 0-based columns, which is how the rest of
+    this module reports a position, and they are offsets into the source as
+    written rather than into the blanked copy the scan reads.
+    """
+
+    keyword: Literal["sorry", "admit"]
+    line: int
+    column: int
+
+
 class LeanCheckResult(FrozenModel):
     success: bool
     diagnostics: tuple[LeanDiagnostic, ...]
@@ -203,6 +279,10 @@ class LeanToolResult(ToolResult):
     interrupted: bool = False
     observation_truncated: bool = False
     source_sha256: str | None = None
+    # Where the proof is still open. Empty for every check but a sketch: an
+    # ordinary check either forbids a hole or does not ask about one, and only
+    # a sketch is answering the question "what is left".
+    holes: tuple[Hole, ...] = ()
 
     @property
     def report(self) -> str:
@@ -227,6 +307,7 @@ class LeanToolResult(ToolResult):
             "interrupted": self.interrupted,
             "observation_truncated": self.observation_truncated,
             "source_sha256": self.source_sha256,
+            "holes": [item.model_dump(mode="json") for item in self.holes],
         }
 
 
@@ -625,7 +706,27 @@ class LeanTools:
         "sorry"`, in both cases telling the model to fix something that was
         never there.
         """
-        return HOLE.search(strip_comments(source)) is not None
+        return HOLE.search(scannable(source)) is not None
+
+    @staticmethod
+    def holes(source: str) -> tuple[Hole, ...]:
+        """Where `source` leaves a proof open, one entry per hole.
+
+        Read over the same comment- and string-blanked text `has_holes` reads,
+        and reported against the *original* line and column, because blanking
+        preserves offsets. Lean itself reports a hole as one warning per
+        declaration -- "declaration uses 'sorry'" -- which says a proof is
+        unfinished without saying where, and a sketch is only useful when its
+        holes can be pointed at.
+        """
+        blanked = scannable(source)
+        found = []
+        for match in HOLE.finditer(blanked):
+            before = blanked[: match.start()]
+            line = before.count("\n") + 1
+            column = match.start() - (before.rfind("\n") + 1)
+            found.append(Hole(keyword=match.group(1), line=line, column=column))
+        return tuple(found)
 
     def run_source(
         self,
@@ -685,6 +786,81 @@ class LeanTools:
                 False, "completed proofs may not contain sorry or admit", self.source(proof)
             )
         return self._run(self.source(proof, audit=final))
+
+    def sketch_proof(self, proof: str) -> LeanToolResult:
+        """Elaborate a skeleton whose holes are deliberate, and say what is left.
+
+        The point of a sketch is the one piece of feedback a hole-free
+        discipline throws away: that the *structure* is right and only step
+        four is missing. So this asks Lean the same question `check_proof`
+        does and then grades the answer differently -- an error is still a
+        failure, because a skeleton that does not elaborate is not a partial
+        proof of anything, while a hole is the thing being reported rather
+        than the thing being refused.
+
+        Never a submission. The result says how many holes remain and where,
+        and `submit_proof` still refuses every one of them; a sketch is an
+        intermediate state and is graded as one.
+
+        The holes it names are the ones in the proof body it was handed, and
+        nothing here audits what the imports rest on: a skeleton whose every
+        local hole is closed can still stand on a lemma that is itself backed
+        by `sorryAx` or by an axiom nobody approved. Only the axiom report
+        `submit_proof` runs answers that, so this says what it scanned rather
+        than calling its list the only thing missing.
+        """
+        holes = self.holes(proof)
+        result = self._run(self.source(proof))
+        if not result.ok:
+            # Lean rejected the skeleton itself. Reported as a failed sketch
+            # and not as "holes remain": the difference is the whole value of
+            # the tool, and a model told the second would go looking for the
+            # missing step in a proof that does not elaborate at all.
+            return LeanToolResult(
+                False,
+                f"the skeleton does not elaborate, so nothing here is proved yet:\n{result.output}",
+                result.source,
+                diagnostics=result.diagnostics,
+                open_goals=result.open_goals,
+                timed_out=result.timed_out,
+                output_overflow=result.output_overflow,
+                interrupted=result.interrupted,
+                observation_truncated=result.observation_truncated,
+                source_sha256=result.source_sha256,
+                holes=holes,
+            )
+        if not holes:
+            note = (
+                "the skeleton elaborates and has no hole left in its own proof body: this "
+                "is a complete candidate, so call submit_proof to have it checked and "
+                "audited. Nothing here has audited what it rests on."
+            )
+        else:
+            # Numbered against the proof body the caller sent, not against the
+            # assembled file: the body is what it wrote and what it will edit,
+            # and a line number counted through Hardy's imports and the
+            # unchanged declaration would point at the wrong line of it.
+            where = ", ".join(f"{item.keyword} at line {item.line} of the proof body" for item in holes)
+            note = (
+                f"the skeleton elaborates and {len(holes)} hole(s) remain in its proof body "
+                f"({where}). This is not a proof and is not verified; keep the skeleton and "
+                "close the holes one at a time, then call submit_proof. Those holes are what "
+                "was scanned here, not everything left to establish: only the axiom report "
+                "submit_proof runs can say whether what this imports is itself holed."
+            )
+        return LeanToolResult(
+            True,
+            f"{note}\n\n{result.output}" if result.output else note,
+            result.source,
+            diagnostics=result.diagnostics,
+            open_goals=result.open_goals,
+            timed_out=result.timed_out,
+            output_overflow=result.output_overflow,
+            interrupted=result.interrupted,
+            observation_truncated=result.observation_truncated,
+            source_sha256=result.source_sha256,
+            holes=holes,
+        )
 
     def inspect_goal(self, tactic: str = "") -> LeanToolResult:
         proof = "by\n" + (f"  {tactic}\n" if tactic.strip() else "") + "  trace_state\n  sorry"

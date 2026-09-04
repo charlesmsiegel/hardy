@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import layout
+from . import compaction, layout
 from .domain import RunLimits
 
 DEFAULT_MODEL = "claude-opus-5"
@@ -45,9 +45,11 @@ SETTINGS = {
     "tectonic": "HARDY_TECTONIC",
     "tectonic_bundle": "HARDY_TECTONIC_BUNDLE",
     "tectonic_bundle_sha256": "HARDY_TECTONIC_BUNDLE_SHA256",
+    "backend": "HARDY_BACKEND",
     "cas_backend": "HARDY_CAS_BACKEND",
     "cas_command": "HARDY_CAS_COMMAND",
     "project_context": "HARDY_PROJECT_CONTEXT",
+    "context_window": "HARDY_CONTEXT_WINDOW",
 }
 
 # What a project's own committed config may say. Deliberately tiny: the file
@@ -59,6 +61,56 @@ PROJECT_SETTINGS = frozenset({"project"})
 # SymPy is the default because it is a Python dependency and therefore always
 # present. Singular and Macaulay2 are far better at algebraic geometry and far
 # worse at Windows, so they are opt-in rather than assumed.
+# Which transport a conversation is carried by. `claude` is the default
+# because it is the one that needs no API key: it authenticates through the
+# Claude Code agent SDK and a Claude Max subscription. `api` is the opt-in
+# harness-owned loop of issue #23 -- Hardy decides when a provider call is
+# made, keeps both bounds itself, and can decline a call outright -- and it
+# needs `ANTHROPIC_API_KEY`.
+BACKENDS = ("claude", "api")
+DEFAULT_BACKEND = "claude"
+
+#: How each backend is paid for, in the words a session banner and the model
+#: picker use. Stated once because both of them tell a user which credentials
+#: are about to be spent, and "Claude Code subscription" over a metered API key
+#: is not a cosmetic error -- it is the wrong answer to the question the line
+#: exists to answer.
+AUTHENTICATION = {
+    "claude": "Claude Code subscription",
+    "api": "Anthropic API key (metered)",
+}
+
+
+def authentication(backend: str) -> str:
+    """What a session on `backend` is billed against."""
+    return AUTHENTICATION.get(backend, backend)
+
+#: The context window Hardy plans compaction against, in tokens.
+#:
+#: Deliberately not derived from the model identity, even though `catalog`
+#: notes a larger figure for three of the four entries: Hardy sends no
+#: long-context beta with its requests, so 200K is the window every catalogued
+#: model actually offers on the path Hardy uses. Guessing higher is the
+#: unrecoverable direction -- the compactor would never run and the provider
+#: would refuse every request -- while guessing lower only cuts sooner than it
+#: had to.
+#:
+#: Settable because the figure is a property of the endpoint, not of Hardy: a
+#: gateway answering `claude-opus-5` may offer a smaller window than Anthropic
+#: does, and a user who knows that needs somewhere to say so. What was used is
+#: written into the compaction event, so a transcript states the window its
+#: cuts were planned against rather than leaving it to be inferred.
+#:
+#: The figure itself lives in `compaction`, beside the reserve and recent
+#: budgets it is spent against, so the default and the planner cannot drift.
+DEFAULT_CONTEXT_WINDOW = compaction.CONTEXT_WINDOW
+
+#: The largest reply the API transport will ask for, and therefore the smallest
+#: window that can hold one. Stated here rather than imported from
+#: `api_runtime`, which pulls in the whole chat stack to read one number; a test
+#: pins the two together so neither can move without the other.
+MINIMUM_CONTEXT_WINDOW = 8192
+
 CAS_BACKENDS = ("sympy", "singular", "macaulay2")
 DEFAULT_CAS_BACKEND = "sympy"
 
@@ -211,6 +263,16 @@ class Config:
     tectonic: Path = Path(DEFAULT_TECTONIC)
     tectonic_bundle: str = DEFAULT_TECTONIC_BUNDLE
     tectonic_bundle_sha256: str = DEFAULT_TECTONIC_BUNDLE_SHA256
+    # Which transport carries the conversation, and with it who owns the turn
+    # loop. `claude` authenticates through the Claude Code agent SDK, needs no
+    # API key, and leaves the loop to the SDK (issue #23). `api` calls the
+    # Messages API directly with `ANTHROPIC_API_KEY` and runs the loop here,
+    # which is what makes Hardy's own turn bound, its wall clock and its cheap
+    # closers real rather than declared. They are different experimental
+    # conditions and both are recorded as such.
+    backend: str = DEFAULT_BACKEND
+    # See DEFAULT_CONTEXT_WINDOW: what compaction plans against, in tokens.
+    context_window: int = DEFAULT_CONTEXT_WINDOW
     # The computer algebra kernel. `cas_command` is unset for SymPy, which runs
     # on Hardy's own interpreter; the other backends need an executable.
     cas_backend: str = DEFAULT_CAS_BACKEND
@@ -430,6 +492,29 @@ def load(
             return False
         raise ValueError(f"{key} must be true or false, not {value!r}")
 
+    try:
+        context_window = int(values.get("context_window", DEFAULT_CONTEXT_WINDOW))
+    except (TypeError, ValueError):
+        raise ValueError(f"context_window must be a number of tokens, not {values['context_window']!r}") from None
+    # A window no request could fit inside is a typo, not a preference, and a
+    # compactor told to plan against it would cut every conversation to
+    # nothing while still overflowing. Refused where the file is read.
+    #
+    # The floor is the transport's output cap rather than zero: the reserve is
+    # never smaller than what the model may write, so a window at or below the
+    # cap leaves nothing at all for the request -- the planner would report
+    # zero available space and the loop would send the request anyway. A
+    # configuration that cannot hold an answer is not a small window, it is a
+    # wrong one, and the place to say so is where the file is read.
+    if context_window <= MINIMUM_CONTEXT_WINDOW:
+        raise ValueError(
+            f"context_window must leave room for a reply: more than "
+            f"{MINIMUM_CONTEXT_WINDOW} tokens, not {context_window}"
+        )
+
+    backend = text("backend", DEFAULT_BACKEND)
+    if backend not in BACKENDS:
+        raise ValueError(f"backend must be one of {list(BACKENDS)}, not {backend!r}")
     cas_backend = text("cas_backend", DEFAULT_CAS_BACKEND)
     # Rejected here rather than at first use: an unknown backend is a typo in a
     # config file, and the place to say so is where the file is read.
@@ -456,9 +541,11 @@ def load(
         tectonic=location("tectonic") or Path(DEFAULT_TECTONIC),
         tectonic_bundle=text("tectonic_bundle", DEFAULT_TECTONIC_BUNDLE),
         tectonic_bundle_sha256=text("tectonic_bundle_sha256", DEFAULT_TECTONIC_BUNDLE_SHA256),
+        backend=backend,
         cas_backend=cas_backend,
         cas_command=location("cas_command"),
         project_context=flag("project_context", True),
+        context_window=context_window,
         path=path if path.exists() else None,
         requested_path=path,
     )

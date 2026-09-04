@@ -100,6 +100,14 @@ class RunResult:
     # could not identify them. Never absent and never a literal: a `verified`
     # beside no toolchain is a claim about a Lean nobody can name.
     toolchain: dict[str, Any] | None = None
+    # The last skeleton Lean accepted with holes still in it, as
+    # `{"proof": ..., "holes": [...]}`, or None when the run reached none.
+    # Never a grade and never a proof: a sketch is an intermediate state, and
+    # `formalization` stays "not formalized" whatever is recorded here. It is
+    # written down so a run that got the structure right and ran out of turns
+    # leaves the partial development behind instead of only the transcript of
+    # having attempted one.
+    sketch: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

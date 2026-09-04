@@ -19,6 +19,11 @@ def test_the_registry_holds_the_specified_commands():
     ]
 
 
+def test_status_advertises_its_one_argument():
+    registry = {c.name: c for c in handlers.build_registry()}
+    assert registry["status"].argument_hint == "[--full]"
+
+
 def test_only_read_only_commands_are_safe_while_a_turn_runs():
     """A command added later must default to refused, so this pins the set.
 
@@ -52,6 +57,46 @@ async def test_status_reports_the_live_configuration(ui, settings):
     assert "claude-opus-5" in ui.text
     assert str(settings.layout.problem) in ui.text
     assert str(settings.path) in ui.text
+
+
+async def test_status_full_prints_the_workspace_derived_summary(ui, settings):
+    """`/status --full` is where a user can check the summary a compaction
+    would put in front of the model (#100). It is Hardy's answer, read off the
+    workspace, so it must be readable without asking the model anything."""
+    session = SimpleNamespace(summary=lambda: "## Goal\n- Show that True is true.")
+
+    await handlers.handle_status(ui, "--full", State(config=settings, session=session))
+
+    assert "Summary" in ui.text
+    assert "Show that True is true." in ui.text
+
+
+async def test_plain_status_leaves_the_summary_out(ui, settings):
+    session = SimpleNamespace(summary=lambda: "## Goal\n- Show that True is true.")
+
+    await handlers.handle_status(ui, "", State(config=settings, session=session))
+
+    assert "Show that True is true." not in ui.text
+
+
+async def test_status_full_says_so_when_a_summary_cannot_be_assembled(ui, settings):
+    """A status line must not end the session, and a workspace too broken to
+    summarise is exactly when someone reaches for one."""
+    def broken():
+        raise RuntimeError("the tree does not order")
+
+    session = SimpleNamespace(summary=broken)
+
+    await handlers.handle_status(ui, "--full", State(config=settings, session=session))
+
+    assert "could not be assembled" in ui.text
+    assert "does not order" in ui.text
+
+
+async def test_status_full_before_a_session_exists_says_so(ui, settings):
+    await handlers.handle_status(ui, "--full", State(config=settings, session=None))
+
+    assert "no workspace to read" in ui.text
 
 
 async def test_status_reports_the_full_spend_breakdown(ui, settings):
@@ -430,3 +475,24 @@ async def test_import_unquotes_a_quoted_triage_directory(ui, settings):
     session = SimpleNamespace(triage_pile=triage_pile)
     await handlers.handle_import(ui, '"my old files"', State(config=settings, session=session))
     assert piles == [Path("my old files")]
+
+
+async def test_the_model_picker_names_which_credentials_it_will_spend(settings):
+    """On an API-key session the old wording told the user their subscription
+    was about to be spent when it was not."""
+    seen: dict[str, str] = {}
+
+    class Picker:
+        def write(self, text, *, style="system"):
+            pass
+
+        async def choose(self, title, rows, *, current=0, subtitle=""):
+            seen["subtitle"] = subtitle
+            return None
+
+    await handlers._chosen_identity(Picker(), "", settings)
+    assert "Claude Code subscription" in seen["subtitle"]
+
+    await handlers._chosen_identity(Picker(), "", dataclasses.replace(settings, backend="api"))
+    assert "Anthropic API key (metered)" in seen["subtitle"]
+    assert "subscription" not in seen["subtitle"]
