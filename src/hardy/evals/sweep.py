@@ -108,10 +108,17 @@ def witness_source(entry: Entry) -> str | None:
     `witness: null` with a note, and is reported unwitnessed rather than
     silently passed.
     """
-    if entry.witness is None:
-        return None
     binders = entry.binders.strip()
-    body = f"∃ {binders}, True" if binders else "True"
+    if entry.witness is None or not binders:
+        # No binders means nothing for A6 to quantify over -- but *not* that
+        # there are no hypotheses. The schema lets a premise live in
+        # `conclusion` (`euler-polynomial-small` is `∀ n < 10, ...` with empty
+        # binders), and this module never parses Lean, so it cannot lift that
+        # premise out. Building `True := trivial` would record `witnessed`
+        # while establishing nothing about a premise that might be impossible,
+        # so an entry wanting A6 coverage puts its hypotheses in `binders`.
+        return None
+    body = f"∃ {binders}, True"
     name = witness_name(entry)
     return (
         header(entry.imports)
@@ -457,15 +464,56 @@ def sweep_entry(entry: Entry, elaborate: Elaborate, *, confirm_name: str) -> Ent
                          negation=negation, witness=witness_verdict(entry, elaborate))
 
 
+def reusable(prior: Baseline | None, *, environment_digest: str, procedure_digest: str) -> bool:
+    """Whether `prior`'s rows may be carried forward at all.
+
+    Reuse is decided per entry by statement digest, but only under an identity
+    the prior baseline shares: a Mathlib upgrade or a change to the sweep code
+    invalidates every row at once, and carrying rows across that would be the
+    exact failure the environment and procedure digests exist to prevent.
+    """
+    return (
+        prior is not None
+        and prior.environment_digest == environment_digest
+        and prior.procedure_digest == procedure_digest
+        and bool(prior.statement_digests)
+    )
+
+
 def sweep(problems: ProblemSet, *, problems_sha256: str, environment: EnvironmentIdentity, elaborate: Elaborate,
           now: Callable[[], datetime], host: dict[str, Any], import_seconds: float | None = None,
-          wall_backstop_seconds: float = WALL_BACKSTOP_FLOOR, report: Callable[[str], None] = lambda _: None) -> Baseline:
+          wall_backstop_seconds: float = WALL_BACKSTOP_FLOOR, report: Callable[[str], None] = lambda _: None,
+          prior: Baseline | None = None, prior_statement_digests: dict[str, str] | None = None) -> Baseline:
+    """Sweep the corpus, carrying forward every entry whose identity did not move.
+
+    This is what the per-entry digests are *for* (spec §3): correcting one
+    statement in a corpus of thousands must be a re-sweep of one entry, not of
+    thousands. Without this path the digests only diagnose staleness while the
+    single repair route re-elaborates everything, which at corpus scale is
+    hundreds of hours of Lean for one corrected line.
+
+    `prior_statement_digests` is the *current* digest of each entry, so a
+    caller can pass digests computed under a fixture; it defaults to the
+    entries' own.
+    """
+    environment_digest = environment_digest_of(environment, host)
+    procedure_digest = procedure_digest_of(wall_backstop_seconds)
+    current = prior_statement_digests or {e.id: e.statement_digest() for e in problems.entries}
+    carry = reusable(prior, environment_digest=environment_digest, procedure_digest=procedure_digest)
+
     entries: dict[str, EntryBaseline] = {}
     findings: list[str] = []
+    reused = 0
     for entry in problems.entries:
-        report(f"sweeping {entry.id}")
-        result = sweep_entry(entry, elaborate, confirm_name=entry.name)
-        entries[entry.id] = result
+        if (carry and prior is not None
+                and prior.statement_digests.get(entry.id) == current.get(entry.id)
+                and entry.id in prior.entries):
+            entries[entry.id] = result = prior.entries[entry.id]
+            reused += 1
+        else:
+            report(f"sweeping {entry.id}")
+            result = sweep_entry(entry, elaborate, confirm_name=entry.name)
+            entries[entry.id] = result
         if not result.elaborates:
             findings.append(f"{entry.id}: the canonical statement does not elaborate")
         if entry.expected == "false" and result.closed_by:
@@ -475,11 +523,13 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
         for tactic, attempt in result.attempts.items():
             if attempt.status == "unconfirmed":
                 report(f"  {entry.id}: {tactic} was a candidate but did not confirm: {attempt.message}")
+    if reused:
+        report(f"reused {reused} of {len(problems.entries)} entries whose identity did not move")
     return Baseline(
         created_at=now(), problems_sha256=problems_sha256,
-        statement_digests={e.id: e.statement_digest() for e in problems.entries},
-        environment_digest=environment_digest_of(environment, host),
-        procedure_digest=procedure_digest_of(wall_backstop_seconds),
+        statement_digests=current,
+        environment_digest=environment_digest,
+        procedure_digest=procedure_digest,
         environment=environment,
         heartbeat_budget=HEARTBEAT_BUDGET, wall_backstop_seconds=wall_backstop_seconds, import_seconds=import_seconds,
         singles=SINGLES, chains=CHAINS, host=host, problems=tuple(findings), entries=entries,

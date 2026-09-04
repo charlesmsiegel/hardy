@@ -86,7 +86,15 @@ def load_corpus(root: Path) -> ProblemSet:
                     )
                 seen[entry.id] = path
                 entries.append(entry)
-        return ProblemSet(entries=tuple(entries))
+        try:
+            # Cross-shard invariants -- a Lean `name` duplicated across two
+            # shards, a twin whose target lives elsewhere -- fail here, not in
+            # `_load_shard`, because each shard is individually valid. Raw,
+            # this is a pydantic `ValidationError` that walks straight out of
+            # `corpus check`, whose job is to report exactly this.
+            return ProblemSet(entries=tuple(entries))
+        except ValidationError as error:
+            raise CorpusError(f"the shards do not form one valid corpus: {error}") from error
 
 
 TAXONOMY_FILES = ("msc2020.json", "msc-to-arxiv.json")

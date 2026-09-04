@@ -1704,6 +1704,43 @@ so a Windows checkout of the same commit can hold CRLF source; the source
 digests normalise line endings rather than rejecting identical logic for a
 checkout artefact.
 
+**The committed baseline no longer claims a procedure it cannot support.**
+Its `procedure_digest` had been hand-edited to match the new code, but the
+sweep is dated 2026-09-02 and predates every change on this branch — so the
+gate that exists to refuse measurements from other code was being told, by
+hand, that these came from this code. The field is now empty: `staleness`
+reports the baseline stale until someone re-sweeps against real Lean, which is
+the truth. `environment_digest` and `statement_digests` stay, because both are
+faithful derivations of values the sweep itself recorded rather than new
+claims. A test pins the invariant: the field is absent or genuinely equal, and
+never edited to match.
+
+**A sweep reuses entries whose identity did not move.** `sweep()` elaborated
+every entry unconditionally, and it is the *only* repair route for a stale
+baseline — so a one-line correction in a corpus of thousands re-ran the whole
+tactic ladder, which is the cost the per-entry digests exist to avoid. It now
+takes a `prior` baseline and carries forward each entry whose statement digest
+matches, but only when the prior shares the environment *and* procedure
+identity: a Mathlib upgrade or a change to the sweep code invalidates every
+row at once, and carrying rows across that would be the failure those digests
+were added to prevent. `run_baseline` passes the existing baseline
+automatically.
+
+**A6 no longer treats an empty `binders` as trivially witnessed.** The schema
+lets a premise live in `conclusion` — `euler-polynomial-small` is
+`∀ n < 10, Nat.Prime (n ^ 2 + n + 41)` with no binders at all — and this module
+never parses Lean, so it cannot lift that premise out to quantify over.
+Building `True := trivial` would have recorded `witnessed` while establishing
+nothing about a premise that might be impossible. Such an entry is now
+`unwitnessed`, and an entry wanting A6 coverage puts its hypotheses in
+`binders`.
+
+**A cross-shard invariant failure is reported, not raised.** A Lean `name`
+duplicated across two shards, or a twin whose target lives in another shard,
+fails at the final `ProblemSet` construction rather than in any one shard — so
+`corpus check`, whose whole job is to report malformed corpus state, exited
+with a pydantic traceback instead.
+
 ### Known gaps, deliberately left to their phase
 
 - **`Review` does not bind the origin it was read against.** `occurrences` and

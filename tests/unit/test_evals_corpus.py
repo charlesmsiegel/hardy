@@ -336,3 +336,14 @@ def test_report_counts_by_group_and_status():
     lines = report(ROOT / "corpus")
     assert any("candidate" in line for line in lines)
     assert any("number-theory" in line for line in lines)
+
+
+def test_an_invariant_spanning_two_shards_is_reported_not_raised(tmp_path):
+    """Each shard is individually valid, so `_load_shard` cannot catch this;
+    raw, it is a pydantic error walking out of the command asked to report it.
+    """
+    _write(tmp_path, "13", [_entry(id="a", name="Same", msc=["13A15"])])
+    _write(tmp_path, "20", [_entry(id="b", name="Same", msc=["20D"])])
+    with pytest.raises(CorpusError, match="do not form one valid corpus"):
+        load_corpus(tmp_path)
+    assert any("one valid corpus" in i for i in check_issues(tmp_path))
