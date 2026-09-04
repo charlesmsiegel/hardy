@@ -382,6 +382,12 @@ class AgentLoop:
             self.messages.append(Message(
                 "assistant", text=turn.text, tool_calls=turn.tool_calls, reasoning=turn.reasoning
             ))
+            # Answered before anything is yielded, including the notice below.
+            # `_settle` yields, and a consumer that stops there would leave the
+            # whole batch unanswered -- the same dead conversation the
+            # placeholders exist to prevent, reached by a path the placeholders
+            # were on the wrong side of.
+            placeholders = self._preanswer(turn.tool_calls)
             # Said before the tools run, not only when there are none. A reply
             # that ended on `max_tokens` *with* a tool call in it is the case
             # where the disclosure matters most and was the case that lost it:
@@ -391,7 +397,7 @@ class AgentLoop:
             yield from self._settle(turn)
             if not turn.tool_calls:
                 return
-            yield from self._call_tools(turn.tool_calls, budget)
+            yield from self._call_tools(turn.tool_calls, placeholders, budget)
 
     def _hook(self, run: Callable[[], T]) -> T:
         """Run one of the caller's hooks, recording a failure of it as a failure.
@@ -451,29 +457,20 @@ class AgentLoop:
             ),
         )
 
-    def _call_tools(self, calls: Sequence[ToolCall], budget: Budget) -> Iterator[TurnEvent]:
-        """Run the calls one response asked for, and answer every one of them.
+    def _preanswer(self, calls: Sequence[ToolCall]) -> list[int]:
+        """Answer every call of a batch before anything about it is yielded.
 
-        The budget is re-read before each of them, not once for the batch. One
-        response can ask for several Lean checks, each of which may run to its
-        own process timeout -- so a batch begun inside the deadline could
-        overrun it by minutes per queued call while nothing looked again. A
-        call the budget no longer covers is refused rather than skipped: the
-        provider needs an answer for every `tool_use` it issued, whatever the
-        answer is.
+        A consumer that stops iterating -- closes the generator, breaks out of
+        the loop, dies -- suspends the loop at whichever `yield` it reached,
+        and the `finally` that would run then cannot append anything, because
+        a closed generator may not yield. So the answers go in first and are
+        replaced as the real ones arrive. The whole batch, not each call as its
+        turn comes: the assistant message already carries all of them, and the
+        API refuses an incomplete batch as firmly as an empty one.
+
+        Indexed by position rather than by call id, so a provider that repeated
+        an id cannot leave one placeholder nothing replaces.
         """
-        # Every call in the batch answered before the first event is offered,
-        # not each one as its turn comes. A consumer that stops iterating --
-        # closes the generator, breaks out of the loop, dies -- suspends this
-        # function at whichever `yield` it reached, and the `finally` that
-        # would run then cannot append anything, because a closed generator
-        # may not yield. Answering per call left every *later* call of the
-        # same batch unanswered, and the API refuses a batch that is
-        # incomplete just as firmly as one that is empty: the assistant
-        # message already carries all of them.
-        # Indexed by position rather than by call id: a provider that issued
-        # the same id twice would otherwise leave one of them holding an
-        # abandonment result nothing replaced.
         placeholders: list[int] = []
         for call in calls:
             self.messages.append(
@@ -486,6 +483,19 @@ class AgentLoop:
                 )
             )
             placeholders.append(len(self.messages) - 1)
+        return placeholders
+
+    def _call_tools(self, calls: Sequence[ToolCall], placeholders: Sequence[int], budget: Budget) -> Iterator[TurnEvent]:
+        """Run the calls one response asked for, and answer every one of them.
+
+        The budget is re-read before each of them, not once for the batch. One
+        response can ask for several Lean checks, each of which may run to its
+        own process timeout -- so a batch begun inside the deadline could
+        overrun it by minutes per queued call while nothing looked again. A
+        call the budget no longer covers is refused rather than skipped: the
+        provider needs an answer for every `tool_use` it issued, whatever the
+        answer is.
+        """
         for placeholder, call in zip(placeholders, calls, strict=True):
             self._observe({"type": "tool_use", "name": call.name, "input": call.arguments})
             yield TurnEvent("tool_use", name=call.name, call_id=call.id)
