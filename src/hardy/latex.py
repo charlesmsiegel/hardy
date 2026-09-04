@@ -354,6 +354,28 @@ def _copy_tree(tree: Path, work: Path) -> None:
         guard.write_bytes(name, read_bytes(tree, relative), sync=False)
 
 
+def _diagnostics(work: Path, outcome: GuardedResult) -> str:
+    r"""What the compiler reported, from the file it is obliged to write.
+
+    `writeup.log`, not the terminal. TeX mirrors its warnings to stdout under
+    the interaction modes Hardy configures by default and stops doing so under
+    `batchmode` -- which a `latex_command` may select, and which a document can
+    select for itself with `\batchmode`. The verdict would then be computed
+    from an empty diagnostic stream: nothing undefined seen, no rerun asked
+    for, one pass run, and a PDF full of `??` published as clean. The log is
+    written either way.
+
+    The terminal output is appended rather than replaced. It is usually the
+    same text, findings are deduplicated on identity, and a run that died
+    before the log existed still has whatever it managed to say.
+    """
+    text = ""
+    log = work / "writeup.log"
+    if log.is_file() and not log.is_symlink():
+        text = log.read_text(encoding="utf-8", errors="replace")
+    return text + outcome.stdout + outcome.stderr
+
+
 def _publish(work: Path, output_dir: Path, aux_dir: Path | None) -> None:
     r"""Copy the compiled document out of the scratch tree, through a guard.
 
@@ -470,13 +492,16 @@ class LatexTools:
             if stamp:
                 root.write_text(stamped(root.read_text(encoding="utf-8"), stamp), encoding="utf-8")
             try:
-                outcome, log = self._passes(work, root)
+                outcome, terminal, log = self._passes(work, root)
             except subprocess.TimeoutExpired as error:
                 output = ((error.stdout or "") + (error.stderr or ""))[-self.output_limit :]
                 return ToolResult(False, f"timeout after {self.timeout:.1f}s\n{output}", source)
             except FileNotFoundError:
                 return ToolResult(False, f"LaTeX executable not found: {self.command[0]}", source)
-            output = log.strip()[-self.output_limit :]
+            # The terminal output is what a reader is shown; `log` is what
+            # the verdict is computed from. Usually the same text, and under
+            # batch interaction not the same at all.
+            output = terminal.strip()[-self.output_limit :]
             elapsed = time.monotonic() - started
             if outcome.interrupted:
                 # Stopped, not judged. A compile nobody let finish has no
@@ -545,7 +570,7 @@ class LatexTools:
             keys.extend(references.citations(text))
         return vouched(tuple(dict.fromkeys(keys)))
 
-    def _passes(self, work: Path, root: Path) -> tuple[GuardedResult, str]:
+    def _passes(self, work: Path, root: Path) -> tuple[GuardedResult, str, str]:
         r"""Run the compiler until another pass would not change the answer.
 
         One pass cannot resolve a single `\ref`: the numbers are written into
@@ -560,6 +585,7 @@ class LatexTools:
         document TeX rejected has nothing left to converge.
         """
         outcome = None
+        terminal = ""
         log = ""
         previous: tuple[references.Unresolved, ...] | None = None
         for _ in range(MAX_PASSES):
@@ -574,7 +600,8 @@ class LatexTools:
                 raise subprocess.TimeoutExpired(
                     self.command, self.timeout, outcome.stdout, outcome.stderr
                 )
-            log = outcome.stdout + outcome.stderr
+            terminal = outcome.stdout + outcome.stderr
+            log = _diagnostics(work, outcome)
             if outcome.returncode != 0 or outcome.interrupted:
                 break
             if not references.rerun_requested(log):
@@ -593,7 +620,7 @@ class LatexTools:
                 break
             previous = unresolved
         assert outcome is not None  # MAX_PASSES is at least one
-        return outcome, log
+        return outcome, terminal, log
 
     def _references(self, work: Path, log: str) -> tuple[str, tuple[str, ...]]:
         """What the log and the compiled tree say about references, in words.

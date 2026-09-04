@@ -38,6 +38,7 @@ import os
 import re
 import shutil
 import tempfile
+import textwrap
 import time
 import urllib.error
 import urllib.parse
@@ -50,7 +51,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .domain import FrozenModel
-from .layout import LayoutError, guard_for, read_text
+from .layout import LayoutError, guard_for, read_bytes, read_text
 from .storage import FileLock
 
 ENDPOINT = "https://export.arxiv.org/api/query"
@@ -66,6 +67,10 @@ MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 READ_CHUNK_BYTES = 64 * 1024
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_RESULTS = 50
+#: Where a stored abstract is wrapped. Any fixed width would do; what matters
+#: is that no line is longer than a bounded read can return whole, so paging
+#: through a record can always reach the end of it.
+ABSTRACT_COLUMNS = 96
 # arXiv asks that a caller identify itself. A version and a project URL is
 # what lets them tell Hardy's traffic apart from a scraper's and complain to
 # somebody rather than block a subnet.
@@ -185,7 +190,21 @@ class PaperRecord(FrozenModel):
             head.append(f"DOI: {self.doi}")
         if self.journal_ref:
             head.append(f"Journal reference: {self.journal_ref}")
-        return "\n".join(head) + "\n\nAbstract\n" + self.abstract + "\n"
+        # Wrapped, and wrapped HERE rather than where it is displayed, so the
+        # digest covers the text a reader is served. An abstract can arrive as
+        # one enormous line, and `read_paper` pages by line: a line too long
+        # for one observation is clipped, and the part left over can never be
+        # asked for, because there is no line after it to start from. Hard
+        # breaks included, since a single unbroken token can be longer than
+        # the window on its own.
+        body = "\n".join(
+            "\n".join(
+                textwrap.wrap(paragraph, ABSTRACT_COLUMNS, break_long_words=True)
+                or [""]
+            )
+            for paragraph in self.abstract.splitlines() or [""]
+        )
+        return "\n".join(head) + "\n\nAbstract\n" + body + "\n"
 
     def summary(self) -> str:
         """One line, for a search result the reader is scanning."""
@@ -308,12 +327,21 @@ class PaperLibrary:
         # that file was edited or deleted underneath it -- a provenance claim
         # nothing stood behind.
         try:
-            response = (self.path_for(identifier) / "response.xml").read_bytes()
-        except OSError as error:
+            response = read_bytes(self.root, f"{held}/response.xml")
+        except (OSError, LayoutError) as error:
             raise ArxivError(
                 f"the stored response for {identifier} could not be read: {error}"
             ) from error
-        if record.response_sha256 and hashlib.sha256(response).hexdigest() != record.response_sha256:
+        # Required, not merely compared when present. An empty digest was an
+        # opt-out: blank the field in `record.json` and any `response.xml`
+        # became acceptable, leaving a record that reads and cites without the
+        # provenance it claims to carry.
+        if not record.response_sha256:
+            raise ArxivError(
+                f"the record stored under {identifier} carries no response digest, so "
+                "nothing says which bytes its metadata was read from"
+            )
+        if hashlib.sha256(response).hexdigest() != record.response_sha256:
             raise ArxivError(
                 f"the stored response for {identifier} does not match its recorded digest; "
                 "this record no longer says where its metadata came from"
@@ -384,8 +412,18 @@ class PaperLibrary:
             shutil.rmtree(staging, ignore_errors=True)
         return self.read(identifier)
 
-    def cached_query(self, key: str, *, now: float, ttl: float = QUERY_TTL_SECONDS) -> bytes | None:
-        """The stored answer to this query, if it is still fresh."""
+    def cached_query(
+        self, key: str, *, now: float, ttl: float = QUERY_TTL_SECONDS
+    ) -> tuple[bytes, float] | None:
+        """The stored answer to this query and when it was obtained, if fresh.
+
+        The timestamp comes back with the body because a record parsed out of
+        a cached response was fetched when the CACHE was filled, not when it
+        was read. Stamping it with the read time made `fetched_at` say the
+        bytes arrived at a moment they did not -- which matters exactly when
+        it is checked: an admission that failed on a full disk and succeeded
+        on a retry an hour later.
+        """
         try:
             payload = json.loads(self._read(f"queries/{key}.json"))
             fetched = float(payload["fetched_at"])
@@ -400,7 +438,7 @@ class PaperLibrary:
         # throttle treats the same jump as "no idea"; so does this.
         if age < 0 or age > ttl:
             return None
-        return body.encode("utf-8")
+        return body.encode("utf-8"), fetched
 
     def cache_query(self, key: str, body: bytes, *, now: float) -> None:
         guard, name = self._guard(f"queries/{key}.json")
@@ -598,9 +636,6 @@ class ArxivClient:
             return self.library.read(resolved), True
         return self.library.admit(record, body), False
 
-    def _stamp(self) -> str:
-        return datetime.fromtimestamp(self._clock(), UTC).isoformat(timespec="seconds")
-
     def _url(self, parameters: dict[str, str]) -> str:
         return f"{ENDPOINT}?{urllib.parse.urlencode(parameters)}"
 
@@ -615,19 +650,23 @@ class ArxivClient:
         longer parses is dropped for the same reason and asked again.
         """
         key = _key(url)
-        stamp = self._stamp()
         cached = self.library.cached_query(key, now=self._clock())
         if cached is not None:
+            body, fetched = cached
             try:
-                return _entries(cached, url, stamp), cached
+                # Stamped with when the bytes arrived, not when they were read
+                # back: a record admitted from the cache says where it came
+                # from and when, and both have to be true.
+                return _entries(body, url, _stamp(fetched)), body
             except ArxivError:
                 self.library.drop_query(key)
         self._throttle()
         body = self._transport(url, self._timeout)
+        now = self._clock()
         # Parsed before it is cached, so the refusal below leaves nothing
         # behind to be served again.
-        found = _entries(body, url, stamp)
-        self.library.cache_query(key, body, now=self._clock())
+        found = _entries(body, url, _stamp(now))
+        self.library.cache_query(key, body, now=now)
         return found, body
 
     def _throttle(self) -> None:
@@ -679,6 +718,11 @@ def _narrow(response: Any, seconds: float) -> None:
         response.settimeout(max(0.001, seconds))
     except (OSError, AttributeError, ValueError):
         return
+
+
+def _stamp(when: float) -> str:
+    """One epoch time as the string a record records it under."""
+    return datetime.fromtimestamp(when, UTC).isoformat(timespec="seconds")
 
 
 def _key(url: str) -> str:
