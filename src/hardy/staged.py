@@ -23,6 +23,7 @@ from pydantic import BaseModel, ValidationError
 from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
+from .chat import final_text
 from .claude_runtime import ClaudeAgentRuntime
 from .codex_runtime import ProofSubmission
 from .domain import FrozenClaim, RunPhase, schema_text
@@ -159,6 +160,11 @@ class ClaudeStagedRuntime:
         # Set once for the whole run, not per stage: the only caller is
         # `ProveWorkflow` tearing a run down, and there is no next stage.
         self._cancelled = threading.Event()
+        # Held while a turn is being opened, and while `cancel` is arming the
+        # flag that refuses one. See `run_structured`: without it the two are
+        # separate steps and a cancellation can land between them, only to be
+        # erased by the very turn it was meant to stop.
+        self._starting = threading.Lock()
         # `_observe` is the one path from the provider's thread into the
         # trajectory, so it is the one that has to be closable. See `_seal`.
         self._records = threading.Lock()
@@ -383,17 +389,37 @@ class ClaudeStagedRuntime:
         # Here rather than only in the workflow because this is where a turn is
         # actually opened: a check in the caller narrows the window, and a
         # check at the door closes it for every caller there will ever be.
-        if self._cancelled.is_set():
-            raise RuntimeError(f"the run was cancelled before the {stage} turn was sent")
-        # Counted before it is sent, not after it is answered: the answer is
-        # exactly what a cancelled or timed-out stage never has.
-        with self._records:
-            self._asked += 1
+        #
+        # The check and the submission are one step, under `_starting`, because
+        # separately they are not enough. `ClaudeAgentRuntime.stream` clears
+        # its own cancellation flag as a turn is submitted -- deliberately, so
+        # that a press a moment before one turn does not kill the next -- so a
+        # `cancel` landing after this check found an idle runtime, did nothing,
+        # and was then wiped by the turn it was meant to stop. `cancel` takes
+        # the same lock to arm the flag, so it either gets there first and this
+        # refuses, or it arrives to a turn that is already open and interrupts
+        # it.
+        #
+        # `stream` rather than `ask` because the two halves of `ask` have
+        # opposite costs: submitting is synchronous and immediate, reading the
+        # answer is the whole exchange. Only the first is under the lock, so
+        # `cancel` still reaches a stage in flight rather than waiting minutes
+        # behind it. A runtime that offers no `stream` keeps the door check
+        # alone, which is where every runtime stood before this.
+        #
         # One rendering, shared with the faithfulness gate, which persists this
         # exact text as the contract the reader answered.
-        spoken = thread.runtime.ask(
-            prompt + STRUCTURE_INSTRUCTION + schema_text(output_type)
-        )
+        with self._starting:
+            if self._cancelled.is_set():
+                raise RuntimeError(f"the run was cancelled before the {stage} turn was sent")
+            text = prompt + STRUCTURE_INSTRUCTION + schema_text(output_type)
+            # Counted before it is sent, not after it is answered: the answer
+            # is exactly what a cancelled or timed-out stage never has.
+            with self._records:
+                self._asked += 1
+            opened = getattr(thread.runtime, "stream", None)
+            reading = opened(text) if opened is not None else None
+        spoken = final_text(reading) if reading is not None else thread.runtime.ask(text)
         payload = _json_object(spoken)
         if payload is None:
             raise ValueError(f"{stage} turn returned no structured final response")
@@ -418,14 +444,19 @@ class ClaudeStagedRuntime:
         no further tool call runs, and one already inside a subprocess is left
         to finish rather than torn out halfway.
         """
-        self._cancelled.set()
-        # There is a handle to interrupt now (issue #32): the runtime holds the
-        # SDK client for the turn in flight and `cancel` is safe to call from
-        # any thread. A runtime too old to be told to stop is left to its
-        # deadline rather than being an error here.
-        cancel = getattr(thread.runtime, "cancel", None)
-        if cancel is not None:
-            cancel()
+        # Under `_starting`, which is what makes this atomic with opening a
+        # turn: see `run_structured`. Held for the arming only -- the waiting
+        # below is outside it, so a stage being submitted at this instant is
+        # not blocked behind a Lean timeout.
+        with self._starting:
+            self._cancelled.set()
+            # There is a handle to interrupt now (issue #32): the runtime holds
+            # the SDK client for the turn in flight and `cancel` is safe to
+            # call from any thread. A runtime too old to be told to stop is
+            # left to its deadline rather than being an error here.
+            cancel = getattr(thread.runtime, "cancel", None)
+            if cancel is not None:
+                cancel()
         # Taking the gate is how this thread learns that no tool is running.
         # Bounded by the tools' own timeouts, not by a guess here: interrupting
         # a Lean or CAS subprocess is exactly what the paragraph above says

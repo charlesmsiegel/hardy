@@ -1110,3 +1110,49 @@ def test_a_run_cancelled_during_a_rejecting_verification_is_not_graded_completed
     )
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
     assert 'writeup' not in [stage for stage, _ in state.prompts]
+
+
+def test_a_run_cancelled_while_the_document_compiled_is_not_a_tex_failure(
+    tmp_path,
+) -> None:
+    """Tectonic is a tracked child, so Esc reaches it and the build comes back
+    TEX_FAILED. That was the last thing to touch the terminal reason, so an
+    abandoned run was recorded as a completed experiment whose document failed
+    to compile -- a claim about the toolchain, for something the user did."""
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path, document_status='tex_failed'
+    )
+    build = controller._writeup_builder
+
+    def cancelling(*args, **kwargs):
+        controller.cancel()               # the press, mid-compilation
+        return build(*args, **kwargs)
+
+    controller._writeup_builder = cancelling
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    # Both facts, not one: the document really did not compile, and the reason
+    # the run ended is still the user.
+    assert manifest.grades.document is domain.DocumentStatus.TEX_FAILED
+
+
+def test_a_run_cancelled_during_the_writeup_turn_compiles_nothing(tmp_path) -> None:
+    """The writeup turn has a fallback catching `RuntimeError`, which is what
+    the staged runtime raises to refuse a turn on a cancelled run -- so the
+    refusal was swallowed and the run went on to build a document anyway."""
+    workflow, domain, controller, state = _scripted_controller(
+        tmp_path, cancel_quietly_at='writeup'
+    )
+    built = []
+    build = controller._writeup_builder
+    controller._writeup_builder = lambda *a, **k: built.append(a) or build(*a, **k)
+
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
+    assert built == [], 'a cancelled run compiled a document'

@@ -440,3 +440,31 @@ def test_the_path_reported_is_where_the_write_actually_landed(tmp_path):
     written = export.write(material(), tmp_path / "exports" / "report.html")
     assert written == elsewhere / "report.html"
     assert (elsewhere / "report.html").is_file()
+
+
+def test_a_digest_authorization_header_loses_every_field():
+    """The value is a set of fields, not one token. A tail that stopped at the
+    first quote redacted `username=` and left the response hash standing."""
+    cleaned = export.redact(
+        'Authorization: Digest username="Mufasa", realm="private", '
+        'nonce="dcd98b7102dd2f0e", response="6629fae49393a05397450978507c4ef1"'
+    )
+    assert "6629fae49393a05397450978507c4ef1" not in cleaned
+    assert "Mufasa" not in cleaned
+    # The scheme is not a secret and tells the reader what was there.
+    assert "Digest" in cleaned
+
+
+def test_a_quoted_authorization_value_is_redacted_past_its_escaped_quotes():
+    """How a header arrives when a JSON payload or a log line is pasted."""
+    cleaned = export.redact(
+        '{"Authorization": "Digest username=\\"x\\", response=\\"deadbeef\\""}'
+    )
+    assert "deadbeef" not in cleaned
+
+
+def test_redaction_stops_at_the_end_of_the_header_line():
+    """The value runs to the end of the line; the next line is not a secret."""
+    cleaned = export.redact("Authorization: Basic dXNlcjpwYXNz\nlet G be a group")
+    assert "dXNlcjpwYXNz" not in cleaned
+    assert "let G be a group" in cleaned

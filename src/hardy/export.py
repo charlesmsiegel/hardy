@@ -63,10 +63,35 @@ SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     # matches `\S+`, which is the SCHEME, so it redacted the word "Basic" and
     # left the base64 credential standing. The scheme is kept (it is not a
     # secret and it tells a reader what was there) and what follows it goes.
+    # The same header written as a quoted value, which is how it arrives when
+    # somebody pastes a JSON payload or a log line. The closing quote is a
+    # backreference to the opening one, and an escaped character is consumed
+    # whole, so `"Digest username=\"x\", response=\"...\""` ends where the
+    # value ends rather than at the first quote inside it -- which is where a
+    # rule matching `"[^"]*"` stopped, leaving the response field standing.
     (
         re.compile(
-            r"(?i)\b(proxy-authorization|authorization)([\"\']?\s*[:=]\s*[\"\']?)"
-            r"(basic|bearer|digest|negotiate|token|apikey)\s+[^\s\"\']+"
+            r"(?i)\b(proxy-authorization|authorization)([\"\']?\s*[:=]\s*)([\"\'])"
+            r"((?:basic|bearer|digest|negotiate|token|apikey)\s+)"
+            r"(?:\\.|[^\r\n])*?\3"
+        ),
+        r"\1\2\3\4[REDACTED-KEY]\3",
+    ),
+    #
+    # The value runs to the end of the line rather than to the next quote or
+    # space. `Authorization: Digest username="Mufasa", realm="private",
+    # nonce="...", response="..."` is one credential written as fields, and a
+    # tail that stopped at the first quote redacted `username=` and left every
+    # field after it standing. A header is a line, so the line is the value.
+    #
+    # Deliberately not matching a quoted value: `{"Authorization": "Digest
+    # ..."}` has a quote between the separator and the scheme, so it falls
+    # through to the generic rule below, which takes the whole quoted string
+    # and does not run past the end of it into the rest of the payload.
+    (
+        re.compile(
+            r"(?i)\b(proxy-authorization|authorization)(\s*[:=]\s*)"
+            r"(basic|bearer|digest|negotiate|token|apikey)\s+[^\r\n]+"
         ),
         r"\1\2\3 [REDACTED-KEY]",
     ),

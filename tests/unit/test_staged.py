@@ -349,3 +349,86 @@ def test_a_cancelled_runtime_refuses_to_open_a_new_turn():
     with pytest.raises(RuntimeError, match="cancelled before the writeup turn"):
         runtime.run_structured(thread, "writeup", "prompt", dict)
     assert asked == [], "a cancelled run opened a provider turn"
+
+
+def test_a_turn_is_opened_under_the_lock_that_arms_cancellation():
+    """`ClaudeAgentRuntime.stream` clears its own cancellation flag as a turn
+    is submitted -- deliberately, so a press a moment before one turn does not
+    kill the next. A `cancel` landing after the door check and before the call
+    therefore found an idle runtime, did nothing, and was then wiped by the
+    very turn it was meant to stop. The check and the submission are one step.
+    """
+    from types import SimpleNamespace
+
+    from pydantic import BaseModel
+
+    from hardy.staged import ClaudeStagedRuntime, StagedThread
+
+    class Empty(BaseModel):
+        pass
+
+    runtime = ClaudeStagedRuntime(
+        store=SimpleNamespace(append=lambda *a, **k: None),
+        lean_runtime_factory=lambda claim: None,
+    )
+    held: list[bool] = []
+
+    def stream(text):
+        held.append(runtime._starting.locked())
+        return [SimpleNamespace(kind="reply", text="{}")]
+
+    thread = StagedThread(runtime=SimpleNamespace(stream=stream), claim=None)
+
+    runtime.run_structured(thread, "writeup", "prompt", Empty)
+
+    assert held == [True], "the turn was opened outside the lock cancel takes"
+
+
+def test_a_runtime_that_cannot_stream_still_answers_a_stage():
+    """The submission half is only separable where the runtime offers it; one
+    that does not keeps the door check alone, which is where all of them were."""
+    from types import SimpleNamespace
+
+    from pydantic import BaseModel
+
+    from hardy.staged import ClaudeStagedRuntime, StagedThread
+
+    class Empty(BaseModel):
+        pass
+
+    runtime = ClaudeStagedRuntime(
+        store=SimpleNamespace(append=lambda *a, **k: None),
+        lean_runtime_factory=lambda claim: None,
+    )
+    asked: list[str] = []
+    thread = StagedThread(
+        runtime=SimpleNamespace(ask=lambda prompt: asked.append(prompt) or "{}"),
+        claim=None,
+    )
+
+    runtime.run_structured(thread, "writeup", "prompt", Empty)
+
+    assert len(asked) == 1
+
+
+def test_cancellation_is_armed_under_that_same_lock():
+    """The other side of the handshake: if the flag were set outside it, a turn
+    could be submitted between the check and the arming and outlive both."""
+    from types import SimpleNamespace
+
+    from hardy.staged import ClaudeStagedRuntime, StagedThread
+
+    runtime = ClaudeStagedRuntime(
+        store=SimpleNamespace(append=lambda *a, **k: None),
+        lean_runtime_factory=lambda claim: None,
+    )
+    held: list[bool] = []
+    thread = StagedThread(
+        runtime=SimpleNamespace(cancel=lambda: held.append(runtime._starting.locked())),
+        claim=None,
+    )
+
+    runtime.cancel(thread)
+
+    assert held == [True], "cancellation was armed outside the lock"
+    assert runtime._cancelled.is_set()
