@@ -105,6 +105,12 @@ def authentication(backend: str) -> str:
 #: budgets it is spent against, so the default and the planner cannot drift.
 DEFAULT_CONTEXT_WINDOW = compaction.CONTEXT_WINDOW
 
+#: The largest reply the API transport will ask for, and therefore the smallest
+#: window that can hold one. Stated here rather than imported from
+#: `api_runtime`, which pulls in the whole chat stack to read one number; a test
+#: pins the two together so neither can move without the other.
+MINIMUM_CONTEXT_WINDOW = 8192
+
 CAS_BACKENDS = ("sympy", "singular", "macaulay2")
 DEFAULT_CAS_BACKEND = "sympy"
 
@@ -493,8 +499,18 @@ def load(
     # A window no request could fit inside is a typo, not a preference, and a
     # compactor told to plan against it would cut every conversation to
     # nothing while still overflowing. Refused where the file is read.
-    if context_window <= 0:
-        raise ValueError(f"context_window must be a positive number of tokens, not {context_window}")
+    #
+    # The floor is the transport's output cap rather than zero: the reserve is
+    # never smaller than what the model may write, so a window at or below the
+    # cap leaves nothing at all for the request -- the planner would report
+    # zero available space and the loop would send the request anyway. A
+    # configuration that cannot hold an answer is not a small window, it is a
+    # wrong one, and the place to say so is where the file is read.
+    if context_window <= MINIMUM_CONTEXT_WINDOW:
+        raise ValueError(
+            f"context_window must leave room for a reply: more than "
+            f"{MINIMUM_CONTEXT_WINDOW} tokens, not {context_window}"
+        )
 
     backend = text("backend", DEFAULT_BACKEND)
     if backend not in BACKENDS:

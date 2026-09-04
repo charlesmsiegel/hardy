@@ -413,9 +413,20 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     elif not asked:
         # Out of time before the model was asked anything. Reported as the
         # limit it is, not as a model that submitted nothing.
+        #
+        # And blaming whatever actually spent it. `--wall-seconds 0` with no
+        # ladder reached this branch too, and the record then said the closers
+        # had used the whole budget beside a `closers` block saying they were
+        # disabled -- a false sentence, and one `hardy accept --recorded` reads
+        # as evidence that the provider was deliberately unasked.
         closed.set()
         reason = "wall_clock_limit"
-        events.append({"type": "limit", "limit": "wall_seconds", "detail": "the closers used the whole wall-clock budget; no model turn was spent"})
+        detail = (
+            "the closers used the whole wall-clock budget; no model turn was spent"
+            if ladder["enabled"]
+            else "the wall-clock budget was gone before a model turn could be spent"
+        )
+        events.append({"type": "limit", "limit": "wall_seconds", "detail": detail})
     try:
         if asked:
             runtime.ask(task)

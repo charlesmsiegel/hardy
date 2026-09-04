@@ -642,11 +642,35 @@ def test_the_context_window_can_be_stated_for_the_endpoint_in_use(tmp_path: Path
 
 def test_a_context_window_that_could_hold_nothing_is_refused(tmp_path: Path):
     """A compactor told to plan against it would cut every conversation to
-    nothing and still overflow, so it is a typo rather than a preference."""
+    nothing and still overflow, so it is a typo rather than a preference.
+
+    The floor is the transport's output cap, not zero: the reserve is never
+    smaller than what the model may write, so a window at or below the cap
+    leaves no room for the request at all -- the planner would report zero
+    available space and the loop would send the request anyway.
+    """
     path = write(tmp_path / "config.toml", "context_window = 0\n")
-    with pytest.raises(ValueError, match="context_window must be a positive"):
+    with pytest.raises(ValueError, match="context_window must leave room for a reply"):
         config.load(path)
 
+    exact = write(tmp_path / "exact.toml", f"context_window = {config.MINIMUM_CONTEXT_WINDOW}\n")
+    with pytest.raises(ValueError, match="context_window must leave room for a reply"):
+        config.load(exact)
+
+    just_over = write(tmp_path / "over.toml", f"context_window = {config.MINIMUM_CONTEXT_WINDOW + 1}\n")
+    assert config.load(just_over).context_window == config.MINIMUM_CONTEXT_WINDOW + 1
+
+
+def test_the_window_floor_is_the_transports_own_output_cap():
+    """Stated in `config` rather than imported from `api_runtime`, which pulls
+    in the whole chat stack to read one number. Pinned here so neither can move
+    without the other."""
+    from hardy import api_runtime
+
+    assert config.MINIMUM_CONTEXT_WINDOW == api_runtime.DEFAULT_MAX_TOKENS
+
+
+def test_a_context_window_that_is_not_a_number_is_refused(tmp_path: Path):
     text = write(tmp_path / "text.toml", 'context_window = "large"\n')
     with pytest.raises(ValueError, match="context_window must be a number"):
         config.load(text)
