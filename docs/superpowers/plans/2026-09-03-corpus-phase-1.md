@@ -1761,6 +1761,26 @@ without a `codes` table, or `msc-to-arxiv.json` missing a roll-up, raised a
 bare `KeyError` from inside entry validation — out of the command whose job is
 to report exactly that.
 
+**The release gate now has a historical anchor, and CI runs it.**
+`version_issues` compares two values from the same working tree, so editing a
+shard *and* rewriting the digest on the existing heading passed: the same
+version number then denoted different content, and a published release was no
+longer reproducible from its number. The spec (§3) assigns that comparison to
+CI, and CI did not do it. `release_issues(root, prior_changelog)` is the pure
+half — the previous release's changelog head already carries both its version
+and the manifest it bound, so the merge base's `CHANGELOG.md` is the whole
+input — and `tests.yml` supplies it with one `git show`. `corpus check --since`
+exposes the same check locally.
+
+**Three narrower gates.** The A6 broken-witness finding is re-derived at reuse
+like the twin guard, since `baseline.problems` is an editable top-level list
+that a cleared finding would let a run past. Taxonomy tables must map strings
+to strings, not merely be dicts — a class mapped to a list made `group_of`
+return a list, `corpus check` pass, and `corpus report` crash on an unhashable
+`Counter` key. And a `Review` must name a reviewer (not whitespace) and an ISO
+8601 `reviewed_at` (not `"unknown"`), because `active_ids` trusts the status
+that record grants.
+
 ### Known gaps, deliberately left to their phase
 
 - **`Review` does not bind the origin it was read against.** `occurrences` and
@@ -1770,8 +1790,9 @@ to report exactly that.
   spec change (§2.2) rather than an implementation fix.
 - **A delete-and-reintroduce of one id inside a single commit is invisible** to
   a file-level check. The registry catches the deletion whenever it lands
-  alone; catching both at once needs the merge-base diff the spec assigns to
-  CI.
+  alone. Catching both at once needs a merge-base comparison of `tombstones.json`
+  — the same shape as the release gate now in `tests.yml`, and the obvious next
+  thing to add there.
 - **Scoreboard rows carry no prompt digest.** Nothing reuses a model run yet —
   every run is fresh — so there is no reuse decision for it to govern. It
   belongs with phase 2's reporting.

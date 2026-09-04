@@ -91,6 +91,13 @@ def add_parser(subparsers: Any) -> None:
                            ("report", "coverage by group, status, difficulty and source")):
         sub = corpus_verbs.add_parser(verb, help=helptext)
         sub.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
+        if verb == "check":
+            sub.add_argument(
+                "--since", type=Path, default=None,
+                help="the previous release's CHANGELOG.md (its head carries the version and the "
+                     "manifest digest it bound); refuses content that moved under a version "
+                     "already released. CI passes the merge base's copy.",
+            )
     check = verbs.add_parser("check", help="re-derive a committed scoreboard from its run directories")
     check.add_argument("scoreboard", type=Path)
     check.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
@@ -202,7 +209,11 @@ def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "corpus":
         from .corpus import check_issues, report
         if args.corpus_verb == "check":
+            from .corpus import release_issues
+
             issues = check_issues(args.corpus)
+            if getattr(args, "since", None) is not None:
+                issues.extend(release_issues(args.corpus, args.since.read_text(encoding="utf-8")))
             for issue in issues:
                 print(issue, file=sys.stderr)
             return 1 if issues else 0
