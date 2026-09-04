@@ -139,6 +139,10 @@ def test_hardy_can_decline_to_call_the_provider_at_all() -> None:
     assert events[-1].text == "closed by `simp` before a model turn was spent"
     assert any(item["type"] == "declined_turn" for item in observed)
     assert loop.turns == 0
+    # Recorded as Hardy's own words. Kept in the assistant's role it would put
+    # them in the model's mouth in every later exchange that reads this
+    # conversation back.
+    assert loop.messages[-1].role == "user"
 
 
 def test_a_declined_turn_still_reports_the_exchange() -> None:

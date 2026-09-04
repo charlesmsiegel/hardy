@@ -262,7 +262,12 @@ class AgentLoop:
                 # an absence of one, so it is recorded and said out loud.
                 self._observe({"type": "declined_turn", "why": declined})
                 spoken.append(declined)
-                self.messages.append(Message("assistant", text=declined))
+                # In the `user` role, not the assistant's. Hardy is the party
+                # on this side of the wire -- the steering block travels the
+                # same way -- and a decline recorded as something the model
+                # said would put words in its mouth in every later exchange
+                # that reads this conversation back.
+                self.messages.append(Message("user", text=declined))
                 return
             if self._compact is not None:
                 compacted = self._compact(self.messages)
