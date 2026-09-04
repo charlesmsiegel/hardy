@@ -658,8 +658,9 @@ files rather than from a narration nobody can verify.
 `/export [path]` writes one self-contained HTML file — no scripts, no fonts, no
 images, nothing fetched when it is opened — holding the conversation, the Lean
 sources, the writeup sources, the audit verdicts, the naming registry, the
-approved assumptions with their provenance, the spend, and the model and
-toolchain identities. With no path it lands in the problem directory under the
+approved assumptions with their provenance, the spend, the project instructions
+the model was given, the points where its memory of the conversation was reset,
+and the model and toolchain identities. With no path it lands in the problem directory under the
 project's name and the time.
 
 The point of it is that it does **not** flatten Hardy's distinctions. A

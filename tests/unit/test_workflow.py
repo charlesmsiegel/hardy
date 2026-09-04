@@ -1156,3 +1156,22 @@ def test_a_run_cancelled_during_the_writeup_turn_compiles_nothing(tmp_path) -> N
 
     assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION
     assert built == [], 'a cancelled run compiled a document'
+
+
+def test_a_run_cancelled_while_the_doctor_probed_is_not_a_setup_failure(tmp_path) -> None:
+    """The doctor probes Lean and Tectonic as tracked children, so a press
+    reaches them and the probe comes back unhealthy -- which was then read as a
+    broken installation, blaming the machine for something the user did."""
+    workflow, domain, controller, state = _scripted_controller(tmp_path, healthy=False)
+    probe = controller._doctor
+
+    def cancelling(config):
+        controller.cancel()               # the press, mid-probe
+        return probe(config)              # an interrupted probe reports unhealthy
+
+    controller._doctor = cancelling
+    manifest = controller.run(
+        workflow.ProveRequest(text='two equals two', model='test-model'), Terminal()
+    )
+
+    assert manifest.terminal_reason is domain.TerminalReason.USER_CANCELLATION

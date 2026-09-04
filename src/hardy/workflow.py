@@ -299,6 +299,12 @@ class ProveWorkflow:
                     approved_claim,
                 )
             report = self._doctor(self._config)
+            # Before the report is interpreted. The doctor probes Lean and
+            # Tectonic as tracked children, so a press reaches them and an
+            # interrupted probe comes back unhealthy -- which the branch below
+            # would read as a broken installation and finalize as
+            # SETUP_FAILURE, blaming the machine for something the user did.
+            self._refuse_if_cancelled()
             if not report.healthy:
                 # Why, in the record: a setup failure with no reason beside it
                 # sends the reader to rerun `hardy doctor` to learn what this

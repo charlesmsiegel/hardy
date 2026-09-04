@@ -212,10 +212,18 @@ def load(root: Path, *, reserved: frozenset[str] | set[str] = frozenset()) -> tu
     where = directory(root)
     problems: list[str] = []
     try:
-        if where.is_symlink():
-            return [], [
-                f"{where} is a symlink; refusing to read prompt templates through it."
-            ]
+        # Every component from `root` down, not only the leaf. `.hardy` itself
+        # can be the link: a checkout shipping `.hardy -> ~/somewhere` with an
+        # ordinary `prompts/*.md` beneath it passes a check on `prompts` alone
+        # and loads host files as prompts to send. Above `root` is the user's
+        # own filesystem and none of Hardy's business.
+        walked = root
+        for name in where.relative_to(root).parts:
+            walked = walked / name
+            if walked.is_symlink():
+                return [], [
+                    f"{walked} is a symlink; refusing to read prompt templates through it."
+                ]
         if not where.is_dir():
             return [], problems
         files = sorted(where.iterdir(), key=lambda item: item.name)
