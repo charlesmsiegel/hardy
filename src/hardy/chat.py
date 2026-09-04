@@ -1015,16 +1015,31 @@ class MathematicsSession:
         previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint", *OPTIONAL_PROVENANCE)}
         carried = getattr(self.runtime, "conversation", None)
         self.runtime = self._build(model=model, session_id=self._carried_thread())
-        adopt = getattr(self.runtime, "adopt_conversation", None)
-        if adopt is not None and carried is not None:
-            adopt(carried)
         current = provenance(self.runtime)
         # The same drop `_sync_provenance` makes, for the same reason: a switch
         # to a backend that states no output cap must not leave the old one
         # standing in the record.
-        for key in OPTIONAL_PROVENANCE:
-            if key not in current:
-                self.state.pop(key, None)
+        #
+        # And the prompt is rebuilt over the corrected record rather than left
+        # holding the old one. `_build` freezes the state manifest into the
+        # system prompt and hands it to the runtime once, for the life of the
+        # conversation -- so a key dropped only from `self.state` left
+        # `session.json` and the switch event naming the uncapped condition
+        # while every later request still told the model it was generating
+        # under the cap that had just been retired. Building twice is the price
+        # of learning the new runtime's shape before the prompt is frozen, and
+        # it is paid only on the switch that actually changes it: a runtime is
+        # bookkeeping until its first turn, when the SDK is loaded.
+        stale = [key for key in OPTIONAL_PROVENANCE if key not in current and key in self.state]
+        for key in stale:
+            self.state.pop(key, None)
+        if stale:
+            self.runtime = self._build(model=model, session_id=self._carried_thread())
+        # Handed over after the last build, so a rebuilt runtime is not left
+        # holding the empty conversation its replacement was given.
+        adopt = getattr(self.runtime, "adopt_conversation", None)
+        if adopt is not None and carried is not None:
+            adopt(carried)
         self.state.update(current)
         self._save_state()
         self._record({"type": "model", "reason": "switched", "previous": previous, **current})
@@ -1123,6 +1138,12 @@ class MathematicsSession:
             self.state.pop(key, None)
         self.state.update(current)
         self._save_state()
+        if stale:
+            # Reopening is the other half of the same bug: `_build` ran above
+            # this call and froze the manifest from the record as it stood on
+            # disk, cap and all. See `switch_model` for why the prompt is
+            # rebuilt rather than only the record corrected.
+            self.runtime = self._build(session_id=self._carried_thread())
         if started:
             self._record({"type": "model", "reason": "session_resumed", "previous": previous, **current})
 

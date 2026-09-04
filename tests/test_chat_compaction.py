@@ -290,6 +290,13 @@ def test_reopening_on_a_backend_with_no_output_cap_drops_the_old_one(tmp_path: P
     reopened = session(tmp_path, FakeChatRuntime([]))
 
     assert "output_limit" not in reopened.state
+    # And out of the prompt as well as out of the record. `_build` runs before
+    # the correction and freezes the manifest into a system prompt the runtime
+    # is handed once, so a cap dropped only from `self.state` left every later
+    # request telling the model it generates under a limit the record had
+    # already retired -- the two disagreeing about the condition the turns ran
+    # under, which is what the record exists to settle.
+    assert "output_limit" not in reopened.runtime.context["system_prompt"]
     # And the change is on the record from both sides, so a reader can see what
     # the earlier turns did run under.
     resumed = [item for item in events(tmp_path) if item.get("reason") == "session_resumed"][-1]
@@ -320,8 +327,79 @@ def test_switching_to_a_runtime_with_no_cap_drops_it_too(tmp_path: Path) -> None
     chat.switch_model("another-model@test")
 
     assert "output_limit" not in chat.state
+    assert "output_limit" not in chat.runtime.context["system_prompt"]
     switched = [item for item in events(tmp_path) if item.get("reason") == "switched"][-1]
     assert switched["previous"]["output_limit"] == 8192
+
+
+def test_a_switch_that_drops_no_cap_builds_the_runtime_once(tmp_path: Path) -> None:
+    """The rebuild is the price of learning the new runtime's shape before the
+    prompt is frozen, and a switch that changes nothing must not pay it."""
+    built: list[FakeChatRuntime] = []
+
+    def make(model=None, **context):
+        runtime = FakeChatRuntime([], **context)
+        if model:
+            runtime.model = model
+        built.append(runtime)
+        return runtime
+
+    chat = MathematicsSession(
+        tmp_path,
+        make,
+        (sys.executable, str(Path(__file__).with_name("fake_lean.py"))),
+        (sys.executable, str(Path(__file__).with_name("fake_latex.py"))),
+        lambda proposal: False,
+    )
+    before = len(built)
+
+    chat.switch_model("another-model@test")
+
+    assert len(built) == before + 1
+    assert chat.runtime.model == "another-model@test"
+
+
+def test_a_switch_that_drops_a_cap_keeps_the_conversation(tmp_path: Path) -> None:
+    """The rebuilt runtime is the one the conversation is handed to.
+
+    Adopted before the rebuild, the turns the session had taken would have gone
+    to the runtime that was thrown away -- trading a stale prompt for a lost
+    conversation, which is the switch's whole reason for carrying one.
+    """
+    carried = [Message("user", text="prove it"), Message("assistant", text="working")]
+    built: list[FakeChatRuntime] = []
+
+    class Carrier(FakeChatRuntime):
+        conversation: list = []
+
+        def __init__(self, script, **context):
+            super().__init__(script, **context)
+            self.adopted: list | None = None
+
+        def adopt_conversation(self, messages) -> None:
+            self.adopted = list(messages)
+
+    def make(model=None, **context):
+        runtime = (Capped if not built else Carrier)([], **context)
+        if model:
+            runtime.model = model
+        built.append(runtime)
+        return runtime
+
+    chat = MathematicsSession(
+        tmp_path,
+        make,
+        (sys.executable, str(Path(__file__).with_name("fake_lean.py"))),
+        (sys.executable, str(Path(__file__).with_name("fake_latex.py"))),
+        lambda proposal: False,
+    )
+    chat.runtime.conversation = carried
+
+    chat.switch_model("another-model@test")
+
+    assert isinstance(chat.runtime, Carrier)
+    assert chat.runtime.adopted == carried
+    assert "output_limit" not in chat.runtime.context["system_prompt"]
 
 
 def test_the_facts_are_not_rebuilt_for_a_conversation_that_needs_no_compaction(tmp_path: Path) -> None:
