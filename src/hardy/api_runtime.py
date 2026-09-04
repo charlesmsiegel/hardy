@@ -87,6 +87,10 @@ def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
 
     An assistant turn that said nothing and called nothing is dropped: the API
     refuses empty content, and there is nothing in such a turn to preserve.
+    Consecutive `user` entries are joined for the mirror-image reason. Hardy
+    puts its own words in that role -- a compaction summary, a declined turn --
+    so two of them can land in a row without the model having said anything in
+    between, and the API expects the two sides to alternate.
     """
     out: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
@@ -107,7 +111,11 @@ def as_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
             continue
         flush()
         if message.role == "user":
-            if message.text:
+            if not message.text:
+                continue
+            if out and out[-1]["role"] == "user":
+                out[-1]["content"].append({"type": "text", "text": message.text})
+            else:
                 out.append({"role": "user", "content": [{"type": "text", "text": message.text}]})
             continue
         content: list[dict[str, Any]] = []
