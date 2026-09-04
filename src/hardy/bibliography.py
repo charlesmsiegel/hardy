@@ -47,7 +47,7 @@ from typing import Literal
 from .arxiv import PaperRecord
 from .domain import FrozenModel
 from .latex import uncommented
-from .layout import LayoutError, WriteGuard, read_text
+from .layout import LOCAL_DIR, LayoutError, WriteGuard, read_text
 from .storage import FileLock, LockTimeout
 
 #: The canonical store, beside the session record: versioned, hand-readable,
@@ -60,6 +60,12 @@ GENERATED = "references.tex"
 #: problem is an ordinary thing to have, and without this both read the same
 #: store, append their own entry, and the second write drops the first
 #: citation -- silently, with a `\cite` key already in somebody's document.
+#:
+#: Kept in `.local/`, which is machine-local and ignored, rather than beside
+#: the store. A process killed mid-citation leaves the file, and in the
+#: versioned directory the next `git add -A` would commit it -- after which
+#: every fresh checkout gets a lock with a current mtime, and the first
+#: citation on that clone waits out the timeout and fails.
 LOCK = "bibliography.lock"
 CURRENT_SCHEMA = 1
 
@@ -91,6 +97,9 @@ YEAR = re.compile(r"(\d{4})")
 # it silently becomes two keys inside `\cite{...}`, and one with a brace in it
 # breaks the entry that defines it.
 SAFE_KEY = re.compile(r"[^A-Za-z0-9:_-]+")
+#: How much of a key is the readable part. Long enough to recognise a paper
+#: by, short enough that no `\cite` ever outgrows a TeX input line.
+STEM_CHARACTERS = 60
 
 
 class BibliographyError(ValueError):
@@ -198,7 +207,12 @@ def base_key(record: PaperRecord) -> str:
             word = candidate
             break
     key = f"{author}{year}{word}" or record.arxiv_id
-    return SAFE_KEY.sub("", key) or "ref"
+    # Capped, because both halves come from arXiv. A surname or a first title
+    # word may legitimately be enormous, and an unbounded stem makes a
+    # `\bibitem` key past TeX's input-line capacity -- a citation recorded and
+    # then unable to compile. The digest `cite_key` appends is what keeps it
+    # unique; this half only has to be readable.
+    return SAFE_KEY.sub("", key)[:STEM_CHARACTERS] or "ref"
 
 
 def cite_key(record: PaperRecord) -> str:
@@ -241,7 +255,7 @@ class Bibliography:
         it finds -- neither of which may happen through a symlinked problem
         directory.
         """
-        return WriteGuard(self.problem, create=True).path(LOCK)
+        return WriteGuard(self.problem / LOCAL_DIR, create=True).path(LOCK)
 
     def read(self) -> Store:
         """What the store says, or an empty one when there is nothing yet.
@@ -326,9 +340,16 @@ class Bibliography:
                 )
             ) if record.content_sha256 else (held.content_sha256, *held.also_read)
             later = tuple(digest for digest in seen if digest and digest != held.content_sha256)
-            if merged == held.identities and later == held.also_read:
-                return held, False
             updated = held.model_copy(update={"identities": merged, "also_read": later})
+            if merged == held.identities and later == held.also_read:
+                # Nothing about the entry has changed, and the generated file
+                # is still rewritten. It is derived state that a clone, a
+                # merge, or a hand edit can leave missing or wrong, and there
+                # may be no new paper to cite merely to bring it back; a
+                # citation that reports success has to leave the reference
+                # list correct.
+                self._write(store)
+                return held, False
             self._write(
                 store.model_copy(
                     update={

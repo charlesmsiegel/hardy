@@ -260,7 +260,9 @@ def test_the_generated_file_may_not_be_written_by_hand():
 
 def test_a_citation_needs_the_lock_it_cannot_get(tmp_path: Path):
     """A lost citation is silent, so the refusal must not be."""
-    (tmp_path / "bibliography.lock").write_text("999999", encoding="utf-8")
+    held = tmp_path / ".local" / "bibliography.lock"
+    held.parent.mkdir(parents=True)
+    held.write_text("999999", encoding="utf-8")
     bibliography = Bibliography(tmp_path, lock_timeout=0.2)
     with pytest.raises(BibliographyError, match="another session"):
         bibliography.cite(_record(), now=None)
@@ -269,6 +271,9 @@ def test_a_citation_needs_the_lock_it_cannot_get(tmp_path: Path):
 def test_the_lock_is_released_when_a_citation_finishes(tmp_path: Path):
     bibliography = Bibliography(tmp_path)
     bibliography.cite(_record())
+    # In `.local/`, which is machine-local and ignored -- a lock left by a
+    # killed process must not be committable.
+    assert not (tmp_path / ".local" / "bibliography.lock").exists()
     assert not (tmp_path / "bibliography.lock").exists()
     assert bibliography.cite(_record(arxiv_id="2401.00002v1"))[1]
 
@@ -313,3 +318,33 @@ def test_building_a_control_sequence_by_name_is_refused():
         refusal = hand_written_bibliography("writeup.tex", command)
         assert refusal, command
         assert "control sequences by name" in refusal
+
+
+def test_citing_a_paper_already_present_still_regenerates_the_file(tmp_path: Path):
+    """The generated list is derived state a clone or a merge can lose.
+
+    An early return that skipped the write left a missing or hand-edited
+    `references.tex` missing or edited after `cite_paper` reported success --
+    and there may be no new paper to cite merely to bring it back.
+    """
+    bibliography = Bibliography(tmp_path)
+    entry, _ = bibliography.cite(_record())
+    generated = tmp_path / "tex" / "references.tex"
+    generated.unlink()
+    again, added = bibliography.cite(_record())
+    assert not added
+    assert again.key == entry.key
+    assert f"\\bibitem{{{entry.key}}}" in generated.read_text(encoding="utf-8")
+
+
+def test_a_key_stays_short_enough_for_tex(tmp_path: Path):
+    """Both halves of the readable stem are arXiv's text, not Hardy's."""
+    key = cite_key(_record(authors=("A" * 5_000,), title="B" * 5_000))
+    assert len(key) < 100
+    # Two papers whose readable stems are both cut to the same characters are
+    # still two keys: the digest half is what separates them.
+    other = cite_key(
+        _record(arxiv_id="2401.00001v1", authors=("A" * 5_000,), title="B" * 5_000)
+    )
+    assert other != key
+    assert len(other) < 100

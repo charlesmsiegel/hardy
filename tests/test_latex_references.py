@@ -168,10 +168,14 @@ def test_keys_are_collected_from_every_auxiliary_file(tmp_path: Path):
     anyway -- so the whole auxiliary tree is read, not the root's alone.
     """
     tree = _tree(tmp_path)
-    (tree / "part.aux").write_text("\\bibcite{hidden2020}{1}\n", encoding="utf-8")
+    (tree / "part.tex").write_text(
+        "\\begin{thebibliography}{9}\n\\bibitem{hidden2020} Nobody.\n"
+        "\\end{thebibliography}\n",
+        encoding="utf-8",
+    )
     seen: list[tuple[str, ...]] = []
     LatexTools(COMMAND).check(
-        PREAMBLE + "Text.\n" + END,
+        PREAMBLE + "\\include{part}\n" + END,
         tree=tree,
         vouched=lambda keys: seen.append(keys) or "",
     )
@@ -189,3 +193,24 @@ def test_a_refused_reference_list_takes_the_save_with_it(tmp_path: Path):
     assert not result.ok
     assert "no." in result.output
     assert committed == []
+
+
+def test_an_aux_file_committed_into_the_tree_is_not_read_as_this_compile_s(
+    tmp_path: Path,
+):
+    r"""`_copy_tree` copies everything under `tex/`, build artifacts included.
+
+    A checkout carrying `tex/old.aux` with a `\citation` in it would be read
+    as a citation of the document being checked, and every clean writeup in
+    that tree refused over a file the compiler never wrote.
+    """
+    tree = _tree(tmp_path)
+    (tree / "old.aux").write_text("\\citation{obsolete}\n", encoding="utf-8")
+    seen: list[tuple[str, ...]] = []
+    result = LatexTools(COMMAND).check(
+        PREAMBLE + "Text.\n" + END,
+        tree=tree,
+        vouched=lambda keys: seen.append(keys) or "",
+    )
+    assert result.ok, result.output
+    assert seen and "obsolete" not in seen[0]
