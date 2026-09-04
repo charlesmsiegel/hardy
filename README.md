@@ -648,8 +648,8 @@ or gate CI on `hardy evals check`, rather than on that status.
 
 `hardy prove` is the other exception, in the opposite direction: it exits `0`
 whenever the run reached its completed phase, and a run that exhausted its
-proof checks or failed to compile its document still reaches that phase — with
-`partial` formal status and a terminal reason saying why. So `0` there means
+proof checks or failed to compile its document still reaches that phase, with a
+terminal reason saying why. So `0` there means
 the pipeline ran to the end, not that Lean verified anything; the manifest's
 grades are what say which. A caller that must distinguish them reads
 `manifest.json` — and reads more than one field, because the grades move
@@ -759,7 +759,7 @@ hardy prove "every prime above two is odd"
 | Option | Default | What it does |
 | --- | --- | --- |
 | `claim` (positional) | prompted for if omitted | The claim in ordinary language. Only an answer that is still empty after the prompt is refused, with `2`. Passing an empty string is not the same as refusing: `hardy prove "$CLAIM"` with an unset variable falls through to the prompt, so it raises `EOFError` on closed stdin and reads the next line of piped input as the claim — check the variable before the call. A whitespace-only claim is taken as given. |
-| `--backend {claude,codex}` | `claude` | Which SDK drives the run. The no-tools guarantee behind the faithfulness reader holds on `claude` and not on `codex`; each runtime reports what its isolation is worth and every verdict records it. Note that the staged preflight is Claude's either way: it runs `hardy doctor`'s required checks, which include the Claude SDK, the `claude` CLI, and a signed-in login, so a Codex-only machine records a setup failure before the backend is ever built. |
+| `--backend {claude,codex}` | `claude` | Which SDK drives the run. The no-tools guarantee behind the faithfulness reader holds on `claude` and not on `codex`; each runtime reports what its isolation is worth and every verdict records it. Note that the staged preflight is Claude's either way: it runs `hardy doctor`'s required checks, which include the Claude SDK, the `claude` CLI, and a signed-in login, so a Codex-only machine records a setup failure before the backend is ever built. Pass `--model` with it, too: the run's model identity goes to the chosen SDK unchanged, and the default is `claude-opus-5`, which Codex cannot serve. |
 | `--model IDENTITY` | the global `--model` | Who does the work. |
 | `--faithfulness-model IDENTITY` | `faithfulness_model`, else the run's own model | Who reads the translation back — the configured reviewer wins, and the run's model is only the fallback. Per invocation, because the setting is global and the backends do not share model names. |
 
