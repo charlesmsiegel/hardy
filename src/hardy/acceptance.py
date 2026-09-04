@@ -713,9 +713,6 @@ BATCH_FAILURES = frozenset({"no_proof_submitted", "axioms_rejected", "turn_limit
 # which is a different fact from the model giving up or the gate refusing.
 REFUSALS = frozenset({"no_proof_submitted", "axioms_rejected"})
 # The tool names that count as "the model looked something up", per surface.
-#: The heading `runner.run` writes a kept sketch under. Named once, because
-#: the audit and the writer must mean the same section.
-SKETCH_HEADING = "## Sketch (not a proof)"
 BATCH_SEARCH = frozenset({"search_declaration"})
 STAGED_SEARCH = frozenset({"lean_search_declarations", "lean_inspect_declarations", "rank_premises"})
 
@@ -845,13 +842,21 @@ def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]]) -> 
     elif any(item.get("ok") is True for item in attempts if isinstance(item, dict)):
         issues.append("a closer attempt was accepted but the block names no tactic that closed it")
     # The claim that no model was needed is the one the field exists to make,
-    # so it is the one worth checking against the rest of the record.
+    # so it is the one worth checking against the rest of the record -- and in
+    # both directions. Asking only "if a turn was declined, does the rest agree"
+    # let the decline itself be deleted, which took the provider-exchange check
+    # down with it.
     declined = [event for event in events if event.get("type") == "declined_turn"]
-    if declined:
-        if closed_by is None:
-            issues.append("a turn was declined for a ladder that closed nothing")
-        if any(event.get("type") == "result" for event in events):
-            issues.append("a run that declined its model turn records a provider exchange")
+    exchanges = [event for event in events if event.get("type") == "result"]
+    if closed_by is not None:
+        # `closed_by` is set only for a submission the run kept, which is
+        # exactly the case where no model turn is spent.
+        if len(declined) != 1:
+            issues.append(f"a ladder that closed the statement records {len(declined)} declined turns, not one")
+        if exchanges:
+            issues.append("a run the ladder closed records a provider exchange")
+    elif declined:
+        issues.append("a turn was declined for a ladder that closed nothing")
     return issues
 
 
@@ -885,6 +890,8 @@ def _sketch_issues(
         and isinstance(event.get("result"), dict)
         and event["result"].get("ok") is True
     ]
+    from .runner import SKETCH_HEADING, sketch_section
+
     carried = SKETCH_HEADING in writeup
     if reason == "verified":
         # A verified run has the proof to show. A skeleton recorded beside it
@@ -912,8 +919,13 @@ def _sketch_issues(
             issues.append("the kept sketch's holes are not the ones Lean reported")
     if not carried:
         issues.append("writeup.md does not carry the sketch the record kept")
-    elif str(sketch.get("proof", "")) not in writeup:
-        issues.append("writeup.md's sketch section is not the skeleton the record kept")
+    elif sketch_section(sketch) not in writeup:
+        # The whole section, not the code block alone. Checking only that the
+        # skeleton appears somewhere let an honest writeup be edited from
+        # "1 hole" to "0 holes" with the Lean untouched -- and the writeup is
+        # the artifact a reader opens, so that is exactly where a partial
+        # result would most usefully conceal its remaining work.
+        issues.append("writeup.md's sketch section is not the one the record implies")
     return issues
 
 
@@ -1044,11 +1056,19 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
         issues.append("usage differs between result.json and trajectory.json")
     if "turns" not in result:
         issues.append("result states no turn count (absent is not null)")
-    elif reason == "wall_clock_limit" and result["turns"] is not None:
-        # The provider's count rides on its final result, which a run Hardy's
-        # clock cancelled never receives. A count here was invented.
-        issues.append("a wall-clock-cancelled run reports a turn count the provider never delivered")
     limits = trajectory.get("limits") or {}
+    if (
+        "turns" in result
+        and reason == "wall_clock_limit"
+        and result["turns"] is not None
+        and limits.get("turns_enforced_by") != "hardy"
+    ):
+        # The *provider's* count rides on its final result, which a run Hardy's
+        # clock cancelled never receives, so a count there was invented. A
+        # harness-owned loop counts its own provider calls and publishes them
+        # however the exchange ended, so on that backend the count is the
+        # honest one and refusing it would fail every truthful API timeout.
+        issues.append("a wall-clock-cancelled run reports a turn count the provider never delivered")
     for field in ("wall_seconds", "elapsed_seconds", "max_turns"):
         if field not in limits:
             issues.append(f"trajectory limits do not state {field}")

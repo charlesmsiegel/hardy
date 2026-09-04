@@ -35,6 +35,12 @@ from typing import Any, Protocol
 
 from .models import ToolResult, TurnEvent
 
+#: Stop reasons that mean the model finished saying what it had to say. None
+#: is here because a provider that states nothing has told Hardy nothing to
+#: disclose; anything else -- `max_tokens` above all -- ended the turn for a
+#: reason the reader has to be told about.
+TERMINAL_STOPS = frozenset({"end_turn", "stop_sequence", "tool_use", None})
+
 
 class TurnLimitReached(RuntimeError):
     """The exchange stopped because the requested turn bound was reached.
@@ -322,6 +328,19 @@ class AgentLoop:
             if budget.expired():
                 self._observe({"type": "wall_clock_limit", "seconds": self.wall_seconds})
                 raise TimeoutError(f"the run exceeded its {self.wall_seconds:g}s wall-clock budget")
+            if self._cancelled:
+                # The request was already in flight when the cancel arrived and
+                # this transport cannot abort one, so the answer came back
+                # after Hardy had reported the turn stopped. It is recorded --
+                # it was produced and it was billed for -- and it is not
+                # published: a reply the user is handed after being told the
+                # turn was cancelled is worse than no reply.
+                self._observe({
+                    "type": "discarded",
+                    "why": "the turn was cancelled while this reply was in flight",
+                    "message": {"role": "assistant", "content": turn.text},
+                })
+                return
             if turn.thinking:
                 self._observe({"type": "thinking"})
                 yield TurnEvent("thinking")
@@ -331,8 +350,29 @@ class AgentLoop:
                 yield TurnEvent("text", text=turn.text)
             self.messages.append(Message("assistant", text=turn.text, tool_calls=turn.tool_calls))
             if not turn.tool_calls:
+                yield from self._settle(turn)
                 return
             yield from self._call_tools(turn.tool_calls)
+
+    def _settle(self, turn: ProviderTurn) -> Iterator[TurnEvent]:
+        """Say so when a turn ended for a reason other than having finished.
+
+        A reply that stopped because it ran out of output tokens is not a
+        finished answer, and a tool-free turn is where that is indistinguishable
+        by shape alone: the exchange ends either way. Presented as completion it
+        reads as the model having said its piece -- and unattended, as a run
+        that chose not to submit rather than one cut off before it could.
+        """
+        if turn.stop_reason in TERMINAL_STOPS:
+            return
+        self._observe({"type": "truncated", "stop_reason": turn.stop_reason})
+        yield TurnEvent(
+            "notice",
+            text=(
+                f"Hardy: the model stopped for `{turn.stop_reason}` rather than finishing, so "
+                "the reply above is cut off rather than complete."
+            ),
+        )
 
     def _call_tools(self, calls: Sequence[ToolCall]) -> Iterator[TurnEvent]:
         for call in calls:
@@ -343,7 +383,19 @@ class AgentLoop:
                 # an answer for the call, or the next request is malformed.
                 result = ToolResult(False, "the turn was cancelled before this tool call was made")
             else:
-                result = self._dispatch(call.name, dict(call.arguments))
+                try:
+                    result = self._dispatch(call.name, dict(call.arguments))
+                except Exception as error:  # noqa: BLE001 - answered, not propagated
+                    # An unexpected failure -- an `OSError` writing an
+                    # artifact, say -- must not escape before the result is
+                    # appended. The conversation would then hold an assistant
+                    # `tool_use` that nothing ever answered, and every later
+                    # request built from it is one the API refuses outright:
+                    # a single unlucky write would end the session rather than
+                    # the turn. The failure is the tool's answer instead, which
+                    # is also what the model needs to see.
+                    result = ToolResult(False, f"the tool failed: {type(error).__name__}: {error}")
+                    self._observe({"type": "tool_error", "name": call.name, "error": f"{type(error).__name__}: {error}"})
             self.messages.append(
                 Message("tool_result", text=result.output, call_id=call.id, name=call.name, ok=result.ok)
             )

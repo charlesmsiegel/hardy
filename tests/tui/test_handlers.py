@@ -476,3 +476,24 @@ async def test_import_unquotes_a_quoted_triage_directory(ui, settings):
     session = SimpleNamespace(triage_pile=triage_pile)
     await handlers.handle_import(ui, '"my old files"', State(config=settings, session=session))
     assert piles == [Path("my old files")]
+
+
+async def test_the_model_picker_names_which_credentials_it_will_spend(settings):
+    """On an API-key session the old wording told the user their subscription
+    was about to be spent when it was not."""
+    seen: dict[str, str] = {}
+
+    class Picker:
+        def write(self, text, *, style="system"):
+            pass
+
+        async def choose(self, title, rows, *, current=0, subtitle=""):
+            seen["subtitle"] = subtitle
+            return None
+
+    await handlers._chosen_identity(Picker(), "", settings)
+    assert "Claude Code subscription" in seen["subtitle"]
+
+    await handlers._chosen_identity(Picker(), "", dataclasses.replace(settings, backend="api"))
+    assert "Anthropic API key (metered)" in seen["subtitle"]
+    assert "subscription" not in seen["subtitle"]
