@@ -237,3 +237,29 @@ def test_a_link_is_refused_by_the_open_itself_not_by_a_check_before_it(tmp_path,
     assert found == []
     assert any("symlink" in problem for problem in problems)
     assert not any("PRIVATE KEY MATERIAL" in str(item) for item in found)
+
+
+def test_a_platform_without_the_no_follow_flag_still_refuses_a_link(tmp_path, monkeypatch):
+    """Windows has no `O_NOFOLLOW`, so `_NOFOLLOW` is 0 there.
+
+    Naming `os.O_NOFOLLOW` directly raised `AttributeError` before the session's
+    own error handling ran, so a project with any template in it could not open
+    a Windows session at all. With the flag absent the pre-check is the whole of
+    the leaf check -- narrower than the atomic refusal, and far better than
+    reading the link.
+    """
+    from hardy.prompts import user
+
+    secret = tmp_path / "id_rsa"
+    secret.write_text("PRIVATE KEY MATERIAL\n", encoding="utf-8")
+    prompts = tmp_path / ".hardy" / "prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "notes.md").symlink_to(secret)
+    (prompts / "fine.md").write_text("an ordinary template\n", encoding="utf-8")
+
+    monkeypatch.setattr(user, "_NOFOLLOW", 0)
+
+    found, problems = user.load(tmp_path)
+
+    assert [item.name for item in found] == ["fine"]
+    assert any("symlink" in problem for problem in problems)

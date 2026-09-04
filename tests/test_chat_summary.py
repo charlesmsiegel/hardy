@@ -601,20 +601,30 @@ def test_the_settings_carry_the_limits_that_bound_what_could_be_observed(tmp_pat
     Read off the runtime that enforces them, so what the page reports is what
     was actually in force rather than what a config file still says.
     """
-    from hardy import cas_tools
-    from hardy.domain import RunLimits
-
     chat = built(tmp_path)
-
-    class Session:
-        limits = RunLimits()
-
-    chat.cas = cas_tools.CasToolRuntime.__new__(cas_tools.CasToolRuntime)
-    chat.cas.session = Session()
-    chat.cas.observation_bytes = 32 * 1024
+    chat.cas = object()
+    chat.search = object()
 
     settings = chat.export_material()["settings"]
     assert "per cell" in settings["Computer algebra limits"]
     assert "per session" in settings["Computer algebra limits"]
     assert "bytes per tool result" in settings["Observed by the model"]
     assert "wall clock" in settings["Literature search budget"]
+
+
+def test_the_retrieval_budget_is_reported_without_a_computer_algebra_kernel(tmp_path: Path):
+    """`_chat` builds the two runtimes independently.
+
+    Reading the budgets off the CAS session meant a session with working
+    retrieval and no kernel reported no retrieval budget at all -- and the
+    point of this table is that two runs under different budgets can be told
+    apart.
+    """
+    chat = built(tmp_path)
+    chat.cas = None
+    chat.search = object()
+
+    settings = chat.export_material()["settings"]
+    assert "Computer algebra limits" not in settings
+    assert "wall clock" in settings["Literature search budget"]
+    assert "bytes per tool result" in settings["Observed by the model"]

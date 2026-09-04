@@ -41,6 +41,10 @@ from . import audit as audit_module
 #: How much of a refusal's text is worth keeping in a summary line. Long enough
 #: to say what Lean objected to, short enough that a dozen of them still read.
 DETAIL = 160
+#: The newest failed attempts always keep at least this many slots, so a run
+#: with many SDK denials cannot hide the diagnostic that stopped the work.
+FAILURE_FLOOR = 4
+
 #: How many failed attempts to carry. The most recent, because the summary is
 #: about where the work is now, not about everything that was ever tried.
 ATTEMPTS = 12
@@ -167,7 +171,16 @@ def attempts(events: Iterable[Mapping[str, Any]], *, limit: int = ATTEMPTS) -> t
     every = list(folded.values())
     denied = [item for item in every if item.subject == "" and "not a Hardy tool" in item.detail]
     rest = [item for item in every if item not in denied]
-    kept = denied + rest[-max(0, limit - len(denied)) :] if denied else rest[-limit:]
+    # The same competition the export's refusal list resolves, resolved the
+    # same way: the SDK denials are what a reader is here for, the newest
+    # failures are what says why the work stopped, and neither may hide the
+    # other. `[-0:]` is the whole list rather than an empty one, so the room
+    # left is tested before it is used as a bound.
+    floor = min(len(rest), FAILURE_FLOOR)
+    for_denials = max(0, limit - floor)
+    kept_denied = denied[-for_denials:] if for_denials else []
+    room = max(limit - len(kept_denied), floor)
+    kept = kept_denied + (rest[-room:] if room > 0 else [])
     dropped = len(every) - len(kept)
     if not dropped:
         return tuple(kept)
