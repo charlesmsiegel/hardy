@@ -384,6 +384,33 @@ class PaperLibrary:
                 f"the stored response for {identifier} does not match its recorded digest; "
                 "this record no longer says where its metadata came from"
             )
+        # And the metadata is re-derived from that response rather than merely
+        # accompanied by it. Until this, the two digests proved the response
+        # was untouched and that the record agreed with `content.txt` -- and
+        # nothing at all connected the two, so editing `record.json` and
+        # `content.txt` together and recomputing the content digest served
+        # fabricated authors and titles under a response that was still
+        # genuinely arXiv's. A record's claim is that these fields came out of
+        # those bytes; that claim is now checked rather than asserted.
+        #
+        # Rebuilt with the record's own `source_url` and `fetched_at`, which
+        # the feed does not carry: those two are covered instead by
+        # `content_sha256`, which is the digest a bibliography entry takes to
+        # another machine. Comparing the rebuilt content digest covers every
+        # field `_entry` reads in one comparison.
+        try:
+            reparsed = _entries(response, record.source_url, record.fetched_at)
+        except ArxivError as error:
+            raise ArxivError(
+                f"the stored response for {identifier} can no longer be read as the feed "
+                f"its record was parsed from: {error}"
+            ) from error
+        rebuilt = next((one for one in reparsed if one.arxiv_id == record.arxiv_id), None)
+        if rebuilt is None or rebuilt.content_sha256 != record.content_sha256:
+            raise ArxivError(
+                f"the record stored under {identifier} is not what its own response says; "
+                "its metadata has been edited away from the bytes it claims to come from"
+            )
         if str(record.identifier) != str(identifier):
             raise ArxivError(
                 f"the record stored under {identifier} says it is {record.arxiv_id}; "
@@ -519,9 +546,17 @@ class PaperLibrary:
 
     def last_request(self) -> float:
         try:
-            return float(json.loads(read_text(self.throttle, "state.json"))["last_request"])
+            when = float(json.loads(read_text(self.throttle, "state.json"))["last_request"])
         except (OSError, ValueError, KeyError, TypeError):
             return 0.0
+        # A `NaN` survives `json.loads` and `float`, and every comparison
+        # against one is false -- so the interval arithmetic below produced no
+        # wait at all and the request went out at once, past the one promise
+        # this file exists to keep. Reported as no record, which is what the
+        # clause above already does for a state file that cannot be read: the
+        # spacing is re-established from the next `note_request` rather than
+        # guessed at.
+        return when if math.isfinite(when) else 0.0
 
     def note_request(self, when: float) -> None:
         """Record that a request is being made, before it is made.

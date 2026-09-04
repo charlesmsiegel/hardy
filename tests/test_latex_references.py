@@ -309,3 +309,36 @@ def test_the_diagnostic_is_inside_the_output_limit_too(tmp_path: Path):
     # rather than TeX's chatter.
     assert result.output.startswith("exit=")
     assert "did not resolve" in result.output or "thm:missing" in result.output
+
+
+def test_a_macro_included_fragment_is_still_compiled_and_still_caught(tmp_path: Path):
+    r"""Where `reached_fragments` stops, and what holds anyway.
+
+    `\newcommand{\body}{\input{part}}` followed by `\body` includes
+    `part.tex`, and the scan -- which reads commands rather than expanding
+    macros -- calls it unreached. So saving `part.tex` alone is compiled
+    through a probe and its references are not judged. What this pins is that
+    the gap is bounded: the fragment is still compiled, so malformed TeX is
+    still refused, and the next save of the root judges the whole tree.
+    """
+    tree = _tree(tmp_path)
+    (tree / "part.tex").write_text("Text.\n", encoding="utf-8")
+    root = (
+        "\\documentclass{article}\n\\newcommand{\\body}{\\input{part}}\n"
+        "\\begin{document}\n\\body\n\\end{document}\n"
+    )
+    (tree / "writeup.tex").write_text(root, encoding="utf-8")
+    tools = LatexTools(COMMAND)
+    # Not judged on its references, because the scan cannot see the macro.
+    lenient = tools.check("See \\ref{thm:missing}.\n", path="part.tex", tree=tree)
+    assert lenient.ok
+    # But it WAS compiled -- the compiler's own warning is in the answer -- so
+    # source that is not TeX at all is still refused here.
+    assert "thm:missing" in lenient.output
+    broken = tools.check("\\input{nothing-at-all}\n", path="part.tex", tree=tree)
+    assert not broken.ok
+    # And the root's own save judges the whole document, undefined ref and all.
+    (tree / "part.tex").write_text("See \\ref{thm:missing}.\n", encoding="utf-8")
+    whole = tools.check(root, tree=tree)
+    assert not whole.ok
+    assert "thm:missing" in whole.output

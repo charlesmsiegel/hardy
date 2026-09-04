@@ -770,3 +770,35 @@ def test_arxivs_own_error_entry_is_still_a_report_that_nothing_matched(tmp_path:
     )
     client, _, _ = _client(tmp_path, Recorder(feed))
     assert client.search("ricci flow") == ()
+
+
+def test_a_throttle_timestamp_that_is_not_a_number_is_no_record(tmp_path: Path):
+    """Every comparison against a NaN is false, so the interval vanished.
+
+    The arithmetic in `_throttle` computed no wait at all and the request went
+    out at once, past the one promise this file exists to keep.
+    """
+    library = arxiv.PaperLibrary(tmp_path / "papers")
+    library.note_request(1_000_000.0)
+    state = library.throttle / "state.json"
+    state.write_text('{"last_request": NaN}', encoding="utf-8")
+    assert library.last_request() == 0.0
+
+
+def test_a_record_edited_away_from_its_own_response_is_refused(tmp_path: Path):
+    """The two digests proved the response was untouched and that the record
+    agreed with `content.txt` -- and nothing connected the two.
+
+    So editing `record.json` and `content.txt` together and recomputing the
+    content digest served fabricated authors under a response that was still
+    genuinely arXiv's.
+    """
+    client, library, _ = _client(tmp_path, Recorder(_feed()))
+    record, _ = client.fetch("math.DG/0211159v1")
+    held = library.path_for(record.identifier)
+    forged = record.model_copy(update={"authors": ("Somebody Else",)})
+    forged = forged.model_copy(update={"content_sha256": arxiv.digest(forged.content())})
+    (held / "record.json").write_text(forged.model_dump_json(), encoding="utf-8")
+    (held / "content.txt").write_bytes(forged.content().encode("utf-8"))
+    with pytest.raises(arxiv.ArxivError, match="not what its own response says"):
+        library.read(record.identifier)

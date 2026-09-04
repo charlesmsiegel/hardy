@@ -323,6 +323,28 @@ def _reached(work: Path) -> set[str]:
     exempted from the reference and citation checks -- and an undefined
     `\ref` in a fragment that is genuinely part of the document exited zero
     and was committed.
+
+    WHERE THIS STOPS. The scan reads `\input` commands out of the text TeX
+    would execute; it does not expand macros. `\newcommand{\body}{\input{part}}`
+    followed by `\body` includes `part.tex` in the real document, and this
+    calls it unreached -- so saving `part.tex` alone is compiled through a
+    probe and its references are not judged.
+
+    That boundary is deliberate, and the direction it errs in is the safe one.
+    Guessing the other way is worse, not better: a fragment wrongly called
+    part of the document is compiled by running the UNCHANGED root, which does
+    not read it -- so malformed source would be saved as checked, which is the
+    failure the probe exists to prevent. Erring as it does, the fragment is
+    still compiled, still has to be sound TeX, and cannot be published: only
+    an `actual` compile publishes, and the next save of the root itself judges
+    the whole tree and refuses. `tests/test_latex_references.py` pins both
+    halves of that, so the bound is asserted rather than assumed.
+
+    Closing it properly needs the compiler's own list of the files it opened,
+    which is the same answer the bibliography rule reached in an earlier round
+    for the same reason: chasing TeX's expansion with a regular expression is
+    a race against a macro language, and Hardy's rule everywhere else is to
+    read what the compiler did rather than guess what the source means.
     """
     sources = {}
     for found in sorted(work.rglob("*.tex")):
