@@ -914,7 +914,7 @@ def _attempt_issues(attempts: list[Any], events: list[dict[str, Any]]) -> list[s
         len(events),
     )
     submissions = [
-        event for event in events[:boundary]
+        (index, event) for index, event in enumerate(events[:boundary])
         if event.get("type") == "tool" and event.get("name") == "submit_proof"
     ]
     issues: list[str] = []
@@ -927,12 +927,23 @@ def _attempt_issues(attempts: list[Any], events: list[dict[str, Any]]) -> list[s
         if index >= len(submissions):
             issues.append(f"closer attempt {index + 1} has no submit_proof behind it")
             continue
-        event = submissions[index]
+        position, event = submissions[index]
         expected = f"by {attempt.get('tactic')}"
         if str((event.get("arguments") or {}).get("proof", "")) != expected:
             issues.append(f"closer attempt {index + 1} does not match the proof submitted for it")
         result = event.get("result")
-        if not isinstance(result, dict) or result.get("ok") is not attempt.get("ok"):
+        # Against whether the run *kept* the submission, not against Lean's raw
+        # answer. `runner.submit` reports a tactic as having failed when the
+        # check began inside the deadline and finished outside it -- the proof
+        # is not kept -- while the event beside it still carries Lean's
+        # `ok: true` behind the runner's discard marker. Compared to the raw
+        # flag, that honest `wall_clock_limit` artifact was refused as
+        # inconsistent with itself.
+        if not isinstance(result, dict):
+            issues.append(f"closer attempt {index + 1} states no result for its submission")
+            continue
+        kept = result.get("ok") is True and not _discarded(events, position)
+        if kept is not attempt.get("ok"):
             issues.append(f"closer attempt {index + 1} disagrees with how its submission came out")
         # And in Lean's words, not only in its verdict. `ok` alone left the
         # diagnostic free: the `output` of a failed attempt could be rewritten
