@@ -596,3 +596,34 @@ def test_a_percent_inside_verbatim_does_not_swallow_its_closer():
     )
     assert refusal
     assert "writes its own bibliography" in refusal
+
+
+def test_percent_as_a_verb_delimiter_does_not_hide_what_follows():
+    r"""`%` is a legal `\verb` delimiter, and TeX closes at the second one.
+
+    Stripping comments before finding `\verb` spans read the OPENING
+    delimiter as a comment and dropped the rest of the line -- so a
+    `thebibliography` written after it vanished from the check while the
+    compiler executed it.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "\\verb%x%\\begin{thebibliography}{1}\\bibitem{known2020} Fake."
+        "\\end{thebibliography}\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal
+
+
+def test_a_verb_delimited_by_percent_is_still_verbatim():
+    r"""And the other direction: the span itself is text, not commands."""
+    assert hand_written_bibliography("writeup.tex", "Show \\verb%\\bibitem{x}% inline.\n") == ""
+
+
+def test_a_verb_written_inside_a_comment_is_not_a_verb():
+    r"""Whichever comes first in the line wins, which is what TeX does."""
+    refusal = hand_written_bibliography(
+        "writeup.tex", "% \\verb|a|\n\\bibitem{y2020} No.\n"
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal

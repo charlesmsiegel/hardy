@@ -336,7 +336,7 @@ class PaperToolRuntime:
         full = self._fetch_payload(record, held, SEARCH_DETAIL[0].title)
         if len(full.encode("utf-8")) <= self.observation_bytes:
             return full
-        return json.dumps(
+        identity = json.dumps(
             {
                 "paper_id": record.arxiv_id,
                 "content_sha256": record.content_sha256,
@@ -348,6 +348,14 @@ class PaperToolRuntime:
             },
             ensure_ascii=False,
         )
+        if len(identity.encode("utf-8")) <= self.observation_bytes:
+            return identity
+        # "Always fits" was a claim about the identity being short, not a
+        # measurement, and nothing puts a floor under the configured budget: a
+        # 64-character digest and a sentence do not fit in 256 bytes. The
+        # paper is stored either way, so the honest short answer is the
+        # identifier and where to go for the rest.
+        return json.dumps({"paper_id": record.arxiv_id, "already_held": held})
 
     def _fetch_payload(self, record: PaperRecord, held: bool, title: int) -> str:
         # Bounded like the other two. A title or an author list can be

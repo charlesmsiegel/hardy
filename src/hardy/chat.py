@@ -25,6 +25,7 @@ from .cas import CasError
 from .cas_export import export_session
 from .cas_tools import CAS_TOOL_NAMES, CAS_TOOLS, CasToolRuntime
 from .domain import RunLimits
+from .latex import OUTPUTS as LATEX_OUTPUTS
 from .latex import ROOT_DOCUMENT, LatexTools, compiles_document, uncommented, unreached_fragments
 from .layout import (
     HARDY_DIR,
@@ -3714,9 +3715,19 @@ class MathematicsSession:
         if not self.tex_root.is_dir():
             return []
         try:
-            return [relative.as_posix() for relative in files_under(self.tex_root, "")]
+            found = files_under(self.tex_root, "")
         except (OSError, ValueError):
             return self._tex_paths()
+        # The same exclusions `_copy_tree` makes, so that this list is exactly
+        # what the compiler is handed: an auxiliary file is the compiler's
+        # output read back, and `writeup.pdf`/`writeup.log` are its outputs by
+        # name. Neither is an input, so neither is scanned for commands nor
+        # hashed into what the writeup was compiled from.
+        return [
+            relative.as_posix()
+            for relative in found
+            if relative.suffix != ".aux" and relative.as_posix() not in LATEX_OUTPUTS
+        ]
 
     def _tex_path(self, path: str) -> tuple[str, Path] | ToolResult:
         """The workspace-relative writeup path, and where it lives on disk."""
@@ -5057,10 +5068,34 @@ class MathematicsSession:
         if only that had not moved. Everything else is read live.
         """
         digest = hashlib.sha256()
-        for path, source in sorted((self._tex_sources() if tex is None else tex).items()):
+        # Every file the compiler is handed, not the `.tex` ones alone.
+        # `_copy_tree` gives TeX the whole tree, so a `.bbl`, an `.inc` or a
+        # local `.sty` that the root pulls in is part of what was compiled --
+        # and while the signature covered only `.tex`, one of those could
+        # change after a successful save and leave the writeup reading as
+        # current against a tree the checked PDF no longer describes. Read as
+        # bytes, because these are not all text.
+        for path in self._compilable_paths():
             digest.update(path.encode("utf-8"))
             digest.update(b"\0")
-            digest.update(source.encode("utf-8"))
+            if tex is not None and path in tex:
+                # A caller holding a snapshot of the `.tex` tree is answered
+                # from it, so its obligations all describe one moment. For a
+                # file that decodes cleanly this is the same bytes the live
+                # read below would hash; where it is not -- a `.tex` that is
+                # not UTF-8, or one deleted since the snapshot -- the two
+                # disagree and the writeup reads as stale, which is the safe
+                # direction for a comparison whose match releases a refusal.
+                digest.update(tex[path].encode("utf-8"))
+                digest.update(b"\0")
+                continue
+            try:
+                digest.update(read_bytes(self.tex_root, path))
+            except (OSError, ValueError):
+                # Unreadable is itself a state to be stamped against, and a
+                # distinct one from absent: the path is already in the hash
+                # above, so this marks it without pretending to its content.
+                digest.update(b"<unreadable>")
             digest.update(b"\0")
         # The banner is part of the published document, so a change to what it
         # would say makes the PDF as stale as an edit to the source does.

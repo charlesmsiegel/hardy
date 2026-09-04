@@ -244,11 +244,96 @@ def _drop_macro_bodies(text: str) -> str:
     return "".join(out)
 
 
+VERBATIM_ENVIRONMENT = re.compile(
+    r"\\begin\s*\{(?P<env>verbatim\*?|Verbatim|lstlisting|minted)\}"
+)
+#: `\verb` and its delimiter. The delimiter is any character that is not a
+#: letter, a star or a space -- `%` very much included, which is the whole
+#: reason this is matched during the comment scan rather than after it.
+INLINE_VERBATIM = re.compile(r"\\verb\*?(?P<mark>[^*\sa-zA-Z])")
+
+
+def _executed_line(line: str) -> str:
+    r"""One line as TeX reads it: comments gone, `\verb` spans removed.
+
+    Both in ONE left-to-right pass, because they are the same decision. Doing
+    comments first loses `\verb%x%` -- `%` is a legal `\verb` delimiter, and
+    the opening one was read as a comment, so everything after it on the line
+    vanished from the check while TeX closed the verbatim at the second `%`
+    and executed the rest. Doing verbatim first loses the other direction: a
+    `\verb` written inside a comment is not a `\verb` at all.
+
+    Whichever comes first in the line wins, which is what TeX does.
+    """
+    kept: list[str] = []
+    index = 0
+    while index < len(line):
+        character = line[index]
+        if character == "\\":
+            found = INLINE_VERBATIM.match(line, index)
+            if found is not None:
+                closed = line.find(found.group("mark"), found.end())
+                kept.append(" ")
+                index = len(line) if closed < 0 else closed + 1
+                continue
+            # An escaped character, `\%` among them, so it cannot open a
+            # comment. Two characters at a time is enough for that: a control
+            # word's remaining letters are ordinary text to this scan.
+            kept.append(line[index : index + 2])
+            index += 2
+            continue
+        if character == "%":
+            break
+        kept.append(character)
+        index += 1
+    return "".join(kept)
+
+
+def typeset(source: str) -> str:
+    r"""`source` reduced to what TeX would actually execute.
+
+    Comments dropped and verbatim content removed, decided together and in
+    the order TeX meets them. Removing verbatim regions first -- which is how
+    this was written when the exemption was added -- let a commented opener
+    delete executable source: `% \begin{verbatim}`, a real `thebibliography`,
+    then `% \end{verbatim}` was cut out whole, and TeX ran every line of it.
+
+    So the state is carried line by line: outside a region a line has its
+    comments and `\verb` spans removed and is then looked at for an opener,
+    so a commented opener is gone before it can open anything; inside one,
+    `%` is an ordinary character and only the literal closer ends the region.
+    """
+    kept: list[str] = []
+    closing: str | None = None
+    for raw in source.splitlines():
+        line = raw
+        if closing is not None:
+            _, marker, rest = line.partition(closing)
+            if not marker:
+                continue
+            line, closing = rest, None
+        while True:
+            line = _executed_line(line)
+            found = VERBATIM_ENVIRONMENT.search(line)
+            if found is None:
+                break
+            kept.append(line[: found.start()])
+            closer = f"\\end{{{found.group('env')}}}"
+            _, marker, rest = line[found.end() :].partition(closer)
+            if not marker:
+                closing, line = closer, ""
+                break
+            line = rest
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def _executed(source: str) -> str:
     r"""`source` with everything TeX would never actually run removed.
 
     `uncommented` drops what a human comment hides from TeX; this drops
-    what TeX itself never reaches. An `\input` inside `\iffalse ... \fi`, or
+    what TeX itself never reaches. An `\input` inside a `verbatim` block, or
+    inside `\iffalse ... \fi`, or
     inside a `\newcommand`/`\renewcommand`/`\providecommand`/`\def` body, is
     text that sits in the file but is never executed unless a branch is
     taken or a macro is expanded -- and nothing here does either. Reading it
@@ -261,7 +346,7 @@ def _executed(source: str) -> str:
     answered by what the writeup's `\input` chain names, not by which of
     those inputs would run.
     """
-    return _drop_macro_bodies(_drop_iffalse(uncommented(source)))
+    return _drop_macro_bodies(_drop_iffalse(typeset(source)))
 
 
 def unreached_fragments(sources: Mapping[str, str]) -> list[str]:

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from hardy import layout
-from hardy.latex import LatexTools, unreached_fragments
+from hardy.latex import LatexTools, reached_fragments, unreached_fragments
 
 COMMAND = (sys.executable, str(Path(__file__).with_name("fake_latex.py")))
 ROOT = "\\documentclass{article}\n\\begin{document}\\input{sections/one}\\end{document}\n"
@@ -497,3 +497,23 @@ def test_an_input_that_follows_a_macro_definition_on_the_same_line_is_reached() 
     }
 
     assert unreached_fragments(sources) == []
+
+
+def test_an_input_shown_inside_verbatim_does_not_make_a_fragment_reachable():
+    r"""A displayed `\input` is text, and reachability decides the probe.
+
+    `writeup.tex` includes `a.tex`, and `a.tex` merely *shows* `\input{b}` in
+    a `verbatim` block. Counting that edge marks `b.tex` part of the real
+    document, so saving it skips the probe and compiles the unchanged root --
+    which never reads the candidate, so even malformed `b.tex` is committed
+    and the tree stamped as checked.
+    """
+    sources = {
+        "writeup.tex": "\\documentclass{article}\n\\begin{document}\n"
+        "\\input{a}\n\\end{document}\n",
+        "a.tex": "See:\n\\begin{verbatim}\n\\input{b}\n\\end{verbatim}\n",
+        "b.tex": "Text.\n",
+    }
+    reached = reached_fragments(sources)
+    assert "a.tex" in reached
+    assert "b.tex" not in reached

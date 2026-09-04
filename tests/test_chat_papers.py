@@ -485,3 +485,34 @@ def test_withdrawing_the_bibliography_stales_the_writeup(session) -> None:
     assert session._tex_signature() != before, (
         "the writeup still reads as compiled against a store that is gone"
     )
+
+
+def test_a_non_tex_compiler_input_is_part_of_the_writeup_signature(session) -> None:
+    r"""The signature bound `.tex` and the store; the compiler reads more.
+
+    A `.bbl`, an `.inc` or a local `.sty` the root pulls in is part of what
+    was compiled, so one changing after a successful save left the writeup
+    reading as current against a tree the checked PDF no longer describes.
+    """
+    saved = session._tool(
+        "save_latex",
+        {"source": "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n"},
+    )
+    assert saved.ok, saved.output
+    extra = session.workspace / "tex" / "macros.inc"
+    extra.write_text("\\newcommand{\\one}{1}\n", encoding="utf-8")
+    before = session._tex_signature()
+    extra.write_text("\\newcommand{\\one}{2}\n", encoding="utf-8")
+    assert session._tex_signature() != before
+
+
+def test_the_compilers_own_output_is_not_part_of_that_signature(session) -> None:
+    """`_copy_tree` does not hand it to TeX, so it is not what was compiled."""
+    session._tool(
+        "save_latex",
+        {"source": "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n"},
+    )
+    before = session._tex_signature()
+    (session.workspace / "tex" / "writeup.pdf").write_bytes(b"%PDF-stale")
+    (session.workspace / "tex" / "old.aux").write_text("\\citation{x}\n", encoding="utf-8")
+    assert session._tex_signature() == before

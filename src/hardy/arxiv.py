@@ -434,7 +434,14 @@ class PaperLibrary:
                 f"its record was parsed from: {error}"
             ) from error
         rebuilt = next((one for one in reparsed if one.arxiv_id == record.arxiv_id), None)
-        if rebuilt is None or rebuilt.content_sha256 != record.content_sha256:
+        # The WHOLE record, not its content digest. `content()` does not
+        # render `primary_category`, `abs_url` or `content_bytes`, so those
+        # three could be edited with every digest still agreeing -- a record
+        # serving fields it had not re-derived from anything, which is the one
+        # thing this comparison exists to rule out. Comparing the models
+        # themselves also means a field added later is covered the day it is
+        # added rather than the day someone remembers this list.
+        if rebuilt is None or rebuilt != record:
             raise ArxivError(
                 f"the record stored under {identifier} is not what its own response says; "
                 "its metadata has been edited away from the bytes it claims to come from"
