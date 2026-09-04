@@ -5,6 +5,7 @@ import os
 import threading
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -51,20 +52,33 @@ def _audited(result: LeanToolResult, lean: LeanTools) -> tuple[ToolResult, audit
     refused: an audit that could not run is a different fact from one that ran
     and found something, and both differ from never having audited anything.
     """
+    def refused(why: str) -> LeanToolResult:
+        """The audit's verdict over Lean's own answer, rather than instead of it.
+
+        Rebuilt from the result rather than replaced by a bare `ToolResult`:
+        `source_sha256` is the one field in the record that ties a submission
+        to the file Lean was really given, and dropping it left an honest
+        artifact -- a candidate the audit refused, kept as the development in
+        hand -- with nothing `hardy accept --recorded` could check it against.
+        Lean's diagnostics survive for the same reason: what Lean said is not
+        untrue because the audit went on to refuse what it rests on.
+        """
+        return replace(result, ok=False, output=why)
+
     name = lean.target_name
     if name is None:
         why = "an anonymous `example` cannot be audited; state the claim as a named theorem or lemma"
-        return ToolResult(False, why, result.source), None, audit.unestablished(why)
+        return refused(why), None, audit.unestablished(why)
     # The whole report, not the tail a model is shown: an audit graded on a
     # truncated report would refuse a proof for a line that was merely cut off.
     reports = audit.parse(result.report, (name,))
     if reports is None:
         why = f"the axiom audit for `{name}` could not be established; remove any #print axioms from the proof, Hardy adds its own"
-        return ToolResult(False, why, result.source), None, audit.unestablished(why)
+        return refused(why), None, audit.unestablished(why)
     verdict = audit.classify(reports, ())
     if verdict.status != "clean":
         why = f"Lean accepted the proof but the axiom audit refused it: {audit.describe(verdict)}"
-        return ToolResult(False, why, result.source), verdict, verdict.as_dict()
+        return refused(why), verdict, verdict.as_dict()
     return result, verdict, None
 
 
@@ -150,9 +164,23 @@ def sketch_section(sketch: dict[str, Any]) -> str:
             f"({where}). Lean accepted its structure and nothing else: a hole closes any "
             "goal, so this is not evidence for the claim and is not verified."
         )
+    elif sketch.get("submitted"):
+        # A hole-free body that was submitted, that Lean accepted, and that the
+        # axiom audit then refused -- the only way a submission becomes the
+        # retained candidate. The sentence below it would be false twice over:
+        # it *was* submitted, and the axiom report did run. Saying "nothing has
+        # audited what it rests on" over a body refused for what it rests on
+        # would name the wrong remaining work, which is the whole failure this
+        # section exists not to commit.
+        body = (
+            "The run left a complete candidate: Lean elaborated it with no hole in its "
+            "own proof body, and the run submitted it. The axiom report refused what it "
+            + "rests on -- the grade above names the axioms -- so this is not verified "
+            "and is not a result."
+        )
     else:
         # A hole-free body `sketch_proof` accepted, on a run that ended before
-        # it was submitted. The sentence above is false about it -- there is no
+        # it was submitted. The first sentence is false about it -- there is no
         # hole, and saying one closes the goal would be a reason that does not
         # apply to the artifact underneath it. What *is* true is narrower and
         # is the whole of why it is not a result: nothing audited what it rests
@@ -232,7 +260,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     # behind rather than only the transcript of having attempted one. It is
     # never a result: nothing here reaches `found`, and `submit_proof` is the
     # only door a verdict comes through.
-    sketched: dict[str, Any] = {"proof": None, "holes": []}
+    sketched: dict[str, Any] = {"proof": None, "holes": [], "submitted": False}
     # Cancelling the exchange does not stop a Lean check already running on a
     # worker thread, and that thread is waited on during shutdown — so late work
     # can land before the timeout is even caught. The deadline itself decides
@@ -297,6 +325,12 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
             return
         sketched["proof"] = proof
         sketched["holes"] = [item.model_dump(mode="json") for item in lean.holes(proof)]
+        # Which door it came through, because the writeup says different true
+        # things about the two. A submitted candidate has been through the
+        # axiom report and a checked one has not, and a section telling a
+        # reader that nothing audited what a refused proof rests on would name
+        # the wrong remaining work.
+        sketched["submitted"] = name == "submit_proof"
 
     def dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
         """Hardy runs every proof check, whoever decided to ask for one.
@@ -311,6 +345,12 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     def _dispatch(name: str, arguments: dict[str, Any]) -> ToolResult:
         if closed.is_set():
             return ToolResult(False, "the run's budget expired before this tool call was made")
+        # Bound before the try, because the event below is written on the way
+        # out of both the body and the `except`: a `submit_proof` whose
+        # arguments would not parse never reaches the assignment inside, and
+        # reading it there would raise a `NameError` from the error path of the
+        # error handler.
+        submitted = False
         try:
             if name == "check_proof":
                 proof = str(arguments["proof"])
@@ -342,15 +382,13 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
                 # this the late branches below could no longer tell that a
                 # submission had arrived at all.
                 submitted = result.ok
-                # And it is a development Lean accepted, so it replaces the
-                # retained one -- judged on Lean's answer, before the audit
-                # changes it. A run that sketched with holes, closed them, and
-                # then had the finished proof refused for an unapproved axiom
-                # otherwise published the older skeleton as the development in
-                # hand: the holes were the run's remaining work two events ago
-                # and the axiom is its remaining work now, and the artifacts
-                # named the wrong one.
-                _retain(name, proof, result)
+                # Lean's own answer, kept because the audit is about to
+                # overwrite `result` with its own. The two are different
+                # judgements and `ok` alone conflates them: a body Lean refused
+                # and a body Lean accepted and the audit refused are recorded
+                # identically without this, and neither the retention below nor
+                # `hardy accept --recorded` can tell them apart.
+                accepted = result
                 if result.ok:
                     result, verdict, record = _audited(result, lean)
                 # Judged against the clock rather than a flag: a check that was
@@ -367,11 +405,36 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
                     found["result"], found["proof"], found["verdict"] = result, proof, verdict
                 elif record is not None:
                     refused["axioms"], refused["record"] = True, record
+                    # A development Lean accepted, so it replaces the retained
+                    # one. A run that sketched with holes, closed them, and
+                    # then had the finished proof refused for an unapproved
+                    # axiom otherwise published the older skeleton as the
+                    # development in hand: the holes were the run's remaining
+                    # work two events ago and the axiom is its remaining work
+                    # now, and the artifacts named the wrong one.
+                    #
+                    # Here rather than beside the check, so the retention and
+                    # the submission agree about what happened. Retained before
+                    # the audit ran, a candidate whose audit pushed the run past
+                    # the deadline was discarded as a submission and kept as a
+                    # sketch, and the writeup then reported an axiom refusal the
+                    # trajectory recorded as a timeout.
+                    _retain(name, proof, accepted)
             else:
                 result = ToolResult(False, f"unknown tool: {name}")
         except (KeyError, TypeError, ValueError) as error:
             result = ToolResult(False, f"invalid tool arguments: {error}")
-        events.append({"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()})
+        event: dict[str, Any] = {"type": "tool", "name": name, "arguments": arguments, "result": result.as_dict()}
+        if name == "submit_proof":
+            # Recorded because `ok` no longer answers it. The audit turns an
+            # accepted proof into a refused one, so a submission Lean accepted
+            # and a submission Lean rejected reach the trajectory with the same
+            # `ok: false` -- and the retained candidate above is produced by
+            # exactly one of them. Without this the audit cannot re-derive
+            # which, and an honest artifact fails for a skeleton it can see but
+            # cannot tie to the Lean run that made it.
+            event["lean_accepted"] = submitted
+        events.append(event)
         return result
 
     system = BATCH_SYSTEM_PROMPT
@@ -503,6 +566,28 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
     compacted = attach is not None
     if attach is not None:
         attach(compact)
+
+    def gate(messages: Sequence[compaction.Message]) -> str | None:
+        """Whether there is anything left for a provider turn to do.
+
+        A batch run ends at its first kept submission: `writeup.md` is built
+        from the artifacts rather than from the model's closing remarks, so
+        every turn after the one that submitted buys nothing and is billed for
+        anyway. Worse than wasted, it is not inert -- the tools stay live, and
+        a second accepted submission would replace the proof the artifact was
+        already going to carry.
+
+        Offered rather than assumed, like the compactor above: a backend whose
+        SDK owns the loop has no point at which to ask, and a run there simply
+        continues as it did before.
+        """
+        if found["result"] is None:
+            return None
+        return "a submission was accepted and audited; the run has its result and needs no further turn"
+
+    gated = getattr(runtime, "attach_gate", None)
+    if gated is not None:
+        gated(gate)
     # Whether a provider was asked anything at all. A ladder that closed the
     # statement means Hardy declined to spend a turn, which is a fact about the
     # run and not an absence of one -- and it is what keeps the ledger below

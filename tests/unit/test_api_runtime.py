@@ -8,6 +8,7 @@ run — plus the two promises the runtime makes about itself.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -484,3 +485,98 @@ def test_an_ipv6_endpoint_keeps_its_brackets() -> None:
     assert redacted("https://[2001:db8::1]") == "https://[2001:db8::1]"
     # An ordinary host is untouched by the bracketing.
     assert redacted("https://api.anthropic.com:8443").startswith("https://api.anthropic.com:8443")
+
+
+def test_a_batch_run_spends_no_turn_after_its_submission_is_accepted(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The run has what it came for, so Hardy declines the next provider call.
+
+    `writeup.md` is built from the artifacts rather than from anything the
+    model says afterwards, so every turn past the accepted submission is billed
+    for and buys nothing -- and it is not inert either: the tools stay live, and
+    a second accepted submission would replace the proof the artifact was
+    already going to carry. Declining is the decision issue #23 exists to move
+    back to Hardy, and this is the cheapest place it pays.
+    """
+    import sys
+    from pathlib import Path
+
+    from hardy.lean import LeanTools
+    from hardy.models import Request
+    from hardy.runner import run
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    request = Request.from_dict(
+        {"declaration": "theorem HardyTarget : True", "informal_claim": "True is true."}
+    )
+    lean = LeanTools(request, (sys.executable, str(Path(__file__).parents[1] / "fake_lean.py")))
+    client = FakeClient([
+        Reply([Block(
+            type="tool_use", id="c1", name="submit_proof", input={"proof": "by exact True.intro"}
+        )], stop_reason="tool_use"),
+        # Never asked for: the submission above is the run's result. Scripted
+        # anyway, so a loop that did take another turn fails on the assertion
+        # below rather than on an exhausted script.
+        Reply([Block(type="text", text="anything else you need?")]),
+    ])
+
+    def make(model=None, **context):
+        return ApiRuntime(
+            model or "claude-test",
+            provider=AnthropicProvider("claude-test", client=client),
+            **context,
+        )
+
+    result = run(request, make, lean, tmp_path)
+
+    assert result.terminal_reason == "verified"
+    assert len(client.sent) == 1
+    trajectory = json.loads((tmp_path / "trajectory.json").read_text(encoding="utf-8"))
+    declined = [event for event in trajectory["events"] if event.get("type") == "declined_turn"]
+    assert declined and "needs no further turn" in declined[0]["why"]
+    # And the turn that was spent is the one the ledger bills for.
+    assert trajectory["limits"]["turns_enforced_by"] == "hardy"
+    assert result.turns == 1
+
+
+def test_the_gate_lets_a_run_with_nothing_yet_carry_on(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The converse, so the gate is not a stop button wearing a condition.
+
+    A submission the axiom audit refused is not a result, and a run that
+    stopped there would report a turn limit it never reached.
+    """
+    import sys
+    from pathlib import Path
+
+    from hardy.lean import LeanTools
+    from hardy.models import Request
+    from hardy.runner import run
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    request = Request.from_dict(
+        {"declaration": "theorem HardyTarget : True", "informal_claim": "True is true."}
+    )
+    lean = LeanTools(request, (sys.executable, str(Path(__file__).parents[1] / "fake_lean.py")))
+    client = FakeClient([
+        Reply([Block(
+            type="tool_use", id="c1", name="submit_proof",
+            input={"proof": "by exact True.intro -- axioms: badAxiom"},
+        )], stop_reason="tool_use"),
+        Reply([Block(
+            type="tool_use", id="c2", name="submit_proof", input={"proof": "by exact True.intro"}
+        )], stop_reason="tool_use"),
+        Reply([Block(type="text", text="that one stands")]),
+    ])
+
+    def make(model=None, **context):
+        return ApiRuntime(
+            model or "claude-test",
+            provider=AnthropicProvider("claude-test", client=client),
+            **context,
+        )
+
+    result = run(request, make, lean, tmp_path)
+
+    assert result.terminal_reason == "verified"
+    # Two turns: the refused submission did not end the run, and the accepted
+    # one did.
+    assert len(client.sent) == 2

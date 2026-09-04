@@ -969,13 +969,18 @@ def _attempt_issues(attempts: list[Any], events: list[dict[str, Any]]) -> list[s
     return issues
 
 
-def _sketch_source(trajectory: dict[str, Any], proof: str) -> str | None:
-    """The file a `sketch_proof` on `proof` would have handed Lean.
+def _sketch_source(trajectory: dict[str, Any], proof: str, *, audited: bool = False) -> str | None:
+    """The file a check on `proof` would have handed Lean.
 
     Rebuilt from the request the trajectory records, the same way the verified
     path rebuilds `proof.lean`. None when the request is not readable enough to
     rebuild from, which is reported by its own check rather than by a
     comparison against a guess.
+
+    `audited` for a `submit_proof`, which is the same file with the axiom
+    report appended -- and the retained candidate can now have come through
+    that door. Rebuilding the plain body for it would fail an honest record for
+    the two lines `submit_proof` adds itself.
     """
     request = trajectory.get("request")
     if not isinstance(request, dict):
@@ -985,7 +990,17 @@ def _sketch_source(trajectory: dict[str, Any], proof: str) -> str | None:
     if not declaration or not isinstance(imports, list) or not imports:
         return None
     header = "\n".join(f"import {name}" for name in imports)
-    return f"{header}\n\n{declaration} := {proof.strip()}\n"
+    body = f"{header}\n\n{declaration} := {proof.strip()}\n"
+    if not audited:
+        return body
+    # Named the way Lean names it back, which is what `LeanTools.target_name`
+    # exists to get right: `theorem _root_.bar` is printed as `bar`, and an
+    # audit source built with the unnormalised name matches nothing.
+    found = DECLARATION_HEAD.match(declaration)
+    name = declared_name(found.group(1)) if found else None
+    if name is None:
+        return None
+    return LeanTools.with_audit(body, (f"axioms {name}",))
 
 
 def _sketch_issues(
@@ -1023,8 +1038,42 @@ def _sketch_issues(
     # submitting would otherwise leave the older skeleton published as the
     # run's remaining work, with the trajectory two events above proving it was
     # not.
+    def _submitted(event: dict[str, Any]) -> bool:
+        """A submission Lean accepted and the axiom audit then refused.
+
+        The third door a candidate comes through, and the one `ok` cannot
+        answer for: the audit rewrites a submission's result, so a body Lean
+        refused and a body Lean accepted and the audit refused both reach the
+        record as `ok: false`. `lean_accepted` is what the runner writes to
+        tell them apart. A submission the audit *passed* is a verified run and
+        carries no sketch at all, so this is exactly the set the runner retains
+        from.
+        """
+        return (
+            event.get("name") == "submit_proof"
+            and event.get("lean_accepted") is True
+            and isinstance(event.get("result"), dict)
+            and event["result"].get("ok") is False
+        )
+
     accepted_events = _kept(("sketch_proof",))
-    latest_events = _kept(("sketch_proof", "check_proof"))
+    # In the order they happened, because "the last skeleton Lean accepted" is
+    # a question about the sequence: a `check_proof` and a refused submission
+    # sorted apart would name whichever list ran longer rather than whichever
+    # event came last.
+    latest_events = [
+        event for index, event in enumerate(events)
+        if event.get("type") == "tool"
+        and not _discarded(events, index)
+        and (
+            (
+                event.get("name") in ("sketch_proof", "check_proof")
+                and isinstance(event.get("result"), dict)
+                and event["result"].get("ok") is True
+            )
+            or _submitted(event)
+        )
+    ]
     if "sketch" not in trajectory and "sketch" not in result:
         # The legacy-record exception, and only where it is genuinely one. A
         # trajectory holding an accepted sketch is a record from this code
@@ -1096,6 +1145,12 @@ def _sketch_issues(
         # this is the second witness, not the only one.
         if last.get("name") == "sketch_proof" and last["result"].get("holes") != sketch.get("holes"):
             issues.append("the kept sketch's holes are not the ones Lean reported")
+        # And the door it came through, because the writeup says a different
+        # true thing about each. `submitted` is what makes the section report
+        # an axiom refusal rather than a body nothing has audited, so a record
+        # that set it either way would choose its own wording.
+        if bool(sketch.get("submitted")) != (last.get("name") == "submit_proof"):
+            issues.append("the kept sketch does not agree about whether it was submitted")
         # And the file Lean actually elaborated. Everything above compares the
         # record against itself; this compares it against the one thing in the
         # trajectory that came out of Lean -- the source it was given and the
@@ -1106,7 +1161,9 @@ def _sketch_issues(
         # request edited until it could not be rebuilt from, skipped the one
         # comparison that reaches outside the record -- and a sketch nothing
         # can tie to a Lean run is a sketch with no evidence behind it.
-        rebuilt = _sketch_source(trajectory, str(sketch.get("proof", "")))
+        rebuilt = _sketch_source(
+            trajectory, str(sketch.get("proof", "")), audited=last.get("name") == "submit_proof"
+        )
         recorded = str(last["result"].get("source") or "")
         digest = last["result"].get("source_sha256")
         if rebuilt is None:
