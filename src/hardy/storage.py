@@ -138,7 +138,16 @@ class FileLock:
             return False
         except OSError:
             return False
-        os.write(handle, str(os.getpid()).encode())
+        try:
+            os.write(handle, str(os.getpid()).encode())
+        except OSError:
+            # The exclusive create succeeded and writing into it did not -- a
+            # quota or a full disk, reached while allocating the lock's first
+            # block. Leaving the file behind would block every caller for the
+            # whole staleness window over a lock nobody holds.
+            os.close(handle)
+            self.path.unlink(missing_ok=True)
+            return False
         os.close(handle)
         return True
 

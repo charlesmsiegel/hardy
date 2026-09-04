@@ -174,35 +174,30 @@ class PaperRecord(FrozenModel):
 
     def content(self) -> str:
         """The text this record vouches for, rendered from its own fields."""
-        authors = ", ".join(self.authors)
         head = [
             f"arXiv:{self.arxiv_id}",
-            f"Title: {self.title}",
-            f"Authors: {authors}",
+            *_wrapped(f"Title: {self.title}"),
+            *_wrapped("Authors: " + ", ".join(self.authors)),
         ]
         if self.categories:
-            head.append(f"Categories: {', '.join(self.categories)}")
+            head.extend(_wrapped(f"Categories: {', '.join(self.categories)}"))
         if self.published:
             head.append(f"Submitted: {self.published}")
         if self.updated and self.updated != self.published:
             head.append(f"This version: {self.updated}")
         if self.doi:
-            head.append(f"DOI: {self.doi}")
+            head.extend(_wrapped(f"DOI: {self.doi}"))
         if self.journal_ref:
-            head.append(f"Journal reference: {self.journal_ref}")
-        # Wrapped, and wrapped HERE rather than where it is displayed, so the
-        # digest covers the text a reader is served. An abstract can arrive as
-        # one enormous line, and `read_paper` pages by line: a line too long
-        # for one observation is clipped, and the part left over can never be
-        # asked for, because there is no line after it to start from. Hard
-        # breaks included, since a single unbroken token can be longer than
-        # the window on its own.
+            head.extend(_wrapped(f"Journal reference: {self.journal_ref}"))
+        # EVERY line is wrapped, metadata included, and wrapped HERE rather
+        # than where it is displayed, so the digest covers the text a reader
+        # is served. `read_paper` pages by line: a line too long for one
+        # observation is clipped, and the part left over can never be asked
+        # for, because there is no line after it to start from. An abstract
+        # can arrive as one enormous line -- and so can an author list, on a
+        # paper with three thousand of them.
         body = "\n".join(
-            "\n".join(
-                textwrap.wrap(paragraph, ABSTRACT_COLUMNS, break_long_words=True)
-                or [""]
-            )
-            for paragraph in self.abstract.splitlines() or [""]
+            "\n".join(_wrapped(paragraph)) for paragraph in self.abstract.splitlines() or [""]
         )
         return "\n".join(head) + "\n\nAbstract\n" + body + "\n"
 
@@ -212,6 +207,16 @@ class PaperRecord(FrozenModel):
             return f"{self.arxiv_id}  {self.title}"
         who = self.authors[0] + (" et al." if len(self.authors) > 1 else "")
         return f"{self.arxiv_id}  {self.title} ({who})"
+
+
+def _wrapped(line: str) -> list[str]:
+    """One line, cut to a width a bounded read can return whole.
+
+    Hard breaks included: a single unbroken token can be longer than the
+    window on its own, and a line nothing will break is a line nothing can
+    page past.
+    """
+    return textwrap.wrap(line, ABSTRACT_COLUMNS, break_long_words=True) or [""]
 
 
 def digest(text: str) -> str:

@@ -12,7 +12,11 @@ import re
 import sys
 import time
 
-INPUT = re.compile(r"\\input\{([^}]*)\}")
+INPUT = re.compile(r"\\(?:input|include)\{([^}]*)\}")
+# `\include` gives its fragment an auxiliary file of its own, which the root's
+# aux merely `\@input`s on a later pass. Modelled here because Hardy reads the
+# whole auxiliary tree for exactly this reason.
+INCLUDE = re.compile(r"\\include\{([^}]*)\}")
 LABEL = re.compile(r"\\label\{([^}]*)\}")
 REF = re.compile(r"\\(?:page|eq)?ref\{([^}]*)\}")
 CITE = re.compile(r"\\cite\{([^}]*)\}")
@@ -118,6 +122,21 @@ if "\\begin{document}" in source and "\\end{document}" in source:
     if re.search(r"%\s*unstable", source):
         record += f"\\newlabel{{pass}}{{{{{len(previous)}}}{{1}}}}\n"
     aux.write_text(record, encoding="utf-8")
+    for name in INCLUDE.findall(executed):
+        target = path.parent / name
+        if not target.suffix:
+            target = target.with_suffix(".tex")
+        if not target.is_file():
+            continue
+        part = _uncommented(target.read_text())
+        pathlib.Path(name).with_suffix(".aux").write_text(
+            "\n".join(
+                [f"\\bibcite{{{key}}}{{1}}" for key in BIBITEM.findall(part)]
+                + [f"\\citation{{{key}}}" for key in CITE.findall(part)]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     undefined = False
     for name in dict.fromkeys(REF.findall(executed)):

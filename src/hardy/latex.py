@@ -348,6 +348,16 @@ def _copy_tree(tree: Path, work: Path) -> None:
     everywhere else in a project.
     """
     for relative in files_under(tree, ""):
+        # Auxiliary files are the compiler's own output, and this is its
+        # input. A checkout carrying `tex/old.aux` -- a build artifact
+        # somebody committed -- would otherwise be read as something this
+        # compile produced: its `\citation` records would be judged as
+        # citations of the document being checked, and every clean writeup in
+        # that tree would be refused over a file the compiler never wrote.
+        # Stale numbers on the first pass are the same mistake in the other
+        # direction, so they are left out rather than trusted.
+        if relative.suffix == ".aux":
+            continue
         guard, name = guard_for(work, relative, create=True)
         # Not fsynced: every byte here lands in a `TemporaryDirectory` this
         # process is about to hand to TeX and then delete.
