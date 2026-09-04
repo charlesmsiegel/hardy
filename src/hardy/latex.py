@@ -403,6 +403,7 @@ class LatexTools:
         aux_dir: Path | None = None,
         commit: Callable[[], None] | None = None,
         stamp: str | None = None,
+        vouched: Callable[[tuple[str, ...]], str] | None = None,
     ) -> ToolResult:
         r"""Compile a candidate against the documents already saved.
 
@@ -492,6 +493,19 @@ class LatexTools:
             broken, labels = ("", ())
             if actual and outcome.returncode == 0:
                 broken, labels = self._references(work, log)
+            # What the compiler REALLY put in the reference list, which is a
+            # different question from what the source spells. A caller that
+            # owns the bibliography (the interactive session does) is handed
+            # those keys and may refuse the document over them; nobody else
+            # passes `vouched` and nothing changes for them.
+            if actual and outcome.returncode == 0 and not broken and vouched is not None:
+                aux = work / "writeup.aux"
+                refused = vouched(
+                    references.bibcites(aux.read_text(encoding="utf-8", errors="replace"))
+                    if aux.exists()
+                    else ()
+                )
+                broken = refused or broken
             resolved = outcome.returncode == 0 and not broken
             # Before a single byte leaves the scratch tree, and deliberately
             # allowed to raise: see the note on `commit` above. A fragment

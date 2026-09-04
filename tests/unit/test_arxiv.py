@@ -499,3 +499,20 @@ def test_the_throttle_lock_is_not_opened_through_a_symlink(tmp_path: Path):
     with pytest.raises(LayoutError):
         client.search("ricci flow")
     assert victim.read_text(encoding="utf-8") == "someone else's file"
+
+
+def test_a_cache_entry_dated_in_the_future_is_stale(tmp_path: Path):
+    """A clock that moved backwards must not freeze the cache.
+
+    The throttle treats the same jump as "no idea"; a cache that read it as
+    "very fresh indeed" went on serving a day-old answer for as long as the
+    jump lasted, so an unversioned fetch kept resolving to a superseded
+    version.
+    """
+    clock = Clock()
+    transport = Recorder(_feed(), _feed("math.DG/0211159v2"))
+    client, library, _ = _client(tmp_path, transport, clock)
+    client.search("ricci flow")
+    clock.now -= 10 * arxiv.QUERY_TTL_SECONDS
+    client.search("ricci flow")
+    assert len(transport.urls) == 2

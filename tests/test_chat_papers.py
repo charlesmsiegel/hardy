@@ -71,9 +71,10 @@ def test_a_fetch_and_a_citation_reach_the_runtime(session) -> None:
     assert fetched.ok, fetched.output
     cited = session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"})
     assert cited.ok, cited.output
-    assert json.loads(cited.output)["cite_key"] == "perelman2002entropy"
+    key = json.loads(cited.output)["cite_key"]
+    assert key.startswith("perelman2002entropy-")
     generated = session.workspace / "tex" / "references.tex"
-    assert "\\bibitem{perelman2002entropy}" in generated.read_text(encoding="utf-8")
+    assert f"\\bibitem{{{key}}}" in generated.read_text(encoding="utf-8")
 
 
 def test_a_citation_of_something_never_fetched_is_refused(session) -> None:
@@ -138,7 +139,7 @@ def test_the_generated_bibliography_is_not_the_models_to_write(session) -> None:
     assert "bibliography.json" in overwrite.output
     generated = (session.workspace / "tex" / "references.tex").read_text(encoding="utf-8")
     assert "invented2020" not in generated
-    assert "perelman2002entropy" in generated
+    assert "perelman2002entropy-" in generated
 
 
 def test_the_generated_bibliography_is_not_the_models_to_delete(session) -> None:
@@ -188,6 +189,45 @@ def test_a_bibliography_in_a_saved_fragment_refuses_the_root_too(session) -> Non
 
 def test_the_generated_file_does_not_refuse_the_document_it_is_part_of(session) -> None:
     """Hardy's own reference list is the one exemption from that sweep."""
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    key = json.loads(
+        session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"}).output
+    )["cite_key"]
+    result = session._tool(
+        "save_latex",
+        {
+            "source": "\\documentclass{article}\n\\begin{document}\n"
+            f"As shown in \\cite{{{key}}}.\n\\input{{references}}\n\\end{{document}}\n"
+        },
+    )
+    assert result.ok, result.output
+
+
+def test_a_bibliography_built_by_expansion_is_still_refused(session) -> None:
+    r"""Lexical detection is not the gate; the compiler's own record is.
+
+    TeX is a macro language: `\csname bibitem\endcsname` is a `\bibitem` that
+    no reader of the source would recognise as one, and it resolves a
+    citation just as well. What every spelling has in common is the
+    `\bibcite` the compiler writes into the `.aux`.
+    """
+    source = (
+        "\\documentclass{article}\n\\begin{document}\n"
+        "As shown in \\cite{invented2020}.\n"
+        "\\csname begin\\endcsname{thebibliography}{9}\n"
+        "\\csname bibitem\\endcsname{invented2020} Nobody.\n"
+        "\\csname end\\endcsname{thebibliography}\n"
+        "\\end{document}\n"
+    )
+    result = session._tool("save_latex", {"source": source})
+    assert not result.ok
+    assert "invented2020" in result.output
+    assert "cite_paper" in result.output
+    assert not (session.workspace / "tex" / "writeup.tex").exists()
+
+
+def test_the_reference_list_cite_paper_generated_is_vouched_for(session) -> None:
+    """The same check must accept Hardy's own entries, however it reads them."""
     session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
     key = json.loads(
         session._tool("cite_paper", {"paper_id": "math.DG/0211159v1"}).output
