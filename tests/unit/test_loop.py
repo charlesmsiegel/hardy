@@ -496,3 +496,43 @@ def test_a_counter_this_exchange_did_not_state_is_not_restated() -> None:
     assert reports[0]["usage"] == {"cache_read_input_tokens": 400, "input_tokens": 10}
     # The cache counter is absent, not repeated at its stale value.
     assert reports[1]["usage"] == {"input_tokens": 40}
+
+
+def test_a_hook_that_raises_is_reported_as_a_failed_exchange() -> None:
+    """`before_turn` is Hardy's own work, and Hardy's own work can fail.
+
+    Only the provider call used to be wrapped, so an exchange that died in a
+    hook -- a closer ladder that could not reach Lean -- emitted `is_error:
+    false` beside `turns: 0` from the `finally`, which reads as an exchange
+    that finished without needing a turn rather than one that never got to
+    take its first.
+    """
+    def hook(messages):
+        raise RuntimeError("the Lean toolchain is missing")
+
+    loop, _, observed = _loop([ProviderTurn(text="never asked")], before_turn=hook)
+
+    with pytest.raises(RuntimeError, match="toolchain is missing"):
+        _drain(loop, "prove it")
+
+    report = next(item for item in observed if item["type"] == "result")
+    assert report["is_error"] is True
+    assert "the Lean toolchain is missing" in report["error"]
+    # No provider call was made, so no turn was spent -- which is the fact the
+    # `is_error` flag has to carry, because the turn count cannot.
+    assert report["turns"] == 0
+
+
+def test_a_compactor_that_raises_is_reported_the_same_way() -> None:
+    def compact(messages):
+        raise OSError("transcript.jsonl disappeared")
+
+    loop, _, observed = _loop([ProviderTurn(text="never asked")])
+    loop.attach_compactor(compact)
+
+    with pytest.raises(OSError, match="transcript.jsonl"):
+        _drain(loop, "prove it")
+
+    report = next(item for item in observed if item["type"] == "result")
+    assert report["is_error"] is True
+    assert "transcript.jsonl disappeared" in report["error"]

@@ -477,7 +477,11 @@ Priority labels are sequencing hints:
   unconfined. Closing it belongs with the deferred process isolation, not here.
 - **Now (implemented) — `sorry`-backed sketches, unattended:** `hardy batch`
   offers `sketch_proof`, which elaborates a skeleton whose holes are deliberate
-  and reports how many are left and where. `hardy batch` only: the staged
+  and reports how many are left and where. Those are the holes in the proof body
+  it was handed: nothing there audits what the skeleton imports, so the result
+  says what it scanned rather than calling its list the only thing missing —
+  only the axiom report `submit_proof` runs can say whether a lemma the skeleton
+  leans on is itself backed by `sorryAx`. `hardy batch` only: the staged
   `hardy prove` path has its own tool set and its own artifacts, and carrying
   sketches into it is separate work rather than something this entry may
   quietly claim. An error is still a

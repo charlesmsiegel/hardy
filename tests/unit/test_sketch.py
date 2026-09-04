@@ -105,8 +105,15 @@ def test_a_sketch_reports_its_holes_rather_than_refusing_them(lean: LeanTools) -
 
     assert result.ok
     assert [item.keyword for item in result.holes] == ["sorry"]
-    assert "1 hole(s) are the only thing missing" in result.output
+    assert "1 hole(s) remain in its proof body" in result.output
     assert "not verified" in result.output
+    # And the list is not offered as exhaustive. Nothing here audits the
+    # imports, so a skeleton standing on a lemma that is itself backed by
+    # `sorryAx` would otherwise be told the local holes were all that was
+    # left -- which is the claim only `submit_proof`'s axiom report can make.
+    assert "only thing missing" not in result.output
+    assert "not everything left to establish" in result.output
+    assert "submit_proof" in result.output
 
 
 def test_a_skeleton_that_does_not_elaborate_is_a_failed_sketch(broken_lean: LeanTools) -> None:
@@ -128,6 +135,10 @@ def test_a_hole_free_sketch_is_sent_to_submit_rather_than_graded(lean: LeanTools
     assert result.ok
     assert result.holes == ()
     assert "call submit_proof" in result.output
+    # Hole-free in its own body is not the same as finished, and the note says
+    # which of the two it checked.
+    assert "no hole left in its own proof body" in result.output
+    assert "Nothing here has audited what it rests on" in result.output
 
 
 def test_submitting_a_sketch_is_still_refused(lean: LeanTools) -> None:
