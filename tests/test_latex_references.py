@@ -214,3 +214,23 @@ def test_an_aux_file_committed_into_the_tree_is_not_read_as_this_compile_s(
     )
     assert result.ok, result.output
     assert seen and "obsolete" not in seen[0]
+
+
+def test_a_fragment_reached_through_another_fragment_is_the_real_document(tmp_path: Path):
+    r"""Inclusion is transitive, and the reference checks follow it.
+
+    `writeup.tex` includes `a.tex`, `a.tex` includes `b.tex`. Asking only
+    whether the root's own text names `b.tex` said no, so saving `b.tex` was
+    compiled through a probe root -- which exempts it from the reference
+    checks -- and an undefined `\ref` in a fragment genuinely in the document
+    exited zero and was committed.
+    """
+    tree = _tree(tmp_path)
+    (tree / "a.tex").write_text("\\input{b}\n", encoding="utf-8")
+    (tree / "b.tex").write_text("Text.\n", encoding="utf-8")
+    (tree / "writeup.tex").write_text(PREAMBLE + "\\input{a}\n" + END, encoding="utf-8")
+    result = LatexTools(COMMAND).check(
+        "See \\ref{thm:missing}.\n", path="b.tex", tree=tree
+    )
+    assert not result.ok, result.output
+    assert "thm:missing" in result.output

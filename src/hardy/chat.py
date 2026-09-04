@@ -3571,7 +3571,7 @@ class MathematicsSession:
         # the fragment is sound and nothing about the writeup -- stamping that
         # would mark the tree established on the strength of a document nobody
         # will read.
-        if compiles_document(self._tex_root_source(), relative):
+        if compiles_document(self._tex_sources(), relative):
             self._stamp_writeup()
         # Advisory rather than a refusal. With the save_lean ratchet in place a
         # hard gate here would deadlock: Lean blocked for want of a writeup,
@@ -3937,30 +3937,48 @@ class MathematicsSession:
         guard, name = guard_for(self.tex_root, relative)
         kept = read_text(self.tex_root, relative)
         guard.unlink(name)
+
+        def _restore() -> None:
+            """Put the fragment back exactly as it was.
+
+            The unlink has already happened by the time anything can go
+            wrong, so every way out of the compile below runs this -- not
+            only the one that returns a refusal. `vouched` reads
+            `bibliography.json`, which raises when the store is unreadable or
+            malformed; that exception came out of `check`, went past the
+            restoration, and left the fragment permanently deleted by an
+            operation the caller was told had failed.
+            """
+            guard.mkdir()
+            with guard.open(name, "w", encoding="utf-8") as handle:
+                handle.write(kept)
+
         root = self.tex_root / ROOT_DOCUMENT
         if root.is_file():
-            checked = self.latex.check(
-                self._tex_root_source(),
-                tree=self.tex_root,
-                output_dir=self.workspace,
-                aux_dir=self.workspace / BUILD_DIR_TEX,
-                # This path publishes writeup.pdf too, and re-stamps the
-                # signature afterwards. Without the banner, deleting a fragment
-                # silently replaced a stamped PDF with an unstamped one and
-                # recorded it as current.
-                stamp=self._stamp(),
-                # And it is a publish, so it owes the same bibliography gate a
-                # save does. Without it, deleting an unrelated fragment
-                # published whatever reference list the remaining files
-                # happened to build -- the ordinary unresolved-reference check
-                # sees nothing wrong with an invented `\bibitem` that
-                # resolves.
-                vouched=self._vouched_references,
-            )
+            try:
+                checked = self.latex.check(
+                    self._tex_root_source(),
+                    tree=self.tex_root,
+                    output_dir=self.workspace,
+                    aux_dir=self.workspace / BUILD_DIR_TEX,
+                    # This path publishes writeup.pdf too, and re-stamps the
+                    # signature afterwards. Without the banner, deleting a
+                    # fragment silently replaced a stamped PDF with an
+                    # unstamped one and recorded it as current.
+                    stamp=self._stamp(),
+                    # And it is a publish, so it owes the same bibliography
+                    # gate a save does. Without it, deleting an unrelated
+                    # fragment published whatever reference list the remaining
+                    # files happened to build -- the ordinary
+                    # unresolved-reference check sees nothing wrong with an
+                    # invented `\bibitem` that resolves.
+                    vouched=self._vouched_references,
+                )
+            except BaseException:
+                _restore()
+                raise
             if not checked.ok:
-                guard.mkdir()
-                with guard.open(name, "w", encoding="utf-8") as handle:
-                    handle.write(kept)
+                _restore()
                 return ToolResult(False, f"the writeup no longer compiles without {path}, so it was kept:\n{checked.output}")
             # This compile is as good as a save's, and the tree it compiled is
             # the tree on disk -- so it is stamped like one. Without this a
@@ -4369,7 +4387,7 @@ class MathematicsSession:
                 return result
             entry = self._remember_import("tex", f"{TEX_DIR}/{relative}", origin, content)
             message = f"imported {origin} as {entry['path']} (sha256 {entry['sha256']})"
-            if not compiles_document(self._tex_root_source(), relative):
+            if not compiles_document(self._tex_sources(), relative):
                 message += (
                     f"\n- not yet part of the writeup: nothing \\inputs {relative}. "
                     "Where it belongs in the document is yours to decide; the check "

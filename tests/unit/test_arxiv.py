@@ -655,3 +655,31 @@ def test_a_record_whose_line_endings_were_rewritten_is_refused(tmp_path: Path):
     stored.write_bytes(stored.read_bytes().replace(b"\n", b"\r\n"))
     with pytest.raises(arxiv.ArxivError, match="does not match its recorded digest"):
         library.read(record.identifier)
+
+
+def test_a_query_answered_while_this_one_waited_is_not_asked_again(tmp_path: Path):
+    """The throttle's own wait is what creates the second request.
+
+    Two processes wanting the same uncached query both miss the cache and
+    both queue behind the interval; the first fills the cache while the
+    second is still sleeping, and the second then asked arXiv for something
+    already on disk -- a duplicate in exactly the multi-process case the lock
+    exists for.
+    """
+    clock = Clock()
+    transport = Recorder(_feed())
+    client, library, _ = _client(tmp_path, transport, clock)
+    # A request just made, so this one has the full interval to wait out.
+    library.note_request(clock.now)
+    asked: list[str] = []
+    original = library.cached_query
+    library.cached_query = lambda key, *, now: asked.append(key) or original(key, now=now)
+
+    def _answered_by_someone_else(seconds: float) -> None:
+        clock.sleep(seconds)
+        library.cache_query(asked[0], _feed(), now=clock.now)
+
+    client._sleep = _answered_by_someone_else
+    found = client.search("ricci flow")
+    assert found, "the cached answer was served"
+    assert transport.urls == [], "the answer was already on disk when the wait ended"

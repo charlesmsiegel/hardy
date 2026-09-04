@@ -77,6 +77,11 @@ BUSY = frozenset(
 )
 
 
+#: `O_NOFOLLOW` where the platform has it, nothing where it does not -- which
+#: is why the `lstat` beside it is not redundant.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+
 class LockTimeout(RuntimeError):
     """A lock somebody else was holding for longer than the caller would wait."""
 
@@ -217,12 +222,20 @@ class FileLock:
         """
         if self._handle is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
-            # `O_NOFOLLOW` fails on a symlink rather than opening what it
-            # points at, so a lock file shipped in a repository as a link is
-            # never written through and never taken. That refusal reaches the
-            # caller as itself now, rather than as a wait for a holder that
-            # was never there.
+            # `lstat` first, and on every platform. `O_NOFOLLOW` does this in
+            # the kernel and closes the window between the check and the open,
+            # but Windows has no such flag and `getattr(os, "O_NOFOLLOW", 0)`
+            # quietly becomes nothing there -- so a `.local/bibliography.lock`
+            # shipped in a clone as a link was followed, and the `ftruncate`
+            # below then emptied whatever it named. `WriteGuard` makes the
+            # same two-part check for the same reason; see its docstring for
+            # the threat model, which is a repository shipping a symlink
+            # rather than a local adversary racing the check.
+            if self.path.is_symlink():
+                raise OSError(
+                    errno.ELOOP, f"{self.path} is a symlink; refusing to lock through it"
+                )
+            flags = os.O_CREAT | os.O_RDWR | _NOFOLLOW
             self._handle = os.open(self.path, flags, 0o600)
         try:
             _lock(self._handle)

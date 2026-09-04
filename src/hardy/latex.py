@@ -61,9 +61,16 @@ BODY = "\\begin{document}"
 INCLUSION = re.compile(r"\\(?:input|include|subfile)\s*\{([^}]*)\}")
 
 
-def compiles_document(root: str, path: str) -> bool:
-    """Whether saving `path` compiles the writeup itself rather than a probe."""
-    return path == ROOT_DOCUMENT or _includes(root, path)
+def compiles_document(sources: Mapping[str, str], path: str) -> bool:
+    r"""Whether saving `path` compiles the writeup itself rather than a probe.
+
+    The whole tree, because inclusion is transitive: `writeup.tex` includes
+    `a.tex` and `a.tex` includes `b.tex`, and asking only whether the root's
+    own text names `b.tex` called a file that is genuinely in the document a
+    probe -- which is the same mistake `LatexTools.check` was making, and the
+    same walk fixes both.
+    """
+    return path == ROOT_DOCUMENT or path in reached_fragments(sources)
 
 
 def uncommented(source: str) -> str:
@@ -87,27 +94,6 @@ def uncommented(source: str) -> str:
                 break
             cut = found + 1
     return "\n".join(kept)
-
-
-def _includes(root: str, path: str) -> bool:
-    r"""Whether `root` actually pulls `path` in.
-
-    An `\input` command, not merely the text `{sections/one}` appearing
-    somewhere: in a comment, or as an argument to an unrelated command, that
-    text means nothing to TeX, and treating it as an inclusion would leave the
-    fragment uncompiled while reporting it as checked. TeX lets the extension
-    be dropped, and either separator reaches the same file here, so all the
-    spellings are compared.
-    """
-    stem = path[: -len(".tex")] if path.endswith(".tex") else path
-    wanted = {
-        name.replace("\\", "/")
-        for name in (path, stem, path.replace("/", "\\"), stem.replace("/", "\\"))
-    }
-    return any(
-        found.strip().replace("\\", "/") in wanted
-        for found in INCLUSION.findall(uncommented(root))
-    )
 
 
 def _normalise_include(found: str) -> str:
@@ -260,7 +246,7 @@ def _executed(source: str) -> str:
     one layer further in: not "did a human hide this with `%`" but "would
     TeX itself ever get here".
 
-    Used by `unreached_fragments`, which asks that question. `_includes`
+    Used by `unreached_fragments`, which asks that question. The walk
     keeps `uncommented`: whether a save *compiles* is a different question,
     answered by what the writeup's `\input` chain names, not by which of
     those inputs would run.
@@ -273,7 +259,7 @@ def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
 
     A fragment nothing includes is in no PDF, whatever it says. A session once
     wrote itself a status report that way and nobody could have read it.
-    Follows the same commands `_includes` does, through `_executed` rather
+    Follows the same commands `reached_fragments` does, through `_executed` rather
     than plain `uncommented`: an `\input` written inside `\iffalse ... \fi`
     or inside a macro definition's body is text TeX itself never runs, and
     counting it as reached would clear a fragment that is not, in fact, in
@@ -289,6 +275,22 @@ def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
     """
     if ROOT_DOCUMENT not in sources:
         return []
+    return sorted(path for path in sources if path not in reached_fragments(sources))
+
+
+def reached_fragments(sources: Mapping[str, str]) -> set[str]:
+    r"""Every writeup file an `\input` chain from the root does reach.
+
+    The walk itself, so that the two questions asked of it -- which files are
+    orphans, and whether THIS file is part of the real document -- are
+    answered by one traversal rather than by two rules that can disagree.
+    They did: asking only whether the root's own text names a fragment made
+    `b.tex`, included by `a.tex` which the root includes, look like a file
+    nothing reaches, so saving it was compiled through a probe root and
+    exempted from the reference checks that the real document owes.
+    """
+    if ROOT_DOCUMENT not in sources:
+        return set()
     by_stem = {}
     for path in sources:
         normal = path.replace("\\", "/")
@@ -309,7 +311,30 @@ def unreached_fragments(sources: Mapping[str, str]) -> list[str]:
             if target is not None and target not in reached:
                 reached.add(target)
                 frontier.append(target)
-    return sorted(path for path in sources if path not in reached)
+    return reached
+
+
+def _reached(work: Path) -> set[str]:
+    r"""Which of the `.tex` files in `work` the root actually pulls in.
+
+    The whole inclusion tree, not the root's own text. `writeup.tex` includes
+    `a.tex`, `a.tex` includes `b.tex`: asking only whether the root names
+    `b.tex` said no, so saving `b.tex` was compiled through a probe root and
+    exempted from the reference and citation checks -- and an undefined
+    `\ref` in a fragment that is genuinely part of the document exited zero
+    and was committed.
+    """
+    sources = {}
+    for found in sorted(work.rglob("*.tex")):
+        try:
+            sources[found.relative_to(work).as_posix()] = found.read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            # One unreadable file must not make every other fragment look
+            # unreached, which would exempt the whole tree from the checks.
+            continue
+    return reached_fragments(sources)
 
 
 def _probe_root(root: str, path: str) -> str:
@@ -478,7 +503,7 @@ class LatexTools:
                         source,
                     )
                 root.write_text(source, encoding="utf-8")
-            elif path != ROOT_DOCUMENT and not _includes(root.read_text(encoding="utf-8"), path):
+            elif path != ROOT_DOCUMENT and path not in _reached(work):
                 # The root does not pull this fragment in yet, which is exactly
                 # the fragment-first order a split writeup has to be built in.
                 # Compiling the unchanged root would check nothing about the
