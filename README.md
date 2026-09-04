@@ -77,9 +77,9 @@ closes outright.
 A persistent computer algebra session sits alongside them, so the question of
 what is worth proving can be answered by computing rather than by guessing.
 State carries between cells, `/cas` lets you drive the same kernel yourself, and
-`cas_export` writes a script and a notebook, replays every cell in a fresh kernel
-to check the cells reproduce, and then runs the script it just wrote to check the
-file itself does. SymPy is the default because it is a Python dependency and
+`cas_export` writes a script and a notebook covering the current segment's
+accepted cells, replays them in a fresh kernel to check they reproduce, and then
+runs the script it just wrote to check the file itself does. SymPy is the default because it is a Python dependency and
 works everywhere; Singular and Macaulay2 are far stronger for algebraic geometry
 and are used when configured. No computation is evidence — only Lean's kernel
 verifies anything, and the verifier never reads a CAS result.
@@ -684,11 +684,15 @@ omitting it there leaves the global one alone rather than overwriting it.
 Not every command sees every flag. `chat`, `doctor`, `latency`, and `batch`
 resolve the whole configuration, command line included. `evals` resolves it too
 but pins its own toolchain at both ends: the sweep, the toolchain identity it
-records, and every batch row all invoke `lake env lean`, so `--lean-command` is
-ignored there on purpose — a row checked under a compiler other than the one
-the scoreboard and the baseline name would be measuring nothing — and its
-staged documents are built with Tectonic, so `--latex-command` does nothing
-there either (a batch row compiles no document at all). `--latex-command` in
+records, and every batch row all invoke `lake env lean`, so `--lean-command`
+governs nothing there on purpose — a row checked under a compiler other than the
+one the scoreboard and the baseline name would be measuring nothing — and its
+staged documents are built with Tectonic, so `--latex-command` builds nothing
+there either (a batch row compiles no document at all). Neither is *inert*
+under `--mode staged`, though: each row's preflight is `hardy doctor`'s check
+set against the configuration as resolved, so an override naming a command this
+machine does not have turns every staged row into a setup failure while the
+work itself goes on using `lake env lean` and Tectonic. `--latex-command` in
 fact only ever reaches `chat` and `doctor` — with one sting in the tail: the
 staged preflight is `hardy doctor`'s check set, so `prove` and `accept` still
 require the configured `latex_command` (`pdflatex` by default) on `PATH` even
@@ -945,7 +949,7 @@ kernel.
 | --- | --- |
 | `/help` | List the commands. |
 | `/model [identity]` | Switch the live model, or open a selector (arrow keys or a row number, Enter to choose, Esc to cancel). |
-| `/cas [state\|reset\|export\|expr]` | Drive the same persistent computer algebra kernel the model uses: `/cas <source>` runs one cell, a bare `/cas` opens a block ended by `/end`, `/cas state` reports the backend and what the kernel holds, `/cas reset` starts a clean kernel, `/cas export` writes the script and notebook and replays every cell to check they reproduce. |
+| `/cas [state\|reset\|export\|expr]` | Drive the same persistent computer algebra kernel the model uses: `/cas <source>` runs one cell, a bare `/cas` opens a block ended by `/end`, `/cas state` reports the backend and what the kernel holds, `/cas reset` starts a clean kernel, `/cas export` writes the script and notebook and replays them to check they reproduce. What it exports is the current segment's *accepted* cells: a cell that failed, one that was interrupted, and everything from before a `/cas reset` are all left out, so an export is the reproducible line through the session rather than its whole history. |
 | `/goal [text]` | State what this session is for, or print it. It is shown beside every request to approve an assumption, so nobody approves an axiom with the assignment off-screen. |
 | `/import [<dir>\|lean\|reference\|tex]` | Triage a pile of existing files without modifying it, or promote one: `/import lean <file> [dest]` through the ordinary save path, `/import reference <file> [dest]` into the root's shared `.hardy/lean/`, `/import tex <file> [dest]` through the LaTeX save path. |
 | `/project [list\|new\|switch]` | List the problems in this root and mark the active one, start another, or open one. |
