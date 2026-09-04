@@ -171,6 +171,29 @@ _MACRO_DEF = re.compile(
     # that would have to guess at the order they were written in.
     r"|\\[gxe]?def\b"
 )
+#: `\let`, which is not a definition but consumes tokens like one.
+#: `\let\x=\begin{verbatim}` hands `\begin` to `\x` WITHOUT running it, and
+#: `{verbatim}` after it is ordinary text -- so nothing opens, while the scan
+#: read a live opener and hid everything after it until a commented closer.
+#: `\futurelet` takes three tokens rather than two and is deliberately not
+#: here: it is vanishingly rare in a writeup, and guessing at a primitive's
+#: arity is how this scan would start being wrong in the dangerous direction.
+_LET = re.compile(r"\\let(?![a-zA-Z])")
+
+
+def _skip_command(text: str, index: int) -> int:
+    r"""The index just after the control sequence starting at `index`.
+
+    `\foo` is its letters; `\&` is the single character after the backslash.
+    The same rule TeX tokenises by, and the one `_MacroState.step` relies on
+    when it declines to count an escaped brace as a group.
+    """
+    pos = index + 1
+    if pos < len(text) and text[pos].isalpha():
+        while pos < len(text) and text[pos].isalpha():
+            pos += 1
+        return pos
+    return min(pos + 1, len(text))
 
 
 def _skip_balanced(text: str, index: int, opener: str, closer: str) -> int:
@@ -334,12 +357,17 @@ class _MacroState:
     unexecuted as the first.
     """
 
-    __slots__ = ("phase", "depth", "bodies")
+    __slots__ = ("phase", "depth", "bodies", "letting")
 
     def __init__(self) -> None:
         self.phase = "idle"
         self.depth = 0
         self.bodies = 0
+        #: How many more tokens a `\let` is still swallowing: the name it is
+        #: defining, then the meaning it is copying. Carried across lines
+        #: like everything else here, because `\let\x=` may end one line and
+        #: `\begin{verbatim}` begin the next.
+        self.letting = 0
 
     @property
     def storing(self) -> bool:
@@ -357,6 +385,25 @@ class _MacroState:
         self.phase = "name"
         self.depth = 0
         self.bodies = 2 if environment else 1
+
+    def lets(self) -> None:
+        r"""A `\let` was executed: the next two tokens are its arguments."""
+        self.letting = 2
+
+    def swallowed(self, character: str = "") -> bool:
+        r"""Whether this token belongs to a `\let` rather than to the document.
+
+        `=` and spaces sit between the two arguments and are neither, so they
+        are stepped over without spending one. Everything else -- a control
+        sequence, a single character -- is one of the two, and the second is
+        the token `\let` copies WITHOUT running, which is the whole point.
+        """
+        if self.letting <= 0:
+            return False
+        if character and (character.isspace() or character == "="):
+            return True
+        self.letting -= 1
+        return True
 
     def escape(self) -> None:
         r"""A control sequence or escaped character was executed.
@@ -440,6 +487,14 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str,
     while index < len(line):
         character = line[index]
         if character == "\\":
+            if state.swallowed():
+                # A token `\let` is consuming, not one the document runs.
+                # `\let\x=\begin{verbatim}` hands `\begin` over without
+                # executing it, so honouring it as an opener put every line
+                # after into a region TeX never entered.
+                kept.append(" ")
+                index = _skip_command(line, index)
+                continue
             found = INLINE_VERBATIM.match(line, index)
             if found is not None:
                 closed = line.find(found.group("mark"), found.end())
@@ -466,6 +521,12 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str,
                 state.defines(bool(definition.group("env")))
                 index = definition.end()
                 continue
+            binding = _LET.match(line, index)
+            if binding is not None:
+                kept.append(binding.group(0))
+                state.lets()
+                index = binding.end()
+                continue
             # An escaped backslash is dropped rather than carried through.
             # `\\` is TeX's line break and means nothing to any of the
             # patterns run over this text -- but leaving the pair intact left
@@ -482,7 +543,8 @@ def _executed_line(line: str, state: _MacroState) -> tuple[str, str | None, str,
         if character == "%":
             return "".join(kept), None, "", True
         kept.append(character)
-        state.step(character)
+        if not state.swallowed(character):
+            state.step(character)
         index += 1
     return "".join(kept), None, "", False
 

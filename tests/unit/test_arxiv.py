@@ -1126,3 +1126,54 @@ def test_a_conditional_drop_waits_for_the_key_it_is_comparing(tmp_path: Path):
         child.wait()
     assert elapsed >= 0.4, "the drop compared and deleted without holding the key"
     assert library.cached_query(key, now=1_000_000.0) is None
+
+
+def test_nothing_changes_a_cache_key_without_holding_it(tmp_path: Path, monkeypatch):
+    """`required=False` and a fallback that acts anyway is the race again.
+
+    It is the timed-out writer who supplies the replacement to destroy: a
+    process holding the key, paused between its comparison and its unlink,
+    outlasts somebody else's wait, and that somebody caches a good answer
+    unlocked for the first to delete. So neither operation touches a key it
+    does not hold -- what is lost when the key is busy for five whole seconds
+    is one cache entry, which the next request fetches again.
+    """
+    library = arxiv.PaperLibrary(tmp_path / "papers")
+    key = "k" * 64
+    library.cache_query(key, _feed(), now=1_000_000.0)
+    # The wait itself is not what is under test -- what is under test is what
+    # happens when it runs out -- so it is shortened rather than waited out.
+    monkeypatch.setattr(arxiv, "LOCK_SECONDS", 0.2)
+    lock = library.query_lock(key)
+    ready = tmp_path / "ready"
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                f"""
+                import pathlib, time
+                from hardy.storage import FileLock
+                with FileLock(pathlib.Path({str(lock)!r})):
+                    pathlib.Path({str(ready)!r}).write_text("held")
+                    time.sleep(30)
+                """
+            ),
+        ],
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not ready.exists() and time.monotonic() < deadline:
+            if child.poll() is not None:
+                pytest.fail("the child exited before it took the lock")
+            time.sleep(0.02)
+        assert ready.exists(), "the child never reported holding the lock"
+        # Both give up rather than acting on a key somebody else holds.
+        library.cache_query(key, b"<replacement/>", now=1_000_000.0)
+        library.drop_query(key, body=_feed())
+    finally:
+        child.kill()
+        child.wait()
+    held = library.cached_query(key, now=1_000_000.0)
+    assert held is not None, "an unlocked drop removed the entry anyway"
+    assert held[0] == _feed(), "an unlocked write replaced the entry anyway"

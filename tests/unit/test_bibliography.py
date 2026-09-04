@@ -783,3 +783,36 @@ def test_an_entry_with_no_digest_is_not_a_citation():
         Entry(**fields, content_sha256="not-a-digest")
     # And a real one still loads.
     assert Entry(**fields, content_sha256="a" * 64).content_sha256 == "a" * 64
+
+
+def test_a_let_binding_cannot_open_a_verbatim_region():
+    r"""`\let` hands a token over without running it.
+
+    `\let\x=\begin{verbatim}` gives `\x` the meaning of `\begin` and typesets
+    `{verbatim}` as ordinary text -- nothing opens. The scan read a live
+    opener and put every line after it into a region TeX never entered, which
+    a commented `\end{verbatim}` then closed, taking a real `thebibliography`
+    out of the check.
+    """
+    for binding in ("\\let\\x=\\begin{verbatim}", "\\let\\x\\begin{verbatim}"):
+        refusal = hand_written_bibliography(
+            "writeup.tex",
+            f"{binding}\n"
+            "\\begin{thebibliography}{1}\n\\bibitem{known2020} Fake.\n"
+            "\\end{thebibliography}\n% \\end{verbatim}\n",
+        )
+        assert refusal, binding
+        assert "writes its own bibliography" in refusal
+
+
+def test_a_real_verbatim_block_after_a_let_still_opens():
+    r"""And the swallowing stops after the two tokens `\let` takes.
+
+    Otherwise the fix would be the dangerous direction of the same mistake:
+    a `\bibitem` printed inside a genuine `verbatim` block read as executable.
+    """
+    assert not hand_written_bibliography(
+        "writeup.tex",
+        "\\let\\x=\\relax\n"
+        "\\begin{verbatim}\n\\bibitem{ghost2020} Printed, not run.\n\\end{verbatim}\n",
+    )

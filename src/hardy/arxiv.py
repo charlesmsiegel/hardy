@@ -588,13 +588,23 @@ class PaperLibrary:
         return guard.path(f"{key}.lock")
 
     def cache_query(self, key: str, body: bytes, *, now: float) -> None:
-        # Under the same lock the conditional drop takes. Without it the
-        # comparison there is still racing a write: a process that has
-        # established the cached bytes are the ones it rejected can be
-        # overtaken between that and the unlink, and delete a good answer
-        # somebody else had just put there.
+        # Under the same lock the conditional drop takes, and NOT written
+        # without it. Without the lock the comparison there is still racing a
+        # write: a process that has established the cached bytes are the ones
+        # it rejected can be overtaken between that and the unlink, and delete
+        # a good answer somebody else had just put there. `required=False`
+        # with a fallback that writes anyway is that race with extra steps --
+        # it is the timed-out writer who supplies the replacement to destroy.
+        #
+        # So the invariant is that a cache key is only ever changed by a
+        # process holding it, and the cost of that is losing THIS answer when
+        # the key is busy for five whole seconds. Cheap: the answer is in hand
+        # for this call either way, and what is lost is one cache entry that
+        # the next request fetches again.
         guard, name = self._guard(f"queries/{key}.json")
-        with FileLock(self.query_lock(key), timeout=LOCK_SECONDS, required=False):
+        with FileLock(self.query_lock(key), timeout=LOCK_SECONDS, required=False) as lock:
+            if not lock.held:
+                return
             guard.write_bytes(
                 name,
                 json.dumps(
@@ -619,14 +629,23 @@ class PaperLibrary:
         disk. A bad entry is dropped once, by the process that read it.
         """
         try:
-            # Compared and deleted under one lock. The two were separate,
-            # unlocked steps: a process that had established the cached bytes
-            # were the ones it rejected could be overtaken between them --
-            # somebody else drops, refetches, caches a good answer -- and then
-            # delete that, turning a cached success into another request and
-            # possibly into a network failure.
+            # Compared and deleted under one lock, and neither without it.
+            # The two were separate, unlocked steps: a process that had
+            # established the cached bytes were the ones it rejected could be
+            # overtaken between them -- somebody else drops, refetches, caches
+            # a good answer -- and then delete that, turning a cached success
+            # into another request and possibly into a network failure.
+            #
+            # Nothing happens when the lock cannot be taken. A five-second
+            # wait on a lock covering one comparison and one unlink means
+            # somebody live is stuck holding the key -- a dead holder releases
+            # it, since the kernel holds it rather than a file anyone has to
+            # judge -- and leaving a bad entry for them to drop is better than
+            # deleting whatever is there without having compared it.
             guard, name = self._guard(f"queries/{key}.json")
-            with FileLock(self.query_lock(key), timeout=LOCK_SECONDS, required=False):
+            with FileLock(self.query_lock(key), timeout=LOCK_SECONDS, required=False) as lock:
+                if not lock.held:
+                    return
                 if body is not None and self._cached_body(key) not in (None, body):
                     return
                 guard.unlink(name, missing_ok=True)
