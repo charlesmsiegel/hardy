@@ -268,7 +268,21 @@ class PaperToolRuntime:
             payload = self._results(found, echoed, note + level.note, level)
             if len(payload.encode("utf-8")) <= self.observation_bytes:
                 return ToolResult(True, payload)
-        return ToolResult(True, payload)
+        # Nothing left to shed and still too big -- a very small configured
+        # budget, where even the identifiers and the note do not fit. The last
+        # level was returned anyway, which put an oversized answer into the
+        # context the budget exists to protect. Refused instead, and refused
+        # in a way that says what to do: the one thing that must never happen
+        # here is quietly returning fewer papers than were found, because a
+        # shortened list is indistinguishable from a search that found fewer.
+        return ToolResult(
+            False,
+            f"arXiv matched {len(found)} papers and the reply does not fit the "
+            f"{self.observation_bytes}-byte observation budget even as bare identifiers. "
+            "Ask for fewer results, or raise limits.model_observation_bytes; the list is "
+            "not shortened here, because a shortened list reads exactly like a smaller "
+            "answer.",
+        )
 
     def _results(self, found: Any, query: str, note: str, level: SearchDetail) -> str:
         """One search answer at one level of detail."""

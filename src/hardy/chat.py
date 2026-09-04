@@ -18,6 +18,7 @@ from typing import Any, Protocol
 from . import audit, completion, ingest, process
 from . import summary as summary_module
 from .bibliography import GENERATED as GENERATED_BIBLIOGRAPHY
+from .bibliography import STORE as STORE_BIBLIOGRAPHY
 from .bibliography import BibliographyError, hand_written_bibliography
 from .bibliography import is_generated as is_generated_bibliography
 from .cas import CasError
@@ -5075,7 +5076,31 @@ class MathematicsSession:
             json.dumps(self._stamp_inputs(open_names, sources), sort_keys=True).encode("utf-8")
         )
         digest.update(b"\0")
+        # And the store the reference list is vouched against. The keys a
+        # compile used are checked at the save, and the verdict is remembered
+        # by this signature -- so `bibliography.json` edited or deleted after
+        # that save left the signature current, the writeup reading as freshly
+        # compiled, and `report_result` accepting a document whose references
+        # nothing recorded any more. A citation withdrawn from the store is a
+        # change to what the document rests on, exactly as an edit to its
+        # source is.
+        digest.update(self._bibliography_identity().encode("utf-8"))
+        digest.update(b"\0")
         return digest.hexdigest()
+
+    def _bibliography_identity(self) -> str:
+        """The store as the signature sees it: its bytes, or that it has none.
+
+        Unreadable and absent are told apart, because "there is no
+        bibliography" and "the bibliography cannot be read" are different
+        states for a writeup to be stamped against.
+        """
+        try:
+            return hashlib.sha256(read_bytes(self.workspace, STORE_BIBLIOGRAPHY)).hexdigest()
+        except FileNotFoundError:
+            return "absent"
+        except (OSError, ValueError):
+            return "unreadable"
 
     def _stamp_inputs(
         self, open_names: Sequence[str] | None = None, sources: dict[str, str] | None = None

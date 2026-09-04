@@ -410,3 +410,18 @@ def test_an_empty_result_does_not_echo_an_unbounded_query(tmp_path: Path):
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 2048
     assert "matched nothing" in result.output
+
+
+def test_a_result_set_that_cannot_be_represented_is_refused_not_shrunk(tmp_path: Path):
+    """The one thing that must never happen here is quietly returning fewer.
+
+    With a budget too small even for bare identifiers, the last level was
+    returned anyway -- an oversized answer in the context the budget exists to
+    protect. Refusing says so; shortening the list would read exactly like a
+    search that found fewer papers.
+    """
+    runtime = _runtime(tmp_path, observation_bytes=64)
+    result = runtime.call("search_papers", {"query": "ricci flow"})
+    assert not result.ok
+    assert "observation budget" in result.output
+    assert "not shortened" in result.output

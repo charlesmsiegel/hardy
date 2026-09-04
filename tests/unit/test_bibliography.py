@@ -562,3 +562,37 @@ def test_a_comparison_in_a_title_is_not_typeset_as_punctuation(tmp_path: Path):
     generated = (tmp_path / "tex" / "references.tex").read_text(encoding="utf-8")
     assert "\\textless{}" in generated
     assert "0 <" not in generated
+
+
+def test_a_commented_verbatim_opener_cannot_hide_executable_source():
+    r"""The order of comment-stripping and verbatim removal is the whole thing.
+
+    `% \begin{verbatim}`, a real `thebibliography`, then `% \end{verbatim}`:
+    TeX runs every line of that, and removing verbatim regions first cut it
+    out whole. An earlier round called that "the right way round to be wrong"
+    because the compiler's `\bibcite` record was the real check -- but that
+    record covers the KEYS, so a forged entry reusing a vouched key passed
+    both.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "Text.\n% \\begin{verbatim}\n\\begin{thebibliography}{9}\n"
+        "\\bibitem{perelman2002entropy-abcdef0123} Somebody Else.\n"
+        "\\end{thebibliography}\n% \\end{verbatim}\nMore.\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal
+
+
+def test_a_percent_inside_verbatim_does_not_swallow_its_closer():
+    r"""`%` is an ordinary character in there, so the region ends where it says.
+
+    Stripping comments inside a verbatim region could eat the `\end`, leaving
+    it open to the end of the file and hiding every command after it.
+    """
+    refusal = hand_written_bibliography(
+        "writeup.tex",
+        "\\begin{verbatim}\n50% of \\end{verbatim}\n\\bibitem{executed2020} Nobody.\n",
+    )
+    assert refusal
+    assert "writes its own bibliography" in refusal

@@ -234,8 +234,36 @@ def _wrapped(line: str) -> list[str]:
     Hard breaks included: a single unbroken token can be longer than the
     window on its own, and a line nothing will break is a line nothing can
     page past.
+
+    Measured in ENCODED BYTES, not in code points, because the budget it
+    exists to fit inside is a byte budget. Ninety-six CJK characters are two
+    hundred and eighty-eight bytes, so a line `textwrap` called short enough
+    did not fit a small window -- and `truncate` then clipped it and moved on
+    to the next line, leaving the clipped tail unreachable by any later
+    `read_paper`. A page nothing can turn to is the failure the wrapping is
+    for.
     """
-    return textwrap.wrap(line, ABSTRACT_COLUMNS, break_long_words=True) or [""]
+    wrapped = textwrap.wrap(line, ABSTRACT_COLUMNS, break_long_words=True) or [""]
+    return [piece for one in wrapped for piece in _by_bytes(one)]
+
+
+def _by_bytes(line: str) -> list[str]:
+    """`line` in pieces of at most `ABSTRACT_COLUMNS` encoded bytes."""
+    if len(line.encode("utf-8")) <= ABSTRACT_COLUMNS:
+        return [line]
+    pieces: list[str] = []
+    current = ""
+    width = 0
+    for character in line:
+        size = len(character.encode("utf-8"))
+        if width + size > ABSTRACT_COLUMNS and current:
+            pieces.append(current)
+            current, width = "", 0
+        current += character
+        width += size
+    if current:
+        pieces.append(current)
+    return pieces
 
 
 def digest(text: str) -> str:
@@ -754,24 +782,37 @@ class ArxivClient:
                 return _entries(body, url, _stamp(fetched)), body
             except ArxivError:
                 self.library.drop_query(key)
-        self._throttle()
-        # Asked again on the way out of the wait. Two processes wanting the
+        # Asked again on the way out of the wait, and asked INSIDE the lock,
+        # between the waiting and the reservation. Two processes wanting the
         # same uncached query both miss above and both queue on the throttle;
         # the first fills the cache while the second is still sleeping out the
         # interval, and without this the second woke up and asked arXiv for
         # something already on disk -- a duplicate request in exactly the
-        # multi-process case the lock exists for. This does not make the miss
-        # atomic: the transport is deliberately outside the lock, since
-        # serialising every request machine-wide is a different and much
-        # larger promise than spacing them. It removes the waste that the
-        # waiting itself creates.
-        cached = self.library.cached_query(key, now=self._clock())
-        if cached is not None:
+        # multi-process case the lock exists for.
+        #
+        # Inside rather than after, because a reservation is a claim on the
+        # next slot and doing anything between claiming it and using it lets
+        # the order slip: a process delayed there has already written its
+        # timestamp, so a second can wait its three seconds, reserve, and fire
+        # first, leaving the two real requests closer together than the
+        # interval. Deciding not to fetch before reserving keeps the two
+        # adjacent.
+        served: list[tuple[tuple[PaperRecord, ...], bytes]] = []
+
+        def _already_answered() -> bool:
+            cached = self.library.cached_query(key, now=self._clock())
+            if cached is None:
+                return False
             body, fetched = cached
             try:
-                return _entries(body, url, _stamp(fetched)), body
+                served.append((_entries(body, url, _stamp(fetched)), body))
             except ArxivError:
                 self.library.drop_query(key)
+                return False
+            return True
+
+        if not self._throttle(_already_answered):
+            return served[0]
         body = self._transport(url, self._timeout)
         now = self._clock()
         # Parsed before it is cached, so the refusal below leaves nothing
@@ -780,8 +821,13 @@ class ArxivClient:
         self.library.cache_query(key, body, now=now)
         return found, body
 
-    def _throttle(self) -> None:
-        """Wait out arXiv's interval, counting from the last request anywhere.
+    def _throttle(self, answered: Callable[[], bool] | None = None) -> bool:
+        """Wait out arXiv's interval, and say whether a request is still wanted.
+
+        `answered` is asked once, under the lock, after the wait and before
+        the reservation: it is the caller's chance to notice that somebody
+        else answered the same question while this process was asleep. True
+        means no request is made and no slot is claimed.
 
         The clock is on disk, so two Hardy processes on one machine share one
         budget -- but a timestamp on disk is not on its own a mutex, and
@@ -815,7 +861,10 @@ class ArxivClient:
                 wait = self._interval - since
             if wait > 0:
                 self._sleep(wait)
+            if answered is not None and answered():
+                return False
             self.library.note_request(self._clock())
+        return True
 
 
 def _narrow(response: Any, seconds: float) -> None:
