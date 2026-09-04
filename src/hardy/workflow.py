@@ -276,6 +276,19 @@ class ProveWorkflow:
         terminal_reason: TerminalReason | None = None
         grades = Grades()
         try:
+            # The rule for everything below, learned one site at a time and
+            # written here so the next stage does not have to learn it again:
+            # every call that BLOCKS -- a provider turn, a Lean or Tectonic
+            # run, a question put to the user -- gets a cancellation check
+            # after it returns and before its result is recorded, displayed or
+            # interpreted. A press lands inside such a call, and the call's own
+            # failure mode is then indistinguishable from the interruption: an
+            # interrupted probe reads as a broken toolchain, an interrupted
+            # reader as an unreachable one, an abandoned selector as a refusal,
+            # a killed Tectonic as a compilation failure. Each of those would
+            # go in the manifest as a claim about the machine or the model for
+            # something the user did.
+            #
             # Before anything is asked of the user or the provider: a run
             # cancelled between being built and being started must not open a
             # thread. Inside the `try`, and after the store exists, so it takes
@@ -396,6 +409,15 @@ class ProveWorkflow:
                 wait_started = self._monotonic()
                 choice = terminal.choose_approval()
                 user_wait += self._monotonic() - wait_started
+                # Before the answer is recorded or read. An abandoned selector
+                # answers "cancel" -- and so does a user who read the
+                # formalization and refused it. Those are different facts, and
+                # the manifest keeps them apart (USER_REJECTION against
+                # USER_CANCELLATION) precisely because automation reading
+                # `terminal_reason` acts on them differently. A press that
+                # stopped the run is not a judgement on the statement, and
+                # recording one would put words in the user's mouth.
+                self._refuse_if_cancelled()
                 store.append("user.approval", {"choice": choice}, phase=state.phase)
                 if choice == "cancel":
                     state.transition(RunPhase.CANCELLED)
@@ -593,6 +615,12 @@ class ProveWorkflow:
                     terminal_reason = TerminalReason.TIMEOUT_BUDGET_EXHAUSTED
                     break
                 last_submission = runtime.run_proof(active_thread, proof_request)
+                # Before the verifier rather than only after it. The check
+                # below keeps the record honest about a press that lands
+                # inside the verification; this one keeps an abandoned run
+                # from buying a verification at all, and it is Lean over the
+                # whole claim -- minutes, on a machine nobody is waiting at.
+                self._refuse_if_cancelled()
                 state.transition(RunPhase.FINAL_VERIFICATION)
                 verification = self._verifier.verify(
                     approved_claim, last_submission.proof_body, store
