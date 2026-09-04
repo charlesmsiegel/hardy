@@ -19,6 +19,7 @@ class Recorder:
         self.terminals: list = []
         self._phase = phase
         self.cancelled = 0
+        self.abandoned = 0
 
     def run(self, request, terminal):
         self.requests.append(request)
@@ -27,6 +28,9 @@ class Recorder:
 
     def cancel(self):
         self.cancelled += 1
+
+    def abandon(self):
+        self.abandoned += 1
 
 
 @pytest.fixture
@@ -288,3 +292,52 @@ async def test_the_real_shell_still_uses_a_worker(ui, settings, monkeypatch):
     monkeypatch.setattr(prove, "run", run)
     await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
     assert where != [threading.current_thread().name], "the terminal ran it inline"
+
+
+async def test_the_press_refuses_further_stages_before_it_returns(ui, settings, monkeypatch):
+    """Setting the flag is an `Event` and costs nothing; the rest of `cancel`
+    waits for the tool gate and the provider worker, which is minutes. Deferring
+    both let the worker pass its next check and open one more billable stage
+    after the terminal had said the run was stopping."""
+    from hardy.tui import prove
+
+    recorder = Recorder()
+    monkeypatch.setattr("hardy.tui.handlers.process.interrupt_children", lambda: None)
+
+    # Observed rather than asserted in place: `handle_prove` catches `Exception`
+    # to keep a failed run from ending the session, so an `assert` inside this
+    # callback is swallowed and the test can never fail.
+    refused_by_then: list[int] = []
+
+    def run(config, claim, terminal, *, backend="claude", ready=None):
+        ready(recorder)
+        ui.stopper()
+        # The instant the press returns, before any teardown thread can have
+        # run: the workflow must already be refusing stages.
+        refused_by_then.append(recorder.abandoned)
+        return recorder.run(SimpleNamespace(text=claim, model=config.model), terminal)
+
+    monkeypatch.setattr(prove, "run", run)
+    await handlers.handle_prove(ui, "a claim", State(config=settings, session=None))
+    assert refused_by_then == [1], "the run was not refused until a thread ran"
+
+
+def test_abandon_is_the_instantaneous_half_of_cancel():
+    """`ProveWorkflow.cancel` still refuses stages; it just blocks afterwards."""
+    from hardy import workflow as workflow_module
+
+    built = workflow_module.ProveWorkflow.__new__(workflow_module.ProveWorkflow)
+    import threading as _threading
+
+    built._cancelled = _threading.Event()
+    built._runtime_in_flight = None
+    built._thread_in_flight = None
+    built.abandon()
+    assert built._cancelled.is_set(), "abandon did not refuse further stages"
+
+    again = workflow_module.ProveWorkflow.__new__(workflow_module.ProveWorkflow)
+    again._cancelled = _threading.Event()
+    again._runtime_in_flight = None
+    again._thread_in_flight = None
+    again.cancel()
+    assert again._cancelled.is_set(), "cancel stopped refusing stages"

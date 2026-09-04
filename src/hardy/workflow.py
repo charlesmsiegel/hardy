@@ -201,13 +201,32 @@ class ProveWorkflow:
 
         The boundary is the documented one: no further tool call runs, and one
         already inside a subprocess is left to finish rather than torn out.
+
+        `abandon` is the half of this that a caller on an event loop can afford
+        to run inline. Keep them together in that order: the flag is what the
+        stage loops read, so deferring it along with the teardown lets the
+        worker pass its next check and open another stage.
         """
-        self._cancelled.set()
+        self.abandon()
         runtime, thread = self._runtime_in_flight, self._thread_in_flight
         if runtime is not None and thread is not None:
             stop = getattr(runtime, "cancel", None)
             if stop is not None:
                 stop(thread)
+
+    def abandon(self) -> None:
+        """Refuse every further stage, and return at once. Any thread.
+
+        Split out of `cancel` because the two halves have opposite costs. This
+        one sets an `Event`, which is instantaneous; the rest of `cancel` waits
+        for the tool gate and then for the provider worker to settle, which is
+        minutes for a Lean call. A caller on an event loop needs the first
+        inline -- it is what the stage loops actually read -- and the second on
+        a thread. Deferring both let the worker pass its next check and open
+        one more billable stage after the user had been told the run was
+        stopping.
+        """
+        self._cancelled.set()
 
     def _track(self, thread: Any) -> Any:
         """Publish the thread `cancel` should reach, and hand it back."""
