@@ -541,3 +541,80 @@ def test_the_project_copy_wins_when_two_shared_trees_define_a_module(tmp_path: P
 
     carried = chat._shared_sources({"Basic": "import Helper\n"})
     assert carried["Helper"] == "theorem helper : True := trivial\n"
+
+
+def test_a_shared_module_the_workspace_shadows_is_not_published(tmp_path: Path):
+    """Lean resolves the problem's own module, so the shared one is not what
+    the theorem rests on -- and publishing it would put an unrelated file on
+    the page under the name of one the page already carries."""
+    workspace = tmp_path / "problem"
+    shared = tmp_path / ".hardy" / "lean"
+    shared.mkdir(parents=True)
+    (shared / "Helper.lean").write_text(
+        'def secret : String := "not this one"\n', encoding="utf-8"
+    )
+
+    runtime = FakeChatRuntime([{"role": "assistant", "content": "Nothing to do."}])
+    chat = session(workspace, runtime)
+    lean = Path(chat.workspace) / "lean"
+    lean.mkdir(parents=True, exist_ok=True)
+    # The workspace declares `Helper` itself, so the import resolves here.
+    (lean / "Helper.lean").write_text("theorem helper : True := trivial\n", encoding="utf-8")
+    (lean / "Basic.lean").write_text("import Helper\n", encoding="utf-8")
+
+    carried = chat.export_material()["shared_sources"]
+    assert "Helper" not in carried
+    assert not any("not this one" in text for text in carried.values())
+
+
+def test_a_personal_library_resolves_its_own_imports_not_the_projects(tmp_path: Path):
+    """`_compile_path`'s rule: a shared library sees only the libraries further
+    out than itself. A personal module importing `B` is compiled against the
+    personal `B`, so the page has to carry that one."""
+    workspace = tmp_path / "problem"
+    project = tmp_path / ".hardy" / "lean"
+    project.mkdir(parents=True)
+    (project / "B.lean").write_text("theorem b : True := trivial  -- project\n", encoding="utf-8")
+
+    runtime = FakeChatRuntime([{"role": "assistant", "content": "Nothing to do."}])
+    chat = session(workspace, runtime)
+
+    personal = tmp_path / "personal"
+    personal.mkdir()
+    (personal / "A.lean").write_text("import B\n", encoding="utf-8")
+    (personal / "B.lean").write_text("theorem b : True := trivial  -- personal\n", encoding="utf-8")
+    chat.shared_roots = (*chat.shared_roots, (personal, personal))
+
+    carried = chat._shared_sources({"Basic": "import A\n"})
+
+    assert "A" in carried
+    # `A` lives in the personal tree, so its own `import B` resolves there.
+    assert "personal" in carried["B"]
+
+
+def test_the_settings_carry_the_limits_that_bound_what_could_be_observed(tmp_path: Path):
+    """A cell that timed out, a session budget that ran out, and an observation
+    the model saw only a summary of are three different reasons a computation
+    is missing from the record. A reader comparing two exports has to be able
+    to tell a different question from a different budget.
+
+    Read off the runtime that enforces them, so what the page reports is what
+    was actually in force rather than what a config file still says.
+    """
+    from hardy import cas_tools
+    from hardy.domain import RunLimits
+
+    chat = built(tmp_path)
+
+    class Session:
+        limits = RunLimits()
+
+    chat.cas = cas_tools.CasToolRuntime.__new__(cas_tools.CasToolRuntime)
+    chat.cas.session = Session()
+    chat.cas.observation_bytes = 32 * 1024
+
+    settings = chat.export_material()["settings"]
+    assert "per cell" in settings["Computer algebra limits"]
+    assert "per session" in settings["Computer algebra limits"]
+    assert "bytes per tool result" in settings["Observed by the model"]
+    assert "wall clock" in settings["Literature search budget"]
