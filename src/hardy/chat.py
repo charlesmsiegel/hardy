@@ -2629,13 +2629,13 @@ class MathematicsSession:
             return set()
         return set(NEWLABEL.findall(written))
 
-    def _saved_theorems(self) -> set[str]:
+    def _saved_theorems(self, sources: dict[str, str] | None = None) -> set[str]:
         found: set[str] = set()
-        for source in self.lean_workspace.sources().values():
+        for source in (self.lean_workspace.sources() if sources is None else sources).values():
             found.update(declarations(source)["theorem"])
         return found
 
-    def _theorem_statements(self) -> dict[str, str]:
+    def _theorem_statements(self, sources: dict[str, str] | None = None) -> dict[str, str]:
         """Every saved theorem, with the exact statement Lean was given.
 
         Theorems only. A `lemma` is scaffolding and owes nothing, which is the
@@ -2647,7 +2647,7 @@ class MathematicsSession:
         carry it on the same terms as any other.
         """
         found: dict[str, str] = {}
-        for source in self.lean_workspace.sources().values():
+        for source in (self.lean_workspace.sources() if sources is None else sources).values():
             theorems = set(declarations(source)["theorem"])
             found.update(
                 {name: text for name, text in statements(source).items() if name in theorems}
@@ -2671,7 +2671,7 @@ class MathematicsSession:
             if name not in opened
         }
 
-    def _shared_names(self) -> dict[str, list[str]]:
+    def _shared_names(self, sources: dict[str, str] | None = None) -> dict[str, list[str]]:
         """Theorem names more than one saved module declares.
 
         Lean permits it while nothing imports both, and the workspace does not
@@ -2683,7 +2683,8 @@ class MathematicsSession:
         asked to put one in a namespace.
         """
         holders: dict[str, list[str]] = {}
-        for module, source in sorted(self.lean_workspace.sources().items()):
+        snapshot = self.lean_workspace.sources() if sources is None else sources
+        for module, source in sorted(snapshot.items()):
             for name in declarations(source)["theorem"]:
                 holders.setdefault(name, []).append(module)
         return {name: found for name, found in holders.items() if len(found) > 1}
@@ -2941,7 +2942,9 @@ class MathematicsSession:
         """
         return bool(self._saved_theorems())
 
-    def _current_audit(self) -> dict[str, dict[str, Any]]:
+    def _current_audit(
+        self, sources: dict[str, str] | None = None
+    ) -> dict[str, dict[str, Any]]:
         """The stored verdicts, each measured against the tree in front of us.
 
         `session.json` keeps a verdict for reference after the module beneath
@@ -2960,7 +2963,7 @@ class MathematicsSession:
         """
         stored = self.state.get("audit", {})
         try:
-            signatures = self.lean_workspace.current_signatures()
+            signatures = self.lean_workspace.current_signatures(sources)
         except ImportCycle as error:
             return {
                 module: {
@@ -3009,22 +3012,30 @@ class MathematicsSession:
             return self._summary()
 
     def _summary(self) -> summary_module.Summary:
-        """`summary`'s body, with the gate already held."""
+        """`summary`'s body, with the gate already held.
+
+        One read of the Lean tree, shared by everything derived from it. The
+        gate serializes Hardy's own tool calls and nothing else -- editing a
+        `.lean` file behind Hardy is supported -- so two reads could straddle
+        an edit and pair a still-current verdict with a statement that verdict
+        was never about.
+        """
+        sources = self.lean_workspace.sources()
         return summary_module.assemble(
             goal=self.goal(),
             assumptions=list(self.state["assumptions"]),
             registry=list(self.state["names"]),
-            audit=self._current_audit(),
-            theorems=self._theorem_statements(),
-            open_theorems=self._open_theorems(),
+            audit=self._current_audit(sources),
+            theorems=self._theorem_statements(sources),
+            open_theorems=self._open_theorems(sources),
             obligations=self._obligations(),
             failed=summary_module.attempts(self._recorded()),
-            modules=sorted(self.lean_workspace.sources()),
+            modules=sorted(sources),
             # Already computed for the obligations, and needed here for the
             # same reason: a name two modules declare cannot be graded, because
             # the statement shown and the verdict over it may come from
             # different ones.
-            shared=self._shared_names(),
+            shared=self._shared_names(sources),
         )
 
     def export_material(self) -> dict[str, Any]:
@@ -3049,7 +3060,14 @@ class MathematicsSession:
             return self._export_material()
 
     def _export_material(self) -> dict[str, Any]:
-        """`export_material`'s body, with the gate already held."""
+        """`export_material`'s body, with the gate already held.
+
+        One read of the Lean tree, for `_summary`'s reason: the verdict, the
+        statement it grades and the source the page prints all have to come
+        from the same moment, and a file edited behind Hardy between two reads
+        is a supported thing for a user to do.
+        """
+        sources = self.lean_workspace.sources()
         document = self.workspace / "writeup.pdf"
         # Not through a link. `is_file` and `stat` both follow one, so a
         # checked-out `writeup.pdf -> /etc/passwd` would have the export state
@@ -3063,11 +3081,11 @@ class MathematicsSession:
             "goal": self.goal(),
             "assumptions": list(self.state["assumptions"]),
             "registry": list(self.state["names"]),
-            "audit": self._current_audit(),
-            "theorems": self._theorem_statements(),
-            "open": sorted(self._open_theorems()),
-            "shared": self._shared_names(),
-            "lean": self.lean_workspace.sources(),
+            "audit": self._current_audit(sources),
+            "theorems": self._theorem_statements(sources),
+            "open": sorted(self._open_theorems(sources)),
+            "shared": self._shared_names(sources),
+            "lean": sources,
             "tex": self._tex_sources(),
             "obligations": [str(item) for item in self._obligations()],
             "document": (
@@ -4763,7 +4781,7 @@ class MathematicsSession:
             )
         ]
 
-    def _open_declarations(self) -> set[str]:
+    def _open_declarations(self, sources: dict[str, str] | None = None) -> set[str]:
         """Every saved declaration Lean reported resting on a hole.
 
         Read from the stored audit records, which are stamped with the build
@@ -4773,7 +4791,7 @@ class MathematicsSession:
         reports a stale record as its own obligation, so nothing is lost here.
         """
         try:
-            signatures = self.lean_workspace.current_signatures()
+            signatures = self.lean_workspace.current_signatures(sources)
         except ImportCycle:
             # `_audit_gaps` reports the cycle. Answering "nothing is open" for a
             # tree that does not order would be a claim, and this has none.
@@ -4810,7 +4828,7 @@ class MathematicsSession:
             )
         return found
 
-    def _open_theorems(self) -> set[str]:
+    def _open_theorems(self, sources: dict[str, str] | None = None) -> set[str]:
         """The open declarations that are theorems, which is what is reportable.
 
         An open `lemma` is reported to the model by the save's own audit note,
@@ -4818,7 +4836,7 @@ class MathematicsSession:
         hole. The obligations answer a narrower question -- what stands between
         this workspace and a report -- and a lemma was never reportable.
         """
-        return self._open_declarations() & self._saved_theorems()
+        return self._open_declarations(sources) & self._saved_theorems(sources)
 
     def _audit_gaps(self, names: Iterable[str]) -> list[completion.Obligation]:
         """Claimed theorems with no current audit behind them.

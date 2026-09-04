@@ -937,7 +937,7 @@ class LeanWorkspace:
             signatures[module] = digest.hexdigest()
         return signatures
 
-    def current_signatures(self) -> dict[str, str]:
+    def current_signatures(self, sources: dict[str, str] | None = None) -> dict[str, str]:
         """What every module's build inputs hash to *now*.
 
         Computed rather than read back from the index: the index records what a
@@ -947,8 +947,13 @@ class LeanWorkspace:
         module's inputs still the ones some earlier answer was about -- and
         because `_signatures` is recursive, a change anywhere beneath a module
         changes its answer too.
+
+        A caller may hand in the sources it already read. The gate serializes
+        Hardy's own tool calls and nothing else, so a file edited on disk
+        between two reads of the tree would otherwise let one caller pair a
+        signature with a statement it was never computed over.
         """
-        sources = self.sources()
+        sources = self.sources() if sources is None else sources
         if not sources:
             return {}
         return self._signatures(sources, build_order(sources, tuple(sources)))

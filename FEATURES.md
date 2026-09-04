@@ -318,8 +318,9 @@ interactive surface's own live run is still to come.
 - **Now (implemented):** `/export [path]` writes one self-contained HTML file —
   no scripts, fonts, images or fetches — holding the conversation, the Lean and
   writeup sources, the audit verdicts, the naming registry, the approved
-  assumptions with their provenance, the spend, and the model and toolchain
-  identities (issue #105). It does not flatten Hardy's distinctions: a
+  assumptions with their provenance, the spend, the project instructions the
+  model was given, the points where its memory of the conversation was reset,
+  and the model and toolchain identities (issue #105). It does not flatten Hardy's distinctions: a
   kernel-verified theorem, a theorem checked given an approved axiom, and a
   sentence from the conversation are rendered as three visibly different things,
   and the conversation is labelled as evidence for nothing — with an

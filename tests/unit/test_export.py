@@ -468,3 +468,37 @@ def test_redaction_stops_at_the_end_of_the_header_line():
     cleaned = export.redact("Authorization: Basic dXNlcjpwYXNz\nlet G be a group")
     assert "dXNlcjpwYXNz" not in cleaned
     assert "let G be a group" in cleaned
+
+
+def test_the_project_instructions_the_model_was_given_are_on_the_page():
+    """`AGENTS.md` is part of the system prompt, so it is part of the
+    experimental condition. The transcript keeps the whole text rather than a
+    digest for the reason the page has to carry it: the reader of an export
+    does not have the file, and a hash of something they cannot see says
+    nothing about what was asked for."""
+    page = build(transcript=[
+        {
+            "type": "project_context",
+            "reason": "read",
+            "file": "AGENTS.md",
+            "sha256": "a" * 64,
+            "bytes": 42,
+            "truncated": False,
+            "text": "Prefer Finset over Set throughout.",
+        },
+        {"role": "user", "content": "Start."},
+    ])
+    assert "AGENTS.md" in page
+    assert "Prefer Finset over Set throughout." in page
+
+
+def test_a_discarded_provider_thread_is_a_visible_boundary():
+    """Without it the page reads as one continuous exchange, and a reply below
+    the cut looks like it was written knowing what is above it."""
+    page = build(transcript=[
+        {"role": "user", "content": "Before."},
+        {"type": "thread", "reason": "fresh"},
+        {"role": "user", "content": "After."},
+    ])
+    assert "discarded" in page
+    assert "fresh" in page

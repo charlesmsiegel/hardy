@@ -170,3 +170,20 @@ def test_dollar_at_with_nothing_to_fill_it_is_a_refusal():
 def test_dollar_at_with_an_argument_still_expands():
     parsed = templates.parse("formalize", "Formalize $@.")
     assert templates.expand(parsed, "Sylow") == "Formalize Sylow."
+
+
+def test_a_linked_hardy_directory_is_refused_like_a_linked_prompts_one(tmp_path):
+    """`.hardy` itself can be the link. A check on the `prompts` leaf alone
+    passed a checkout shipping `.hardy -> elsewhere` with ordinary files
+    beneath it, and a template's body is sent to the model."""
+    elsewhere = tmp_path / "elsewhere" / "prompts"
+    elsewhere.mkdir(parents=True)
+    (elsewhere / "audit.md").write_text("Audit the workspace.", encoding="utf-8")
+    root = tmp_path / "project"
+    root.mkdir()
+    templates.directory(root).parent.symlink_to(elsewhere.parent)
+
+    found, problems = templates.load(root)
+
+    assert found == []
+    assert "symlink" in problems[0]

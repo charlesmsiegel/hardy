@@ -409,6 +409,38 @@ def _conversation(events: Sequence[Mapping[str, Any]]) -> str:
                 f'<p class="{style}"><code>{_escape(event.get("name", "?"))}</code>'
                 f" — {'ok' if ok else 'refused'}</p>{_output(str(output))}</div>"
             )
+        elif kind == "project_context":
+            # The user's own instructions, which are part of the system prompt
+            # and therefore part of the experimental condition. The transcript
+            # records the whole text rather than a digest for exactly the
+            # reason this page has to carry it: a reader holding the export
+            # does not have the file, and a hash of something they cannot see
+            # proves nothing about what the model was asked for.
+            reason = str(event.get("reason", "read"))
+            name = str(event.get("file", "the project instructions"))
+            said = {
+                "read": f"{name} was read and added to the system prompt.",
+                "changed": f"{name} changed; the system prompt carried the new text from here on.",
+                "withheld": f"{name} was not read for this run, so the model was never given it.",
+            }.get(reason, f"{name}: {reason}.")
+            if event.get("truncated"):
+                said += " Hardy carried only the beginning of it."
+            body = str(event.get("text", ""))
+            parts.append(
+                '<div class="turn"><div class="who">Project instructions</div>'
+                f'<p class="tool">{_escape(said)}</p>'
+                + (_output(body) if body else "")
+                + "</div>"
+            )
+        elif kind == "thread":
+            # Where the model's memory of this conversation was cut. Without
+            # it the page reads as one continuous exchange, and a reply below
+            # the boundary looks like it was written knowing what is above.
+            parts.append(
+                '<p class="fail">The provider conversation was discarded here '
+                f"({_escape(event.get('reason', 'reset'))}); nothing above this point "
+                "was in the model's context afterwards.</p>"
+            )
         elif kind == "obligations":
             # What Hardy told the user at the end of a turn, which is the half
             # of the exchange a transcript of the model's replies alone leaves

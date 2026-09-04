@@ -125,9 +125,9 @@ def test_the_summary_and_the_export_gather_under_the_session_gate(tmp_path: Path
     # Read inside the gathering, so a witness can say the gate was open then.
     original = chat._theorem_statements
 
-    def watching():
+    def watching(sources=None):
         assert watched.depth == 1, "the sources were read outside the gate"
-        return original()
+        return original(sources)
 
     chat._theorem_statements = watching
     chat.summary()
@@ -145,3 +145,34 @@ def test_a_linked_writeup_is_not_reported_as_a_compiled_document(tmp_path: Path)
     (Path(chat.workspace) / "writeup.pdf").symlink_to(elsewhere)
 
     assert "No compiled document" in chat.export_material()["document"]
+
+
+def test_the_audit_and_the_statement_come_from_one_read_of_the_tree(tmp_path: Path):
+    """The gate serializes Hardy's own tool calls and nothing else; editing a
+    `.lean` file behind Hardy is supported. Two reads could straddle such an
+    edit and pair a still-current verdict with a statement it was never about.
+
+    The obligations are deliberately not part of this: they are the same
+    independent computation `/status` and `report_result` use, and a later read
+    can only make them ask for more.
+    """
+    chat = built(tmp_path)
+    read = chat.lean_workspace.sources
+    calls: list[int] = []
+    edited = BASIC.replace("True := by exact True.intro", "1 = 1 := by rfl")
+
+    def moving():
+        calls.append(1)
+        found = read()
+        # An editor changes the file between one read of the tree and the next.
+        return found if len(calls) == 1 else dict.fromkeys(found, edited)
+
+    chat.lean_workspace.sources = moving
+    material = chat.export_material()
+
+    assert "1 = 1" not in material["theorems"]["hardyBasic"], (
+        "a verdict was paired with a statement it never graded"
+    )
+    assert "1 = 1" not in "".join(material["lean"].values()), (
+        "the page prints a source the verdict beside it is not about"
+    )
