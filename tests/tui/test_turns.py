@@ -306,7 +306,15 @@ async def test_escape_immediately_followed_by_slash_no_longer_loses_it(settings)
     not for looking like ordinary text.
     """
     session = SlowSession()
-    _, written = await blast(settings, session, "prove something\r\x1b/model\r\x03")
+    # `until` for the same reason as the `/status` test below: this asserts on
+    # text a handler renders after the turn settles, which is the window the
+    # trailing Ctrl+C can close early.
+    _, written = await blast(
+        settings,
+        session,
+        "prove something\r\x1b/model\r\x03",
+        until="/model cannot run while a turn is still running.",
+    )
     assert session.switched == []
     assert "/model cannot run while a turn is still running." in written
     assert "Wait for it to finish" not in written  # the old, wrong, plain-text refusal
@@ -322,7 +330,15 @@ async def test_status_is_allowed_while_a_turn_is_in_flight(settings):
     refusal instead of actually running the command.
     """
     session = SlowSession()
-    _, written = await blast(settings, session, "prove something\r\x1b/status\r\x03")
+    # `until`, for the reason `blast`'s own docstring gives: the turn settling
+    # and the handler's output reaching the buffer are two different moments,
+    # and on a loaded runner the trailing Ctrl+C can land between them -- the
+    # app exits, the buffer is read, and an assertion about text the handler
+    # demonstrably wrote fails. That is how this went red on CI while passing
+    # every local run.
+    _, written = await blast(
+        settings, session, "prove something\r\x1b/status\r\x03", until="A turn is still running."
+    )
     assert "A turn is still running." in written
     assert str(settings.layout.problem) in written
 
