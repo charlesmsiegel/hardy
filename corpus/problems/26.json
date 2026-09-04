@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "corpus_version": "0.1.1",
+  "corpus_version": "0.2.0",
   "entries": [
     {
       "id": "sq-sum-ge-two-mul",
@@ -15,7 +15,7 @@
       "twin_of": null,
       "source": "textbook",
       "msc": [
-        "26D"
+        "26Dxx"
       ],
       "difficulty": "routine",
       "occurrences": [],
@@ -37,7 +37,7 @@
       "twin_of": null,
       "source": "textbook",
       "msc": [
-        "26D"
+        "26Dxx"
       ],
       "difficulty": "routine",
       "occurrences": [],
@@ -59,7 +59,7 @@
       "twin_of": "sq-sum-ge-two-mul",
       "source": "textbook",
       "msc": [
-        "26D"
+        "26Dxx"
       ],
       "difficulty": "routine",
       "occurrences": [],

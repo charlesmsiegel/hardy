@@ -28,8 +28,8 @@ from hardy.evals.problems import Entry
 
 HOST = sweep.host_info()
 
-TRUE = Entry(id="t", input="True.", name="HardyTarget", conclusion="True", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
-TWIN = Entry(id="f", input="False.", name="HardyTarget", conclusion="True", expected="false", twin_of="t", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
+TRUE = Entry(id="t", input="True.", name="HardyTarget", conclusion="True", expected="true", source="textbook", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
+TWIN = Entry(id="f", input="False.", name="HardyTarget", conclusion="True", expected="false", twin_of="t", source="textbook", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
 # ^ both name HardyTarget because the shared fixture in test_recorded_runs poses `theorem HardyTarget : True`.
 
 

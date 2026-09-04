@@ -161,11 +161,11 @@ def _scripted(closers: dict[str, set[str]], *, timeout_first: bool = False, unco
 
 def _problems() -> ProblemSet:
     return ProblemSet(entries=(
-        Entry(id="easy", input="P", name="Easy", conclusion="P", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
-        Entry(id="lib", input="Q", name="Lib", conclusion="Q", expected="true", source="classical", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
-        Entry(id="chain", input="R", name="Chain", conclusion="R", expected="true", source="classical", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
-        Entry(id="hard", input="S", name="Hard", conclusion="S", expected="true", source="classical", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
-        Entry(id="twin", input="not S", name="Twin", conclusion="¬ S", expected="false", twin_of="hard", source="classical", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+        Entry(id="easy", input="P", name="Easy", conclusion="P", expected="true", source="textbook", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+        Entry(id="lib", input="Q", name="Lib", conclusion="Q", expected="true", source="classical", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+        Entry(id="chain", input="R", name="Chain", conclusion="R", expected="true", source="classical", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+        Entry(id="hard", input="S", name="Hard", conclusion="S", expected="true", source="classical", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
+        Entry(id="twin", input="not S", name="Twin", conclusion="¬ S", expected="false", twin_of="hard", source="classical", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture"),
     ))
 
 
@@ -220,7 +220,7 @@ def test_a_statement_that_does_not_elaborate_is_a_problem_and_is_not_swept():
         if "sorry" in source:
             return _elaboration([_msg(3, "error", "unknown identifier 'Frob'")], returncode=1)
         raise AssertionError("swept a statement that does not elaborate")
-    entry = Entry(id="broken", input="x", name="Broken", conclusion="Frob 1", expected="true", source="textbook", msc=("11A",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
+    entry = Entry(id="broken", input="x", name="Broken", conclusion="Frob 1", expected="true", source="textbook", msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None, witness_note="test fixture")
     result = sweep.sweep_entry(entry, elaborate, confirm_name="Broken")
     assert result.elaborates is False and result.tier == 3 and result.attempts == {}
 
@@ -373,7 +373,7 @@ def test_staleness_names_a_missing_baseline_entry():
 
 def _witness_entry(**overrides) -> Entry:
     base = dict(id="odd-sum", input="...", name="OddSum", binders="(n : ℕ) (h : n > 0)",
-                conclusion="n ≥ 1", expected="true", source="textbook", msc=("11A",),
+                conclusion="n ≥ 1", expected="true", source="textbook", msc=("11Axx",),
                 difficulty="routine", rationale="test fixture",
                 witness="⟨1, by norm_num, trivial⟩", witness_note=None)
     base.update(overrides)

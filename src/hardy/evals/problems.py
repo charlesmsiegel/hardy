@@ -24,6 +24,10 @@ IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_'.]*$")
 # A dotted Lean module path -- what a real `import` line accepts -- and
 # nothing else: no newline, no space, no stray token that could smuggle a
 # second Lean command onto the same or a following line (item 6b).
+# `12Fxx` or `12F10`, the two forms that name mathematics. MSC also publishes
+# `12-XX` (the bare class) and `12-01` (publication type: textbooks, surveys,
+# proceedings), and neither classifies a theorem.
+SUBJECT_CODE = re.compile(r"\d\d[A-Z](xx|\d\d)")
 IMPORT = re.compile(r"^[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*$")
 
 
@@ -147,10 +151,12 @@ class Entry(FrozenModel):
     @model_validator(mode="after")
     def _codes_are_known_and_finer_than_their_class(self) -> Entry:
         for code in self.msc:
-            if len(code) <= 2:
+            if not SUBJECT_CODE.fullmatch(code):
                 raise ValueError(
-                    f"{code!r} is no finer than its own 2-digit class: a bare class is what a "
-                    "tagger writes when they did not look (spec section 2)"
+                    f"{code!r} is not an MSC2020 subject code. A code names a section "
+                    "(`12Fxx`) or a subsection (`12F10`): `12-XX` is the bare class, which is "
+                    "what a tagger writes when they did not look, and `12-01` classifies a "
+                    "publication type rather than mathematics (spec section 2)"
                 )
             if not taxonomy.is_known(code):
                 raise ValueError(f"unknown MSC2020 code: {code!r}")

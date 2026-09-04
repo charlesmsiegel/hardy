@@ -13,7 +13,7 @@ this file is the reader's guide to the data.
 ```
 problems/<NN>.json     entries, sharded by MSC 2-digit class
 sources.json           the texts entries are drawn from
-taxonomy/              MSC2020 codes with names; the MSC→arXiv map and groups
+taxonomy/              all 6603 MSC2020 codes; the MSC→arXiv map and groups
 tombstones.json        every entry id ever issued
 measurements/          Lean measurements, keyed by entry id and digest
 CHANGELOG.md           what changed, per version, citing ids
@@ -43,7 +43,7 @@ the antecedent rule.
 | `binders`, `conclusion`, `imports` | assembled into the Lean declaration by string concatenation; never parsed here |
 | `expected` | `true`, or `false` for a deliberate perturbation |
 | `twin_of` | for a false entry, the true entry it perturbs. A twin shares its target's field |
-| `msc` | MSC2020 codes, primary first, each **strictly finer than its 2-digit class** |
+| `msc` | MSC2020 codes, primary first. A code names a section (`12Fxx`) or a subsection (`12F10`); `12-XX` is the bare class and `12-01` classifies a publication type, so neither is accepted |
 | `arxiv_override` | when the derived arXiv class is wrong; needs `override_reason` |
 | `difficulty` | `routine` / `substantial` / `qualifying` / `research-adjacent` |
 | `occurrences` | `(source_id, locator)` pairs; `locator` is `(chapter, section, item)` |
@@ -76,6 +76,26 @@ have no witness in this form. Such an entry records `witness: null` with a
 `witness_note` saying so, and is reported *unwitnessed* rather than passed: the
 non-vacuity check did not run, and nothing but the human read stands between a
 vacuous statement and a field headline.
+
+## Classification
+
+`taxonomy/msc2020.json` is the whole of MSC2020 as published at
+[msc2020.org](https://msc2020.org/) — every code, in the form MSC publishes it,
+with its own name. `scripts/vendor_msc2020.py` regenerates it.
+
+`taxonomy/msc-to-arxiv.json` is *editorial*: arXiv publishes no MSC crosswalk,
+so the arXiv class and the reporting group are judgements against
+[arxiv.org/archive/math](https://arxiv.org/archive/math), versioned with the
+corpus and open to disagreement. Both resolve **most specific first** — whole
+code, then section, then class — because MSC classes are not homogeneous under
+an arXiv reading. MSC 12 is the worst case: Galois theory (`12F`) is math.NT,
+valuation theory (`12J`) is math.AC, near-fields (`12K`) are math.RA, and model
+theory of fields (`12L`) is math.LO. Where even that is wrong for one entry,
+`arxiv_override` carries the exception and its reason.
+
+Reporting groups are deliberately coarser than the classes — a ranking per
+2-digit class would be dozens of underpowered comparisons — while keeping the
+fields the corpus targets distinct. MSC 26 and 28 are one group, `analysis`.
 
 ## The shard is derived
 

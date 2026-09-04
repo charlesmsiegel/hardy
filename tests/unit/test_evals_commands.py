@@ -14,7 +14,7 @@ from hardy.evals import commands, scoreboard
 
 IDENTITY = EnvironmentIdentity(lean_version="4.33.1", lean_commit="819816b2", mathlib_revision="v4.33.1", lake_manifest_sha256="m" * 64)
 PROBLEMS = {"schema_version": 1, "entries": [
-    {"id": "t", "input": "True.", "name": "T", "binders": "", "conclusion": "True", "imports": ["Mathlib"], "expected": "true", "twin_of": None, "source": "textbook", "msc": ["11A"], "difficulty": "routine", "rationale": "test fixture", "witness": None, "witness_note": "test fixture"},
+    {"id": "t", "input": "True.", "name": "T", "binders": "", "conclusion": "True", "imports": ["Mathlib"], "expected": "true", "twin_of": None, "source": "textbook", "msc": ["11Axx"], "difficulty": "routine", "rationale": "test fixture", "witness": None, "witness_note": "test fixture"},
 ]}
 
 
