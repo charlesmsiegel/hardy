@@ -1161,7 +1161,11 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
         )
 
     def staged_doctor(value: configuration.Config) -> Any:
-        checks = doctor.run_checks(value)
+        # The backend this workflow is actually building, not the one the
+        # global config names for interactive and batch work. They are
+        # different settings and a staged run is entitled to have its own
+        # credentials checked rather than somebody else's.
+        checks = doctor.run_checks(value, backend=backend)
         return SimpleNamespace(
             healthy=all(check.ok for check in checks if check.required),
             authenticated=all(check.ok for check in checks if "login" in check.name.lower()),

@@ -784,7 +784,7 @@ def refusal_issues(output_dir: Path) -> tuple[str, ...]:
     return tuple(issues)
 
 
-def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]]) -> list[str]:
+def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]], reason: Any) -> list[str]:
     """Re-derive the closer ladder from the events, and refuse a block that differs.
 
     The `closers` block exists to say which experimental condition a run was:
@@ -830,15 +830,32 @@ def _closer_issues(trajectory: dict[str, Any], events: list[dict[str, Any]]) -> 
     if closed_by is not None:
         if not any(item.get("tactic") == closed_by and item.get("ok") is True for item in attempts if isinstance(item, dict)):
             issues.append(f"closers claim `{closed_by}` closed the statement with no attempt saying so")
-        # And the proof went in by the ordinary door, or it is not a proof.
+        # And the proof went in by the ordinary door and was *accepted* there.
+        # Matching the text alone let a refused submission stand behind a
+        # `closed_by`: a duplicated block claiming the attempt succeeded, plus
+        # the decline the check below wants, and a run where nothing was ever
+        # accepted certified a closer.
         submitted = [
             event for event in events
             if event.get("type") == "tool"
             and event.get("name") == "submit_proof"
             and str((event.get("arguments") or {}).get("proof", "")) == f"by {closed_by}"
         ]
+        accepted = [
+            event for index, event in enumerate(events)
+            if event in submitted
+            and isinstance(event.get("result"), dict)
+            and event["result"].get("ok") is True
+            and not _discarded(events, index)
+        ]
         if not submitted:
             issues.append(f"closers claim `{closed_by}` closed the statement with no matching submit_proof")
+        elif not accepted:
+            issues.append(f"closers claim `{closed_by}` closed the statement with no submission that was accepted and kept")
+        elif reason != "verified":
+            # A closer that closed it produced a verified run, by definition:
+            # the submission it made went through the audit like any other.
+            issues.append(f"closers claim `{closed_by}` closed the statement but the run is {reason!r}")
     elif any(item.get("ok") is True for item in attempts if isinstance(item, dict)):
         issues.append("a closer attempt was accepted but the block names no tactic that closed it")
     # The claim that no model was needed is the one the field exists to make,
@@ -909,6 +926,14 @@ def _sketch_issues(
         return issues
     if not isinstance(sketch, dict):
         return [*issues, "the kept sketch is not an object"]
+    # Recomputed from the skeleton rather than compared between copies. Edited
+    # consistently everywhere -- `proof: "by sorry"` beside `holes: []` in all
+    # three artifacts and the event -- the copies agree with each other and
+    # conceal the hole from every one of them. Lean's own rule is the only
+    # thing outside that agreement.
+    expected = [item.model_dump(mode="json") for item in LeanTools.holes(str(sketch.get("proof", "")))]
+    if sketch.get("holes") != expected:
+        issues.append("the kept sketch's holes are not the ones its own skeleton contains")
     if not accepted:
         issues.append("a sketch is recorded that no accepted sketch_proof produced")
     else:
@@ -1075,7 +1100,7 @@ def validate_batch_consistency(output_dir: Path) -> tuple[str, ...]:
     if not trajectory.get("model") or not trajectory.get("backend"):
         issues.append("trajectory does not name the model and backend that ran")
     events = trajectory.get("events") or []
-    issues.extend(_closer_issues(trajectory, events))
+    issues.extend(_closer_issues(trajectory, events, reason))
     issues.extend(_sketch_issues(result, trajectory, events, writeup, reason))
 
     if reason == "verified":

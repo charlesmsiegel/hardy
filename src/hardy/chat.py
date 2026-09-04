@@ -126,6 +126,11 @@ NEWLABEL = re.compile(r"\\newlabel\{([^}]*)\}")
 # which saved statements one tactic closes checked against the tree in front of
 # it, and the stored verdicts include entries whose statement has since moved.
 WITHHELD = ("audit", "automation", PROJECT_CONTEXT_KEY)
+#: Provenance keys a runtime states only when it has one to state. They are
+#: dropped rather than merged over when the runtime changes: a value left
+#: behind by the backend that stated it describes turns that never ran under
+#: it, which is exactly what recording provenance exists to prevent.
+OPTIONAL_PROVENANCE = ("output_limit",)
 USAGE_KEY = "usage"
 #: How far into `transcript.jsonl` the stored ledger has been brought up to
 #: date. Hardy's own bookkeeping, and no more the model's business than the
@@ -968,15 +973,22 @@ class MathematicsSession:
         the thread-carrying backends kept theirs -- the same act meaning two
         different things depending on the transport.
         """
-        previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint")}
+        previous = {key: self.state.get(key) for key in ("model", "backend", "endpoint", *OPTIONAL_PROVENANCE)}
         carried = getattr(self.runtime, "conversation", None)
         self.runtime = self._build(model=model, session_id=self._carried_thread())
         adopt = getattr(self.runtime, "adopt_conversation", None)
         if adopt is not None and carried is not None:
             adopt(carried)
-        self.state.update(provenance(self.runtime))
+        current = provenance(self.runtime)
+        # The same drop `_sync_provenance` makes, for the same reason: a switch
+        # to a backend that states no output cap must not leave the old one
+        # standing in the record.
+        for key in OPTIONAL_PROVENANCE:
+            if key not in current:
+                self.state.pop(key, None)
+        self.state.update(current)
         self._save_state()
-        self._record({"type": "model", "reason": "switched", "previous": previous, **provenance(self.runtime)})
+        self._record({"type": "model", "reason": "switched", "previous": previous, **current})
 
     def _read_state(self) -> dict[str, Any]:
         """The record, refusing anything this version does not read.
@@ -1058,10 +1070,18 @@ class MathematicsSession:
         attributed to the model that produced the earlier ones.
         """
         current = provenance(self.runtime)
-        if all(self.state.get(key) == value for key, value in current.items()):
+        stale = [key for key in OPTIONAL_PROVENANCE if key not in current and key in self.state]
+        if not stale and all(self.state.get(key) == value for key, value in current.items()):
             return
-        previous = {key: self.state.get(key) for key in current}
+        previous = {key: self.state.get(key) for key in (*current, *stale)}
         started = any(previous.values())
+        # Dropped, not merged over. A workspace opened once on the API backend
+        # carries `output_limit`; reopened on a backend that states none, a
+        # plain `update` left the old cap in the record and in the manifest the
+        # system prompt embeds -- so subscription turns read as though they had
+        # run under an API-only generation limit.
+        for key in stale:
+            self.state.pop(key, None)
         self.state.update(current)
         self._save_state()
         if started:
@@ -3468,11 +3488,28 @@ class MathematicsSession:
         messages start, and what the summary said. A compaction that left no
         trace would be exactly the invisible loss this exists to prevent.
         """
-        # Rendered before the plan, not after: the summary is prepended to
-        # whatever the plan keeps, so what it costs has to be charged against
-        # the same budget the kept tail is. Costed by rendering it once and
-        # measuring, rather than by an allowance -- a workspace with fifty
-        # registered names has a summary an allowance would badly misjudge.
+        # Asked twice, cheaply first. This runs before *every* provider call,
+        # and assembling the facts scans the Lean tree, the stored audits and
+        # the whole of `transcript.jsonl` -- so rendering a summary to find out
+        # that a short conversation needs none made an ordinary turn re-read an
+        # ever-growing record, which is quadratic over a session and felt as
+        # latency in the terminal. The first pass costs an arithmetic sweep of
+        # the messages.
+        overhead = self._request_overhead()
+        if not compaction.plan(
+            messages,
+            context_window=self.context_window,
+            reserve_tokens=compaction.RESERVE_TOKENS,
+            keep_tokens=compaction.RECENT_TOKENS,
+            overhead_tokens=overhead,
+        ).needed:
+            return None
+        # Now it is worth the read. Rendered before the plan is settled, not
+        # after: the summary is prepended to whatever the plan keeps, so what
+        # it costs has to be charged against the same budget the kept tail is.
+        # Costed by rendering it once and measuring, rather than by an
+        # allowance -- a workspace with fifty registered names has a summary an
+        # allowance would badly misjudge.
         summarised = compaction.summarize(self.facts())
         outcome = compaction.plan(
             messages,
@@ -3480,6 +3517,7 @@ class MathematicsSession:
             reserve_tokens=compaction.RESERVE_TOKENS,
             keep_tokens=compaction.RECENT_TOKENS,
             summary_tokens=compaction.estimate_tokens([Message("user", text=summarised.render())]),
+            overhead_tokens=overhead,
         )
         if not outcome.needed:
             return None
@@ -3503,6 +3541,21 @@ class MathematicsSession:
             "text": summarised.render(),
         })
         return compaction.compacted(messages, outcome.cut, summarised)
+
+    def _request_overhead(self) -> int:
+        """What every request carries before a message is added.
+
+        The system prompt and the tool schemas are charged against the same
+        window the conversation is. Left out, a workspace whose `AGENTS.md` is
+        in the prompt -- up to 50 KB of it, which Hardy supports on purpose --
+        could be told no compaction was needed for a request the provider then
+        refuses.
+        """
+        prompt = SYSTEM_PROMPT
+        if self.cas is not None:
+            prompt += "\n\n" + chat_cas_prompt(self.cas.session.backend.name)
+        specs = CHAT_TOOLS + (CAS_TOOLS if self.cas is not None else [])
+        return compaction.overhead(prompt + self._context(), specs)
 
     def obligations(self) -> tuple[completion.Obligation, ...]:
         """What the workspace owes, for the human rather than the model.

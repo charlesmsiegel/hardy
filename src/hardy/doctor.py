@@ -210,8 +210,17 @@ def _cas_check(config: Config) -> Check:
     return Check("cas", runtime is not None, detail, required=required)
 
 
-def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
-    """Report whether this machine can actually run an interactive Hardy session."""
+def run_checks(config: Config, *, deep: bool = False, backend: str | None = None) -> list[Check]:
+    """Report whether this machine can actually run the Hardy session asked for.
+
+    `backend` is what the *caller* is about to build, which is not always what
+    the config's own setting says: `hardy prove` and `hardy accept` take a
+    `--backend` of their own and construct that one. Reading the global setting
+    for them would block an otherwise usable staged run on a missing API key,
+    and -- the direction that matters more -- would report a machine ready on
+    credentials the run is not going to use.
+    """
+    selected = backend or config.backend
     checks = [
         Check("python", sys.version_info >= (3, 11), f"{sys.version.split()[0]} at {sys.executable}"),
         _lean_project_check(config),
@@ -234,8 +243,8 @@ def run_checks(config: Config, *, deep: bool = False) -> list[Check]:
 
     checks.append(_cas_check(config))
     checks.append(Check("model", bool(config.model), config.model or "unset; set model in the config file or HARDY_MODEL"))
-    checks.append(Check("backend", True, config.backend, required=False))
-    checks.extend(_backend_checks(config.backend))
+    checks.append(Check("backend", True, selected, required=False))
+    checks.extend(_backend_checks(selected))
 
     if deep:
         checks.append(_mathlib_check(config))
