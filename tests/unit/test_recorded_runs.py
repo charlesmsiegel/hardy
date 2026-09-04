@@ -1120,3 +1120,62 @@ def test_a_run_that_asked_no_provider_records_zero_turns(tmp_path) -> None:
         'asked no provider anything' in issue or 'turn count' in issue
         for issue in acceptance.validate_batch_consistency(output)
     )
+
+
+def test_a_zero_budget_run_does_not_blame_closers_that_never_ran(tmp_path) -> None:
+    """`--wall-seconds 0` with no ladder reached the same branch, and the
+    record then said the closers had used the whole budget beside a `closers`
+    block saying they were disabled -- a false sentence, and one the audit
+    reads as evidence that the provider was deliberately unasked."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    models = importlib.import_module('hardy.models')
+    lean_module = importlib.import_module('hardy.lean')
+    runner = importlib.import_module('hardy.runner')
+    request = models.Request.from_dict(
+        {'declaration': 'theorem HardyTarget : True', 'informal_claim': 'True is true.'}
+    )
+
+    class Unasked(_Runtime):
+        turns = None
+
+    output = tmp_path / 'no-budget'
+    runner.run(
+        request,
+        lambda model=None, **context: Unasked([], **context),
+        lean_module.LeanTools(request, (sys.executable, str(FAKE_LEAN))),
+        output,
+        max_turns=3,
+        wall_seconds=0.0,
+        toolchain=IDENTITY,
+    )
+
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    limits = [event for event in trajectory['events'] if event.get('type') == 'limit']
+    assert len(limits) == 1
+    assert 'closers' not in limits[0]['detail']
+    assert trajectory['closers']['enabled'] is False
+    # And it is still a run that asked nothing, so it still reports zero turns
+    # and still validates.
+    assert json.loads((output / 'result.json').read_text(encoding='utf-8'))['turns'] == 0
+    assert acceptance.validate_batch_consistency(output) == ()
+
+
+def test_a_ladder_that_kept_going_past_a_success_is_refused(tmp_path) -> None:
+    """`closers.close` returns on the first submission the run keeps, so
+    exactly one attempt succeeds and it is the last. Any other arrangement is a
+    record no run could have produced, and a hand-edited or merged trajectory
+    could otherwise certify a ladder order and a cost that never happened."""
+    acceptance = importlib.import_module('hardy.acceptance')
+    output = _with_closers(tmp_path, tactics=('nonsense_tactic', 'exact True.intro'))
+    trajectory = json.loads((output / 'trajectory.json').read_text(encoding='utf-8'))
+    blocks = [trajectory['closers'], *[e for e in trajectory['events'] if e.get('type') == 'closers']]
+    for block in blocks:
+        # The successful attempt moved ahead of the failed one, as a record
+        # claiming a cheaper ladder would.
+        block['tactics'] = list(reversed(block['tactics']))
+        block['attempts'] = list(reversed(block['attempts']))
+    (output / 'trajectory.json').write_text(json.dumps(trajectory, indent=2) + '\n', encoding='utf-8')
+
+    issues = acceptance.validate_batch_consistency(output)
+
+    assert any('went on past' in issue for issue in issues)

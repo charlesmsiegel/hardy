@@ -119,8 +119,10 @@ installer is cheap and safe.
    Hardy authenticates through it. Node itself is not installed for you; if npm
    is missing the installer says so rather than guessing a package manager.
 7. **Configuration** — the installer asks for a model identity and writes it to
-   the config file below (mode 600). There is no API key: sign in once with
-   `claude login`. An existing config file is never overwritten.
+   the config file below (mode 600). On the default backend there is no API
+   key: sign in once with `claude login`. The opt-in `api` backend is the one
+   exception and is not installed by default — see **The API backend** below.
+   An existing config file is never overwritten.
 8. **Verification** — `hardy doctor` runs last and reports anything still
    missing.
 
@@ -175,6 +177,8 @@ lean_command = "lake env lean"
 lean_timeout = 180                # seconds per Lean invocation
 latex_command = "pdflatex -interaction=nonstopmode -halt-on-error"
 root = "/home/you/math"           # where your problems live, if you keep one place
+backend = "claude"                # "claude" (subscription, default) or "api" (metered key)
+context_window = 200000           # what compaction plans against; see below
 ```
 
 Each setting can be overridden by the matching `HARDY_*` environment variable
@@ -195,6 +199,33 @@ uniformly; see the known limits in FEATURES.md. Naming a different model here bu
 --faithfulness-model ...` overrides it for a single run — which is what a
 config naming a Claude reviewer needs when the invocation is `--backend
 codex`.
+
+### The API backend
+
+`backend = "api"` (or `HARDY_BACKEND=api`) sends to the Anthropic Messages API
+directly instead of through the Claude Code CLI, and Hardy runs the turn loop
+itself. It is opt-in because it is billed differently: it needs an API key
+rather than a subscription, and which transport carried a run is recorded as
+part of that run's identity.
+
+```sh
+pip install 'hardy-prover[api]'   # or: uv pip install 'hardy-prover[api]'
+export ANTHROPIC_API_KEY=...
+```
+
+`context_window` is what compaction plans against, in tokens. It defaults to
+200,000 and is settable because the window belongs to the endpoint rather than
+to Hardy — a gateway answering `claude-opus-5` may offer less. It is not
+derived from the model identity: Hardy sends no long-context beta, so 200K is
+what every catalogued model offers on the path Hardy uses, and a window guessed
+too large is the direction that cannot recover. A value at or below the
+transport's 8,192-token output cap is refused: a window with room for the
+request and none for the reply is not a window the request fits in.
+
+`ANTHROPIC_BASE_URL` selects a different endpoint. Whichever answered is
+recorded, with credentials stripped: userinfo and query go whole, and the path
+is fingerprinted rather than kept, so two endpoints on one host are still told
+apart without a gateway token being committed beside the experiment.
 
 `lean_project` is what lets `hardy` run from any directory: Lean resolves
 imports through that Lake project rather than the directory you happen to be
@@ -219,8 +250,13 @@ hardy doctor          # Python, lake, the Lean project, pdflatex, model, SDK, CL
 hardy doctor --deep   # also compiles `import Mathlib` + `norm_num`, which is slow
 ```
 
-`doctor` checks that the Claude Code CLI is signed in, not merely installed: a
-logged-out machine fails here rather than on your first question.
+`doctor` and `setup` both check whichever backend the config *selects*, not
+whichever one Hardy shipped with. On the default backend that means the Claude
+Code CLI is signed in, not merely installed: a logged-out machine fails here
+rather than on your first question. With `backend = "api"` it means the
+`anthropic` package is importable and `ANTHROPIC_API_KEY` is set — whether one
+is set, never what it is, since a doctor report is something people paste into
+issues.
 
 ## Updating
 
