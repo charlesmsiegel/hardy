@@ -15,8 +15,10 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
-from . import audit, completion, ingest, process
+from . import assume as assume_module
+from . import audit, completion, ingest, process, refute
 from . import summary as summary_module
+from .arxiv import ArxivError
 from .bibliography import GENERATED as GENERATED_BIBLIOGRAPHY
 from .bibliography import STORE as STORE_BIBLIOGRAPHY
 from .bibliography import BibliographyError, hand_written_bibliography
@@ -45,7 +47,7 @@ from .layout import (
     read_text,
 )
 from .lean import DECLARATION_NAME, LeanTools
-from .models import Request, ToolResult, TurnEvent
+from .models import Request, ToolResult, TurnEvent, json_object
 from .modules import ModuleIndex
 from .paper_tools import PAPER_TOOL_NAMES, PAPER_TOOLS, PaperToolRuntime
 from .paper_tools import build_runtime as build_paper_runtime
@@ -55,7 +57,12 @@ from .project_context import (
     ProjectContext,
     read_project_context,
 )
-from .prompts import CHAT_SYSTEM_PROMPT, chat_cas_prompt, chat_project_context_prompt
+from .prompts import (
+    ASSUME_REVIEW_PROMPT,
+    CHAT_SYSTEM_PROMPT,
+    chat_cas_prompt,
+    chat_project_context_prompt,
+)
 from .search_tools import SEARCH_TOOL_NAMES, SEARCH_TOOLS, SearchToolRuntime
 from .storage import LockTimeout
 from .truncation import truncate
@@ -163,6 +170,8 @@ CHAT_TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "delete_file", "description": "Delete one workspace file. Refused if another workspace file imports it.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "record_name", "description": "Record the durable correspondence between a Lean declaration and its LaTeX label/name.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "latex_name": {"type": "string"}, "description": {"type": "string"}}, "required": ["formal_name", "latex_name", "description"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "request_assumption", "description": "Ask the human for permission to introduce an axiom when a result is unavailable. Never assume approval.", "parameters": {"type": "object", "properties": {"formal_name": {"type": "string"}, "lean_statement": {"type": "string"}, "latex_name": {"type": "string"}, "informal_statement": {"type": "string"}, "source": {"type": "string"}, "reason": {"type": "string"}}, "required": ["formal_name", "lean_statement", "latex_name", "informal_statement", "source", "reason"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "list_statements", "description": "List every statement a fetched paper's source makes -- theorems, lemmas, propositions, definitions -- in the order the paper states them, with the reference to name one by. Reading a paper assumes nothing; assume_statement is what mints an axiom, one statement at a time.", "parameters": {"type": "object", "properties": {"paper_id": {"type": "string"}, "start": {"type": "integer"}}, "required": ["paper_id"], "additionalProperties": False}}},
+    {"type": "function", "function": {"name": "assume_statement", "description": "Ask the human to assume one statement of a fetched paper as a Lean axiom, named by the reference list_statements gave it. Hardy elaborates it, searches for a counterexample, has an independent reader compare your Lean against the paper's own words, and only then asks. The axiom is written into Papers.<CiteKey> with a docstring tying it to the paper -- never write that file yourself. `kind` is `statement` for a proposition, or `constant` for an opaque definition the paper uses that Mathlib lacks, which is more trust and is recorded as such.", "parameters": {"type": "object", "properties": {"paper_id": {"type": "string"}, "statement": {"type": "string"}, "formal_name": {"type": "string"}, "lean_statement": {"type": "string"}, "informal_statement": {"type": "string"}, "reason": {"type": "string"}, "kind": {"type": "string"}, "latex_name": {"type": "string"}}, "required": ["paper_id", "statement", "formal_name", "lean_statement", "informal_statement", "reason"], "additionalProperties": False}}},
     {"type": "function", "function": {"name": "report_result", "description": "Report finished work. The only way to call anything proved, done, or complete: say it in prose and Hardy contradicts you in front of the user. Refused unless every theorem named is saved Lean the kernel audited, the writeup creates its label and quotes its exact Lean statement verbatim, and every assumption the work rests on is stated in an appendix in both Lean and prose. A theorem still resting on a hole is graded partial rather than refused: the report names which, and the writeup must carry it on exactly the same terms, so a reader can see what was and was not proved.", "parameters": {"type": "object", "properties": {"theorems": {"type": "array", "items": {"type": "string"}}, "summary": {"type": "string"}}, "required": ["theorems", "summary"], "additionalProperties": False}}},
 ]
 
@@ -1130,7 +1139,18 @@ class MathematicsSession:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
             return handle.tell()
 
-    def _final_gates(self, source: str) -> ToolResult | None:
+    def _generated_module_refusal(self, relative: Any) -> str | None:
+        """Why this path is not the workspace's to write, or None."""
+        parts = str(relative).replace("\\", "/").split("/")
+        if parts and parts[0] == self.PAPERS_DIR:
+            return (
+                f"{'/'.join(parts)} is generated by Hardy from the assumptions a human "
+                "approved, and is regenerated whole on every mint. Use assume_statement to "
+                "add a paper's statement; nothing else may write this tree."
+            )
+        return None
+
+    def _final_gates(self, source: str, *, generated: bool = False) -> ToolResult | None:
         """What disqualifies a source from being saved, before Lean is asked.
 
         All of it is textual, so it costs nothing and runs first: there is no
@@ -1175,6 +1195,24 @@ class MathematicsSession:
                 "scaffolding rather than a result.",
                 source,
             )
+        # A quarantined name is refused before approval is consulted at all.
+        # An unfaithfully formalised statement is not an assumption a human
+        # may approve their way past: the reader said this Lean does not say
+        # what the paper says, and declaring it anyway would let Hardy derive
+        # claims the paper never made under the paper's name. Checked on the
+        # qualified name and on the leaf, because the file that declares it
+        # may sit in the namespace the quarantine recorded or above it.
+        quarantined = self._quarantined_names()
+        leaves = {name.rsplit(".", 1)[-1] for name in quarantined}
+        for name, _ in assumptions(source):
+            if name in quarantined or name.rsplit(".", 1)[-1] in leaves:
+                return ToolResult(
+                    False,
+                    f"`{name}` is quarantined: an independent reader found that this Lean "
+                    "does not say what the paper says, so it is recorded and not importable. "
+                    "Restate it through assume_statement; it cannot be declared by hand.",
+                    source,
+                )
         approved = {item["formal_name"]: " ".join(item["lean_statement"].split()) for item in self.state["assumptions"]}
         # Qualified by the namespace they sit in, so this gate and the audit
         # ask about the same name. A flat scan called it `bar` while Lean
@@ -2260,7 +2298,9 @@ class MathematicsSession:
             self._save_streak[key] = self._save_streak.get(key, 0) + 1
         return result
 
-    def _save_lean_unbraked(self, path: str, source: str, *, ratchet: bool = True) -> ToolResult:
+    def _save_lean_unbraked(
+        self, path: str, source: str, *, ratchet: bool = True, generated: bool = False
+    ) -> ToolResult:
         try:
             relative = safe_relative(path)
         except WorkspacePathError as error:
@@ -2274,10 +2314,19 @@ class MathematicsSession:
         # "no weaker a check than one Hardy wrote" means, and the writeup debt
         # an imported theorem brings is not waived either -- it lands in the
         # obligations like any other saved theorem's.
+        # `Papers/` is Hardy's own writing, minted from an approved paper
+        # statement and regenerated whole. A model editing it by hand could
+        # put an axiom nobody approved under a name the audit already trusts,
+        # which is the one thing the approval flow exists to prevent -- so the
+        # tree is refused to everything but `assume_statement`.
+        if not generated:
+            owned = self._generated_module_refusal(relative)
+            if owned is not None:
+                return ToolResult(False, owned, source)
         gate = (self._result_gate(source) or self._documentation_gate(source)) if ratchet else None
         if gate is not None:
             return ToolResult(False, gate, source)
-        refusal = self._final_gates(source)
+        refusal = self._final_gates(source, generated=generated)
         if refusal is not None:
             return refusal
         text = source.rstrip() + "\n"
@@ -3835,6 +3884,11 @@ class MathematicsSession:
             # Files no `\input` chain from the root reaches: in no PDF,
             # whatever they say.
             "tex_unreached": self._unreached_tex(),
+            # Statements an independent reader refused. Reported rather than
+            # left in the record alone: a model that cannot see why a name is
+            # refused will keep proposing it, and a reader of the workspace
+            # is owed the list of what was tried and rejected.
+            "quarantine": list(self.state.get("quarantine", ())),
             # The Lean this project may import but did not author, and which of
             # its own modules answer to a shared name instead. Reported rather
             # than left implicit: a model that cannot see the library cannot
@@ -3956,6 +4010,12 @@ class MathematicsSession:
                 )
             return self._delete_tex(target, path)
         relative = safe_relative(str(path).replace("\\", "/"))
+        owned = self._generated_module_refusal(relative)
+        if owned is not None:
+            # Deleting it would silently drop axioms a human approved while
+            # the record still lists them, so the record and the tree would
+            # disagree about what the work rests on.
+            return ToolResult(False, owned)
         module = module_name(relative)
         committed = self.lean_workspace.sources()
         importers = dependents(committed, module)
@@ -4680,6 +4740,26 @@ class MathematicsSession:
                     proposal["lean_statement"]
                 )
             return result
+        if name == "list_statements":
+            return self._list_statements(
+                str(arguments["paper_id"]), int(arguments.get("start", 1) or 1)
+            )
+        if name == "assume_statement":
+            return self._assume_statement(
+                {
+                    key: str(arguments.get(key) or "")
+                    for key in (
+                        "paper_id",
+                        "statement",
+                        "formal_name",
+                        "lean_statement",
+                        "informal_statement",
+                        "reason",
+                        "kind",
+                        "latex_name",
+                    )
+                }
+            )
         if name == "report_result":
             claimed = arguments.get("theorems")
             return self._report_result(
@@ -4845,6 +4925,471 @@ class MathematicsSession:
             )
         finally:
             self._consume_search_evidence()
+
+    # --- Assumed-paper libraries ------------------------------------------
+
+    #: Where minted paper axioms live, and the one path that may write them.
+    PAPERS_DIR = "Papers"
+
+    def _paper_statements(self, paper_id: str):
+        """The inventory of a held paper, with the record it belongs to.
+
+        Both come back because every caller needs both: the statements to
+        choose from, and the record whose identity a minted axiom carries.
+        """
+        record = self.papers._held(paper_id)
+        identifier = record.identifier
+        if not self.papers.library.holds_source(identifier):
+            raise ArxivError(
+                f"{record.arxiv_id} has no source in the library, and a statement can only be "
+                "assumed from the paper's own words. Call fetch_source first."
+            )
+        return record, assume_module.inventory(self.papers.library.source_texts(identifier))
+
+    def _list_statements(self, paper_id: str, start: int = 1) -> ToolResult:
+        """What the paper claims, bounded and resumable. Nothing is minted.
+
+        The whole point of listing separately from minting: reading a paper
+        that states ninety results must cost nothing in trust, and the axioms
+        that follow must be the ones the proof actually needed.
+        """
+        try:
+            record, statements = self._paper_statements(paper_id)
+        except (ArxivError, assume_module.AssumeError) as error:
+            return ToolResult(False, str(error))
+        if not statements:
+            return ToolResult(
+                False,
+                f"{record.arxiv_id} states nothing Hardy recognises as a theorem, lemma, "
+                "proposition or definition. Read its source with read_paper instead.",
+            )
+        first = max(1, start)
+        # Bounded like every other observation, and resumable rather than
+        # clipped: a paper's last theorem is as assumable as its first, and a
+        # listing that silently stops is indistinguishable from a paper that
+        # stops there.
+        shown: list[dict[str, Any]] = []
+        for item in statements[first - 1 :]:
+            shown.append(item.as_dict())
+            payload = self._statements_payload(record, statements, first, shown)
+            if len(payload.encode("utf-8")) > self.papers.observation_bytes:
+                shown.pop()
+                break
+        if not shown:
+            return ToolResult(
+                False,
+                f"statement {first} of {record.arxiv_id} does not fit the "
+                f"{self.papers.observation_bytes}-byte observation budget",
+            )
+        return ToolResult(True, self._statements_payload(record, statements, first, shown))
+
+    def _statements_payload(
+        self, record: Any, statements: Sequence[Any], first: int, shown: Sequence[dict[str, Any]]
+    ) -> str:
+        following = first + len(shown)
+        return json.dumps(
+            {
+                "paper_id": record.arxiv_id,
+                "total": len(statements),
+                "statements": list(shown),
+                **(
+                    {"next_start": following}
+                    if following <= len(statements)
+                    else {}
+                ),
+                "note": (
+                    "Nothing here is assumed. assume_statement mints one of these as an axiom, "
+                    "after a human approves it. Assume only what your proof needs."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    def _assume_statement(self, request: dict[str, str]) -> ToolResult:
+        """Mint one paper statement as an axiom, or say why not.
+
+        The order of the gates is the design. Everything Hardy can establish
+        by itself runs before a human is asked anything: that the paper really
+        makes this statement, that the Lean parses as an axiom at all, that
+        Lean does not prove it outright (a theorem, not an assumption), that
+        Lean does not prove its *negation* (false, and would make everything
+        provable), and that an independent reader accepts the Lean as saying
+        what the paper says. Only then is anyone asked to approve it.
+
+        A reader that disputes the translation quarantines it rather than
+        warning about it: the name is recorded, visible, and refused by the
+        save gate. An unfaithfully formalised assumption is worse than no
+        assumption, because it lets Hardy prove what the paper never claimed
+        while naming the paper as its source.
+        """
+        try:
+            record, statements = self._paper_statements(request["paper_id"])
+        except (ArxivError, assume_module.AssumeError) as error:
+            return ToolResult(False, str(error))
+        wanted = assume_module.find(statements, request["statement"])
+        if wanted is None:
+            return ToolResult(
+                False,
+                f"{record.arxiv_id} makes no statement called {request['statement']!r}. "
+                f"list_statements names them: {[item.ref for item in statements][:20]}",
+            )
+        kind = request.get("kind") or "statement"
+        if kind not in ("statement", "constant"):
+            return ToolResult(
+                False, f"kind must be 'statement' or 'constant', not {kind!r}"
+            )
+        if self.search is not None and self._inspect_attempts_since_request == 0:
+            # The same gate `request_assumption` lives by, for the same
+            # reason: a paper stating a result is not evidence that Mathlib
+            # lacks it, and an axiom for something already formalised is a
+            # widening of the trust base bought for nothing.
+            return ToolResult(
+                False,
+                "no `inspect_declarations` has been run since the last assumption request. "
+                "Look for the result in Mathlib before assuming it from the paper.",
+            )
+        short = request["formal_name"].strip()
+        try:
+            entry, _ = self.papers.bibliography.cite(record)
+        except (BibliographyError, LockTimeout, OSError, LayoutError) as error:
+            return ToolResult(
+                False, f"the paper could not be recorded in the bibliography: {error}"
+            )
+        try:
+            namespace = assume_module.namespace_for(entry.key)
+        except assume_module.AssumeError as error:
+            return ToolResult(False, str(error))
+        qualified = f"{namespace}.{short}"
+        try:
+            return self._mint(request, record, entry, wanted, namespace, qualified, kind)
+        finally:
+            self._consume_search_evidence()
+
+    def _mint(
+        self,
+        request: dict[str, str],
+        record: Any,
+        entry: Any,
+        wanted: Any,
+        namespace: str,
+        qualified: str,
+        kind: str,
+    ) -> ToolResult:
+        statement = request["lean_statement"].strip()
+        # An opaque constant is a type or a term, not a proposition, so the
+        # shape and probe gates below -- which ask whether Lean *proves* a
+        # statement -- have nothing to say about one. Its own risk is stated
+        # to the human instead, and recorded as added trust.
+        if kind == "statement":
+            refusal = self._assumption_shape(request["formal_name"], statement)
+            if refusal is not None:
+                return ToolResult(False, refusal)
+            probe, caveat = self._assumption_probe(f"axiom {qualified} : {statement}")
+            if probe is not None:
+                return ToolResult(False, probe)
+            verdict = self._refutation_probe(statement)
+            if verdict.refuted:
+                return ToolResult(False, refute.describe(verdict, statement))
+            # Both caveats travel, not the first of them. A human approving
+            # an axiom is owed every fact about what was and was not checked,
+            # and reporting only the elaboration's silence would leave them
+            # believing the counterexample search had come back clean.
+            checked = " ".join(
+                part
+                for part in (
+                    caveat
+                    or "Lean elaborated this statement and could not prove it.",
+                    (
+                        f"The counterexample search was not conclusive: {verdict.caveat}."
+                        if verdict.caveat
+                        else "No counterexample was found by the cheap refutation probes."
+                    ),
+                )
+                if part
+            )
+        else:
+            checked = (
+                "An opaque constant is not elaborated as a proposition, so nothing was "
+                "proved or refuted about it. It asserts that something with this type "
+                "exists, which is trust beyond assuming a statement."
+            )
+        agreed, divergences = self._faithfulness(request, record, wanted, qualified)
+        if not agreed:
+            self._quarantine(request, record, entry, wanted, qualified, kind, divergences)
+            return ToolResult(
+                False,
+                "an independent reader would not accept this Lean as saying what the paper "
+                f"says, so it is quarantined rather than assumed: {list(divergences)}. It is "
+                "recorded in the workspace and cannot be declared. Restate it and try again.",
+            )
+        proposal = {
+            "formal_name": qualified,
+            "lean_statement": statement,
+            "latex_name": request.get("latex_name") or f"assumption:{request['formal_name']}",
+            "informal_statement": request["informal_statement"],
+            "source": f"arXiv:{record.arxiv_id} ({wanted.ref})",
+            "reason": request["reason"],
+            "checked": checked,
+            "goal": self.goal(),
+            "paper_text": wanted.text,
+            "paper_title": record.title,
+            "cite_key": entry.key,
+            "kind": kind,
+        }
+        self._record(
+            {
+                "type": "assumption_prompt",
+                "formal_name": qualified,
+                "checked": checked,
+                "paper": record.arxiv_id,
+                "statement": wanted.ref,
+            }
+        )
+        if not self.confirm(proposal):
+            return ToolResult(False, "The user declined this assumption. Do not use it.")
+        minted = assume_module.Minted(
+            formal_name=request["formal_name"].strip(),
+            lean_statement=statement,
+            informal_statement=request["informal_statement"],
+            kind=kind,
+            ref=wanted.ref,
+            heading=wanted.heading,
+            paper_text=wanted.text,
+        )
+        durable = {
+            "formal_name": qualified,
+            "lean_statement": statement,
+            "latex_name": proposal["latex_name"],
+            "informal_statement": request["informal_statement"],
+            "source": proposal["source"],
+            "reason": request["reason"],
+            "status": "user-approved",
+            "kind": kind,
+            "paper": {
+                "arxiv_id": record.arxiv_id,
+                "cite_key": entry.key,
+                "ref": wanted.ref,
+                "heading": wanted.heading,
+                "module": "",
+            },
+        }
+        mapping = {
+            "formal_name": qualified,
+            "latex_name": proposal["latex_name"],
+            "description": request["informal_statement"],
+        }
+        fresh = not any(item["formal_name"] == qualified for item in self.state["assumptions"])
+        if fresh:
+            # Recorded BEFORE the module is written, because the module is
+            # saved through the ordinary path and that path refuses an axiom
+            # no human approved -- which this one now has. Rolled back below
+            # if the save fails, so a refused write never leaves an approval
+            # standing for an axiom that is not in the tree.
+            self.state["assumptions"].append(durable)
+            self.state["names"].append(mapping)
+            self._save_state()
+        written = self._write_papers_module(record, entry, minted, minted_already=fresh)
+        if isinstance(written, ToolResult):
+            if fresh:
+                self.state["assumptions"].remove(durable)
+                self.state["names"].remove(mapping)
+                self._save_state()
+            return written
+        if fresh:
+            durable["paper"]["module"] = written
+            self._save_state()
+        return ToolResult(
+            True,
+            f"User approved. `{qualified}` is declared in {written} and cited as "
+            f"\\cite{{{entry.key}}}. Import it with `import {module_name(safe_relative(written))}`"
+            f", disclose it in the writeup's \\appendix under \\label{{{proposal['latex_name']}}} "
+            "with the exact Lean line, and remember that anything resting on it is verified "
+            "only modulo this paper.",
+        )
+
+    def _refutation_probe(self, statement: str) -> refute.Verdict:
+        """Ask Lean whether the negation is provable, and never crash doing it.
+
+        A machine whose Lean cannot start must not be one where every axiom is
+        admitted unchecked, nor one where none can be: the caveat carries the
+        uncertainty to the human, who is the one deciding.
+        """
+        source, tactics = refute.probe_source(statement)
+        try:
+            result = self._probe_lean_source(
+                source, timeout=max(self.lean.timeout, refute.PROBE_SECONDS)
+            )
+        except Exception as error:  # noqa: BLE001 - an unrunnable probe is a caveat, never a crash
+            return refute.Verdict(False, caveat=f"the refutation probe could not run ({error})")
+        return refute.judge(result, tactics)
+
+    def _faithfulness(
+        self, request: dict[str, str], record: Any, wanted: Any, qualified: str
+    ) -> tuple[bool, tuple[str, ...]]:
+        """Whether an independent reader accepts the Lean as the paper's claim.
+
+        Fail-closed in every direction. A reader that cannot be reached, that
+        answers with something that is not a review, or that answers "no" has
+        not agreed, and there is no third outcome that mints an axiom.
+        """
+        try:
+            agreed, divergences = self._review_assumption(
+                paper=f"arXiv:{record.arxiv_id} -- {record.title}",
+                reference=wanted.ref,
+                paper_text=wanted.text,
+                formal_name=qualified,
+                lean_statement=request["lean_statement"].strip(),
+                informal_statement=request["informal_statement"],
+            )
+        except Exception as error:  # noqa: BLE001 - an unreachable reader is not an agreement
+            return False, (f"the independent reader could not be reached: {error}",)
+        return bool(agreed), tuple(str(item) for item in divergences)
+
+    def _review_assumption(
+        self,
+        *,
+        paper: str,
+        reference: str,
+        paper_text: str,
+        formal_name: str,
+        lean_statement: str,
+        informal_statement: str,
+    ) -> tuple[bool, tuple[str, ...]]:
+        """One independent read of one translation, on its own thread.
+
+        Independent of *context*, not merely of weights, for the reason
+        `faithfulness.py` gives at length: a reader handed the conversation
+        that produced a translation reads the translation through it. This one
+        gets the paper's sentence and the Lean, no tools, and no session
+        history.
+        """
+        runtime = self._make_runtime(
+            model=getattr(self.runtime, "model", None),
+            system_prompt=ASSUME_REVIEW_PROMPT,
+            specs=[],
+            dispatch=lambda name, arguments: ToolResult(
+                False, "the reader is given no tools"
+            ),
+            cwd=self.workspace,
+            session_id=None,
+            observe=lambda event: None,
+        )
+        answer = runtime.ask(
+            json.dumps(
+                {
+                    "paper": paper,
+                    "reference": reference,
+                    "paper_states": paper_text,
+                    "lean_name": formal_name,
+                    "lean_statement": lean_statement,
+                    "informal_rendering": informal_statement,
+                },
+                ensure_ascii=False,
+            )
+        )
+        # The reader's answer is parsed the way every structured answer in
+        # Hardy is: the first balanced JSON object in the text, because a
+        # model that adds a sentence around it has still answered. Anything
+        # unparseable is not a review, and not a review is not an agreement.
+        found = json_object(str(answer))
+        try:
+            payload = json.loads(found) if found else None
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return False, ("the reader did not answer with a review",)
+        divergences = payload.get("divergences")
+        return bool(payload.get("agrees")), tuple(
+            str(item) for item in (divergences if isinstance(divergences, list) else ())
+        )
+
+    def _quarantine(
+        self,
+        request: dict[str, str],
+        record: Any,
+        entry: Any,
+        wanted: Any,
+        qualified: str,
+        kind: str,
+        divergences: tuple[str, ...],
+    ) -> None:
+        """Record a refused translation where it stays visible and unusable.
+
+        Not a warning beside an admitted axiom: the entry below is what
+        `_final_gates` reads to refuse the name outright. The difference
+        between a rule and a suggestion is that the rule refuses.
+        """
+        quarantined = self.state.setdefault("quarantine", [])
+        quarantined.append(
+            {
+                "formal_name": qualified,
+                "lean_statement": request["lean_statement"].strip(),
+                "informal_statement": request["informal_statement"],
+                "kind": kind,
+                "divergences": list(divergences),
+                "paper": {
+                    "arxiv_id": record.arxiv_id,
+                    "cite_key": entry.key,
+                    "ref": wanted.ref,
+                },
+            }
+        )
+        self._save_state()
+        self._record({"type": "assumption_quarantined", "formal_name": qualified,
+                      "divergences": list(divergences)})
+
+    def _quarantined_names(self) -> set[str]:
+        return {str(item["formal_name"]) for item in self.state.get("quarantine", ())}
+
+    def _papers_module_path(self, cite_key: str) -> str:
+        return assume_module.module_path_for(cite_key)
+
+    def _write_papers_module(
+        self, record: Any, entry: Any, minted: Any, *, minted_already: bool = False
+    ) -> str | ToolResult:
+        """Regenerate one paper's module, with this statement added.
+
+        Whole rather than appended to, and from the record rather than from
+        the file, for the reason the bibliography is: a generated file
+        assembled by successive edits drifts from what it is a rendering of,
+        and there is then no answer to which of the two the run rests on.
+        """
+        relative = self._papers_module_path(entry.key)
+        held = [
+            assume_module.Minted(
+                formal_name=str(item["formal_name"]).rsplit(".", 1)[-1],
+                lean_statement=str(item["lean_statement"]),
+                informal_statement=str(item["informal_statement"]),
+                kind=str(item.get("kind") or "statement"),
+                ref=str(item.get("paper", {}).get("ref", "")),
+                heading=str(item.get("paper", {}).get("heading", "")),
+                paper_text="",
+            )
+            for item in self.state["assumptions"]
+            if item.get("paper", {}).get("cite_key") == entry.key
+        ]
+        # `held` is read from the record, which already carries this
+        # statement when the caller recorded it first. Rendering it twice
+        # would declare the same axiom twice and refuse the whole module.
+        statements = tuple(held) if minted_already else (*held, minted)
+        source = assume_module.render_module(
+            cite_key=entry.key,
+            arxiv_id=record.arxiv_id,
+            title=record.title,
+            statements=statements,
+        )
+        # Through the ordinary save path, so a minted module is checked,
+        # built, and audited exactly as authored Lean is. `ratchet=False`
+        # skips only the authorship steering -- this file is Hardy's own
+        # writing, not the model's -- and every verification gate still runs.
+        result = self._save_lean_unbraked(relative, source, ratchet=True, generated=True)
+        if not result.ok:
+            return ToolResult(
+                False,
+                "the assumption was approved but its module could not be saved, so nothing "
+                f"was minted: {result.output}",
+            )
+        return relative
 
     def _report_result(self, claimed: list[str], summary: str) -> ToolResult:
         """Say the work is done, and be refused until the artifacts say it too.

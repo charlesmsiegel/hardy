@@ -602,7 +602,7 @@ def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
     if verdict.outcome in ("agreed", "disputed"):
         from pydantic import ValidationError
 
-        from ..staged import _json_object
+        from ..models import json_object
 
         trajectory_path = row_dir / "canonical-trajectory.jsonl"
         if not trajectory_path.exists():
@@ -623,7 +623,7 @@ def _canonical_issues(entry: Entry, row_dir: Path, where: str) -> list[str]:
             if not assistant_texts:
                 issues.append(f"{where}: canonical-trajectory.jsonl records no claude.assistant reply")
             else:
-                payload_text = _json_object(assistant_texts[-1])
+                payload_text = json_object(assistant_texts[-1])
                 if payload_text is None:
                     issues.append(f"{where}: the reader's last reply in canonical-trajectory.jsonl carries no JSON object")
                 else:

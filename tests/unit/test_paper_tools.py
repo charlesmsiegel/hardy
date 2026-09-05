@@ -1,4 +1,4 @@
-"""The four verbs, and the one thing they make impossible.
+"""The literature verbs, and the one thing they make impossible.
 
 The property worth testing is negative: there is no sequence of tool calls
 that puts a reference Hardy never fetched into the bibliography. `cite_paper`
@@ -63,8 +63,14 @@ def _json(result) -> dict:
     return json.loads(result.output)
 
 
-def test_the_four_verbs_are_what_is_offered():
-    assert PAPER_TOOL_NAMES == ("search_papers", "fetch_paper", "read_paper", "cite_paper")
+def test_the_five_verbs_are_what_is_offered():
+    assert PAPER_TOOL_NAMES == (
+        "search_papers",
+        "fetch_paper",
+        "fetch_source",
+        "read_paper",
+        "cite_paper",
+    )
 
 
 def test_a_search_returns_leads_and_records_nothing(tmp_path: Path):
@@ -595,3 +601,136 @@ def test_an_empty_search_fits_the_smallest_budget(tmp_path: Path):
     assert result.ok, result.output
     assert len(result.output.encode("utf-8")) <= 48
     assert json.loads(result.output)["results"] == []
+
+
+# --- The source bundle, as a tool surface ------------------------------------
+
+
+def _tar_bundle(*members: tuple[str, bytes]) -> bytes:
+    import io
+    import tarfile
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for name, content in members:
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+    return buffer.getvalue()
+
+
+MAIN_TEX = b"\\documentclass{article}\n\\begin{document}\n\\section{One}\nBody.\n\\end{document}\n"
+
+
+def _sourced(tmp_path: Path, *members: tuple[str, bytes]):
+    """A runtime whose arXiv answers both the API and the e-print endpoint."""
+    library = arxiv.PaperLibrary(tmp_path / "papers")
+    bundle = _tar_bundle(*(members or (("main.tex", MAIN_TEX),)))
+
+    def transport(url: str, timeout: float, limit: int | None = None) -> bytes:
+        return bundle if "e-print" in url else _feed()
+
+    client = arxiv.ArxivClient(
+        library, transport=transport, clock=lambda: 1_000_000.0, sleep=lambda seconds: None
+    )
+    return PaperToolRuntime(
+        library, Bibliography(tmp_path / "problem"), client=client, observation_bytes=32 * 1024
+    )
+
+
+def test_the_source_verbs_are_offered_beside_the_others():
+    assert "fetch_source" in PAPER_TOOL_NAMES
+
+
+def test_a_source_cannot_be_fetched_before_the_paper_is(tmp_path: Path):
+    runtime = _sourced(tmp_path)
+
+    result = runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+
+    assert not result.ok
+    assert "fetch_paper" in result.output
+
+
+def test_fetching_a_source_lists_what_it_holds(tmp_path: Path):
+    runtime = _sourced(tmp_path, ("main.tex", MAIN_TEX), ("figures/plot.png", b"\x89PNG\x00\x01"))
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+
+    result = runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+
+    assert result.ok, result.output
+    payload = _json(result)
+    assert payload["paper_id"] == "math.DG/0211159v1"
+    assert "main.tex" in payload["files"]
+    assert payload["archive_sha256"]
+    # A binary file is held but is not offered as something to read.
+    assert "figures/plot.png" not in payload["files"]
+
+
+def test_a_source_file_is_read_through_read_paper(tmp_path: Path):
+    runtime = _sourced(tmp_path)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+
+    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "file": "main.tex"})
+
+    assert result.ok, result.output
+    assert "\\section{One}" in result.output
+
+
+def test_reading_a_file_of_a_source_nobody_fetched_says_how_to_get_it(tmp_path: Path):
+    runtime = _sourced(tmp_path)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+
+    result = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "file": "main.tex"})
+
+    assert not result.ok
+    assert "fetch_source" in result.output
+
+
+def test_a_file_the_source_does_not_hold_is_refused(tmp_path: Path):
+    runtime = _sourced(tmp_path)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+
+    result = runtime.call(
+        "read_paper", {"paper_id": "math.DG/0211159v1", "file": "../record.json"}
+    )
+
+    assert not result.ok
+    assert "not in the source" in result.output
+
+
+def test_a_long_source_file_is_paged_like_any_other_read(tmp_path: Path):
+    body = b"\\documentclass{article}\n" + b"\n".join(
+        f"Line {number} of the paper.".encode() for number in range(400)
+    )
+    runtime = _sourced(tmp_path, ("main.tex", body))
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+    runtime.observation_bytes = 400
+
+    first = runtime.call("read_paper", {"paper_id": "math.DG/0211159v1", "file": "main.tex"})
+
+    assert first.ok, first.output
+    assert len(first.output.encode("utf-8")) <= 400
+    assert "start_line=" in first.output
+
+
+def test_a_refused_archive_is_reported_as_a_tool_answer(tmp_path: Path):
+    """An `ArchiveError` is a refusal the model must be able to read, not a
+    traceback that ends the turn."""
+    library = arxiv.PaperLibrary(tmp_path / "papers")
+
+    def transport(url: str, timeout: float, limit: int | None = None) -> bytes:
+        return b"<html>down for maintenance</html>" if "e-print" in url else _feed()
+
+    client = arxiv.ArxivClient(
+        library, transport=transport, clock=lambda: 1_000_000.0, sleep=lambda seconds: None
+    )
+    runtime = PaperToolRuntime(library, Bibliography(tmp_path / "problem"), client=client)
+    runtime.call("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+
+    result = runtime.call("fetch_source", {"paper_id": "math.DG/0211159v1"})
+
+    assert not result.ok
+    assert "gzip, tar, or PDF" in result.output

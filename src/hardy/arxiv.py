@@ -17,13 +17,18 @@ rather than an overwrite. That is what makes "the paper says X" checkable
 later -- an unversioned citation is a citation of whatever the author has
 uploaded since.
 
-What is stored is the metadata and the abstract, which is what the arXiv API
-serves. The full source bundle is deliberately not fetched: unpacking a
-third-party archive safely is its own piece of work (`FEATURES.md`, "treat
-downloaded archives as hostile"), Hardy still has no process isolation to fall
-back on, and a half-done version of that is worse than none. So `read_paper`
-serves an abstract and says so, rather than implying a full text it does not
-have.
+Two things are stored, and a citation rests on the first alone. The metadata
+and abstract come from the API and are what `cite_paper` vouches for. The
+*source bundle* is fetched separately, on request, and unpacked under the
+rules in `archives.py`: normalised paths, no links, quotas, temporary staging,
+and one rename. Its bytes are kept beside the tree they unpacked to, so the
+manifest's claim about where the files came from is checkable rather than
+asserted.
+
+Nothing extracted is executed, compiled, or handed to TeX -- the files are
+text to read and to inventory. Hardy still has no process isolation (#84), and
+defensive unpacking bounds what an archive can do to the filesystem; it is not
+a sandbox and does not make running the contents safe.
 
 Nothing here is trusted. The response is third-party XML: it is size-bounded
 before parsing, refused outright if it carries a DOCTYPE (an entity bomb needs
@@ -57,6 +62,10 @@ from .layout import LayoutError, guard_for, read_bytes, read_text
 from .storage import FileLock
 
 ENDPOINT = "https://export.arxiv.org/api/query"
+#: Where a paper's source bundle comes from. A different service from the
+#: API -- it answers bytes rather than a feed -- but the same caller, so it
+#: shares the one request interval below.
+SOURCE_ENDPOINT = "https://export.arxiv.org/e-print/"
 #: arXiv's own request: one call every three seconds from a given caller.
 MIN_INTERVAL_SECONDS = 3.0
 #: How long a cache write or a conditional drop waits for the key it touches.
@@ -71,6 +80,11 @@ QUERY_TTL_SECONDS = 24 * 60 * 60
 #: A single API response. Generous for an Atom feed of fifty entries and far
 #: under what a compressed bomb would need to matter.
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+#: A source bundle, which is a different order of thing from a feed: a paper
+#: with figures runs to tens of megabytes and is not misbehaving. This bounds
+#: the *download*; what the archive may inflate to once unpacked is
+#: `archives.Limits`, which is the bound that matters against a bomb.
+MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 READ_CHUNK_BYTES = 64 * 1024
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_RESULTS = 50
@@ -275,6 +289,48 @@ def digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+class SourceFile(FrozenModel):
+    """One file out of a paper's source bundle, as it was unpacked."""
+
+    path: str
+    size: int
+    sha256: str
+    text: bool
+
+
+class SourceManifest(FrozenModel):
+    """What a paper's source tree is, and which bytes it came out of.
+
+    The archive digest is the claim a reader can check against arXiv itself:
+    these files are what that bundle unpacked to, under the rules in
+    `archives.py`, at that moment. Nothing here was executed or compiled --
+    see `admit_source`.
+    """
+
+    schema_version: Literal[1] = 1
+    arxiv_id: str
+    kind: str
+    archive_sha256: str
+    archive_bytes: int
+    source_url: str = ""
+    fetched_at: str = ""
+    files: tuple[SourceFile, ...] = ()
+
+    def find(self, path: str) -> SourceFile | None:
+        return next((item for item in self.files if item.path == path), None)
+
+
+#: The directory a record's unpacked source lives in, and the manifest inside
+#: it. Named here so the two places that build the path cannot disagree.
+SOURCE_DIR = "source"
+SOURCE_MANIFEST = "source.json"
+#: The bundle itself, kept beside the tree it unpacked to. Without it the
+#: manifest's `archive_sha256` is a claim nothing stands behind: the files
+#: could be edited and their digests recomputed, and every check would pass
+#: while the manifest went on naming a download those bytes never came from.
+SOURCE_ARCHIVE = "archive.bin"
+
+
 class PaperLibrary:
     """The records on disk, and the rules that keep them immutable.
 
@@ -470,6 +526,184 @@ class PaperLibrary:
                 if not child.is_symlink() and (child / "record.json").is_file()
             )
         )
+
+    def holds_source(self, identifier: ArxivId) -> bool:
+        return identifier.versioned and (
+            self.path_for(identifier) / SOURCE_DIR / SOURCE_MANIFEST
+        ).is_file()
+
+    def source_manifest(self, identifier: ArxivId) -> SourceManifest:
+        """The manifest for a held source tree, checked against its own archive.
+
+        Three separate things are established here, and each of them was a way
+        a source tree could lie. The manifest has to be about *this* paper, or
+        a directory moved between records serves one paper's source under
+        another's name. The archive it names has to be present, because a
+        manifest whose bundle is gone is a provenance claim with nothing
+        behind it. And the bundle's bytes have to hash to what the manifest
+        says, so that "these files came out of that download" is checkable
+        rather than asserted -- anyone holding the record can re-extract it
+        and compare.
+
+        The individual files are re-hashed by `read_source`, on the one file
+        being served, rather than here.
+        """
+        held = f"records/{identifier.storage_name}/{SOURCE_DIR}"
+        try:
+            manifest = SourceManifest.model_validate_json(self._read(f"{held}/{SOURCE_MANIFEST}"))
+        except (OSError, ValueError, LayoutError) as error:
+            raise ArxivError(
+                f"the stored source manifest for {identifier} could not be read: {error}"
+            ) from error
+        if manifest.arxiv_id != str(identifier):
+            raise ArxivError(
+                f"the source stored under {identifier} says it belongs to {manifest.arxiv_id}; "
+                "refusing to serve one paper's source under another's identifier"
+            )
+        try:
+            archive = read_bytes(self.root, f"{held}/{SOURCE_ARCHIVE}")
+        except (OSError, LayoutError) as error:
+            raise ArxivError(
+                f"the stored archive for {identifier} could not be read: {error}"
+            ) from error
+        if hashlib.sha256(archive).hexdigest() != manifest.archive_sha256:
+            raise ArxivError(
+                f"the stored archive for {identifier} does not match the digest its manifest "
+                "names; this source tree no longer says which download it came from"
+            )
+        return manifest
+
+    def read_source(
+        self, identifier: ArxivId, path: str, manifest: SourceManifest | None = None
+    ) -> str:
+        """One text file out of a held source tree, checked before it is served.
+
+        Two separate refusals, because they are two different failures. A path
+        the manifest does not name is not part of what was admitted -- a file
+        planted in the directory afterwards, or a traversal out of it -- and
+        is refused whether or not it exists. A path the manifest names whose
+        bytes no longer hash to what was recorded has been edited since
+        admission, and the digest exists precisely so that is not served
+        silently.
+        """
+        manifest = self.source_manifest(identifier) if manifest is None else manifest
+        wanted = manifest.find(path)
+        if wanted is None:
+            raise ArxivError(
+                f"{path!r} is not in the source of {identifier}; the files it holds are "
+                f"{[item.path for item in manifest.files][:20]}"
+            )
+        if not wanted.text:
+            raise ArxivError(
+                f"{path!r} is not text ({wanted.size} bytes), so there is nothing to read; "
+                "Hardy stores it but does not decode it"
+            )
+        held = f"records/{identifier.storage_name}/{SOURCE_DIR}"
+        try:
+            stored = read_bytes(self.root, f"{held}/{path}")
+        except (OSError, LayoutError) as error:
+            raise ArxivError(f"{path!r} could not be read: {error}") from error
+        if hashlib.sha256(stored).hexdigest() != wanted.sha256:
+            raise ArxivError(
+                f"{path!r} does not match the digest it was admitted under; the source tree "
+                f"for {identifier} has been edited and can no longer be read"
+            )
+        return stored.decode("utf-8", errors="replace")
+
+    def source_texts(self, identifier: ArxivId) -> dict[str, str]:
+        """Every readable file in a held source tree, by path.
+
+        Each one goes through `read_source`, so a tree with one edited file
+        refuses rather than quietly returning the rest.
+        """
+        manifest = self.source_manifest(identifier)
+        return {
+            item.path: self.read_source(identifier, item.path, manifest)
+            for item in manifest.files
+            if item.text
+        }
+
+    def admit_source(
+        self,
+        identifier: ArxivId,
+        archive: bytes,
+        *,
+        source_url: str,
+        fetched_at: str,
+        limits: Any | None = None,
+    ) -> SourceManifest:
+        """Unpack a source bundle into the library, or refuse it whole.
+
+        The unpacking rules are `archives.extract`'s and are documented there.
+        What this adds is the same two properties the metadata record has:
+        extraction happens in a temporary directory *beside* the target and
+        lands with one rename, so a refused archive never leaves a partial
+        `source/` behind; and a tree already held is never rewritten, because
+        an assumption minted against one reading of a paper must not find
+        different bytes under it later.
+
+        Nothing extracted is executed, compiled, or handed to TeX. These are
+        files to read and to inventory. Hardy has no process isolation yet
+        (#84), and the defensive unpacking here is a bound on what an archive
+        can do to the filesystem -- not a sandbox, and not a licence to run
+        what it contains.
+        """
+        from . import archives  # local: `archives` is only needed by this path
+
+        if not identifier.versioned:
+            raise ArxivError("a source may only be admitted under a versioned identifier")
+        if not self.holds(identifier):
+            raise ArxivError(
+                f"there is no record for {identifier}, so nothing says where a source tree "
+                "under that name came from; fetch the paper first"
+            )
+        if self.holds_source(identifier):
+            return self.source_manifest(identifier)
+        guard, name = self._guard(f"records/{identifier.storage_name}/{SOURCE_DIR}")
+        target = guard.reserve(name)
+        staging = Path(tempfile.mkdtemp(prefix=".staging-source-", dir=guard.directory))
+        try:
+            extraction = archives.extract(
+                archive, staging, **({} if limits is None else {"limits": limits})
+            )
+            if any(item.path in (SOURCE_MANIFEST, SOURCE_ARCHIVE) for item in extraction.files):
+                # The manifest is Hardy's own claim about the tree. An archive
+                # carrying a file of that name would either overwrite it or be
+                # overwritten by it, and either way one of the two would be
+                # read as the other.
+                raise ArxivError(
+                    f"the archive contains a file named {SOURCE_MANIFEST} or "
+                    f"{SOURCE_ARCHIVE}, which are the names Hardy's own manifest and stored "
+                    "bundle take; refusing it"
+                )
+            manifest = SourceManifest(
+                arxiv_id=str(identifier),
+                kind=extraction.kind,
+                archive_sha256=hashlib.sha256(archive).hexdigest(),
+                archive_bytes=len(archive),
+                source_url=source_url,
+                fetched_at=fetched_at,
+                files=tuple(
+                    SourceFile(path=item.path, size=item.size, sha256=item.sha256, text=item.text)
+                    for item in extraction.files
+                ),
+            )
+            (staging / SOURCE_ARCHIVE).write_bytes(archive)
+            (staging / SOURCE_MANIFEST).write_bytes(
+                (manifest.model_dump_json(indent=2) + "\n").encode("utf-8")
+            )
+            try:
+                os.replace(staging, target)
+            except OSError:
+                # Another process admitted the same source between the check
+                # above and this rename. Whoever landed first holds it, which
+                # is the outcome this method wants anyway.
+                if (target / SOURCE_MANIFEST).is_file():
+                    return self.source_manifest(identifier)
+                raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        return self.source_manifest(identifier)
 
     def admit(self, record: PaperRecord, response: bytes) -> PaperRecord:
         """Put a record in the library, or keep the one already there.
@@ -677,16 +911,24 @@ class PaperLibrary:
         guard.write_bytes("state.json", json.dumps({"last_request": when}).encode("utf-8"))
 
 
-Transport = Callable[[str, float], bytes]
+#: `(url, timeout, limit)`. The limit is keyword-optional so a test double
+#: written for the API alone still satisfies it.
+Transport = Callable[..., bytes]
 
 
-def _http(url: str, timeout: float) -> bytes:
+def _http(url: str, timeout: float, limit: int | None = None) -> bytes:
     """Read a whole response under one deadline, size-bounded.
+
+    `limit` is what the caller will accept, defaulting to an API response's
+    bound. A source bundle is served by a different endpoint and is allowed
+    to be much larger, so the bound travels with the request rather than
+    being a property of this module.
 
     The same shape as `retrieval._fetch_url` and for the same reason: a
     per-read socket timeout is not a bound on the transfer, because a server
     dripping one byte at a time resets it forever.
     """
+    bound = MAX_RESPONSE_BYTES if limit is None else limit
     deadline = time.monotonic() + timeout
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
@@ -710,7 +952,7 @@ def _http(url: str, timeout: float) -> bytes:
     with opened as response:
         chunks: list[bytes] = []
         received = 0
-        wanted = MAX_RESPONSE_BYTES + 1
+        wanted = bound + 1
         try:
             while received < wanted:
                 remaining = deadline - time.monotonic()
@@ -737,8 +979,8 @@ def _http(url: str, timeout: float) -> bytes:
                 f"the arXiv response failed after {received} bytes: {error}"
             ) from error
     body = b"".join(chunks)
-    if len(body) > MAX_RESPONSE_BYTES:
-        raise ArxivError(f"the arXiv response exceeds {MAX_RESPONSE_BYTES} bytes")
+    if len(body) > bound:
+        raise ArxivError(f"the arXiv response exceeds {bound} bytes")
     return body
 
 
@@ -844,6 +1086,47 @@ class ArxivClient:
         if self.library.holds(resolved):
             return self.library.read(resolved), True
         return self.library.admit(record, body), False
+
+    def fetch_source(self, raw: str) -> tuple[SourceManifest, bool]:
+        """The paper's source bundle, unpacked into the library.
+
+        Only for a paper already held, and only under a versioned identifier:
+        the record is what says where these bytes came from, and "the source
+        of 2401.12345" is a moving target in exactly the way a versioned
+        record exists to rule out.
+
+        A tree already held costs no request at all -- a versioned bundle
+        cannot change, so asking would be asking a question whose answer is on
+        disk. Otherwise the download takes an ordinary throttle slot: arXiv
+        sees one caller, and a source fetch is a request like any other.
+
+        Deliberately not cached as a query. The query cache stores bodies as
+        text in JSON, which an archive is not, and a bundle that unpacked
+        successfully is already on disk under its manifest.
+        """
+        identifier = parse_id(raw)
+        if not identifier.versioned:
+            raise ArxivError(
+                f"{identifier} names no version, and a paper's source differs between "
+                f"versions; fetch_paper {identifier} first and ask for the version it names"
+            )
+        if not self.library.holds(identifier):
+            raise ArxivError(
+                f"{identifier} has not been fetched, so Hardy has no record to file a source "
+                "tree under. Call fetch_paper first."
+            )
+        if self.library.holds_source(identifier):
+            return self.library.source_manifest(identifier), True
+        url = f"{SOURCE_ENDPOINT}{identifier}"
+        self._throttle()
+        body = self._transport(url, self._timeout, MAX_ARCHIVE_BYTES)
+        now = self._clock()
+        return (
+            self.library.admit_source(
+                identifier, body, source_url=url, fetched_at=_stamp(now)
+            ),
+            False,
+        )
 
     def _url(self, parameters: dict[str, str]) -> str:
         return f"{ENDPOINT}?{urllib.parse.urlencode(parameters)}"

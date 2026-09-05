@@ -447,6 +447,54 @@ async def handle_goal(ui: Ui, argument: str, state: State) -> State:
     return state
 
 
+ASSUME_USAGE = (
+    "/assume <paper-id> [<ref> ...] — list a fetched paper's statements, or assume "
+    "the ones you name"
+)
+
+
+async def handle_assume(ui: Ui, argument: str, state: State) -> State:
+    r"""Ask for a paper's statements, or for a named set of them up front.
+
+    The issue's "standalone Assume request": ordinarily an axiom is minted
+    when the proof reaches a step that needs it, and this is the other way in
+    -- a human who already knows which of a paper's results they are willing
+    to stand on says so, and the whole set is put through the same gates one
+    at a time.
+
+    Nothing here mints anything itself. It composes the turn and the model
+    calls `assume_statement`, so every approval, probe and independent read
+    happens exactly where it does for a lazily minted axiom. A command that
+    wrote axioms directly would be a second write path into the trust base.
+    """
+    session = state.session
+    if session is None:
+        ui.write("No session yet.", style="error")
+        return state
+    parts = argument.split()
+    if not parts:
+        ui.write(ASSUME_USAGE)
+        return state
+    paper, refs = parts[0], parts[1:]
+    if refs:
+        wanted = ", ".join(refs)
+        request = (
+            f"Assume these statements of arXiv:{paper}: {wanted}. "
+            f"Call fetch_paper and fetch_source for {paper} if you have not, read each "
+            "statement, and call assume_statement once per statement with the Lean you "
+            "propose for it. Assume nothing else from this paper."
+        )
+    else:
+        request = (
+            f"Call fetch_paper and fetch_source for arXiv:{paper} if you have not, then "
+            "list_statements, and show me what it states. Do not call assume_statement yet: "
+            "I will say which of them to assume."
+        )
+    ui.write(f"Assume: {paper}" + (f" — {', '.join(refs)}" if refs else " — listing statements"))
+    session.send(request)
+    return state
+
+
 IMPORT_USAGE = (
     "/import <directory> triages a pile · /import lean <file> [dest] · "
     "/import reference <file> [dest] · /import tex <file> [dest]"
@@ -1036,6 +1084,10 @@ def build_registry(templates: Sequence[user_prompts.Template] = ()) -> list[Comm
             argument_hint="[state|reset|export|expr]",
         ),
         Command("goal", "state what this session is for", handle_goal, argument_hint="[text]"),
+        Command(
+            "assume", "list a paper's statements, or assume the ones you name", handle_assume,
+            argument_hint="<paper-id> [ref ...]",
+        ),
         Command(
             "import", "triage an existing pile, or promote a file from it", handle_import,
             argument_hint="[<dir>|lean|reference|tex]",

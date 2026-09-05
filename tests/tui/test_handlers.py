@@ -15,8 +15,8 @@ from hardy.usage import Usage
 def test_the_registry_holds_the_specified_commands():
     names = [c.name for c in handlers.build_registry()]
     assert names == [
-        "help", "model", "cas", "goal", "import", "project", "status", "prove", "export",
-        "doctor", "clear", "exit", "quit",
+        "help", "model", "cas", "goal", "assume", "import", "project", "status", "prove",
+        "export", "doctor", "clear", "exit", "quit",
     ]
 
 

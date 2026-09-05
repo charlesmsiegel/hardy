@@ -28,8 +28,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
+from . import refute
 from .config import Config
 from .domain import (
+    DeclaredAssumption,
     DocumentStatus,
     EnvironmentIdentity,
     FaithfulnessOutcome,
@@ -76,6 +78,11 @@ class ProveRequest(FrozenModel):
     text: str
     model: str
     problem_slug: str = "theorem"
+    #: What this run is allowed to stand on. Empty is the ordinary case and
+    #: the strict one: with nothing declared, any axiom beyond Lean's own
+    #: refuses the proof. A run that declares a set is graded *verified
+    #: modulo* exactly the members it actually used.
+    assumptions: tuple[DeclaredAssumption, ...] = ()
 
 
 class Terminal(Protocol):
@@ -279,6 +286,14 @@ class ProveWorkflow:
         active_started = self._monotonic()
         user_wait = 0.0
         store.write_text(PurePosixPath("request.md"), request.text.rstrip() + "\n")
+        if request.assumptions:
+            # What was ALLOWED, beside the manifest's record of what was used.
+            # A reader checking an assumed result wants both: the set someone
+            # decided this run could stand on, and the subset the proof spent.
+            store.write_json(
+                PurePosixPath("assumptions.json"),
+                [item.model_dump(mode="json") for item in request.assumptions],
+            )
         store.append(
             "workflow.warning",
             {
@@ -291,6 +306,10 @@ class ProveWorkflow:
         )
         approved_claim: FrozenClaim | None = None
         approved_verdict: FaithfulnessVerdict | None = None
+        # What the refutation probes could not settle. Carried into the final
+        # grades rather than dropped: "no counterexample was found" and "the
+        # search could not be run" are different facts about the same axiom.
+        assumption_gaps: tuple[str, ...] = ()
         runtime: Any | None = None
         active_thread: Any | None = None
         verification: VerificationResult | None = None
@@ -637,6 +656,31 @@ class ProveWorkflow:
                         ),
                         approved_claim,
                     )
+                # Cheap refutation, before the proving budget is spent. An
+                # assumption whose negation Lean proves makes everything
+                # provable, so a run standing on one would come back green
+                # with every downstream signal agreeing and mean nothing.
+                refuted, unchecked = self._refute(request.assumptions, store, state.phase)
+                if refuted is not None:
+                    grades = Grades(
+                        faithfulness=FaithfulnessStatus.USER_APPROVED,
+                        faithfulness_review=verdict,
+                        known_gaps=(refuted,),
+                    )
+                    state.transition(RunPhase.CANCELLED)
+                    return self._finalize(
+                        request,
+                        terminal,
+                        store,
+                        state,
+                        created_at,
+                        active_started,
+                        user_wait,
+                        grades,
+                        TerminalReason.REFUTED_ASSUMPTION,
+                        approved_claim,
+                    )
+                assumption_gaps = unchecked
                 # Kept for the final grades. The running `grades` above
                 # already carries it, so a run cancelled mid-proof still
                 # reports that its translation was read and by what.
@@ -689,7 +733,10 @@ class ProveWorkflow:
                 self._refuse_if_cancelled()
                 state.transition(RunPhase.FINAL_VERIFICATION)
                 verification = self._verifier.verify(
-                    approved_claim, last_submission.proof_body, store
+                    approved_claim,
+                    last_submission.proof_body,
+                    store,
+                    allowed=request.assumptions,
                 )
                 # After the verifier, whatever it said. It runs Lean over the
                 # whole claim and can take minutes, so a press very plausibly
@@ -720,9 +767,26 @@ class ProveWorkflow:
                     )
                 )
             verified = verification is not None and verification.verified
-            gaps = () if verified else ("No proof passed the independent FinalVerifier.",)
+            used = verification.assumed if verified and verification is not None else ()
+            gaps = (
+                assumption_gaps
+                if verified
+                else (*assumption_gaps, "No proof passed the independent FinalVerifier.")
+            )
             grades = Grades(
-                formal=(FormalStatus.KERNEL_VERIFIED if verified else FormalStatus.PARTIAL),
+                formal=(
+                    (
+                        FormalStatus.VERIFIED_MODULO
+                        if used
+                        else FormalStatus.KERNEL_VERIFIED
+                    )
+                    if verified
+                    else FormalStatus.PARTIAL
+                ),
+                # Exactly what Lean reported the proof depends on, out of what
+                # was declared. Never the declared list: a run that did not
+                # need an assumption must not be recorded as resting on it.
+                assumed=used,
                 faithfulness=FaithfulnessStatus.USER_APPROVED,
                 faithfulness_review=approved_verdict,
                 informal=(
@@ -859,6 +923,55 @@ class ProveWorkflow:
         finally:
             if runtime is not None and hasattr(runtime, "close"):
                 runtime.close()
+
+    def _refute(
+        self, assumptions: tuple[DeclaredAssumption, ...], store: RunStore, phase: RunPhase
+    ) -> tuple[str | None, tuple[str, ...]]:
+        """Look for an obvious counterexample to each declared assumption.
+
+        Returns the refusal for the first one Lean disproves, and the gaps for
+        those it could not settle. A probe that will not run is not a
+        refutation -- a machine whose Lean cannot answer must not become one
+        where nothing may be assumed -- but it is not silence either: the run
+        records that this axiom went unchecked, so a reader is not left
+        believing the search came back clean.
+
+        Every verdict is written to the trajectory, refuted or not, because
+        "we looked and found nothing" is the fact the grade rests on and a
+        record that only keeps failures cannot show it was ever looked for.
+        """
+        unchecked: list[str] = []
+        for item in assumptions:
+            source, tactics = refute.probe_source(item.statement)
+            try:
+                result = self._lean.check_scratch(source)
+            except Exception as error:  # noqa: BLE001 - an unrunnable probe is a gap, not a crash
+                verdict = refute.Verdict(
+                    False, caveat=f"the refutation probe could not run ({error})"
+                )
+            else:
+                verdict = refute.judge(result, tactics)
+            store.append(
+                "assumption.refutation",
+                {
+                    "name": item.name,
+                    "refuted": verdict.refuted,
+                    "tactic": verdict.tactic,
+                    "caveat": verdict.caveat,
+                },
+                phase=phase,
+            )
+            if verdict.refuted:
+                return (
+                    f"The declared assumption {item.name} is false: Lean proves its negation "
+                    f"with `{verdict.tactic}`.",
+                    (),
+                )
+            if verdict.caveat:
+                unchecked.append(
+                    f"The refutation check for {item.name} was inconclusive: {verdict.caveat}."
+                )
+        return None, tuple(unchecked)
 
     def _finalize(
         self,
