@@ -121,6 +121,17 @@
   .verdicts button:disabled { opacity: .45; cursor: not-allowed; }
   .verdicts .hint { color: var(--dim); font-size: .8rem; }
   #status.pending { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+  .nav { display: flex; gap: .5rem; align-items: center; margin-bottom: .9rem; flex-wrap: wrap; }
+  .nav button {
+    font: inherit; font-size: .85rem; padding: .3rem .75rem; border-radius: 5px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--accent);
+  }
+  .nav button:disabled { opacity: .4; cursor: not-allowed; color: var(--dim); }
+  .nav .keys { color: var(--dim); font-size: .78rem; margin-left: auto; }
+  .nav .keys kbd {
+    font: inherit; font-size: .74rem; padding: 0 .3rem; border: 1px solid var(--line);
+    border-bottom-width: 2px; border-radius: 4px; background: var(--code-bg);
+  }
   footer { padding: .6rem 1rem; color: var(--dim); font-size: .76rem; border-top: 1px solid var(--line); }
 </style>
 </head>
@@ -217,6 +228,73 @@ function renderList() {
   }
   $("foot").textContent =
     `${shown.length} of ${DATA.entries.length} shown · read from disk at ${DATA.generated_at} · refresh to re-read`;
+  updateNav();
+}
+
+// --- previous / next through whatever the filters currently show ---
+
+// Neighbours are found by position in the *full* list among the ids currently
+// shown, so an entry that just left the filter -- approved under a
+// candidate-only view, say -- is stepped over in both directions rather than
+// revisited. Wraps at both ends; nowhere to go only when nothing else is shown.
+function neighbours(all, shown, current) {
+  const position = new Map(all.map((id, i) => [id, i]));
+  const others = shown.filter((id) => id !== current && position.has(id))
+    .sort((x, y) => position.get(x) - position.get(y));
+  if (!others.length) return { prev: null, next: null };
+  const here = position.has(current) ? position.get(current) : -1;
+  const after = others.filter((id) => position.get(id) > here);
+  const before = others.filter((id) => position.get(id) < here);
+  return {
+    prev: before.length ? before[before.length - 1] : others[others.length - 1],
+    next: after.length ? after[0] : others[0],
+  };
+}
+
+function currentNeighbours() {
+  return neighbours(DATA.entries.map((x) => x.id),
+                    DATA.entries.filter(matches).map((x) => x.id),
+                    location.hash.slice(1));
+}
+
+function navHtml() {
+  return `<div class="nav">
+    <button id="prevBtn" title="previous shown entry (←)">‹ previous</button>
+    <button id="nextBtn" title="next shown entry (→)">next ›</button>
+    <span class="keys">keys: <kbd>←</kbd> previous · <kbd>→</kbd> next ·
+      <kbd>F</kbd> faithful · <kbd>U</kbd> unfaithful</span>
+  </div>`;
+}
+
+function bindNav(box) {
+  const prev = box.querySelector("#prevBtn"), next = box.querySelector("#nextBtn");
+  if (prev) prev.onclick = () => { const n = currentNeighbours(); if (n.prev) location.hash = n.prev; };
+  if (next) next.onclick = () => { const n = currentNeighbours(); if (n.next) location.hash = n.next; };
+  updateNav();
+}
+
+function updateNav() {
+  const prev = $("prevBtn"), next = $("nextBtn");
+  if (!prev || !next) return;
+  const n = currentNeighbours();
+  prev.disabled = !n.prev;
+  next.disabled = !n.next;
+}
+
+function onKey(ev) {
+  const t = ev.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+  const id = location.hash.slice(1);
+  if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
+    const n = currentNeighbours();
+    const to = ev.key === "ArrowLeft" ? n.prev : n.next;
+    if (to) { location.hash = to; ev.preventDefault(); }
+  } else if ((ev.key === "f" || ev.key === "F") && id) {
+    submitVerdict(id, "faithful");
+  } else if ((ev.key === "u" || ev.key === "U") && id) {
+    submitVerdict(id, "unfaithful");
+  }
 }
 
 function pane(title, html) { return `<div class="pane"><h3>${title}</h3>${html}</div>`; }
@@ -230,7 +308,8 @@ function renderDetail() {
   // hash, so no entry -- returning early here left the page showing nothing
   // at all until something happened to redraw it.
   if (!e) {
-    box.innerHTML = '<p class="none">Select an entry.</p>';
+    box.innerHTML = `${navHtml()}<p class="none">Select an entry, or press → for the first one shown.</p>`;
+    bindNav(box);
     renderList();
     return;
   }
@@ -280,6 +359,7 @@ function renderDetail() {
     </div>`;
 
   box.innerHTML = `
+    ${navHtml()}
     <h2>${esc(e.title || e.id)}</h2>
     <div class="sub"><code>${esc(e.id)}</code> · shard ${esc(e.shard)} · ${esc(e.difficulty)} ·
       ${e.expected === "false" ? `twin of <code>${esc(e.twin_of)}</code>` : "true"}</div>
@@ -300,6 +380,7 @@ function renderDetail() {
     ${pane("Digest", `<div class="mono" style="font-size:.76rem;color:var(--dim)">statement ${esc(e.statement_digest)}</div>`)}
   `;
   renderMath($("stmt"));
+  bindNav(box);
   for (const button of box.querySelectorAll(".verdicts button")) {
     button.onclick = () => submitVerdict(e.id, button.dataset.verdict);
   }
@@ -386,6 +467,7 @@ for (const id of ["q", "fGroup", "fStatus", "fDifficulty", "fExpected"]) {
   $(id).addEventListener("input", renderList);
 }
 $("reviewer").addEventListener("change", rememberReviewer);
+document.addEventListener("keydown", onKey);
 window.addEventListener("hashchange", renderDetail);
 window.addEventListener("DOMContentLoaded", load);
 load();

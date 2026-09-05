@@ -504,3 +504,60 @@ def test_the_bibliography_page_is_served_and_lists_every_source(reviewing):
     with urllib.request.urlopen(f"{url}/bibliography") as page:
         assert page.headers["Content-Type"].startswith("text/html")
         assert b"Bibliography" in page.read()
+
+
+# --- Navigation: previous/next through the filtered list, with keys ---
+
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+
+def _neighbours(all_ids, shown_ids, current):
+    """Run the page's own `neighbours` under Node, so the test reads the real function."""
+    page = PAGE.read_text(encoding="utf-8")
+    start = page.index("function neighbours(")
+    end = page.index("\n}\n", start) + 3
+    script = page[start:end] + (
+        f"\nconsole.log(JSON.stringify(neighbours({json.dumps(all_ids)}, "
+        f"{json.dumps(shown_ids)}, {json.dumps(current)})));")
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+
+
+@needs_node
+def test_next_and_previous_step_through_the_filtered_list_and_wrap():
+    every = ["a", "b", "c", "d", "e"]
+    assert _neighbours(every, ["a", "c", "e"], "c") == {"prev": "a", "next": "e"}
+    assert _neighbours(every, ["a", "c", "e"], "e") == {"prev": "c", "next": "a"}, "wraps forward"
+    assert _neighbours(every, ["a", "c", "e"], "a") == {"prev": "e", "next": "c"}, "wraps backward"
+
+
+@needs_node
+def test_an_entry_that_left_the_filter_is_skipped_in_both_directions():
+    """Approve `c` under a candidate-only filter: it drops out of the list.
+    Next from it goes on to `e`; previous from `e` then lands on `a`, not `c`."""
+    every = ["a", "b", "c", "d", "e"]
+    assert _neighbours(every, ["a", "e"], "c") == {"prev": "a", "next": "e"}
+    assert _neighbours(every, ["a", "e"], "e") == {"prev": "a", "next": "a"}
+
+
+@needs_node
+def test_with_one_or_no_entries_shown_there_is_nowhere_to_go():
+    every = ["a", "b", "c"]
+    assert _neighbours(every, ["b"], "b") == {"prev": None, "next": None}
+    assert _neighbours(every, [], "b") == {"prev": None, "next": None}
+    assert _neighbours(every, ["a"], "b") == {"prev": "a", "next": "a"}, "one other entry is still somewhere to go"
+
+
+def test_the_page_binds_the_keys_it_documents():
+    page = PAGE.read_text(encoding="utf-8")
+    legend = page[page.index('class="keys"'):]
+    for key in ("←", "→", "F", "U"):
+        assert key in legend[:600], f"{key} is not in the legend"
+    handler = page[page.index("function onKey("):]
+    for name in ('"ArrowLeft"', '"ArrowRight"', '"f"', '"u"'):
+        assert name in handler[:1500], f"{name} is not handled"
+    assert "INPUT" in handler[:1500] and "SELECT" in handler[:1500], "typing in a filter must not navigate"
