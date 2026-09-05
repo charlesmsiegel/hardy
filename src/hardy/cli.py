@@ -1263,6 +1263,16 @@ def _declared_assumptions(path: Path | None) -> tuple[Any, ...]:
     declared = tuple(DeclaredAssumption.model_validate(item) for item in payload["assumptions"])
     if not declared:
         raise ValueError(f"{path} declares no assumptions")
+    # The same rules the verifier applies before it writes a declaration into
+    # the source the kernel reads. Run here so a malformed file costs nothing:
+    # inside the verifier they land after formalization, the faithfulness read
+    # and the whole proving loop.
+    from .verifier import declaration_violation
+
+    for item in declared:
+        violation = declaration_violation(item)
+        if violation is not None:
+            raise ValueError(violation)
     return declared
 
 

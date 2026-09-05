@@ -66,7 +66,7 @@ def _pieces(domain, writeup, assumed=()):
     return claim, grades, content, evidence
 
 
-def _render(assumed=()):
+def _render(assumed=(), declared=()):
     domain = importlib.import_module("hardy.domain")
     verifier = importlib.import_module("hardy.verifier")
     writeup = importlib.import_module("hardy.writeup")
@@ -101,6 +101,7 @@ def _render(assumed=()):
         verification,
         identities,
         domain.DocumentStatus.TEX_COMPILED,
+        declared=declared,
     )
 
 
@@ -126,3 +127,37 @@ def test_an_unassumed_document_says_it_rests_on_none() -> None:
 
     assert "Kernel verified" in rendered
     assert "no assumption" in rendered.lower()
+
+
+def test_the_document_states_what_was_assumed_not_only_its_name() -> None:
+    """A reader holding the PDF sees `Papers.perelman.no_local_collapsing` and
+    cannot tell what was assumed or on whose authority. AGENTS.md: partial
+    results are valid only when their assumptions are explicit."""
+    domain = importlib.import_module("hardy.domain")
+    declared = (
+        domain.DeclaredAssumption(
+            name="Papers.perelman.no_local_collapsing",
+            statement="∀ n : Nat, n = n",
+            source="arXiv:math.DG/0211159v1 (thm:collapse)",
+            justification="Mathlib has no Ricci flow theory.",
+        ),
+    )
+
+    rendered = _render(assumed=("Papers.perelman.no_local_collapsing",), declared=declared)
+
+    # As TeX renders it: an underscore in a Lean name is escaped, and what
+    # matters is what the reader sees on the page.
+    from hardy.writeup import escape_tex_text
+
+    assert escape_tex_text("Papers.perelman.no_local_collapsing") in rendered
+    assert "n = n" in rendered, "the statement that was assumed"
+    assert "math.DG/0211159v1" in rendered, "and where it came from"
+    assert "Ricci flow theory" in rendered, "and why"
+
+
+def test_an_assumption_the_document_cannot_describe_is_still_named() -> None:
+    """A grade naming an axiom no declaration describes must not go silent
+    about it -- that is the case a reader most needs to see."""
+    rendered = _render(assumed=("Papers.mystery.one",), declared=())
+
+    assert "Papers.mystery.one" in rendered

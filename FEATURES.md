@@ -916,8 +916,8 @@ Priority labels are sequencing hints:
   asserted, and each file is re-hashed before it is served. Nothing extracted is
   executed, compiled, or handed to TeX: this bounds what an archive can do to
   the filesystem and is not a sandbox — the deferred process isolation is still
-  what a claim of safety would need. Until that
-  exists Hardy fetches metadata and abstracts only, and never a source bundle.
+  what a claim of safety would need, and until it exists nothing in a fetched
+  bundle may be compiled or run.
 - **Now (implemented):** one canonical bibliography per problem in
   `bibliography.json`, deduplicated by versioned arXiv ID and DOI together, with
   a cite key that is a function of the paper and of nothing else — author, year,

@@ -530,9 +530,13 @@ class PaperToolRuntime:
                 "read. Call fetch_source first; it lists what the bundle holds."
             )
         wanted = str(file)
+        # The manifest is read once here and handed down. Left to
+        # `read_source` it was re-read -- and the stored archive re-hashed,
+        # up to 64 MB of it -- on every page of a paged read.
+        manifest = self.library.source_manifest(identifier)
         return self._window(
             f"{record.arxiv_id}:{wanted}",
-            self.library.read_source(identifier, wanted),
+            self.library.read_source(identifier, wanted, manifest),
             max(1, start_line),
             "Call read_paper again with file="
             + json.dumps(wanted)

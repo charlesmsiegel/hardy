@@ -407,8 +407,18 @@ declared_only = [
     for line in code.splitlines()
     if line.strip() and not line.strip().startswith(("import ", "#"))
 ]
-if declared_only and all(
-    DECLARES_AXIOM.match(line) or SCOPING.match(line) for line in declared_only
+#
+# Behind the hole check, not in front of it: `axiom foo : (sorry : Prop)` is a
+# hole wearing a declaration's clothes, and a bypass that ran first would have
+# reported it as resting on nothing at all.
+#
+# What this deliberately does NOT do is resolve the names in an axiom's type --
+# no stand-in here has an environment to resolve them against -- so a test
+# whose subject is whether a type exists needs the real toolchain, not this.
+if (
+    declared_only
+    and not HOLE.search(code)
+    and all(DECLARES_AXIOM.match(line) or SCOPING.match(line) for line in declared_only)
 ):
     report_axioms()
     write_olean()

@@ -11,12 +11,19 @@ from __future__ import annotations
 
 import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
-from .domain import DocumentStatus, FrozenClaim, FrozenModel, Grades, RunLimits
+from .domain import (
+    DeclaredAssumption,
+    DocumentStatus,
+    FrozenClaim,
+    FrozenModel,
+    Grades,
+    RunLimits,
+)
 from .process import ProcessResult, ProcessSpec, run_process
 from .storage import ArtifactIdentity, RunStore
 from .verifier import VerificationResult
@@ -143,6 +150,7 @@ def build_writeup(
     *,
     limits: RunLimits,
     runner: Callable[[ProcessSpec], ProcessResult] = run_process,
+    declared: Sequence[DeclaredAssumption] = (),
 ) -> DocumentResult:
     compiled_source = _render(
         claim,
@@ -151,6 +159,7 @@ def build_writeup(
         verification,
         identities,
         DocumentStatus.TEX_COMPILED,
+        declared=declared,
     )
     with tempfile.TemporaryDirectory(prefix="hardy-tex-") as temporary:
         work = Path(temporary)
@@ -213,6 +222,7 @@ def build_writeup(
                 verification,
                 identities,
                 DocumentStatus.TEX_FAILED,
+                declared=declared,
             )
         )
         tex_artifact = store.write_text(PurePosixPath("writeup/paper.tex"), source)
@@ -242,6 +252,7 @@ def _render(
     verification: VerificationResult | None,
     identities: RunIdentities,
     document_status: DocumentStatus,
+    declared: Sequence[DeclaredAssumption] = (),
 ) -> str:
     template = files("hardy").joinpath("templates/paper.tex").read_text(encoding="utf-8")
     binders = f" {claim.proposal.binders.strip()}" if claim.proposal.binders.strip() else ""
@@ -300,13 +311,7 @@ def _render(
         # tells them nothing they can act on. The sentence is written even
         # when there are none, because silence here reads the same as an
         # assumption nobody rendered.
-        "@@ASSUMPTIONS@@": (
-            _items(grades.assumed, "")
-            if grades.assumed
-            else escape_tex_text(
-                "None. This result rests on no assumption beyond Lean's own axioms."
-            )
-        ),
+        "@@ASSUMPTIONS@@": _assumptions(grades.assumed, declared),
         "@@HASHES@@": _verbatim("\n".join(hashes)),
         "@@IDENTITIES@@": "\n".join(
             BACKSLASH + "item " + escape_tex_text(line) for line in identity_lines
@@ -315,6 +320,39 @@ def _render(
     for marker, value in replacements.items():
         template = template.replace(marker, value)
     return template
+
+
+def _assumptions(
+    assumed: tuple[str, ...], declared: Sequence[DeclaredAssumption]
+) -> str:
+    """What this result rests on, stated rather than merely named.
+
+    A reader holding the PDF has to be able to decide whether to believe an
+    assumed theorem, and a bare Lean name does not let them: they need what
+    was assumed and on whose authority. An axiom the grade names but no
+    declaration describes is still listed -- that case is the one a reader
+    most needs to see, and going silent about it would be the worst reading
+    of "the manifest is exact".
+    """
+    if not assumed:
+        return escape_tex_text(
+            "None. This result rests on no assumption beyond Lean's own axioms."
+        )
+    described = {item.name: item for item in declared}
+    lines = []
+    for name in assumed:
+        item = described.get(name)
+        if item is None:
+            lines.append(
+                escape_tex_text(f"{name} — no declaration in this run describes it.")
+            )
+            continue
+        rendered = escape_tex_text(f"{name} : {item.statement.strip()}")
+        provenance = escape_tex_text(f"Assumed from {item.source.strip()}.")
+        if item.justification.strip():
+            provenance += " " + escape_tex_text(item.justification.strip())
+        lines.append(f"{rendered}\\{BACKSLASH}\\{BACKSLASH}{provenance}")
+    return "\n".join(BACKSLASH + "item " + line for line in lines)
 
 
 def _items(values: tuple[str, ...], empty: str) -> str:

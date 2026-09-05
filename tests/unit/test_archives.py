@@ -189,7 +189,7 @@ def test_anything_but_a_file_or_a_directory_is_refused(into: Path, kind: str, ta
 
 def test_more_files_than_the_quota_are_refused(into: Path) -> None:
     members = tuple((f"f{index}.tex", b"x", "file") for index in range(4))
-    with pytest.raises(archives.ArchiveError, match="files"):
+    with pytest.raises(archives.ArchiveError, match="entries"):
         archives.extract(_tar(*members), into, limits=archives.Limits(max_files=3))
 
 
@@ -240,3 +240,50 @@ def test_a_refused_archive_leaves_nothing_under_the_root(into: Path) -> None:
         archives.extract(archive, into)
 
     assert list(into.iterdir()) == []
+
+
+def test_directories_count_against_the_file_quota(into: Path) -> None:
+    """A directory member costs an inode and a `mkdir` like anything else.
+    Counting only files let 282 KB of headers make sixty thousand of them,
+    which then land in the library permanently."""
+    members = tuple((f"d{index}/", None, "dir") for index in range(50))
+    with pytest.raises(archives.ArchiveError, match="entries|files"):
+        archives.extract(
+            _tar(*members, ("main.tex", b"x", "file")),
+            into,
+            limits=archives.Limits(max_files=10),
+        )
+
+
+def test_a_file_landing_on_an_implicitly_created_parent_is_refused(into: Path) -> None:
+    """`a/b.tex` makes `a` on the way past, so a later file member named `a`
+    hit `IsADirectoryError` instead of this module's own refusal."""
+    with pytest.raises(archives.ArchiveError, match="through|directory"):
+        archives.extract(_tar(("a/b.tex", b"x", "file"), ("a", b"y", "file")), into)
+
+
+def test_a_file_whose_binary_half_starts_late_is_not_called_text(into: Path) -> None:
+    """An EPS figure with a long ASCII header is the ordinary case in a real
+    bundle, not an attack. Sampling the first 8 KiB called it text, and
+    `read_paper` then served a megabyte of mojibake."""
+    # An ASCII header far longer than any prefix a sampler would read.
+    body = b"%!PS-Adobe-3.0\n" + b"% comment\n" * 1200 + b"\x00\x80\xff" * 4000
+    assert body.index(b"\x00") > 8 * 1024, "the ASCII run must outlast any sampling prefix"
+
+    result = archives.extract(_tar(("fig.eps", body, "file")), into)
+
+    assert result.files[0].text is False
+
+
+def test_a_file_that_is_text_all_the_way_through_is_text(into: Path) -> None:
+    body = b"\\documentclass{article}\n" + b"% a long preamble\n" * 2000
+
+    result = archives.extract(_tar(("main.tex", body, "file")), into)
+
+    assert result.files[0].text is True
+
+
+def test_a_trailing_byte_that_cannot_be_utf8_is_not_text(into: Path) -> None:
+    result = archives.extract(_tar(("odd.tex", b"abc\xff", "file")), into)
+
+    assert result.files[0].text is False

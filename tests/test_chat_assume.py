@@ -468,3 +468,123 @@ def test_a_reader_that_answers_with_prose_is_not_an_agreement(session) -> None:
 
     assert not agreed
     assert divergences
+
+
+def test_a_quarantined_constant_cannot_be_declared_as_opaque(sourced) -> None:
+    r"""`render_module` writes `opaque` for `kind="constant"`, so `opaque` is
+    the spelling this feature mints -- and the gate scanned for `axiom` and
+    `constant` only. A name the independent reader refused could be declared
+    by hand under the one keyword the quarantine could not see."""
+    sourced._review_assumption = lambda **kwargs: (False, ("wrong object",))
+    _assume(sourced, kind="constant", formal_name="RicciFlow", lean_statement="Type")
+    quarantined = sourced.state["quarantine"][0]["formal_name"]
+
+    refusal = sourced._final_gates(f"opaque {quarantined} : Type\n")
+
+    assert refusal is not None
+    assert "quarantin" in refusal.output.lower()
+
+
+def test_an_unapproved_opaque_constant_is_refused_like_an_axiom(sourced) -> None:
+    """An `opaque` is a declaration with no proof, exactly as an `axiom` is:
+    it asserts that something of that type exists. Approval is what makes one
+    admissible, whichever keyword it is spelled with."""
+    refusal = sourced._final_gates("opaque cheat : Nat\n")
+
+    assert refusal is not None
+    assert "unapproved" in refusal.output.lower() or "quarantin" in refusal.output.lower()
+
+
+def test_an_approved_constant_still_saves(sourced) -> None:
+    """The gate has to admit what the mint writes, or nothing can be assumed."""
+    result = _assume(
+        sourced, kind="constant", formal_name="RicciFlow", lean_statement="Type",
+        statement="lem:aux",
+    )
+
+    assert result.ok, result.output
+
+
+def test_assuming_a_name_already_recorded_is_refused_before_anyone_is_asked(sourced) -> None:
+    """The second mint rendered the module from the record *and* appended the
+    new statement, so the same axiom was declared twice and the save failed --
+    after a human had approved it, and blaming the approval flow for a
+    rendering bug. There is no path to revise a minted assumption in place
+    (`Papers/` is refused to save_lean and delete_file), so the honest answer
+    is to refuse before the prompt."""
+    assert _assume(sourced).ok
+    shown: list[dict] = []
+    sourced.confirm = lambda proposal: shown.append(dict(proposal)) or True
+
+    again = _assume(sourced, lean_statement="2 = 2")
+
+    assert not again.ok
+    assert "already" in again.output.lower()
+    assert shown == [], "nobody should be asked to approve a name that is already minted"
+    module = next((sourced.workspace / "lean" / "Papers").glob("*.lean"))
+    source = module.read_text(encoding="utf-8")
+    assert source.count("axiom no_local_collapsing") == 1
+    assert len(sourced.state["assumptions"]) == 1
+
+
+def test_a_constant_statement_is_shape_checked_like_an_axiom(sourced) -> None:
+    """`kind="constant"` skipped every pre-approval gate, so a statement
+    carrying its own declaration reached the human and the generated file."""
+    shown: list[dict] = []
+    sourced.confirm = lambda proposal: shown.append(dict(proposal)) or True
+
+    result = _assume(
+        sourced,
+        kind="constant",
+        formal_name="Widget",
+        lean_statement="Type\naxiom sneaky : False",
+        statement="lem:aux",
+    )
+
+    assert not result.ok
+    assert sourced.state["assumptions"] == []
+    assert shown == [], "the shape gate must run before anyone is asked to approve"
+
+
+def test_a_paper_whose_inclusions_nest_deeply_is_refused_not_crashed(sourced) -> None:
+    """A bundle of 1200 files each `\\input`ing the next is well inside every
+    quota. The walk recursed per inclusion and raised `RecursionError`, which
+    is a `RuntimeError` and escaped the tool dispatcher entirely."""
+    from hardy import assume as assume_module
+
+    files = {"main.tex": "\\documentclass{article}\\begin{document}\\input{f0}\\end{document}"}
+    for index in range(1200):
+        files[f"f{index}.tex"] = f"\\input{{f{index + 1}}}"
+    files["f1200.tex"] = "\\begin{theorem}\\label{t}Deep.\\end{theorem}"
+
+    found = assume_module.inventory(files)
+
+    assert isinstance(found, tuple)
+
+
+def test_the_papers_tree_is_hardys_whatever_the_case(sourced) -> None:
+    """`papers/` and `Papers/` are one file on macOS and Windows."""
+    _assume(sourced)
+    module = next((sourced.workspace / "lean" / "Papers").glob("*.lean"))
+
+    result = sourced._tool(
+        "save_lean",
+        {"path": f"papers/{module.name}", "source": "import Mathlib\naxiom sneaky : False\n"},
+    )
+
+    assert not result.ok
+    assert "assume_statement" in result.output
+
+
+def test_an_assumption_whose_statement_hides_a_hole_is_not_reported_clean(sourced) -> None:
+    """A `sorry` inside an axiom's type is a hole, and the stand-in used to
+    accept the whole file before it looked for one."""
+    _assume(sourced)
+    module = next((sourced.workspace / "lean" / "Papers").glob("*.lean"))
+    holed = module.read_text(encoding="utf-8").replace(
+        "axiom no_local_collapsing : True", "axiom no_local_collapsing : (sorry : Prop)"
+    )
+
+    result = sourced._tool("check_lean", {"path": "Holed.lean", "source": holed})
+
+    assert "sorry" in result.output.lower() or not result.ok
