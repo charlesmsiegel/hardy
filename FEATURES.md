@@ -768,9 +768,12 @@ Priority labels are sequencing hints:
   may decline it. On the subscription backends the SDK still owns that moment
   (issue #23).
 - **Now (implemented):** compaction Hardy owns, with a summary derived from the
-  workspace rather than narrated by a model. `hardy/compaction.py` assembles
-  Goal, Standing assumptions, Proved, Open, Naming registry, Workspace, Failed
-  attempts and Next steps — the goal, assumptions and registry from
+  workspace rather than narrated by a model. `hardy/summary.py` assembles the
+  sections — Goal, Standing assumptions, Modules, Proved, Open, Not
+  established, Failed attempts, Naming registry and Next steps — and
+  `hardy/compaction.py` decides what leaves the context and puts that summary
+  in front of what stays. One assembler for both, so the text `/status --full`
+  prints is the text the model is handed. The goal, assumptions and registry come from
   `session.json`, what is proved and what is open from the stored audit
   verdicts (which expire when the build inputs beneath them move), the modules
   from the Lean tree, and the failed attempts from the tool results the
@@ -796,10 +799,18 @@ Priority labels are sequencing hints:
   that quietly claimed to be enough. A compaction that left no trace is
   the invisible loss the feature exists to prevent. A backend whose SDK owns
   the loop is not offered a compactor at all, rather than handed one it would
-  silently drop. `hardy batch` gets the same treatment on the same terms: the
-  facts are narrower — an unattended run has no naming registry and no approved
-  assumptions, but it has the claim it was given, the skeleton it holds and
-  every failed attempt in Lean's own words — and the trajectory's `limits`
+  silently drop. `hardy batch` gets the same treatment on the same terms, through the same
+  assembler: the sections are narrower — an unattended run has no naming
+  registry and no approved assumptions, so those say "none" as truthfully there
+  as anywhere — and it adds the two the interactive surface has no use for.
+  `Statement` carries the frozen declaration and `Development in hand` the
+  retained skeleton, because those are the one thing a summary carries rather
+  than reads off a workspace: a batch run has no Lean tree and no
+  `session.json`, so a cut that dropped them would leave the model unable to
+  type-check against the declaration it may not change, or to continue from the
+  development the record says Hardy is holding. Both are omitted rather than
+  emptied where they do not apply, which is every interactive session. The
+  trajectory's `limits`
   record both the window the run was planned against and which of the two did
   the compacting. The estimate is one token per UTF-8 byte, plus a framing
   allowance per *content block* rather than per message — a turn asking for six

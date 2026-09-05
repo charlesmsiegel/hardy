@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 from . import audit, compaction
 from . import closers as closer_ladder
+from . import summary as summary_module
 from .chat import provenance
 from .claude_runtime import TurnLimitReached
 from .latency import manifest_binds
@@ -544,37 +545,43 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
         if not outcome.needed:
             _record_overflow(outcome)
             return None
-        facts = compaction.Facts(
+        summarised = summary_module.assemble(
             goal=request.informal_claim,
             # The frozen statement, verbatim. The cut discards the task message
             # that carried it, and a model left with the prose alone writes
             # candidates that cannot type-check against the declaration it was
             # told not to change.
             declaration=request.declaration,
-            assumptions=[],
-            proved=[found["proof"]] if found["proof"] else [],
-            open_declarations=[
-                f"{item.get('keyword')} at line {item.get('line')} of the retained skeleton"
-                for item in sketched["holes"]
-            ],
             # And the skeleton itself, which on this surface lives nowhere else:
             # a batch run writes no workspace file for a partial development, so
             # a cut that dropped the `sketch_proof` message would leave the
             # model unable to continue from the development the record says
             # Hardy is holding.
             development=str(sketched["proof"] or ""),
-            names=[],
-            attempts=compaction.failed_attempts(events),
-            next_steps=[],
+            # Empty on this surface rather than absent, because an unattended
+            # run has no `session.json` and no Lean tree: no assumption was ever
+            # approved, nothing is registered, and the only theorem in play is
+            # the one it was given. The same assembler `/status --full` uses
+            # says "none" to each, which is true of a batch run and is what a
+            # reader of the two side by side should see.
+            assumptions=[],
+            registry=[],
+            audit={},
+            theorems={},
+            open_theorems=[],
+            obligations=[
+                f"{item.get('keyword')} at line {item.get('line')} of the retained skeleton"
+                for item in sketched["holes"]
+            ],
+            failed=summary_module.attempts(events),
             modules=list(request.imports),
         )
-        summarised = compaction.summarize(facts)
         settled = compaction.plan(
             messages,
             context_window=context_window,
             reserve_tokens=compaction.RESERVE_TOKENS,
             keep_tokens=compaction.RECENT_TOKENS,
-            summary_tokens=compaction.estimate_tokens([compaction.Message("user", text=summarised.render())]),
+            summary_tokens=compaction.estimate_tokens([compaction.Message("user", text=compaction.rendered(summarised))]),
             overhead_tokens=overhead,
             output_tokens=int(getattr(runtime, "output_limit", None) or 0),
         )
@@ -592,7 +599,7 @@ def run(request: Request, make_runtime: Callable[..., Runtime], lean: LeanTools,
                 "fits": settled.fits,
             },
             "context_window": context_window,
-            "text": summarised.render(),
+            "text": compaction.rendered(summarised),
         })
         return compaction.compacted(messages, settled.cut, summarised)
 

@@ -210,8 +210,10 @@ window what survives is decided by the provider's rules, invisibly, and
 record-integrity problem, not a convenience problem: the compaction decides
 what endures about which lemmas were proved, which axioms are standing, and
 which attempts failed and why, and Hardy neither chooses it nor writes it
-down. The positive half matters more and is what `hardy/compaction.py` is:
-a mathematical summary is largely mechanical — the naming registry, the
+down. The positive half matters more and is what `hardy/summary.py` and
+`hardy/compaction.py` are between them: the first assembles what a session
+amounts to, the second decides what leaves the context and rebuilds the
+conversation around it. A mathematical summary is largely mechanical — the naming registry, the
 approved assumptions and the audit verdicts are already in `session.json`, and
 the declaration list is already what `read_workspace` returns — so almost
 every heading is derived from the workspace rather than narrated by a model,
@@ -228,7 +230,9 @@ context but an invalid one. And the compaction is written into
 what the summary said — because a compaction that leaves no trace is precisely
 the invisible loss this exists to prevent. `/status --full` prints the same
 summary at any time, which is what makes it checkable by a human and not only
-by Hardy.
+by Hardy — literally the same one, through the same assembler: two renderings
+would have made what the model was told and what the user can look at two
+different documents.
 
 Two headings exist for a specific reason, and it is the mechanism by which a
 long session degrades: "Standing assumptions" and "Naming registry" were
