@@ -158,6 +158,27 @@ def listed(pattern: re.Pattern[str], text: str) -> list[str]:
 axioms = marked(source)
 code = code_only(source)
 
+# `import` is a header command: real Lean refuses one that comes after any
+# other content, and a file it refuses is not a file Hardy may accept. The
+# stand-in was blind to position, so a renderer that put `axiom` above
+# `import Mathlib` -- which real Lean rejects outright -- passed every test
+# and shipped. Read over the comment-blanked text, because the word inside a
+# docstring is not a command.
+seen_content = False
+for number, line in enumerate(code.splitlines(), start=1):
+    stripped = line.strip()
+    if not stripped:
+        continue
+    if stripped.startswith("import "):
+        if seen_content:
+            print(
+                f"{path.name}:{number}:0: error: invalid 'import' command, "
+                "it must be used in the beginning of the file"
+            )
+            raise SystemExit(1)
+        continue
+    seen_content = True
+
 
 def qualifiers(text: str) -> list[tuple[int, str]]:
     """The namespace prefix in force at each offset, as (offset, prefix).

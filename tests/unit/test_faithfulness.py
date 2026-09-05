@@ -54,7 +54,7 @@ class _Runtime:
 
     backend = 'fixture-backend'
 
-    def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None):
+    def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None, allowed=()):
         self.starts.append(
             {
                 'model': model,

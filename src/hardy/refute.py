@@ -92,6 +92,14 @@ def probe_source(
     has nothing to do with the negation being provable.
     """
     text = normalise_lean(str(statement)).strip()
+    # The collapse is not total: `normalise_lean` preserves newlines inside
+    # string literals, raw strings and `«...»`, deliberately, because those
+    # are part of the text rather than layout. A survivor here shifts every
+    # probe below it and hands `judge` an answer attributed to the wrong
+    # tactic, so it is refused where the contract is stated rather than left
+    # to whichever caller remembered to filter first.
+    if any(character in text for character in ("\n", "\r", "\x0b", "\x0c", "\u2028", "\u2029")):
+        raise ValueError("a refutation probe needs a statement that fits on one line")
     examples = "\n".join(f"example : ¬ ({text}) := by {tactic}" for tactic in tactics)
     sentinel = f"example : ¬ ({text}) := by sorry"
     body = f"{examples}\n{sentinel}\n"
@@ -151,9 +159,16 @@ def _reading(result: Any) -> tuple[bool, bool]:
     if ok is None:
         ok = bool(getattr(result, "success", False))
     child = getattr(result, "process", None)
+    # Every "it never finished" signal is asked of both shapes. `LeanToolResult`
+    # carries `output_overflow` as a field of its own and has no `.process`, so
+    # reading only the child's meant a truncated answer -- `exact?` against
+    # Mathlib will do it -- came back as a refutation: silent probe lines,
+    # silent because Lean's output was cut off, read as tactics that closed the
+    # negation.
     unfinished = bool(
         getattr(result, "timed_out", False)
         or getattr(result, "interrupted", False)
+        or getattr(result, "output_overflow", False)
         or getattr(child, "timed_out", False)
         or getattr(child, "interrupted", False)
         or getattr(child, "output_overflow", False)

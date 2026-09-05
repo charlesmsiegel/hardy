@@ -183,7 +183,7 @@ class Lean:
 
 def staged(lean: Lean, tmp_path: Path):
     runtime = ClaudeStagedRuntime(
-        store=None, lean_runtime_factory=lambda claim: lean, runtime_class=StagedProvider
+        store=None, lean_runtime_factory=lambda claim, allowed=(): lean, runtime_class=StagedProvider
     )
     thread = runtime.start(model="claude-haiku-4-5", run_dir=tmp_path, claim=object())
     return runtime, thread
@@ -261,7 +261,7 @@ def test_a_provider_thread_that_will_not_settle_seals_the_trajectory(tmp_path: P
 
     store = Store()
     runtime = ClaudeStagedRuntime(
-        store=store, lean_runtime_factory=lambda claim: None, runtime_class=Stuck
+        store=store, lean_runtime_factory=lambda claim, allowed=(): None, runtime_class=Stuck
     )
     thread = runtime.start(model="claude-haiku-4-5", run_dir=tmp_path, claim=None)
 

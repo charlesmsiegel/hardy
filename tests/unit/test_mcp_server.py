@@ -62,7 +62,7 @@ def test_proof_tool_requires_the_frozen_claim_and_owns_the_official_budget(
     store = storage.RunStore.create(tmp_path, 'mcp', now=NOW, run_id=RUN_ID)
 
     class Service:
-        def check_proof(self, received_claim, proof_body):
+        def check_proof(self, received_claim, proof_body, allowed=()):
             assert received_claim is claim
             return _check(lean, process, claim, proof_body)
 
@@ -99,7 +99,7 @@ def test_tool_observations_are_bounded_and_full_output_is_saved(tmp_path) -> Non
     store = storage.RunStore.create(tmp_path, 'mcp', now=NOW, run_id=RUN_ID)
 
     class Service:
-        def check_proof(self, received_claim, proof_body):
+        def check_proof(self, received_claim, proof_body, allowed=()):
             return _check(lean, process, claim, 'x' * 10_000)
 
     server.configure_runtime(
