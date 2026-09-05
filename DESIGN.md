@@ -358,9 +358,26 @@ no computation can move a formalization grade.
 ### 6. Literature and frontier mathematics
 
 Hardy can fetch immutable, versioned papers; maintain canonical bibliography data;
-and compile citations into writeups. For results beyond Mathlib, an explicit
-Assume workflow may translate selected paper statements into independently
-reviewed Lean axioms. Downstream artifacts list the exact assumptions used.
+and compile citations into writeups. A paper's LaTeX source can be downloaded and
+unpacked, defensively: the archive is arbitrary third-party data, so paths are
+normalised, links refused, quotas enforced on the decompressed stream, and the
+result admitted atomically or not at all. Nothing in it is executed or compiled,
+and that unpacking bounds what an archive can do to the filesystem rather than
+making its contents safe to run — the deferred process isolation is what a claim
+of safety would need.
+
+For results beyond Mathlib, an explicit Assume workflow translates selected paper
+statements into Lean axioms. Statements are inventoried eagerly and minted lazily,
+one at a time and only on request, into version-specific `Papers.<CiteKey>`
+namespaces whose docstrings tie each axiom to the paper's own reference and to its
+bibliography key. Each one is elaborated, probed for a cheap counterexample, and
+read by an independent reviewer that sees the paper's sentence and the proposed
+Lean and nothing else; a statement that reviewer will not accept is quarantined —
+recorded, visible, and refused by the save gate — rather than admitted with a
+warning. A staged run may declare the axioms it is allowed to stand on and is then
+graded *verified modulo* exactly the ones its proof used, read from `#print
+axioms` rather than from what was declared. Downstream artifacts list those
+assumptions by name, never as a count.
 
 A citation is worth something only if the paper cannot move underneath it, so a
 record is stored under the exact versioned identifier arXiv reported and carries

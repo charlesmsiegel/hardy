@@ -91,10 +91,45 @@ what it stops is the thing that actually goes wrong, which is a model inventing
 one without meaning to. Fetching
 is polite: one request every three seconds, throttled through a timestamp on
 disk so two Hardy processes share the budget, every query cached for a day, and
-a paper already held never fetched again. What is stored is arXiv's metadata and
-abstract rather than a source bundle, because unpacking an arbitrary archive
-safely is work that has not been done yet and Hardy has no isolation to fall
-back on; the tool says so, so an abstract's claim is not written up as a proof.
+a paper already held never fetched again.
+
+`fetch_paper` stores the metadata and abstract; `fetch_source` goes and gets the
+version's LaTeX bundle, which `read_paper` then serves a file at a time. An
+abstract is a claim rather than a proof, and the tool descriptions say so — the
+source is what you read before writing that a paper proves something. A
+downloaded archive is arbitrary third-party data and is unpacked as though it
+meant harm: member paths normalised, every symlink and hardlink refused rather
+than skipped, file and byte quotas enforced on the decompressed stream, all of it
+in a temporary directory that lands with one rename, so a refused bundle leaves
+the record exactly as it was. The archive is kept beside the tree it unpacked to
+and its digest checked on every read, so "these files came out of that download"
+is checkable rather than asserted. Nothing in it is executed or compiled: that
+bounds what an archive can do to your filesystem and is not a sandbox, and the
+warning below still applies.
+
+Once a paper's source is held, `list_statements` shows everything it states and
+`assume_statement` mints one of those as a Lean axiom — after Hardy elaborates
+your Lean, searches for a counterexample to it, and has an independent reader
+compare it against the paper's own sentence, and after a human approves it.
+Reading a paper assumes nothing; the axioms are the ones a proof actually needed.
+They live in `Papers.<CiteKey>`, one module per paper version, generated whole
+and writable by nothing else, each axiom carrying a docstring naming the paper,
+the statement it stands for, and its bibliography key. A statement the
+independent reader will not accept is quarantined — recorded, shown by
+`read_workspace`, and refused by the save gate — rather than admitted with a
+warning, because an assumption that does not say what the paper says lets Hardy
+prove things the paper never claimed under the paper's name. `/assume <paper-id>
+<ref> ...` asks for an explicitly chosen set up front.
+
+A staged run can declare what it may stand on: `hardy prove --assume FILE`, where
+every entry names an axiom, its Lean statement and its source. Each declaration
+is checked for an obvious counterexample before any proving happens, and a proof
+that used one is graded **verified modulo** — a third grade, neither
+`kernel_verified` nor `partial`. The manifest and the compiled document name
+exactly the assumptions the proof used, read from `#print axioms` rather than
+from what was declared, so a run that declared three and needed none is graded
+kernel verified. An axiom nobody declared still refuses the proof, and `sorryAx`
+is refused whatever was declared.
 
 The document side closes the same loop. LaTeX resolves a missing `\ref` to `??`
 and a missing `\cite` to `[?]` and exits successfully either way, so a document

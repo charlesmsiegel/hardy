@@ -59,6 +59,10 @@ DEFINED = re.compile(
     r"(?m)^\s*(?:(private|protected)\s+)?(?:def|abbrev|structure|instance)\s+(«[^»\n]+»|\S+)"
 )
 OLEAN_PREFIX = b"olean-fake\n"
+# An axiom or an opaque constant: a declaration with no body to elaborate.
+DECLARES_AXIOM = re.compile(r"^\s*(?:axiom|opaque|constant)\s")
+# The lines that only open or close a scope, which carry nothing to check.
+SCOPING = re.compile(r"^\s*(?:namespace|end|section|open|universe|variable)\b")
 
 argv = sys.argv[1:]
 output = None
@@ -387,6 +391,27 @@ body = [
 ]
 if not body:
     report_axioms()
+    raise SystemExit(0)
+
+# Read over comment-blanked text, because a doc comment is not a declaration:
+# the generated module states each axiom under a `/-- ... -/` naming the paper,
+# and prose inside one is not something Lean elaborates.
+#
+# A file whose only declarations are axioms elaborates. Real Lean accepts
+# `axiom foo : True` with no proof to check -- that is what an axiom is -- and
+# the generated `Papers/` module is exactly that shape, so a stand-in that
+# called it a type mismatch would make an approved assumption unsavable while
+# real Lean saved it happily.
+declared_only = [
+    line.strip()
+    for line in code.splitlines()
+    if line.strip() and not line.strip().startswith(("import ", "#"))
+]
+if declared_only and all(
+    DECLARES_AXIOM.match(line) or SCOPING.match(line) for line in declared_only
+):
+    report_axioms()
+    write_olean()
     raise SystemExit(0)
 
 if "exact True.intro" in source and not HOLE.search(code):

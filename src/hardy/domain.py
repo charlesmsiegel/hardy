@@ -150,6 +150,10 @@ class TerminalReason(str, Enum):
     # run where none was ever assessed.
     FAITHFULNESS_UNAVAILABLE = "faithfulness_unavailable"
     UNEXPECTED_AXIOM = "unexpected_axiom"
+    # A declared assumption whose negation Lean proved. Distinct from
+    # `unexpected_axiom`, which is an axiom nobody declared: this one was
+    # declared, and is false.
+    REFUTED_ASSUMPTION = "refuted_assumption"
     AGENT_RUNTIME_FAILURE = "agent_runtime_failure"
     TIMEOUT_BUDGET_EXHAUSTED = "timeout_budget_exhausted"
     TEX_COMPILATION_FAILURE = "tex_compilation_failure"
@@ -158,9 +162,40 @@ class TerminalReason(str, Enum):
 
 
 class FormalStatus(str, Enum):
+    """How much of a proof the kernel established, and on what.
+
+    `verified_modulo` is a third grade rather than a shade of either
+    neighbour. A proof that used an assumption a human declared is not
+    `kernel_verified` -- the kernel checked it against something nobody
+    proved -- and calling it `partial` would be false in the other direction,
+    since nothing about it is unfinished. What it is worth depends entirely
+    on the assumptions, which is why `Grades.assumed` names them exactly.
+    """
+
     KERNEL_VERIFIED = "kernel_verified"
+    VERIFIED_MODULO = "verified_modulo"
     PARTIAL = "partial"
     NOT_FORMALIZED = "not_formalized"
+
+
+class DeclaredAssumption(FrozenModel):
+    """One axiom a run is permitted to stand on, declared before it starts.
+
+    `statement` is the Lean type after the colon and nothing else: Hardy
+    writes `axiom <name> :` in front of it into the source the independent
+    verifier elaborates, so a statement carrying its own header, a proof, or
+    a second declaration is refused rather than written.
+
+    `source` and `justification` are for the reader of the artifact, and are
+    required for the same reason the interactive flow requires them: an
+    assumption whose provenance nobody wrote down is indistinguishable from
+    one somebody invented.
+    """
+
+    name: str
+    statement: str
+    source: str
+    justification: str = ""
 
 
 class FaithfulnessStatus(str, Enum):
@@ -352,6 +387,12 @@ class Grades(FrozenModel):
     informal: InformalStatus = InformalStatus.NOT_INDEPENDENTLY_ASSESSED
     document: DocumentStatus = DocumentStatus.NOT_ATTEMPTED
     known_gaps: tuple[str, ...] = ()
+    #: Exactly the declared assumptions the proof actually used, read from
+    #: `#print axioms` rather than from what the run declared. Declaring an
+    #: assumption permits it; only the kernel's own report says whether it was
+    #: spent, and a manifest listing what was permitted would overstate the
+    #: trust base of a proof that did not need it.
+    assumed: tuple[str, ...] = ()
     verification_sha256: str | None = None
     verification_evidence: VerificationEvidence | None = None
     faithfulness_review: FaithfulnessVerdict | None = None
@@ -367,17 +408,43 @@ class Grades(FrozenModel):
         have no evidence — `partial` and `not_formalized` — from carrying a
         hash that would read as one.
         """
-        verified = self.formal is FormalStatus.KERNEL_VERIFIED
+        verified = self.formal in (FormalStatus.KERNEL_VERIFIED, FormalStatus.VERIFIED_MODULO)
         if self.verification_evidence is None:
             if verified:
-                raise ValueError("kernel_verified requires final verification evidence")
+                raise ValueError(f"{self.formal.value} requires final verification evidence")
             if self.verification_sha256 is not None:
                 raise ValueError("verification_sha256 without the evidence it is taken over")
             return self
         if not verified:
-            raise ValueError("verification evidence without a kernel_verified grade")
+            raise ValueError("verification evidence without a verified grade")
         if self.verification_sha256 != self.verification_evidence.digest:
             raise ValueError("verification_sha256 does not match its evidence")
+        return self
+
+    @model_validator(mode="after")
+    def modulo_names_what_it_stands_on(self) -> Grades:
+        """Keep the three formal grades from blurring into each other.
+
+        `kernel_verified` is Lean's own foundations and nothing else, so a
+        grade naming an assumption may not wear it -- that is the whole
+        distinction, and a run that could report an assumed proof as verified
+        would make the word worthless. `verified_modulo` without a named
+        assumption is the same failure from the other side: a grade that says
+        "modulo something" and cannot say what.
+        """
+        assumed = self.assumed
+        if self.formal is FormalStatus.KERNEL_VERIFIED and assumed:
+            raise ValueError(
+                "a proof resting on declared assumptions is verified_modulo, not "
+                "kernel_verified"
+            )
+        if self.formal is FormalStatus.VERIFIED_MODULO and not assumed:
+            raise ValueError("a verified_modulo grade must name the assumption it rests on")
+        if assumed and self.formal not in (
+            FormalStatus.VERIFIED_MODULO,
+            FormalStatus.PARTIAL,
+        ):
+            raise ValueError("assumptions recorded against a grade that cannot carry them")
         return self
 
     @model_validator(mode="after")
@@ -406,8 +473,13 @@ class Grades(FrozenModel):
             )
         if agreed and not approved:
             raise ValueError("an agreeing independent review without an approved grade")
-        if self.formal is FormalStatus.KERNEL_VERIFIED and not approved:
-            raise ValueError("kernel_verified requires an approved, independently read claim")
+        if (
+            self.formal in (FormalStatus.KERNEL_VERIFIED, FormalStatus.VERIFIED_MODULO)
+            and not approved
+        ):
+            raise ValueError(
+                f"{self.formal.value} requires an approved, independently read claim"
+            )
         return self
 
 

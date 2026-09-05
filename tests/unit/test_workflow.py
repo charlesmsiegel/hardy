@@ -244,7 +244,7 @@ def _scripted_controller(
             return _lean_result(domain, lean, process, success)
 
     class Verifier:
-        def verify(self, claim, proof_body, store):
+        def verify(self, claim, proof_body, store, allowed=()):
             state.verifier_calls += 1
             success = proof_results.pop(0) if proof_results else False
             if success:
@@ -363,7 +363,7 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
         def __init__(self):
             self.calls = 0
 
-        def verify(self, claim, proof_body, store):
+        def verify(self, claim, proof_body, store, allowed=()):
             self.calls += 1
             if self.calls == 1:
                 store.write_text(PurePosixPath('lean/last-attempt.lean'), proof_body)
@@ -1080,8 +1080,11 @@ def test_a_run_cancelled_during_verification_does_not_open_the_writeup_turn(tmp_
 
     verify = controller._verifier.verify
 
-    def cancelling(claim, proof_body, store):
-        result = verify(claim, proof_body, store)
+    def cancelling(claim, proof_body, store, allowed=()):
+        # Transparent, `allowed` included: the subject here is the press, not
+        # the verifier's signature, and a wrapper that swallowed an argument
+        # would be testing the wrapper.
+        result = verify(claim, proof_body, store, allowed)
         controller.cancel()                   # the press, mid-verification
         return result
 
@@ -1105,8 +1108,8 @@ def test_a_run_cancelled_during_a_rejecting_verification_is_not_graded_completed
     )
     verify = controller._verifier.verify
 
-    def cancelling(claim, proof_body, store):
-        result = verify(claim, proof_body, store)
+    def cancelling(claim, proof_body, store, allowed=()):
+        result = verify(claim, proof_body, store, allowed)
         controller.cancel()
         return result
 

@@ -294,6 +294,19 @@ def _render(
         "@@KNOWN_GAPS@@": _items(gaps, "None recorded."),
         "@@LEAN_SIGNATURE@@": _verbatim(signature),
         "@@AXIOMS@@": escape_tex_text(axioms),
+        # Named one by one, never counted. A reader deciding whether to
+        # believe an assumed result has to be able to go and check each
+        # assumption against the paper it came from, and "two assumptions"
+        # tells them nothing they can act on. The sentence is written even
+        # when there are none, because silence here reads the same as an
+        # assumption nobody rendered.
+        "@@ASSUMPTIONS@@": (
+            _items(grades.assumed, "")
+            if grades.assumed
+            else escape_tex_text(
+                "None. This result rests on no assumption beyond Lean's own axioms."
+            )
+        ),
         "@@HASHES@@": _verbatim("\n".join(hashes)),
         "@@IDENTITIES@@": "\n".join(
             BACKSLASH + "item " + escape_tex_text(line) for line in identity_lines

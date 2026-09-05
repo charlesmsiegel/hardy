@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 
 from pydantic import model_validator
 
 from . import audit
 from .domain import (
+    DeclaredAssumption,
     EnvironmentIdentity,
     FrozenClaim,
     FrozenModel,
@@ -61,6 +62,8 @@ class VerificationResult(FrozenModel):
     source_sha256: str
     verification_sha256: str | None
     evidence: VerificationEvidence | None = None
+    #: The declared assumptions this proof actually used.
+    assumed: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def digest_must_derive_from_evidence(self) -> VerificationResult:
@@ -96,15 +99,49 @@ class FinalVerifier:
         environment: EnvironmentIdentity,
         limits: RunLimits,
         runner: Callable[[ProcessSpec], ProcessResult] = run_process,
+        allowed: Sequence[DeclaredAssumption] = (),
     ) -> None:
         self._lake = lake
         self._lean_project = lean_project
         self._environment = environment
         self._limits = limits
         self._runner = runner
+        # What this run declared it may stand on. Empty by default, which is
+        # the ordinary case and the strict one: with nothing declared, every
+        # axiom beyond Lean's own is unexpected and refuses the proof.
+        self._allowed = tuple(allowed)
 
-    def verify(self, claim: FrozenClaim, proof_body: str, store: RunStore) -> VerificationResult:
-        source = verification_source(claim, proof_body)
+    def verify(
+        self,
+        claim: FrozenClaim,
+        proof_body: str,
+        store: RunStore,
+        allowed: Sequence[DeclaredAssumption] | None = None,
+    ) -> VerificationResult:
+        """Rebuild the claim and check it, against a declared assumption set.
+
+        `allowed` belongs to the *run* rather than to this verifier, which is
+        built once per process -- so a caller with a request in hand passes it
+        here, and the constructor's value is the default for callers that have
+        none (the acceptance path, and every run declaring nothing).
+        """
+        permitted = self._allowed if allowed is None else tuple(allowed)
+        declared = _declaration_violation(permitted, claim)
+        if declared is not None:
+            # Refused before any source is written, because what is refused
+            # here is text Hardy would otherwise put into the file the kernel
+            # checks. Everything the run declares is rendered into that file,
+            # so a declaration is as much Hardy's responsibility as the
+            # theorem header it sits above.
+            bare = verification_source(claim, proof_body)
+            return _failure(
+                store,
+                bare,
+                hashlib.sha256(bare.encode("utf-8")).hexdigest(),
+                TerminalReason.FORBIDDEN_HOLE,
+                "Declared assumption refused: " + declared,
+            )
+        source = verification_source(claim, proof_body, permitted)
         source_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
         # The claim must still hash to what it hashed to when it was approved,
         # and must still be the environment this verifier is running.
@@ -199,13 +236,14 @@ class FinalVerifier:
                 diagnostics,
             )
         axioms = reports[0].axioms
-        # No approved assumptions: a staged run is nobody's place to widen the
-        # trust base, so `sorryAx` and every non-standard axiom are refused
-        # alike. They keep one terminal reason because that string is written to
-        # disk and read by things that never import Hardy; the message says
-        # which was found.
-        verdict = audit.classify(reports, ())
-        if verdict.status != "clean":
+        # Graded against exactly what this run declared. With nothing declared
+        # this is the old rule unchanged -- `sorryAx` and every non-standard
+        # axiom refused alike -- and with a declared set, an axiom in it is
+        # `modulo` while one outside it is still refused. `sorryAx` is
+        # forbidden in `audit.classify` before approval is consulted at all,
+        # so no declaration can launder a hole.
+        verdict = audit.classify(reports, [item.name for item in permitted])
+        if verdict.status not in ("clean", "modulo"):
             return _failure(
                 store,
                 source,
@@ -230,6 +268,11 @@ class FinalVerifier:
             source_sha256=source_sha,
             verification_sha256=evidence.digest,
             evidence=evidence,
+            # What was USED, from Lean's own report -- not what was declared.
+            # A run that declared three assumptions and needed none of them is
+            # kernel verified, and a manifest naming all three would overstate
+            # what the result stands on.
+            assumed=verdict.assumed,
         )
         store.write_text(PurePosixPath("lean/Main.lean"), source)
         store.write_json(PurePosixPath("lean/verification.json"), result)
@@ -241,9 +284,69 @@ def axiom_report_line(theorem_name: str) -> str:
     return f"#print axioms {theorem_name}"
 
 
-def verification_source(claim: FrozenClaim, proof_body: str) -> str:
+def verification_source(
+    claim: FrozenClaim, proof_body: str, allowed: Sequence[DeclaredAssumption] = ()
+) -> str:
+    """The file the independent verifier elaborates, declarations and all.
+
+    The declared axioms come first, so the theorem below can use them. They
+    are written here rather than imported from the run's workspace for the
+    reason the whole verifier exists: it rebuilds from the frozen claim, and
+    reading the workspace would let the thing being checked supply its own
+    premises.
+    """
     theorem = render_theorem(claim, proof_body)
-    return f"{theorem}\n{axiom_report_line(claim.proposal.theorem_name)}\n"
+    declarations = "".join(
+        f"axiom {item.name} : {item.statement.strip()}\n" for item in allowed
+    )
+    head = f"{declarations}\n" if declarations else ""
+    return f"{head}{theorem}\n{axiom_report_line(claim.proposal.theorem_name)}\n"
+
+
+def _declaration_violation(
+    allowed: Sequence[DeclaredAssumption], claim: FrozenClaim
+) -> str | None:
+    """Why a declared assumption may not be written into the source, or None.
+
+    Every rule here exists because the text is Hardy's to write into a file
+    the kernel then checks. A name that is not one identifier, or a statement
+    carrying a proof or a second declaration, would put whatever the run
+    supplied where declarations go -- and a declaration that shadows the
+    theorem being proved is assuming the goal, which would make every run
+    trivially succeed while reporting the assumption in the manifest as
+    though it were a premise rather than the conclusion.
+    """
+    target = claim.proposal.theorem_name
+    for item in allowed:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_'.\u00c0-\uffff]*", item.name):
+            return f"{item.name!r} is not a single Lean declaration name"
+        if item.name == target or item.name.rsplit(".", 1)[-1] == target:
+            return (
+                f"{item.name!r} is the theorem being proved; assuming the goal is not a "
+                "proof of it"
+            )
+        stripped = strip_comments(item.statement)
+        if ":=" in stripped:
+            return f"the statement of {item.name!r} carries a proof"
+        if "\n" in item.statement.strip():
+            return f"the statement of {item.name!r} spans more than one line"
+        unauthorized = UNAUTHORIZED_SIGNATURE_TOKEN.search(stripped)
+        if unauthorized is not None:
+            return (
+                f"the statement of {item.name!r} contains {unauthorized.group(1)!r}, which "
+                "opens a declaration rather than stating a type"
+            )
+        if FORBIDDEN_TOKEN.search(stripped):
+            return f"the statement of {item.name!r} contains a forbidden Lean token"
+        if "#" in stripped:
+            # A `#`-command is not part of a type. Lean would refuse the file
+            # anyway, but the refusal would arrive as an elaboration failure
+            # that names Hardy's own generated line, which is a confusing way
+            # to be told the declaration was malformed.
+            return f"the statement of {item.name!r} contains a Lean command"
+        if not item.source.strip():
+            return f"{item.name!r} names no source, so nothing says where it came from"
+    return None
 
 
 def _signature_violation(claim: FrozenClaim) -> str | None:

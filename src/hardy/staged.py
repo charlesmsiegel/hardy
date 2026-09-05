@@ -27,7 +27,7 @@ from .chat import final_text
 from .claude_runtime import ClaudeAgentRuntime
 from .codex_runtime import ProofSubmission
 from .domain import FrozenClaim, RunPhase, schema_text
-from .models import ToolResult
+from .models import ToolResult, json_object
 from .prompts import BASE_INSTRUCTIONS, DEVELOPER_INSTRUCTIONS, STRUCTURE_INSTRUCTION
 from .storage import RunStore
 from .usage import Usage
@@ -420,7 +420,7 @@ class ClaudeStagedRuntime:
             opened = getattr(thread.runtime, "stream", None)
             reading = opened(text) if opened is not None else None
         spoken = final_text(reading) if reading is not None else thread.runtime.ask(text)
-        payload = _json_object(spoken)
+        payload = json_object(spoken)
         if payload is None:
             raise ValueError(f"{stage} turn returned no structured final response")
         try:
@@ -519,46 +519,3 @@ class ClaudeStagedRuntime:
         # until the whole Hardy process exits.
         if self._cas is not None:
             self._cas.session.close()
-
-
-def _json_object(text: str) -> str | None:
-    """Find the one JSON object in a reply, fence or no fence."""
-    if not text:
-        return None
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        body = stripped.split("```")
-        for part in body:
-            candidate = part[4:] if part.startswith("json") else part
-            found = _balanced_object(candidate)
-            if found is not None:
-                return found
-    return _balanced_object(stripped)
-
-
-def _balanced_object(text: str) -> str | None:
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_string = False
-    escaped = False
-    for index in range(start, len(text)):
-        character = text[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == '"':
-                in_string = False
-            continue
-        if character == '"':
-            in_string = True
-        elif character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : index + 1]
-    return None

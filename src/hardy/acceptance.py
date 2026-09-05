@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -39,6 +40,7 @@ from .domain import (
     FormalStatus,
     FrozenClaim,
     FrozenModel,
+    Grades,
     RunManifest,
     RunPhase,
     TerminalReason,
@@ -57,6 +59,45 @@ from .verifier import (
 from .workflow import ProveRequest, ProveWorkflow
 from .workspace import declared_name, strip_comments
 from .writeup import RunIdentities, WriteupContent, build_writeup, dropped_glyphs, host_paths
+
+#: The formal grades that carry verification evidence and are audited as
+#: verified runs. `verified_modulo` is one of them: a wider trust base is a
+#: reason to check the evidence, the axiom report and the document harder, not
+#: a reason to skip them, and an audit that recognised only `kernel_verified`
+#: would have skipped all three on exactly the runs that need them.
+VERIFIED_GRADES = frozenset({FormalStatus.KERNEL_VERIFIED, FormalStatus.VERIFIED_MODULO})
+
+
+def grades_agree(recorded: Any, manifest_grades: Grades) -> bool:
+    """Whether a trajectory's terminal grades are the manifest's.
+
+    Both sides are read through today's `Grades` before they are compared.
+    The manifest was already being parsed that way while the event was read as
+    raw JSON, so a field added to the model after a run was recorded appeared
+    on one side only -- and a run whose two records agreed perfectly failed the
+    audit over a key neither of them had ever written. Any real difference,
+    in any grade, still fails.
+    """
+    if not isinstance(recorded, dict):
+        return False
+    try:
+        return Grades.model_validate(recorded) == manifest_grades
+    except ValidationError:
+        return False
+
+
+def permitted_axioms(assumed: Sequence[str] = ()) -> frozenset[str]:
+    """Lean's own axioms, plus exactly the assumptions the manifest names.
+
+    `sorryAx` can never be permitted: a hole is not an assumption, no
+    declaration may launder one, and `audit.classify` refuses it before
+    approval is consulted at all. Enforced here too rather than relied upon,
+    because this function is what a reader of a stored run is checked against
+    and the manifest it reads was written by the run being audited.
+    """
+    return frozenset(ALLOWED_AXIOMS) | (
+        {name for name in assumed if name not in audit.FORBIDDEN}
+    )
 
 
 class DeterministicRun(FrozenModel):
@@ -198,8 +239,11 @@ class _DeterministicVerifier:
     def __init__(self, outcome: Literal["verified", "exhausted"]) -> None:
         self.outcome = outcome
 
-    def verify(self, claim, proof_body, store) -> VerificationResult:
-        source = verification_source(claim, proof_body)
+    def verify(self, claim, proof_body, store, allowed=()) -> VerificationResult:
+        # `allowed` is part of the protocol the workflow calls, and this
+        # stand-in renders it into the source like the real verifier so the
+        # file it writes is the one a declared run would have checked.
+        source = verification_source(claim, proof_body, allowed)
         source_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
         if self.outcome == "verified":
             evidence = VerificationEvidence(
@@ -362,7 +406,8 @@ def _verified_run_issues(
         issues.append("verified run has no lean/verification.json")
     else:
         issues.extend(_verification_record_issues(verification_path, evidence))
-    unexpected = tuple(axiom for axiom in evidence.axioms if axiom not in ALLOWED_AXIOMS)
+    permitted = permitted_axioms(manifest.grades.assumed)
+    unexpected = tuple(axiom for axiom in evidence.axioms if axiom not in permitted)
     if unexpected:
         issues.append("verification evidence admits unexpected axioms: " + ", ".join(unexpected))
     if claim is None:
@@ -504,7 +549,7 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
             reason = manifest.terminal_reason.value if manifest.terminal_reason else None
             if terminal.get("terminal_reason") != reason:
                 issues.append("terminal reason differs from manifest")
-            if terminal.get("grades") != manifest.grades.model_dump(mode="json"):
+            if not grades_agree(terminal.get("grades"), manifest.grades):
                 issues.append("terminal grades differ from manifest")
     issues.extend(
         _faithfulness_issues(
@@ -517,7 +562,7 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
     )
     main = run_dir / "lean" / "Main.lean"
     verification_path = run_dir / "lean" / "verification.json"
-    if manifest.grades.formal is FormalStatus.KERNEL_VERIFIED:
+    if manifest.grades.formal in VERIFIED_GRADES:
         issues.extend(_verified_run_issues(manifest, claim, main, verification_path))
     elif main.exists():
         issues.append("non-verified run unexpectedly has lean/Main.lean")
@@ -868,6 +913,8 @@ def _verified_batch_issues(
         issues.append("the axiom audit does not report exactly the target declaration")
     else:
         found = tuple(declared[0].get("axioms") or ())
+        # A batch run declares nothing -- `--assume` belongs to `hardy prove`
+        # -- so Lean's own axioms are the whole allowlist here.
         unexpected = tuple(axiom for axiom in found if axiom not in ALLOWED_AXIOMS)
         if unexpected:
             issues.append("the axiom audit admits unexpected axioms: " + ", ".join(unexpected))
@@ -912,7 +959,7 @@ def _live_staged_issues(run_dir: Path, manifest: RunManifest) -> list[str]:
         issues.append(
             f"manifest states {exchanges!r} exchanges but the trajectory holds {reported} provider reports"
         )
-    if manifest.grades.formal is FormalStatus.KERNEL_VERIFIED:
+    if manifest.grades.formal in VERIFIED_GRADES:
         if "workflow.transition" not in kinds:
             issues.append("trajectory records no phase transitions")
         verification_path = run_dir / "lean" / "verification.json"

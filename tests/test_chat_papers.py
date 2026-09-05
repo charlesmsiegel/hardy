@@ -737,3 +737,43 @@ def test_a_save_landing_during_the_signature_hash_does_not_get_stamped(session) 
     assert session.state["tex_signature"] == stale, (
         "a signature was stamped for a tree that moved while it was being hashed"
     )
+
+
+def test_the_session_reaches_the_source_verb(session, tmp_path: Path) -> None:
+    """A tool `paper_tools` offers and the session cannot dispatch is a tool
+    the model does not have."""
+    import io
+    import tarfile
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        body = b"\\documentclass{article}\n\\begin{document}\nThe proof.\n\\end{document}\n"
+        info = tarfile.TarInfo("main.tex")
+        info.size = len(body)
+        tar.addfile(info, io.BytesIO(body))
+    bundle = buffer.getvalue()
+
+    def transport(url: str, timeout: float, limit: int | None = None) -> bytes:
+        return bundle if "e-print" in url else FEED
+
+    session.papers.client = arxiv.ArxivClient(
+        session.papers.library,
+        transport=transport,
+        clock=lambda: 1_000_000.0,
+        sleep=lambda seconds: None,
+    )
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+
+    fetched = session._tool("fetch_source", {"paper_id": "math.DG/0211159v1"})
+
+    assert fetched.ok, fetched.output
+    assert "main.tex" in fetched.output
+    read = session._tool(
+        "read_paper", {"paper_id": "math.DG/0211159v1", "file": "main.tex"}
+    )
+    assert read.ok, read.output
+    assert "The proof." in read.output
+
+
+def test_the_session_advertises_the_source_verb() -> None:
+    assert "fetch_source" in {spec["function"]["name"] for spec in CHAT_TOOLS}

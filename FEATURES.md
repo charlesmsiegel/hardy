@@ -901,8 +901,22 @@ Priority labels are sequencing hints:
   read-modify-write sequences, so both are held under a lock file for the whole
   sequence: the spacing is machine-wide rather than per-process, and two sessions
   citing at once cannot lose a citation between them.
-- **Next:** treat downloaded archives as hostile: normalized extraction, symlink
-  defense, file/byte quotas, temporary staging, and atomic admission. Until that
+- **Now (implemented):** downloaded archives are treated as hostile. `fetch_source`
+  downloads a version's LaTeX bundle; `archives.py` unpacks it with member paths
+  normalised (no `..`, no absolute path, no drive letter, no backslash, no NUL,
+  bounded depth, no repeat and none passing through a file), every symlink,
+  hardlink, device and FIFO refused rather than skipped, and file-count,
+  per-file and total-byte quotas enforced on the *decompressed* stream as it is
+  read — so a header that lies about its size cannot make the reader inflate
+  through the rest of the archive. Extraction happens in a temporary directory
+  beside the target and lands with one rename, so a refused archive leaves the
+  record exactly as it was rather than a partial `source/`. The bundle itself is
+  kept beside the tree it unpacked to and its digest checked on every read, so
+  the manifest's claim about where the files came from is checkable rather than
+  asserted, and each file is re-hashed before it is served. Nothing extracted is
+  executed, compiled, or handed to TeX: this bounds what an archive can do to
+  the filesystem and is not a sandbox — the deferred process isolation is still
+  what a claim of safety would need. Until that
   exists Hardy fetches metadata and abstracts only, and never a source bundle.
 - **Now (implemented):** one canonical bibliography per problem in
   `bibliography.json`, deduplicated by versioned arXiv ID and DOI together, with

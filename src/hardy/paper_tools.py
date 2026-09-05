@@ -1,4 +1,4 @@
-"""Four verbs for the literature: search, fetch, read, cite.
+"""Five verbs for the literature: search, fetch, fetch source, read, cite.
 
 A model asked to cite from memory invents references -- plausible authors, a
 plausible year, a paper that was never written. The defence here is not a
@@ -9,13 +9,15 @@ the model can pass that puts a hand-written entry in the bibliography, because
 the tool takes an identifier and nothing else: no title, no author, no year.
 Every one of those comes from the record.
 
-The four are deliberately small and deliberately separate. `search_papers`
-finds leads and admits nothing -- a search result names whichever version is
-current at the moment of asking, and pinning that as a citation without a
-second, deliberate step is how an unversioned reference gets into a document.
-`fetch_paper` pins one. `read_paper` serves a bounded window of what was
-pinned. `cite_paper` writes it into the one canonical bibliography through the
-one path that may write it.
+They are deliberately small and deliberately separate. `search_papers` finds
+leads and admits nothing -- a search result names whichever version is current
+at the moment of asking, and pinning that as a citation without a second,
+deliberate step is how an unversioned reference gets into a document.
+`fetch_paper` pins one, with its metadata and abstract. `fetch_source`
+downloads that version's LaTeX bundle and unpacks it under the hostile-archive
+rules in `archives.py` -- nothing in it is executed or compiled. `read_paper`
+serves a bounded window of either. `cite_paper` writes the paper into the one
+canonical bibliography through the one path that may write it.
 
 Unlike the `cas_*` tools, these are always offered. A machine with no network
 still reads and cites everything it has already fetched, and a search that
@@ -32,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from . import truncation
+from .archives import ArchiveError
 from .arxiv import ArxivClient, ArxivError, PaperLibrary, PaperRecord, parse_id
 from .bibliography import Bibliography, BibliographyError
 from .layout import HARDY_DIR, global_dir
@@ -87,19 +90,40 @@ PAPER_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "fetch_source",
+            "description": (
+                "Download and unpack the LaTeX source bundle of a paper already fetched, "
+                "and list the text files it holds. The archive is treated as hostile: paths "
+                "are normalised, links refused, and file and byte quotas enforced, and a "
+                "violation rejects the whole bundle. Nothing in it is executed or compiled "
+                "-- the files are there to read with read_paper."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"paper_id": {"type": "string"}},
+                "required": ["paper_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "read_paper",
             "description": (
-                "Read a bounded portion of a fetched paper: its metadata and abstract, as "
-                "arXiv serves them. Long records come back truncated and the reply names "
-                "the `start_line` to pass to read the next part. This is not the full "
-                "text -- Hardy does not download source bundles -- so never write that "
-                "the paper proves something the abstract only claims."
+                "Read a bounded portion of a fetched paper. With no `file`, its metadata "
+                "and abstract as arXiv serves them; with `file`, one text file of the "
+                "source bundle fetch_source unpacked (`main.tex` and the like). Long reads "
+                "come back truncated and the reply names the `start_line` to pass to read "
+                "the next part. An abstract is a claim, not a proof: never write that the "
+                "paper proves something you have only read the abstract of."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "paper_id": {"type": "string"},
                     "start_line": {"type": "integer"},
+                    "file": {"type": "string"},
                 },
                 "required": ["paper_id"],
                 "additionalProperties": False,
@@ -170,7 +194,7 @@ SEARCH_DETAIL = (
 
 
 class PaperToolRuntime:
-    """The four verbs, bound to one library and one problem's bibliography."""
+    """The literature verbs, bound to one library and one bibliography."""
 
     def __init__(
         self,
@@ -201,13 +225,22 @@ class PaperToolRuntime:
                 )
             if name == "fetch_paper":
                 return self.fetch(str(arguments["paper_id"]))
+            if name == "fetch_source":
+                return self.fetch_source(str(arguments["paper_id"]))
             if name == "read_paper":
+                wanted = arguments.get("file")
                 return self.read(
-                    str(arguments["paper_id"]), int(arguments.get("start_line", 1) or 1)
+                    str(arguments["paper_id"]),
+                    int(arguments.get("start_line", 1) or 1),
+                    None if wanted is None else str(wanted),
                 )
             if name == "cite_paper":
                 return self.cite(str(arguments["paper_id"]))
-        except (ArxivError, BibliographyError) as error:
+        except (ArxivError, BibliographyError, ArchiveError) as error:
+            # An `ArchiveError` reaches the model as its own sentence for the
+            # same reason the other two do: a refused bundle is an answer --
+            # "this is not an archive", "this one climbs out of its root" --
+            # and a refusal a model cannot read is a refusal it repeats.
             return ToolResult(False, self._bounded(str(error)))
         except (KeyError, TypeError, ValueError) as error:
             return ToolResult(False, self._bounded(f"{type(error).__name__}: {error}"))
@@ -427,19 +460,95 @@ class PaperToolRuntime:
             ensure_ascii=False,
         )
 
-    def read(self, paper_id: str, start_line: int = 1) -> ToolResult:
-        """A bounded window on a stored record.
+    def fetch_source(self, paper_id: str) -> ToolResult:
+        """Unpack a held paper's source bundle, and say what may be read.
+
+        Only the text files are listed. A figure or a compiled PDF is stored
+        and digested like everything else, but there is nothing in it for a
+        reader to quote, and naming it would invite a `read_paper` that can
+        only be refused.
+        """
+        manifest, already = self.client.fetch_source(paper_id)
+        readable = [item.path for item in manifest.files if item.text]
+        for answer in (
+            {
+                "paper_id": manifest.arxiv_id,
+                "already_held": already,
+                "files": readable,
+                "other_files": len(manifest.files) - len(readable),
+                "archive_sha256": manifest.archive_sha256,
+                "note": (
+                    "Unpacked defensively and stored under this exact version. Read one "
+                    "with read_paper(paper_id, file=...). Nothing here was executed or "
+                    "compiled, and a claim in this source is the paper's claim, not a proof."
+                ),
+            },
+            {
+                "paper_id": manifest.arxiv_id,
+                "already_held": already,
+                "files": readable,
+                "archive_sha256": manifest.archive_sha256,
+            },
+            # Shedding the file list is the last resort and it costs the
+            # caller the map: `read_paper` still needs a name. `main.tex` is
+            # arXiv's own convention for a single-file submission and the
+            # commonest root otherwise, so the shortest useful answer keeps
+            # whichever names fit rather than the count.
+            {"paper_id": manifest.arxiv_id, "files": readable[:5]},
+            {"paper_id": manifest.arxiv_id, "files": readable[:1]},
+        ):
+            payload = json.dumps(answer, ensure_ascii=False)
+            if len(payload.encode("utf-8")) <= self.observation_bytes:
+                return ToolResult(True, payload)
+        return ToolResult(
+            True,
+            self._bounded(
+                f"{manifest.arxiv_id}: {len(readable)} readable files, too many to name "
+                f"in a {self.observation_bytes}-byte observation."
+            ),
+        )
+
+    def read(self, paper_id: str, start_line: int = 1, file: str | None = None) -> ToolResult:
+        """A bounded window on a stored record, or on one file of its source.
+
+        Both go through `_window`, so a source file pages exactly as a record
+        does. What differs is only what is being read and how to ask for the
+        next part of it.
+        """
+        record = self._held(paper_id)
+        if file is None:
+            return self._window(
+                record.arxiv_id,
+                record.content(),
+                max(1, start_line),
+                "Call read_paper again with start_line={line} for the rest.",
+            )
+        identifier = record.identifier
+        if not self.library.holds_source(identifier):
+            raise ArxivError(
+                f"{record.arxiv_id} has no source in the library, so there is no file to "
+                "read. Call fetch_source first; it lists what the bundle holds."
+            )
+        wanted = str(file)
+        return self._window(
+            f"{record.arxiv_id}:{wanted}",
+            self.library.read_source(identifier, wanted),
+            max(1, start_line),
+            "Call read_paper again with file="
+            + json.dumps(wanted)
+            + " and start_line={line} for the rest.",
+        )
+
+    def _window(self, label: str, content: str, start: int, resume: str) -> ToolResult:
+        """One bounded, resumable page of `content`, or a refusal that says why.
 
         The note goes first and the text after it, exactly as `read_file`
         does and for the same reason: a model reading from the top and
         stopping when it has what it wants never reaches a trailing notice,
-        and the notice is what says this is a fragment. A whole short record
+        and the notice is what says this is a fragment. A whole short text
         read from the top gets no note at all, so quoting what was handed
-        back is quoting the record.
+        back is quoting the source.
         """
-        record = self._held(paper_id)
-        content = record.content()
-        start = max(1, start_line)
         # The note is part of the answer, so it is part of the budget. Letting
         # `truncate` spend the whole limit and then prepending the paper id,
         # the summary and the continuation line put every long window over the
@@ -461,16 +570,14 @@ class PaperToolRuntime:
                 return ToolResult(
                     False,
                     self._bounded(
-                        f"{record.arxiv_id} has {cut.total_lines} lines; "
+                        f"{label} has {cut.total_lines} lines; "
                         f"start_line={start} is past the end"
                     ),
                 )
             rest = (
-                f" Call read_paper again with start_line={cut.next_line} for the rest."
-                if cut.next_line is not None
-                else ""
+                " " + resume.format(line=cut.next_line) if cut.next_line is not None else ""
             )
-            payload = f"{record.arxiv_id}: {cut.summary}.{rest}\n\n{cut.text}"
+            payload = f"{label}: {cut.summary}.{rest}\n\n{cut.text}"
             over = len(payload.encode("utf-8")) - self.observation_bytes
             # `cut.clipped` disqualifies a window that would otherwise fit.
             # `truncate` returns one line even when that line alone does not
@@ -501,7 +608,7 @@ class PaperToolRuntime:
             # returning an unmeasured refusal spends more of the context than
             # the answer it declined to give.
             self._bounded(
-                f"a window of {record.arxiv_id} does not fit the "
+                f"a window of {label} does not fit the "
                 f"{self.observation_bytes}-byte observation budget once the continuation "
                 "line is counted; raise limits.model_observation_bytes to read this record."
             ),

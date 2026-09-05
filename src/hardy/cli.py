@@ -1216,6 +1216,14 @@ def run_prove(
     if not claim:
         print("A nonempty theorem statement is required.")
         return 2
+    try:
+        assumptions = _declared_assumptions(getattr(args, "assume", None))
+    except (OSError, ValueError) as error:
+        # Refused before the run starts, not during it. A malformed
+        # declaration is a mistake in the invocation, and reporting it as a
+        # failed run would bury it in a manifest.
+        print(f"The declared assumptions could not be read: {error}")
+        return 2
     # Through `tui.prove`, which `/prove` uses too: the run directory a claim
     # lands in must not depend on which surface asked for it.
     from .tui.prove import problem_slug
@@ -1224,11 +1232,38 @@ def run_prove(
     terminal = ConsoleTerminal(input_fn=input_fn)
     workflow = workflow_factory(config, config_path, backend=getattr(args, "backend", "claude"))
     manifest = workflow.run(
-        ProveRequest(text=claim, model=str(args.model or config.model), problem_slug=slug),
+        ProveRequest(
+            text=claim,
+            model=str(args.model or config.model),
+            problem_slug=slug,
+            assumptions=assumptions,
+        ),
         terminal,
     )
     print(f"Artifacts: {config.runs_root}")
     return 0 if manifest.phase.value == "completed" else 1
+
+
+def _declared_assumptions(path: Path | None) -> tuple[Any, ...]:
+    """What a run declared it may stand on, read from one file.
+
+    Validated here rather than trusted, because every field is load-bearing
+    downstream: the name is written into the source the kernel checks, and
+    the source is what a reader of the artifact follows to decide whether to
+    believe an assumed result. A declaration with no provenance is an axiom
+    somebody could have invented.
+    """
+    from .domain import DeclaredAssumption
+
+    if path is None:
+        return ()
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("assumptions"), list):
+        raise ValueError(f"{path} must hold an object with an `assumptions` list")
+    declared = tuple(DeclaredAssumption.model_validate(item) for item in payload["assumptions"])
+    if not declared:
+        raise ValueError(f"{path} declares no assumptions")
+    return declared
 
 
 def run_accept(args: argparse.Namespace) -> int:
@@ -1546,6 +1581,16 @@ def build_parser() -> argparse.ArgumentParser:
     prove = subparsers.add_parser("prove", help="stage one claim from statement to document")
     prove.add_argument("claim", nargs="?", help="the claim in ordinary language")
     prove.add_argument("--backend", choices=("claude", "codex"), default="claude")
+    prove.add_argument(
+        "--assume",
+        type=Path,
+        help=(
+            "JSON file declaring the axioms this run may stand on: "
+            '{"assumptions": [{"name": ..., "statement": ..., "source": ...}]}. '
+            "A proof using them is graded verified_modulo and the manifest names exactly "
+            "the ones it used."
+        ),
+    )
     # SUPPRESS so that omitting it here leaves the global --model alone rather
     # than overwriting it with this subparser's default.
     prove.add_argument("--model", default=argparse.SUPPRESS)
