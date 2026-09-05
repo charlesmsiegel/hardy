@@ -303,6 +303,42 @@ def verification_source(
     return f"{head}{theorem}\n{axiom_report_line(claim.proposal.theorem_name)}\n"
 
 
+def declaration_violation(item: DeclaredAssumption) -> str | None:
+    """Why this declaration may not be written into a Lean source, or None.
+
+    Public and claim-free so `hardy prove --assume` can run it at the
+    invocation. These rules used to live only inside the verifier, which runs
+    after formalization, the faithfulness read and the entire proving loop --
+    so a typo in a declaration file cost the whole budget before anything said
+    so, and was then recorded as `forbidden_hole` for a declaration with no
+    hole in it.
+    """
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_'.\u00c0-\uffff]*", item.name):
+        return f"{item.name!r} is not a single Lean declaration name"
+    stripped = strip_comments(item.statement)
+    if ":=" in stripped:
+        return f"the statement of {item.name!r} carries a proof"
+    if "\n" in item.statement.strip():
+        return f"the statement of {item.name!r} spans more than one line"
+    unauthorized = UNAUTHORIZED_SIGNATURE_TOKEN.search(stripped)
+    if unauthorized is not None:
+        return (
+            f"the statement of {item.name!r} contains {unauthorized.group(1)!r}, which "
+            "opens a declaration rather than stating a type"
+        )
+    if FORBIDDEN_TOKEN.search(stripped):
+        return f"the statement of {item.name!r} contains a forbidden Lean token"
+    if "#" in stripped:
+        # A `#`-command is not part of a type. Lean would refuse the file
+        # anyway, but the refusal would arrive as an elaboration failure that
+        # names Hardy's own generated line, which is a confusing way to be
+        # told the declaration was malformed.
+        return f"the statement of {item.name!r} contains a Lean command"
+    if not item.source.strip():
+        return f"{item.name!r} names no source, so nothing says where it came from"
+    return None
+
+
 def _declaration_violation(
     allowed: Sequence[DeclaredAssumption], claim: FrozenClaim
 ) -> str | None:
@@ -318,34 +354,14 @@ def _declaration_violation(
     """
     target = claim.proposal.theorem_name
     for item in allowed:
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_'.\u00c0-\uffff]*", item.name):
-            return f"{item.name!r} is not a single Lean declaration name"
+        violation = declaration_violation(item)
+        if violation is not None:
+            return violation
         if item.name == target or item.name.rsplit(".", 1)[-1] == target:
             return (
                 f"{item.name!r} is the theorem being proved; assuming the goal is not a "
                 "proof of it"
             )
-        stripped = strip_comments(item.statement)
-        if ":=" in stripped:
-            return f"the statement of {item.name!r} carries a proof"
-        if "\n" in item.statement.strip():
-            return f"the statement of {item.name!r} spans more than one line"
-        unauthorized = UNAUTHORIZED_SIGNATURE_TOKEN.search(stripped)
-        if unauthorized is not None:
-            return (
-                f"the statement of {item.name!r} contains {unauthorized.group(1)!r}, which "
-                "opens a declaration rather than stating a type"
-            )
-        if FORBIDDEN_TOKEN.search(stripped):
-            return f"the statement of {item.name!r} contains a forbidden Lean token"
-        if "#" in stripped:
-            # A `#`-command is not part of a type. Lean would refuse the file
-            # anyway, but the refusal would arrive as an elaboration failure
-            # that names Hardy's own generated line, which is a confusing way
-            # to be told the declaration was malformed.
-            return f"the statement of {item.name!r} contains a Lean command"
-        if not item.source.strip():
-            return f"{item.name!r} names no source, so nothing says where it came from"
     return None
 
 

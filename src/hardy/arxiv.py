@@ -911,8 +911,10 @@ class PaperLibrary:
         guard.write_bytes("state.json", json.dumps({"last_request": when}).encode("utf-8"))
 
 
-#: `(url, timeout, limit)`. The limit is keyword-optional so a test double
-#: written for the API alone still satisfies it.
+#: `(url, timeout)`, plus a keyword `limit` for a caller that accepts more
+#: than an API response. Passed as a keyword and only when it differs from the
+#: default, so a double written for the API alone -- `lambda url, timeout:
+#: ...` -- still satisfies the protocol for every call that does not need one.
 Transport = Callable[..., bytes]
 
 
@@ -1119,7 +1121,7 @@ class ArxivClient:
             return self.library.source_manifest(identifier), True
         url = f"{SOURCE_ENDPOINT}{identifier}"
         self._throttle()
-        body = self._transport(url, self._timeout, MAX_ARCHIVE_BYTES)
+        body = self._transport(url, self._timeout, limit=MAX_ARCHIVE_BYTES)
         now = self._clock()
         return (
             self.library.admit_source(

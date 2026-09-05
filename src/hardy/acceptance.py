@@ -31,6 +31,7 @@ from . import audit
 from .codex_runtime import ProofSubmission
 from .config import Config
 from .domain import (
+    DeclaredAssumption,
     DocumentStatus,
     EnvironmentIdentity,
     FaithfulnessReview,
@@ -84,6 +85,70 @@ def grades_agree(recorded: Any, manifest_grades: Grades) -> bool:
         return Grades.model_validate(recorded) == manifest_grades
     except ValidationError:
         return False
+
+
+ASSUMPTIONS_FILE = "assumptions.json"
+
+
+def _declared(run_dir: Path) -> tuple[DeclaredAssumption, ...] | None:
+    """What a human declared this run could stand on, or None if unreadable."""
+    path = run_dir / ASSUMPTIONS_FILE
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return tuple(DeclaredAssumption.model_validate(item) for item in payload)
+    except (OSError, ValueError, ValidationError):
+        return None
+
+
+def _declared_names(run_dir: Path) -> set[str]:
+    declared = _declared(run_dir)
+    return {item.name for item in declared} if declared else set()
+
+
+def _declaration_issues(manifest: RunManifest, main: Path, run_dir: Path) -> list[str]:
+    """Whether an assumed run's axioms were declared, and are what was declared.
+
+    Three separate questions, because they fail separately. Was anything
+    declared at all -- a `verified_modulo` grade with no `assumptions.json`
+    is a run that invented its own permission. Is every axiom the grade names
+    one of those declarations. And does the Lean the kernel actually read
+    state those declarations verbatim -- a declaration file saying `foo : True`
+    beside a source saying `axiom foo : False` is worth nothing, and the source
+    is the half that was elaborated.
+    """
+    assumed = tuple(manifest.grades.assumed)
+    if not assumed:
+        return []
+    declared = _declared(run_dir)
+    if declared is None:
+        return [
+            f"a run graded {manifest.grades.formal.value} has no readable "
+            f"{ASSUMPTIONS_FILE} declaring what it may stand on"
+        ]
+    issues: list[str] = []
+    undeclared = tuple(name for name in assumed if name not in {item.name for item in declared})
+    if undeclared:
+        issues.append("the run assumed axioms nobody declared: " + ", ".join(undeclared))
+    if not main.exists():
+        return issues
+    try:
+        source = main.read_text(encoding="utf-8")
+    except OSError as error:
+        return [*issues, f"lean/Main.lean could not be read: {error}"]
+    # Byte for byte, in the rendering the verifier uses. Comparing loosely
+    # would accept a source that states a weaker or stronger axiom under a
+    # declared name, which is the whole thing the declaration is supposed to
+    # pin down.
+    for item in declared:
+        rendered = f"axiom {item.name} : {item.statement.strip()}\n"
+        if rendered not in source:
+            issues.append(
+                f"lean/Main.lean does not state the declared assumption {item.name!r} as it "
+                "was declared"
+            )
+    return issues
 
 
 def permitted_axioms(assumed: Sequence[str] = ()) -> frozenset[str]:
@@ -379,6 +444,7 @@ def _verified_run_issues(
     claim: FrozenClaim | None,
     main: Path,
     verification_path: Path,
+    run_dir: Path,
 ) -> list[str]:
     """Check a `kernel_verified` grade against the evidence it is taken over.
 
@@ -406,7 +472,13 @@ def _verified_run_issues(
         issues.append("verified run has no lean/verification.json")
     else:
         issues.extend(_verification_record_issues(verification_path, evidence))
-    permitted = permitted_axioms(manifest.grades.assumed)
+    # The assumption set is checked against what a HUMAN declared before the
+    # run, not against what the run says it assumed. `manifest.grades.assumed`
+    # is written by the artifact under audit: taking the allowlist from it let
+    # a run name its own axiom -- `falsum : False` -- and pass every check,
+    # which made this whole function vacuous for a `verified_modulo` grade.
+    issues.extend(_declaration_issues(manifest, main, run_dir))
+    permitted = permitted_axioms(_declared_names(run_dir) & set(manifest.grades.assumed))
     unexpected = tuple(axiom for axiom in evidence.axioms if axiom not in permitted)
     if unexpected:
         issues.append("verification evidence admits unexpected axioms: " + ", ".join(unexpected))
@@ -563,7 +635,9 @@ def validate_run_consistency(run_dir: Path, manifest: RunManifest) -> tuple[str,
     main = run_dir / "lean" / "Main.lean"
     verification_path = run_dir / "lean" / "verification.json"
     if manifest.grades.formal in VERIFIED_GRADES:
-        issues.extend(_verified_run_issues(manifest, claim, main, verification_path))
+        issues.extend(
+            _verified_run_issues(manifest, claim, main, verification_path, run_dir)
+        )
     elif main.exists():
         issues.append("non-verified run unexpectedly has lean/Main.lean")
     tex = run_dir / "writeup" / "paper.tex"

@@ -169,3 +169,32 @@ def test_the_refusal_names_the_tactic_and_the_statement() -> None:
     assert "decide" in sentence
     assert "(1 : Nat) = 2" in sentence
     assert "counterexample" in sentence.lower() or "refut" in sentence.lower()
+
+
+# --- What each caller actually hands Lean -------------------------------------
+
+
+def test_a_caller_that_supplies_its_own_header_gets_the_body_alone() -> None:
+    """`LeanService.check_scratch` prepends `import Mathlib` itself. Handing it
+    a source that already carries one put a second import on line 3 and shifted
+    every probe by two, so `judge` read the sentinel's line as a tactic's: the
+    staged refutation gate could not refute anything, and reported every honest
+    assumption as one that did not elaborate."""
+    body, tactics = refute.probe_source("2 + 2 = 5", imported=False)
+
+    assert not body.startswith("import")
+    # What `check_scratch` elaborates, spelled exactly as it spells it.
+    elaborated = f"import Mathlib\n\n{body.rstrip()}\n".splitlines()
+    assert elaborated[0] == "import Mathlib"
+    for index, tactic in enumerate(tactics):
+        assert elaborated[refute.FIRST_PROBE - 1 + index].endswith(f":= by {tactic}")
+    assert elaborated[refute.FIRST_PROBE - 1 + len(tactics)].endswith(":= by sorry")
+
+
+def test_both_spellings_put_the_probes_on_the_same_lines() -> None:
+    """The line contract is what `judge` reads, so it has to hold whichever
+    caller built the file."""
+    whole, tactics = refute.probe_source("True")
+    body, _ = refute.probe_source("True", imported=False)
+
+    assert whole.splitlines() == f"import Mathlib\n\n{body.rstrip()}\n".splitlines()

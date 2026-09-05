@@ -108,3 +108,48 @@ def test_a_malformed_declaration_is_refused_before_the_run(
 
     assert code == 2
     assert requests == []
+
+
+def test_a_statement_the_verifier_would_refuse_is_caught_at_the_invocation(
+    tmp_path: Path, capsys
+) -> None:
+    """The rules that decide whether a declaration can be written into the
+    source ran inside the verifier, so a malformed one was reported only after
+    formalization, the faithfulness review and the whole proving loop -- and
+    reported as `forbidden_hole`, for a declaration containing no hole."""
+    cli = importlib.import_module("hardy.cli")
+    path = tmp_path / "assume.json"
+    path.write_text(
+        json.dumps(
+            {
+                "assumptions": [
+                    {
+                        "name": "foo",
+                        "statement": "True := by trivial",
+                        "source": "arXiv:2401.00001v1",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    requests: list = []
+
+    code = _run(cli, _args(assume=path), requests)
+
+    assert code == 2
+    assert requests == [], "no budget should be spent on a declaration that cannot be written"
+    assert "proof" in capsys.readouterr().out.lower()
+
+
+def test_a_declaration_with_no_source_is_refused(tmp_path: Path, capsys) -> None:
+    cli = importlib.import_module("hardy.cli")
+    path = tmp_path / "assume.json"
+    path.write_text(
+        json.dumps({"assumptions": [{"name": "foo", "statement": "True", "source": "   "}]}),
+        encoding="utf-8",
+    )
+    requests: list = []
+
+    assert _run(cli, _args(assume=path), requests) == 2
+    assert requests == []

@@ -381,15 +381,21 @@ def normalise_lean(text: str) -> str:
     return "".join(out).strip()
 
 
+# `opaque` belongs here beside `axiom` and `constant`: all three put a
+# declaration in the environment with no proof to check, and an `opaque` is
+# the *stronger* claim, since it asserts something of that type exists. It is
+# also the keyword `assume.render_module` writes for an assumed definition, so
+# a scanner blind to it let a quarantined name be declared under the one
+# spelling this feature mints.
 ASSUMPTION = re.compile(
     rf"^{WRAPPER}(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|noncomputable|scoped|local)\s+)*"
-    rf"(?:axiom|constant)\s+({QUALIFIED_NAME})\s*:(.*)$"
+    rf"(?:axiom|constant|opaque)\s+({QUALIFIED_NAME})\s*:(.*)$"
 )
 # The keyword itself, for finding an axiom this pattern cannot read. The
 # boundary is `IDENTIFIER`'s alphabet with `!` and `?`, so `axiom?` and `get!`
 # are names rather than keywords, and the guillemets go with them because
 # `def «axiom» : Nat` names a declaration rather than making one.
-AXIOM_KEYWORD = re.compile(r"(?<![\w'!?.«])(?:axiom|constant)(?![\w'!?»])")
+AXIOM_KEYWORD = re.compile(r"(?<![\w'!?.«])(?:axiom|constant|opaque)(?![\w'!?»])")
 # Where a declaration stops, so the one before it is not read as running on.
 # Approximate on purpose: over-reading appends text to a statement and the
 # comparison refuses a save that should have passed, which is visible and

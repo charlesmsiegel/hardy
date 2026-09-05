@@ -35,6 +35,7 @@ rather than letting a careful unpacker read as isolation.
 
 from __future__ import annotations
 
+import codecs
 import gzip
 import hashlib
 import io
@@ -45,8 +46,6 @@ import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
-#: How much of a file is inspected to decide whether it is text.
-TEXT_SAMPLE_BYTES = 8 * 1024
 READ_CHUNK_BYTES = 64 * 1024
 #: The name a one-file gzip submission is stored under. arXiv serves a
 #: single-file source as the gzip of that file, with no tar around it and no
@@ -222,18 +221,6 @@ def member_path(name: str, limits: Limits = DEFAULT_LIMITS) -> str:
     return "/".join(parts)
 
 
-def looks_like_text(sample: bytes) -> bool:
-    """Whether a file's first bytes read as UTF-8 text without NULs."""
-    if b"\x00" in sample:
-        return False
-    try:
-        sample.decode("utf-8")
-    except UnicodeDecodeError as error:
-        # A multibyte character cut by the sample boundary is not binary.
-        return error.start >= len(sample) - 3
-    return True
-
-
 def _extract_tar(stream: _Bounded, into: Path, limits: Limits) -> tuple[ExtractedFile, ...]:
     files: list[ExtractedFile] = []
     written: set[str] = set()
@@ -246,7 +233,14 @@ def _extract_tar(stream: _Bounded, into: Path, limits: Limits) -> tuple[Extracte
             path = member_path(member.name, limits)
             if member.isdir():
                 _no_file_on_the_way(path, written, include_self=True)
-                directories.add(path)
+                if len(files) + len(directories) + 1 > limits.max_files:
+                    raise ArchiveError(
+                        f"the archive holds more than {limits.max_files} entries"
+                    )
+                # Every component, not just the leaf: a member `a/b/c/` makes
+                # three directories, and counting one let a bounded number of
+                # members produce an unbounded number of inodes.
+                directories.update(_prefixes(path))
                 (into / path).mkdir(parents=True, exist_ok=True)
                 continue
             if not member.isfile():
@@ -260,11 +254,15 @@ def _extract_tar(stream: _Bounded, into: Path, limits: Limits) -> tuple[Extracte
                 raise ArchiveError(
                     f"{member.name!r} is {what}; only files and directories are unpacked"
                 )
-            if path in written or path in directories:
+            if path in written:
                 raise ArchiveError(f"the archive names {path!r} twice")
+            if path in directories:
+                raise ArchiveError(
+                    f"the archive names {path!r} as a file and as a directory"
+                )
             _no_file_on_the_way(path, written, include_self=False)
-            if len(files) + 1 > limits.max_files:
-                raise ArchiveError(f"the archive holds more than {limits.max_files} files")
+            if len(files) + len(directories) + 1 > limits.max_files:
+                raise ArchiveError(f"the archive holds more than {limits.max_files} entries")
             if member.size > limits.max_file_bytes:
                 raise ArchiveError(
                     f"{path!r} is {member.size} bytes, over the {limits.max_file_bytes}-byte "
@@ -279,10 +277,21 @@ def _extract_tar(stream: _Bounded, into: Path, limits: Limits) -> tuple[Extracte
                 raise ArchiveError(f"{path!r} has no readable body")
             files.append(_write(into, path, body, limits, member.size))
             written.add(path)
+            # The parents `_write` made on the way past. Without them a later
+            # member named `a` -- after `a/b.tex` created `a` -- reached the
+            # open as a directory and raised `IsADirectoryError` from three
+            # frames down instead of this module's own refusal.
+            directories.update(_prefixes(path)[:-1])
             total += files[-1].size
     if not files:
         raise ArchiveError("the archive holds no files")
     return tuple(sorted(files, key=lambda item: item.path))
+
+
+def _prefixes(path: str) -> list[str]:
+    """Every directory prefix of `path`, and `path` itself, outermost first."""
+    parts = path.split("/")
+    return ["/".join(parts[: index + 1]) for index in range(len(parts))]
 
 
 def _no_file_on_the_way(path: str, written: set[str], *, include_self: bool) -> None:
@@ -317,8 +326,12 @@ def _write(
     target.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
     size = 0
-    sample = b""
     ceiling = min(limits.max_file_bytes, limits.max_total_bytes)
+    # Decided as the bytes go past, over every one of them. The digest loop
+    # already sees the whole file, so this costs a decoder rather than a
+    # second read.
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    textual = True
     with open(target, "wb") as handle:
         while True:
             chunk = stream.read(READ_CHUNK_BYTES)
@@ -330,13 +343,25 @@ def _write(
                     f"{path!r} delivered more than {ceiling if declared is None else declared} "
                     "bytes; refusing the archive"
                 )
-            if len(sample) < TEXT_SAMPLE_BYTES:
-                sample += chunk[: TEXT_SAMPLE_BYTES - len(sample)]
+            if textual:
+                if b"\x00" in chunk:
+                    textual = False
+                else:
+                    try:
+                        decoder.decode(chunk)
+                    except UnicodeDecodeError:
+                        textual = False
             digest.update(chunk)
             handle.write(chunk)
-    return ExtractedFile(
-        path, size, digest.hexdigest(), looks_like_text(sample) if text is None else text
-    )
+    if textual:
+        try:
+            # The tail: a multibyte character cut by the last chunk boundary is
+            # incomplete, not binary, and only the final call can tell them
+            # apart.
+            decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            textual = False
+    return ExtractedFile(path, size, digest.hexdigest(), textual if text is None else text)
 
 
 def _clear(into: Path) -> None:

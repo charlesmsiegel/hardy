@@ -836,6 +836,11 @@ class ProveWorkflow:
                 self._identities_factory(run_id, request.model),
                 store,
                 limits=self._config.limits,
+                # So the document can state what was assumed rather than only
+                # naming it: a reader deciding whether to believe an assumed
+                # theorem needs the statement and its source, and the grade
+                # carries neither.
+                declared=request.assumptions,
             )
             grades = grades.model_copy(update={"document": document.status})
             # And after it. Tectonic is a tracked child, so a press reaches it
@@ -942,7 +947,10 @@ class ProveWorkflow:
         """
         unchecked: list[str] = []
         for item in assumptions:
-            source, tactics = refute.probe_source(item.statement)
+            # Body only: `check_scratch` prepends the import itself, and a
+            # file carrying two of them shifts every probe past the line
+            # `judge` reads it on.
+            source, tactics = refute.probe_source(item.statement, imported=False)
             try:
                 result = self._lean.check_scratch(source)
             except Exception as error:  # noqa: BLE001 - an unrunnable probe is a gap, not a crash

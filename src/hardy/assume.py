@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from . import completion
 
@@ -169,21 +170,32 @@ def _pages(files: Mapping[str, str], root: str) -> list[tuple[str, str]]:
     """
     seen: set[str] = set()
     ordered: list[tuple[str, str]] = []
+    # An explicit stack rather than recursion. A bundle of a thousand files
+    # each `\input`ing the next is well inside every archive quota and cost a
+    # `RecursionError` -- which is a `RuntimeError`, so it escaped the tool
+    # dispatcher's `(KeyError, TypeError, ValueError)` and ended the turn.
+    # Each frame is (path, executed text, offset, remaining inclusions).
+    stack: list[tuple[str, str, int, list[Any]]] = []
 
-    def walk(path: str) -> None:
+    def opened(path: str) -> None:
         if not path or path in seen or path not in files:
             return
         seen.add(path)
-        page = completion.displayed(files[path])
-        executed = completion.without_definitions(page.executed)
-        consumed = 0
-        for match in completion.INCLUSION.finditer(executed):
-            ordered.append((path, executed[consumed : match.start()]))
-            walk(completion.target(match.group(1), files))
-            consumed = match.end()
-        ordered.append((path, executed[consumed:]))
+        executed = completion.without_definitions(completion.displayed(files[path]).executed)
+        stack.append((path, executed, 0, list(completion.INCLUSION.finditer(executed))))
 
-    walk(root)
+    opened(root)
+    while stack:
+        path, executed, consumed, pending = stack.pop()
+        if pending:
+            match = pending.pop(0)
+            ordered.append((path, executed[consumed : match.start()]))
+            # This file resumes after the inclusion, once the included one has
+            # been walked -- so it goes back first and the child on top.
+            stack.append((path, executed, match.end(), pending))
+            opened(completion.target(match.group(1), files))
+            continue
+        ordered.append((path, executed[consumed:]))
     return ordered
 
 
@@ -324,7 +336,15 @@ def _docstring(item: Minted, arxiv_id: str, cite_key: str) -> list[str]:
             ]
         )
     body.append("-/")
-    return [_comment_safe(line) if line not in ("/--", "-/") else line for line in body]
+    # By position, not by value. Comparing the text let an
+    # `informal_statement` of exactly `-/` pass through unsanitised and close
+    # the docstring on its own line -- the one string the exemption was
+    # written to protect was also the one an author could supply.
+    opening, closing = 0, len(body) - 1
+    return [
+        line if index in (opening, closing) else _comment_safe(line)
+        for index, line in enumerate(body)
+    ]
 
 
 def _comment_safe(text: str) -> str:

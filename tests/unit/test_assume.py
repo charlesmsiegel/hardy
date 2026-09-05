@@ -237,3 +237,20 @@ def test_the_module_is_regenerated_whole_rather_than_appended_to() -> None:
 
     assert source.index("axiom first") < source.index("axiom second")
     assert source.count("namespace Papers.k_1") == 1
+
+
+def test_a_paper_that_says_only_the_closing_delimiter_cannot_close_the_docstring() -> None:
+    r"""The exemption was written for the fixed `/--` and `-/` lines the
+    renderer emits, but it compared text -- so an `informal_statement` of
+    exactly `-/` was handed the exemption too and ended the docstring on its
+    own second line."""
+    source = assume.render_module(
+        cite_key="k-1",
+        arxiv_id="2401.00001v1",
+        title="A paper",
+        statements=(_minted(informal_statement="-/"),),
+    )
+
+    docstring, _, rest = source.split("/--", 1)[1].partition("-/")
+    assert "axiom main_estimate" in rest
+    assert "axiom main_estimate" not in docstring

@@ -341,7 +341,7 @@ class RunStore:
     def write_json(
         self,
         relative_path: PurePosixPath,
-        value: BaseModel | dict[str, Any],
+        value: BaseModel | dict[str, Any] | list[Any],
     ) -> ArtifactIdentity:
         serializable = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
         text = json.dumps(serializable, ensure_ascii=False, indent=2, sort_keys=True) + "\n"

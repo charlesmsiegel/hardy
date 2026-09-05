@@ -88,6 +88,11 @@ def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
             )
 
         def check_scratch(self, source):
+            # Exactly what the real `LeanService.check_scratch` elaborates,
+            # header and all. A double that numbered the lines of the string
+            # it was handed asserted on its own arithmetic rather than on
+            # production's, and passed while the probe was two lines out.
+            source = f"import Mathlib\n\n{source.rstrip()}\n"
             probes.append(source)
             refute = importlib.import_module("hardy.refute")
             if unreadable:
@@ -215,6 +220,11 @@ def test_a_run_may_declare_what_it_stands_on(tmp_path) -> None:
 
     assert manifest.grades.formal is domain.FormalStatus.VERIFIED_MODULO
     assert manifest.grades.assumed == ("Papers.perelman.no_local_collapsing",)
+    # An assumption the probe actually cleared carries no gap. This is the
+    # user-visible half of the off-by-two: every honest assumption used to
+    # report "the statement did not elaborate in the refutation probe" into
+    # the manifest and the compiled writeup's known-gaps list.
+    assert manifest.grades.known_gaps == ()
 
 
 def test_a_run_that_declared_but_did_not_use_is_kernel_verified(tmp_path) -> None:
@@ -284,3 +294,23 @@ def test_the_declared_set_is_written_into_the_run_directory(tmp_path) -> None:
     assert declared[0]["name"] == "Papers.perelman.no_local_collapsing"
     assert declared[0]["source"].startswith("arXiv:")
     assert "assumptions.json" in manifest.artifacts
+
+
+def test_the_document_is_given_the_declarations_it_must_state(tmp_path) -> None:
+    """The rendering exists; this is what makes it fire in production."""
+    workflow, domain, controller, _ = _controller(
+        tmp_path, used=("Papers.perelman.no_local_collapsing",)
+    )
+    seen: dict = {}
+    builder = controller._writeup_builder
+
+    def watching(*args, **kwargs):
+        seen["declared"] = kwargs.get("declared")
+        return builder(*args, **{key: value for key, value in kwargs.items() if key != "declared"})
+
+    controller._writeup_builder = watching
+    declared = (_assumption(domain),)
+
+    _run(controller, workflow, domain, declared)
+
+    assert seen["declared"] == declared
