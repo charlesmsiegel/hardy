@@ -13,6 +13,7 @@ the model reached it through.
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -203,6 +204,7 @@ class ClaudeStagedRuntime:
         isolated: bool = False,
         phase: RunPhase = RunPhase.PROVING,
         wall_seconds: float | None = None,
+        allowed: Sequence[Any] = (),
     ) -> StagedThread:
         """Open one stage's thread, with the tools that stage is entitled to.
 
@@ -218,7 +220,18 @@ class ClaudeStagedRuntime:
         """
         # Before a claim is approved there is nothing to check a proof against,
         # so the formalizing stage is given no Lean tools at all.
-        lean_runtime = None if isolated else self._lean_runtime_factory(claim) if claim else None
+        # The declared assumptions travel with the claim, so the proof the
+        # model checks is elaborated in the environment the verifier will use.
+        # Without them `lean_check_proof` answered `unknown identifier` for
+        # every axiom the run was standing on, which tells a model its proof
+        # is wrong when the environment is what differed.
+        lean_runtime = (
+            None
+            if isolated
+            else self._lean_runtime_factory(claim, tuple(allowed))
+            if claim
+            else None
+        )
         specs: list[Any] = [] if isolated else list(TOOLS) if lean_runtime is not None else []
         if self._cas is not None and not isolated:
             specs = specs + CAS_TOOLS

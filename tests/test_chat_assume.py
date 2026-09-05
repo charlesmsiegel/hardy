@@ -588,3 +588,92 @@ def test_an_assumption_whose_statement_hides_a_hole_is_not_reported_clean(source
     result = sourced._tool("check_lean", {"path": "Holed.lean", "source": holed})
 
     assert "sorry" in result.output.lower() or not result.ok
+
+
+def test_a_quarantine_does_not_brick_the_same_leaf_in_another_paper(sourced) -> None:
+    """The leaf fallback matched across papers, and `Papers/<A>.lean` is
+    regenerated whole on every mint -- so one paper's rejected `main` refused
+    another paper's already-approved `main` forever, and the message accused
+    the innocent axiom of being the quarantined one."""
+    sourced._review_assumption = lambda **kwargs: (False, ("wrong quantifier",))
+    _assume(sourced)
+    quarantined = sourced.state["quarantine"][0]["formal_name"]
+    leaf = quarantined.rsplit(".", 1)[-1]
+    elsewhere = f"Papers.someone_else_0000000000.{leaf}"
+
+    refusal = sourced._final_gates(f"axiom {elsewhere} : True\n")
+
+    assert refusal is None or "quarantin" not in refusal.output.lower()
+
+
+def test_an_unqualified_spelling_of_a_quarantined_name_is_still_refused(sourced) -> None:
+    """The scan reports the name as the file spells it, so a module that
+    declares the axiom above its namespace gives the bare leaf. That is the
+    quarantined statement under another spelling, not a different one."""
+    sourced._review_assumption = lambda **kwargs: (False, ("wrong quantifier",))
+    _assume(sourced)
+    leaf = sourced.state["quarantine"][0]["formal_name"].rsplit(".", 1)[-1]
+
+    refusal = sourced._final_gates(f"axiom {leaf} : True\n")
+
+    assert refusal is not None
+    assert "quarantin" in refusal.output.lower()
+
+
+def test_the_generated_docstring_quotes_the_paper_s_own_sentence(sourced) -> None:
+    """`assume.py`'s promise is that a reader who wants to check an assumption
+    can find the sentence it was made from. The module is regenerated from the
+    durable record rather than from the object just minted, and the record
+    carried no paper text -- so no generated module ever quoted the paper."""
+    result = _assume(sourced)
+
+    assert result.ok, result.output
+    source = next((sourced.workspace / "lean" / "Papers").glob("*.lean")).read_text(
+        encoding="utf-8"
+    )
+
+    assert "The paper states:" in source
+    assert "bounded geometry" in source
+
+
+def test_a_refusal_past_the_search_gate_still_spends_the_inspection(sourced) -> None:
+    """`request_assumption` spends the evidence in a `finally` around
+    everything after the gate, and says why: letting it sit unconsumed let a
+    next request under a different name walk through the gate on evidence
+    that was never about it. Here the `finally` sat around the mint alone, so
+    every refusal between the gate and the mint returned with it intact."""
+    sourced.search = object()
+    assert _assume(sourced).ok
+
+    sourced._inspect_attempts_since_request = 1
+    refused = _assume(sourced)
+
+    assert not refused.ok
+    assert "already an approved assumption" in refused.output
+    assert sourced._inspect_attempts_since_request == 0
+
+
+def test_the_workspace_listing_of_refusals_is_bounded(sourced) -> None:
+    """The record keeps every refusal -- it is what the gate refuses from --
+    but the listing is re-sent whole on every `read_workspace`, so a model
+    that keeps proposing bad Lean was growing its own context with its own
+    rejected statements until the turn died."""
+    sourced.state["quarantine"] = [
+        {
+            "formal_name": f"Papers.k.n{index}",
+            "lean_statement": "x " * 5_000,
+            "informal_statement": "y " * 5_000,
+            "kind": "statement",
+            "divergences": ["z " * 5_000],
+            "paper": {"arxiv_id": PAPER, "cite_key": "k", "ref": "thm:collapse"},
+        }
+        for index in range(200)
+    ]
+
+    listing = json.loads(sourced._tool("read_workspace", {}).output)
+
+    assert listing["quarantine_count"] == 200
+    assert len(listing["quarantine"]) <= 20
+    assert len(json.dumps(listing["quarantine"])) < 40_000
+    # The most recent, because that is what the model just tried.
+    assert listing["quarantine"][-1]["formal_name"] == "Papers.k.n199"

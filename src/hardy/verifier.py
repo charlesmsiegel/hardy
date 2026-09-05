@@ -295,12 +295,8 @@ def verification_source(
     reading the workspace would let the thing being checked supply its own
     premises.
     """
-    theorem = render_theorem(claim, proof_body)
-    declarations = "".join(
-        f"axiom {item.name} : {item.statement.strip()}\n" for item in allowed
-    )
-    head = f"{declarations}\n" if declarations else ""
-    return f"{head}{theorem}\n{axiom_report_line(claim.proposal.theorem_name)}\n"
+    theorem = render_theorem(claim, proof_body, allowed)
+    return f"{theorem}\n{axiom_report_line(claim.proposal.theorem_name)}\n"
 
 
 def declaration_violation(item: DeclaredAssumption) -> str | None:
@@ -318,7 +314,11 @@ def declaration_violation(item: DeclaredAssumption) -> str | None:
     stripped = strip_comments(item.statement)
     if ":=" in stripped:
         return f"the statement of {item.name!r} carries a proof"
-    if "\n" in item.statement.strip():
+    # Every line terminator, not just `\n`. A statement `True\raxiom X : False`
+    # is one Python line and two Lean ones; the file is rendered on a single
+    # line, so anything that ends a line ends the declaration and starts
+    # whatever follows.
+    if any(character in item.statement.strip() for character in ("\n", "\r", "\x0b", "\x0c", "\u2028", "\u2029")):
         return f"the statement of {item.name!r} spans more than one line"
     unauthorized = UNAUTHORIZED_SIGNATURE_TOKEN.search(stripped)
     if unauthorized is not None:

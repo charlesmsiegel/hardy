@@ -351,8 +351,21 @@ def _assumptions(
         provenance = escape_tex_text(f"Assumed from {item.source.strip()}.")
         if item.justification.strip():
             provenance += " " + escape_tex_text(item.justification.strip())
-        lines.append(f"{rendered}\\{BACKSLASH}\\{BACKSLASH}{provenance}")
-    return "\n".join(BACKSLASH + "item " + line for line in lines)
+        # One line break, not two: the provenance sits under the statement it
+        # describes. Two in a row is two breaks, and LaTeX refuses the
+        # second with "there's no line here to end" -- which is no PDF at all.
+        lines.append(f"{rendered}{BACKSLASH}{BACKSLASH}{provenance}")
+    # The template writes this after a bold label and opens no list
+    # of its own, so the block has to carry its own environment. A bare
+    # item outside one is a fatal error, not a formatting blemish.
+    return (
+        BACKSLASH
+        + "begin{itemize}\n"
+        + "\n".join(BACKSLASH + "item " + line for line in lines)
+        + "\n"
+        + BACKSLASH
+        + "end{itemize}"
+    )
 
 
 def _items(values: tuple[str, ...], empty: str) -> str:

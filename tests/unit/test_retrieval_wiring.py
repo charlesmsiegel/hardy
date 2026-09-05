@@ -142,7 +142,7 @@ def test_the_staged_dispatcher_offers_the_same_tool(tmp_path) -> None:
     )
     dispatch = staged.ClaudeStagedRuntime(
         store=storage.RunStore.create(tmp_path / 'staged', 'prove', now=NOW, run_id=RUN_ID),
-        lean_runtime_factory=lambda claim: runtime,
+        lean_runtime_factory=lambda claim, allowed=(): runtime,
     )._dispatcher(runtime)
 
     result = dispatch('rank_premises', {'goal': '_ + _ = _ + _', 'limit': 5})
@@ -179,7 +179,7 @@ def test_a_staged_ranking_reaches_the_run_record(tmp_path) -> None:
         ),
     )
     dispatch = staged.ClaudeStagedRuntime(
-        store=store, lean_runtime_factory=lambda claim: runtime
+        store=store, lean_runtime_factory=lambda claim, allowed=(): runtime
     )._dispatcher(runtime)
 
     assert dispatch('rank_premises', {'goal': '_ + _ = _ + _'}).ok
@@ -212,7 +212,7 @@ def test_a_malformed_retrieval_call_is_an_answer_rather_than_a_traceback(tmp_pat
         retriever=_retriever(retrieval, []),
     )
     dispatch = staged.ClaudeStagedRuntime(
-        store=None, lean_runtime_factory=lambda claim: runtime
+        store=None, lean_runtime_factory=lambda claim, allowed=(): runtime
     )._dispatcher(runtime)
 
     result = dispatch('rank_premises', {'goal': 'x' * 5_000})

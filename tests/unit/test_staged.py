@@ -18,7 +18,7 @@ def test_close_shuts_down_the_staged_cas_kernel(cas_session) -> None:
 
     runtime = staged.ClaudeStagedRuntime(
         store=None,
-        lean_runtime_factory=lambda claim: None,
+        lean_runtime_factory=lambda claim, allowed=(): None,
         cas_runtime=cas_runtime,
     )
 
@@ -64,7 +64,7 @@ def _staged(tmp_path, cas_runtime=None):
     )
     runtime = staged.ClaudeStagedRuntime(
         store=store,
-        lean_runtime_factory=lambda claim: object(),
+        lean_runtime_factory=lambda claim, allowed=(): object(),
         runtime_class=_RecordingRuntime,
         cas_runtime=cas_runtime,
     )
@@ -338,7 +338,7 @@ def test_a_cancelled_runtime_refuses_to_open_a_new_turn():
 
     runtime = ClaudeStagedRuntime(
         store=SimpleNamespace(append=lambda *a, **k: None),
-        lean_runtime_factory=lambda claim: None,
+        lean_runtime_factory=lambda claim, allowed=(): None,
     )
     asked: list[str] = []
     thread = StagedThread(
@@ -369,7 +369,7 @@ def test_a_turn_is_opened_under_the_lock_that_arms_cancellation():
 
     runtime = ClaudeStagedRuntime(
         store=SimpleNamespace(append=lambda *a, **k: None),
-        lean_runtime_factory=lambda claim: None,
+        lean_runtime_factory=lambda claim, allowed=(): None,
     )
     held: list[bool] = []
 
@@ -398,7 +398,7 @@ def test_a_runtime_that_cannot_stream_still_answers_a_stage():
 
     runtime = ClaudeStagedRuntime(
         store=SimpleNamespace(append=lambda *a, **k: None),
-        lean_runtime_factory=lambda claim: None,
+        lean_runtime_factory=lambda claim, allowed=(): None,
     )
     asked: list[str] = []
     thread = StagedThread(
@@ -420,7 +420,7 @@ def test_cancellation_is_armed_under_that_same_lock():
 
     runtime = ClaudeStagedRuntime(
         store=SimpleNamespace(append=lambda *a, **k: None),
-        lean_runtime_factory=lambda claim: None,
+        lean_runtime_factory=lambda claim, allowed=(): None,
     )
     held: list[bool] = []
     thread = StagedThread(
@@ -473,7 +473,7 @@ def test_cancelling_a_staged_run_asks_its_cas_kernel_to_stop() -> None:
     session = _CountingCasSession()
     runtime = staged.ClaudeStagedRuntime(
         store=None,
-        lean_runtime_factory=lambda claim: None,
+        lean_runtime_factory=lambda claim, allowed=(): None,
         cas_runtime=_CasRuntime(session),
     )
 
@@ -499,7 +499,7 @@ def test_the_second_press_escalates_the_staged_cas_kernel() -> None:
     session = _CountingCasSession()
     runtime = staged.ClaudeStagedRuntime(
         store=None,
-        lean_runtime_factory=lambda claim: None,
+        lean_runtime_factory=lambda claim, allowed=(): None,
         cas_runtime=_CasRuntime(session),
     )
 
@@ -513,7 +513,7 @@ def test_a_staged_run_without_cas_is_not_an_error_to_cancel() -> None:
     staged = importlib.import_module('hardy.staged')
 
     runtime = staged.ClaudeStagedRuntime(
-        store=None, lean_runtime_factory=lambda claim: None, cas_runtime=None
+        store=None, lean_runtime_factory=lambda claim, allowed=(): None, cas_runtime=None
     )
 
     assert runtime.interrupt_cas() is False

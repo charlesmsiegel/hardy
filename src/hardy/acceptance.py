@@ -91,7 +91,12 @@ ASSUMPTIONS_FILE = "assumptions.json"
 
 
 def _declared(run_dir: Path) -> tuple[DeclaredAssumption, ...] | None:
-    """What a human declared this run could stand on, or None if unreadable."""
+    """What the run recorded it was allowed to stand on, or None if unreadable.
+
+    Written by the run from `--assume`, into the run's own directory, so this
+    is the declaration the run made rather than a signature it could not
+    forge. See `_verified_issues` for what that does and does not buy.
+    """
     path = run_dir / ASSUMPTIONS_FILE
     if not path.is_file():
         return None
@@ -270,7 +275,7 @@ class _DeterministicRuntime:
 
 
 class _DeterministicLean:
-    def check_proof(self, claim: FrozenClaim, proof_body: str) -> LeanCheckResult:
+    def check_proof(self, claim: FrozenClaim, proof_body: str, allowed=()) -> LeanCheckResult:
         process = ProcessResult(
             argv=("deterministic-lean",),
             cwd=Path("."),
@@ -472,11 +477,18 @@ def _verified_run_issues(
         issues.append("verified run has no lean/verification.json")
     else:
         issues.extend(_verification_record_issues(verification_path, evidence))
-    # The assumption set is checked against what a HUMAN declared before the
-    # run, not against what the run says it assumed. `manifest.grades.assumed`
-    # is written by the artifact under audit: taking the allowlist from it let
-    # a run name its own axiom -- `falsum : False` -- and pass every check,
-    # which made this whole function vacuous for a `verified_modulo` grade.
+    # The allowlist comes from `assumptions.json` rather than from
+    # `manifest.grades.assumed`: taking it from the grade let a run name its
+    # own axiom -- `falsum : False` -- and pass every check, which made this
+    # whole function vacuous for a `verified_modulo` grade.
+    #
+    # What that buys is internal consistency across four artifacts, not a
+    # human's signature: `assumptions.json` is written by the run into the
+    # run's own directory, so a fabricated run that declares `falsum` *and*
+    # states it in `Main.lean` *and* reports it in the grade still passes.
+    # Provenance the run cannot mint is what would close that, and nothing
+    # here provides it (#84). The bar this raises is "name your own axiom in
+    # every place at once", not "a human said so".
     issues.extend(_declaration_issues(manifest, main, run_dir))
     permitted = permitted_axioms(_declared_names(run_dir) & set(manifest.grades.assumed))
     unexpected = tuple(axiom for axiom in evidence.axioms if axiom not in permitted)

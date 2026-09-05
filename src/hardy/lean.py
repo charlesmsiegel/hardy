@@ -230,14 +230,35 @@ class LeanToolResult(ToolResult):
         }
 
 
-def render_theorem(claim: FrozenClaim, proof_body: str) -> str:
+def render_theorem(
+    claim: FrozenClaim, proof_body: str, allowed: Sequence[Any] = ()
+) -> str:
+    """The claim as one Lean file, with any declared assumptions in scope.
+
+    The declarations go *after* the imports, because Lean 4 admits `import`
+    only in the module header: a command above it is `invalid 'import'
+    command, it must be used in the beginning of the file`. Rendering them
+    first produced a file that could not parse at all, so every run that
+    declared an assumption failed verification on a syntax error rather than
+    on its mathematics.
+
+    Both the in-loop check and the independent verifier render through here,
+    so the environment a proof is written against is the environment it is
+    judged in. They diverged once: the loop saw no declarations, so a proof
+    citing one got `unknown identifier` from every official check and could
+    never be submitted.
+    """
     imports = "".join(f"import {name}\n" for name in claim.imports)
+    declarations = "".join(
+        f"axiom {item.name} : {item.statement.strip()}\n" for item in allowed
+    )
     binders = f" {claim.proposal.binders.strip()}" if claim.proposal.binders.strip() else ""
     signature = (
         f"theorem {claim.proposal.theorem_name}{binders} : "
         f"{claim.proposal.proposition.strip()} :="
     )
-    return f"{imports}\n{signature}\n{proof_body.rstrip()}\n"
+    head = f"{imports}\n{declarations}\n" if declarations else f"{imports}\n"
+    return f"{head}{signature}\n{proof_body.rstrip()}\n"
 
 
 def parse_lean_json(output: str) -> tuple[tuple[LeanDiagnostic, ...], tuple[str, ...]]:
@@ -697,6 +718,18 @@ class LeanTools:
         return self._run(f"{imports}\n\n#check {name}\n#print {name}\n")
 
 
+def scratch_source(source: str) -> str:
+    """The file `check_scratch` elaborates: the Mathlib header, then the body.
+
+    A function rather than a format string inside the method because
+    `refute`'s verdict is read off which *line* an error landed on, so the
+    header's height is part of a contract two modules and their tests share.
+    Doubles that spelled it out for themselves asserted on their own
+    arithmetic, and stayed green while production shifted by a line.
+    """
+    return f"import Mathlib\n\n{source.rstrip()}\n"
+
+
 class LeanService:
     """Claim-shaped Lean access for the staged workflow and the MCP server."""
 
@@ -734,13 +767,15 @@ class LeanService:
         """
         return self._lean_project
 
-    def check_proof(self, claim: FrozenClaim, proof_body: str) -> LeanCheckResult:
-        return self._check_source(render_theorem(claim, proof_body))
+    def check_proof(
+        self, claim: FrozenClaim, proof_body: str, allowed: Sequence[Any] = ()
+    ) -> LeanCheckResult:
+        return self._check_source(render_theorem(claim, proof_body, allowed))
 
     def check_scratch(self, source: str) -> LeanCheckResult:
         if len(source.encode("utf-8")) > 64 * 1024:
             raise ValueError("scratch source exceeds the 64 KiB limit")
-        return self._check_source(f"import Mathlib\n\n{source.rstrip()}\n")
+        return self._check_source(scratch_source(source))
 
     def inspect_declarations(self, names: tuple[str, ...]) -> DeclarationInspection:
         if not 1 <= len(names) <= 20:

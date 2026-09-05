@@ -313,7 +313,15 @@ def test_a_hole_is_refused_however_much_was_declared(tmp_path) -> None:
 
 @pytest.mark.parametrize(
     "statement",
-    ["True := trivial", "True\ntheorem sneaky : False", "True #eval dangerous"],
+    [
+        "True := trivial",
+        "True\ntheorem sneaky : False",
+        "True #eval dangerous",
+        # Every line terminator, not just `\n`. The declaration is rendered on
+        # one line, so anything that ends a line starts whatever follows it.
+        "True\raxiom sneaky : False",
+        "True\u2028axiom sneaky : False",
+    ],
 )
 def test_a_declared_statement_that_is_not_a_type_never_reaches_lean(
     tmp_path, statement
@@ -415,3 +423,40 @@ def test_a_declared_assumption_may_not_shadow_the_theorem_being_proved(tmp_path)
 
     assert not result.verified
     assert result.reason is domain.TerminalReason.FORBIDDEN_HOLE
+
+
+def test_the_verified_source_is_a_file_lean_will_parse(tmp_path) -> None:
+    """Lean 4 admits `import` only in the module header: any command above it
+    is `invalid 'import' command`. Rendering the declarations before the
+    imports made every `--assume` run fail final verification with a parse
+    error, so `verified_modulo` could not be produced at all."""
+    domain = importlib.import_module("hardy.domain")
+    verifier = importlib.import_module("hardy.verifier")
+    claim = _claim(domain)
+
+    source = verifier.verification_source(claim, "by rfl", (_assumption(domain),))
+
+    lines = source.splitlines()
+    assert lines[0] == "import Mathlib", source
+    # Every import first, then the declarations, then the theorem.
+    imports = [index for index, line in enumerate(lines) if line.startswith("import ")]
+    axiom = next(index for index, line in enumerate(lines) if line.startswith("axiom "))
+    theorem = next(index for index, line in enumerate(lines) if line.startswith("theorem "))
+    assert max(imports) < axiom < theorem, source
+
+
+def test_a_declared_assumption_is_in_scope_for_the_loop_that_writes_the_proof(
+    tmp_path,
+) -> None:
+    """The official in-loop check renders the same environment the verifier
+    does. Without the declarations a proof citing one got `unknown identifier`
+    from every check, so no proof using a declared assumption could ever be
+    submitted -- the feature was unusable from both ends."""
+    domain = importlib.import_module("hardy.domain")
+    lean = importlib.import_module("hardy.lean")
+    claim = _claim(domain)
+
+    rendered = lean.render_theorem(claim, "by rfl", (_assumption(domain),))
+
+    assert rendered.splitlines()[0] == "import Mathlib"
+    assert "axiom Papers.perelman.no_local_collapsing : True" in rendered

@@ -666,13 +666,23 @@ class PaperLibrary:
             extraction = archives.extract(
                 archive, staging, **({} if limits is None else {"limits": limits})
             )
-            if any(item.path in (SOURCE_MANIFEST, SOURCE_ARCHIVE) for item in extraction.files):
+            # Asked of the staging tree rather than of `extraction.files`,
+            # because a *directory* takes the name just as a file does and is
+            # not reported as a file: `archive.bin/y.tex` extracted cleanly
+            # and then met `IsADirectoryError` on the write below -- an
+            # `OSError`, which no caller of this module catches, so the turn
+            # ended instead of the refusal being read. `lexists` rather than
+            # `exists` so a name is a name whatever it points at.
+            if any(
+                os.path.lexists(staging / name)
+                for name in (SOURCE_MANIFEST, SOURCE_ARCHIVE)
+            ):
                 # The manifest is Hardy's own claim about the tree. An archive
                 # carrying a file of that name would either overwrite it or be
                 # overwritten by it, and either way one of the two would be
                 # read as the other.
                 raise ArxivError(
-                    f"the archive contains a file named {SOURCE_MANIFEST} or "
+                    f"the archive contains an entry named {SOURCE_MANIFEST} or "
                     f"{SOURCE_ARCHIVE}, which are the names Hardy's own manifest and stored "
                     "bundle take; refusing it"
                 )

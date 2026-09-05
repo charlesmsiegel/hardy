@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -161,3 +162,55 @@ def test_an_assumption_the_document_cannot_describe_is_still_named() -> None:
     rendered = _render(assumed=("Papers.mystery.one",), declared=())
 
     assert "Papers.mystery.one" in rendered
+
+
+def test_every_item_the_document_writes_is_inside_a_list() -> None:
+    r"""`\item` outside a list environment is a fatal LaTeX error, so a
+    document that emits one has no PDF at all -- and the assumptions block
+    is exactly where a reader goes to check what the result rests on."""
+    domain = importlib.import_module("hardy.domain")
+    declared = (
+        domain.DeclaredAssumption(
+            name="Papers.a.one",
+            statement="∀ n : Nat, n = n",
+            source="arXiv:2401.00001v1 (thm:one)",
+            justification="Mathlib has no such theory.",
+        ),
+    )
+    rendered = _render(assumed=("Papers.a.one", "Papers.b.two"), declared=declared)
+
+    slash = chr(92)
+    pattern = re.compile(
+        slash + slash + r"(begin|end)" + slash + r"{(itemize|enumerate|description)"
+        + slash + r"}|" + slash + slash + r"item(?![A-Za-z])"
+    )
+    depth = 0
+    for match in pattern.finditer(rendered):
+        if match.group(1) == "begin":
+            depth += 1
+        elif match.group(1) == "end":
+            depth -= 1
+        else:
+            assert depth > 0, (
+                f"an item at character {match.start()} is outside any list: "
+                f"{rendered[match.start() : match.start() + 80]!r}"
+            )
+    assert depth == 0, "a list environment was left open"
+
+
+def test_a_described_assumption_breaks_its_line_once() -> None:
+    r"""The provenance goes on its own line under the statement, which is one
+    `\\`. Four backslashes are two line breaks in a row, and LaTeX refuses
+    the second with "there's no line here to end"."""
+    domain = importlib.import_module("hardy.domain")
+    declared = (
+        domain.DeclaredAssumption(
+            name="Papers.a.one",
+            statement="∀ n : Nat, n = n",
+            source="arXiv:2401.00001v1 (thm:one)",
+            justification="Mathlib has no such theory.",
+        ),
+    )
+    rendered = _render(assumed=("Papers.a.one",), declared=declared)
+
+    assert chr(92) * 4 not in rendered

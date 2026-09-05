@@ -70,7 +70,15 @@ class Limits:
     max_file_bytes: int = 64 * 1024 * 1024
     max_total_bytes: int = 256 * 1024 * 1024
     max_depth: int = 16
-    max_component_chars: int = 255
+    #: Bounds are in bytes, not characters: ext4 bounds a name at 255
+    #: bytes and Linux bounds a path at 4096, so a name of 255 two-byte
+    #: characters is twice what the filesystem will take. Counting
+    #: characters let that member through to an `OSError` no caller of
+    #: this module catches.
+    max_component_bytes: int = 255
+    #: The assembled relative path. Generous for a paper, and far enough
+    #: under `PATH_MAX` to leave room for whatever root it is joined to.
+    max_path_bytes: int = 1024
 
     @property
     def stream_bytes(self) -> int:
@@ -187,6 +195,14 @@ def extract(data: bytes, into: Path, *, limits: Limits = DEFAULT_LIMITS) -> Extr
     except ArchiveError:
         _clear(into)
         raise
+    except OSError as error:
+        # The path bounds above are what should stop this, but the filesystem
+        # has the last word on what it will take, and an `OSError` out of here
+        # ends the model's turn: no caller of this module catches one. A
+        # refusal by name is the promise the module makes, so it keeps it even
+        # when the refusal comes from the kernel.
+        _clear(into)
+        raise ArchiveError(f"the archive could not be written: {error}") from error
     except BaseException:
         _clear(into)
         raise
@@ -216,9 +232,12 @@ def member_path(name: str, limits: Limits = DEFAULT_LIMITS) -> str:
         raise ArchiveError(f"the member path {name!r} names nothing")
     if len(parts) > limits.max_depth:
         raise ArchiveError(f"the member path {name!r} is nested too deep")
-    if any(len(part) > limits.max_component_chars for part in parts):
+    if any(len(part.encode("utf-8")) > limits.max_component_bytes for part in parts):
         raise ArchiveError(f"a component of the member path {name!r} is too long")
-    return "/".join(parts)
+    path = "/".join(parts)
+    if len(path.encode("utf-8")) > limits.max_path_bytes:
+        raise ArchiveError(f"the member path {name!r} is too long")
+    return path
 
 
 def _extract_tar(stream: _Bounded, into: Path, limits: Limits) -> tuple[ExtractedFile, ...]:

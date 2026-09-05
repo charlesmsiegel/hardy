@@ -1123,8 +1123,9 @@ def build_prove_workflow(config: configuration.Config, config_path: Path, *, bac
         declarations = DeclarationIndex(config.lean_project)
         return ClaudeStagedRuntime(
             store=store,
-            lean_runtime_factory=lambda claim: LeanToolRuntime(
+            lean_runtime_factory=lambda claim, allowed=(): LeanToolRuntime(
                 claim=claim,
+                allowed=allowed,
                 service=lean,
                 store=store,
                 official_checks=config.limits.official_checks,

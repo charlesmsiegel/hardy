@@ -307,3 +307,38 @@ def test_an_archive_the_service_refused_is_reported_rather_than_stored(held) -> 
         client.fetch_source(PAPER)
 
     assert not library.holds_source(arxiv.parse_id(PAPER))
+
+
+def test_an_archive_naming_hardy_s_own_manifest_is_refused(held) -> None:
+    """The manifest is Hardy's claim about the tree. A member of that name
+    would overwrite it or be overwritten by it, and either way one of the two
+    is read as the other."""
+    _, library, _ = held
+
+    with pytest.raises(arxiv.ArxivError, match="refusing it"):
+        library.admit_source(
+            arxiv.parse_id(PAPER),
+            _bundle((arxiv.SOURCE_MANIFEST, b"{}"), ("main.tex", MAIN)),
+            source_url="u",
+            fetched_at="t",
+        )
+
+    assert not library.holds_source(arxiv.parse_id(PAPER))
+
+
+def test_a_directory_taking_a_reserved_name_is_refused_rather_than_crashing(held) -> None:
+    """The guard compared extracted file paths, so `archive.bin/y.tex` walked
+    past it and the write of the stored bundle came back
+    `IsADirectoryError` -- an `OSError`, which the model's dispatch does not
+    catch, so the turn ended instead of the refusal being read."""
+    _, library, _ = held
+
+    with pytest.raises(arxiv.ArxivError, match="refusing it"):
+        library.admit_source(
+            arxiv.parse_id(PAPER),
+            _bundle((f"{arxiv.SOURCE_ARCHIVE}/y.tex", MAIN)),
+            source_url="u",
+            fetched_at="t",
+        )
+
+    assert not library.holds_source(arxiv.parse_id(PAPER))

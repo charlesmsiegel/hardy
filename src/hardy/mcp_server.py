@@ -14,7 +14,7 @@ a bounded summary that names the artifact holding the rest.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import UUID
@@ -44,8 +44,13 @@ class LeanToolRuntime:
         observation_bytes: int,
         retriever: PremiseRetriever | None = None,
         declarations: DeclarationIndex | None = None,
+        allowed: Sequence[Any] = (),
     ) -> None:
         self.claim = claim
+        #: What this run declared it may stand on. Rendered into every proof
+        #: this runtime checks, so the model develops against the environment
+        #: its work is finally judged in.
+        self.allowed = tuple(allowed)
         self.service = service
         self.store = store
         self.remaining_official_checks = official_checks
@@ -84,7 +89,7 @@ class LeanToolRuntime:
         if self.remaining_official_checks <= 0:
             raise ValueError("official proof-check budget exhausted")
         self.remaining_official_checks -= 1
-        return self.bound_check(self.service.check_proof(self.claim, proof_body))
+        return self.bound_check(self.service.check_proof(self.claim, proof_body, self.allowed))
 
     def bound_check(self, result: LeanCheckResult) -> LeanCheckResult:
         if len(result.model_dump_json().encode("utf-8")) <= self.observation_bytes:

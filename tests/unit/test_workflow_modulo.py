@@ -41,7 +41,7 @@ def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
     class Runtime:
         backend = "fixture-backend"
 
-        def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None):
+        def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None, allowed=()):
             return object()
 
         def run_structured(self, thread, stage, prompt, output_type):
@@ -77,7 +77,7 @@ def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
         )
 
     class Lean:
-        def check_proof(self, claim, proof_body):
+        def check_proof(self, claim, proof_body, allowed=()):
             return lean_module.LeanCheckResult(
                 success=True,
                 diagnostics=(),
@@ -88,11 +88,12 @@ def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
             )
 
         def check_scratch(self, source):
-            # Exactly what the real `LeanService.check_scratch` elaborates,
-            # header and all. A double that numbered the lines of the string
-            # it was handed asserted on its own arithmetic rather than on
-            # production's, and passed while the probe was two lines out.
-            source = f"import Mathlib\n\n{source.rstrip()}\n"
+            # Through production's own assembly, header and all. A double that
+            # numbered the lines of the string it was handed asserted on its
+            # own arithmetic rather than on production's, and passed while the
+            # probe was two lines out; one that rebuilt the header here would
+            # stay green through a change to it.
+            source = lean_module.scratch_source(source)
             probes.append(source)
             refute = importlib.import_module("hardy.refute")
             if unreadable:

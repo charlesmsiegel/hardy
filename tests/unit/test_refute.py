@@ -15,7 +15,7 @@ that is not clearly an answer has to become a caveat rather than a verdict.
 from __future__ import annotations
 
 from hardy import refute
-from hardy.lean import LeanDiagnostic, LeanToolResult
+from hardy.lean import LeanDiagnostic, LeanToolResult, scratch_source
 
 
 def _result(source: str, *, failing: set[int], ok: bool = False, output: str = "") -> LeanToolResult:
@@ -183,8 +183,9 @@ def test_a_caller_that_supplies_its_own_header_gets_the_body_alone() -> None:
     body, tactics = refute.probe_source("2 + 2 = 5", imported=False)
 
     assert not body.startswith("import")
-    # What `check_scratch` elaborates, spelled exactly as it spells it.
-    elaborated = f"import Mathlib\n\n{body.rstrip()}\n".splitlines()
+    # Asked of production rather than spelled out again here: a double that
+    # rebuilds the header asserts on its own arithmetic.
+    elaborated = scratch_source(body).splitlines()
     assert elaborated[0] == "import Mathlib"
     for index, tactic in enumerate(tactics):
         assert elaborated[refute.FIRST_PROBE - 1 + index].endswith(f":= by {tactic}")
@@ -197,4 +198,39 @@ def test_both_spellings_put_the_probes_on_the_same_lines() -> None:
     whole, tactics = refute.probe_source("True")
     body, _ = refute.probe_source("True", imported=False)
 
-    assert whole.splitlines() == f"import Mathlib\n\n{body.rstrip()}\n".splitlines()
+    assert whole.splitlines() == scratch_source(body).splitlines()
+
+
+def test_a_truncated_answer_is_a_caveat_not_a_refutation() -> None:
+    """`exact?` against Mathlib can outrun the output limit. The interactive
+    result carries `output_overflow` as a field of its own rather than on a
+    child process, and reading only the child's meant a silent probe line --
+    silent because Lean's answer was cut off -- was reported to a human as
+    "Lean proves the NEGATION of this statement"."""
+    source, tactics = refute.probe_source("True")
+    result = LeanToolResult(
+        False,
+        "output limit reached",
+        source,
+        diagnostics=(
+            LeanDiagnostic(severity="error", message="unsolved goals", line=refute.FIRST_PROBE, column=0),
+        ),
+        output_overflow=True,
+    )
+
+    verdict = refute.judge(result, tactics)
+
+    assert not verdict.refuted
+    assert verdict.caveat
+
+
+def test_a_statement_that_survives_the_one_line_collapse_is_refused() -> None:
+    """`normalise_lean` deliberately preserves newlines inside string literals
+    and raw strings, so the collapse is not total. The verdict is read off
+    which line a diagnostic landed on, so a surviving newline shifts every
+    probe below it and attributes an answer to the wrong tactic. Both callers
+    happen to filter first; the guard belongs beside the contract."""
+    import pytest
+
+    with pytest.raises(ValueError, match="one line"):
+        refute.probe_source('True ∧ (s = "a\nb").isEmpty')

@@ -1203,13 +1203,18 @@ class MathematicsSession:
         # An unfaithfully formalised statement is not an assumption a human
         # may approve their way past: the reader said this Lean does not say
         # what the paper says, and declaring it anyway would let Hardy derive
-        # claims the paper never made under the paper's name. Checked on the
-        # qualified name and on the leaf, because the file that declares it
-        # may sit in the namespace the quarantine recorded or above it.
+        # claims the paper never made under the paper's name. Matched on the
+        # qualified name and on any shorter spelling of *that same* name,
+        # because the file that declares it may sit inside the namespace the
+        # quarantine recorded rather than above it. Not on the bare leaf
+        # across papers: `Papers/<key>.lean` is regenerated whole on every
+        # mint, so one paper's rejected `main` refused every other paper's
+        # approved `main` forever -- and blamed the innocent axiom for it.
         quarantined = self._quarantined_names()
-        leaves = {name.rsplit(".", 1)[-1] for name in quarantined}
         for name, _ in assumptions(source):
-            if name in quarantined or name.rsplit(".", 1)[-1] in leaves:
+            if name in quarantined or any(
+                held.endswith(f".{name}") for held in quarantined
+            ):
                 return ToolResult(
                     False,
                     f"`{name}` is quarantined: an independent reader found that this Lean "
@@ -3892,7 +3897,14 @@ class MathematicsSession:
             # left in the record alone: a model that cannot see why a name is
             # refused will keep proposing it, and a reader of the workspace
             # is owed the list of what was tried and rejected.
-            "quarantine": list(self.state.get("quarantine", ())),
+            #
+            # The most recent ones, and how many there are. The record keeps
+            # every entry -- it is what `_final_gates` refuses from -- but this
+            # listing is re-sent whole on every `read_workspace`, so a model
+            # that keeps proposing bad Lean was growing its own context with
+            # its own rejected statements until the turn died.
+            "quarantine": self._recent_quarantine(),
+            "quarantine_count": len(self.state.get("quarantine", ())),
             # The Lean this project may import but did not author, and which of
             # its own modules answer to a shared name instead. Reported rather
             # than left implicit: a model that cannot see the library cannot
@@ -5052,33 +5064,39 @@ class MathematicsSession:
                 "no `inspect_declarations` has been run since the last assumption request. "
                 "Look for the result in Mathlib before assuming it from the paper.",
             )
-        short = request["formal_name"].strip()
+        # Spent from here on, whatever the answer, for the reason
+        # `_request_assumption` spends it: an inspection was evidence about
+        # *this* request, and leaving it standing on a refusal let the next
+        # request under a different name walk through the gate on evidence
+        # that was never about it. The `finally` sat around the mint alone, so
+        # the three refusals between here and there returned it intact.
         try:
-            entry, _ = self.papers.bibliography.cite(record)
-        except (BibliographyError, LockTimeout, OSError, LayoutError) as error:
-            return ToolResult(
-                False, f"the paper could not be recorded in the bibliography: {error}"
-            )
-        try:
-            namespace = assume_module.namespace_for(entry.key)
-        except assume_module.AssumeError as error:
-            return ToolResult(False, str(error))
-        qualified = f"{namespace}.{short}"
-        if any(item["formal_name"] == qualified for item in self.state["assumptions"]):
-            # Refused here rather than at the save, and before the human is
-            # asked. The module is regenerated from the record, so a second
-            # mint under a recorded name renders that axiom twice and the save
-            # is refused -- after an approval was spent, with a message
-            # blaming the approval flow for a rendering fault. Nothing revises
-            # a minted assumption in place (`Papers/` is closed to `save_lean`
-            # and `delete_file`), so a different name is the only honest move.
-            return ToolResult(
-                False,
-                f"`{qualified}` is already an approved assumption from this paper. An "
-                "assumption cannot be restated under a name that is already minted: ask "
-                "for the corrected statement under a new formal_name.",
-            )
-        try:
+            short = request["formal_name"].strip()
+            try:
+                entry, _ = self.papers.bibliography.cite(record)
+            except (BibliographyError, LockTimeout, OSError, LayoutError) as error:
+                return ToolResult(
+                    False, f"the paper could not be recorded in the bibliography: {error}"
+                )
+            try:
+                namespace = assume_module.namespace_for(entry.key)
+            except assume_module.AssumeError as error:
+                return ToolResult(False, str(error))
+            qualified = f"{namespace}.{short}"
+            if any(item["formal_name"] == qualified for item in self.state["assumptions"]):
+                # Refused here rather than at the save, and before the human is
+                # asked. The module is regenerated from the record, so a second
+                # mint under a recorded name renders that axiom twice and the save
+                # is refused -- after an approval was spent, with a message
+                # blaming the approval flow for a rendering fault. Nothing revises
+                # a minted assumption in place (`Papers/` is closed to `save_lean`
+                # and `delete_file`), so a different name is the only honest move.
+                return ToolResult(
+                    False,
+                    f"`{qualified}` is already an approved assumption from this paper. An "
+                    "assumption cannot be restated under a name that is already minted: ask "
+                    "for the corrected statement under a new formal_name.",
+                )
             return self._mint(request, record, entry, wanted, namespace, qualified, kind)
         finally:
             self._consume_search_evidence()
@@ -5192,6 +5210,12 @@ class MathematicsSession:
                 "cite_key": entry.key,
                 "ref": wanted.ref,
                 "heading": wanted.heading,
+                # The paper's own sentence, kept because the module is
+                # regenerated from this record rather than from the object
+                # minted here. Without it every generated docstring named the
+                # statement and quoted nothing, which is the one thing a
+                # reader checking an assumption needs.
+                "text": wanted.text,
                 "module": "",
             },
         }
@@ -5360,6 +5384,24 @@ class MathematicsSession:
         self._record({"type": "assumption_quarantined", "formal_name": qualified,
                       "divergences": list(divergences)})
 
+    #: How many refused translations `read_workspace` shows. The record keeps
+    #: all of them; this is what fits in a response that is sent again on
+    #: every read.
+    QUARANTINE_SHOWN = 10
+
+    def _recent_quarantine(self) -> list[dict[str, Any]]:
+        """The last few refusals, each cut to what a model has to act on."""
+        held = list(self.state.get("quarantine", ()))
+        return [
+            {
+                "formal_name": item.get("formal_name", ""),
+                "lean_statement": str(item.get("lean_statement", ""))[:400],
+                "divergences": [str(reason)[:400] for reason in item.get("divergences", ())][:5],
+                "paper": item.get("paper", {}),
+            }
+            for item in held[-self.QUARANTINE_SHOWN :]
+        ]
+
     def _quarantined_names(self) -> set[str]:
         return {str(item["formal_name"]) for item in self.state.get("quarantine", ())}
 
@@ -5385,7 +5427,9 @@ class MathematicsSession:
                 kind=str(item.get("kind") or "statement"),
                 ref=str(item.get("paper", {}).get("ref", "")),
                 heading=str(item.get("paper", {}).get("heading", "")),
-                paper_text="",
+                # Absent from records written before this was stored; those
+                # modules render as they always did rather than failing.
+                paper_text=str(item.get("paper", {}).get("text", "")),
             )
             for item in self.state["assumptions"]
             if item.get("paper", {}).get("cite_key") == entry.key

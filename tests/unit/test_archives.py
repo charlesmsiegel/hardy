@@ -287,3 +287,29 @@ def test_a_trailing_byte_that_cannot_be_utf8_is_not_text(into: Path) -> None:
     result = archives.extract(_tar(("odd.tex", b"abc\xff", "file")), into)
 
     assert result.files[0].text is False
+
+
+def test_a_name_that_is_255_characters_but_510_bytes_is_refused_by_name(into: Path) -> None:
+    """The component bound counted characters; ext4 counts bytes. A name of
+    255 two-byte characters sailed past the check and came back as
+    `OSError: File name too long` -- an exception this module's callers do
+    not catch, so a hostile bundle ended the turn instead of being refused."""
+    archive = _tar((chr(0xE9) * 255 + "/x.tex", b"hi", "file"))
+
+    with pytest.raises(archives.ArchiveError, match="too long"):
+        archives.extract(archive, into)
+
+    assert _files(into) == set()
+
+
+def test_a_path_too_long_for_the_filesystem_is_refused_by_name(into: Path) -> None:
+    """Each component fits; the assembled path does not. Depth times the
+    component bound is four kilobytes, which is PATH_MAX on Linux before the
+    extraction root is even prefixed -- the same OSError by another route."""
+    deep = "/".join("d" * 250 for _ in range(archives.DEFAULT_LIMITS.max_depth - 1))
+    archive = _tar((f"{deep}/x.tex", b"hi", "file"))
+
+    with pytest.raises(archives.ArchiveError, match="too long"):
+        archives.extract(archive, into)
+
+    assert _files(into) == set()

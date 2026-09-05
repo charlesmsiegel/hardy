@@ -444,7 +444,12 @@ class ProveWorkflow:
                 )
                 # A statement that does not elaborate is not a statement, so it
                 # is never put in front of the user for approval.
-                elaboration = self._lean.check_proof(temporary_claim, "by sorry")
+                # With the declared set in scope: a claim whose statement
+                # mentions an assumed constant would otherwise fail to
+                # elaborate here and be refused as a bad formalization.
+                elaboration = self._lean.check_proof(
+                    temporary_claim, "by sorry", request.assumptions
+                )
                 # Elaboration runs Lean, so a press lands inside it and the
                 # child is interrupted. Without this the run either walked on
                 # into the approval selector and waited for an answer nobody
@@ -710,7 +715,7 @@ class ProveWorkflow:
                 runtime.start(model=request.model, run_dir=store.path, claim=approved_claim)
             )
             proof_started = self._monotonic()
-            proof_request = proof_prompt(approved_claim)
+            proof_request = proof_prompt(approved_claim) + _declared_note(request.assumptions)
             last_submission = None
             for attempt in range(self._config.limits.official_checks):
                 self._refuse_if_cancelled()
@@ -947,11 +952,14 @@ class ProveWorkflow:
         """
         unchecked: list[str] = []
         for item in assumptions:
-            # Body only: `check_scratch` prepends the import itself, and a
-            # file carrying two of them shifts every probe past the line
-            # `judge` reads it on.
-            source, tactics = refute.probe_source(item.statement, imported=False)
             try:
+                # Body only: `check_scratch` prepends the import itself, and a
+                # file carrying two of them shifts every probe past the line
+                # `judge` reads it on. Built inside the guard because
+                # `probe_source` refuses a statement it cannot put on one
+                # line, and a probe that will not run is a gap rather than a
+                # crash however early it declines.
+                source, tactics = refute.probe_source(item.statement, imported=False)
                 result = self._lean.check_scratch(source)
             except Exception as error:  # noqa: BLE001 - an unrunnable probe is a gap, not a crash
                 verdict = refute.Verdict(
@@ -1024,6 +1032,30 @@ class ProveWorkflow:
         store.finalize(manifest)
         terminal.show_result(manifest)
         return manifest
+
+
+def _declared_note(assumptions: tuple[DeclaredAssumption, ...]) -> str:
+    """What the proof may stand on, told to the model that writes it.
+
+    Without this the declarations were in scope in the file and mentioned
+    nowhere in the prompt: the model had no way to know the axioms existed, so
+    a run could declare an assumption and never use it. They are named with
+    their statements and their sources, and marked as assumed rather than
+    proved, because a model that mistakes one for a proved lemma will describe
+    it as one in the writeup.
+    """
+    if not assumptions:
+        return ""
+    lines = "\n".join(
+        f"- `{item.name} : {item.statement.strip()}` (assumed from {item.source.strip()})"
+        for item in assumptions
+    )
+    return (
+        "\n\nThis run may stand on the following axioms, which are already in scope in "
+        "the file you are proving. They are ASSUMED, not proved: anything resting on one "
+        "is verified only modulo them, and the result will be graded and documented that "
+        f"way. Use them only where you need them.\n{lines}\n"
+    )
 
 
 def _artifact_hashes(run_dir: Path) -> dict[str, str]:

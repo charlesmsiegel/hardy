@@ -190,7 +190,7 @@ def _scripted_controller(
     class Runtime:
         backend = 'fixture-backend'
 
-        def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None):
+        def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None, allowed=()):
             if runtime_error:
                 raise RuntimeError('runtime fixture failure')
             state.starts.append(claim)
@@ -239,7 +239,7 @@ def _scripted_controller(
             state.cancelled = thread
 
     class Lean:
-        def check_proof(self, claim, proof):
+        def check_proof(self, claim, proof, allowed=()):
             success = elaborations.pop(0) if elaborations else False
             return _lean_result(domain, lean, process, success)
 
@@ -330,7 +330,7 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
     class Runtime:
         backend = 'fixture-backend'
 
-        def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None):
+        def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None, allowed=()):
             starts.append((claim, isolated))
             return object()
 
@@ -410,7 +410,9 @@ def test_success_requires_approval_repairs_a_failed_candidate_and_finalizes(tmp_
         environment=environment,
         doctor=lambda _: SimpleNamespace(healthy=True),
         lean=SimpleNamespace(
-            check_proof=lambda claim, proof: _lean_result(domain, lean, process)
+            check_proof=lambda claim, proof, allowed=(): _lean_result(
+                domain, lean, process
+            )
         ),
         runtime_factory=lambda store: Runtime(),
         verifier=Verifier(),
@@ -925,7 +927,7 @@ def test_an_exhausted_budget_does_not_buy_one_more_provider_call(tmp_path) -> No
     class SpendingLean:
         """Elaboration that begins inside the budget and finishes outside it."""
 
-        def check_proof(self, claim, proof):
+        def check_proof(self, claim, proof, allowed=()):
             clock.value += 2_000.0
             return _lean_result(domain, importlib.import_module('hardy.lean'),
                                 importlib.import_module('hardy.process'), True)
@@ -959,7 +961,7 @@ def test_the_reader_is_given_the_budget_that_is_actually_left(tmp_path) -> None:
     clock = Clock()
 
     class SlowLean:
-        def check_proof(self, claim, proof):
+        def check_proof(self, claim, proof, allowed=()):
             clock.value += 1_000.0
             return _lean_result(domain, importlib.import_module('hardy.lean'),
                                 importlib.import_module('hardy.process'), True)
@@ -1193,9 +1195,9 @@ def test_a_run_cancelled_while_lean_elaborated_never_asks_for_approval(tmp_path)
     workflow, domain, controller, state = _scripted_controller(tmp_path)
     elaborate = controller._lean.check_proof
 
-    def cancelling(claim, body):
+    def cancelling(claim, body, allowed=()):
         controller.cancel()               # the press, mid-elaboration
-        return elaborate(claim, body)
+        return elaborate(claim, body, allowed)
 
     controller._lean.check_proof = cancelling
     terminal = Terminal()
