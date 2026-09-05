@@ -440,10 +440,14 @@ class Grades(FrozenModel):
             )
         if self.formal is FormalStatus.VERIFIED_MODULO and not assumed:
             raise ValueError("a verified_modulo grade must name the assumption it rests on")
-        if assumed and self.formal not in (
-            FormalStatus.VERIFIED_MODULO,
-            FormalStatus.PARTIAL,
-        ):
+        # `verified_modulo` and nothing else. `partial` was permitted too, and
+        # `acceptance.VERIFIED_GRADES` does not include it -- so that shape was
+        # the one manifest that could carry an axiom name past the declaration
+        # cross-check entirely. Production never builds it (a run records what
+        # it used only once verified), so nothing legitimate is lost by
+        # refusing it, and a grade that is not a verification has no business
+        # naming what a proof rests on.
+        if assumed and self.formal is not FormalStatus.VERIFIED_MODULO:
             raise ValueError("assumptions recorded against a grade that cannot carry them")
         return self
 

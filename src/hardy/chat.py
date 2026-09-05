@@ -68,6 +68,7 @@ from .storage import LockTimeout
 from .truncation import truncate
 from .usage import Usage
 from .workspace import (
+    ANY_NAME,
     COMMAND,
     IDENTIFIER,
     QUALIFIED_NAME,
@@ -1204,17 +1205,18 @@ class MathematicsSession:
         # may approve their way past: the reader said this Lean does not say
         # what the paper says, and declaring it anyway would let Hardy derive
         # claims the paper never made under the paper's name. Matched on the
-        # qualified name and on any shorter spelling of *that same* name,
-        # because the file that declares it may sit inside the namespace the
-        # quarantine recorded rather than above it. Not on the bare leaf
-        # across papers: `Papers/<key>.lean` is regenerated whole on every
-        # mint, so one paper's rejected `main` refused every other paper's
-        # approved `main` forever -- and blamed the innocent axiom for it.
+        # qualified name and nothing else, because that is the declaration
+        # the reader refused: `assumptions()` qualifies by the namespace in
+        # force, so a minted axiom always comes back as `Papers.<key>.<leaf>`,
+        # and a top-level `axiom <leaf>` is a different declaration Lean will
+        # not confuse with it. Matching a shorter spelling therefore only ever
+        # fired on an unrelated name -- refusing another paper's approved
+        # `main`, or a bare one `request_assumption` approved, and blaming a
+        # reader that never saw it. The approval gate below is what refuses a
+        # bare name nobody approved, and it says the true thing about why.
         quarantined = self._quarantined_names()
         for name, _ in assumptions(source):
-            if name in quarantined or any(
-                held.endswith(f".{name}") for held in quarantined
-            ):
+            if name in quarantined:
                 return ToolResult(
                     False,
                     f"`{name}` is quarantined: an independent reader found that this Lean "
@@ -4960,7 +4962,7 @@ class MathematicsSession:
                 f"{record.arxiv_id} has no source in the library, and a statement can only be "
                 "assumed from the paper's own words. Call fetch_source first."
             )
-        return record, assume_module.inventory(self.papers.library.source_texts(identifier))
+        return record, assume_module.survey(self.papers.library.source_texts(identifier))
 
     def _list_statements(self, paper_id: str, start: int = 1) -> ToolResult:
         """What the paper claims, bounded and resumable. Nothing is minted.
@@ -4970,9 +4972,10 @@ class MathematicsSession:
         that follow must be the ones the proof actually needed.
         """
         try:
-            record, statements = self._paper_statements(paper_id)
+            record, reading = self._paper_statements(paper_id)
         except (ArxivError, assume_module.AssumeError) as error:
             return ToolResult(False, str(error))
+        statements = reading.statements
         if not statements:
             return ToolResult(
                 False,
@@ -4987,7 +4990,7 @@ class MathematicsSession:
         shown: list[dict[str, Any]] = []
         for item in statements[first - 1 :]:
             shown.append(item.as_dict())
-            payload = self._statements_payload(record, statements, first, shown)
+            payload = self._statements_payload(record, reading, first, shown)
             if len(payload.encode("utf-8")) > self.papers.observation_bytes:
                 shown.pop()
                 break
@@ -4997,12 +5000,19 @@ class MathematicsSession:
                 f"statement {first} of {record.arxiv_id} does not fit the "
                 f"{self.papers.observation_bytes}-byte observation budget",
             )
-        return ToolResult(True, self._statements_payload(record, statements, first, shown))
+        return ToolResult(True, self._statements_payload(record, reading, first, shown))
 
     def _statements_payload(
-        self, record: Any, statements: Sequence[Any], first: int, shown: Sequence[dict[str, Any]]
+        self, record: Any, reading: Any, first: int, shown: Sequence[dict[str, Any]]
     ) -> str:
         following = first + len(shown)
+        statements = reading.statements
+        # The root actually read, and every other document in the bundle that
+        # was not. Which root wins is decided by a filename, so a bundle
+        # carrying a second one has a whole document going unlisted -- and a
+        # reader weighing an assumption is owed that rather than left to infer
+        # the paper states only what this names.
+        unread = list(reading.unread)
         return json.dumps(
             {
                 "paper_id": record.arxiv_id,
@@ -5013,6 +5023,10 @@ class MathematicsSession:
                     if following <= len(statements)
                     else {}
                 ),
+                # Said rather than left to silence: a listing cut at the bound
+                # looks exactly like a paper that stops there.
+                **({"truncated": True} if reading.truncated else {}),
+                **({"unread_documents": unread} if unread else {}),
                 "note": (
                     "Nothing here is assumed. assume_statement mints one of these as an axiom, "
                     "after a human approves it. Assume only what your proof needs."
@@ -5039,20 +5053,45 @@ class MathematicsSession:
         while naming the paper as its source.
         """
         try:
-            record, statements = self._paper_statements(request["paper_id"])
+            record, reading = self._paper_statements(request["paper_id"])
         except (ArxivError, assume_module.AssumeError) as error:
             return ToolResult(False, str(error))
+        statements = reading.statements
         wanted = assume_module.find(statements, request["statement"])
         if wanted is None:
+            # A truncated reading is said so rather than reported as the
+            # paper's silence: the inventory stopping is Hardy's bound, and
+            # "the paper makes no statement called that" is a claim about the
+            # paper that Hardy has not established.
+            cut = (
+                f" The reading stopped at the first {assume_module.MAX_STATEMENTS} statements, "
+                "so this may be one it did not reach."
+                if reading.truncated
+                else ""
+            )
             return ToolResult(
                 False,
-                f"{record.arxiv_id} makes no statement called {request['statement']!r}. "
+                f"{record.arxiv_id} makes no statement called {request['statement']!r}.{cut} "
                 f"list_statements names them: {[item.ref for item in statements][:20]}",
             )
         kind = request.get("kind") or "statement"
         if kind not in ("statement", "constant"):
             return ToolResult(
                 False, f"kind must be 'statement' or 'constant', not {kind!r}"
+            )
+        # One component, refused here rather than at the save. The module is
+        # regenerated from the record with only the leaf of the recorded name,
+        # so a dotted name passed every gate, spent a human approval, and then
+        # failed the save under a Lean name nobody proposed -- advising
+        # `request_assumption`, which cannot write `Papers/` either. The
+        # namespace is Hardy's to choose; the caller names the axiom in it.
+        short = request["formal_name"].strip()
+        if not re.fullmatch(ANY_NAME, short):
+            return ToolResult(
+                False,
+                f"formal_name must be a single Lean identifier, not {short!r}: the "
+                "namespace is the paper's cite key and Hardy writes it. Pass the axiom's "
+                "own name with no dots in it.",
             )
         if self.search is not None and self._inspect_attempts_since_request == 0:
             # The same gate `request_assumption` lives by, for the same
@@ -5071,7 +5110,6 @@ class MathematicsSession:
         # that was never about it. The `finally` sat around the mint alone, so
         # the three refusals between here and there returned it intact.
         try:
-            short = request["formal_name"].strip()
             try:
                 entry, _ = self.papers.bibliography.cite(record)
             except (BibliographyError, LockTimeout, OSError, LayoutError) as error:
@@ -5153,7 +5191,24 @@ class MathematicsSession:
                 "proved or refuted about it. It asserts that something with this type "
                 "exists, which is trust beyond assuming a statement."
             )
-        agreed, divergences = self._faithfulness(request, record, wanted, qualified)
+        reached, agreed, divergences = self._faithfulness(request, record, wanted, qualified)
+        if not reached:
+            # Refused, and nothing recorded against the name. Hardy did not
+            # establish anything about this translation, so the record must
+            # not read as though it did.
+            self._record(
+                {
+                    "type": "assumption_review_unavailable",
+                    "formal_name": qualified,
+                    "reason": list(divergences),
+                }
+            )
+            return ToolResult(
+                False,
+                "the independent reader that has to accept this Lean before it may be "
+                f"assumed could not be reached: {list(divergences)}. Nothing was minted and "
+                "nothing is recorded against this name -- try again.",
+            )
         if not agreed:
             self._quarantine(request, record, entry, wanted, qualified, kind, divergences)
             return ToolResult(
@@ -5218,6 +5273,14 @@ class MathematicsSession:
                 "text": wanted.text,
                 "module": "",
             },
+            # Both written for the reason `_request_assumption` writes them:
+            # every renderer of an approval reads these, and their absence is
+            # a claim of its own. Without them the export said "this approval
+            # predates the field" of one seconds old, and that the goal shown
+            # may not be the one it was given for -- when the proposal above
+            # had just shown that very goal.
+            "goal_at_approval": str(proposal.get("goal") or "").strip(),
+            "approved_at": datetime.now(UTC).isoformat(),
         }
         mapping = {
             "formal_name": qualified,
@@ -5271,12 +5334,20 @@ class MathematicsSession:
 
     def _faithfulness(
         self, request: dict[str, str], record: Any, wanted: Any, qualified: str
-    ) -> tuple[bool, tuple[str, ...]]:
-        """Whether an independent reader accepts the Lean as the paper's claim.
+    ) -> tuple[bool, bool, tuple[str, ...]]:
+        """Whether a reader was reached, whether it agreed, and what it found.
 
-        Fail-closed in every direction. A reader that cannot be reached, that
-        answers with something that is not a review, or that answers "no" has
-        not agreed, and there is no third outcome that mints an axiom.
+        Fail-closed in every direction: nothing here mints an axiom unless a
+        reader was reached *and* agreed. But the two failures are not the same
+        fact, and the record has to keep them apart. Quarantine is durable,
+        nothing clears an entry, and `Papers/` is closed to hand-written
+        saves -- so folding an unreachable reader into "the reader found this
+        unfaithful" let one provider 503 blacklist a name for the life of the
+        project under a verdict nobody ever reached.
+
+        An answer that is not a review counts as not reached for the same
+        reason: no verdict was obtained. What was obtained is a refusal the
+        model can act on by trying again.
         """
         try:
             agreed, divergences = self._review_assumption(
@@ -5288,8 +5359,10 @@ class MathematicsSession:
                 informal_statement=request["informal_statement"],
             )
         except Exception as error:  # noqa: BLE001 - an unreachable reader is not an agreement
-            return False, (f"the independent reader could not be reached: {error}",)
-        return bool(agreed), tuple(str(item) for item in divergences)
+            return False, False, (f"the independent reader could not be reached: {error}",)
+        if agreed is None:
+            return False, False, tuple(str(item) for item in divergences)
+        return True, bool(agreed), tuple(str(item) for item in divergences)
 
     def _review_assumption(
         self,
@@ -5300,8 +5373,12 @@ class MathematicsSession:
         formal_name: str,
         lean_statement: str,
         informal_statement: str,
-    ) -> tuple[bool, tuple[str, ...]]:
+    ) -> tuple[bool | None, tuple[str, ...]]:
         """One independent read of one translation, on its own thread.
+
+        `None` for "no review was obtained" -- an answer that is not a review
+        is not a verdict, and the caller keeps that apart from a verdict of
+        "this is not what the paper says".
 
         Independent of *context*, not merely of weights, for the reason
         `faithfulness.py` gives at length: a reader handed the conversation
@@ -5343,7 +5420,10 @@ class MathematicsSession:
         except ValueError:
             payload = None
         if not isinstance(payload, dict):
-            return False, ("the reader did not answer with a review",)
+            # `None` rather than `False`: no verdict was reached, which is a
+            # different fact from a verdict of "this is not what the paper
+            # says" and must not be recorded as one.
+            return None, ("the reader did not answer with a review",)
         divergences = payload.get("divergences")
         return bool(payload.get("agrees")), tuple(
             str(item) for item in (divergences if isinstance(divergences, list) else ())

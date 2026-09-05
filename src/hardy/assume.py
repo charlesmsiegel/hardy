@@ -140,6 +140,33 @@ class Minted:
     paper_text: str
 
 
+def roots_of(files: Mapping[str, str]) -> tuple[str, ...]:
+    r"""Every file that opens a document of its own, in reading order.
+
+    Read from what TeX would *execute*, not from the raw bytes. A section
+    file beginning `% \documentclass{article}` -- the everyday idiom for
+    making one compile on its own -- was selected as the paper's root while
+    `inventory` read comment-stripped text, so the paper's own theorems went
+    unlisted and a decoy file supplied the whole listing. The scan and the
+    reader now agree about what the source says.
+    """
+    return tuple(
+        sorted(
+            path
+            for path, text in files.items()
+            if _executable(text) is not None
+        )
+    )
+
+
+def _executable(text: str) -> str | None:
+    """`text` as TeX would run it, if it opens a document; otherwise None."""
+    executed = completion.displayed(text).executed
+    if ROOT_MARKER.search(executed) or BODY_MARKER.search(executed):
+        return executed
+    return None
+
+
 def root_of(files: Mapping[str, str]) -> str:
     r"""The file a reader would compile, or a refusal.
 
@@ -148,15 +175,12 @@ def root_of(files: Mapping[str, str]) -> str:
     since a root at the top of a bundle is a root and one three directories
     down is usually a copy.
     """
-    roots = [
-        path
-        for path, text in files.items()
-        if ROOT_MARKER.search(text) or BODY_MARKER.search(text)
-    ]
+    roots = roots_of(files)
     if not roots:
         raise AssumeError(
-            "no root document: none of these files carries a \\documentclass, so there is "
-            f"nothing to read the paper's statements out of ({sorted(files)[:10]})"
+            "no root document: none of these files opens one with \\documentclass or "
+            f"\\begin{{document}}, so there is nothing to read the paper's statements "
+            f"out of ({sorted(files)[:10]})"
         )
     return min(roots, key=lambda path: (path != "main.tex", path.count("/"), path))
 
@@ -167,6 +191,15 @@ def _pages(files: Mapping[str, str], root: str) -> list[tuple[str, str]]:
     Kept as separate pages rather than spliced into one string, unlike
     `completion.assemble`: every statement has to be able to say which file it
     came from, so a reader can go and look at it.
+
+    Two consequences of that split, both accepted rather than overlooked. A
+    statement whose body spans an `\input` boundary is read only as far as
+    the boundary, because the two halves are in different pages -- the
+    alternative is splicing, which costs the per-statement `file` a reader
+    needs. And a file included twice is walked once, so `ordinal` counts
+    occurrences of the source rather than of the printed document; `number`
+    is only ever taken from the source itself, so nothing here claims a
+    printed number that drifts from it.
     """
     seen: set[str] = set()
     ordered: list[tuple[str, str]] = []
@@ -199,6 +232,43 @@ def _pages(files: Mapping[str, str], root: str) -> list[tuple[str, str]]:
     return ordered
 
 
+@dataclass(frozen=True)
+class Survey:
+    """What one bundle says, and what was left out of the saying.
+
+    `truncated` and `roots` are here because their absence was read as
+    silence: a listing cut at `MAX_STATEMENTS` looked exactly like a paper
+    that stops there, so `find` answered None for a statement the paper
+    really makes and the model was told the paper does not state it. And a
+    bundle carrying a second document has one of them read and the other
+    ignored, decided by a filename -- a fact a reader weighing an assumption
+    is owed rather than one Hardy keeps.
+    """
+
+    statements: tuple[Statement, ...]
+    truncated: bool
+    #: The document that was read.
+    root: str
+    #: Every document in the bundle that opens one, this one included.
+    roots: tuple[str, ...]
+
+    @property
+    def unread(self) -> tuple[str, ...]:
+        """The documents in this bundle that nothing above was read from."""
+        return tuple(path for path in self.roots if path != self.root)
+
+
+def survey(files: Mapping[str, str]) -> Survey:
+    """The inventory, with what it could not fit and what it did not read."""
+    found = _inventory(files)
+    return Survey(
+        statements=found,
+        truncated=len(found) >= MAX_STATEMENTS,
+        root=root_of(files),
+        roots=roots_of(files),
+    )
+
+
 def inventory(files: Mapping[str, str]) -> tuple[Statement, ...]:
     r"""Every statement the paper asserts, in the order a reader meets them.
 
@@ -207,7 +277,15 @@ def inventory(files: Mapping[str, str]) -> tuple[Statement, ...]:
     illustration rather than a claim, and a `\newcommand` body that holds one
     asserts nothing until it is expanded. Both of those are
     `completion.displayed`'s distinctions, made once there and reused here.
+
+    `survey` is the same reading with the two facts this bounded tuple
+    cannot carry: whether it was cut short, and which documents it did not
+    read at all.
     """
+    return _inventory(files)
+
+
+def _inventory(files: Mapping[str, str]) -> tuple[Statement, ...]:
     found: list[Statement] = []
     counts: dict[str, int] = {}
     for path, text in _pages(files, root_of(files)):
@@ -246,11 +324,22 @@ def inventory(files: Mapping[str, str]) -> tuple[Statement, ...]:
 
 
 def find(statements: Sequence[Statement], ref: str) -> Statement | None:
-    """The statement a caller named, by reference or by label."""
+    r"""The statement a caller named, by label first and then by reference.
+
+    A label the paper wrote wins over an ordinal Hardy synthesised for
+    something else. `lemma-1` is what an unlabelled first lemma is called
+    here, and a paper that really writes `\label{lemma-1}` on a theorem means
+    that theorem -- resolving to the ordinal handed the independent reader the
+    wrong sentence to check the Lean against, under the name the caller asked
+    for. Two statements carrying the same real label are the paper's own
+    ambiguity and the first still wins; nothing here can tell them apart.
+    """
     wanted = str(ref).strip()
+    if not wanted:
+        return None
     return next(
-        (item for item in statements if wanted in (item.ref, item.label)),
-        None,
+        (item for item in statements if item.label == wanted),
+        next((item for item in statements if item.ref == wanted), None),
     )
 
 
@@ -260,6 +349,14 @@ def namespace_for(cite_key: str) -> str:
     Version-specific because the cite key is: the key names one paper at one
     version with a digest of its identity, so two readings of a preprint are
     two namespaces and an axiom cannot silently come to mean the other one.
+
+    Every run of characters Lean will not take becomes `_`, so two keys
+    differing only in such a run would name one namespace -- and
+    `_write_papers_module`, which selects by cite key, would then regenerate
+    the module without the other paper's axioms. What keeps that off the
+    table is the key's own digest, which is derived from the paper's identity
+    rather than from its title: two distinct papers do not share it, so two
+    distinct keys do not collapse together.
     """
     component = COMPONENT.sub("_", str(cite_key)).strip("_")
     if not component:

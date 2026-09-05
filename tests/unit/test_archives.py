@@ -313,3 +313,20 @@ def test_a_path_too_long_for_the_filesystem_is_refused_by_name(into: Path) -> No
         archives.extract(archive, into)
 
     assert _files(into) == set()
+
+
+def test_a_member_name_that_is_not_utf_8_is_refused_by_name(into: Path) -> None:
+    r"""`tarfile` decodes a name field with `surrogateescape`, so a latin-1
+    filename arrives as lone surrogates. Encoding one to measure its length
+    raised `UnicodeEncodeError` straight out of a module whose whole promise
+    is that it refuses by name -- and legacy arXiv bundles carry such names."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        info = tarfile.TarInfo("ma\udcffn.tex")
+        info.size = 2
+        tar.addfile(info, io.BytesIO(b"hi"))
+
+    with pytest.raises(archives.ArchiveError, match="UTF-8|utf-8"):
+        archives.extract(buffer.getvalue(), into)
+
+    assert _files(into) == set()

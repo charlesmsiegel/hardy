@@ -29,6 +29,7 @@ mistake `search_tools` documents at length.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -521,7 +522,7 @@ class PaperToolRuntime:
                 record.arxiv_id,
                 record.content(),
                 max(1, start_line),
-                "Call read_paper again with start_line={line} for the rest.",
+                lambda line: f"Call read_paper again with start_line={line} for the rest.",
             )
         identifier = record.identifier
         if not self.library.holds_source(identifier):
@@ -538,12 +539,25 @@ class PaperToolRuntime:
             f"{record.arxiv_id}:{wanted}",
             self.library.read_source(identifier, wanted, manifest),
             max(1, start_line),
-            "Call read_paper again with file="
-            + json.dumps(wanted)
-            + " and start_line={line} for the rest.",
+            # A function of the line rather than a `format` template: the
+            # filename comes from the archive, and one carrying `{` or `}`
+            # made `resume.format(line=...)` raise a bare `KeyError` -- only
+            # on files long enough to need a second page, which is every file
+            # where paging matters at all.
+            lambda line: (
+                "Call read_paper again with file="
+                + json.dumps(wanted)
+                + f" and start_line={line} for the rest."
+            ),
         )
 
-    def _window(self, label: str, content: str, start: int, resume: str) -> ToolResult:
+    def _window(
+        self,
+        label: str,
+        content: str,
+        start: int,
+        resume: Callable[[int], str],
+    ) -> ToolResult:
         """One bounded, resumable page of `content`, or a refusal that says why.
 
         The note goes first and the text after it, exactly as `read_file`
@@ -578,9 +592,7 @@ class PaperToolRuntime:
                         f"start_line={start} is past the end"
                     ),
                 )
-            rest = (
-                " " + resume.format(line=cut.next_line) if cut.next_line is not None else ""
-            )
+            rest = " " + resume(cut.next_line) if cut.next_line is not None else ""
             payload = f"{label}: {cut.summary}.{rest}\n\n{cut.text}"
             over = len(payload.encode("utf-8")) - self.observation_bytes
             # `cut.clipped` disqualifies a window that would otherwise fit.

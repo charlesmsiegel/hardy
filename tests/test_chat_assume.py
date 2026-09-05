@@ -19,6 +19,7 @@ import pytest
 from test_chat import FakeChatRuntime, factory
 
 from hardy import arxiv
+from hardy import assume as assume_module
 from hardy.chat import CHAT_TOOLS, MathematicsSession
 
 FEED = (
@@ -49,14 +50,25 @@ The entropy is monotonic.
 PAPER = "math.DG/0211159v1"
 
 
-def _bundle(body: str = PAPER_SOURCE) -> bytes:
+def _bundle(
+    body: str = PAPER_SOURCE, second: tuple[str, str] | None = None
+) -> bytes:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        encoded = body.encode("utf-8")
-        info = tarfile.TarInfo("main.tex")
-        info.size = len(encoded)
-        tar.addfile(info, io.BytesIO(encoded))
+        for name, text in (("main.tex", body), *( (second,) if second else () )):
+            encoded = text.encode("utf-8")
+            info = tarfile.TarInfo(name)
+            info.size = len(encoded)
+            tar.addfile(info, io.BytesIO(encoded))
     return buffer.getvalue()
+
+
+DECOY_SOURCE = r"""
+\documentclass{article}
+egin{document}
+egin{theorem}\label{decoy}Decoy claim nobody published.\end{theorem}
+\end{document}
+"""
 
 
 @pytest.fixture
@@ -293,6 +305,9 @@ def test_a_statement_the_reader_disputes_is_quarantined_rather_than_minted(sourc
 
 
 def test_a_reader_that_cannot_be_reached_is_not_an_agreement(sourced) -> None:
+    """Nothing is minted -- and nothing is recorded against the name either,
+    because Hardy established nothing about this translation. See
+    `test_a_reader_that_could_not_be_reached_is_not_recorded_as_a_finding`."""
     def unreachable(**kwargs):
         raise RuntimeError("the provider is down")
 
@@ -302,7 +317,7 @@ def test_a_reader_that_cannot_be_reached_is_not_an_agreement(sourced) -> None:
 
     assert not result.ok
     assert sourced.state["assumptions"] == []
-    assert sourced.state["quarantine"]
+    assert not sourced.state.get("quarantine")
 
 
 def test_the_review_happens_before_the_human_is_asked(sourced) -> None:
@@ -606,18 +621,32 @@ def test_a_quarantine_does_not_brick_the_same_leaf_in_another_paper(sourced) -> 
     assert refusal is None or "quarantin" not in refusal.output.lower()
 
 
-def test_an_unqualified_spelling_of_a_quarantined_name_is_still_refused(sourced) -> None:
-    """The scan reports the name as the file spells it, so a module that
-    declares the axiom above its namespace gives the bare leaf. That is the
-    quarantined statement under another spelling, not a different one."""
+def test_an_unrelated_approval_sharing_a_leaf_is_not_refused_as_quarantined(sourced) -> None:
+    """A top-level `axiom key_bound` is a different Lean declaration from
+    `Papers.<key>.key_bound`, and it is the shape `request_assumption`
+    approves. Matching quarantine on a shorter spelling only ever fired on
+    that case -- and the approval gate below already refuses an unapproved
+    bare name, so the branch bought nothing and cost a human's approval."""
     sourced._review_assumption = lambda **kwargs: (False, ("wrong quantifier",))
-    _assume(sourced)
+    _assume(sourced, formal_name="key_bound")
     leaf = sourced.state["quarantine"][0]["formal_name"].rsplit(".", 1)[-1]
+    sourced.state["assumptions"].append(
+        {"formal_name": leaf, "lean_statement": "True", "informal_statement": "x"}
+    )
 
-    refusal = sourced._final_gates(f"axiom {leaf} : True\n")
+    assert sourced._final_gates(f"axiom {leaf} : True\n") is None
+
+
+def test_a_bare_name_nobody_approved_is_still_refused(sourced) -> None:
+    """What the dropped quarantine branch was standing in for: the approval
+    gate catches it, and says the true thing about why."""
+    sourced._review_assumption = lambda **kwargs: (False, ("wrong quantifier",))
+    _assume(sourced, formal_name="key_bound")
+
+    refusal = sourced._final_gates("axiom key_bound : True\n")
 
     assert refusal is not None
-    assert "quarantin" in refusal.output.lower()
+    assert "unapproved" in refusal.output.lower()
 
 
 def test_the_generated_docstring_quotes_the_paper_s_own_sentence(sourced) -> None:
@@ -677,3 +706,131 @@ def test_the_workspace_listing_of_refusals_is_bounded(sourced) -> None:
     assert len(json.dumps(listing["quarantine"])) < 40_000
     # The most recent, because that is what the model just tried.
     assert listing["quarantine"][-1]["formal_name"] == "Papers.k.n199"
+
+
+def test_a_listing_says_when_it_stopped_short_of_the_paper(sourced, monkeypatch) -> None:
+    """A listing cut at the bound looked exactly like a paper that stops
+    there, and `assume_statement` then answered "the paper makes no statement
+    called that" about a statement the paper does make."""
+    monkeypatch.setattr(assume_module, "MAX_STATEMENTS", 1)
+
+    listing = json.loads(sourced._tool("list_statements", {"paper_id": PAPER}).output)
+
+    assert listing["truncated"] is True
+    refusal = _assume(sourced, statement="lem:aux")
+    assert not refusal.ok
+    assert "stopped" in refusal.output or "truncat" in refusal.output
+
+
+def test_a_listing_names_the_documents_it_did_not_read(session) -> None:
+    """One root is read and the others are not, decided by a filename. A
+    reader weighing an assumption is owed the fact that another document in
+    the bundle was never looked at -- a decoy carrying a real preamble is
+    otherwise invisible."""
+    session._tool("fetch_paper", {"paper_id": PAPER})
+    session.papers.library.admit_source(
+        session.papers._held(PAPER).identifier,
+        _bundle(PAPER_SOURCE, second=("decoy.tex", DECOY_SOURCE)),
+        source_url="u",
+        fetched_at="t",
+    )
+
+    listing = json.loads(session._tool("list_statements", {"paper_id": PAPER}).output)
+
+    assert listing["unread_documents"] == ["decoy.tex"]
+    assert all(item["file"] != "decoy.tex" for item in listing["statements"])
+
+
+def test_a_reader_that_could_not_be_reached_is_not_recorded_as_a_finding(sourced) -> None:
+    """Refusing to mint is right -- an unreachable reader is not an
+    agreement. Recording it as a *divergence* is not: quarantine is durable,
+    there is no path to clear an entry, and one provider 503 was blacklisting
+    a name for the life of the project under a verdict nobody reached."""
+    def unreachable(**kwargs):
+        raise ConnectionError("provider 503")
+
+    sourced._review_assumption = unreachable
+
+    result = _assume(sourced)
+
+    assert not result.ok
+    assert sourced.state["assumptions"] == []
+    assert sourced.state.get("quarantine", []) == [], "no reader said this was unfaithful"
+    assert "could not be reached" in result.output
+    assert "try again" in result.output.lower()
+
+
+def test_the_name_stays_available_after_a_reader_could_not_be_reached(sourced) -> None:
+    """The retry is the whole point of not quarantining: a second call must
+    reach the human rather than meet a permanent refusal."""
+    calls = []
+
+    def flaky(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise ConnectionError("provider 503")
+        return True, ()
+
+    sourced._review_assumption = flaky
+
+    assert not _assume(sourced).ok
+    second = _assume(sourced)
+
+    assert second.ok, second.output
+    assert len(sourced.state["assumptions"]) == 1
+
+
+def test_a_reader_that_disputes_the_lean_is_still_quarantined(sourced) -> None:
+    """The distinction is between a verdict and a failure to get one."""
+    sourced._review_assumption = lambda **kwargs: (False, ("the Lean drops the hypothesis",))
+
+    result = _assume(sourced)
+
+    assert not result.ok
+    assert sourced.state["quarantine"][0]["divergences"] == ["the Lean drops the hypothesis"]
+
+
+def test_a_dotted_formal_name_is_refused_before_the_human_is_asked(sourced) -> None:
+    """The module is regenerated with only the leaf of the recorded name, so
+    a dotted name always failed the save gate afterwards -- spending a human
+    approval, naming a Lean name nobody proposed, and advising a tool that
+    cannot write `Papers/` at all. Refused up front instead."""
+    shown: list[dict] = []
+    sourced.confirm = lambda proposal: shown.append(dict(proposal)) or True
+
+    result = _assume(sourced, formal_name="Ricci.no_collapse")
+
+    assert not result.ok
+    assert shown == [], "nobody should be asked to approve a name that cannot be minted"
+    assert "." in result.output
+    assert sourced.state["assumptions"] == []
+
+
+def test_a_minted_axiom_records_when_it_was_approved_and_against_what(sourced) -> None:
+    """`request_assumption` writes both, and every renderer reads them. The
+    mint path wrote neither, so the export said "this approval predates the
+    field" of an approval seconds old -- and that the goal shown may not be
+    the one it was given for, when `_mint` had just shown that very goal."""
+    sourced.state["goal"] = "Prove the Poincare conjecture."
+
+    assert _assume(sourced).ok
+
+    record = sourced.state["assumptions"][0]
+    assert record["approved_at"], "when a human said yes"
+    assert record["goal_at_approval"] == "Prove the Poincare conjecture."
+
+
+def test_an_assumed_constant_is_exported_as_the_opaque_it_is(sourced) -> None:
+    """`kind='constant'` is written into the module as `opaque`, and the two
+    are not the same trust. The export printed `axiom` under a comment
+    reading "the declaration the results above rest on, exactly"."""
+    from hardy import export
+
+    assert _assume(
+        sourced, kind="constant", formal_name="RicciFlow", lean_statement="Type"
+    ).ok
+
+    page = export._assumptions(sourced.state["assumptions"])
+
+    assert "opaque Papers." in page
+    assert "axiom Papers." not in page

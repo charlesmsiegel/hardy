@@ -777,3 +777,46 @@ def test_the_session_reaches_the_source_verb(session, tmp_path: Path) -> None:
 
 def test_the_session_advertises_the_source_verb() -> None:
     assert "fetch_source" in {spec["function"]["name"] for spec in CHAT_TOOLS}
+
+
+def test_a_source_filename_with_braces_still_pages(session, tmp_path: Path) -> None:
+    """The continuation line was a `format` template with the filename baked
+    into it, so a name carrying `{` or `}` raised a bare `KeyError` -- and
+    only on files big enough to need a second page, which is every file where
+    paging matters."""
+    import io
+    import tarfile
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for name, body in (
+            (
+                "main.tex",
+                b"\\documentclass{article}\n\\begin{document}\nA.\n\\end{document}\n",
+            ),
+            ("fig{a}.tex", ("line of text\n" * 8_000).encode("utf-8")),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            tar.addfile(info, io.BytesIO(body))
+    bundle = buffer.getvalue()
+
+    def transport(url: str, timeout: float, limit: int | None = None) -> bytes:
+        return bundle if "e-print" in url else FEED
+
+    session.papers.client = arxiv.ArxivClient(
+        session.papers.library,
+        transport=transport,
+        clock=lambda: 1_000_000.0,
+        sleep=lambda seconds: None,
+    )
+    session._tool("fetch_paper", {"paper_id": "math.DG/0211159v1"})
+    session._tool("fetch_source", {"paper_id": "math.DG/0211159v1"})
+
+    read = session._tool(
+        "read_paper", {"paper_id": "math.DG/0211159v1", "file": "fig{a}.tex"}
+    )
+
+    assert read.ok, read.output
+    assert "fig{a}.tex" in read.output
+    assert "start_line=" in read.output, "a truncated read has to say how to resume"

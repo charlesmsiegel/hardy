@@ -190,7 +190,7 @@ def staged_runner(config: Any, *, backend: str) -> Callable[[Entry, Path, str], 
             return
         reader_model = config.faithfulness_model or model
         compare_canonical(entry, runs[0], row_dir,
-                          runtime_factory=lambda store: ClaudeStagedRuntime(store=store, lean_runtime_factory=lambda claim: None),
+                          runtime_factory=lambda store: ClaudeStagedRuntime(store=store, lean_runtime_factory=lambda claim, allowed=(): None),
                           model=reader_model, wall_seconds=float(config.limits.lean_process_seconds))
 
     return run_one

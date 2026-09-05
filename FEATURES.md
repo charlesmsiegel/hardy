@@ -961,16 +961,37 @@ Priority labels are sequencing hints:
 
 ## Assumed-paper libraries
 
-- **Later:** eagerly inventory a paper's statements but mint axioms lazily on use;
-  a standalone Assume request can mint an explicitly selected set.
-- **Later:** put version-specific axioms in `Papers.<CiteKey>` namespaces, with
-  docstrings tied to paper numbering and bibliography keys.
-- **Later:** independently review each formalized statement for faithfulness;
-  quarantine failures rather than making them importable.
-- **Later:** map definitions to Mathlib first, create real definitions when cheap,
-  and otherwise record opaque constants and characterizing axioms as added trust.
-- **Later:** perform cheap refutation checks and include an exact axiom manifest in
-  every downstream artifact; grade such proofs “verified modulo” those assumptions.
+- **Now (implemented):** `list_statements` inventories a held paper's source eagerly
+  — every theorem, lemma, proposition, corollary, definition and conjecture it
+  states, in reading order across `\input`s — and mints nothing. `assume_statement`
+  mints one of them at a time; `/assume <paper-id> <ref> ...` asks for an explicitly
+  chosen set up front. The reading is bounded, and a reading that stopped at the
+  bound says so rather than letting a listing that stops read as a paper that does.
+  A bundle carrying more than one document names the ones it did not read, since
+  which root wins is decided by a filename.
+- **Now (implemented):** minted axioms live in version-specific `Papers.<CiteKey>`
+  namespaces, one module per paper version, generated whole and writable by nothing
+  else. Each docstring names the paper, its arXiv identifier, the reference the
+  statement carries, and the bibliography key, and quotes the paper's own sentence.
+  Hardy does not run TeX, so it records the `\label` and any `[Named]` heading and
+  marks its own ordinal as its own — a printed number it inferred would be a
+  citation a reader cannot follow.
+- **Now (implemented):** an independent reader — its own thread, no tools, no session
+  history — compares each proposed translation against the paper's sentence before
+  any human is asked. A statement it will not accept is quarantined: recorded,
+  shown by `read_workspace`, and refused by the save gate under that name. A reader
+  that could not be *reached* is a different fact and is kept as one: nothing is
+  minted and nothing is recorded against the name, so the request can be made again.
+- **Now (implemented):** an assumed definition is recorded as an `opaque` constant
+  rather than an axiom, and every surface that renders it — the generated module,
+  the session summary, the export — says which of the two it is, because they are
+  not the same trust.
+- **Now (implemented):** each declared assumption is checked for a cheap
+  counterexample before any proving begins, and a proof that used one is graded
+  *verified modulo* — with the manifest and the compiled document naming exactly the
+  assumptions `#print axioms` reported, never the ones that were permitted.
+- **Later:** map definitions to Mathlib first and create real definitions when cheap,
+  rather than recording an opaque constant whenever one is asked for.
 
 ## Evaluation and reproducibility
 

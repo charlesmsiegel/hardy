@@ -118,7 +118,9 @@ the statement it stands for, and its bibliography key. A statement the
 independent reader will not accept is quarantined — recorded, shown by
 `read_workspace`, and refused by the save gate — rather than admitted with a
 warning, because an assumption that does not say what the paper says lets Hardy
-prove things the paper never claimed under the paper's name. `/assume <paper-id>
+prove things the paper never claimed under the paper's name. A reader that could
+not be reached is not that: nothing is minted, and nothing is recorded against
+the name, so the request can simply be made again. `/assume <paper-id>
 <ref> ...` asks for an explicitly chosen set up front.
 
 A staged run can declare what it may stand on: `hardy prove --assume FILE`, where

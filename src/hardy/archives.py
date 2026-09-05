@@ -219,6 +219,13 @@ def member_path(name: str, limits: Limits = DEFAULT_LIMITS) -> str:
     """
     if "\x00" in name:
         raise ArchiveError("a member path contains a NUL byte")
+    # `tarfile` decodes the name field with `surrogateescape`, so bytes that
+    # are not UTF-8 arrive as lone surrogates. Refused first and by name:
+    # measuring one in bytes raised `UnicodeEncodeError` out of a module whose
+    # promise is that it refuses by name, and no caller catches that. A path
+    # Hardy cannot even spell is not one it should be writing.
+    if any("\ud800" <= character <= "\udfff" for character in name):
+        raise ArchiveError(f"the member path {name!r} is not valid UTF-8")
     if "\\" in name:
         raise ArchiveError(f"the member path {name!r} contains a backslash")
     if DRIVE.match(name):

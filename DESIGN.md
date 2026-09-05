@@ -374,7 +374,11 @@ bibliography key. Each one is elaborated, probed for a cheap counterexample, and
 read by an independent reviewer that sees the paper's sentence and the proposed
 Lean and nothing else; a statement that reviewer will not accept is quarantined —
 recorded, visible, and refused by the save gate — rather than admitted with a
-warning. A staged run may declare the axioms it is allowed to stand on and is then
+warning. A reviewer that could not be *reached* is a different fact and is kept
+as one: nothing is minted, and nothing is recorded against the name, because
+quarantine is durable and no path clears an entry — folding a provider outage
+into "the reader found this unfaithful" would blacklist a name for the life of
+the project under a verdict nobody reached. A staged run may declare the axioms it is allowed to stand on and is then
 graded *verified modulo* exactly the ones its proof used, read from `#print
 axioms` rather than from what was declared. Downstream artifacts list those
 assumptions by name, never as a count.
