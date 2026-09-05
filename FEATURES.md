@@ -967,8 +967,11 @@ Priority labels are sequencing hints:
   mints one of them at a time; `/assume <paper-id> <ref> ...` asks for an explicitly
   chosen set up front. The reading is bounded, and a reading that stopped at the
   bound says so rather than letting a listing that stops read as a paper that does.
-  A bundle carrying more than one document names the ones it did not read, since
-  which root wins is decided by a filename.
+  A bundle carrying more than one document names the ones the reading never
+  walked — a `standalone` figure or a `subfiles` fragment opens a document of
+  its own too, so the paper is the one no other document includes, and what
+  counts as unread is what the walk did not visit rather than what is not the
+  root.
 - **Now (implemented):** minted axioms live in version-specific `Papers.<CiteKey>`
   namespaces, one module per paper version, generated whole and writable by nothing
   else. Each docstring names the paper, its arXiv identifier, the reference the
@@ -984,8 +987,9 @@ Priority labels are sequencing hints:
   minted and nothing is recorded against the name, so the request can be made again.
 - **Now (implemented):** an assumed definition is recorded as an `opaque` constant
   rather than an axiom, and every surface that renders it — the generated module,
-  the session summary, the export — says which of the two it is, because they are
-  not the same trust.
+  the approval a human reads, the completion gate that decides what the appendix
+  owes, the session summary and the export — says which of the two it is, because
+  they are not the same trust.
 - **Now (implemented):** each declared assumption is checked for a cheap
   counterexample before any proving begins, and a proof that used one is graded
   *verified modulo* — with the manifest and the compiled document naming exactly the

@@ -834,3 +834,142 @@ def test_an_assumed_constant_is_exported_as_the_opaque_it_is(sourced) -> None:
 
     assert "opaque Papers." in page
     assert "axiom Papers." not in page
+
+
+def test_a_reader_that_answers_the_string_false_has_not_agreed(sourced) -> None:
+    """`bool("false")` is `True`. Every non-empty string the reader could put
+    in `agrees` -- "false", "no", "disagree" -- read as agreement, so a
+    reader that refused and spelled out the divergence had its axiom minted
+    anyway and its findings discarded."""
+    def refusing(**kwargs):
+        return sourced._read_review(
+            '{"agrees": "false", "divergences": ["the Lean asserts the converse"]}'
+        )
+
+    sourced._review_assumption = refusing
+
+    result = _assume(sourced)
+
+    assert not result.ok
+    assert sourced.state["assumptions"] == []
+
+
+def test_an_answer_with_no_verdict_field_is_not_a_verdict(sourced) -> None:
+    """A model that paraphrases its schema answers with a JSON object that
+    has no `agrees` key. That is not a review, so it must refuse and record
+    nothing -- quarantining it under an empty divergence list is the durable
+    blacklisting the unreachable-reader split exists to prevent, arriving by
+    the schema rather than by the transport."""
+    def paraphrasing(**kwargs):
+        return sourced._read_review('{"verdict": "agrees", "notes": []}')
+
+    sourced._review_assumption = paraphrasing
+
+    result = _assume(sourced)
+
+    assert not result.ok
+    assert sourced.state["assumptions"] == []
+    assert not sourced.state.get("quarantine")
+    assert "could not be reached" in result.output
+
+
+def test_a_reader_that_answers_true_agrees(sourced) -> None:
+    def agreeing(**kwargs):
+        return sourced._read_review('{"agrees": true, "divergences": []}')
+
+    sourced._review_assumption = agreeing
+
+    assert _assume(sourced).ok
+
+
+def test_an_empty_listing_names_the_documents_it_did_not_read(session) -> None:
+    """"The paper states nothing Hardy recognises" is a claim about the
+    paper. When another document in the bundle went unread, the honest
+    answer says so -- the empty-listing branch returned before the payload
+    that carries `unread_documents` was ever built."""
+    session._tool("fetch_paper", {"paper_id": PAPER})
+    session.papers.library.admit_source(
+        session.papers._held(PAPER).identifier,
+        _bundle(
+            "\\documentclass{article}\n\\begin{document}\nNo results here.\n\\end{document}\n",
+            second=("zother.tex", DECOY_SOURCE),
+        ),
+        source_url="u",
+        fetched_at="t",
+    )
+
+    result = session._tool("list_statements", {"paper_id": PAPER})
+
+    assert not result.ok
+    assert "zother.tex" in result.output
+
+
+def test_the_appendix_owes_the_declaration_lean_was_actually_given(sourced) -> None:
+    """The generated module writes `opaque`, and the completion gate demanded
+    a verbatim `axiom` line that exists nowhere in the tree. The only
+    reachable finished state was one whose published appendix misstated what
+    the work rests on -- understating the trust base, since an opaque
+    constant is the stronger thing to have asserted."""
+    from hardy import completion
+
+    assert _assume(
+        sourced, kind="constant", formal_name="widget", lean_statement="Type"
+    ).ok
+    name = sourced.state["assumptions"][0]["formal_name"]
+
+    owed = completion._assumption_obligations(
+        sourced.state["assumptions"],
+        {name},
+        (),
+        completion.displayed("\\appendix\nNothing quoted here.\n"),
+    )
+
+    quoted = " ".join(item.detail for item in owed)
+    assert f"opaque {name} : Type" in quoted
+    assert f"axiom {name} : Type" not in quoted
+
+
+def test_the_human_is_shown_the_keyword_hardy_will_write(sourced) -> None:
+    """The one point where a person decides. It printed `Lean: axiom ...`
+    for a declaration Hardy writes as `opaque ...`."""
+    shown: list[dict] = []
+    sourced.confirm = lambda proposal: shown.append(dict(proposal)) or True
+
+    _assume(sourced, kind="constant", formal_name="widget", lean_statement="Type")
+
+    assert shown[0]["kind"] == "constant"
+    assert shown[0]["keyword"] == "opaque"
+
+
+def test_a_guillemet_name_carrying_a_dot_is_refused_before_the_human_is_asked(
+    sourced,
+) -> None:
+    """`ANY_NAME` admits `«a.b»`, and the module is regenerated with
+    `rsplit(".", 1)[-1]` -- giving the leaf `b»`. The human approved
+    `Papers.<key>.«a.b»` and the file was written with `axiom b»`. The gate
+    has to be "one component", not "matches a Lean name"."""
+    shown: list[dict] = []
+    sourced.confirm = lambda proposal: shown.append(dict(proposal)) or True
+
+    result = _assume(sourced, formal_name="«a.b»")
+
+    assert not result.ok
+    assert shown == []
+    assert sourced.state["assumptions"] == []
+
+
+def test_a_guillemet_name_without_a_dot_is_still_allowed(sourced) -> None:
+    """The escape exists so a name Lean needs quoting for can be used."""
+    assert _assume(sourced, formal_name="«a b»").ok
+
+
+def test_a_statement_the_probe_cannot_collapse_is_a_refusal_not_a_crash(sourced) -> None:
+    """`_assumption_shape` rejects `\\n` and `\\r`; `probe_source` rejects six
+    line terminators. A separator that survives `normalise_lean` inside a
+    string literal raised `ValueError` out of the tool -- no
+    `assumption_prompt` recorded, and the search evidence spent by the
+    `finally`. `_refutation_probe`'s docstring opens "and never crash"."""
+    result = _assume(sourced, lean_statement='True ∨ ("a b" = "a b")')
+
+    assert not result.ok
+    assert sourced.state["assumptions"] == []

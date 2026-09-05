@@ -1200,11 +1200,17 @@ class MathematicsSession:
                 "scaffolding rather than a result.",
                 source,
             )
-        # A quarantined name is refused before approval is consulted at all.
-        # An unfaithfully formalised statement is not an assumption a human
-        # may approve their way past: the reader said this Lean does not say
-        # what the paper says, and declaring it anyway would let Hardy derive
-        # claims the paper never made under the paper's name. Matched on the
+        # A quarantined name is refused before approval is consulted at all:
+        # the reader said this Lean does not say what the paper says, and
+        # declaring it under that name anyway would let Hardy derive claims
+        # the paper never made under the paper's name.
+        #
+        # What this does *not* do is close the statement off entirely. The
+        # same Lean, re-requested through `request_assumption` under a
+        # different name, is an ordinary approval a human may grant -- and
+        # should be able to, since the reader's verdict is one reading and
+        # the human is the one deciding. The rule is about the paper's name,
+        # not about the text. Matched on the
         # qualified name and nothing else, because that is the declaration
         # the reader refused: `assumptions()` qualifies by the namespace in
         # force, so a minted axiom always comes back as `Papers.<key>.<leaf>`,
@@ -4977,10 +4983,22 @@ class MathematicsSession:
             return ToolResult(False, str(error))
         statements = reading.statements
         if not statements:
+            # Which document was read, and which were not. "The paper states
+            # nothing" is a claim about the paper, and this branch returned
+            # before the payload carrying `unread_documents` was built -- so
+            # a bundle whose root was chosen wrongly said the paper is silent
+            # and never mentioned the file it had not opened.
+            elsewhere = (
+                f" It read {reading.root} and not {list(reading.unread)}; if the paper is "
+                "one of those, read it with read_paper."
+                if reading.unread
+                else ""
+            )
             return ToolResult(
                 False,
                 f"{record.arxiv_id} states nothing Hardy recognises as a theorem, lemma, "
-                "proposition or definition. Read its source with read_paper instead.",
+                f"proposition or definition.{elsewhere} Read its source with read_paper "
+                "instead.",
             )
         first = max(1, start)
         # Bounded like every other observation, and resumable rather than
@@ -5086,7 +5104,11 @@ class MathematicsSession:
         # `request_assumption`, which cannot write `Papers/` either. The
         # namespace is Hardy's to choose; the caller names the axiom in it.
         short = request["formal_name"].strip()
-        if not re.fullmatch(ANY_NAME, short):
+        # One component: `ANY_NAME` admits the guillemet escape, and `«a.b»`
+        # carries a dot through it. The module is regenerated with
+        # `rsplit(".", 1)[-1]`, so the human approved `Papers.<key>.«a.b»`
+        # and the file was written with `axiom b»`.
+        if "." in short or not re.fullmatch(ANY_NAME, short):
             return ToolResult(
                 False,
                 f"formal_name must be a single Lean identifier, not {short!r}: the "
@@ -5230,6 +5252,11 @@ class MathematicsSession:
             "paper_title": record.title,
             "cite_key": entry.key,
             "kind": kind,
+            # The keyword the file will actually carry, so the one line a
+            # person reads before deciding is the declaration Hardy writes.
+            # It printed `axiom` for what it mints as `opaque`, which is the
+            # weaker of the two and not what was being approved.
+            "keyword": "opaque" if kind == "constant" else "axiom",
         }
         self._record(
             {
@@ -5323,8 +5350,15 @@ class MathematicsSession:
         admitted unchecked, nor one where none can be: the caveat carries the
         uncertainty to the human, who is the one deciding.
         """
-        source, tactics = refute.probe_source(statement)
         try:
+            # Built inside the guard, as `workflow._refute` builds it: the
+            # shape gate here rejects `\n` and `\r`, and `probe_source`
+            # rejects six line terminators, so a separator surviving
+            # `normalise_lean` inside a string literal raised out of the tool
+            # -- no `assumption_prompt` recorded, and the search evidence
+            # spent by the caller's `finally`. A probe that will not run is a
+            # caveat however early it declines.
+            source, tactics = refute.probe_source(statement)
             result = self._probe_lean_source(
                 source, timeout=max(self.lean.timeout, refute.PROBE_SECONDS)
             )
@@ -5410,24 +5444,43 @@ class MathematicsSession:
                 ensure_ascii=False,
             )
         )
-        # The reader's answer is parsed the way every structured answer in
-        # Hardy is: the first balanced JSON object in the text, because a
-        # model that adds a sentence around it has still answered. Anything
-        # unparseable is not a review, and not a review is not an agreement.
-        found = json_object(str(answer))
+        return self._read_review(str(answer))
+
+    @staticmethod
+    def _read_review(answer: str) -> tuple[bool | None, tuple[str, ...]]:
+        """The reader's verdict, or `None` where it did not give one.
+
+        Parsed the way every structured answer in Hardy is: the first
+        balanced JSON object in the text, because a model that adds a
+        sentence around it has still answered.
+
+        The verdict must be an actual boolean. `bool("false")` is `True`, so
+        coercing the field let every non-empty string -- "false", "no",
+        "disagree" -- read as agreement: a reader that refused and spelled
+        out the divergence had its axiom minted anyway and its findings
+        thrown away. And a field that is missing or of the wrong type is not
+        a verdict of "no", it is no verdict: answering `False` there would
+        quarantine the name durably on a model's paraphrase of its own
+        schema, which is the same permanent blacklisting the unreachable
+        case exists to avoid, arriving by the schema instead of the wire.
+        """
+        found = json_object(answer)
         try:
             payload = json.loads(found) if found else None
         except ValueError:
             payload = None
         if not isinstance(payload, dict):
-            # `None` rather than `False`: no verdict was reached, which is a
-            # different fact from a verdict of "this is not what the paper
-            # says" and must not be recorded as one.
             return None, ("the reader did not answer with a review",)
         divergences = payload.get("divergences")
-        return bool(payload.get("agrees")), tuple(
+        reported = tuple(
             str(item) for item in (divergences if isinstance(divergences, list) else ())
         )
+        agrees = payload.get("agrees")
+        if not isinstance(agrees, bool):
+            return None, (
+                f"the reader's answer carried no verdict Hardy can read (agrees={agrees!r})",
+            )
+        return agrees, reported
 
     def _quarantine(
         self,
