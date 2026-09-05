@@ -8,100 +8,50 @@ of them needs a model.
 
 from __future__ import annotations
 
-import pytest
-
 from hardy import compaction
+from hardy import summary as summary_module
 from hardy.loop import Message, ToolCall
 
 
-def _facts(**overrides) -> compaction.Facts:
+def _summary(**overrides) -> summary_module.Summary:
+    """A summary the way a session assembles one, for the plan tests below.
+
+    Through `summary.assemble` rather than built by hand: what a compaction
+    costs is what the real assembler produces, and a stand-in that rendered
+    differently would size the budget against text nobody sends.
+    """
     base = dict(
         goal="Show every group of order 15 is cyclic.",
-        assumptions=[{
-            "formal_name": "sylow_three",
-            "lean_statement": "∀ p : ℕ, True",
-            "source": "Isaacs, Theorem 1.7",
-            "status": "user-approved",
-        }],
-        proved=["order_fifteen_cyclic", "helper"],
-        open_declarations=["hard_step"],
-        names=[{"formal_name": "order_fifteen_cyclic", "latex_name": "thm:main", "description": "the main result"}],
-        attempts=[compaction.Attempt("save_lean", "Main.lean", "error: unknown identifier 'foo'")],
-        next_steps=["hard_step rests on a hole"],
-        modules=["Main", "Support"],
+        assumptions=[],
+        registry=[],
+        audit={},
+        theorems={},
+        open_theorems=[],
+        obligations=[],
     )
     base.update(overrides)
-    return compaction.Facts(**base)
-
-
-def test_the_summary_carries_every_heading_in_order() -> None:
-    rendered = compaction.summarize(_facts()).render()
-
-    titles = [line[3:] for line in rendered.splitlines() if line.startswith("## ")]
-    assert titles == [
-        "Goal", "Standing assumptions", "Proved", "Open",
-        "Naming registry", "Workspace", "Failed attempts", "Next steps",
-    ]
-
-
-def test_an_assumption_is_quoted_with_its_provenance() -> None:
-    # An assumption a later turn restates loosely is an assumption a later turn
-    # has weakened, and the human approved these exact words.
-    rendered = compaction.summarize(_facts()).render()
-
-    assert "`sylow_three` : ∀ p : ℕ, True [Isaacs, Theorem 1.7] (user-approved)" in rendered
-
-
-def test_an_empty_heading_says_none_rather_than_vanishing() -> None:
-    # A heading that disappears when it is empty reads as a summary that
-    # forgot to mention it, which is the opposite of what this is for.
-    rendered = compaction.summarize(_facts(assumptions=[], proved=[])).render()
-
-    assert "## Standing assumptions\n- none" in rendered
-    assert "## Proved\n- none" in rendered
-
+    return summary_module.assemble(**base)
 
 def test_the_summary_says_it_is_a_record_and_not_a_conversation() -> None:
-    assert compaction.summarize(_facts()).render().startswith(compaction.PREAMBLE)
+    """The preamble is compaction's own, and the sections are `hardy.summary`'s.
 
+    A model handed the summary with no framing reads it as a turn to answer.
+    What it needs to know is that this is what happened, not what was said to
+    it -- so the preamble goes above the same text `/status --full` prints.
+    """
+    rendered = compaction.rendered(summary_module.assemble(
+        goal="Show that True is true.",
+        assumptions=[],
+        registry=[],
+        audit={},
+        theorems={},
+        open_theorems=[],
+        obligations=[],
+    ))
 
-# -- failed attempts, read off the transcript -------------------------------
-
-
-def test_only_failures_are_gathered_and_lean_is_quoted() -> None:
-    events = [
-        {"type": "tool", "name": "save_lean", "arguments": {"path": "Main.lean"}, "result": {"ok": False, "output": "error: type mismatch"}},
-        {"type": "tool", "name": "save_lean", "arguments": {"path": "Main.lean"}, "result": {"ok": True, "output": "saved"}},
-        {"type": "user", "message": {"role": "user", "content": "keep going"}},
-    ]
-
-    found = compaction.failed_attempts(events)
-
-    assert len(found) == 1
-    assert found[0].line() == "save_lean (Main.lean): error: type mismatch"
-
-
-def test_a_long_lean_failure_is_cut_rather_than_carried_whole() -> None:
-    events = [{"type": "tool", "name": "check_lean", "arguments": {}, "result": {"ok": False, "output": "x" * 5000}}]
-
-    line = compaction.failed_attempts(events)[0].line()
-
-    assert "cut from 5000 characters" in line
-    assert len(line) < 2200
-
-
-def test_only_the_most_recent_failures_are_kept() -> None:
-    events = [
-        {"type": "tool", "name": f"tool{index}", "arguments": {}, "result": {"ok": False, "output": "no"}}
-        for index in range(20)
-    ]
-
-    found = compaction.failed_attempts(events, limit=3)
-
-    assert [item.tool for item in found] == ["tool17", "tool18", "tool19"]
-
-
-# -- deciding when and where to cut -----------------------------------------
+    assert rendered.startswith(compaction.PREAMBLE)
+    assert "Goal" in rendered
+    assert "Show that True is true." in rendered
 
 
 def _long(role: str, size: int = 4000, **kwargs) -> Message:
@@ -153,7 +103,7 @@ def test_a_conversation_with_no_legal_cut_is_left_whole() -> None:
 
 def test_the_compacted_conversation_is_the_summary_then_the_tail() -> None:
     messages = [Message("user", text="old"), Message("assistant", text="older"), Message("user", text="recent")]
-    summary = compaction.summarize(_facts())
+    summary = _summary()
 
     rebuilt = compaction.compacted(messages, 2, summary)
 
@@ -186,14 +136,6 @@ def test_an_empty_message_still_costs_something() -> None:
 
     assert empty > 0
     assert result > empty
-
-
-@pytest.mark.parametrize("field", ["usage", "usage_cursor", "provider_session"])
-def test_the_spend_ledger_is_not_a_field_a_summary_can_carry(field: str) -> None:
-    # `Facts` is the whole of what a summary may be assembled from, so the
-    # withheld keys cannot reach the model through one by construction rather
-    # than by a filter somebody has to remember to apply.
-    assert field not in compaction.Facts.__dataclass_fields__
 
 
 def test_the_summary_is_charged_against_the_budget_it_will_be_sent_in() -> None:

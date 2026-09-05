@@ -321,12 +321,24 @@ def assemble(
     modules: Sequence[str] = (),
     automation: Mapping[str, str] | None = None,
     shared: Mapping[str, Sequence[str]] | None = None,
+    declaration: str = "",
+    development: str = "",
 ) -> Summary:
     """The summary, in the order a reader needs it.
 
     The shape issue #100 proposes: goal, standing assumptions, what is proved,
     what failed, what is open, the naming registry, and what is left. Every
     section is derived; none of it is narrated.
+
+    `declaration` and `development` are for the unattended surface, and are the
+    one place a section is carried rather than read off a workspace. `hardy
+    batch` has no Lean tree and no `session.json`: the statement it was given
+    and the skeleton it is holding live in the conversation alone, so a
+    compaction that cut them would leave the model unable to type-check against
+    the declaration it may not change, or to continue from the development
+    Hardy says it retained. Both are omitted when empty, which is every
+    interactive session -- there the Lean is on disk and the summary can point
+    at it instead.
     """
     # Routed by the verdict rather than by the caller's list alone. The session
     # supplies `open_theorems` from the same records, so the two agree -- but a
@@ -356,6 +368,11 @@ def assemble(
     return Summary(
         (
             Section("Goal", (goal,) if goal.strip() else (), empty="not set (/goal)"),
+            # Absent rather than empty on an interactive session, which is why
+            # these two carry no `empty`: a heading saying "none" would tell a
+            # reader something is missing when nothing is.
+            Section("Statement", (declaration,) if declaration.strip() else ()),
+            Section("Development in hand", (development,) if development.strip() else ()),
             Section(
                 "Standing assumptions",
                 tuple(_assumption_line(item) for item in assumptions),

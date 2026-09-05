@@ -1323,19 +1323,37 @@ def test_the_batch_summary_carries_the_statement_and_the_skeleton(tmp_path) -> N
 
     assert rebuilt is not None
     summary = rebuilt[0].text
+    assert 'Statement' in summary
     assert 'theorem HardyTarget : True' in summary
-    assert 'by\n  sorry' in summary
+    # The skeleton itself, whole. `hardy.summary` indents each line of a
+    # multi-line entry under its heading, so the comparison is against the
+    # body rather than against the indentation the renderer adds.
+    assert 'Development in hand' in summary
+    assert 'by\nsorry' in '\n'.join(line.strip() for line in summary.splitlines())
     assert 'sorry at line 2 of the retained skeleton' in summary
 
 
 def test_a_summary_with_nothing_held_has_no_development_heading() -> None:
     """Absent on a whole surface rather than for a particular run: an
     interactive workspace keeps its Lean on disk, so a heading saying "none"
-    would answer a question that surface does not ask."""
-    compaction = importlib.import_module('hardy.compaction')
+    would answer a question that surface does not ask.
 
-    rendered = compaction.summarize(compaction.Facts(goal="Show it.")).render()
+    The two batch-only sections are the one place `hardy.summary` carries
+    something rather than reading it off a workspace, which is why they are the
+    only two with no `empty` text.
+    """
+    summary_module = importlib.import_module('hardy.summary')
+
+    rendered = summary_module.assemble(
+        goal="Show it.",
+        assumptions=[],
+        registry=[],
+        audit={},
+        theorems={},
+        open_theorems=[],
+        obligations=[],
+    ).text()
 
     assert 'Development in hand' not in rendered
     assert 'Statement' not in rendered
-    assert '## Goal' in rendered
+    assert 'Goal' in rendered

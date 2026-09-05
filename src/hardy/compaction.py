@@ -32,10 +32,11 @@ The rules a compaction may not break:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
+from . import summary as summary_module
 from .loop import Message, first_legal_cut
 from .prompts import COMPACTION_PREAMBLE
 
@@ -48,175 +49,23 @@ CONTEXT_WINDOW = 200_000
 RESERVE_TOKENS = 16_384
 RECENT_TOKENS = 20_000
 
-#: What a tool result is cut to when it is serialised into a summary. Lean's
-#: output is the largest thing in a mathematical transcript by a wide margin,
-#: and a summary that carried it whole would be the size of what it replaced.
-RESULT_LIMIT = 2000
-
 #: Said above the summary, so a model reads it as a record of what happened
 #: rather than as a conversation to carry on. Model-facing text, so it is a
 #: template in `hardy/prompts` like every other instruction Hardy sends.
 PREAMBLE = COMPACTION_PREAMBLE
 
 
-@dataclass(frozen=True)
-class Attempt:
-    """One thing that was tried and did not work, as the record has it."""
+def rendered(summary: summary_module.Summary) -> str:
+    """The summary as a compaction sends it: the preamble, then the sections.
 
-    tool: str
-    detail: str
-    said: str
-
-    def line(self) -> str:
-        where = f" ({self.detail})" if self.detail else ""
-        return f"{self.tool}{where}: {_bounded(self.said)}"
-
-
-@dataclass
-class Facts:
-    """The mechanical inputs to a summary, each from something checkable.
-
-    A dataclass rather than a session method's return value so that the
-    assembling and the rendering can be tested apart, and so that nothing in
-    here can quietly reach back into a live session for something the
-    docstring did not promise.
+    The sections come from `hardy.summary`, which assembles the same text
+    `/status --full` prints. One assembler for both, deliberately: the whole
+    argument for Hardy compacting its own sessions is that the summary can be
+    checked against the workspace it was read off, and a user can only check
+    the one they are shown. Two renderings would have made "what the model was
+    told" and "what the user can look at" different documents.
     """
-
-    goal: str = ""
-    #: `session.json`'s approved assumptions, each with its provenance.
-    assumptions: Sequence[Mapping[str, Any]] = ()
-    #: Audited declarations that do not rest on a hole.
-    proved: Sequence[str] = ()
-    #: Audited declarations that do, plus anything else still owed.
-    open_declarations: Sequence[str] = ()
-    #: `session.json`'s formal <-> LaTeX registry.
-    names: Sequence[Mapping[str, Any]] = ()
-    #: What was tried and failed, read off the transcript.
-    attempts: Sequence[Attempt] = ()
-    #: The obligations, in the words the refusal would use.
-    next_steps: Sequence[str] = ()
-    #: Lean modules in the workspace, so the summary says where work lives.
-    modules: Sequence[str] = ()
-    #: The statement being proved, exactly as it was frozen. Carried because a
-    #: cut discards the message that stated it, and prose is not a Lean
-    #: signature: a model working from the informal claim alone will write
-    #: candidates that cannot type-check against the declaration it was
-    #: forbidden to change.
-    declaration: str = ""
-    #: The development being held, when it lives only in the conversation.
-    #: An interactive workspace keeps its Lean on disk and needs nothing here;
-    #: an unattended run's skeleton exists in the transcript alone, so a cut
-    #: that dropped the `sketch_proof` message would leave the model unable to
-    #: continue from the development Hardy says it retained.
-    development: str = ""
-
-
-@dataclass(frozen=True)
-class Summary:
-    """A rendered summary and the parts it was assembled from."""
-
-    facts: Facts
-    sections: tuple[tuple[str, tuple[str, ...]], ...] = field(default_factory=tuple)
-
-    def render(self) -> str:
-        blocks = [PREAMBLE]
-        for title, lines in self.sections:
-            body = "\n".join(f"- {line}" for line in lines) if lines else "- none"
-            blocks.append(f"## {title}\n{body}")
-        return "\n\n".join(blocks)
-
-    def as_dict(self) -> dict[str, Any]:
-        return {title: list(lines) for title, lines in self.sections}
-
-
-def _bounded(text: str, limit: int = RESULT_LIMIT) -> str:
-    """`text` on one line, cut to `limit`, saying so when it was cut."""
-    flat = " ".join(str(text).split())
-    if len(flat) <= limit:
-        return flat
-    return f"{flat[:limit]}… [cut from {len(flat)} characters]"
-
-
-def failed_attempts(events: Iterable[Mapping[str, Any]], limit: int = 12) -> tuple[Attempt, ...]:
-    """What was tried and refused, newest last, read off recorded tool events.
-
-    This is the one heading the issue expected a model to have to narrate, and
-    it does not: Hardy already records every tool call and what came back, so
-    "what was tried, what Lean said, why it failed" is in the transcript in
-    Lean's own words. Reading it beats asking a model to remember it, for the
-    same reason the other headings are derived.
-
-    Only failures. A successful save is already accounted for by the
-    declaration it produced, and repeating it here would make the summary a
-    second, weaker copy of the workspace.
-    """
-    found: list[Attempt] = []
-    for event in events:
-        if event.get("type") != "tool":
-            continue
-        result = event.get("result")
-        if not isinstance(result, Mapping) or result.get("ok") is not False:
-            continue
-        arguments = event.get("arguments")
-        arguments = arguments if isinstance(arguments, Mapping) else {}
-        # The one argument worth naming, and never the source itself: a
-        # summary that quoted every refused file would be larger than the
-        # conversation it replaces.
-        detail = str(arguments.get("path") or arguments.get("formal_name") or arguments.get("name") or "")
-        found.append(Attempt(str(event.get("name") or "?"), detail, str(result.get("output") or "")))
-    return tuple(found[-limit:])
-
-
-def summarize(facts: Facts) -> Summary:
-    """The summary, in the order a reader needs it.
-
-    Goal first because everything else is subordinate to it; standing
-    assumptions second because a later turn that contradicts one has invented
-    a result; then what is settled, what is not, and what to do next.
-
-    Two sections appear only when there is something to put in them, against
-    the "an empty heading says none" rule the others follow. That rule exists
-    so a reader cannot mistake an omission for an absence -- but these two are
-    absent on a whole *surface* rather than for a particular run: an
-    interactive workspace keeps its Lean on disk and its statement in
-    `session.json`, so a heading saying "none" would be answering a question
-    that surface does not ask.
-    """
-    sections: list[tuple[str, tuple[str, ...]]] = [
-        ("Goal", (facts.goal,) if facts.goal else ()),
-        # Beside the goal rather than under it: the prose says what is meant
-        # and the declaration says what must type-check, and only the second
-        # can be written against.
-        *([("Statement", (facts.declaration,))] if facts.declaration else []),
-        ("Standing assumptions", tuple(_assumption(item) for item in facts.assumptions)),
-        ("Proved", tuple(sorted(facts.proved))),
-        ("Open", tuple(sorted(facts.open_declarations))),
-        ("Naming registry", tuple(_name(item) for item in facts.names)),
-        ("Workspace", tuple(sorted(facts.modules))),
-        *([("Development in hand", (facts.development,))] if facts.development else []),
-        ("Failed attempts", tuple(item.line() for item in facts.attempts)),
-        ("Next steps", tuple(facts.next_steps)),
-    ]
-    return Summary(facts, tuple(sections))
-
-
-def _assumption(item: Mapping[str, Any]) -> str:
-    """One approved axiom, with the provenance the human approved it on.
-
-    The statement is quoted rather than described. An assumption a later turn
-    restates loosely is an assumption a later turn has weakened, and the
-    approval was given for these exact words.
-    """
-    name = str(item.get("formal_name") or "?")
-    statement = " ".join(str(item.get("lean_statement") or "").split())
-    source = str(item.get("source") or "")
-    status = str(item.get("status") or "")
-    tail = f" [{source}]" if source else ""
-    return f"`{name}` : {statement}{tail}" + (f" ({status})" if status else "")
-
-
-def _name(item: Mapping[str, Any]) -> str:
-    return f"`{item.get('formal_name')}` = {item.get('latex_name')} — {item.get('description')}"
+    return f"{PREAMBLE}\n\n{summary.text()}"
 
 
 def estimate_text(text: str) -> int:
@@ -452,7 +301,7 @@ def plan(
     )
 
 
-def compacted(messages: Sequence[Message], cut: int, summary: Summary) -> list[Message]:
+def compacted(messages: Sequence[Message], cut: int, summary: summary_module.Summary) -> list[Message]:
     """The conversation to continue from: the summary, then the kept tail.
 
     The summary arrives as a `user` message because that is the only role a
@@ -462,4 +311,4 @@ def compacted(messages: Sequence[Message], cut: int, summary: Summary) -> list[M
     checkable, or in `transcript.jsonl`, which is the record and is not
     replaced by any of this.
     """
-    return [Message("user", text=summary.render()), *messages[cut:]]
+    return [Message("user", text=rendered(summary)), *messages[cut:]]

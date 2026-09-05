@@ -3531,49 +3531,6 @@ class MathematicsSession:
             "settings": self._effective_settings(),
             "transcript": list(self._recorded()),
         }
-    def facts(self) -> compaction.Facts:
-        """The mechanical parts of a summary, each read off something checkable.
-
-        Nothing here is remembered. The goal, the approved assumptions and the
-        naming registry come from `session.json`; what is proved and what is
-        still open come from the stored audit verdicts, which expire when the
-        build inputs beneath them move; the modules come from the Lean tree;
-        and the failed attempts come from the tool results the transcript
-        already holds, in Lean's own words. That is the whole argument for
-        Hardy compacting its own sessions rather than asking a model to
-        remember them -- a summary assembled this way can be checked.
-
-        Deliberately without the spend ledger and its cursor. They are Hardy's
-        bookkeeping and no more the model's business in a summary than in the
-        workspace listing; a summary is not a loophole into the context.
-        """
-        try:
-            modules = sorted(self.lean_workspace.sources())
-        except ImportCycle:
-            # A tree that does not order is reported by the obligations below.
-            # Listing no modules for it is honest; raising out of a summary is
-            # not, since the summary is what a stuck session is read by.
-            modules = []
-        return compaction.Facts(
-            goal=self.goal(),
-            assumptions=list(self.state.get("assumptions", ())),
-            proved=sorted(self._settled_declarations()),
-            open_declarations=sorted(self._open_declarations()),
-            names=list(self.state.get("names", ())),
-            attempts=compaction.failed_attempts(self._recorded()),
-            next_steps=[str(item) for item in self._obligations()],
-            modules=modules,
-        )
-
-    def compaction_summary(self) -> str:
-        """The workspace-derived summary, rendered.
-
-        The same text a compaction would insert, available without one: it is
-        worth having as an answer to "what is going on in here" whether or not
-        a conversation has grown long enough to need cutting.
-        """
-        return compaction.summarize(self.facts()).render()
-
     def _record_overflow(self, plan: compaction.Plan) -> None:
         """Say that a request the window has no room for is going out anyway.
 
@@ -3638,13 +3595,13 @@ class MathematicsSession:
         # Costed by rendering it once and measuring, rather than by an
         # allowance -- a workspace with fifty registered names has a summary an
         # allowance would badly misjudge.
-        summarised = compaction.summarize(self.facts())
+        summarised = self._summary()
         outcome = compaction.plan(
             messages,
             context_window=self.context_window,
             reserve_tokens=compaction.RESERVE_TOKENS,
             keep_tokens=compaction.RECENT_TOKENS,
-            summary_tokens=compaction.estimate_tokens([Message("user", text=summarised.render())]),
+            summary_tokens=compaction.estimate_tokens([Message("user", text=compaction.rendered(summarised))]),
             overhead_tokens=overhead,
             output_tokens=self._output_cap(),
         )
@@ -3698,8 +3655,8 @@ class MathematicsSession:
             # show the same `available` -- and a transcript that does not state
             # the window cannot say which endpoint's limit the cuts were for.
             "context_window": self.context_window,
-            "sections": summarised.as_dict(),
-            "text": summarised.render(),
+            "sections": {section.title: list(section.shown) for section in summarised.sections},
+            "text": compaction.rendered(summarised),
         })
         return compaction.compacted(messages, outcome.cut, summarised)
 
