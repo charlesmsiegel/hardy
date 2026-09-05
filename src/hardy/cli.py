@@ -55,7 +55,14 @@ def confirm_assumption(ui: Any) -> Callable[[dict[str, Any]], bool]:
             blocking.write(f"  {goal}" if goal else "  not set -- /goal sets one")
             blocking.write("Hardy wants to introduce an assumption:", style="warning")
             blocking.write(f"  Informal: {proposal['informal_statement']}")
-            blocking.write(f"  Lean: axiom {proposal['formal_name']} : {proposal['lean_statement']}")
+            # `keyword` rather than a literal `axiom`: an assumed definition
+            # is written as `opaque`, and this is the single line a person
+            # reads before deciding. Defaulted for a caller that predates the
+            # field -- `request_assumption` produces only axioms.
+            keyword = proposal.get("keyword") or "axiom"
+            blocking.write(
+                f"  Lean: {keyword} {proposal['formal_name']} : {proposal['lean_statement']}"
+            )
             blocking.write(f"  Source: {proposal['source']}")
             blocking.write(f"  Reason: {proposal['reason']}")
             blocking.write(f"  Checked: {proposal.get('checked', 'not checked')}")
@@ -1599,7 +1606,8 @@ def build_parser() -> argparse.ArgumentParser:
             "JSON file declaring the axioms this run may stand on: "
             '{"assumptions": [{"name": ..., "statement": ..., "source": ...}]}. '
             "A proof using them is graded verified_modulo and the manifest names exactly "
-            "the ones it used."
+            "the ones it used. The run writes its own assumptions.json as a bare list of "
+            "the same entries, which is what the release audit reads back."
         ),
     )
     # SUPPRESS so that omitting it here leaves the global --model alone rather

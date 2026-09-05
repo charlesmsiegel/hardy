@@ -712,7 +712,19 @@ class ProveWorkflow:
                 )
 
             active_thread = self._track(
-                runtime.start(model=request.model, run_dir=store.path, claim=approved_claim)
+                runtime.start(
+                    model=request.model,
+                    run_dir=store.path,
+                    claim=approved_claim,
+                    # The thread that writes the proof gets the same declared
+                    # set the verifier will render, because `_declared_note`
+                    # below tells the model they "are already in scope in the
+                    # file you are proving" -- and without this they were not.
+                    # The model cited one, every official check answered
+                    # `unknown identifier`, and the budget went on an
+                    # environment mismatch Hardy had created itself.
+                    allowed=request.assumptions,
+                )
             )
             proof_started = self._monotonic()
             proof_request = proof_prompt(approved_claim) + _declared_note(request.assumptions)

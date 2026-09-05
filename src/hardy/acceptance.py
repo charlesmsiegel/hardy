@@ -216,8 +216,18 @@ class _DeterministicRuntime:
 
     backend = "deterministic-no-model"
 
-    def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None):
-        return SimpleNamespace(claim=claim, isolated=isolated)
+    def start(
+        self,
+        *,
+        model,
+        run_dir,
+        claim,
+        isolated=False,
+        phase=None,
+        wall_seconds=None,
+        allowed=(),
+    ):
+        return SimpleNamespace(claim=claim, isolated=isolated, allowed=tuple(allowed))
 
     def run_structured(self, thread, stage, prompt, output_type):
         if stage == "faithfulness":

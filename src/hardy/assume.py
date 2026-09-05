@@ -176,13 +176,42 @@ def root_of(files: Mapping[str, str]) -> str:
     down is usually a copy.
     """
     roots = roots_of(files)
-    if not roots:
+    # A `standalone` TikZ figure is a document TeX would execute, so reading
+    # what TeX executes does not tell it from the paper -- and `fig1.tex`
+    # sorts before `ms.tex`, so alphabetical order chose the figure and the
+    # paper's theorems went unlisted, reported as a paper that states
+    # nothing. What separates a part from the whole is that the whole
+    # includes it: a document another document reaches is not the root. If
+    # every candidate is reached (a cycle, or two files including each
+    # other) the tie-break below decides, because refusing outright would be
+    # worse than reading one of them.
+    included = _included_anywhere(files, roots)
+    standing = tuple(path for path in roots if path not in included) or roots
+    if not standing:
         raise AssumeError(
             "no root document: none of these files opens one with \\documentclass or "
             f"\\begin{{document}}, so there is nothing to read the paper's statements "
             f"out of ({sorted(files)[:10]})"
         )
-    return min(roots, key=lambda path: (path != "main.tex", path.count("/"), path))
+    return min(standing, key=lambda path: (path != "main.tex", path.count("/"), path))
+
+
+def _included_anywhere(files: Mapping[str, str], roots: Sequence[str]) -> set[str]:
+    """Every file some document in `roots` pulls in, directly or not."""
+    reached: set[str] = set()
+    for start in roots:
+        pending = [start]
+        seen = {start}
+        while pending:
+            current = pending.pop()
+            executed = completion.displayed(files.get(current, "")).executed
+            for match in completion.INCLUSION.finditer(executed):
+                target = completion.target(match.group(1), files)
+                if target and target not in seen:
+                    seen.add(target)
+                    reached.add(target)
+                    pending.append(target)
+    return reached
 
 
 def _pages(files: Mapping[str, str], root: str) -> list[tuple[str, str]]:
@@ -251,21 +280,34 @@ class Survey:
     root: str
     #: Every document in the bundle that opens one, this one included.
     roots: tuple[str, ...]
+    #: Every file the reading actually walked, the root and its inclusions.
+    read: tuple[str, ...]
 
     @property
     def unread(self) -> tuple[str, ...]:
-        """The documents in this bundle that nothing above was read from."""
-        return tuple(path for path in self.roots if path != self.root)
+        r"""The documents in this bundle that nothing above was read from.
+
+        Asked of what the walk visited, not of `roots` minus the root. A
+        `subfiles` fragment opens a document of its own *and* is `\subfile`d
+        by the root, so it is both a root and fully read -- and subtracting
+        named it unread beside statements the same payload had just taken
+        from it, telling the model to distrust a complete listing.
+        """
+        walked = set(self.read)
+        return tuple(path for path in self.roots if path not in walked)
 
 
 def survey(files: Mapping[str, str]) -> Survey:
     """The inventory, with what it could not fit and what it did not read."""
-    found = _inventory(files)
+    root = root_of(files)
+    pages = _pages(files, root)
+    found, truncated = _read_pages(pages)
     return Survey(
         statements=found,
-        truncated=len(found) >= MAX_STATEMENTS,
-        root=root_of(files),
+        truncated=truncated,
+        root=root,
         roots=roots_of(files),
+        read=tuple(dict.fromkeys(path for path, _ in pages)),
     )
 
 
@@ -282,13 +324,26 @@ def inventory(files: Mapping[str, str]) -> tuple[Statement, ...]:
     cannot carry: whether it was cut short, and which documents it did not
     read at all.
     """
-    return _inventory(files)
+    return _from_pages(_pages(files, root_of(files)))
 
 
-def _inventory(files: Mapping[str, str]) -> tuple[Statement, ...]:
+def _from_pages(pages: Sequence[tuple[str, str]]) -> tuple[Statement, ...]:
+    return _read_pages(pages)[0]
+
+
+def _read_pages(
+    pages: Sequence[tuple[str, str]],
+) -> tuple[tuple[Statement, ...], bool]:
+    """The statements, and whether the bound stopped the reading short.
+
+    Signalled from the loop rather than inferred from the count: a paper
+    stating exactly `MAX_STATEMENTS` results was reported as truncated, and
+    a `find` miss then said "the reading stopped at the first 200, so this
+    may be one it did not reach" when nothing had been cut.
+    """
     found: list[Statement] = []
     counts: dict[str, int] = {}
-    for path, text in _pages(files, root_of(files)):
+    for path, text in pages:
         for match in OPENING.finditer(text):
             environment = match.group(1)
             kind = _kind_of(environment)
@@ -318,9 +373,13 @@ def _inventory(files: Mapping[str, str]) -> tuple[Statement, ...]:
                     file=path,
                 )
             )
-            if len(found) >= MAX_STATEMENTS:
-                return tuple(found)
-    return tuple(found)
+            # One past the bound, then trimmed: stopping *at* the bound
+            # cannot tell a paper that states exactly `MAX_STATEMENTS`
+            # results from one that states more, and reported the first as
+            # cut short.
+            if len(found) > MAX_STATEMENTS:
+                return tuple(found[:MAX_STATEMENTS]), True
+    return tuple(found), False
 
 
 def find(statements: Sequence[Statement], ref: str) -> Statement | None:

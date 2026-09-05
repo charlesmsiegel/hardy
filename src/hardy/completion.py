@@ -662,14 +662,22 @@ def _assumption_obligations(
         )
     for item in wanted:
         name = str(item["formal_name"])
-        declaration = normalise(f"axiom {name} : {item.get('lean_statement', '')}")
+        # The keyword the tree really carries. An assumed *definition* is
+        # minted as `opaque`, and demanding a verbatim `axiom` line here
+        # meant the only appendix that cleared the gate quoted a declaration
+        # that exists nowhere -- understating the trust base, since an opaque
+        # constant is the stronger thing to have asserted.
+        keyword = "opaque" if str(item.get("kind", "")).strip() == "constant" else "axiom"
+        declaration = normalise(
+            f"{keyword} {name} : {item.get('lean_statement', '')}"
+        )
         if not quotes(declaration, quoted):
             owed.append(
                 Obligation(
                     "assumption",
                     name,
-                    "the appendix does not quote the axiom Lean was given. Quote it "
-                    f"verbatim, exactly: {declaration}",
+                    "the appendix does not quote the declaration Lean was given. "
+                    f"Quote it verbatim, exactly: {declaration}",
                 )
             )
         latex_name = str(item.get("latex_name") or "")

@@ -342,3 +342,55 @@ def test_a_real_label_wins_over_another_statement_s_synthesised_ordinal() -> Non
 
     assert picked is not None
     assert "the paper named" in picked.text
+
+
+STANDALONE_FIGURE = r"""
+\documentclass[tikz]{standalone}
+\begin{document}
+\begin{tikzpicture}\draw (0,0) -- (1,1);\end{tikzpicture}
+\end{document}
+"""
+
+MANUSCRIPT = r"""
+\documentclass{article}
+\begin{document}
+\input{fig1}
+\begin{theorem}\label{thm:main}The published result.\end{theorem}
+\end{document}
+"""
+
+
+def test_a_standalone_figure_is_not_the_paper() -> None:
+    r"""A `standalone` TikZ figure really is a document TeX would execute, so
+    reading what TeX executes does not distinguish it from the paper -- and
+    `fig1.tex` sorts before `ms.tex`, so it was chosen and the paper's
+    theorems went unlisted. It is reached by `\input` from the manuscript,
+    which is what says it is a part rather than the whole."""
+    files = {"fig1.tex": STANDALONE_FIGURE, "ms.tex": MANUSCRIPT}
+
+    assert assume.root_of(files) == "ms.tex"
+    assert [item.ref for item in assume.inventory(files)] == ["thm:main"]
+
+
+def test_a_subfile_the_root_reads_is_not_reported_as_unread() -> None:
+    r"""`subfiles` fragments open a document of their own and are `\subfile`d
+    by the root, so they are roots *and* fully read. Naming one as unread
+    told the model to distrust a listing that came from it -- the payload
+    contradicted itself."""
+    files = {
+        "main.tex": (
+            "\\documentclass{article}\\begin{document}\n"
+            "\\subfile{sections/intro}\n\\end{document}\n"
+        ),
+        "sections/intro.tex": (
+            "\\documentclass[../main.tex]{subfiles}\\begin{document}\n"
+            "\\begin{theorem}\\label{thm:main}A result.\\end{theorem}\n"
+            "\\end{document}\n"
+        ),
+    }
+
+    reading = assume.survey(files)
+
+    assert reading.root == "main.tex"
+    assert [item.file for item in reading.statements] == ["sections/intro.tex"]
+    assert reading.unread == ()

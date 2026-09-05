@@ -37,11 +37,17 @@ def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
     writeup = importlib.import_module("hardy.writeup")
     environment = _environment(domain)
     probes: list[str] = []
+    # What each thread was opened with. Recorded rather than defaulted away:
+    # every double in the suite took `allowed=()` and ignored it, so the one
+    # production call site that never passed it went unnoticed and the
+    # parameter was exercised only by tests.
+    starts: list[dict] = []
 
     class Runtime:
         backend = "fixture-backend"
 
         def start(self, *, model, run_dir, claim, isolated=False, phase=None, wall_seconds=None, allowed=()):
+            starts.append({"claim": claim, "phase": phase, "allowed": tuple(allowed)})
             return object()
 
         def run_structured(self, thread, stage, prompt, output_type):
@@ -177,7 +183,7 @@ def _controller(tmp_path, *, used=(), refuted=False, unreadable=False):
         monotonic=lambda: 0.0,
         uuid_factory=lambda: RUN_ID,
     )
-    return workflow, domain, controller, probes
+    return workflow, domain, controller, probes, starts
 
 
 class Terminal:
@@ -213,7 +219,7 @@ def _run(controller, workflow, domain, assumptions):
 
 
 def test_a_run_may_declare_what_it_stands_on(tmp_path) -> None:
-    workflow, domain, controller, _ = _controller(
+    workflow, domain, controller, _, starts = _controller(
         tmp_path, used=("Papers.perelman.no_local_collapsing",)
     )
 
@@ -229,7 +235,7 @@ def test_a_run_may_declare_what_it_stands_on(tmp_path) -> None:
 
 
 def test_a_run_that_declared_but_did_not_use_is_kernel_verified(tmp_path) -> None:
-    workflow, domain, controller, _ = _controller(tmp_path, used=())
+    workflow, domain, controller, _, starts = _controller(tmp_path, used=())
 
     manifest = _run(controller, workflow, domain, (_assumption(domain),))
 
@@ -238,7 +244,7 @@ def test_a_run_that_declared_but_did_not_use_is_kernel_verified(tmp_path) -> Non
 
 
 def test_a_run_declaring_nothing_is_graded_as_before(tmp_path) -> None:
-    workflow, domain, controller, _ = _controller(tmp_path, used=())
+    workflow, domain, controller, _, starts = _controller(tmp_path, used=())
 
     manifest = _run(controller, workflow, domain, ())
 
@@ -246,7 +252,7 @@ def test_a_run_declaring_nothing_is_graded_as_before(tmp_path) -> None:
 
 
 def test_every_declared_assumption_is_refutation_checked_before_proving(tmp_path) -> None:
-    workflow, domain, controller, probes = _controller(
+    workflow, domain, controller, probes, starts = _controller(
         tmp_path, used=("Papers.perelman.no_local_collapsing",)
     )
 
@@ -259,7 +265,7 @@ def test_every_declared_assumption_is_refutation_checked_before_proving(tmp_path
 def test_a_refuted_assumption_stops_the_run_before_any_proving(tmp_path) -> None:
     """A false axiom makes everything provable, so the run that would have
     spent its budget proving on one is stopped instead."""
-    workflow, domain, controller, _ = _controller(tmp_path, refuted=True)
+    workflow, domain, controller, _, starts = _controller(tmp_path, refuted=True)
 
     manifest = _run(controller, workflow, domain, (_assumption(domain),))
 
@@ -271,7 +277,7 @@ def test_a_refuted_assumption_stops_the_run_before_any_proving(tmp_path) -> None
 def test_a_refutation_that_could_not_run_does_not_stop_the_run(tmp_path) -> None:
     """A machine whose Lean will not answer must not silently become one where
     nothing can be assumed -- but the run says so in its known gaps."""
-    workflow, domain, controller, _ = _controller(
+    workflow, domain, controller, _, starts = _controller(
         tmp_path, used=("Papers.perelman.no_local_collapsing",), unreadable=True
     )
 
@@ -284,7 +290,7 @@ def test_a_refutation_that_could_not_run_does_not_stop_the_run(tmp_path) -> None
 def test_the_declared_set_is_written_into_the_run_directory(tmp_path) -> None:
     """The manifest names what was used; the request names what was allowed,
     and a reader wants both."""
-    workflow, domain, controller, _ = _controller(
+    workflow, domain, controller, _, starts = _controller(
         tmp_path, used=("Papers.perelman.no_local_collapsing",)
     )
 
@@ -299,7 +305,7 @@ def test_the_declared_set_is_written_into_the_run_directory(tmp_path) -> None:
 
 def test_the_document_is_given_the_declarations_it_must_state(tmp_path) -> None:
     """The rendering exists; this is what makes it fire in production."""
-    workflow, domain, controller, _ = _controller(
+    workflow, domain, controller, _, starts = _controller(
         tmp_path, used=("Papers.perelman.no_local_collapsing",)
     )
     seen: dict = {}
@@ -315,3 +321,23 @@ def test_the_document_is_given_the_declarations_it_must_state(tmp_path) -> None:
     _run(controller, workflow, domain, declared)
 
     assert seen["declared"] == declared
+
+
+def test_the_proving_thread_is_opened_with_the_declared_assumptions(tmp_path) -> None:
+    """`_declared_note` tells the model these axioms "are already in scope in
+    the file you are proving", and `render_theorem` puts them there -- but
+    only for a runtime that was told what they are. The one production call
+    site that opens the proving thread never passed them, so the model cited
+    a declared axiom and got `unknown identifier` back from every official
+    check while the note said it was in scope. Asserted on what `start`
+    received, because every double in the suite defaults the argument away."""
+    workflow, domain, controller, _, starts = _controller(
+        tmp_path, used=("Papers.perelman.no_local_collapsing",)
+    )
+    declared = (_assumption(domain),)
+
+    _run(controller, workflow, domain, declared)
+
+    proving = [item for item in starts if item["claim"] is not None]
+    assert proving, "no thread was opened for the proof"
+    assert proving[-1]["allowed"] == declared
