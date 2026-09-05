@@ -52,3 +52,8 @@ def _changelog(root: Path, version: str) -> None:
         f"# Changelog\n\n## {version} - 2026-09-03 - manifest {manifest_digest(root)}\n"
         "\n- test corpus\n",
         encoding="utf-8")
+
+
+def rebind_changelog(root: Path, version: str = VERSION) -> None:
+    """Re-bind the changelog head after a test adds content the manifest covers."""
+    _changelog(root, version)

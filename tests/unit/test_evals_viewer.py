@@ -9,10 +9,11 @@ import urllib.request
 from pathlib import Path
 
 import pytest
-from corpus_helpers import write_corpus
+from corpus_helpers import rebind_changelog, write_corpus
 
 from hardy.evals.problems import Entry
-from hardy.evals.viewer import PAGE, payload, serve
+from hardy.evals.corpus import load_corpus
+from hardy.evals.viewer import PAGE, ReviewRefused, payload, record_review, serve
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -318,3 +319,188 @@ def test_a_sidecar_of_the_wrong_json_shape_still_renders_the_page(tmp_path, name
     got = payload(root)
     assert got["issues"], "the objection must reach the page"
     assert isinstance(got["sources"], dict)
+
+
+# --- The write path: a human records a faithfulness read (spec §2.2, §12) ---
+
+
+def _authored(id: str, **kw) -> Entry:
+    return _entry(id=id, name="".join(p.title() for p in id.split("-")), binders="(n : ℕ)",
+                  conclusion="n = n", msc=("13A15",), witness="⟨0, trivial⟩", witness_note=None, **kw)
+
+
+@pytest.fixture
+def reviewable(tmp_path):
+    root = write_corpus(tmp_path / "corpus", (_authored("alpha"), _authored("beta")))
+    # `sources.json` is content the manifest covers, so the head is re-bound after it lands.
+    (root / "sources.json").write_text('{"schema_version": 1, "sources": {}}', encoding="utf-8")
+    rebind_changelog(root)
+    return root
+
+
+def test_a_faithful_verdict_promotes_the_entry_and_binds_the_review_to_its_digests(reviewable):
+    before = load_corpus(reviewable).by_id("alpha")
+
+    result = record_review(reviewable, "alpha", verdict="faithful", reviewer="Ada Lovelace")
+
+    after = load_corpus(reviewable).by_id("alpha")
+    assert after.status == "active"
+    assert after.review is not None
+    assert after.review.reviewer == "Ada Lovelace"
+    assert after.review.verdict == "faithful"
+    assert after.review.statement_digest == before.statement_digest()
+    assert after.review.prompt_digest == before.prompt_digest()
+    assert after.review.msc == before.msc and after.review.group == "commutative-algebra"
+    assert result["status"] == "active" and result["review"]["reviewer"] == "Ada Lovelace"
+
+
+def test_an_unfaithful_verdict_needs_a_reason_and_leaves_the_entry_a_candidate(reviewable):
+    with pytest.raises(ReviewRefused, match="reason|why"):
+        record_review(reviewable, "alpha", verdict="unfaithful", reviewer="Ada Lovelace")
+    assert load_corpus(reviewable).by_id("alpha").review is None, "a refused review writes nothing"
+
+    record_review(reviewable, "alpha", verdict="unfaithful", reviewer="Ada Lovelace", reason="binders drop 0 < n")
+
+    after = load_corpus(reviewable).by_id("alpha")
+    assert after.status == "candidate"
+    assert after.review.verdict == "unfaithful" and after.review.reason == "binders drop 0 < n"
+
+
+def test_a_review_of_an_unknown_entry_or_by_nobody_is_refused(reviewable):
+    with pytest.raises(ReviewRefused, match="gamma"):
+        record_review(reviewable, "gamma", verdict="faithful", reviewer="Ada Lovelace")
+    with pytest.raises(ReviewRefused, match="reviewer"):
+        record_review(reviewable, "alpha", verdict="faithful", reviewer="   ")
+
+
+def test_recording_a_review_leaves_the_rest_of_the_shard_alone(reviewable):
+    shard = reviewable / "problems" / "13.json"
+    beta_before = next(r for r in json.loads(shard.read_text(encoding="utf-8"))["entries"] if r["id"] == "beta")
+
+    record_review(reviewable, "alpha", verdict="faithful", reviewer="Ada Lovelace")
+
+    rows = json.loads(shard.read_text(encoding="utf-8"))["entries"]
+    assert [r["id"] for r in rows] == ["alpha", "beta"], "order and membership are preserved"
+    assert next(r for r in rows if r["id"] == "beta") == beta_before
+    assert not (reviewable / "problems" / "13.json.tmp").exists()
+
+
+def test_a_recorded_review_leaves_only_the_release_objection_standing(reviewable):
+    """Content changed, so the manifest no longer matches the changelog head:
+    that objection is expected and is cleared by the release cut before a push.
+    Anything else would mean the write produced a corpus the CLI rejects."""
+    from hardy.evals.corpus import check_issues
+
+    assert check_issues(reviewable) == []
+    record_review(reviewable, "alpha", verdict="faithful", reviewer="Ada Lovelace")
+    issues = check_issues(reviewable)
+    assert len(issues) == 1 and "manifest" in issues[0], issues
+
+
+@pytest.fixture
+def reviewing(reviewable):
+    server = serve(reviewable, port=0, report=lambda _: None, serve_forever=False)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}", reviewable
+    server.shutdown()
+    server.server_close()
+
+
+def _post(url: str, body: dict):
+    request = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json"})
+    return urllib.request.urlopen(request)
+
+
+def test_the_review_route_records_a_verdict_and_returns_the_updated_entry(reviewing):
+    url, root = reviewing
+    with _post(f"{url}/api/review", {"id": "alpha", "verdict": "faithful", "reviewer": "Ada Lovelace"}) as res:
+        body = json.loads(res.read())
+    assert body["status"] == "active" and body["review"]["reviewer"] == "Ada Lovelace"
+    assert load_corpus(root).by_id("alpha").status == "active"
+
+
+def test_the_review_route_refuses_with_the_reason_and_writes_nothing(reviewing):
+    url, root = reviewing
+    for body in ({"id": "gamma", "verdict": "faithful", "reviewer": "Ada"},
+                 {"id": "alpha", "verdict": "unfaithful", "reviewer": "Ada"},
+                 {"id": "alpha", "verdict": "faithful", "reviewer": ""}):
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            _post(f"{url}/api/review", body)
+        assert raised.value.code == 400
+        assert "error" in json.loads(raised.value.read())
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        urllib.request.urlopen(urllib.request.Request(f"{url}/api/review", data=b"not json", method="POST"))
+    assert raised.value.code == 400
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        urllib.request.urlopen(urllib.request.Request(f"{url}/api/corpus", data=b"{}", method="POST"))
+    assert raised.value.code == 404, "POST exists for one route only"
+    assert load_corpus(root).by_id("alpha").review is None
+
+
+# --- Citations: AMS alpha labels and the per-source locator conventions ---
+
+from hardy.evals.viewer import cite_locator, format_ams  # noqa: E402
+
+
+AM = {"citation_key": "AM69", "authors": ["M. F. Atiyah", "I. G. Macdonald"],
+      "title": "Introduction to commutative algebra", "publisher": "Addison-Wesley Publishing Co.",
+      "address": "Reading, Mass.-London-Don Mills, Ont.", "year": 1969, "locator_style": "chapter-item"}
+
+
+@pytest.mark.parametrize("style, locator, text", [
+    ("chapter-item", [1, 0, 11], "1.11"),
+    ("chapter-item", [3, 1, 18], "Ex. 3.18"),
+    ("section-item", [7, 4, 11], "§7.4, no. 11"),
+    ("section-item", [7, 4, 127], "§7.4, Ex. 27"),
+    ("numbered-section", [1, 1, 3], "Thm. 1.3"),
+    ("numbered-section", [1, 1, 105], "Ex. 1.5"),
+    ("numbered-section", [1, 1, 201], "§1, Example 1"),
+    ("paragraph", [1, 8, 0], "1.8"),
+    ("paragraph", [1, 8, 1], "1.8, Cor."),
+    ("paragraph", [1, 99, 10], "Ex. 1.10"),
+    ("paragraph", [5, 12, 0], "5.12"),
+])
+def test_a_locator_renders_the_way_the_book_is_cited(style, locator, text):
+    assert cite_locator(style, locator) == text
+
+
+def test_an_unknown_style_or_shape_falls_back_to_the_bare_locator():
+    assert cite_locator("nonsense", [1, 2, 3]) == "1.2.3"
+    assert cite_locator("chapter-item", [4]) == "4"
+
+
+def test_a_source_renders_as_an_ams_alpha_bibliography_entry():
+    assert format_ams(AM) == (
+        "M. F. Atiyah and I. G. Macdonald, <i>Introduction to commutative algebra</i>, "
+        "Addison-Wesley Publishing Co., Reading, Mass.-London-Don Mills, Ont., 1969.")
+    reid = {"citation_key": "Rei95", "authors": ["Miles Reid"], "title": "Undergraduate commutative algebra",
+            "series": "London Mathematical Society Student Texts", "volume": 29,
+            "publisher": "Cambridge University Press", "address": "Cambridge", "year": 1995}
+    assert format_ams(reid) == (
+        "Miles Reid, <i>Undergraduate commutative algebra</i>, London Mathematical Society Student Texts, "
+        "vol. 29, Cambridge University Press, Cambridge, 1995.")
+    df = {"citation_key": "DF04", "authors": ["David S. Dummit", "Richard M. Foote"], "title": "Abstract algebra",
+          "edition": "third", "publisher": "John Wiley & Sons, Inc.", "address": "Hoboken, NJ", "year": 2004}
+    assert format_ams(df) == (
+        "David S. Dummit and Richard M. Foote, <i>Abstract algebra</i>, third ed., "
+        "John Wiley &amp; Sons, Inc., Hoboken, NJ, 2004.")
+    three = {"authors": ["A. One", "B. Two", "C. Three"], "title": "T", "year": 2000}
+    assert format_ams(three) == "A. One, B. Two, and C. Three, <i>T</i>, 2000."
+
+
+def test_the_payload_carries_the_citation_beside_each_occurrence(tmp_path):
+    root = write_corpus(tmp_path / "corpus", (_entry(occurrences=({"source_id": "am", "locator": (1, 0, 11)},), rationale=None),))
+    (root / "sources.json").write_text(json.dumps({"schema_version": 1, "sources": {"am": AM}}), encoding="utf-8")
+    entry = payload(root)["entries"][0]
+    assert entry["occurrences"][0]["citation"] == {"key": "AM69", "locator": "1.11"}
+    assert "<i>Introduction to commutative algebra</i>" in payload(root)["sources"]["am"]["ams"]
+
+
+def test_the_bibliography_page_is_served_and_lists_every_source(reviewing):
+    url, _ = reviewing
+    with urllib.request.urlopen(f"{url}/bibliography") as page:
+        assert page.headers["Content-Type"].startswith("text/html")
+        assert b"Bibliography" in page.read()

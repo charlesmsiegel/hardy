@@ -104,6 +104,23 @@
   table.kv td:first-child { color: var(--dim); width: 8.5rem; white-space: nowrap; }
   .none { color: var(--dim); font-style: italic; }
   .warnline { color: var(--warn); }
+  header .nav { color: var(--accent); font-size: .85rem; }
+  header .reviewer { color: var(--dim); font-size: .82rem; display: flex; gap: .4rem; align-items: baseline; }
+  header .reviewer input {
+    font: inherit; font-size: .85rem; padding: .15rem .45rem; width: 12rem;
+    background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 5px;
+  }
+  header .reviewer input:placeholder-shown { border-color: var(--warn); }
+  .verdicts { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: .6rem; align-items: center; }
+  .verdicts button {
+    font: inherit; font-size: .85rem; padding: .35rem .8rem; border-radius: 5px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  }
+  .verdicts button.faithful { border-color: var(--ok); color: var(--ok); }
+  .verdicts button.unfaithful { border-color: var(--bad); color: var(--bad); }
+  .verdicts button:disabled { opacity: .45; cursor: not-allowed; }
+  .verdicts .hint { color: var(--dim); font-size: .8rem; }
+  #status.pending { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
   footer { padding: .6rem 1rem; color: var(--dim); font-size: .76rem; border-top: 1px solid var(--line); }
 </style>
 </head>
@@ -111,6 +128,10 @@
 <header>
   <h1>Hardy corpus</h1>
   <span class="ver" id="version"></span>
+  <a class="nav" href="/bibliography">bibliography</a>
+  <label class="reviewer">reviewing as
+    <input id="reviewer" type="text" placeholder="your name" autocomplete="name" spellcheck="false">
+  </label>
   <span class="counts" id="counts"></span>
 </header>
 <div id="status">loading…</div>
@@ -216,11 +237,14 @@ function renderDetail() {
 
   const codes = e.msc.map((m) =>
     `<div><code>${esc(m.code)}</code> &nbsp;${esc(m.name)}</div>`).join("");
+  // The citation is built server-side from the source record, so the label
+  // and locator text here match the bibliography page by construction.
   const occ = e.occurrences.length
     ? e.occurrences.map((o, i) => {
         const src = DATA.sources[o.source_id];
-        const cite = src ? esc(src.title || o.source_id) : `<span class="warnline">${esc(o.source_id)} (not in sources.json)</span>`;
-        return `<div>${i === 0 ? "<b>primary</b> · " : ""}${cite} &nbsp;<span class="mono">${esc(o.locator.join("."))}</span></div>`;
+        const label = `[<a href="/bibliography#${esc(o.citation.key)}">${esc(o.citation.key)}</a>, ${esc(o.citation.locator)}]`;
+        const missing = src ? "" : ` <span class="warnline">(${esc(o.source_id)} is not in sources.json)</span>`;
+        return `<div>${i === 0 ? "<b>primary</b> · " : ""}<span class="mono">${label}</span>${missing}</div>`;
       }).join("")
     : `<p class="none">No occurrences. Authored entry — rationale: ${esc(e.rationale) || '<span class="warnline">missing</span>'}</p>`;
   // `e.unwitnessed`, not `e.witness`: A6 has nothing to close when an entry
@@ -228,16 +252,32 @@ function renderDetail() {
   // Branching on the field would show it as evidence while the header counted
   // the entry unwitnessed -- two panels disagreeing about the same statement.
   const stored = e.witness
-    ? ` The stored term <code class="mono">${esc(e.witness)}</code> is not checked: there are no binders to close.`
+    ? ` The stored term <code class="mono">${esc(e.witness)}</code> proves nothing here: there are no binders for it to instantiate.`
     : "";
   const witness = !e.unwitnessed
-    ? `<pre class="lean">${esc(e.witness)}</pre>`
-    : `<p class="none">Unwitnessed — ${esc(e.witness_note) || "no note."} A6 cannot rule out vacuity here.${stored}</p>`;
-  const review = e.review
+    ? `<p>The hypotheses can all hold at once: this term picks a value for every binder and proves each
+         hypothesis about it, and Lean's kernel checked it. The theorem is therefore not true merely
+         because its premises are impossible.</p>
+       <pre class="lean">${esc(e.witness)}</pre>`
+    : `<p class="none">Not checked mechanically — ${esc(e.witness_note) || "no note."}${stored}</p>
+       <p class="none">A theorem whose hypotheses can never all hold is provable for free, so a statement
+         that has not been shown non-vacuous could score as solved while saying nothing. Only the human
+         read rules that out here: confirm the instance named above really satisfies every hypothesis.</p>`;
+  const recorded = e.review
     ? `<table class="kv"><tr><td>reviewer</td><td>${esc(e.review.reviewer)}</td></tr>
        <tr><td>reviewed</td><td>${esc(e.review.reviewed_at)}</td></tr>
-       <tr><td>verdict</td><td>${esc(e.review.verdict)}</td></tr></table>`
+       <tr><td>verdict</td><td>${esc(e.review.verdict)}${e.review.reason ? ` — ${esc(e.review.reason)}` : ""}</td></tr></table>`
     : '<p class="none">No review. Only <code>active</code> entries reach a headline.</p>';
+  // The buttons record a read of *this* statement: the server binds the
+  // verdict to the entry's digests as they stand on disk, so a verdict from a
+  // stale tab is refused rather than approving something else.
+  const named = reviewerName() !== "";
+  const review = `${recorded}
+    <div class="verdicts">
+      <button class="faithful" data-verdict="faithful" ${named ? "" : "disabled"}>Faithful — checked by a human</button>
+      <button class="unfaithful" data-verdict="unfaithful" ${named ? "" : "disabled"}>Unfaithful…</button>
+      <span class="hint">${named ? "recorded as " + esc(reviewerName()) : "enter your name in the header to record a verdict"}</span>
+    </div>`;
 
   box.innerHTML = `
     <h2>${esc(e.title || e.id)}</h2>
@@ -252,7 +292,7 @@ function renderDetail() {
       <tr><td>arXiv</td><td>${esc(e.arxiv)}${e.arxiv_override ? ` <span class="warnline">(override: ${esc(e.override_reason)})</span>` : ""}</td></tr>
     </table>`)}
     ${pane("Provenance", occ)}
-    ${pane("Witness (A6)", witness)}
+    ${pane("Non-vacuity", witness)}
     ${pane("Fixtures", e.fixtures.length
       ? `<div class="mono">${e.fixtures.map(esc).join(", ")}</div>`
       : '<p class="none">None.</p>')}
@@ -260,7 +300,48 @@ function renderDetail() {
     ${pane("Digest", `<div class="mono" style="font-size:.76rem;color:var(--dim)">statement ${esc(e.statement_digest)}</div>`)}
   `;
   renderMath($("stmt"));
+  for (const button of box.querySelectorAll(".verdicts button")) {
+    button.onclick = () => submitVerdict(e.id, button.dataset.verdict);
+  }
   renderList();
+}
+
+// The reviewer's name lives in this browser only. Nothing here authenticates
+// it: the server is loopback-bound and the name is provenance, not access.
+function reviewerName() {
+  try { return (localStorage.getItem("reviewer") || "").trim(); } catch (_) { return ""; }
+}
+
+function rememberReviewer() {
+  try { localStorage.setItem("reviewer", $("reviewer").value.trim()); } catch (_) { /* no storage */ }
+  renderDetail();
+}
+
+async function submitVerdict(id, verdict) {
+  const reviewer = reviewerName();
+  if (!reviewer) return;
+  let reason = null;
+  if (verdict === "unfaithful") {
+    reason = window.prompt("Why is the Lean not the stated theorem? (recorded with the verdict)");
+    if (reason === null || !reason.trim()) return;
+  }
+  let res;
+  try {
+    res = await fetch("/api/review", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, verdict, reviewer, reason }),
+    });
+  } catch (err) {
+    window.alert("Could not reach the viewer server: " + err);
+    return;
+  }
+  if (!res.ok) {
+    let message = res.statusText;
+    try { message = (await res.json()).error || message; } catch (_) { /* keep statusText */ }
+    window.alert("Review refused: " + message);
+    return;
+  }
+  await load();
 }
 
 async function load() {
@@ -276,16 +357,25 @@ async function load() {
   const c = DATA.counts;
   $("counts").innerHTML = c.entries === undefined ? "" :
     `<b>${c.entries}</b> entries · <b>${c.twins}</b> twins · <b>${c.active}</b> active ·
-     <b>${c.unwitnessed}</b> unwitnessed · <b>${c.unsourced}</b> unsourced`;
+     <b>${c.unwitnessed}</b> non-vacuity unchecked · <b>${c.unsourced}</b> unsourced`;
   const s = $("status");
-  if (DATA.issues.length) {
+  // A recorded review changes the content, so the manifest no longer matches
+  // the changelog head: expected, and cleared by the release cut before a
+  // push. It is shown as pending work, not as a broken corpus.
+  const pending = DATA.issues.filter((i) => i.includes("manifest"));
+  const objections = DATA.issues.filter((i) => !i.includes("manifest"));
+  if (objections.length) {
     s.className = "bad";
-    s.innerHTML = `<b>${DATA.issues.length} objection${DATA.issues.length > 1 ? "s" : ""} from <code>corpus check</code>:</b>
-      <ul>${DATA.issues.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+    s.innerHTML = `<b>${objections.length} objection${objections.length > 1 ? "s" : ""} from <code>corpus check</code>:</b>
+      <ul>${objections.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+  } else if (pending.length) {
+    s.className = "pending";
+    s.innerHTML = `corpus check: content changed since v${esc(DATA.corpus_version)} — a release is pending before the next push`;
   } else {
     s.className = "ok";
     s.textContent = "corpus check: clean";
   }
+  $("reviewer").value = reviewerName();
   fillSelect($("fGroup"), [...new Set(DATA.entries.map((e) => e.group))].sort());
   fillSelect($("fStatus"), [...new Set(DATA.entries.map((e) => e.status))].sort());
   fillSelect($("fDifficulty"), [...new Set(DATA.entries.map((e) => e.difficulty))].sort());
@@ -295,6 +385,7 @@ async function load() {
 for (const id of ["q", "fGroup", "fStatus", "fDifficulty", "fExpected"]) {
   $(id).addEventListener("input", renderList);
 }
+$("reviewer").addEventListener("change", rememberReviewer);
 window.addEventListener("hashchange", renderDetail);
 window.addEventListener("DOMContentLoaded", load);
 load();

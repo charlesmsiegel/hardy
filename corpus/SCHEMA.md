@@ -85,10 +85,24 @@ hardy evals corpus serve
 
 opens a local page on `127.0.0.1:8765` that renders every entry the way a
 reviewer needs to judge it: the statement with its LaTeX rendered, the
-assembled Lean beside it, and the classification with MSC2020 *names* rather
-than bare codes. It re-reads from disk on every request, so an entry added by
-hand appears on the next refresh — and if a shard is malformed, the page says
-so instead of showing nothing. Nothing is written back.
+assembled Lean beside it, the classification with MSC2020 *names* rather
+than bare codes, and each occurrence as a citation, `[AM69, 1.11]`, whose
+label links to the bibliography page at `/bibliography`. It re-reads from
+disk on every request, so an entry added by hand appears on the next refresh —
+and if a shard is malformed, the page says so instead of showing nothing.
+
+One thing is written back: the human faithfulness read of §2.2. Enter a name
+in the header (it is kept in that browser only) and each entry offers two
+buttons. **Faithful** records a `review` bound to the entry's statement and
+prompt digests and its classification as they stand on disk, and sets
+`status: active`; **Unfaithful** asks for a reason, records it, and leaves the
+entry `candidate`. The digests are computed by the server from the entry it
+loaded, never taken from the page, so a verdict from a stale tab is refused
+rather than approving a statement that has since changed. A recorded review
+changes the content, so `corpus check` objects that the manifest no longer
+matches the changelog head until a release is cut; the page shows that as
+pending rather than as a failure. Any other objection a write would raise
+reverts the write and comes back as the refusal.
 
 ## Classification
 

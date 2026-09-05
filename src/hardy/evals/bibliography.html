@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardy corpus · Bibliography</title>
+<!-- Same policy as the viewer: this page fetches only `/api/corpus` and loads
+     nothing remote at all. -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data:;
+  connect-src 'self';
+  base-uri 'none';
+  form-action 'none'">
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #fff; --ink: #1a1a19; --dim: #6b6b66; --line: #e3e3df;
+    --accent: #2f5d8a; --bad: #a8321f; --code-bg: #f4f4f1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15161a; --panel: #1c1e23; --ink: #e6e6e3; --dim: #9a9a94; --line: #2e3138;
+      --accent: #7aa8d4; --bad: #e8846f; --code-bg: #22252b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    padding: .7rem 1rem; border-bottom: 1px solid var(--line); background: var(--panel);
+    display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 1rem; font-weight: 650; letter-spacing: -.01em; }
+  header a { color: var(--accent); font-size: .85rem; }
+  main { max-width: 52rem; margin: 0 auto; padding: 1.4rem 1.3rem 4rem; }
+  main h2 { font-size: 1.15rem; margin: 0 0 .3rem; }
+  .lede { color: var(--dim); font-size: .88rem; margin: 0 0 1.4rem; }
+  dl { margin: 0; }
+  dt {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .86rem;
+    color: var(--accent); margin-top: 1.1rem; scroll-margin-top: 1rem;
+  }
+  dd { margin: .15rem 0 0 0; padding-left: 3.4rem; text-indent: -3.4rem; }
+  dd .meta {
+    display: block; text-indent: 0; margin-top: .3rem; color: var(--dim); font-size: .8rem;
+  }
+  dd code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .8rem;
+            background: var(--code-bg); padding: .05rem .3rem; border-radius: 3px; }
+  .bad { color: var(--bad); }
+  .none { color: var(--dim); font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Hardy corpus</h1>
+  <a href="/">← entries</a>
+  <span id="version" style="color:var(--dim);font-size:.82rem"></span>
+</header>
+<main>
+  <h2>Bibliography</h2>
+  <p class="lede">The texts entries are drawn from, in the AMS alpha style. Each label is the one
+    the entry pane cites, as in <code>[AM69, 1.11]</code>; the note under each entry says how that
+    book's locators are read.</p>
+  <div id="body"><p class="none">loading…</p></div>
+</main>
+<script>
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function load() {
+  let data;
+  try {
+    data = await (await fetch("/api/corpus", { cache: "no-store" })).json();
+  } catch (err) {
+    document.getElementById("body").innerHTML = `<p class="bad">Could not reach the viewer server: ${esc(err)}</p>`;
+    return;
+  }
+  document.getElementById("version").textContent = data.corpus_version ? "v" + data.corpus_version : "";
+  const cited = {};
+  for (const e of data.entries) {
+    for (const o of e.occurrences) cited[o.source_id] = (cited[o.source_id] || 0) + 1;
+  }
+  const rows = Object.entries(data.sources)
+    .sort((a, b) => String(a[1].key).localeCompare(String(b[1].key)));
+  if (!rows.length) {
+    document.getElementById("body").innerHTML = '<p class="none">No sources registered.</p>';
+    return;
+  }
+  // `src.ams` is HTML the server built from the record with every field
+  // escaped; everything else read off a record goes through `esc` here.
+  document.getElementById("body").innerHTML = `<dl>${rows.map(([id, src]) => `
+    <dt id="${esc(src.key)}">[${esc(src.key)}]</dt>
+    <dd>${src.ams}
+      <span class="meta">
+        <code>${esc(id)}</code> · ${esc(src.level ?? "level unrecorded")} ·
+        cited by ${cited[id] || 0} ${cited[id] === 1 ? "entry" : "entries"}
+        ${src.locator_convention ? `<br>Locators — ${esc(src.locator_convention)}` : ""}
+      </span>
+    </dd>`).join("")}</dl>`;
+  if (location.hash) {
+    const target = document.getElementById(location.hash.slice(1));
+    if (target) target.scrollIntoView();
+  }
+}
+load();
+</script>
+</body>
+</html>
