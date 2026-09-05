@@ -244,7 +244,13 @@ def _status_of(
 
 def _assumption_line(record: Mapping[str, Any]) -> str:
     name = str(record.get("formal_name", "?"))
-    parts = [f"{name} : {_clip(str(record.get('lean_statement', '')), 120)}"]
+    # `opaque` for an assumed definition, which is not the same trust as an
+    # assumed proposition -- and is the keyword the generated module really
+    # writes, so a reader comparing this line against the file finds it.
+    keyword = "opaque" if str(record.get("kind", "")).strip() == "constant" else "axiom"
+    parts = [
+        f"{keyword} {name} : {_clip(str(record.get('lean_statement', '')), 120)}"
+    ]
     source = str(record.get("source", "")).strip()
     reason = str(record.get("reason", "")).strip()
     approved = str(record.get("approved_at", "")).strip()

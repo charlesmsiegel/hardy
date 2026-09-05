@@ -254,3 +254,91 @@ def test_a_paper_that_says_only_the_closing_delimiter_cannot_close_the_docstring
     docstring, _, rest = source.split("/--", 1)[1].partition("-/")
     assert "axiom main_estimate" in rest
     assert "axiom main_estimate" not in docstring
+
+
+def test_a_commented_out_preamble_does_not_make_a_file_the_root() -> None:
+    r"""`% \documentclass{article}` at the top of a section file is an
+    everyday LaTeX idiom for making it compile standalone. The root scan read
+    raw text while the inventory reads what TeX would execute, so the decoy
+    was chosen as the paper and the paper's own theorems went unlisted --
+    and an axiom minted from one of them would carry the paper's name over a
+    sentence the paper never published."""
+    files = {
+        "appendix.tex": (
+            "% \\documentclass{article}\n"
+            "% \\begin{document}\n"
+            "\\begin{theorem}\\label{decoy}Decoy claim nobody published.\\end{theorem}\n"
+        ),
+        "zpaper.tex": (
+            "\\documentclass{article}\n\\begin{document}\n"
+            "\\begin{theorem}\\label{thm:real}The published result.\\end{theorem}\n"
+            "\\end{document}\n"
+        ),
+    }
+
+    assert assume.root_of(files) == "zpaper.tex"
+    assert [item.ref for item in assume.inventory(files)] == ["thm:real"]
+
+
+def test_a_bundle_carrying_two_real_roots_says_so() -> None:
+    """One is read and the other is not, and which is which is decided by a
+    filename. A reader deciding whether to trust an assumption is owed the
+    fact that another document in the same bundle was never looked at."""
+    files = {
+        "main.tex": (
+            "\\documentclass{article}\\begin{document}\n"
+            "\\begin{theorem}\\label{thm:one}First.\\end{theorem}\n\\end{document}\n"
+        ),
+        "other.tex": (
+            "\\documentclass{article}\\begin{document}\n"
+            "\\begin{theorem}\\label{thm:two}Second.\\end{theorem}\n\\end{document}\n"
+        ),
+    }
+
+    assert assume.roots_of(files) == ("main.tex", "other.tex")
+    assert assume.root_of(files) == "main.tex"
+
+
+def test_a_truncated_inventory_says_it_was_truncated() -> None:
+    """A listing that silently stops is indistinguishable from a paper that
+    stops there -- and `find` then answers None for a statement the paper
+    really makes, which reads as "the paper does not say that"."""
+    body = "\n".join(
+        f"\\begin{{theorem}}\\label{{thm:{n}}}Statement {n}.\\end{{theorem}}"
+        for n in range(assume.MAX_STATEMENTS + 60)
+    )
+    survey = assume.survey(
+        {"main.tex": "\\documentclass{article}\\begin{document}\n" + body + "\n\\end{document}"}
+    )
+
+    assert survey.truncated
+    assert len(survey.statements) == assume.MAX_STATEMENTS
+    assert survey.roots == ("main.tex",)
+
+
+def test_an_untruncated_inventory_does_not_claim_it_was() -> None:
+    survey = assume.survey({"main.tex": PAPER.replace("\\input{sections/second}", "")})
+
+    assert not survey.truncated
+
+
+def test_a_real_label_wins_over_another_statement_s_synthesised_ordinal() -> None:
+    r"""Hardy's own `lemma-1` for an unlabelled lemma is not a name the paper
+    chose, and a paper that really writes `\label{lemma-1}` on something else
+    means that one. Resolving to the ordinal handed the reviewer the wrong
+    sentence to check the Lean against."""
+    found = assume.inventory(
+        {
+            "main.tex": (
+                "\\documentclass{article}\\begin{document}\n"
+                "\\begin{lemma}Unlabelled first.\\end{lemma}\n"
+                "\\begin{theorem}\\label{lemma-1}The one the paper named.\\end{theorem}\n"
+                "\\end{document}"
+            )
+        }
+    )
+
+    picked = assume.find(found, "lemma-1")
+
+    assert picked is not None
+    assert "the paper named" in picked.text

@@ -368,6 +368,18 @@ def _assumption_note(record: Mapping[str, Any] | None, axiom: str) -> str:
     )
 
 
+def _keyword(record: Mapping[str, Any]) -> str:
+    """The keyword this assumption is actually declared with.
+
+    An assumed *definition* is minted as `opaque`, and `opaque X : T` and
+    `axiom X : T` are not the same trust: one asserts that something of that
+    type exists, the other that a proposition holds. Printing both as `axiom`
+    under a line reading "the declaration the results above rest on, exactly"
+    erased the distinction the record exists to keep.
+    """
+    return "opaque" if str(record.get("kind", "")).strip() == "constant" else "axiom"
+
+
 def _assumptions(records: Sequence[Mapping[str, Any]]) -> str:
     if not records:
         return "<p>None. Nothing here rests on an approved axiom.</p>"
@@ -382,7 +394,8 @@ def _assumptions(records: Sequence[Mapping[str, Any]]) -> str:
             # rewrote it to `[REDACTED]` -- misstating the assumption the page
             # says its verified-modulo results depend on.
             + _source_block(
-                f"axiom {record.get('formal_name', '?')} : {record.get('lean_statement', '')}"
+                f"{_keyword(record)} {record.get('formal_name', '?')} : "
+                f"{record.get('lean_statement', '')}"
             )
             + _rows(
                 (
