@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -371,24 +371,50 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
         # Threads, not processes: each job spends nearly all its time
         # waiting on a model call or a Lean subprocess, both of which
         # release the GIL, and threads keep this exception path simple.
+        #
+        # Jobs are submitted in a bounded window of at most `workers` at a
+        # time -- never all of them upfront -- and the window stops
+        # refilling the instant any job raises. Submitting everything
+        # upfront and cancelling the rest on failure was tried first and
+        # rejected: `Future.cancel()` only cancels a future the pool has not
+        # yet started running, and the pool starts pulling its next queued
+        # item the moment a worker frees up, racing the main thread's own
+        # notice of the failure -- a race with no guaranteed winner. Never
+        # submitting the next job at all has no such race: at `workers=1`
+        # this makes a mid-run failure leave every later entry genuinely
+        # unexecuted, exactly as the old sequential loop did (this module's
+        # own docstring: "refuses before it spends"), and at `workers > 1`
+        # it bounds this `with` block's own `shutdown(wait=True)` -- on any
+        # exit, success, a job's own exception, or a raw KeyboardInterrupt
+        # raised while waiting below -- to the handful of jobs already in
+        # flight rather than the whole remaining queue.
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(run_job, entry, repeat): i for i, (entry, repeat) in enumerate(jobs)}
+            pending = list(enumerate(jobs))
+            in_flight: dict[Future[Row], int] = {}
             first_error: BaseException | None = None
-            # Drain every future -- including those after the first failure
-            # -- so a fast, unrelated job that already finished still lands
-            # in its slot before the run is declared interrupted; only the
-            # *first* error is the one this re-raises.
-            for future in as_completed(futures):
-                index = futures[future]
-                try:
-                    row = future.result()
-                except BaseException as error:  # noqa: BLE001 - re-raised below, not swallowed
-                    if first_error is None:
-                        first_error = error
-                    continue
-                with lock:
-                    slots[index] = row
-                    publish()
+            while pending or in_flight:
+                while pending and len(in_flight) < workers and first_error is None:
+                    index, (entry, repeat) = pending.pop(0)
+                    in_flight[executor.submit(run_job, entry, repeat)] = index
+                if not in_flight:
+                    break   # a failure already stopped submission and nothing is left running
+                # Drain whichever in-flight job(s) finish next -- including
+                # after the first failure, so a job that was already running
+                # concurrently with the one that failed still lands in its
+                # slot before the run is declared interrupted; only the
+                # *first* error is the one this re-raises.
+                done, _pending_futures = wait(in_flight, return_when=FIRST_COMPLETED)
+                for future in done:
+                    index = in_flight.pop(future)
+                    try:
+                        row = future.result()
+                    except BaseException as error:  # noqa: BLE001 - re-raised below, not swallowed
+                        if first_error is None:
+                            first_error = error
+                        continue
+                    with lock:
+                        slots[index] = row
+                        publish()
         if first_error is not None:
             raise first_error
     except BaseException:

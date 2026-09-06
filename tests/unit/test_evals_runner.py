@@ -51,14 +51,14 @@ def _entry_baseline(tier: int, *, twin: bool = False, **kw) -> sweep.EntryBaseli
     return sweep.EntryBaseline(**base)
 
 
-def _files(tmp_path: Path, tiers: dict[str, int] = None) -> tuple[Path, Path]:
-    problems = write_corpus(tmp_path / "corpus", ENTRIES)
+def _files(tmp_path: Path, tiers: dict[str, int] = None, entries: tuple[Entry, ...] = ENTRIES) -> tuple[Path, Path]:
+    problems = write_corpus(tmp_path / "corpus", entries)
     tiers = tiers or {"t": 0, "u": 3, "f": 3}
     baseline = sweep.Baseline(created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256=manifest_digest(problems), environment=IDENTITY,
                               environment_digest=sweep.environment_digest_of(IDENTITY, HOST), procedure_digest=sweep.procedure_digest_of(600.0),
-                              statement_digests={e.id: e.statement_digest() for e in ENTRIES},
+                              statement_digests={e.id: e.statement_digest() for e in entries},
                               heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS, host=HOST, problems=(),
-                              entries={k: _entry_baseline(v, twin=any(e.id == k and e.expected == "false" for e in ENTRIES))
+                              entries={k: _entry_baseline(v, twin=any(e.id == k and e.expected == "false" for e in entries))
                                        for k, v in tiers.items()})
     path = tmp_path / "baseline.json"
     path.write_text(json.dumps(baseline.model_dump(mode="json")), encoding="utf-8")
@@ -183,6 +183,70 @@ def test_an_interrupted_parallel_board_is_a_prefix(tmp_path):
     board = json.loads((tmp_path / "boards" / "par2" / "scoreboard.json").read_text(encoding="utf-8"))
     assert [row["id"] for row in board["rows"]] == ["t"]
     assert board["interrupted"] is True
+
+
+def test_a_job_queued_behind_a_failure_is_never_started(tmp_path):
+    """The previous two tests only ever read `scoreboard.json`, which is
+    exactly why they missed this: submitting every job upfront and merely
+    cancelling the unstarted ones on failure would still race the pool's own
+    worker (which starts pulling its next queued item the instant one of its
+    threads frees up) against the main thread's own notice of the error --
+    `Future.cancel()` only stops a future the pool has not yet begun
+    running, and that race has no guaranteed winner. This counts actual
+    invocations of `batch_runner` instead, so a job that was merely queued
+    -- never handed to the executor at all once the failure was seen -- is
+    caught directly, not inferred from what rows a board happens to hold.
+    """
+    problems, baseline_path = _files(tmp_path, tiers={"t": 0, "u": 3, "f": 3})
+    calls: list[str] = []
+
+    def batch_runner(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
+        calls.append(entry.id)
+        if entry.id == "u":
+            raise RuntimeError("scripted failure for u")
+        _scripted_batch(output, SOLVE, declaration=entry.declaration(), informal_claim=entry.input)
+
+    with pytest.raises(RuntimeError):
+        runner.run_set(
+            label="par3", problems_path=problems, baseline_path=baseline_path,
+            scoreboards_root=tmp_path / "boards", condition=_condition(),
+            environment=IDENTITY, batch_runner=batch_runner,
+            now=lambda: datetime(2026, 9, 5, tzinfo=UTC), report=lambda _: None, workers=2,
+        )
+    # `t` and `u` were both already in the initial two-wide submission
+    # window and legitimately ran (in whichever order the threads happened
+    # to interleave); `f` was still waiting behind them and must never have
+    # been dispatched to the executor at all.
+    assert set(calls) == {"t", "u"}
+    assert "f" not in calls
+
+
+def test_at_workers_one_a_mid_run_exception_leaves_later_entries_unexecuted(tmp_path):
+    """`workers=1` must mean exactly what the old, pre-concurrency sequential
+    loop meant: a mid-run failure stops the run right there, with every
+    later entry genuinely never touched -- not raced against a cancellation
+    call that might lose. At `workers=1` the submission window is one job
+    wide, so this is also fully deterministic: `t` must complete (and only
+    then does `u` even get submitted) before `u` raises and `f` is left
+    forever unsubmitted.
+    """
+    problems, baseline_path = _files(tmp_path, tiers={"t": 0, "u": 3, "f": 3})
+    calls: list[str] = []
+
+    def batch_runner(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
+        calls.append(entry.id)
+        if entry.id == "u":
+            raise RuntimeError("scripted failure for u")
+        _scripted_batch(output, SOLVE, declaration=entry.declaration(), informal_claim=entry.input)
+
+    with pytest.raises(RuntimeError):
+        runner.run_set(
+            label="par4", problems_path=problems, baseline_path=baseline_path,
+            scoreboards_root=tmp_path / "boards", condition=_condition(),
+            environment=IDENTITY, batch_runner=batch_runner,
+            now=lambda: datetime(2026, 9, 5, tzinfo=UTC), report=lambda _: None, workers=1,
+        )
+    assert calls == ["t", "u"]
 
 
 def test_a_batch_set_run_writes_rows_a_scoreboard_and_aggregates(tmp_path):
