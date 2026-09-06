@@ -462,6 +462,8 @@ AM = {"citation_key": "AM69", "authors": ["M. F. Atiyah", "I. G. Macdonald"],
     ("paragraph", [1, 8, 1], "1.8, Cor."),
     ("paragraph", [1, 99, 10], "Ex. 1.10"),
     ("paragraph", [5, 12, 0], "5.12"),
+    ("section-theorem", [4, 5, 1], "4.5.1"),
+    ("section-theorem", [4, 5, 103], "Ex. 4.5.3"),
 ])
 def test_a_locator_renders_the_way_the_book_is_cited(style, locator, text):
     assert cite_locator(style, locator) == text

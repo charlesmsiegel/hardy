@@ -100,6 +100,8 @@ def cite_locator(style: str, locator: list[int] | tuple[int, ...]) -> str:
         if n >= 200:
             return f"§{b}, Example {n - 200}"
         return f"Ex. {b}.{n - 100}" if n >= 100 else f"Thm. {b}.{n}"
+    if style == "section-theorem":       # (ch, sec, n) = Theorem ch.sec.n; n >= 100 is Exercise ch.sec.(n-100)
+        return f"Ex. {a}.{b}.{n - 100}" if n >= 100 else f"{a}.{b}.{n}"
     if style == "paragraph":             # (ch, para, n); para 99 = end-of-chapter exercises
         if b == 99:
             return f"Ex. {a}.{n}"
