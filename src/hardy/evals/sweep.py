@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime
 from functools import cache
 from pathlib import Path
@@ -507,7 +507,9 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     so the pool needs no ordering care -- `entries` is a dict keyed by id, not
     a sequence, and the findings pass below always walks `problems.entries`
     in its own fixed order regardless of which entry's Lean process returned
-    first.
+    first. What it does need is a *bounded* submission window, so a failure
+    or a Ctrl-C stops the sweep rather than draining a queue of hours of Lean
+    the operator has already asked it to abandon.
     """
     environment_digest = environment_digest_of(environment, host)
     procedure_digest = procedure_digest_of(wall_backstop_seconds)
@@ -538,14 +540,45 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
             else:
                 to_sweep.append(entry)
     if to_sweep:
+        # Submitted in a bounded window of at most `workers` at a time, never
+        # all of them upfront, and the window stops refilling the instant any
+        # entry raises -- the same shape `run_set` uses, for the same reason.
+        # Submitting everything upfront meant a failure (or a Ctrl-C) still
+        # left `shutdown(wait=True)` to drain the whole remaining queue: at
+        # the corpus scale this sweep is built for that is hours of Lean after
+        # the operator asked it to stop, and at `workers=1` it destroyed the
+        # equivalence with the sequential loop this replaced, which stopped on
+        # the spot. Cancelling queued futures instead was rejected in
+        # `run_set`: `Future.cancel()` cannot catch one the pool has already
+        # started, and never submitting the job has no such race.
+        #
+        # `report` moves inside the window too, so progress interleaves with
+        # completions rather than printing every line before any Lean runs.
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {}
-            for entry in to_sweep:
-                report(f"sweeping {entry.id}")
-                futures[executor.submit(sweep_entry, entry, elaborate, confirm_name=entry.name)] = entry
-            for future in as_completed(futures):
-                entry = futures[future]
-                entries[entry.id] = future.result()
+            pending = list(to_sweep)
+            in_flight: dict[Future[EntryBaseline], Entry] = {}
+            first_error: BaseException | None = None
+            while pending or in_flight:
+                while pending and len(in_flight) < workers and first_error is None:
+                    entry = pending.pop(0)
+                    report(f"sweeping {entry.id}")
+                    in_flight[executor.submit(sweep_entry, entry, elaborate, confirm_name=entry.name)] = entry
+                if not in_flight:
+                    break   # a failure already stopped submission and nothing is left running
+                # Drain whichever in-flight sweeps finish next -- including
+                # after the first failure, so an entry already elaborating
+                # alongside the one that failed still records its row; only
+                # the *first* error is the one this re-raises.
+                done, _still_running = wait(in_flight, return_when=FIRST_COMPLETED)
+                for future in done:
+                    entry = in_flight.pop(future)
+                    try:
+                        entries[entry.id] = future.result()
+                    except BaseException as error:  # noqa: BLE001 - re-raised below, not swallowed
+                        if first_error is None:
+                            first_error = error
+        if first_error is not None:
+            raise first_error
     findings: list[str] = []
     for entry in problems.entries:
         result = entries.get(entry.id)

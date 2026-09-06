@@ -737,3 +737,52 @@ def test_a_broken_witness_is_re_derived_even_if_the_findings_were_cleared():
     issues = sweep.staleness(tampered, statement_digests=DIGESTS, environment=IDENTITY,
                              problem_ids=PROBLEM_IDS, host=HOST, expectations=EXPECTED)
     assert any("easy" in i and "witness" in i for i in issues), issues
+
+
+def _failing_after(n: int, started: list[str]):
+    """`sweep_entry`, but the `n`th entry it is asked for raises."""
+    real = sweep.sweep_entry
+
+    def counting(entry, elaborate, *, confirm_name):
+        started.append(entry.id)
+        if len(started) == n:
+            raise RuntimeError("lean died")
+        return real(entry, elaborate, confirm_name=confirm_name)
+
+    return counting
+
+
+def test_a_failed_entry_stops_the_sweep_instead_of_draining_the_queue(monkeypatch):
+    """A sweep that has already failed must not go on elaborating.
+
+    Submitting every entry upfront left `shutdown(wait=True)` to run the whole
+    remaining queue after the failure -- and at the scale this sweep is built
+    for (a batch of 28 entries is ~1,344 elaborations) that is hours of Lean
+    after the operator, or a Ctrl-C, asked it to stop. At `workers=1` it also
+    destroyed the equivalence with the sequential loop this replaced, which
+    stopped on the spot.
+    """
+    started: list[str] = []
+    reported: list[str] = []
+    monkeypatch.setattr(sweep, "sweep_entry", _failing_after(2, started))
+    with pytest.raises(RuntimeError, match="lean died"):
+        sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                    now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST,
+                    report=reported.append, workers=1)
+    assert started == ["easy", "lib"], "entries after the failure must never be elaborated"
+    # And progress interleaves with completions rather than announcing every
+    # entry before any Lean has run.
+    assert [line for line in reported if line.startswith("sweeping ")] == ["sweeping easy", "sweeping lib"]
+
+
+def test_a_failed_entry_stops_the_sweep_within_the_worker_window(monkeypatch):
+    """At `workers=n` the damage is bounded by the window, not by the queue:
+    the entries already in flight beside the failure still finish, and nothing
+    behind them is ever submitted.
+    """
+    started: list[str] = []
+    monkeypatch.setattr(sweep, "sweep_entry", _failing_after(2, started))
+    with pytest.raises(RuntimeError, match="lean died"):
+        sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                    now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST, workers=3)
+    assert len(started) <= 3 < len(_problems().entries)
