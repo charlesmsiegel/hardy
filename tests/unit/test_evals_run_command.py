@@ -234,3 +234,52 @@ def test_the_default_selection_refuses_when_nothing_active_is_outstanding(monkey
     assert called == []
 
 
+
+
+def _parse(*argv: str) -> argparse.Namespace:
+    """The real CLI parser, so a flag `run` has and `todo` does not is a test
+    failure rather than a silent default.
+    """
+    from hardy.evals import commands
+
+    parser = argparse.ArgumentParser()
+    commands.add_parser(parser.add_subparsers(dest="command", required=True))
+    return parser.parse_args(list(argv))
+
+
+def _key(args: argparse.Namespace, config: SimpleNamespace) -> str:
+    return runner.run_procedure_digest_of(
+        model=config.model, mode=args.mode, limits=runner.limits_for(args, config), repeats=args.repeats,
+    )
+
+
+def test_todo_reports_the_key_of_a_run_with_the_same_budgets_and_repeats():
+    """`evals todo` exists to tell a control agent the pooling key a run
+    started now would produce, so it must accept the flags that decide it.
+
+    Without `--max-turns`/`--wall-seconds`/`--repeats` on the subparser,
+    `limits_for` silently defaulted them: `evals todo` then `evals run
+    --max-turns 40` described one key and recorded another, and `evals pool`
+    refused the very board the agent had just been told to make.
+    """
+    config = _config()
+    todo = _parse("evals", "todo", "--max-turns", "40", "--wall-seconds", "900", "--repeats", "3")
+    run = _parse("evals", "run", "--label", "x", "--max-turns", "40", "--wall-seconds", "900", "--repeats", "3")
+    assert runner.limits_for(todo, config)["max_turns"] == 40
+    assert runner.limits_for(todo, config)["wall_seconds"] == 900.0
+    assert _key(todo, config) == _key(run, config)
+    # And a key stated for one set of budgets is not the key of another.
+    assert _key(_parse("evals", "todo"), config) != _key(todo, config)
+
+
+def test_todo_refuses_batch_budgets_under_staged_exactly_as_run_does(capsys, tmp_path):
+    """A run with these flags would not launch (`run_set_command` refuses
+    them), so reporting a key for it would be reporting a key no run uses.
+    """
+    from hardy.evals import commands
+
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    args = _parse("evals", "todo", "--mode", "staged", "--max-turns", "40")
+    args.problems, args.baseline, args.scoreboards = problems_path, baseline_path, tmp_path / "boards"
+    assert commands.run_todo(args, _config()) == 2
+    assert "do not govern a staged run" in capsys.readouterr().err

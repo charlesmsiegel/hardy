@@ -95,8 +95,8 @@ def run_source_paths() -> tuple[Path, ...]:
     return tuple(sorted(found, key=lambda p: p.relative_to(RUN_SOURCE_ROOT).as_posix()))
 
 
-def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | int]) -> str:
-    """What a pooled row must share: the deciding source, the prompts, the model and its budgets.
+def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | int], repeats: int) -> str:
+    """What a pooled row must share: the deciding source, the prompts, the model, its budgets and its repeats.
 
     The mirror of `sweep.procedure_digest_of`, for the run rather than the
     sweep, and for the same reason its docstring gives: `__version__` is fixed
@@ -107,6 +107,13 @@ def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | 
     `source`, so a changed digest says which input moved. They cover template
     *text* only -- never the `prompts/` code that renders it, which
     `run_source_paths` picks up.
+
+    `repeats` is part of the key, not provenance beside it. The bar a pool
+    has to clear is that the combined result be indistinguishable from one
+    long sequential run made at a single moment, and one sequential run has
+    one `--repeats` setting: folding a board sampled once per entry into one
+    sampled three times per entry is an unbalanced design, where entries with
+    more samples pull the pooled rate towards their own.
     """
     from ..prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
 
@@ -118,6 +125,7 @@ def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | 
         "model": model,
         "mode": mode,
         "limits": limits,
+        "repeats": repeats,
     })
 
 
@@ -425,10 +433,16 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
 
 
 def _batch_runner(config: Any, model: str) -> BatchRunner:
-    from ..cli import runtime_factory
+    # `..wiring`, not the `..cli` re-export: `cli.py` is excluded from
+    # `run_procedure_digest` (RUN_SOURCE_EXCLUDED_FILES) on the grounds that
+    # the run hooks moved out of it. While a run still imports through that
+    # re-export, editing `cli.py` changes what a run does without moving the
+    # digest -- which is to say the digest is defeatable, and the pooling key
+    # stops meaning "the same code produced these rows".
     from ..lean import LeanTools
     from ..models import Request
     from ..runner import run
+    from ..wiring import runtime_factory
 
     def run_one(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
         request = Request.from_dict({"declaration": entry.declaration(), "informal_claim": entry.input, "imports": list(entry.imports)})
@@ -542,7 +556,7 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         return 2
     limits = limits_for(args, config)
     model = str(args.model or config.model)
-    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits)
+    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits, repeats=args.repeats)
 
     problems = load_corpus(args.problems)
     try:

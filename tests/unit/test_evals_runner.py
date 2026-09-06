@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -470,11 +471,14 @@ def test_the_batch_runner_uses_the_conditions_selected_model_not_configs(monkeyp
     actually be produced by it -- not by whatever `config.model` happens to
     be, which under an override is a different model entirely (item 1).
     """
-    from hardy import cli as cli_module
     from hardy import runner as hardy_runner
+    from hardy import wiring
 
     seen: dict = {}
-    monkeypatch.setattr(cli_module, "runtime_factory", lambda model: seen.setdefault("model", model))
+    # Patched on `wiring`, where `_batch_runner` now imports it from: routing
+    # through the `cli` re-export would leave `cli.py` on the run path while
+    # being excluded from `run_procedure_digest`.
+    monkeypatch.setattr(wiring, "runtime_factory", lambda model: seen.setdefault("model", model))
     monkeypatch.setattr(hardy_runner, "run", lambda *a, **kw: seen.setdefault("called", True))
 
     run_one = runner._batch_runner(_fake_config(), "override@test")
@@ -547,20 +551,49 @@ def test_run_source_set_excludes_only_the_declared_paths():
 
 
 def test_run_digest_moves_when_a_counted_module_changes(monkeypatch):
-    before = runner.run_procedure_digest_of(model="m", mode="batch", limits={"max_turns": 3})
+    before = runner.run_procedure_digest_of(model="m", mode="batch", limits={"max_turns": 3}, repeats=1)
     real = runner.run_source_paths
 
     def fewer():
         return tuple(p for p in real() if p.name != "closers.py")
 
     monkeypatch.setattr(runner, "run_source_paths", fewer)
-    assert runner.run_procedure_digest_of(model="m", mode="batch", limits={"max_turns": 3}) != before
+    assert runner.run_procedure_digest_of(model="m", mode="batch", limits={"max_turns": 3}, repeats=1) != before
 
 
 def test_run_digest_moves_with_the_model_and_the_limits():
-    base = dict(model="m", mode="batch", limits={"max_turns": 3})
+    base = dict(model="m", mode="batch", limits={"max_turns": 3}, repeats=1)
     assert runner.run_procedure_digest_of(**base) != runner.run_procedure_digest_of(**{**base, "model": "other"})
     assert runner.run_procedure_digest_of(**base) != runner.run_procedure_digest_of(**{**base, "limits": {"max_turns": 4}})
+
+
+def test_run_digest_moves_with_repeats():
+    """One sequential run has one `--repeats` setting.
+
+    A board sampled once per entry and a board sampled three times per entry
+    are not two halves of one experiment: pooling them is an unbalanced
+    design, where the entries with more samples pull the pooled rate towards
+    themselves. So `repeats` is part of the key, not provenance beside it.
+    """
+    base = dict(model="m", mode="batch", limits={"max_turns": 3}, repeats=1)
+    assert runner.run_procedure_digest_of(**base) != runner.run_procedure_digest_of(**{**base, "repeats": 3})
+
+
+def test_no_module_the_digest_covers_reaches_a_run_through_cli(monkeypatch):
+    """`cli.py` is excluded from `run_procedure_digest` on the grounds that
+    the run hooks moved to `wiring.py`. That holds only while nothing on the
+    run path imports through the re-export left behind: an import of
+    `hardy.cli` from a digested module makes every edit to `cli.py` -- to
+    argument parsing for an unrelated command, say -- change what a run does
+    without moving the key that is supposed to say the code did not change.
+    """
+    importers = []
+    for path in runner.run_source_paths():
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            if re.match(r"^(from|import)\b.*\bcli\b", stripped) and "cas_cli" not in stripped:
+                importers.append(f"{path.name}:{number}: {stripped}")
+    assert importers == []
 
 
 def test_condition_carries_the_run_digest():

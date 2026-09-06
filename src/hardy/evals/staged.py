@@ -177,8 +177,13 @@ def staged_runner(config: Any, *, backend: str) -> Callable[[Entry, Path, str], 
     """(entry, row_dir, model): run `hardy prove` non-interactively under `row_dir`, then compare canonically."""
     import dataclasses
 
-    from ..cli import build_prove_workflow
+    # `..wiring`, not the `..cli` re-export: `cli.py` is excluded from
+    # `run_procedure_digest` on the grounds that the run hooks left it, and
+    # routing a run through it anyway would make that digest defeatable --
+    # an edit to `cli.py` would change what a run does without moving the key
+    # every pooled row is supposed to share.
     from ..staged import ClaudeStagedRuntime
+    from ..wiring import build_prove_workflow
     from ..workflow import ProveRequest
 
     def run_one(entry: Entry, row_dir: Path, model: str) -> None:

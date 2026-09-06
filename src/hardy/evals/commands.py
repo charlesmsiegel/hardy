@@ -173,6 +173,15 @@ def add_parser(subparsers: Any) -> None:
     # this subparser's default (cli.py:1545).
     todo.add_argument("--model", default=argparse.SUPPRESS)
     todo.add_argument("--mode", choices=("batch", "staged"), default="batch")
+    # The same budget and repeat flags `run` takes, with the same types and
+    # the same defaults, because all four feed `run_procedure_digest_of`
+    # through the shared `limits_for`. Without them `todo` silently reported
+    # the key of a *default* run: `evals todo` then `evals run --max-turns 40`
+    # named one key and recorded another, and `evals pool` later refused the
+    # board the agent had just been told to produce.
+    todo.add_argument("--max-turns", type=_positive_max_turns, default=None, help="batch mode default: 60. Refused under --mode staged.")
+    todo.add_argument("--wall-seconds", type=_positive_wall_seconds, default=None, help="batch mode default: 1800.0. Refused under --mode staged.")
+    todo.add_argument("--repeats", type=_positive_repeats, default=1)
     pool = verbs.add_parser(
         "pool",
         help="combine scoreboards sharing one pooling key into one derived, recomputable score",
@@ -181,7 +190,7 @@ def add_parser(subparsers: Any) -> None:
     pool.add_argument("--scoreboards", type=Path, default=DEFAULT_SCOREBOARDS)
     pool.add_argument("--corpus", type=Path, default=DEFAULT_PROBLEMS)
     pool.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
-    pool.add_argument("--out", type=Path, default=None, help="default: evals/pools/<first label>")
+    pool.add_argument("--out", type=Path, default=None, help="default: evals/pools/<first label>/pool.json")
 
 
 def _refuse_missing(*paths: Path) -> str | None:
@@ -326,6 +335,16 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
     if refusal is not None:
         print(refusal, file=sys.stderr)
         return 2
+    if args.mode == "staged" and (args.max_turns is not None or args.wall_seconds is not None):
+        # The same refusal `run_set_command` makes, for the same reason and in
+        # the same words: `todo` exists to report the key a run launched now
+        # would produce, and a run with these flags would not launch at all.
+        print(
+            "Refused: --max-turns/--wall-seconds do not govern a staged run; its budgets are "
+            "config.limits.active_seconds, proof_seconds and official_checks",
+            file=sys.stderr,
+        )
+        return 2
     try:
         identity = _identity(config)
     except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
@@ -339,7 +358,7 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
         return 2
     model = str(getattr(args, "model", None) or config.model)
     limits = limits_for(args, config)
-    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits)
+    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits, repeats=args.repeats)
     environment_digest = sweep.environment_digest_of(identity, host_info())
     key = (run_digest, environment_digest)
     print(json.dumps({
@@ -356,8 +375,8 @@ def run_pool(args: argparse.Namespace) -> int:
     not share one pooling key, when the same `(id, repeat)` is claimed twice,
     or when a board fails its own audit; see `pool.pool`'s docstring.
 
-    Writes only its own output (`--out`, default `evals/pools/<first label>`)
-    and never touches a scoreboard.
+    Writes only its own output (`--out`, default
+    `evals/pools/<first label>/pool.json`) and never touches a scoreboard.
     """
     from .pool import PoolRefused
     from .pool import pool as pool_boards
@@ -376,7 +395,11 @@ def run_pool(args: argparse.Namespace) -> int:
     except PoolRefused as error:
         print(f"Refused: {error}", file=sys.stderr)
         return 2
-    out = args.out if args.out is not None else DEFAULT_POOLS / args.labels[0]
+    # `<label>/pool.json`, not a bare extensionless `<label>` file (spec §3.5):
+    # a pool is a named directory so the derived view has somewhere to grow --
+    # and a file with no extension where a directory is documented is the kind
+    # of surprise that only shows up when something tries to write beside it.
+    out = args.out if args.out is not None else DEFAULT_POOLS / args.labels[0] / "pool.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     # newline="\n": the same repository-evidence integrity concern as the
     # baseline and scoreboard writes -- Path.write_text's default would
