@@ -94,7 +94,11 @@ def build(scoreboards_root: Path, *, problems_path: Path, baseline_path: Path) -
             "model": model, "boards": pooled["boards"],
             "pooling_key": pooled["pooling_key"], "rows": pooled["rows"],
         })
-    return {"scoreboards_root": str(scoreboards_root), "models": models}
+    # POSIX-rendered: this string lands in a committed Markdown file, and a
+    # backslash-separated path would make the same data regenerate differently
+    # on Windows than elsewhere -- a noise diff on a file whose whole contract
+    # is that unchanged input reproduces it byte for byte.
+    return {"scoreboards_root": scoreboards_root.as_posix(), "models": models}
 
 
 def row_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
