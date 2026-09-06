@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from .. import __version__
 from ..domain import EnvironmentIdentity, FrozenModel
+from . import digests
 from .corpus import load_corpus, manifest_digest
 from .problems import Entry, ProblemSet, sha256_of
 from .scoreboard import Aggregates, Row, active_ids, aggregate, batch_row, staged_row
@@ -54,6 +55,68 @@ class Condition(FrozenModel):
     limits: dict[str, float | int]
     repeats: int
     selection: dict[str, Any]
+    # Defaulted to None, not required: a scoreboard written before this gate
+    # existed carries no digest, and `evals pool` refuses such a board by name
+    # rather than crashing on it. Absence is staleness, not agreement -- the
+    # same rule `staleness` applies to a blank environment digest.
+    run_procedure_digest: str | None = None
+
+
+RUN_SOURCE_ROOT = Path(__file__).resolve().parents[1]
+
+# Excluded because no run path reaches them. Inclusion is the default: a
+# module added tomorrow counts without anyone remembering to list it, which
+# is the whole reason this is a denylist. An allowlist drawn from the obvious
+# imports omitted `closers` -- which decides whether a proof closes -- and
+# `usage`, which computes the very token counts a pool aggregates.
+RUN_SOURCE_EXCLUDED_FILES = frozenset({
+    "__main__.py",        # a console-script shim
+    "cas_driver.py",      # reached by no run path
+    "cli.py",             # argument parsing; the run hooks moved to wiring.py
+    "evals/viewer.py",    # the corpus review viewer
+})
+RUN_SOURCE_EXCLUDED_DIRS = ("tui/",)
+
+
+def run_source_paths() -> tuple[Path, ...]:
+    """Every module whose bytes can change what a run does, in a stable order."""
+    found = []
+    for path in RUN_SOURCE_ROOT.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        rel = path.relative_to(RUN_SOURCE_ROOT).as_posix()
+        if rel in RUN_SOURCE_EXCLUDED_FILES or rel.startswith(RUN_SOURCE_EXCLUDED_DIRS):
+            continue
+        found.append(path)
+    # Sorted on the POSIX-relative name, not the OS path: a Windows and a
+    # Linux checkout must hash the same modules in the same order.
+    return tuple(sorted(found, key=lambda p: p.relative_to(RUN_SOURCE_ROOT).as_posix()))
+
+
+def run_procedure_digest_of(*, model: str, mode: str, limits: dict[str, float | int]) -> str:
+    """What a pooled row must share: the deciding source, the prompts, the model and its budgets.
+
+    The mirror of `sweep.procedure_digest_of`, for the run rather than the
+    sweep, and for the same reason its docstring gives: `__version__` is fixed
+    at 0.1.0 across every checkout, so only hashing the deciding modules can
+    tell that two measurements came from the same code.
+
+    The prompt-set hashes stay separate keys rather than folding into
+    `source`, so a changed digest says which input moved. They cover template
+    *text* only -- never the `prompts/` code that renders it, which
+    `run_source_paths` picks up.
+    """
+    from ..prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
+
+    return digests.procedure_digest({
+        "hardy_version": __version__,
+        "source": [digests.source_digest(p.read_bytes()) for p in run_source_paths()],
+        "staged_prompt_set_sha256": PROMPT_SET_SHA256,
+        "batch_prompt_set_sha256": BATCH_PROMPT_SET_SHA256,
+        "model": model,
+        "mode": mode,
+        "limits": limits,
+    })
 
 
 def _source_anchor() -> Path:
@@ -341,6 +404,9 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         hardy_version=__version__, source_revision=source_revision(), limits=limits, repeats=args.repeats,
         selection={"only": args.only.split(",") if args.only else None, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
                    "twins": not args.no_twins},
+        run_procedure_digest=run_procedure_digest_of(
+            model=str(args.model or config.model), mode=args.mode, limits=limits,
+        ),
     )
     staged = None
     if args.mode == "staged":

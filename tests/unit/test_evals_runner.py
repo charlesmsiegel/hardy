@@ -406,3 +406,37 @@ def test_twins_run_batch_even_under_staged_mode(tmp_path):
                        condition=_condition(mode="staged", selection={"only": ["f", "t"], "tiers": None, "twins": True}), environment=IDENTITY,
                        batch_runner=batch, staged_runner=staged, now=lambda: datetime(2026, 9, 1, tzinfo=UTC), report=lambda _: None)
     assert ("batch", "f") in modes and ("staged", "t") in modes
+
+
+def test_run_source_set_excludes_only_the_declared_paths():
+    paths = {p.relative_to(runner.RUN_SOURCE_ROOT).as_posix() for p in runner.run_source_paths()}
+    assert "runner.py" in paths                # the prover loop
+    assert "closers.py" in paths               # decides whether a proof closes
+    assert "usage.py" in paths                 # computes the token counts we aggregate
+    assert "prompts/__init__.py" in paths      # renders the templates
+    assert "evals/viewer.py" not in paths      # excluded: the review viewer
+    assert "cli.py" not in paths               # excluded: argument parsing
+    assert not any(p.startswith("tui/") for p in paths)
+    assert not any("__pycache__" in p for p in paths)
+
+
+def test_run_digest_moves_when_a_counted_module_changes(monkeypatch):
+    before = runner.run_procedure_digest_of(model="m", mode="batch", limits={"max_turns": 3})
+    real = runner.run_source_paths
+
+    def fewer():
+        return tuple(p for p in real() if p.name != "closers.py")
+
+    monkeypatch.setattr(runner, "run_source_paths", fewer)
+    assert runner.run_procedure_digest_of(model="m", mode="batch", limits={"max_turns": 3}) != before
+
+
+def test_run_digest_moves_with_the_model_and_the_limits():
+    base = dict(model="m", mode="batch", limits={"max_turns": 3})
+    assert runner.run_procedure_digest_of(**base) != runner.run_procedure_digest_of(**{**base, "model": "other"})
+    assert runner.run_procedure_digest_of(**base) != runner.run_procedure_digest_of(**{**base, "limits": {"max_turns": 4}})
+
+
+def test_condition_carries_the_run_digest():
+    assert _condition().run_procedure_digest is None      # a board swept before the gate existed
+    assert _condition(run_procedure_digest="d" * 64).run_procedure_digest == "d" * 64
