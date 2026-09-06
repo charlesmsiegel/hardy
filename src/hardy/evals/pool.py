@@ -18,9 +18,17 @@ class PoolRefused(ValueError):
 def pool(labels: list[Path], *, problems_path: Path, baseline_path: Path) -> dict[str, Any]:
     """Combine the scoreboards at `labels` into one derived score.
 
-    Every board is re-validated with the existing `validate_scoreboard`
-    first (spec's own audit, not a second implementation of it: a board that
-    cannot pass its own audit is not evidence). Boards are then combined only
+    Every board is re-validated first with `scoreboard_self_issues` -- the
+    self-consistency half of the existing `validate_scoreboard`, not a second
+    implementation of it: a board that cannot pass its own audit is not
+    evidence. The other half (`problems_sha256`, `baseline_sha256` and the
+    aggregate re-derivation) is deliberately *not* asked for here. Those are
+    the three things the spec excludes from the pooling key because they must
+    drift: accumulating batches is corpus and baseline growth, so an earlier
+    board necessarily names a corpus and a baseline that have since grown,
+    and its aggregates were computed against the denominators of its own day.
+    Demanding them would make a pool of two batches impossible by
+    construction. Boards are then combined only
     when every one shares the same `(run_procedure_digest, environment_digest)`
     -- refusing by naming exactly which of the two differs, since a control
     agent reads this message and "incompatible" alone tells it nothing to
@@ -32,7 +40,7 @@ def pool(labels: list[Path], *, problems_path: Path, baseline_path: Path) -> dic
     from .outstanding import environment_digest_of_board
     from .problems import sha256_of
     from .runner import Scoreboard
-    from .scoreboard import active_ids, aggregate, validate_scoreboard
+    from .scoreboard import active_ids, aggregate, scoreboard_self_issues
     from .sweep import Baseline
 
     problems = load_corpus(problems_path)
@@ -43,7 +51,7 @@ def pool(labels: list[Path], *, problems_path: Path, baseline_path: Path) -> dic
         # The existing audit, not a second implementation of it: a board
         # this cannot verify is not evidence, and re-deriving the check here
         # would be a second thing to keep correct.
-        issues = validate_scoreboard(path, problems_path=problems_path, baseline_path=baseline_path)
+        issues = scoreboard_self_issues(path, problems_path=problems_path, baseline_path=baseline_path)
         if issues:
             raise PoolRefused(f"{path.name} does not validate: " + "; ".join(issues))
         board = Scoreboard.model_validate_json((path / "scoreboard.json").read_text(encoding="utf-8"))
@@ -106,9 +114,21 @@ def pool(labels: list[Path], *, problems_path: Path, baseline_path: Path) -> dic
         "aggregates": aggregates.model_dump(mode="json"),
         # A contended per-row wall_seconds summed across rows overstates
         # serial wall clock (Row.workers' own docstring); labelling the
-        # figure is what stops a reader from mistaking it for one.
-        "wall_seconds_note": (
-            f"summed under up to {aggregates.totals.workers} concurrent workers; "
-            "not a serial wall-clock figure"
-        ),
+        # figure is what stops a reader from mistaking it for one. When no
+        # row records its concurrency -- every row predates `Row.workers` --
+        # the honest label is that the number is unknown, not "up to None".
+        "wall_seconds_note": _wall_seconds_note(aggregates.totals.workers),
     }
+
+
+def _wall_seconds_note(workers: int | None) -> str:
+    """What the summed `wall_seconds` may and may not be read as.
+
+    Never "how long this would take serially" (spec §5). `workers` is `None`
+    when not one row recorded the concurrency it ran under, which is a gap in
+    what is known about the figure rather than a claim that it ran serially --
+    so the note says so instead of naming a number it does not have.
+    """
+    if workers is None:
+        return "summed under an unrecorded number of concurrent workers; not a serial wall-clock figure"
+    return f"summed under up to {workers} concurrent workers; not a serial wall-clock figure"

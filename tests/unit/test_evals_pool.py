@@ -8,13 +8,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from test_evals_runner import SOLVE, _batch_runner, _condition, _files
+from test_evals_runner import ENTRIES, SOLVE, _batch_runner, _condition, _files
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
 from hardy.domain import EnvironmentIdentity
 from hardy.evals import outstanding, pool, runner
+from hardy.evals.corpus import manifest_digest
+from hardy.evals.problems import Entry
 
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
+# The entry harvested after the boards below were run: the corpus and the
+# baseline grow between batches by design, and a pool has to survive that.
+LATER = Entry(id="v", input="True later.", name="V", conclusion="True", expected="true", source="textbook",
+              msc=("11Axx",), difficulty="routine", rationale="test fixture", witness=None,
+              witness_note="test fixture")
 
 # Built once, on disk, for the whole module: every board in every test is
 # validated against this same corpus and baseline (`pool.pool` takes a single
@@ -46,7 +53,7 @@ def _stub_environment_digest(monkeypatch):
     )
 
 
-def _board(path: Path, *, ids: list[str], run_digest: str | None, env_digest: str) -> Path:
+def _board(path: Path, *, ids: list[str], run_digest: str | None, env_digest: str, workers: int | None = 1) -> Path:
     """A scoreboard that genuinely validates (`runner.run_set` writes it for
     real, against the shared `PROBLEMS`/`BASELINE`), with its pooling key
     then pinned to exactly the values a test wants to compare.
@@ -68,6 +75,12 @@ def _board(path: Path, *, ids: list[str], run_digest: str | None, env_digest: st
     board_path = out / "scoreboard.json"
     payload = json.loads(board_path.read_text(encoding="utf-8"))
     payload["host"] = {"digest": env_digest}
+    if workers is None:
+        # A board every row of which predates `Row.workers`. The per-row
+        # cross-check deliberately skips `workers` (it is provenance no run
+        # directory records), so this leaves an otherwise-valid board.
+        for row in payload["rows"]:
+            row["workers"] = None
     board_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return out
 
@@ -78,6 +91,47 @@ def test_two_boards_under_one_key_pool(tmp_path):
     result = pool.pool([a, b], problems_path=PROBLEMS, baseline_path=BASELINE)
     assert sorted(row["id"] for row in result["rows"]) == ["t", "u"]
     assert result["aggregates"]["totals"]["rows"] == 2
+
+
+def test_boards_still_pool_once_the_corpus_and_the_baseline_have_grown(tmp_path):
+    """The case the whole feature exists for, and the one that could never work.
+
+    Accumulating batches *is* corpus and baseline growth: batch 1 is run,
+    more entries are harvested and promoted, the baseline is swept over them,
+    batch 2 is run, and the two are pooled. Every earlier board then names a
+    `problems_sha256` and a `baseline_sha256` that no longer match, and its
+    `aggregates` were computed against the denominators of its own day -- the
+    three things the spec excludes from the pooling key precisely because
+    they must drift. Asking a board for them here refused every pool of two
+    batches that could ever be built.
+
+    What is still demanded of each board is everything about itself: its rows
+    re-derived from its own run directories, its condition and environment
+    cross-checks, its ordering, and per-entry staleness over what it ran.
+    """
+    a = _board(tmp_path / "a", ids=["t"], run_digest="r", env_digest="e")
+    b = _board(tmp_path / "b", ids=["u"], run_digest="r", env_digest="e")
+    grown_problems, grown_baseline = _files(
+        tmp_path / "grown", tiers={"t": 0, "u": 3, "f": 3, "v": 3}, entries=(*ENTRIES, LATER),
+    )
+    result = pool.pool([a, b], problems_path=grown_problems, baseline_path=grown_baseline)
+    assert sorted(row["id"] for row in result["rows"]) == ["t", "u"]
+    assert result["problems_sha256"] == manifest_digest(grown_problems)
+    # And the pool's own aggregate is taken against the corpus and baseline of
+    # today (spec §3.4), not the ones the boards were written under.
+    assert result["aggregates"]["floor"]["entries"] == 4
+
+
+def test_a_board_that_fails_its_own_audit_is_still_refused_after_growth(tmp_path):
+    """Dropping the corpus-hash half must not drop the per-row audit with it."""
+    a = _board(tmp_path / "a", ids=["t"], run_digest="r", env_digest="e")
+    (a / "runs" / "t" / "batch-0" / "proof.lean").write_text("tampered", encoding="utf-8")
+    grown_problems, grown_baseline = _files(
+        tmp_path / "grown", tiers={"t": 0, "u": 3, "f": 3, "v": 3}, entries=(*ENTRIES, LATER),
+    )
+    with pytest.raises(pool.PoolRefused) as caught:
+        pool.pool([a], problems_path=grown_problems, baseline_path=grown_baseline)
+    assert "runs/t/batch-0" in str(caught.value)
 
 
 def test_a_differing_run_digest_is_refused_by_name(tmp_path):
@@ -129,3 +183,41 @@ def test_the_wall_seconds_note_names_the_worker_ceiling_and_disclaims_serial_tim
     assert result["wall_seconds_note"] == (
         f"summed under up to {workers} concurrent workers; not a serial wall-clock figure"
     )
+
+
+def test_the_wall_seconds_note_says_so_when_no_row_recorded_its_concurrency(tmp_path):
+    """`workers` is `None` when every row predates `Row.workers`. "up to None
+    concurrent workers" is not a sentence; the honest reading is that the
+    concurrency behind the figure is unknown, which is still not a claim that
+    it ran serially.
+    """
+    a = _board(tmp_path / "a", ids=["t"], run_digest="r", env_digest="e", workers=None)
+    result = pool.pool([a], problems_path=PROBLEMS, baseline_path=BASELINE)
+    assert result["aggregates"]["totals"]["workers"] is None
+    assert "None" not in result["wall_seconds_note"]
+    assert result["wall_seconds_note"] == (
+        "summed under an unrecorded number of concurrent workers; not a serial wall-clock figure"
+    )
+
+
+def test_the_default_output_is_a_named_pool_directory_holding_pool_json(tmp_path, monkeypatch):
+    """`evals/pools/<name>/pool.json` (spec §3.5), not an extensionless file
+    named `<name>`: a pool is a directory so the derived view has somewhere to
+    grow, and a file where a directory is documented only surprises whoever
+    next tries to write beside it.
+    """
+    import argparse
+
+    from hardy.evals import commands
+
+    board = _board(tmp_path / "boards" / "a", ids=["t"], run_digest="r", env_digest="e")
+    assert board.exists()
+    monkeypatch.setattr(commands, "DEFAULT_POOLS", tmp_path / "pools")
+    code = commands.run_pool(argparse.Namespace(
+        labels=["a"], scoreboards=tmp_path / "boards", corpus=PROBLEMS, baseline=BASELINE, out=None,
+    ))
+    assert code == 0
+    written = tmp_path / "pools" / "a" / "pool.json"
+    assert written.is_file()
+    assert json.loads(written.read_text(encoding="utf-8"))["boards"] == ["a"]
+    assert not (tmp_path / "pools" / "a").is_file()

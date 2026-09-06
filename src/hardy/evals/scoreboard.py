@@ -212,6 +212,12 @@ class Totals(FrozenModel):
     rows: int
     rows_with_usage: int
     rows_with_wall: int
+    # `cost_usd` gets its own denominator rather than borrowing
+    # `rows_with_usage`: a run can report token counts and still leave
+    # `cost_usd` null (`TierAggregate.unreported_costs` exists for exactly
+    # that case), so the two coverages genuinely differ and one standing in
+    # for the other would overstate what the summed cost is a sum over.
+    rows_with_cost: int
     workers: int | None
 
 
@@ -228,6 +234,7 @@ def _totals(rows: list[Row]) -> Totals:
         rows=len(rows),
         rows_with_usage=sum(1 for r in rows if any(getattr(r, f) is not None for f in _TOKEN_FIELDS)),
         rows_with_wall=sum(1 for r in rows if r.wall_seconds is not None),
+        rows_with_cost=sum(1 for r in rows if r.cost_usd is not None),
         # The maximum, not the only value: a pool combines rows from runs made
         # at different worker counts, and the largest is the one the summed
         # wall clock must be read against.
@@ -316,36 +323,126 @@ def active_ids(problems) -> set[str]:
     return {e.id for e in problems.entries if e.status == "active"}
 
 
-def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_path: Path) -> tuple[str, ...]:
-    """Every figure in a committed scoreboard, re-derived from artifacts the audit accepts (spec §5)."""
-    from .corpus import load_corpus, manifest_digest
-    from .problems import sha256_of
-    from .runner import RefusedRun, Scoreboard, select
+def _read_board(scoreboard_dir: Path) -> tuple[Any | None, tuple[str, ...]]:
+    """The committed board, or the findings that stop anything from reading it."""
+    from .runner import Scoreboard
 
     board_path = scoreboard_dir / "scoreboard.json"
     if not board_path.exists():
-        return (f"{scoreboard_dir} has no scoreboard.json",)
+        return None, (f"{scoreboard_dir} has no scoreboard.json",)
     try:
-        board = Scoreboard.model_validate_json(board_path.read_text(encoding="utf-8"))
+        return Scoreboard.model_validate_json(board_path.read_text(encoding="utf-8")), ()
     except Exception as error:  # pydantic.ValidationError, JSON errors
-        return (f"scoreboard.json does not validate: {type(error).__name__}",)
+        return None, (f"scoreboard.json does not validate: {type(error).__name__}",)
+
+
+def _corpus_and_baseline(problems_path: Path, baseline_path: Path):
+    from .corpus import load_corpus
+
+    return load_corpus(problems_path), Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
+
+
+def scoreboard_self_issues(scoreboard_dir: Path, *, problems_path: Path, baseline_path: Path) -> tuple[str, ...]:
+    """Everything a board must satisfy about *itself* and its own run directories.
+
+    The half of `validate_scoreboard` that survives corpus and baseline
+    growth: every row re-derived from the run directory it names, the
+    condition and environment cross-checks, the duplicate-sample checks, the
+    per-entry staleness gate, and the row-ordering/interrupted-prefix rules.
+
+    `evals pool` calls exactly this and not `scoreboard_corpus_issues`,
+    because accumulating batches *is* corpus and baseline growth: an earlier
+    board's `problems_sha256` and `baseline_sha256` necessarily name files
+    that have since grown, and its `aggregates` were computed against the
+    denominators of the day. Those are the three things the other half owns
+    (spec §1's excluded-from-the-key list); everything here still holds, and
+    still has to.
+    """
+    board, unreadable = _read_board(scoreboard_dir)
+    if board is None:
+        return unreadable
+    problems, baseline = _corpus_and_baseline(problems_path, baseline_path)
+    return tuple(_self_issues(board, scoreboard_dir, problems, baseline))
+
+
+def scoreboard_corpus_issues(scoreboard_dir: Path, *, problems_path: Path, baseline_path: Path) -> tuple[str, ...]:
+    """The half that binds a board to the corpus and baseline *as they are now*.
+
+    Only `hardy evals check` asks for this: it is checking that this board
+    still describes today's committed evidence. A pool of several batches
+    cannot -- by construction the corpus and baseline moved between them.
+    """
+    board, unreadable = _read_board(scoreboard_dir)
+    if board is None:
+        return unreadable
+    problems, baseline = _corpus_and_baseline(problems_path, baseline_path)
+    return tuple(_corpus_issues(board, problems, baseline, problems_path=problems_path, baseline_path=baseline_path))
+
+
+def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_path: Path) -> tuple[str, ...]:
+    """Every figure in a committed scoreboard, re-derived from artifacts the audit accepts (spec §5).
+
+    Both halves, in the order they were always reported in. One
+    implementation, factored -- not two validators to keep in step.
+    """
+    board, unreadable = _read_board(scoreboard_dir)
+    if board is None:
+        return unreadable
+    problems, baseline = _corpus_and_baseline(problems_path, baseline_path)
+    return tuple([
+        *_corpus_issues(board, problems, baseline, problems_path=problems_path, baseline_path=baseline_path),
+        *_self_issues(board, scoreboard_dir, problems, baseline),
+    ])
+
+
+def _corpus_issues(board: Any, problems: Any, baseline: Baseline, *, problems_path: Path, baseline_path: Path) -> list[str]:
+    """1 and 6: the board against the corpus, the baseline file and the denominators of today."""
+    from .corpus import manifest_digest
+    from .problems import sha256_of
+
     issues: list[str] = []
     # 1. bound to the committed list and tier file
     if board.problems_sha256 != manifest_digest(problems_path):
         issues.append("problems_sha256 does not match the corpus manifest")
     if board.baseline_sha256 != sha256_of(baseline_path):
         issues.append("baseline_sha256 does not match evals/baseline.json")
-    problems = load_corpus(problems_path)
-    baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
+    # 6. aggregates
+    if aggregate(list(board.rows), baseline, active_ids=active_ids(problems)) != board.aggregates:
+        # Not "...from the rows": that phrase's own plural would satisfy
+        # check 7's `not any("row" in i for i in ...)` for the wrong reason.
+        issues.append("the scoreboard's aggregates do not recompute")
+    return issues
+
+
+def _self_issues(board: Any, scoreboard_dir: Path, problems: Any, baseline: Baseline) -> list[str]:
+    from .runner import RefusedRun, select
+
+    issues: list[str] = []
     if baseline.environment != board.environment:
         # Not redundant with `staleness` below: `EnvironmentIdentity` also
         # carries `imports`, which `staleness` (mirroring the live gate)
         # never compares.
         issues.append("the scoreboard's environment is not the baseline's")
+    # Scoped to what this board actually ran, exactly as `run_set` scopes the
+    # live gate: the baseline is swept a batch at a time, so demanding
+    # whole-corpus coverage here would name every entry nobody has swept yet
+    # and fail every board this benchmark produces. A row's tier and its
+    # twin's mechanical falsity come from its own baseline entry; an entry
+    # this board never ran needs none.
+    known_ids = {e.id for e in problems.entries}
+    ran = [problems.by_id(id) for id in sorted({row.id for row in board.rows} & known_ids)]
+    # The same widening `run_set` applies (runner.py's `mismatch_scope`):
+    # `baseline_entries_mismatch` reads `problem_ids` as an exhaustive
+    # listing, so a baseline that legitimately covers more than this board
+    # ran would otherwise report every uninvolved entry as a spurious
+    # "extra". A baseline row for an id the corpus no longer names is still
+    # extra; an id this board ran that the baseline never covered is still
+    # missing.
+    mismatch_scope = sorted({e.id for e in ran} | (set(baseline.entries) & known_ids))
     # A baseline that tiers entries the problem list no longer names (or is
     # silent about one the list does) cannot be trusted to tier this run
     # (item 8), the same check `staleness` refuses a live run over.
-    mismatch = baseline_entries_mismatch(baseline, (e.id for e in problems.entries))
+    mismatch = baseline_entries_mismatch(baseline, mismatch_scope)
     if mismatch is not None:
         issues.append(mismatch)
     # The same staleness gate `run_set` refuses over before a live run
@@ -359,9 +456,9 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
     # `baseline.host`, not this machine's: re-checking a committed scoreboard
     # must ask whether the baseline was fresh for the run that produced it, not
     # whether it is fresh for whoever is running `hardy evals check` today.
-    for issue in staleness(baseline, statement_digests={e.id: e.statement_digest() for e in problems.entries}, environment=board.environment,
-                           problem_ids=[e.id for e in problems.entries], host=baseline.host,
-                           expectations={e.id: e.expected for e in problems.entries}):
+    for issue in staleness(baseline, statement_digests={e.id: e.statement_digest() for e in ran}, environment=board.environment,
+                           problem_ids=mismatch_scope, host=baseline.host,
+                           expectations={e.id: e.expected for e in ran}):
         issues.append(f"baseline: {issue}")
     # Rows are samples: a duplicated (id, repeat) key or a run_dir reused
     # across rows would let one run be counted as more than one independent
@@ -440,11 +537,6 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
                 issues.append(f"{where}: {field} is {getattr(row, field)!r} but the run says {getattr(derived, field)!r}")
         if row.mode == "staged":
             issues.extend(_canonical_issues(entry, run_dir, where))
-    # 6. aggregates
-    if aggregate(list(board.rows), baseline, active_ids=active_ids(problems)) != board.aggregates:
-        # Not "...from the rows": that phrase's own plural would satisfy
-        # check 7's `not any("row" in i for i in ...)` for the wrong reason.
-        issues.append("the scoreboard's aggregates do not recompute")
     # 7. selection complete unless interrupted, and -- when interrupted -- a
     # prefix of the order `run_set` would actually have completed (item 4).
     # A committed scoreboard could otherwise delete only its failed rows, set
@@ -494,7 +586,7 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
         # since none reads `finished_at` at all.
         if have == expected and board.finished_at is None:
             issues.append("the scoreboard is complete but records no finished_at")
-    return tuple(issues)
+    return issues
 
 
 def _condition_issues(row: Row, run_dir: Path, condition: Any, environment: EnvironmentIdentity, where: str) -> list[str]:

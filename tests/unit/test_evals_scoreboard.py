@@ -200,6 +200,43 @@ def test_a_scoreboard_the_runner_wrote_validates(tmp_path):
     assert scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline) == ()
 
 
+def test_a_board_run_against_a_partial_baseline_validates(tmp_path):
+    """The baseline grows a batch at a time, so `evals check` must gate on
+    what the board actually ran -- exactly as `run_set` already does.
+
+    Whole-corpus `staleness`/`baseline_entries_mismatch` here named every
+    entry nobody has swept yet: on the real numbers (a corpus of 1166, a
+    baseline covering 20) that is ~1129 ids, and every board this benchmark
+    produces fails its own audit. A row's tier comes from its own baseline
+    entry; an entry the board never ran needs none.
+    """
+    problems, baseline = _files(tmp_path, tiers={"t": 0})       # corpus of three, baseline covering one
+    out = runner.run_set(
+        label="one", problems_path=problems, baseline_path=baseline, scoreboards_root=tmp_path / "sb",
+        condition=_condition(selection={"only": ["t"], "tiers": None, "twins": True}),
+        environment=EnvironmentIdentity(**RAW_IDENTITY), batch_runner=_batch_runner({"t": SOLVE}),
+        now=lambda: datetime(2026, 9, 1, tzinfo=UTC), report=lambda _: None,
+    )
+    assert scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline) == ()
+
+
+def test_a_baseline_row_the_corpus_no_longer_names_is_still_extra(tmp_path):
+    """Scoping the gate to what ran must not retire the ghost-entry check:
+    `floor` counts every `baseline.entries` row, so one for an id the corpus
+    dropped still inflates a denominator nobody can trace back to a statement.
+    """
+    problems, baseline = _files(tmp_path, tiers={"t": 0})
+    out = runner.run_set(
+        label="one", problems_path=problems, baseline_path=baseline, scoreboards_root=tmp_path / "sb",
+        condition=_condition(selection={"only": ["t"], "tiers": None, "twins": True}),
+        environment=EnvironmentIdentity(**RAW_IDENTITY), batch_runner=_batch_runner({"t": SOLVE}),
+        now=lambda: datetime(2026, 9, 1, tzinfo=UTC), report=lambda _: None,
+    )
+    _edit(baseline, lambda b: b["entries"].__setitem__("ghost", b["entries"]["t"]))
+    issues = scoreboard.validate_scoreboard(out, problems_path=problems, baseline_path=baseline)
+    assert any("extra" in i and "ghost" in i for i in issues), issues
+
+
 def test_each_check_breaks_one_at_a_time(tmp_path):
     out, problems, baseline = _board(tmp_path)
 
@@ -604,8 +641,28 @@ def test_totals_sum_tokens_and_report_their_coverage():
     assert totals == Totals(
         input_tokens=300, output_tokens=30, cache_read_tokens=5, cache_write_tokens=1,
         cost_usd=1.5, wall_seconds=12.0,
-        rows=3, rows_with_usage=2, rows_with_wall=1, workers=4,
+        rows=3, rows_with_usage=2, rows_with_wall=1, rows_with_cost=2, workers=4,
     )
+
+
+def test_the_summed_cost_carries_its_own_coverage_count():
+    """`cost_usd` cannot borrow `rows_with_usage` as its denominator.
+
+    A run can report token counts and still leave `cost_usd` null -- that is
+    what `TierAggregate.unreported_costs` exists to count -- so the two
+    coverages genuinely differ, and reading one as the other would say the
+    summed cost covered a row it did not.
+    """
+    from hardy.evals.scoreboard import _totals
+
+    totals = _totals([
+        _row(id="a", input_tokens=100, output_tokens=10, cache_read_tokens=0,
+             cache_write_tokens=0, cost_usd=None, wall_seconds=1.0),
+        _row(id="b", input_tokens=200, output_tokens=20, cache_read_tokens=0,
+             cache_write_tokens=0, cost_usd=2.0, wall_seconds=1.0),
+    ])
+    assert totals.rows_with_usage == 2 and totals.rows_with_cost == 1
+    assert totals.cost_usd == 2.0
 
 
 def test_totals_say_when_nothing_carried_a_value():
