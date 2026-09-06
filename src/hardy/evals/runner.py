@@ -210,6 +210,15 @@ def select(problems: ProblemSet, baseline: Baseline, *, only: list[str] | None, 
         unknown = [id_ for id_ in ids if id_ not in known]
         if unknown:
             raise RefusedRun("--only names entries not in the list: " + ", ".join(unknown))
+    if tiers is not None:
+        unbaselined = [id_ for id_ in ids if id_ not in baseline.entries]
+        if unbaselined:
+            # A KeyError here read as a crash; it is a selection the baseline
+            # cannot tier, which is a refusal naming what to sweep.
+            raise RefusedRun(
+                "--tiers needs a baseline row for: " + ", ".join(sorted(unbaselined))
+                + "; re-run `hardy evals baseline` for them"
+            )
     chosen = []
     for id_ in ids:
         entry = problems.by_id(id_)
@@ -243,17 +252,12 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
         raise RefusedRun(f"--label must be a single path component matching {LABEL_RE.pattern!r}, not {label!r}")
     problems = load_corpus(problems_path)
     baseline = Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
-    issues = staleness(baseline, statement_digests={e.id: e.statement_digest() for e in problems.entries}, environment=environment,
-                       problem_ids=[entry.id for entry in problems.entries], host=host_info(),
-                       expectations={e.id: e.expected for e in problems.entries})
-    if issues:
-        raise RefusedRun("; ".join(issues))
-    out = scoreboards_root / label
-    if out.exists():
-        raise RefusedRun(f"{out} already exists; a label is one condition on one day")
-    if condition.mode == "staged" and staged_runner is None:
-        raise RefusedRun("staged mode needs a staged runner")
     sel = condition.selection
+    # Selection first, then the gate over exactly what was selected. The gate
+    # is per entry by design (`staleness`'s own docstring), and a row's tier
+    # and its twin's mechanical falsity come from its own baseline entry --
+    # an entry that never runs needs none. Asking for whole-corpus coverage
+    # made a 1166-entry corpus demand a 1166-entry sweep before a run of 11.
     entries = select(problems, baseline, only=sel.get("only"), tiers=sel.get("tiers"), twins=sel.get("twins", True))
     if not entries:
         # Before `out` is created: `--tiers 2` against a baseline with no
@@ -263,6 +267,33 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
         # order), presenting a nominally completed experiment with no
         # samples (item 5).
         raise RefusedRun("the selection matches no entries (tiers/only/twins filters left nothing to run)")
+    # `baseline_entries_mismatch` (inside `staleness`) reads `problem_ids` as
+    # an exhaustive listing to match `baseline.entries` against exactly, so a
+    # baseline that legitimately covers more than this run selected -- the
+    # ordinary case once a baseline has grown to cover the whole corpus --
+    # would otherwise report every unselected entry as a spurious "extra".
+    # Widening `problem_ids` to the selected ids plus whatever the baseline
+    # already carries (restricted to ids the corpus still names) keeps that
+    # check meaningful -- a baseline entry for a retired id is still "extra"
+    # -- while a selected id the baseline has never covered is still "missing".
+    known_ids = {e.id for e in problems.entries}
+    selected_ids = {e.id for e in entries}
+    mismatch_scope = sorted(selected_ids | (set(baseline.entries) & known_ids))
+    issues = staleness(
+        baseline,
+        statement_digests={e.id: e.statement_digest() for e in entries},
+        environment=environment,
+        problem_ids=mismatch_scope,
+        host=host_info(),
+        expectations={e.id: e.expected for e in entries},
+    )
+    if issues:
+        raise RefusedRun("; ".join(issues))
+    out = scoreboards_root / label
+    if out.exists():
+        raise RefusedRun(f"{out} already exists; a label is one condition on one day")
+    if condition.mode == "staged" and staged_runner is None:
+        raise RefusedRun("staged mode needs a staged runner")
     out.mkdir(parents=True)
     rows: list[Row] = []
     board = Scoreboard(label=label, condition=condition, environment=environment, baseline_sha256=sha256_of(baseline_path),

@@ -440,3 +440,49 @@ def test_run_digest_moves_with_the_model_and_the_limits():
 def test_condition_carries_the_run_digest():
     assert _condition().run_procedure_digest is None      # a board swept before the gate existed
     assert _condition(run_procedure_digest="d" * 64).run_procedure_digest == "d" * 64
+
+
+def _noop_batch_runner(tmp_path: Path):
+    """A batch runner that always refuses, regardless of the entry -- modelled
+    on `_scripted_batch`, but not keyed by id, since the tests using this
+    exercise selection and staleness, not particular outcomes.
+    """
+    def run_one(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
+        _scripted_batch(output, GIVE_UP, declaration=entry.declaration(), informal_claim=entry.input)
+    return run_one
+
+
+def test_a_run_needs_a_baseline_only_for_what_it_selects(tmp_path):
+    # Corpus of three, baseline covering one: the run of that one must pass.
+    problems, baseline_path = _files(tmp_path, tiers={"t": 0})
+    out = runner.run_set(
+        label="one", problems_path=problems, baseline_path=baseline_path,
+        scoreboards_root=tmp_path / "boards",
+        condition=_condition(selection={"only": ["t"], "tiers": None, "twins": True}),
+        environment=IDENTITY, batch_runner=_noop_batch_runner(tmp_path),
+        now=lambda: datetime(2026, 9, 5, tzinfo=UTC), report=lambda _: None,
+    )
+    assert (out / "scoreboard.json").exists()
+
+
+def test_a_run_still_refuses_when_a_selected_entry_is_unbaselined(tmp_path):
+    problems, baseline_path = _files(tmp_path, tiers={"t": 0})
+    with pytest.raises(runner.RefusedRun) as caught:
+        runner.run_set(
+            label="two", problems_path=problems, baseline_path=baseline_path,
+            scoreboards_root=tmp_path / "boards",
+            condition=_condition(selection={"only": ["t", "u"], "tiers": None, "twins": True}),
+            environment=IDENTITY, batch_runner=_noop_batch_runner(tmp_path),
+            now=lambda: datetime(2026, 9, 5, tzinfo=UTC), report=lambda _: None,
+        )
+    assert "u" in str(caught.value)
+
+
+def test_tiers_against_an_unbaselined_entry_refuses_by_name(tmp_path):
+    problems, baseline_path = _files(tmp_path, tiers={"t": 0})
+    from hardy.evals.corpus import load_corpus
+
+    baseline = sweep.Baseline.model_validate_json(baseline_path.read_text(encoding="utf-8"))
+    with pytest.raises(runner.RefusedRun) as caught:
+        runner.select(load_corpus(problems), baseline, only=None, tiers=[0], twins=True)
+    assert "u" in str(caught.value) and "--tiers" in str(caught.value)

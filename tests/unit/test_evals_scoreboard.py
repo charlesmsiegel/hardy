@@ -169,7 +169,8 @@ def test_aggregates_are_counts_and_medians_per_tier():
     assert agg.headline.n == 3 and agg.headline.solved == 2      # tiers 2 and 3 true rows
     assert agg.headline.interval[0] < agg.headline.solve_rate < agg.headline.interval[1]
     assert agg.floor == {"entries": 5, "tier_0": 1, "tier_1": 0, "tier_2": 1, "tier_3": 3,
-                         "single_tactic_closes": 1, "active": 5, "active_unwitnessed": 4}
+                         "single_tactic_closes": 1, "active": 5, "active_unwitnessed": 4,
+                         "baselined": 5, "active_baselined": 5}
     #                                                  `c` is tier 0: below the headline, so not its caveat.
 
 
@@ -615,6 +616,18 @@ def test_totals_say_when_nothing_carried_a_value():
                            cost_usd=None, wall_seconds=None, workers=None)])
     assert totals.rows_with_usage == 0 and totals.rows_with_wall == 0
     assert totals.input_tokens == 0 and totals.workers is None
+
+
+def test_floor_reports_what_the_baseline_actually_covers():
+    # A partial baseline must not let `active_unwitnessed` read as a full count:
+    # it counts only entries holding a baseline row, and it is the caveat saying
+    # a statement rests on the human read alone.
+    rows = [_row(id="t", tier=3)]
+    baseline_covering_one = _baseline({"t": 3})
+    agg = scoreboard.aggregate(rows, baseline_covering_one, active_ids={"t", "u"})
+    assert agg.floor["active"] == 2
+    assert agg.floor["baselined"] == 1
+    assert agg.floor["active_baselined"] == 1
 
 
 def test_the_disclosure_counts_only_statements_the_headline_can_reach():

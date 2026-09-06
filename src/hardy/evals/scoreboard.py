@@ -289,6 +289,13 @@ def aggregate(rows: list[Row], baseline: Baseline, *, active_ids: set[str]) -> A
         floor[f"tier_{t}"] = sum(1 for e in baseline.entries.values() if e.tier == t)
     floor["single_tactic_closes"] = sum(1 for e in baseline.entries.values() if e.tier in (0, 1))
     floor["active"] = len(active_ids)
+    # How much of the corpus -- and of the headline's own denominator -- the
+    # baseline actually covers. `entries` above is what a committed scoreboard
+    # records and stays; `baselined` is the name that says what it means
+    # beside `active_baselined`, since a run may now be gated on a baseline
+    # that covers only what it selected, not the whole corpus.
+    floor["baselined"] = len(baseline.entries)
+    floor["active_baselined"] = sum(1 for id in active_ids if id in baseline.entries)
     # An `active` entry may still be `unwitnessed` -- the schema allows it, and
     # every migrated entry is one. Such a statement rests on the human read
     # alone: A3 cannot see vacuity, so nothing mechanical stands between a
