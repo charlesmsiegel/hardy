@@ -588,6 +588,35 @@ def test_the_headline_discloses_how_many_of_its_statements_lack_a_witness():
     assert floor["active"] == 2 and floor["active_unwitnessed"] == 1
 
 
+def test_totals_sum_tokens_and_report_their_coverage():
+    from hardy.evals.scoreboard import Totals, _totals
+
+    rows = [
+        _row(id="a", input_tokens=100, output_tokens=10, cache_read_tokens=5,
+             cache_write_tokens=1, cost_usd=0.5, wall_seconds=12.0, workers=4),
+        _row(id="b", input_tokens=200, output_tokens=20, cache_read_tokens=0,
+             cache_write_tokens=0, cost_usd=1.0, wall_seconds=None, workers=4),
+        _row(id="c", input_tokens=None, output_tokens=None, cache_read_tokens=None,
+             cache_write_tokens=None, cost_usd=None, wall_seconds=None, workers=4),
+    ]
+    totals = _totals(rows)
+    assert totals == Totals(
+        input_tokens=300, output_tokens=30, cache_read_tokens=5, cache_write_tokens=1,
+        cost_usd=1.5, wall_seconds=12.0,
+        rows=3, rows_with_usage=2, rows_with_wall=1, workers=4,
+    )
+
+
+def test_totals_say_when_nothing_carried_a_value():
+    from hardy.evals.scoreboard import _totals
+
+    totals = _totals([_row(id="a", input_tokens=None, output_tokens=None,
+                           cache_read_tokens=None, cache_write_tokens=None,
+                           cost_usd=None, wall_seconds=None, workers=None)])
+    assert totals.rows_with_usage == 0 and totals.rows_with_wall == 0
+    assert totals.input_tokens == 0 and totals.workers is None
+
+
 def test_the_disclosure_counts_only_statements_the_headline_can_reach():
     """The caveat qualifies the headline, and the headline is tiers 2 and 3.
 

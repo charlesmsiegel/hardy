@@ -48,6 +48,14 @@ class Row(FrozenModel):
     search_calls: int
     canonical: Literal["agreed", "disputed", "unavailable"] | None = None
     approval: Literal["automatic"] | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    # The concurrency this row was produced under, so `wall_seconds` is
+    # self-describing: a contended figure summed across rows overstates serial
+    # wall clock, and a bare number invites a later reader to mistake it for one.
+    workers: int | None = None
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -77,6 +85,8 @@ def batch_row(entry: Entry, tier: int, run_dir: Path, scoreboard_dir: Path, *, r
         wall_seconds=(trajectory.get("limits") or {}).get("elapsed_seconds"),
         lean_checks=sum(1 for e in tools if e.get("name") in LEAN_CALLS),
         search_calls=sum(1 for e in tools if e.get("name") in acceptance.BATCH_SEARCH),
+        input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+        cache_read_tokens=usage.get("cache_read_tokens"), cache_write_tokens=usage.get("cache_write_tokens"),
     )
     if entry.expected == "true":
         solved = result.get("terminal_reason") == "verified" and (result.get("axioms") or {}).get("status") == "clean"
@@ -150,6 +160,8 @@ def staged_row(entry: Entry, tier: int, row_dir: Path, scoreboard_dir: Path, *, 
         wall_seconds=(active / 1000.0) if (active := manifest.timings_ms.get("active")) is not None else None,
         lean_checks=sum(1 for n in names if n == "lean_check_proof"),
         search_calls=sum(1 for n in names if n in acceptance.STAGED_SEARCH), canonical=canonical,
+        input_tokens=manifest.usage.get("input_tokens"), output_tokens=manifest.usage.get("output_tokens"),
+        cache_read_tokens=manifest.usage.get("cache_read_tokens"), cache_write_tokens=manifest.usage.get("cache_write_tokens"),
     )
     verified = manifest.phase is RunPhase.COMPLETED and manifest.grades.formal is FormalStatus.KERNEL_VERIFIED
     if not verified:
@@ -184,10 +196,50 @@ class TierAggregate(FrozenModel):
     unreported_costs: int
 
 
+class Totals(FrozenModel):
+    """Sums, and how many rows actually carried a value.
+
+    `Aggregates` is otherwise counts and medians. A total that silently skips
+    the rows holding `None` -- every `invalid` row does -- is worse than one
+    that says how many it skipped, so the coverage counts travel beside it.
+    """
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float
+    wall_seconds: float
+    rows: int
+    rows_with_usage: int
+    rows_with_wall: int
+    workers: int | None
+
+
+_TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
+
+
+def _totals(rows: list[Row]) -> Totals:
+    sums = {f: sum(getattr(r, f) or 0 for r in rows) for f in _TOKEN_FIELDS}
+    seen_workers = [r.workers for r in rows if r.workers is not None]
+    return Totals(
+        **sums,
+        cost_usd=sum(r.cost_usd or 0.0 for r in rows),
+        wall_seconds=sum(r.wall_seconds or 0.0 for r in rows),
+        rows=len(rows),
+        rows_with_usage=sum(1 for r in rows if any(getattr(r, f) is not None for f in _TOKEN_FIELDS)),
+        rows_with_wall=sum(1 for r in rows if r.wall_seconds is not None),
+        # The maximum, not the only value: a pool combines rows from runs made
+        # at different worker counts, and the largest is the one the summed
+        # wall clock must be read against.
+        workers=max(seen_workers) if seen_workers else None,
+    )
+
+
 class Aggregates(FrozenModel):
     tiers: dict[str, TierAggregate]
     headline: TierAggregate
     floor: dict[str, int]
+    totals: Totals
 
 
 def _tier_aggregate(rows: list[Row], baseline: Baseline) -> TierAggregate:
@@ -249,7 +301,7 @@ def aggregate(rows: list[Row], baseline: Baseline, *, active_ids: set[str]) -> A
         if (row := baseline.entries.get(id)) is not None
         and row.tier in (2, 3) and row.witness != "witnessed"
     )
-    return Aggregates(tiers=tiers, headline=headline, floor=floor)
+    return Aggregates(tiers=tiers, headline=headline, floor=floor, totals=_totals(rows))
 
 
 def active_ids(problems) -> set[str]:
