@@ -123,6 +123,68 @@ SOLVE = [("submit_proof", {"proof": "by exact True.intro"})]
 GIVE_UP = [("check_proof", {"proof": "by sorry"})]
 
 
+def _noop_batch_runner():
+    """Every entry solves immediately -- a batch runner with nothing to say about timing or failure."""
+    def run_one(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
+        _scripted_batch(output, SOLVE, declaration=entry.declaration(), informal_claim=entry.input)
+    return run_one
+
+
+def _reversed_delay_batch_runner(tmp_path):
+    """Entries finish in the reverse of `select()`'s order (the corpus's
+    first entry sleeps longest, its last sleeps not at all), so a passing
+    assertion that the board still reads out in run order is not an accident
+    of whichever job happened to finish first.
+    """
+    import time
+
+    order = ["t", "u", "f"]
+
+    def run_one(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
+        time.sleep(0.05 * (len(order) - 1 - order.index(entry.id)))
+        _scripted_batch(output, SOLVE, declaration=entry.declaration(), informal_claim=entry.input)
+    return run_one
+
+
+def _raises_on(id_: str):
+    """Every entry solves except `id_`, which blows up before writing anything."""
+    def run_one(entry: Entry, output: Path, max_turns: int, wall_seconds: float) -> None:
+        if entry.id == id_:
+            raise RuntimeError(f"scripted failure for {id_}")
+        _scripted_batch(output, SOLVE, declaration=entry.declaration(), informal_claim=entry.input)
+    return run_one
+
+
+def test_rows_stay_in_select_order_under_concurrency(tmp_path):
+    # Finish the entries out of order; the board must still read in run order.
+    problems, baseline_path = _files(tmp_path, tiers={"t": 0, "u": 3, "f": 3})
+    out = runner.run_set(
+        label="par", problems_path=problems, baseline_path=baseline_path,
+        scoreboards_root=tmp_path / "boards", condition=_condition(),
+        environment=IDENTITY, batch_runner=_reversed_delay_batch_runner(tmp_path),
+        now=lambda: datetime(2026, 9, 5, tzinfo=UTC), report=lambda _: None, workers=3,
+    )
+    board = json.loads((out / "scoreboard.json").read_text(encoding="utf-8"))
+    assert [row["id"] for row in board["rows"]] == ["t", "u", "f"]
+    assert {row["workers"] for row in board["rows"]} == {3}
+
+
+def test_an_interrupted_parallel_board_is_a_prefix(tmp_path):
+    # The second entry raises; the board must hold row 0 only -- never row 2
+    # without row 1, which `evals check` refuses as "not a prefix".
+    problems, baseline_path = _files(tmp_path, tiers={"t": 0, "u": 3, "f": 3})
+    with pytest.raises(RuntimeError):
+        runner.run_set(
+            label="par2", problems_path=problems, baseline_path=baseline_path,
+            scoreboards_root=tmp_path / "boards", condition=_condition(),
+            environment=IDENTITY, batch_runner=_raises_on("u"),
+            now=lambda: datetime(2026, 9, 5, tzinfo=UTC), report=lambda _: None, workers=3,
+        )
+    board = json.loads((tmp_path / "boards" / "par2" / "scoreboard.json").read_text(encoding="utf-8"))
+    assert [row["id"] for row in board["rows"]] == ["t"]
+    assert board["interrupted"] is True
+
+
 def test_a_batch_set_run_writes_rows_a_scoreboard_and_aggregates(tmp_path):
     problems, baseline = _files(tmp_path)
     out = runner.run_set(label="first", problems_path=problems, baseline_path=baseline, scoreboards_root=tmp_path / "sb",

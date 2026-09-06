@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from functools import cache
 from pathlib import Path
@@ -480,7 +481,7 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
           now: Callable[[], datetime], host: dict[str, Any], import_seconds: float | None = None,
           wall_backstop_seconds: float = WALL_BACKSTOP_FLOOR, report: Callable[[str], None] = lambda _: None,
           prior: Baseline | None = None, prior_statement_digests: dict[str, str] | None = None,
-          only: tuple[str, ...] | None = None) -> Baseline:
+          only: tuple[str, ...] | None = None, workers: int = 1) -> Baseline:
     """Sweep the corpus, carrying forward every entry whose identity did not move.
 
     This is what the per-entry digests are *for* (spec §3): correcting one
@@ -499,6 +500,14 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     prior baseline already held (or gets none, if it never had one). Without
     this, naming a handful of entries to sweep would drop every other row from
     the baseline, forcing a full re-sweep the moment anyone used `--only`.
+
+    `workers` bounds a `ThreadPoolExecutor` over the entries that actually
+    need `sweep_entry` (never over carried-forward or reused rows, which cost
+    nothing). Each is an independent Lean process over a read-only project,
+    so the pool needs no ordering care -- `entries` is a dict keyed by id, not
+    a sequence, and the findings pass below always walks `problems.entries`
+    in its own fixed order regardless of which entry's Lean process returned
+    first.
     """
     environment_digest = environment_digest_of(environment, host)
     procedure_digest = procedure_digest_of(wall_backstop_seconds)
@@ -506,14 +515,14 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     carry = reusable(prior, environment_digest=environment_digest, procedure_digest=procedure_digest)
 
     entries: dict[str, EntryBaseline] = {}
-    findings: list[str] = []
+    to_sweep: list[Entry] = []
     reused = 0
     for entry in problems.entries:
         if only is not None and entry.id not in only:
             prior_row = prior.entries.get(entry.id) if prior is not None else None
             if prior_row is None:
                 continue   # never selected, never baselined: no row to carry
-            entries[entry.id] = result = prior_row
+            entries[entry.id] = prior_row
         else:
             # The prior row must also have the *shape* this entry now needs.
             # `statement_digest` excludes `expected`, so relabelling a true entry
@@ -524,12 +533,24 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
             shaped = prior_row is not None and (entry.expected != "false" or prior_row.negation is not None)
             if (carry and prior is not None and shaped
                     and prior.statement_digests.get(entry.id) == current.get(entry.id)):
-                entries[entry.id] = result = prior.entries[entry.id]
+                entries[entry.id] = prior.entries[entry.id]
                 reused += 1
             else:
+                to_sweep.append(entry)
+    if to_sweep:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {}
+            for entry in to_sweep:
                 report(f"sweeping {entry.id}")
-                result = sweep_entry(entry, elaborate, confirm_name=entry.name)
-                entries[entry.id] = result
+                futures[executor.submit(sweep_entry, entry, elaborate, confirm_name=entry.name)] = entry
+            for future in as_completed(futures):
+                entry = futures[future]
+                entries[entry.id] = future.result()
+    findings: list[str] = []
+    for entry in problems.entries:
+        result = entries.get(entry.id)
+        if result is None:
+            continue   # excluded by `only`, never had a prior row: not part of this baseline at all
         if not result.elaborates:
             findings.append(f"{entry.id}: the canonical statement does not elaborate")
         if entry.expected == "false" and result.closed_by:

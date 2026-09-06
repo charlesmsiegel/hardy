@@ -106,6 +106,7 @@ def add_parser(subparsers: Any) -> None:
     baseline.add_argument("--status", action="append", default=None,
                           help="select by corpus status, e.g. --status active; repeatable")
     baseline.add_argument("--acknowledge-unsafe-execution", action="store_true")
+    baseline.add_argument("--workers", type=int, default=1, help="concurrent Lean elaborations (default 1)")
     run = verbs.add_parser("run", help="run every entry through batch or staged and write a scoreboard")
     run.add_argument("--label", required=True)
     run.add_argument("--mode", choices=("batch", "staged"), default="batch")
@@ -128,6 +129,7 @@ def add_parser(subparsers: Any) -> None:
     run.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     run.add_argument("--scoreboards", type=Path, default=DEFAULT_SCOREBOARDS)
     run.add_argument("--acknowledge-unsafe-execution", action="store_true")
+    run.add_argument("--workers", type=int, default=1, help="concurrent rows (default 1)")
     corpus = verbs.add_parser("corpus", help="the corpus directory: mechanical checks and coverage")
     corpus_verbs = corpus.add_subparsers(dest="corpus_verb", required=True)
     for verb, helptext in (("check", "report every mechanical objection to the corpus on disk"),
@@ -219,6 +221,14 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
                  identity: EnvironmentIdentity | None = None, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> int:
     from ..runner import WARNING
 
+    # `getattr`, not `args.workers`: a caller (or a test's hand-built
+    # Namespace) that predates this flag carries no `workers` attribute, and
+    # its absence must default the same way omitting the flag on `evals
+    # baseline` does.
+    workers = getattr(args, "workers", 1)
+    if workers < 1:
+        print("--workers must be at least 1", file=sys.stderr)
+        return 2
     refusal = _refuse_missing(args.problems)
     if refusal is not None:
         print(refusal, file=sys.stderr)
@@ -286,6 +296,7 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         wall_backstop_seconds=max(float(config.lean_timeout), sweep.WALL_BACKSTOP_FLOOR) if config is not None else sweep.WALL_BACKSTOP_FLOOR,
         report=lambda line: print(line, file=sys.stderr),
         only=tuple(ids),
+        workers=workers,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     # newline="\n": Path.write_text's default translates every "\n" to the

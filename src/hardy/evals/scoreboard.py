@@ -429,6 +429,13 @@ def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_p
         issues.extend(_condition_issues(row, run_dir, board.condition, board.environment, where))
         issues.extend(_entry_issues(entry, row, run_dir))
         for field in Row.model_fields:
+            # `workers` names the concurrency the run itself was made under,
+            # not something a run directory's own artifacts record -- unlike
+            # every other field here, `batch_row`/`staged_row` cannot derive
+            # it from `run_dir` at all, so it is provenance the scoreboard
+            # carries rather than a claim this cross-check can verify.
+            if field == "workers":
+                continue
             if getattr(derived, field) != getattr(row, field):
                 issues.append(f"{where}: {field} is {getattr(row, field)!r} but the run says {getattr(derived, field)!r}")
         if row.mode == "staged":

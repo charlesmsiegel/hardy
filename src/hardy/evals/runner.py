@@ -6,7 +6,9 @@ import json
 import re
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -252,7 +254,7 @@ def _write(path: Path, board: Scoreboard) -> None:
 
 def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards_root: Path, condition: Condition,
             environment: EnvironmentIdentity, batch_runner: BatchRunner, staged_runner: StagedRunner | None = None,
-            now: Callable[[], datetime], report: Callable[[str], None]) -> Path:
+            now: Callable[[], datetime], report: Callable[[str], None], workers: int = 1) -> Path:
     if not LABEL_RE.fullmatch(label):
         # Before anything is read or created: `scoreboards_root / label`
         # would otherwise resolve outside `evals/scoreboards` for a label
@@ -305,40 +307,90 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     if condition.mode == "staged" and staged_runner is None:
         raise RefusedRun("staged mode needs a staged runner")
     out.mkdir(parents=True)
-    rows: list[Row] = []
     board = Scoreboard(label=label, condition=condition, environment=environment, baseline_sha256=sha256_of(baseline_path),
                        problems_sha256=manifest_digest(problems_path), rows=(), aggregates=aggregate([], baseline, active_ids=active_ids(problems)),
                        started_at=now(), finished_at=None, interrupted=False, host=host)
     _write(out / "scoreboard.json", board)
+    # One job per (entry, repeat), in exactly the order the sequential runner
+    # used to produce rows in: `select()`'s own order, then repeats. `evals
+    # check` requires a finished board's rows in this order and an
+    # interrupted board's rows to be a *prefix* of it (scoreboard.py's
+    # "the scoreboard's rows are not in the run's order" and "interrupted
+    # scoreboard rows are not a prefix of the run order" checks) -- so a
+    # result lands in its own slot at its job's index, and only the
+    # completed contiguous prefix of `slots` is ever written out. Appending
+    # rows as workers finish would satisfy neither check.
+    jobs = [(entry, repeat) for entry in entries for repeat in range(condition.repeats)]
+    slots: list[Row | None] = [None] * len(jobs)
+    lock = threading.Lock()
+
+    def run_job(entry: Entry, repeat: int) -> Row:
+        tier = baseline.entries[entry.id].tier
+        # Twins never run staged: the loop grades every unverified run partial (#23).
+        mode = "batch" if entry.expected == "false" else condition.mode
+        report(f"{entry.id} [{mode} {repeat}]")
+        row_dir = out / "runs" / entry.id / f"{mode}-{repeat}"
+        if mode == "batch":
+            # A batch-mode condition's own limits govern a batch row. A twin
+            # under a staged condition still runs batch (the loop grades
+            # every unverified staged run partial, #23), but staged limits
+            # carry active_seconds/proof_seconds/official_checks, not
+            # max_turns/wall_seconds -- so its budget is the separately-
+            # recorded twin_* pair instead.
+            if condition.mode == "batch":
+                max_turns, wall_seconds = int(condition.limits["max_turns"]), float(condition.limits["wall_seconds"])
+            else:
+                max_turns, wall_seconds = int(condition.limits["twin_max_turns"]), float(condition.limits["twin_wall_seconds"])
+            batch_runner(entry, row_dir, max_turns, wall_seconds)
+            row = batch_row(entry, tier, row_dir, out, repeat=repeat)
+        else:
+            row_dir.mkdir(parents=True, exist_ok=True)
+            staged_runner(entry, row_dir, condition.model)  # type: ignore[misc]
+            row = staged_row(entry, tier, row_dir, out, repeat=repeat)
+        # The concurrency this row was produced under, recorded on every row
+        # this run makes -- including a `workers=1` run -- so `wall_seconds`
+        # is self-describing rather than silently assuming serial wall clock.
+        row = row.model_copy(update={"workers": workers})
+        report(f"  -> {row.outcome} ({row.terminal_reason})")
+        return row
+
+    def publish() -> None:
+        nonlocal board
+        done: list[Row] = []
+        for row in slots:
+            if row is None:
+                break
+            done.append(row)
+        board = board.model_copy(update={
+            "rows": tuple(done),
+            "aggregates": aggregate(done, baseline, active_ids=active_ids(problems)),
+        })
+        _write(out / "scoreboard.json", board)
+
     try:
-        for entry in entries:
-            for repeat in range(condition.repeats):
-                tier = baseline.entries[entry.id].tier
-                # Twins never run staged: the loop grades every unverified run partial (#23).
-                mode = "batch" if entry.expected == "false" else condition.mode
-                report(f"{entry.id} [{mode} {repeat}]")
-                row_dir = out / "runs" / entry.id / f"{mode}-{repeat}"
-                if mode == "batch":
-                    # A batch-mode condition's own limits govern a batch row.
-                    # A twin under a staged condition still runs batch (the
-                    # loop grades every unverified staged run partial, #23),
-                    # but staged limits carry active_seconds/proof_seconds/
-                    # official_checks, not max_turns/wall_seconds -- so its
-                    # budget is the separately-recorded twin_* pair instead.
-                    if condition.mode == "batch":
-                        max_turns, wall_seconds = int(condition.limits["max_turns"]), float(condition.limits["wall_seconds"])
-                    else:
-                        max_turns, wall_seconds = int(condition.limits["twin_max_turns"]), float(condition.limits["twin_wall_seconds"])
-                    batch_runner(entry, row_dir, max_turns, wall_seconds)
-                    row = batch_row(entry, tier, row_dir, out, repeat=repeat)
-                else:
-                    row_dir.mkdir(parents=True, exist_ok=True)
-                    staged_runner(entry, row_dir, condition.model)  # type: ignore[misc]
-                    row = staged_row(entry, tier, row_dir, out, repeat=repeat)
-                rows.append(row)
-                report(f"  -> {row.outcome} ({row.terminal_reason})")
-                board = board.model_copy(update={"rows": tuple(rows), "aggregates": aggregate(rows, baseline, active_ids=active_ids(problems))})
-                _write(out / "scoreboard.json", board)
+        # Threads, not processes: each job spends nearly all its time
+        # waiting on a model call or a Lean subprocess, both of which
+        # release the GIL, and threads keep this exception path simple.
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(run_job, entry, repeat): i for i, (entry, repeat) in enumerate(jobs)}
+            first_error: BaseException | None = None
+            # Drain every future -- including those after the first failure
+            # -- so a fast, unrelated job that already finished still lands
+            # in its slot before the run is declared interrupted; only the
+            # *first* error is the one this re-raises.
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    row = future.result()
+                except BaseException as error:  # noqa: BLE001 - re-raised below, not swallowed
+                    if first_error is None:
+                        first_error = error
+                    continue
+                with lock:
+                    slots[index] = row
+                    publish()
+        if first_error is not None:
+            raise first_error
     except BaseException:
         _write(out / "scoreboard.json", board.model_copy(update={"interrupted": True}))
         raise
@@ -432,6 +484,15 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         return 2
     from .commands import SelectionError, _refuse_missing, selected_ids
 
+    # `getattr`, not `args.workers`: a caller (or a test's hand-built
+    # Namespace) that predates this flag carries no `workers` attribute at
+    # all, and its absence must default the same way omitting the flag on
+    # `evals run` does -- the same reasoning `limits_for` already applies to
+    # `max_turns`/`wall_seconds`.
+    workers = getattr(args, "workers", 1)
+    if workers < 1:
+        print("--workers must be at least 1", file=sys.stderr)
+        return 2
     refusal = _refuse_missing(args.problems, args.baseline)
     if refusal is not None:
         print(refusal, file=sys.stderr)
@@ -497,7 +558,7 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
     try:
         out = run_set(label=args.label, problems_path=args.problems, baseline_path=args.baseline, scoreboards_root=args.scoreboards,
                       condition=condition, environment=environment, batch_runner=_batch_runner(config, condition.model), staged_runner=staged,
-                      now=lambda: datetime.now(UTC), report=lambda line: print(line, file=sys.stderr))
+                      now=lambda: datetime.now(UTC), report=lambda line: print(line, file=sys.stderr), workers=workers)
     except RefusedRun as refused:
         print(f"Refused: {refused}", file=sys.stderr)
         return 2

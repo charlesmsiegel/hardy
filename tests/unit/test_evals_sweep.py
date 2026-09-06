@@ -196,6 +196,22 @@ def test_the_sweep_tiers_every_entry_and_checks_twin_negations():
     assert baseline.heartbeat_budget == 200000 and baseline.problems_sha256 == "p" * 64
 
 
+def test_sweeping_with_workers_matches_the_sequential_result():
+    """The elaborations are independent Lean processes over a read-only
+    project, so running them through a worker pool must land on exactly the
+    dict a sequential sweep would have built -- keyed by id, so completion
+    order carries no meaning.
+    """
+    closers = {"P": {"simp"}, "Q": {"exact?"}, "R": {"intros; simp_all"}, "¬ (¬ S)": {"tauto"}}
+    sequential = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted(closers),
+                             now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+    parallel = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted(closers),
+                          now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST, workers=3)
+    assert parallel.entries == sequential.entries
+    assert parallel.problems == sequential.problems
+    assert parallel.statement_digests == sequential.statement_digests
+
+
 def test_stage_b_runs_once_per_candidate_and_alone():
     elaborate = _scripted({"P": {"simp", "aesop"}})
     entry = _problems().by_id("easy")
