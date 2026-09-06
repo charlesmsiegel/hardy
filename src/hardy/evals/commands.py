@@ -20,6 +20,7 @@ DEFAULT_CORPUS = Path("corpus")
 DEFAULT_PROBLEMS = DEFAULT_CORPUS
 DEFAULT_BASELINE = Path("evals") / "baseline.json"
 DEFAULT_SCOREBOARDS = Path("evals") / "scoreboards"
+DEFAULT_POOLS = Path("evals") / "pools"
 
 
 def _positive_repeats(value: str) -> int:
@@ -170,6 +171,15 @@ def add_parser(subparsers: Any) -> None:
     # this subparser's default (cli.py:1545).
     todo.add_argument("--model", default=argparse.SUPPRESS)
     todo.add_argument("--mode", choices=("batch", "staged"), default="batch")
+    pool = verbs.add_parser(
+        "pool",
+        help="combine scoreboards sharing one pooling key into one derived, recomputable score",
+    )
+    pool.add_argument("labels", nargs="+", help="scoreboard labels, resolved against --scoreboards")
+    pool.add_argument("--scoreboards", type=Path, default=DEFAULT_SCOREBOARDS)
+    pool.add_argument("--corpus", type=Path, default=DEFAULT_PROBLEMS)
+    pool.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    pool.add_argument("--out", type=Path, default=None, help="default: evals/pools/<first label>")
 
 
 def _refuse_missing(*paths: Path) -> str | None:
@@ -329,6 +339,48 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
     return 0
 
 
+def run_pool(args: argparse.Namespace) -> int:
+    """`evals pool`: combine scoreboards under one condition into one derived,
+    recomputable score. Refuses -- never merges -- when the boards named do
+    not share one pooling key, when the same `(id, repeat)` is claimed twice,
+    or when a board fails its own audit; see `pool.pool`'s docstring.
+
+    Writes only its own output (`--out`, default `evals/pools/<first label>`)
+    and never touches a scoreboard.
+    """
+    from .pool import PoolRefused
+    from .pool import pool as pool_boards
+
+    refusal = _refuse_missing(args.corpus, args.baseline)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 2
+    labels = [args.scoreboards / label for label in args.labels]
+    missing = [str(label) for label in labels if not (label / "scoreboard.json").exists()]
+    if missing:
+        print("Refused: no scoreboard.json under " + ", ".join(missing), file=sys.stderr)
+        return 2
+    try:
+        result = pool_boards(labels, problems_path=args.corpus, baseline_path=args.baseline)
+    except PoolRefused as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    out = args.out if args.out is not None else DEFAULT_POOLS / args.labels[0]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # newline="\n": the same repository-evidence integrity concern as the
+    # baseline and scoreboard writes -- Path.write_text's default would
+    # checkin this on Windows as CRLF.
+    out.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    headline = result["aggregates"]["headline"]
+    print(
+        f"Pooled {len(result['boards'])} board(s) ({', '.join(result['boards'])}) into {out}: "
+        f"headline solve_rate={headline['solve_rate']} over n={headline['n']}",
+        file=sys.stderr,
+    )
+    print(out)
+    return 0
+
+
 def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "baseline":
         return run_baseline(args, config)
@@ -387,4 +439,6 @@ def main(args: argparse.Namespace, config: Any) -> int:
         return check_command(args)
     if args.evals_command == "todo":
         return run_todo(args, config)
+    if args.evals_command == "pool":
+        return run_pool(args)
     raise AssertionError(args.evals_command)
