@@ -94,7 +94,9 @@ def cite_locator(style: str, locator: list[int] | tuple[int, ...]) -> str:
     a, b, n = parts
     if style == "chapter-item":          # (ch, 0, n) = item ch.n; (ch, 1, n) = exercise n of ch
         return {0: f"{a}.{n}", 1: f"Ex. {a}.{n}"}.get(b, dotted)
-    if style == "section-item":          # (ch, sec, n); n >= 100 is exercise n-100
+    if style == "section-item":          # (ch, sec, n); n >= 100 is exercise n-100; sec 99 = end-of-chapter exercises
+        if b == 99:
+            return f"Ex. {a}.{n}"
         return f"§{a}.{b}, Ex. {n - 100}" if n >= 100 else f"§{a}.{b}, no. {n}"
     if style == "numbered-section":      # (ch, sec, n) with sections numbered across chapters
         if n >= 200:
