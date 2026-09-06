@@ -5,7 +5,6 @@ in two stages so `exact?` cannot be credited with a neighbour's proof (§2.3).
 """
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Callable, Iterable
 from datetime import datetime
