@@ -260,16 +260,7 @@ DECIDING_SOURCES = (
 )
 
 
-def _digest_source(raw: bytes) -> str:
-    """Hash source with line endings normalised.
-
-    `.gitattributes` pins `corpus/**` and `evals/**` as `-text` because their
-    bytes are hashed; `src/**` is not pinned, so a Windows checkout of the
-    same commit can hold CRLF. Hashing raw bytes would then give identical
-    executable logic two different procedure digests, and a baseline swept
-    there would be refused everywhere else for no real reason.
-    """
-    return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+_digest_source = digests.source_digest
 
 
 @cache

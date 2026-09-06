@@ -74,3 +74,15 @@ def test_environment_and_procedure_digests_track_their_inputs():
     assert environment_digest(env) != environment_digest({**env, "mathlib_revision": "deadbee"})
     proc = {"hardy_revision": "abc123", "singles": ["simp"], "heartbeat_budget": 200000}
     assert procedure_digest(proc) != procedure_digest({**proc, "singles": ["simp", "aesop"]})
+
+
+def test_source_digest_ignores_line_endings():
+    from hardy.evals import digests
+
+    assert digests.source_digest(b"a = 1\nb = 2\n") == digests.source_digest(b"a = 1\r\nb = 2\r\n")
+
+
+def test_source_digest_sees_real_edits():
+    from hardy.evals import digests
+
+    assert digests.source_digest(b"a = 1\n") != digests.source_digest(b"a = 2\n")

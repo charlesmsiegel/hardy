@@ -82,3 +82,15 @@ def procedure_digest(procedure: dict[str, Any]) -> str:
     what a measurement means even when the statement and the library did not.
     """
     return _digest("procedure", [procedure])
+
+
+def source_digest(raw: bytes) -> str:
+    """Hash source with line endings normalised.
+
+    `.gitattributes` pins `corpus/**` and `evals/**` as `-text` because their
+    bytes are hashed; `src/**` is not pinned, so a Windows checkout of the same
+    commit can hold CRLF. Hashing raw bytes would then give identical
+    executable logic two different digests, and a measurement taken there would
+    be refused everywhere else for no real reason.
+    """
+    return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
