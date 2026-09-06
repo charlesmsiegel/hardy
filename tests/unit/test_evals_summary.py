@@ -44,7 +44,7 @@ def _row(id: str, expected: str, outcome: str, **kw) -> dict:
         "id": id, "expected": expected, "outcome": outcome,
         "input_tokens": None, "output_tokens": None,
         "cache_read_tokens": None, "cache_write_tokens": None,
-        "wall_seconds": None, "workers": None,
+        "wall_seconds": None, "workers": None, "cost_usd": None,
     }
     base.update(kw)
     return base
@@ -99,6 +99,35 @@ def test_totals_and_averages_survive_none_tokens_and_none_wall_seconds():
     assert stats["tok_per_prob"] == 75  # (100 + 50) / 2, rounded
     assert stats["wall_seconds"] == 10.0
     assert stats["wall_per_prob"] == 5.0
+
+
+def test_cost_is_summed_from_the_rows_own_recorded_cost_usd():
+    rows = [_row("t", "true", "solved", cost_usd=0.25), _row("u", "true", "solved", cost_usd=0.75)]
+    stats = summary.row_stats(rows)
+    assert stats["cost_usd"] == 1.0
+    assert stats["rows_with_cost"] == 2
+    assert stats["cost_per_prob"] == 0.5
+    assert summary._fmt_cost(stats) == "1.00"  # complete coverage reads as a plain number
+
+
+def test_a_row_with_no_cost_shrinks_the_costs_denominator_and_says_so():
+    """A run killed at its wall-clock limit reports tokens but no `cost_usd`.
+
+    Averaging over every row would price that run at zero; the sum has to say
+    what it is a sum over instead.
+    """
+    rows = [_row("t", "true", "solved", cost_usd=1.0), _row("u", "true", "unsolved", cost_usd=None)]
+    stats = summary.row_stats(rows)
+    assert stats["cost_usd"] == 1.0
+    assert stats["rows_with_cost"] == 1
+    assert stats["cost_per_prob"] == 1.0  # not 0.5: divided by covered rows, not by n
+    assert summary._fmt_cost(stats) == "1.00 (1/2)"
+
+
+def test_a_group_with_no_cost_at_all_renders_a_dash_rather_than_zero():
+    stats = summary.row_stats([_row("t", "true", "solved")])
+    assert stats["cost_per_prob"] is None
+    assert summary._fmt_cost(stats) == "-"
 
 
 def test_a_group_with_no_true_rows_reports_no_rate_rather_than_dividing_by_zero():

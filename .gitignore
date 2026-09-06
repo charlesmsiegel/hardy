@@ -41,3 +41,11 @@ htmlcov/
 # and the one place an ordinary run from a checkout writes to: tracked, every
 # run dirties the worktree and invites a commit of model output.
 hardy-output/
+
+# Scoreboards and their run directories: model output again, and large. Rooted
+# with a leading slash so this is the top-level output directory only -- bare
+# `evals/` matches at any depth and silently swallows `src/hardy/evals/`, whose
+# already-tracked files keep working while any file added there goes unnoticed.
+# `evals/baseline.json` stays tracked (ignoring a tracked path does not untrack
+# it); it is regenerable with `hardy evals baseline --status active`.
+/evals/

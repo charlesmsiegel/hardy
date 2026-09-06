@@ -545,9 +545,30 @@ def test_run_source_set_excludes_only_the_declared_paths():
     assert "usage.py" in paths                 # computes the token counts we aggregate
     assert "prompts/__init__.py" in paths      # renders the templates
     assert "evals/viewer.py" not in paths      # excluded: the review viewer
+    assert "evals/summary.py" not in paths     # excluded: reads finished boards
+    assert "summary.py" in paths               # the *chat* summary, which a run does reach
     assert "cli.py" not in paths               # excluded: argument parsing
     assert not any(p.startswith("tui/") for p in paths)
     assert not any("__pycache__" in p for p in paths)
+
+
+def test_no_module_the_digest_covers_imports_a_downstream_reader_at_module_scope():
+    """`evals/viewer.py` and `evals/summary.py` are excluded because they only
+    read what a finished run wrote. That holds only while nothing the digest
+    covers imports them at module scope: a top-level import would put them on
+    the run path, and then editing a report column would change what a run
+    does while the key says the code did not move.
+
+    `evals/commands.py` imports both, but from inside the command handlers, so
+    neither is reachable from a run. The distinction this checks is the
+    indentation.
+    """
+    offenders = []
+    for path in runner.run_source_paths():
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if line[:1].strip() and re.match(r"^(from|import)\b.*\b(viewer|evals\.summary)\b", line.strip()):
+                offenders.append(f"{path.name}:{number}: {line.strip()}")
+    assert offenders == []
 
 
 def test_run_digest_moves_when_a_counted_module_changes(monkeypatch):

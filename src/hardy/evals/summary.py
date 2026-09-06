@@ -121,6 +121,14 @@ def row_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     `scoreboard._totals`'s own convention: a twin or an invalid row still
     spent tokens and wall time even though it has no place in the solved
     fraction.
+
+    `cost_usd` is the exception, and carries `rows_with_cost` beside it for
+    the same reason `scoreboard.Totals` does: a run killed at its wall-clock
+    limit never delivers the result message the cost is read from, so its
+    `cost_usd` is `None` while its token counts are not. Summing those as
+    zero and dividing by every row would quietly understate the price twice
+    over, so the sum says how many rows it is a sum over and `cost_per_prob`
+    divides by that same count rather than by `n`.
     """
     true_rows = [r for r in rows if r.get("expected") == "true"]
     countable_true = [r for r in true_rows if r.get("outcome") != "invalid"]
@@ -135,6 +143,8 @@ def row_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     cache_read = sum(r.get("cache_read_tokens") or 0 for r in rows)
     cache_write = sum(r.get("cache_write_tokens") or 0 for r in rows)
     wall_seconds = sum(r.get("wall_seconds") or 0.0 for r in rows)
+    costs = [r["cost_usd"] for r in rows if r.get("cost_usd") is not None]
+    cost_usd = sum(costs)
     return {
         "solved": solved, "denominator": denominator, "rate": rate,
         "solved_other": solved_other, "invalid": invalid,
@@ -142,6 +152,8 @@ def row_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cache_read_tokens": cache_read, "cache_write_tokens": cache_write,
         "tok_per_prob": round((input_tokens + output_tokens) / n) if n else None,
         "wall_seconds": wall_seconds, "wall_per_prob": round(wall_seconds / n, 1) if n else None,
+        "cost_usd": cost_usd, "rows_with_cost": len(costs),
+        "cost_per_prob": (cost_usd / len(costs)) if costs else None,
         "rows": n,
     }
 
@@ -209,7 +221,21 @@ def _fmt_opt_int(value: int | None) -> str:
     return "-" if value is None else str(value)
 
 
+def _fmt_cost(stats: dict[str, Any]) -> str:
+    """The summed cost, and what it is a sum over when that is not every row.
+
+    The `(covered/n)` suffix appears only when a row in the group reported no
+    `cost_usd` at all, so a complete group reads as a plain number and an
+    incomplete one cannot be mistaken for one.
+    """
+    covered, n = stats["rows_with_cost"], stats["rows"]
+    if not covered:
+        return "-"
+    return f"{stats['cost_usd']:.2f}" + ("" if covered == n else f" ({covered}/{n})")
+
+
 def _row_cells(stats: dict[str, Any]) -> list[str]:
+    per = stats["cost_per_prob"]
     return [
         f"{stats['solved']}/{stats['denominator']}", _fmt_rate(stats["rate"]),
         str(stats["solved_other"]), str(stats["invalid"]),
@@ -217,11 +243,12 @@ def _row_cells(stats: dict[str, Any]) -> list[str]:
         f"{stats['cache_read_tokens']}/{stats['cache_write_tokens']}",
         _fmt_opt_int(stats["tok_per_prob"]),
         f"{stats['wall_seconds']:.1f}", _fmt_opt_int(stats["wall_per_prob"]),
+        _fmt_cost(stats), "-" if per is None else f"{per:.3f}",
     ]
 
 
 _RESULT_COLUMNS = ("Solved", "Rate", "Solved other", "Invalid", "Input tok", "Output tok",
-                   "Cache r/w", "Tok/prob", "Wall s", "Wall/prob")
+                   "Cache r/w", "Tok/prob", "Wall s", "Wall/prob", "Cost $", "$/prob")
 
 
 def _table(header_extra: tuple[str, ...], rows: list[tuple[list[str], dict[str, Any]]]) -> list[str]:
@@ -272,6 +299,19 @@ def render(data: dict[str, Any], *, problems: Any, root: Path) -> str:
     all_rows = [row for m in models for row in m["rows"]]
     workers = [row.get("workers") for row in all_rows if row.get("workers") is not None]
     lines.append(f"Every Wall s / Wall/prob figure in this report was {wall_seconds_note(max(workers) if workers else None)}.")
+    lines.append("")
+    lines.append(
+        "**Cost $** is each run's own recorded `cost_usd`, summed -- the price the "
+        "provider reported, not a figure re-derived here from the token columns. It "
+        "therefore already prices cache reads and writes at their own rates, which the "
+        "token columns do not: **Input tok** counts only *uncached* input, so the bulk "
+        "of what the model read appears under **Cache r/w** instead, and **Tok/prob** "
+        "((Input + Output) / rows) excludes cache entirely. Prefer **$/prob** over "
+        "**Tok/prob** when comparing models. A cost cell reading `12.34 (35/37)` is a "
+        "sum over 35 of the group's 37 rows: a run killed at its wall-clock limit "
+        "never delivers the message its cost is read from. **$/prob** divides by that "
+        "same covered count."
+    )
     lines.append("")
 
     lines.append("## Table 1: Overall")
