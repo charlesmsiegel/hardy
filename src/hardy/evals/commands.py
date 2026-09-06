@@ -191,6 +191,14 @@ def add_parser(subparsers: Any) -> None:
     pool.add_argument("--corpus", type=Path, default=DEFAULT_PROBLEMS)
     pool.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     pool.add_argument("--out", type=Path, default=None, help="default: evals/pools/<first label>/pool.json")
+    summary = verbs.add_parser(
+        "summary",
+        help="write a Markdown report over every scoreboard, one row per model (read-only)",
+    )
+    summary.add_argument("--scoreboards", type=Path, default=DEFAULT_SCOREBOARDS)
+    summary.add_argument("--corpus", type=Path, default=DEFAULT_PROBLEMS)
+    summary.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    summary.add_argument("--out", type=Path, default=DEFAULT_CORPUS / "EVALS.md")
 
 
 def _refuse_missing(*paths: Path) -> str | None:
@@ -415,6 +423,33 @@ def run_pool(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_summary(args: argparse.Namespace) -> int:
+    """`evals summary`: a Markdown report over every scoreboard, one row per
+    model. Read-only over `--scoreboards`, `--corpus` and `--baseline` --
+    writes only `--out` (default `corpus/EVALS.md`) -- and never fails merely
+    because there is nothing yet to report (`summary.render` writes a valid,
+    empty-of-tables file when `--scoreboards` holds no boards).
+
+    Refuses, like `evals pool`, when one model's own boards do not share a
+    pooling key, claim the same `(id, repeat)` twice, or fail their own
+    audit; see `summary.build` and `summary.SummaryRefused`.
+    """
+    from .summary import SummaryRefused
+    from .summary import write as write_summary
+
+    refusal = _refuse_missing(args.corpus, args.baseline)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 2
+    try:
+        out = write_summary(args.scoreboards, problems_path=args.corpus, baseline_path=args.baseline, out_path=args.out)
+    except SummaryRefused as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    print(out)
+    return 0
+
+
 def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "baseline":
         return run_baseline(args, config)
@@ -475,4 +510,6 @@ def main(args: argparse.Namespace, config: Any) -> int:
         return run_todo(args, config)
     if args.evals_command == "pool":
         return run_pool(args)
+    if args.evals_command == "summary":
+        return run_summary(args)
     raise AssertionError(args.evals_command)
