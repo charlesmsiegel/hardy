@@ -14,6 +14,7 @@ from ..domain import EnvironmentIdentity
 from ..lean import Elaboration, elaborate, environment_identity
 from . import sweep
 from .corpus import load_corpus, manifest_digest
+from .problems import ProblemSet
 
 DEFAULT_CORPUS = Path("corpus")
 DEFAULT_PROBLEMS = DEFAULT_CORPUS
@@ -60,12 +61,49 @@ def _positive_max_turns(value: str) -> int:
     return parsed
 
 
+class SelectionError(ValueError):
+    """A selection this refuses to narrow silently."""
+
+
+def selected_ids(args: argparse.Namespace, problems: ProblemSet) -> list[str] | None:
+    """The ids named explicitly, or None when the caller named none.
+
+    Order is the caller's: naming entries is choosing a run order, which
+    `select` already honours. `--only` and `--status` intersect rather than
+    union -- a caller who gives both is narrowing twice, not asking for either.
+    """
+    named: list[str] | None = None
+    if getattr(args, "only", None):
+        named = [id_.strip() for id_ in args.only.split(",") if id_.strip()]
+    if getattr(args, "only_file", None) is not None:
+        text = sys.stdin.read() if str(args.only_file) == "-" else Path(args.only_file).read_text(encoding="utf-8")
+        from_file = [line.strip() for line in text.splitlines() if line.strip()]
+        named = from_file if named is None else [id_ for id_ in named if id_ in set(from_file)]
+    if named is not None:
+        known = {e.id for e in problems.entries}
+        unknown = [id_ for id_ in named if id_ not in known]
+        if unknown:
+            raise SelectionError("these ids name no entry: " + ", ".join(unknown))
+        seen: set[str] = set()
+        named = [id_ for id_ in named if not (id_ in seen or seen.add(id_))]
+    if getattr(args, "status", None):
+        wanted = set(args.status)
+        at_status = [e.id for e in problems.entries if e.status in wanted]
+        named = at_status if named is None else [id_ for id_ in named if id_ in set(at_status)]
+    return named
+
+
 def add_parser(subparsers: Any) -> None:
     evals = subparsers.add_parser("evals", help="the fixed problem set: baseline sweep, set runs, scoreboard checks")
     verbs = evals.add_subparsers(dest="evals_command", required=True)
     baseline = verbs.add_parser("baseline", help="sweep the tactic set over every canonical statement and write the tier file")
     baseline.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
     baseline.add_argument("--out", type=Path, default=DEFAULT_BASELINE)
+    baseline.add_argument("--only", default=None, help="comma-separated entry ids")
+    baseline.add_argument("--only-file", type=Path, default=None,
+                          help="a file of entry ids, one per line; '-' reads stdin")
+    baseline.add_argument("--status", action="append", default=None,
+                          help="select by corpus status, e.g. --status active; repeatable")
     baseline.add_argument("--acknowledge-unsafe-execution", action="store_true")
     run = verbs.add_parser("run", help="run every entry through batch or staged and write a scoreboard")
     run.add_argument("--label", required=True)
@@ -77,6 +115,10 @@ def add_parser(subparsers: Any) -> None:
     run.add_argument("--model", default=argparse.SUPPRESS)
     run.add_argument("--repeats", type=_positive_repeats, default=1)
     run.add_argument("--only", default=None, help="comma-separated entry ids")
+    run.add_argument("--only-file", type=Path, default=None,
+                     help="a file of entry ids, one per line; '-' reads stdin")
+    run.add_argument("--status", action="append", default=None,
+                     help="select by corpus status, e.g. --status active; repeatable")
     run.add_argument("--tiers", default=None, help="comma-separated tiers, e.g. 2,3")
     run.add_argument("--no-twins", action="store_true")
     run.add_argument("--max-turns", type=_positive_max_turns, default=None, help="batch mode default: 60. Refused under --mode staged.")
@@ -174,6 +216,11 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         return 2
     print(WARNING, file=sys.stderr)
     problems = load_corpus(args.problems)
+    try:
+        ids = selected_ids(args, problems)
+    except SelectionError as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
     if identity is None:
         try:
             identity = _identity(config)
@@ -200,6 +247,7 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         host=host_info(), import_seconds=import_seconds,
         wall_backstop_seconds=max(float(config.lean_timeout), sweep.WALL_BACKSTOP_FLOOR) if config is not None else sweep.WALL_BACKSTOP_FLOOR,
         report=lambda line: print(line, file=sys.stderr),
+        only=tuple(ids) if ids is not None else None,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     # newline="\n": Path.write_text's default translates every "\n" to the

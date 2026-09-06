@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from corpus_helpers import write_corpus
@@ -233,3 +235,59 @@ def test_a_registry_that_issued_nothing_yet_leaves_the_check_clean(tmp_path, cap
     prior.write_text('{"issued": {}}', encoding="utf-8")
     assert commands.main(_corpus_check(corpus, since_registry=prior), config=None) == 0
     assert capsys.readouterr().err == ""
+
+
+# --- selected_ids: --only, --only-file, --status (Task 6) ---
+
+
+def _args(**kw) -> argparse.Namespace:
+    return argparse.Namespace(**kw)
+
+
+def _problems():
+    from hardy.evals import taxonomy
+    from hardy.evals.problems import Entry, ProblemSet, Review
+
+    base = {
+        "input": "True.", "conclusion": "True", "expected": "true", "source": "textbook",
+        "msc": ("11Axx",), "difficulty": "routine", "rationale": "test fixture",
+        "witness": None, "witness_note": "test fixture",
+    }
+    t = Entry(id="t", name="T", **base)
+    u_draft = Entry(id="u", name="U", **base)
+    review = Review(
+        reviewer="cms", reviewed_at="2026-09-03T00:00:00Z",
+        statement_digest=u_draft.statement_digest(), prompt_digest=u_draft.prompt_digest(),
+        msc=list(u_draft.msc), group=taxonomy.group_of(u_draft.msc[0]), verdict="faithful",
+    )
+    u = Entry(id="u", name="U", status="active", review=review, **base)
+    f = Entry(id="f", name="F", twin_of="t", input="True.", conclusion="True", expected="false",
+              source="textbook", msc=("11Axx",), difficulty="routine", rationale="test fixture",
+              witness=None, witness_note="test fixture")
+    return ProblemSet(entries=(t, u, f))
+
+
+def test_only_file_reads_one_id_per_line(tmp_path):
+    listing = tmp_path / "ids.txt"
+    listing.write_text("t\n u \n\n f\n", encoding="utf-8")   # blanks and padding tolerated
+    args = _args(only=None, only_file=listing, status=None)
+    assert commands.selected_ids(args, _problems()) == ["t", "u", "f"]
+
+
+def test_only_file_reads_stdin_when_given_a_dash(monkeypatch):
+    monkeypatch.setattr("sys.stdin", io.StringIO("u\nt\n"))
+    args = _args(only=None, only_file=Path("-"), status=None)
+    assert commands.selected_ids(args, _problems()) == ["u", "t"]
+
+
+def test_status_and_only_intersect():
+    args = _args(only="t,u,f", only_file=None, status=["active"])
+    # only `u` is active in the fixture corpus
+    assert commands.selected_ids(args, _problems()) == ["u"]
+
+
+def test_an_unknown_id_is_refused_by_name():
+    args = _args(only="t,nope", only_file=None, status=None)
+    with pytest.raises(commands.SelectionError) as caught:
+        commands.selected_ids(args, _problems())
+    assert "nope" in str(caught.value)

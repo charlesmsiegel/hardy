@@ -479,7 +479,8 @@ def reusable(prior: Baseline | None, *, environment_digest: str, procedure_diges
 def sweep(problems: ProblemSet, *, problems_sha256: str, environment: EnvironmentIdentity, elaborate: Elaborate,
           now: Callable[[], datetime], host: dict[str, Any], import_seconds: float | None = None,
           wall_backstop_seconds: float = WALL_BACKSTOP_FLOOR, report: Callable[[str], None] = lambda _: None,
-          prior: Baseline | None = None, prior_statement_digests: dict[str, str] | None = None) -> Baseline:
+          prior: Baseline | None = None, prior_statement_digests: dict[str, str] | None = None,
+          only: tuple[str, ...] | None = None) -> Baseline:
     """Sweep the corpus, carrying forward every entry whose identity did not move.
 
     This is what the per-entry digests are *for* (spec §3): correcting one
@@ -491,6 +492,13 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     `prior_statement_digests` is the *current* digest of each entry, so a
     caller can pass digests computed under a fixture; it defaults to the
     entries' own.
+
+    `only`, when given, restricts which entries this call may sweep. An
+    excluded entry is never touched -- not re-elaborated, and not put through
+    the identity-based reuse check either -- it simply keeps whatever row the
+    prior baseline already held (or gets none, if it never had one). Without
+    this, naming a handful of entries to sweep would drop every other row from
+    the baseline, forcing a full re-sweep the moment anyone used `--only`.
     """
     environment_digest = environment_digest_of(environment, host)
     procedure_digest = procedure_digest_of(wall_backstop_seconds)
@@ -501,21 +509,27 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     findings: list[str] = []
     reused = 0
     for entry in problems.entries:
-        # The prior row must also have the *shape* this entry now needs.
-        # `statement_digest` excludes `expected`, so relabelling a true entry
-        # as a twin left a row with `negation=None` that `staleness` refuses
-        # -- and reusing it here meant `hardy evals baseline`, the documented
-        # repair, wrote another refused baseline forever.
-        prior_row = prior.entries.get(entry.id) if prior is not None else None
-        shaped = prior_row is not None and (entry.expected != "false" or prior_row.negation is not None)
-        if (carry and prior is not None and shaped
-                and prior.statement_digests.get(entry.id) == current.get(entry.id)):
-            entries[entry.id] = result = prior.entries[entry.id]
-            reused += 1
+        if only is not None and entry.id not in only:
+            prior_row = prior.entries.get(entry.id) if prior is not None else None
+            if prior_row is None:
+                continue   # never selected, never baselined: no row to carry
+            entries[entry.id] = result = prior_row
         else:
-            report(f"sweeping {entry.id}")
-            result = sweep_entry(entry, elaborate, confirm_name=entry.name)
-            entries[entry.id] = result
+            # The prior row must also have the *shape* this entry now needs.
+            # `statement_digest` excludes `expected`, so relabelling a true entry
+            # as a twin left a row with `negation=None` that `staleness` refuses
+            # -- and reusing it here meant `hardy evals baseline`, the documented
+            # repair, wrote another refused baseline forever.
+            prior_row = prior.entries.get(entry.id) if prior is not None else None
+            shaped = prior_row is not None and (entry.expected != "false" or prior_row.negation is not None)
+            if (carry and prior is not None and shaped
+                    and prior.statement_digests.get(entry.id) == current.get(entry.id)):
+                entries[entry.id] = result = prior.entries[entry.id]
+                reused += 1
+            else:
+                report(f"sweeping {entry.id}")
+                result = sweep_entry(entry, elaborate, confirm_name=entry.name)
+                entries[entry.id] = result
         if not result.elaborates:
             findings.append(f"{entry.id}: the canonical statement does not elaborate")
         if entry.expected == "false" and result.closed_by:

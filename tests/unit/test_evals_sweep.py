@@ -647,6 +647,33 @@ def test_a_sweep_reuses_nothing_when_the_procedure_or_environment_moved():
         assert name in names, f"{name} must be re-swept when the procedure moved"
 
 
+def test_only_sweeps_the_named_entries_and_still_carries_the_rest_forward():
+    """Selecting a subset must not delete every other baseline row: that is
+    what makes incremental growth possible at all. `only` restricts what gets
+    re-swept, but an id it excludes keeps its prior row regardless -- even
+    across an environment change that would otherwise force a full re-sweep,
+    because this run was never asked to touch it.
+    """
+    first = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                        now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST)
+
+    swept: list[str] = []
+
+    def counting(source: str) -> Elaboration:
+        swept.append(source)
+        return _elaboration([])
+
+    elsewhere = {**HOST, "machine": "aarch64", "cpu_count": 96}
+    again = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=counting,
+                        now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=elsewhere,
+                        prior=first, prior_statement_digests=DIGESTS, only=("easy",))
+    assert swept, "the selected entry is re-swept even though its digest did not move"
+    assert all("Easy" in s or "example :" in s for s in swept), swept
+    for id in ("lib", "chain", "hard", "twin"):
+        assert again.entries[id] == first.entries[id], f"{id} must survive carry-forward though unselected"
+    assert set(again.entries) == set(first.entries), "no entry is dropped from the baseline"
+
+
 def test_a_relabelled_twin_is_reswept_rather_than_carried_forward():
     """The repair command must be able to repair.
 
