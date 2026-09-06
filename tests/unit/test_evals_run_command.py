@@ -2,18 +2,54 @@
 from __future__ import annotations
 
 import argparse
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from corpus_helpers import write_corpus
 from test_recorded_runs import IDENTITY as RAW_IDENTITY
 
 from hardy import lean as lean_module
 from hardy.domain import EnvironmentIdentity, RunLimits
-from hardy.evals import runner
+from hardy.evals import runner, sweep, taxonomy
 from hardy.evals import staged as staged_module
+from hardy.evals.problems import Entry, ProblemSet, Review
 from hardy.runner import WARNING
 
 IDENTITY = EnvironmentIdentity(**RAW_IDENTITY)
+
+_ENTRY_BASE = dict(input="True.", conclusion="True", expected="true", source="textbook",
+                   msc=("11Axx",), difficulty="routine", rationale="test fixture",
+                   witness=None, witness_note="test fixture")
+
+
+def _fake_problems(*ids: str) -> ProblemSet:
+    """Entries this test's `--only` names, unconcerned with `status` --
+    `selected_ids` only needs the ids to be known."""
+    return ProblemSet(entries=tuple(Entry(id=i, name=i.upper(), **_ENTRY_BASE) for i in ids))
+
+
+def _minimal_corpus_and_baseline(tmp_path: Path) -> tuple[Path, Path]:
+    """A tiny real corpus and baseline for the unevaluated-active default
+    (Task 7), which now loads both before `run_set` is ever reached --
+    independent of whatever the repository's own corpus and baseline
+    currently hold.
+    """
+    draft = Entry(id="a", name="A", **_ENTRY_BASE)
+    review = Review(reviewer="cms", reviewed_at="2026-09-03T00:00:00Z",
+                    statement_digest=draft.statement_digest(), prompt_digest=draft.prompt_digest(),
+                    msc=list(draft.msc), group=taxonomy.group_of(draft.msc[0]), verdict="faithful")
+    entry = Entry(id="a", name="A", status="active", review=review, **_ENTRY_BASE)
+    problems_path = write_corpus(tmp_path / "corpus", (entry,))
+    baseline = sweep.Baseline(
+        created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256="p" * 64, environment=IDENTITY,
+        heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS,
+        host=sweep.host_info(), problems=(), entries={},
+    )
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(json.dumps(baseline.model_dump(mode="json")), encoding="utf-8")
+    return problems_path, baseline_path
 
 
 def _config(**kw) -> SimpleNamespace:
@@ -63,6 +99,7 @@ def test_a_missing_problems_or_baseline_file_is_refused_before_anything_runs(mon
 def test_batch_mode_applies_the_default_limits_and_records_the_selection(monkeypatch):
     monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
     monkeypatch.setattr(runner, "source_revision", lambda: "deadbeef")
+    monkeypatch.setattr(runner, "load_corpus", lambda path: _fake_problems("a", "b"))
     seen = {}
 
     def fake_run_set(**kw):
@@ -91,7 +128,7 @@ def test_staged_mode_refuses_max_turns_or_wall_seconds(monkeypatch, capsys):
     assert called == []
 
 
-def test_staged_mode_records_its_own_budgets_when_no_flag_is_given(monkeypatch):
+def test_staged_mode_records_its_own_budgets_when_no_flag_is_given(monkeypatch, tmp_path):
     monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
     monkeypatch.setattr(staged_module, "staged_runner", lambda config, *, backend: (lambda entry, row_dir, model: None))
     monkeypatch.setattr(runner, "source_revision", lambda: None)
@@ -102,7 +139,10 @@ def test_staged_mode_records_its_own_budgets_when_no_flag_is_given(monkeypatch):
         return Path("evals/scoreboards/x")
 
     monkeypatch.setattr(runner, "run_set", fake_run_set)
-    code = runner.run_set_command(_args(mode="staged"), _config())
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    code = runner.run_set_command(
+        _args(mode="staged", problems=problems_path, baseline=baseline_path, scoreboards=tmp_path / "boards"), _config(),
+    )
     assert code == 0
     # `source_revision` couldn't be identified here; recorded as `None`
     # rather than a refusal (item 8) -- evals must still be runnable from a
@@ -118,14 +158,17 @@ def test_staged_mode_records_its_own_budgets_when_no_flag_is_given(monkeypatch):
     assert limits["lean_timeout"] == 60.0
 
 
-def test_a_refused_run_from_run_set_is_reported_and_exits_two(monkeypatch, capsys):
+def test_a_refused_run_from_run_set_is_reported_and_exits_two(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
 
     def refuse(**kw):
         raise runner.RefusedRun("a label is one condition on one day")
 
     monkeypatch.setattr(runner, "run_set", refuse)
-    code = runner.run_set_command(_args(), _config())
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    code = runner.run_set_command(
+        _args(problems=problems_path, baseline=baseline_path, scoreboards=tmp_path / "boards"), _config(),
+    )
     assert code == 2
     assert "Refused:" in capsys.readouterr().err
 
@@ -140,6 +183,54 @@ def test_a_toolchain_that_cannot_be_identified_is_a_refusal_not_a_traceback(monk
     code = runner.run_set_command(_args(), _config())
     assert code == 2
     assert "Refused: the Lean toolchain could not be identified" in capsys.readouterr().err
+    assert called == []
+
+
+# --- The unevaluated-active default (Task 7) ---
+
+
+def test_status_selects_without_the_default_ever_running(monkeypatch, tmp_path):
+    """`--status` alone names a selection (Task 6's `selected_ids`); the
+    unevaluated-active default must not also kick in and override it.
+    """
+    monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
+    monkeypatch.setattr(runner, "source_revision", lambda: "deadbeef")
+    seen = {}
+
+    def fake_run_set(**kw):
+        seen.update(kw)
+        return Path("evals/scoreboards/x")
+
+    monkeypatch.setattr(runner, "run_set", fake_run_set)
+    problems_path, baseline_path = _minimal_corpus_and_baseline(tmp_path)
+    code = runner.run_set_command(
+        _args(status=["active"], problems=problems_path, baseline=baseline_path, scoreboards=tmp_path / "boards"), _config(),
+    )
+    assert code == 0
+    assert seen["condition"].selection["only"] == ["a"]
+
+
+def test_the_default_selection_refuses_when_nothing_active_is_outstanding(monkeypatch, tmp_path, capsys):
+    """No `--only`/`--only-file`/`--status`, and no active entry at all: the
+    unevaluated-active default is empty, so this refuses rather than writing
+    an empty scoreboard.
+    """
+    monkeypatch.setattr(lean_module, "environment_identity", lambda *a, **kw: IDENTITY)
+    called = []
+    monkeypatch.setattr(runner, "run_set", lambda **kw: called.append(kw))
+    problems_path = write_corpus(tmp_path / "corpus", (Entry(id="a", name="A", **_ENTRY_BASE),))   # a candidate, not active
+    baseline = sweep.Baseline(
+        created_at=datetime(2026, 9, 1, tzinfo=UTC), problems_sha256="p" * 64, environment=IDENTITY,
+        heartbeat_budget=200000, wall_backstop_seconds=600.0, singles=sweep.SINGLES, chains=sweep.CHAINS,
+        host=sweep.host_info(), problems=(), entries={},
+    )
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(json.dumps(baseline.model_dump(mode="json")), encoding="utf-8")
+    code = runner.run_set_command(
+        _args(problems=problems_path, baseline=baseline_path, scoreboards=tmp_path / "boards"), _config(),
+    )
+    assert code == 2
+    assert "every active entry has already been run under this condition" in capsys.readouterr().err
     assert called == []
 
 

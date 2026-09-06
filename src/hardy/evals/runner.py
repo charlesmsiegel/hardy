@@ -17,7 +17,7 @@ from . import digests
 from .corpus import load_corpus, manifest_digest
 from .problems import Entry, ProblemSet, sha256_of
 from .scoreboard import Aggregates, Row, active_ids, aggregate, batch_row, staged_row
-from .sweep import Baseline, host_info, staleness
+from .sweep import Baseline, environment_digest_of, host_info, staleness
 
 BatchRunner = Callable[[Entry, Path, int, float], None]
 StagedRunner = Callable[[Entry, Path, str], None]   # (entry, row_dir, model): writes the nested run and canonical.json
@@ -188,6 +188,15 @@ class Scoreboard(FrozenModel):
     started_at: datetime
     finished_at: datetime | None
     interrupted: bool
+    # Recorded so a later `evals pool`/`evals todo` can recompute this board's
+    # own environment digest (`outstanding.environment_digest_of_board`) the
+    # same way `sweep.environment_digest_of` computes a baseline's -- over the
+    # environment and the host together, not a value stored precomputed.
+    # Defaulted so every existing `Scoreboard(...)` call site -- test
+    # fixtures included -- need not name it; a board written before this
+    # field existed reads back as `{}`, which will simply never match a real
+    # host and so never falsely pools with a live run.
+    host: dict[str, Any] = {}
 
 
 def select(problems: ProblemSet, baseline: Baseline, *, only: list[str] | None, tiers: list[int] | None, twins: bool) -> tuple[Entry, ...]:
@@ -279,12 +288,13 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     known_ids = {e.id for e in problems.entries}
     selected_ids = {e.id for e in entries}
     mismatch_scope = sorted(selected_ids | (set(baseline.entries) & known_ids))
+    host = host_info()
     issues = staleness(
         baseline,
         statement_digests={e.id: e.statement_digest() for e in entries},
         environment=environment,
         problem_ids=mismatch_scope,
-        host=host_info(),
+        host=host,
         expectations={e.id: e.expected for e in entries},
     )
     if issues:
@@ -298,7 +308,7 @@ def run_set(*, label: str, problems_path: Path, baseline_path: Path, scoreboards
     rows: list[Row] = []
     board = Scoreboard(label=label, condition=condition, environment=environment, baseline_sha256=sha256_of(baseline_path),
                        problems_sha256=manifest_digest(problems_path), rows=(), aggregates=aggregate([], baseline, active_ids=active_ids(problems)),
-                       started_at=now(), finished_at=None, interrupted=False)
+                       started_at=now(), finished_at=None, interrupted=False, host=host)
     _write(out / "scoreboard.json", board)
     try:
         for entry in entries:
@@ -367,6 +377,46 @@ BATCH_DEFAULT_MAX_TURNS = 60
 BATCH_DEFAULT_WALL_SECONDS = 1800.0
 
 
+def limits_for(args: argparse.Namespace, config: Any) -> dict[str, float | int]:
+    """The condition's own budgets, built exactly as `run_set_command` builds
+    them for the run it is about to launch.
+
+    Factored out so `evals todo` can report the pooling key a run started now
+    -- with these flags, no more -- would actually produce; duplicating this
+    would let the two drift and `todo` report a key no run uses.
+    """
+    if args.mode == "staged":
+        # A staged run is bounded by the workflow's own budgets, not
+        # --max-turns/--wall-seconds (refused before this is called, in
+        # `run_set_command`); a twin still runs batch under staged mode
+        # (#23), so its budget -- and, since `_batch_runner` hands a twin's
+        # `LeanTools` the same `config.lean_timeout` a staged run's own
+        # checks use, its per-check Lean timeout too -- is recorded here.
+        # `lean_process_seconds` governs the toolchain-identity probe, not a
+        # proof check, but it is still one of the run's own budgets and
+        # belongs beside the others.
+        return {
+            "active_seconds": config.limits.active_seconds, "proof_seconds": config.limits.proof_seconds,
+            "official_checks": config.limits.official_checks, "lean_process_seconds": config.limits.lean_process_seconds,
+            "twin_max_turns": BATCH_DEFAULT_MAX_TURNS, "twin_wall_seconds": BATCH_DEFAULT_WALL_SECONDS,
+            "lean_timeout": float(config.lean_timeout),
+        }
+    # `lean_timeout` here is condition provenance only: it is what
+    # `_batch_runner` hands `LeanTools` for every per-check Lean call this run
+    # makes, but the batch trajectory itself records no per-check timeout
+    # (item 3), so the validator has nothing to cross-check it against.
+    # `getattr`, not `args.max_turns`: `evals todo`'s namespace carries no
+    # --max-turns/--wall-seconds at all, and its absence there must default
+    # the same way omitting the flag on `evals run` does.
+    max_turns = getattr(args, "max_turns", None)
+    wall_seconds = getattr(args, "wall_seconds", None)
+    return {
+        "max_turns": max_turns if max_turns is not None else BATCH_DEFAULT_MAX_TURNS,
+        "wall_seconds": wall_seconds if wall_seconds is not None else BATCH_DEFAULT_WALL_SECONDS,
+        "lean_timeout": float(config.lean_timeout),
+    }
+
+
 def run_set_command(args: argparse.Namespace, config: Any) -> int:
     from ..lean import environment_identity
     from ..prompts import BATCH_PROMPT_SET_SHA256, PROMPT_SET_SHA256
@@ -380,7 +430,7 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
             file=sys.stderr,
         )
         return 2
-    from .commands import _refuse_missing
+    from .commands import SelectionError, _refuse_missing, selected_ids
 
     refusal = _refuse_missing(args.problems, args.baseline)
     if refusal is not None:
@@ -403,41 +453,42 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
     except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
         print(f"Refused: the Lean toolchain could not be identified: {error}", file=sys.stderr)
         return 2
-    if args.mode == "staged":
-        # A staged run is bounded by the workflow's own budgets, not
-        # --max-turns/--wall-seconds (refused above); a twin still runs
-        # batch under staged mode (#23), so its budget -- and, since
-        # `_batch_runner` hands a twin's `LeanTools` the same
-        # `config.lean_timeout` a staged run's own checks use, its per-check
-        # Lean timeout too -- is recorded here. `lean_process_seconds`
-        # governs the toolchain-identity probe, not a proof check, but it is
-        # still one of the run's own budgets and belongs beside the others.
-        limits: dict[str, float | int] = {
-            "active_seconds": config.limits.active_seconds, "proof_seconds": config.limits.proof_seconds,
-            "official_checks": config.limits.official_checks, "lean_process_seconds": config.limits.lean_process_seconds,
-            "twin_max_turns": BATCH_DEFAULT_MAX_TURNS, "twin_wall_seconds": BATCH_DEFAULT_WALL_SECONDS,
-            "lean_timeout": float(config.lean_timeout),
-        }
-    else:
-        # `lean_timeout` here is condition provenance only: it is what
-        # `_batch_runner` hands `LeanTools` for every per-check Lean call
-        # this run makes, but the batch trajectory itself records no
-        # per-check timeout (item 3), so the validator has nothing to
-        # cross-check it against.
-        limits = {
-            "max_turns": args.max_turns if args.max_turns is not None else BATCH_DEFAULT_MAX_TURNS,
-            "wall_seconds": args.wall_seconds if args.wall_seconds is not None else BATCH_DEFAULT_WALL_SECONDS,
-            "lean_timeout": float(config.lean_timeout),
-        }
+    limits = limits_for(args, config)
+    model = str(args.model or config.model)
+    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits)
+
+    problems = load_corpus(args.problems)
+    try:
+        only = selected_ids(args, problems)
+    except SelectionError as error:
+        print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    if only is None:
+        # Nobody named entries: default to what this exact model, mode and
+        # limits have not yet run against this environment -- not the whole
+        # corpus, which would also spend on candidates and retirees no human
+        # has checked. Recorded into `selection["only"]` below rather than
+        # left as `None`, so the scoreboard states exactly what ran and
+        # `select` picks it up through the path it already uses.
+        from .outstanding import outstanding as compute_outstanding
+
+        default_baseline = Baseline.model_validate_json(args.baseline.read_text(encoding="utf-8"))
+        default_key = (run_digest, environment_digest_of(environment, host_info()))
+        only = compute_outstanding(problems, default_baseline, args.scoreboards, key=default_key)["unevaluated_active"]
+        if not only:
+            print(
+                "Refused: every active entry has already been run under this condition; "
+                "name entries with --only to re-run them",
+                file=sys.stderr,
+            )
+            return 2
     condition = Condition(
-        model=str(args.model or config.model), backend=args.backend, mode=args.mode,
+        model=model, backend=args.backend, mode=args.mode,
         staged_prompt_set_sha256=PROMPT_SET_SHA256, batch_prompt_set_sha256=BATCH_PROMPT_SET_SHA256,
         hardy_version=__version__, source_revision=source_revision(), limits=limits, repeats=args.repeats,
-        selection={"only": args.only.split(",") if args.only else None, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
+        selection={"only": only, "tiers": [int(t) for t in args.tiers.split(",")] if args.tiers else None,
                    "twins": not args.no_twins},
-        run_procedure_digest=run_procedure_digest_of(
-            model=str(args.model or config.model), mode=args.mode, limits=limits,
-        ),
+        run_procedure_digest=run_digest,
     )
     staged = None
     if args.mode == "staged":

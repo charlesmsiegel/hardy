@@ -118,7 +118,10 @@ def test_model_is_accepted_on_the_run_subparser():
 def test_baseline_writes_the_tier_file_and_exits_zero_when_the_list_is_clean(tmp_path):
     problems = _corpus(tmp_path)
     out = tmp_path / "baseline.json"
-    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
+    # `t` is a `candidate` in this fixture, so the unbaselined-active default
+    # (Task 7) would see nothing to sweep; naming it explicitly is what this
+    # test is actually about, not the default.
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True, only="t")
     code = commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
     assert code == 0
     written = json.loads(out.read_text(encoding="utf-8"))
@@ -135,7 +138,9 @@ def test_baseline_exits_one_but_still_writes_when_the_list_has_problems(tmp_path
     twin = dict(PROBLEMS["entries"][0], id="f", name="F", conclusion="True", expected="false", twin_of="t")
     problems = _corpus(tmp_path, [PROBLEMS["entries"][0], twin])
     out = tmp_path / "baseline.json"
-    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
+    # Both are `candidate`s in this fixture; name them so this test still
+    # exercises the sweep rather than the unbaselined-active default (Task 7).
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True, only="t,f")
     code = commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
     assert code == 1 and out.exists()
     assert "f: a twin closed by" in capsys.readouterr().err
@@ -291,3 +296,20 @@ def test_an_unknown_id_is_refused_by_name():
     with pytest.raises(commands.SelectionError) as caught:
         commands.selected_ids(args, _problems())
     assert "nope" in str(caught.value)
+
+
+# --- The unbaselined-active default on `evals baseline` (Task 7) ---
+
+
+def test_baseline_default_refuses_when_no_active_entry_is_outstanding(tmp_path, capsys):
+    """`PROBLEMS`'s only entry, `t`, is a `candidate`: the unbaselined-active
+    default sees nothing to sweep and must refuse rather than write an empty
+    tier file.
+    """
+    problems = _corpus(tmp_path)
+    out = tmp_path / "baseline.json"
+    args = argparse.Namespace(problems=problems, out=out, acknowledge_unsafe_execution=True)
+    code = commands.run_baseline(args, config=None, elaborate=_always_closes, identity=IDENTITY, now=lambda: datetime(2026, 9, 1, tzinfo=UTC))
+    assert code == 2
+    assert "every active entry already has a baseline row" in capsys.readouterr().err
+    assert not out.exists()

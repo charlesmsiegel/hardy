@@ -158,6 +158,18 @@ def add_parser(subparsers: Any) -> None:
     check.add_argument("scoreboard", type=Path)
     check.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
     check.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    todo = verbs.add_parser(
+        "todo",
+        help="what's left to sweep or run under the pooling key this checkout would produce, as JSON on stdout",
+    )
+    todo.add_argument("--problems", type=Path, default=DEFAULT_PROBLEMS)
+    todo.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    todo.add_argument("--scoreboards", type=Path, default=DEFAULT_SCOREBOARDS)
+    # SUPPRESS for the same reason `run`'s own `--model` is: omitting it here
+    # must leave the global `--model` alone rather than overwriting it with
+    # this subparser's default (cli.py:1545).
+    todo.add_argument("--model", default=argparse.SUPPRESS)
+    todo.add_argument("--mode", choices=("batch", "staged"), default="batch")
 
 
 def _refuse_missing(*paths: Path) -> str | None:
@@ -241,13 +253,29 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
             prior = sweep.Baseline.model_validate_json(args.out.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             prior = None   # unreadable prior: sweep everything, say nothing
+    if ids is None:
+        # Nobody named entries: default to the active entries the tier file
+        # does not yet cover, not the whole corpus's candidates and retirees
+        # too. Needs no run digest -- a sweep is Lean-only, gated by the
+        # corpus and the toolchain, not by which model a run would use.
+        from .outstanding import unbaselined_active
+
+        default = unbaselined_active(problems, prior)
+        if not default:
+            print(
+                "Refused: every active entry already has a baseline row; "
+                "name entries with --only to re-sweep them",
+                file=sys.stderr,
+            )
+            return 2
+        ids = default
     baseline = sweep.sweep(
         problems, problems_sha256=manifest_digest(args.problems), environment=identity, elaborate=elaborate, now=now,
         prior=prior,
         host=host_info(), import_seconds=import_seconds,
         wall_backstop_seconds=max(float(config.lean_timeout), sweep.WALL_BACKSTOP_FLOOR) if config is not None else sweep.WALL_BACKSTOP_FLOOR,
         report=lambda line: print(line, file=sys.stderr),
-        only=tuple(ids) if ids is not None else None,
+        only=tuple(ids),
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     # newline="\n": Path.write_text's default translates every "\n" to the
@@ -260,6 +288,45 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
     tiers = {t: sum(1 for e in baseline.entries.values() if e.tier == t) for t in range(4)}
     print(f"Baseline written to {args.out}: tiers " + ", ".join(f"{t}: {n}" for t, n in tiers.items()))
     return 1 if baseline.problems else 0
+
+
+def run_todo(args: argparse.Namespace, config: Any) -> int:
+    """`evals todo`: free, before anything is spent -- what a `baseline` or a
+    `run` launched right now, with these flags, would still have left to do.
+
+    JSON on stdout and nothing else there, so a control agent can parse it
+    without combing prose off the same stream; commentary goes to stderr.
+    """
+    from .outstanding import matching_boards
+    from .outstanding import outstanding as compute_outstanding
+    from .runner import limits_for, run_procedure_digest_of
+
+    refusal = _refuse_missing(args.problems, args.baseline)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 2
+    try:
+        identity = _identity(config)
+    except (ValueError, OSError, KeyError, StopIteration, json.JSONDecodeError) as error:
+        print(f"Refused: the Lean toolchain could not be identified: {error}", file=sys.stderr)
+        return 2
+    problems = load_corpus(args.problems)
+    try:
+        baseline = sweep.Baseline.model_validate_json(args.baseline.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as error:
+        print(f"Refused: {args.baseline} does not read as a baseline: {error}", file=sys.stderr)
+        return 2
+    model = str(getattr(args, "model", None) or config.model)
+    limits = limits_for(args, config)
+    run_digest = run_procedure_digest_of(model=model, mode=args.mode, limits=limits)
+    environment_digest = sweep.environment_digest_of(identity, host_info())
+    key = (run_digest, environment_digest)
+    print(json.dumps({
+        "pooling_key": {"run_procedure_digest": run_digest, "environment_digest": environment_digest},
+        "boards_counted": matching_boards(args.scoreboards, key=key),
+        **compute_outstanding(problems, baseline, args.scoreboards, key=key),
+    }, indent=2))
+    return 0
 
 
 def main(args: argparse.Namespace, config: Any) -> int:
@@ -318,4 +385,6 @@ def main(args: argparse.Namespace, config: Any) -> int:
     if args.evals_command == "check":
         from .scoreboard import check_command
         return check_command(args)
+    if args.evals_command == "todo":
+        return run_todo(args, config)
     raise AssertionError(args.evals_command)
