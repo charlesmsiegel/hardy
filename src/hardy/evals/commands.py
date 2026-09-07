@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -306,6 +307,36 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
             )
             return 2
         ids = default
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+
+    def write(baseline: sweep.Baseline) -> None:
+        """Write the tier file, replacing it atomically.
+
+        Used for the final baseline *and* for every checkpoint, so a snapshot
+        is written exactly the way the finished file is. The rename matters
+        more here than it did when this only ran once: a checkpoint lands
+        while hours of Lean are still running, and a crash caught mid-write
+        would otherwise leave a truncated file that loses the completed rows
+        this exists to protect.
+
+        newline="\\n": Path.write_text's default translates every "\\n" to the
+        platform line separator, so on Windows this would write an evidence
+        file as CRLF even though .gitattributes marks it `-text` (no
+        conversion) precisely so its bytes are the ones a digest is taken over.
+        """
+        text = json.dumps(baseline.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n"
+        tmp = args.out.with_suffix(args.out.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8", newline="\n")
+        os.replace(tmp, args.out)
+
+    swept = 0
+
+    def checkpoint(partial: sweep.Baseline) -> None:
+        nonlocal swept
+        swept = len(partial.entries)
+        write(partial)
+        print(f"  checkpoint: {swept} rows written to {args.out}", file=sys.stderr)
+
     baseline = sweep.sweep(
         problems, problems_sha256=manifest_digest(args.problems), environment=identity, elaborate=elaborate, now=now,
         prior=prior,
@@ -314,13 +345,9 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
         report=lambda line: print(line, file=sys.stderr),
         only=tuple(ids),
         workers=workers,
+        checkpoint=checkpoint,
     )
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    # newline="\n": Path.write_text's default translates every "\n" to the
-    # platform line separator, so on Windows this would checkin a repository
-    # evidence file as CRLF even though .gitattributes marks it `-text` (no
-    # conversion) precisely so its bytes are the ones a digest is taken over.
-    args.out.write_text(json.dumps(baseline.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    write(baseline)
     for problem in baseline.problems:
         print("PROBLEM: " + problem, file=sys.stderr)
     tiers = {t: sum(1 for e in baseline.entries.values() if e.tier == t) for t in range(4)}

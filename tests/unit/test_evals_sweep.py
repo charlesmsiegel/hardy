@@ -786,3 +786,61 @@ def test_a_failed_entry_stops_the_sweep_within_the_worker_window(monkeypatch):
         sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
                     now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST, workers=3)
     assert len(started) <= 3 < len(_problems().entries)
+
+
+def test_a_checkpoint_lands_a_usable_baseline_before_the_sweep_finishes():
+    """A full corpus sweep is hours of Lean, and writing only at the end meant
+    an interrupt discarded every completed row. Each snapshot must be a real
+    baseline over what is done so far, not a lesser artifact.
+    """
+    seen: list[sweep.Baseline] = []
+    baseline = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=_scripted({}),
+                           now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST,
+                           checkpoint=seen.append, checkpoint_every=2)
+    assert [len(b.entries) for b in seen] == [2, 4], "one snapshot every two completions"
+    for snapshot in seen:
+        # Every field a finished baseline carries, so the file on disk is
+        # loadable and runnable against whatever subset it covers.
+        assert snapshot.procedure_digest == baseline.procedure_digest
+        assert snapshot.environment_digest == baseline.environment_digest
+        assert snapshot.statement_digests == baseline.statement_digests
+        assert snapshot.singles == sweep.SINGLES and snapshot.chains == sweep.CHAINS
+        for id, row in snapshot.entries.items():
+            assert row == baseline.entries[id], f"{id} differs from its finished row"
+
+
+def test_an_interrupted_sweep_resumes_from_its_last_checkpoint():
+    """The payoff: rerunning the same command carries every checkpointed row
+    forward and elaborates only the remainder.
+    """
+    snapshots: list[sweep.Baseline] = []
+    boom = RuntimeError("machine died")
+
+    def dies_after_two(source: str) -> Elaboration:
+        if len([s for s in dies_after_two.calls if "example :" not in s]) > 40:
+            raise boom
+        dies_after_two.calls.append(source)
+        return _elaboration([])
+    dies_after_two.calls = []
+
+    with pytest.raises(RuntimeError):
+        sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=dies_after_two,
+                    now=lambda: datetime(2026, 9, 1, tzinfo=UTC), host=HOST,
+                    checkpoint=snapshots.append, checkpoint_every=1)
+    assert snapshots, "the crash left completed rows on disk"
+    partial = snapshots[-1]
+    assert len(partial.entries) < 5
+
+    reswept: list[str] = []
+
+    def counting(source: str) -> Elaboration:
+        reswept.append(source)
+        return _elaboration([])
+
+    finished = sweep.sweep(_problems(), problems_sha256="p" * 64, environment=IDENTITY, elaborate=counting,
+                           now=lambda: datetime(2026, 9, 2, tzinfo=UTC), host=HOST, prior=partial)
+    assert len(finished.entries) == 5
+    for id, row in partial.entries.items():
+        assert finished.entries[id] == row, f"{id} was re-swept though the checkpoint had it"
+    for id in partial.entries:
+        assert not any(f"theorem {_problems().by_id(id).name} " in s for s in reswept), f"{id} re-elaborated"

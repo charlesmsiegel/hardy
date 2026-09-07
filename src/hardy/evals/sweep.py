@@ -481,8 +481,9 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
           now: Callable[[], datetime], host: dict[str, Any], import_seconds: float | None = None,
           wall_backstop_seconds: float = WALL_BACKSTOP_FLOOR, report: Callable[[str], None] = lambda _: None,
           prior: Baseline | None = None, prior_statement_digests: dict[str, str] | None = None,
-          only: tuple[str, ...] | None = None, workers: int = 1) -> Baseline:
-    """Sweep the corpus, carrying forward every entry whose identity did not move.
+          only: tuple[str, ...] | None = None, workers: int = 1,
+          checkpoint: Callable[[Baseline], None] | None = None, checkpoint_every: int = 25) -> Baseline:
+    """Sweep the corpus, carrying forward every identity that did not move.
 
     This is what the per-entry digests are *for* (spec §3): correcting one
     statement in a corpus of thousands must be a re-sweep of one entry, not of
@@ -500,6 +501,22 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     prior baseline already held (or gets none, if it never had one). Without
     this, naming a handful of entries to sweep would drop every other row from
     the baseline, forcing a full re-sweep the moment anyone used `--only`.
+
+    `checkpoint`, when given, is handed a complete `Baseline` over the rows
+    swept *so far*, every `checkpoint_every` completions. A full corpus sweep
+    is many hours of Lean, and writing only at the end meant a Ctrl-C, a
+    crash or a machine reboot discarded every row: one interrupted sweep here
+    lost 98 entries with nothing on disk to show for it. The snapshot is not
+    a lesser artifact -- each row is either fully swept or absent, never
+    half-written -- so it is simply a smaller baseline, and rerunning the same
+    command resumes from it: `reusable` matches the environment and procedure
+    digests it was stamped with and carries every completed row forward, so
+    only the remainder is elaborated again.
+
+    That also means nothing needs to mark a snapshot as partial. A baseline
+    missing rows is caught where it matters by `baseline_entries_mismatch`,
+    which already refuses a run whose selection it does not cover, and the
+    rows it *does* carry are exactly as good as an uninterrupted sweep's.
 
     `workers` bounds a `ThreadPoolExecutor` over the entries that actually
     need `sweep_entry` (never over carried-forward or reused rows, which cost
@@ -519,6 +536,23 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
     entries: dict[str, EntryBaseline] = {}
     to_sweep: list[Entry] = []
     reused = 0
+
+    def built(rows: dict[str, EntryBaseline]) -> Baseline:
+        """The one place a `Baseline` is constructed, so a checkpoint and the
+        returned value cannot drift into describing the same sweep
+        differently. `rows` is copied: the caller's dict keeps mutating."""
+        return Baseline(
+            created_at=now(), problems_sha256=problems_sha256,
+            statement_digests=current,
+            environment_digest=environment_digest,
+            procedure_digest=procedure_digest,
+            environment=environment,
+            heartbeat_budget=HEARTBEAT_BUDGET, wall_backstop_seconds=wall_backstop_seconds,
+            import_seconds=import_seconds,
+            singles=SINGLES, chains=CHAINS, host=host,
+            problems=tuple(_findings(problems, rows)), entries=dict(rows),
+        )
+
     for entry in problems.entries:
         if only is not None and entry.id not in only:
             prior_row = prior.entries.get(entry.id) if prior is not None else None
@@ -558,6 +592,7 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
             pending = list(to_sweep)
             in_flight: dict[Future[EntryBaseline], Entry] = {}
             first_error: BaseException | None = None
+            completed = 0
             while pending or in_flight:
                 while pending and len(in_flight) < workers and first_error is None:
                     entry = pending.pop(0)
@@ -577,33 +612,46 @@ def sweep(problems: ProblemSet, *, problems_sha256: str, environment: Environmen
                     except BaseException as error:  # noqa: BLE001 - re-raised below, not swallowed
                         if first_error is None:
                             first_error = error
+                    else:
+                        # Outside the `try`, so a failing checkpoint is not
+                        # mistaken for a failing sweep of this entry.
+                        completed += 1
+                        if checkpoint is not None and completed % checkpoint_every == 0:
+                            checkpoint(built(entries))
         if first_error is not None:
             raise first_error
+    for entry in problems.entries:
+        result = entries.get(entry.id)
+        if result is None:
+            continue
+        for tactic, attempt in result.attempts.items():
+            if attempt.status == "unconfirmed":
+                report(f"  {entry.id}: {tactic} was a candidate but did not confirm: {attempt.message}")
+    if reused:
+        report(f"reused {reused} of {len(problems.entries)} entries whose identity did not move")
+    return built(entries)
+
+
+def _findings(problems: ProblemSet, entries: dict[str, EntryBaseline]) -> list[str]:
+    """What a swept row says is wrong with its entry, in `problems.entries` order.
+
+    Split out of `sweep` so a checkpoint's findings are computed the same way
+    the final baseline's are, over whichever rows exist at the time. An entry
+    with no row -- excluded by `only`, or not swept yet -- contributes
+    nothing, exactly as before: it is not part of this baseline at all.
+    """
     findings: list[str] = []
     for entry in problems.entries:
         result = entries.get(entry.id)
         if result is None:
-            continue   # excluded by `only`, never had a prior row: not part of this baseline at all
+            continue
         if not result.elaborates:
             findings.append(f"{entry.id}: the canonical statement does not elaborate")
         if entry.expected == "false" and result.closed_by:
             findings.append(f"{entry.id}: a twin closed by {', '.join(result.closed_by)}, so it is true")
         if result.witness == "broken":
             findings.append(f"{entry.id}: the stored witness does not typecheck, so A6 cannot rule out vacuity")
-        for tactic, attempt in result.attempts.items():
-            if attempt.status == "unconfirmed":
-                report(f"  {entry.id}: {tactic} was a candidate but did not confirm: {attempt.message}")
-    if reused:
-        report(f"reused {reused} of {len(problems.entries)} entries whose identity did not move")
-    return Baseline(
-        created_at=now(), problems_sha256=problems_sha256,
-        statement_digests=current,
-        environment_digest=environment_digest,
-        procedure_digest=procedure_digest,
-        environment=environment,
-        heartbeat_budget=HEARTBEAT_BUDGET, wall_backstop_seconds=wall_backstop_seconds, import_seconds=import_seconds,
-        singles=SINGLES, chains=CHAINS, host=host, problems=tuple(findings), entries=entries,
-    )
+    return findings
 
 
 def baseline_entries_mismatch(baseline: Baseline, problem_ids: Iterable[str]) -> str | None:
