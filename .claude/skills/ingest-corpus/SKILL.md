@@ -96,12 +96,25 @@ Both are separate files and both are checked.
 
 ```json
 "atiyah-macdonald": {
-  "title": "Introduction to Commutative Algebra",
+  "citation_key": "AM69",
   "authors": ["M. F. Atiyah", "I. G. Macdonald"],
+  "title": "Introduction to commutative algebra",
+  "publisher": "Addison-Wesley Publishing Co.",
+  "address": "Reading, Mass.-London-Don Mills, Ont.",
   "year": 1969,
-  "level": "graduate"
+  "level": "graduate",
+  "locator_style": "chapter-item",
+  "locator_convention": "(chapter, 0, n) is body item chapter.n; (chapter, 1, n) is exercise n."
 }
 ```
+
+The citation fields are the AMS book fields (`authors`, `title`, `edition`,
+`note`, `series`, `volume`, `publisher`, `address`, `year`), taken from the
+book's own title and copyright pages, not from memory. `locator_style` is one
+of `chapter-item`, `section-item`, `numbered-section`, `paragraph` — see
+`SCHEMA.md` for what each makes of a triple — and decides how the viewer
+prints `[AM69, 1.11]`. Pick the style that matches how the book is actually
+cited, and write the prose convention beside it.
 
 **Every new id** goes in `corpus/tombstones.json` under `issued`, with today's
 date. The registry is append-only: never remove a key, never change a date. An
@@ -130,7 +143,9 @@ remains.
 1. `hardy evals corpus check` exits 0.
 2. `hardy evals corpus report` shows the entries where you expect them.
 3. You have looked at a sample in `hardy evals corpus serve` — the rendered
-   prose beside the Lean is where a mismatch becomes obvious.
+   prose beside the Lean is where a mismatch becomes obvious. The **Faithful**
+   button there is for a human's read, not yours: do not press it for
+   entries you wrote.
 
 ## What not to do
 
