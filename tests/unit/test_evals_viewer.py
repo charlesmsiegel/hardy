@@ -49,7 +49,9 @@ def test_the_shipped_corpus_reports_clean_with_its_counts():
     got = payload(ROOT / "corpus")
     assert got["issues"] == []
     assert got["counts"] == {"entries": 20, "twins": 5, "active": 0,
-                             "unwitnessed": 20, "unsourced": 20}
+                             "unwitnessed": 20, "unsourced": 20,
+                             # No tier file is passed, so nothing is tiered.
+                             "tiered": 0, "broken": 0}
     assert got["corpus_version"]
 
 
@@ -564,3 +566,42 @@ def test_the_page_binds_the_keys_it_documents():
     for name in ('"ArrowLeft"', '"ArrowRight"', '"f"', '"u"'):
         assert name in handler[:1500], f"{name} is not handled"
     assert "INPUT" in handler[:1500] and "SELECT" in handler[:1500], "typing in a filter must not navigate"
+
+
+def test_the_payload_carries_tier_and_elaborates_from_the_baseline(tmp_path):
+    """The tier is measurement over an entry, not a property of it, so it
+    comes from the tier file rather than the shard."""
+    root = ROOT / "corpus"
+    baseline = tmp_path / "baseline.json"
+    problems = load_corpus(root)
+    first, second = problems.entries[0].id, problems.entries[1].id
+    baseline.write_text(json.dumps({"entries": {
+        first: {"tier": 3, "elaborates": True},
+        second: {"tier": 0, "elaborates": False},
+    }}), encoding="utf-8")
+    got = payload(root, baseline)
+    by_id = {e["id"]: e for e in got["entries"]}
+    assert by_id[first]["tier"] == 3 and by_id[first]["elaborates"] is True
+    assert by_id[second]["tier"] == 0 and by_id[second]["elaborates"] is False
+    assert got["counts"]["tiered"] == 2
+    assert got["counts"]["broken"] == 1
+
+
+def test_an_entry_the_sweep_has_not_reached_has_no_tier_rather_than_a_default():
+    """Tier 0 would claim automation closes it and tier 3 would claim nothing
+    does. Both are assertions the sweep has not made."""
+    got = payload(ROOT / "corpus", None)
+    assert all(e["tier"] is None and e["elaborates"] is None for e in got["entries"])
+    assert got["counts"]["tiered"] == 0
+    assert got["counts"]["broken"] == 0
+
+
+def test_a_missing_or_malformed_tier_file_is_not_a_corpus_objection(tmp_path):
+    """`evals/` is ignored and regenerable, so a checkout that never swept is
+    a normal state -- not something to report beside the corpus's own issues."""
+    clean = payload(ROOT / "corpus", None)["issues"]
+    assert payload(ROOT / "corpus", tmp_path / "absent.json")["issues"] == clean
+    junk = tmp_path / "junk.json"
+    junk.write_text("{not json", encoding="utf-8")
+    assert payload(ROOT / "corpus", junk)["issues"] == clean
+    assert payload(ROOT / "corpus", junk)["counts"]["tiered"] == 0

@@ -228,7 +228,31 @@ def _write_atomically(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def payload(root: Path) -> dict[str, Any]:
+def _tiers(baseline_path: Path | None) -> dict[str, dict[str, Any]]:
+    """`{id: {"tier": int, "elaborates": bool}}` from the tier file, or `{}`.
+
+    The tier is measurement, not corpus content: it lives in
+    `evals/baseline.json`, which is ignored and regenerable, so a checkout
+    that has never swept simply has none. That is a normal state, not an
+    error -- the page drops the tier filters and everything else still works
+    -- so every failure here is swallowed to `{}` rather than reported beside
+    the corpus's own objections, which are about the corpus.
+
+    An entry the sweep has not reached is absent rather than defaulted. Tier
+    0 would claim automation closes it and tier 3 would claim nothing does;
+    both are assertions the sweep has not made.
+    """
+    if baseline_path is None or not baseline_path.exists():
+        return {}
+    try:
+        rows = json.loads(baseline_path.read_text(encoding="utf-8"))["entries"]
+        return {id: {"tier": row["tier"], "elaborates": bool(row["elaborates"])}
+                for id, row in rows.items()}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+
+def payload(root: Path, baseline_path: Path | None = None) -> dict[str, Any]:
     """Everything the page needs, or the objections that stopped it.
 
     A malformed shard is the common case while entries are being written by
@@ -256,10 +280,22 @@ def payload(root: Path) -> dict[str, Any]:
         # place that asks for the roll-up. `check_issues` already named it;
         # raising would take down the response that has to show it.
         return empty | {"issues": issues or [f"taxonomy: {error}"]}
+    # Attached here rather than in `_classified`: the tier is measurement over
+    # the entry, not a property of it, and `_classified` is what the review
+    # route echoes back after a write.
+    tiers = _tiers(baseline_path)
+    for entry in entries:
+        row = tiers.get(entry["id"])
+        entry["tier"] = row["tier"] if row else None
+        entry["elaborates"] = row["elaborates"] if row else None
     counts = {
         "entries": len(entries),
         "twins": sum(1 for e in entries if e["expected"] == "false"),
         "active": sum(1 for e in entries if e["status"] == "active"),
+        # Absent when nothing has been swept, so the page can tell "no tier
+        # data" from "every entry is tier 0".
+        "tiered": sum(1 for e in entries if e["tier"] is not None),
+        "broken": sum(1 for e in entries if e["elaborates"] is False),
         # A6's own rule, not `witness is None`: an entry with no binders has
         # nothing to existentially close, so `witness_source` returns nothing
         # and the sweep records it unwitnessed however the field is filled.
@@ -279,8 +315,9 @@ def payload(root: Path) -> dict[str, Any]:
 class Handler(BaseHTTPRequestHandler):
     """Two routes and nothing else: no path from a URL to an arbitrary file."""
 
-    def __init__(self, *args: Any, root: Path, **kw: Any) -> None:
+    def __init__(self, *args: Any, root: Path, baseline: Path | None = None, **kw: Any) -> None:
         self.root = root
+        self.baseline = baseline
         super().__init__(*args, **kw)
 
     def do_GET(self) -> None:  # noqa: N802 -- BaseHTTPRequestHandler's own name
@@ -290,7 +327,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/bibliography":
             self._send(BIBLIOGRAPHY.read_bytes(), "text/html; charset=utf-8")
         elif path == "/api/corpus":
-            body = json.dumps(payload(self.root), ensure_ascii=False).encode("utf-8")
+            body = json.dumps(payload(self.root, self.baseline), ensure_ascii=False).encode("utf-8")
             self._send(body, "application/json; charset=utf-8")
         else:
             self.send_error(404)
@@ -338,10 +375,15 @@ class Handler(BaseHTTPRequestHandler):
         """Silent: the useful output is the URL, printed once by `serve`."""
 
 
-def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765,
+def serve(root: Path, *, host: str = "127.0.0.1", port: int = 8765, baseline: Path | None = None,
           report: Any = print, serve_forever: bool = True) -> HTTPServer:
-    """Bound to loopback: the corpus is a working file, not a published site."""
-    server = HTTPServer((host, port), partial(Handler, root=root))
+    """Bound to loopback: the corpus is a working file, not a published site.
+
+    `baseline` is the tier file the tier and Lean filters read. It is re-read
+    on every request like the corpus is, so a sweep running alongside this
+    server fills the filters in as its checkpoints land.
+    """
+    server = HTTPServer((host, port), partial(Handler, root=root, baseline=baseline))
     report(f"Corpus viewer on http://{host}:{server.server_port}/  (Ctrl-C to stop)")
     report(f"Serving {root.resolve()} -- edit a shard and refresh to see it.")
     if serve_forever:

@@ -142,6 +142,9 @@ def add_parser(subparsers: Any) -> None:
         if verb == "serve":
             sub.add_argument("--port", type=int, default=8765)
             sub.add_argument("--host", default="127.0.0.1")
+            # The tier and Lean filters read this; absent is fine, and the
+            # page simply drops them rather than refusing to render.
+            sub.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
         if verb == "release":
             sub.add_argument("--version", required=True, help="three numbers, greater than the last")
             sub.add_argument("--note", action="append", default=[],
@@ -525,7 +528,7 @@ def main(args: argparse.Namespace, config: Any) -> int:
         if args.corpus_verb == "serve":
             from .viewer import serve
 
-            serve(args.corpus, host=args.host, port=args.port)
+            serve(args.corpus, host=args.host, port=args.port, baseline=args.baseline)
             return 0
         for line in report(args.corpus):
             print(line)

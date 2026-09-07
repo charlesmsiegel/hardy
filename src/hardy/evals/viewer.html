@@ -82,6 +82,11 @@
   }
   .tag.false { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
   .tag.active { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+  /* Tier 3 is the pool worth a human's reading time, so it is the one that
+     stands out; 0 and 1 mean a tactic already closes the goal. */
+  .tag.tier3 { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+  .tag.tier2 { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+  .tag.tier0, .tag.tier1 { opacity: .65; }
   #detail { padding: 1.1rem 1.3rem 4rem; overflow-y: auto; }
   #detail h2 { margin: 0 0 .1rem; font-size: 1.15rem; }
   #detail .sub { color: var(--dim); font-size: .82rem; margin-bottom: 1.1rem; }
@@ -162,6 +167,21 @@
           <option value="false">twins only</option>
         </select>
       </div>
+      <div class="row" id="tierRow">
+        <select id="fTier">
+          <option value="">every tier</option>
+          <option value="3">tier 3 &mdash; no tactic closes it</option>
+          <option value="2">tier 2 &mdash; a chain closes it</option>
+          <option value="1">tier 1 &mdash; exact?/apply?/hint</option>
+          <option value="0">tier 0 &mdash; a plain tactic</option>
+          <option value="unswept">not swept</option>
+        </select>
+        <select id="fLean">
+          <option value="">any Lean</option>
+          <option value="broken">does not elaborate</option>
+          <option value="ok">elaborates</option>
+        </select>
+      </div>
     </div>
     <div id="items"></div>
   </div>
@@ -205,6 +225,14 @@ function matches(e) {
   if ($("fStatus").value && e.status !== $("fStatus").value) return false;
   if ($("fDifficulty").value && e.difficulty !== $("fDifficulty").value) return false;
   if ($("fExpected").value && e.expected !== $("fExpected").value) return false;
+  // `tier == null` is "the sweep has not reached this entry", which is not
+  // tier 0 and not tier 3; it only matches the explicit "not swept" choice.
+  const tier = $("fTier").value;
+  if (tier === "unswept" && e.tier !== null) return false;
+  if (tier && tier !== "unswept" && e.tier !== Number(tier)) return false;
+  const lean = $("fLean").value;
+  if (lean === "broken" && e.elaborates !== false) return false;
+  if (lean === "ok" && e.elaborates !== true) return false;
   if (!q) return true;
   return [e.id, e.input, e.title, e.declaration, e.name, ...e.msc.map((m) => m.code + " " + m.name)]
     .join(" ").toLowerCase().includes(q);
@@ -221,6 +249,8 @@ function renderList() {
         <span class="tag">${esc(e.group)}</span>
         ${e.expected === "false" ? '<span class="tag false">twin</span>' : ""}
         ${e.status === "active" ? '<span class="tag active">active</span>' : `<span class="tag">${esc(e.status)}</span>`}
+        ${e.tier === null ? "" : `<span class="tag tier${esc(e.tier)}">tier ${esc(e.tier)}</span>`}
+        ${e.elaborates === false ? '<span class="tag false">broken</span>' : ""}
       </span>
     </div>`).join("") || '<p class="none" style="padding:.8rem">Nothing matches.</p>';
   for (const el of $("items").children) {
@@ -438,7 +468,11 @@ async function load() {
   const c = DATA.counts;
   $("counts").innerHTML = c.entries === undefined ? "" :
     `<b>${c.entries}</b> entries · <b>${c.twins}</b> twins · <b>${c.active}</b> active ·
-     <b>${c.unwitnessed}</b> non-vacuity unchecked · <b>${c.unsourced}</b> unsourced`;
+     <b>${c.unwitnessed}</b> non-vacuity unchecked · <b>${c.unsourced}</b> unsourced` +
+    (c.tiered ? ` · <b>${c.tiered}</b> tiered · <b>${c.broken}</b> not elaborating` : "");
+  // No tier file means no sweep has run here. Offering filters that can only
+  // return nothing is worse than not offering them, so the row goes away.
+  $("tierRow").hidden = !c.tiered;
   const s = $("status");
   // A recorded review changes the content, so the manifest no longer matches
   // the changelog head: expected, and cleared by the release cut before a
@@ -463,7 +497,7 @@ async function load() {
   renderDetail();
 }
 
-for (const id of ["q", "fGroup", "fStatus", "fDifficulty", "fExpected"]) {
+for (const id of ["q", "fGroup", "fStatus", "fDifficulty", "fExpected", "fTier", "fLean"]) {
   $(id).addEventListener("input", renderList);
 }
 $("reviewer").addEventListener("change", rememberReviewer);
