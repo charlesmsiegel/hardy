@@ -531,6 +531,15 @@ class _Capture:
                 stream.feed(chunk)
                 self._changed.notify_all()
 
+    @staticmethod
+    def _write_marker(marker: bytes) -> None:
+        """Flush Python output before fencing both OS descriptors."""
+        for fd in (1, 2):
+            with contextlib.suppress(Exception):
+                (sys.stdout if fd == 1 else sys.stderr).flush()
+            with contextlib.suppress(OSError):
+                os.write(fd, marker)
+
     def begin(self) -> bytes:
         """Arm both streams for one cell and fence the start of its output.
 
@@ -545,11 +554,7 @@ class _Capture:
         with self._changed:
             for stream in self.streams.values():
                 stream.arm(begin, marker)
-        for fd in (1, 2):
-            with contextlib.suppress(Exception):
-                (sys.stdout if fd == 1 else sys.stderr).flush()
-            with contextlib.suppress(OSError):
-                os.write(fd, begin)
+        self._write_marker(begin)
         return marker
 
     def settle(self, marker: bytes) -> tuple[str, str, bool]:
@@ -561,11 +566,7 @@ class _Capture:
         1, or from a child that inherited it -- is necessarily in front of the
         marker, and finding the marker is proof that all of it has arrived.
         """
-        for fd in (1, 2):
-            with contextlib.suppress(Exception):
-                (sys.stdout if fd == 1 else sys.stderr).flush()
-            with contextlib.suppress(OSError):
-                os.write(fd, marker)
+        self._write_marker(marker)
         with self._changed:
             deadline = time.monotonic() + SETTLE_SECONDS
             while not all(

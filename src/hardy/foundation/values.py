@@ -5,6 +5,7 @@ these primitives impose no dependency on a capability or workflow.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -16,6 +17,18 @@ class FrozenModel(BaseModel):
     """A strict immutable value that is safe to hash or persist."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def json_digest(value: Any) -> str:
+    """SHA-256 of sorted, compact UTF-8 JSON, preserving non-ASCII text.
+
+    Evidence producers and readers must hash the same bytes. Callers own the
+    payload and any domain tag; this function owns only its serialization.
+    """
+    canonical = json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def schema_text(model: type[BaseModel]) -> str:

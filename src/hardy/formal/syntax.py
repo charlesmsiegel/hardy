@@ -268,15 +268,7 @@ def strip_comments(source: str, *, keep_strings: bool = False) -> str:
             index = min(index + len(closer), length)
             continue
         if character == '"' and keep_strings:
-            index += 1
-            while index < length:
-                if source[index] == "\\":
-                    index += 2
-                    continue
-                if source[index] == '"':
-                    index += 1
-                    break
-                index += 1
+            index = _string_end(source, index)
             continue
         if character == '"':
             out[index] = " "
@@ -311,6 +303,23 @@ def strip_comments(source: str, *, keep_strings: bool = False) -> str:
             continue
         index += 1
     return "".join(out)
+
+
+def _string_end(text: str, start: int) -> int:
+    """Scan past an ordinary quoted Lean string, including escaped quotes.
+
+    An unterminated escape may step one character past EOF, as both callers
+    historically did; slicing still preserves all available source text.
+    """
+    index = start + 1
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == '"':
+            return index + 1
+        index += 1
+    return index
 
 
 def normalise_lean(text: str) -> str:
@@ -349,15 +358,7 @@ def normalise_lean(text: str) -> str:
             continue
         if character == '"':
             start = index
-            index += 1
-            while index < length:
-                if text[index] == "\\":
-                    index += 2
-                    continue
-                if text[index] == '"':
-                    index += 1
-                    break
-                index += 1
+            index = _string_end(text, index)
             out.append(text[start:index])
             continue
         if character.isspace():

@@ -508,13 +508,6 @@ IMPORT_USAGE = (
 IMPORT_KINDS = {"lean": "import_lean", "reference": "import_reference", "tex": "import_tex"}
 
 
-def _unquoted(word: str) -> str:
-    """One token with the quotes non-POSIX `shlex` deliberately leaves on."""
-    if len(word) >= 2 and word[0] == word[-1] and word[0] in {'"', "'"}:
-        return word[1:-1]
-    return word
-
-
 async def handle_import(ui: Ui, argument: str, state: State) -> State:
     """Triage an existing pile of files, or promote one into the project.
 
@@ -538,7 +531,7 @@ async def handle_import(ui: Ui, argument: str, state: State) -> State:
         # Windows path, on a platform Hardy supports -- arrived as
         # `C:UsersmeFoo.lean`. Non-POSIX mode keeps the backslashes and still
         # honours quoting, so a path with spaces needs quotes and nothing else.
-        words = [_unquoted(word) for word in shlex.split(argument, posix=False)]
+        words = [user_prompts.unquoted(word) for word in shlex.split(argument, posix=False)]
     except ValueError as error:
         ui.write(f"Could not read that: {error}. {IMPORT_USAGE}", style="error")
         return state
@@ -829,7 +822,7 @@ async def handle_export(ui: Ui, argument: str, state: State) -> State:
     destination: Path | None = None
     try:
         destination = (
-            Path(_unquoted(argument)).expanduser()
+            Path(user_prompts.unquoted(argument)).expanduser()
             if argument
             else export_module.default_path(state.config.layout.problem, state.config.project)
         )

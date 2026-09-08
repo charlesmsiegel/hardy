@@ -280,22 +280,7 @@ _DATA_TYPE = re.compile(r"^(?:Type|Sort|Prop)\b|^(?:ℕ|ℤ|ℚ|ℝ|ℂ|Nat|Int|
 
 def _split_top(text: str, separator: str) -> list[str]:
     """`text` split on `separator` outside every bracket."""
-    parts, depth, start = [], 0, 0
-    index = 0
-    while index < len(text):
-        character = text[index]
-        if character in "([{":
-            depth += 1
-        elif character in ")]}":
-            depth -= 1
-        elif depth == 0 and text.startswith(separator, index):
-            parts.append(text[start:index])
-            start = index + len(separator)
-            index = start
-            continue
-        index += 1
-    parts.append(text[start:])
-    return parts
+    return _split_top_before(text, separator, len(text))
 
 
 def _mentions(name: str, text: str) -> bool:

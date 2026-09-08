@@ -417,10 +417,11 @@ class _MacroState:
                 self.depth = 1
                 return
             self.phase = "args"
-        if self.phase == "naming":
-            if character == "{":
+        if self.phase in {"naming", "bracket"}:
+            opener, closer = ("{", "}") if self.phase == "naming" else ("[", "]")
+            if character == opener:
                 self.depth += 1
-            elif character == "}":
+            elif character == closer:
                 self.depth -= 1
                 if self.depth == 0:
                     self.phase = "args"
@@ -443,14 +444,6 @@ class _MacroState:
             if character == "{":
                 self.phase = "body"
                 self.depth = 1
-            return
-        if self.phase == "bracket":
-            if character == "[":
-                self.depth += 1
-            elif character == "]":
-                self.depth -= 1
-                if self.depth == 0:
-                    self.phase = "args"
             return
         if self.phase == "body":
             if character == "{":

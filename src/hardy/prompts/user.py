@@ -87,7 +87,7 @@ class Template:
         return self.description or f"your own prompt ({self.name}.md)"
 
 
-def _unquoted(word: str) -> str:
+def unquoted(word: str) -> str:
     """One token with the quotes non-POSIX `shlex` deliberately leaves on."""
     if len(word) >= 2 and word[0] == word[-1] and word[0] in {'"', "'"}:
         return word[1:-1]
@@ -108,7 +108,7 @@ def tokenize(argument: str) -> list[str]:
     what a user typing prose meant anyway.
     """
     try:
-        return [_unquoted(word) for word in shlex.split(argument, posix=False)]
+        return [unquoted(word) for word in shlex.split(argument, posix=False)]
     except ValueError:
         return argument.split()
 

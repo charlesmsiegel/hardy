@@ -393,10 +393,6 @@ def prose(document: Displayed) -> str:
     return ESCAPED.sub(r"\1", normalise(without_definitions(document.executed)))
 
 
-def has_appendix(document: Displayed) -> bool:
-    return APPENDIX.search(document.executed) is not None
-
-
 def covering(name: str, registry: Sequence[Mapping[str, str]]) -> Mapping[str, str] | None:
     """The registry entry that records `name`, if one does.
 

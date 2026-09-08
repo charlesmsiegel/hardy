@@ -274,7 +274,7 @@ def scoreboard_self_issues(scoreboard_dir: Path, *, problems_path: Path, baselin
     condition and environment cross-checks, the duplicate-sample checks, the
     per-entry staleness gate, and the row-ordering/interrupted-prefix rules.
 
-    `evals pool` calls exactly this and not `scoreboard_corpus_issues`,
+    `evals pool` calls exactly this and not `_corpus_issues`,
     because accumulating batches *is* corpus and baseline growth: an earlier
     board's `problems_sha256` and `baseline_sha256` necessarily name files
     that have since grown, and its `aggregates` were computed against the
@@ -287,20 +287,6 @@ def scoreboard_self_issues(scoreboard_dir: Path, *, problems_path: Path, baselin
         return unreadable
     problems, baseline = _corpus_and_baseline(problems_path, baseline_path)
     return tuple(_self_issues(board, scoreboard_dir, problems, baseline))
-
-
-def scoreboard_corpus_issues(scoreboard_dir: Path, *, problems_path: Path, baseline_path: Path) -> tuple[str, ...]:
-    """The half that binds a board to the corpus and baseline *as they are now*.
-
-    Only `hardy evals check` asks for this: it is checking that this board
-    still describes today's committed evidence. A pool of several batches
-    cannot -- by construction the corpus and baseline moved between them.
-    """
-    board, unreadable = _read_board(scoreboard_dir)
-    if board is None:
-        return unreadable
-    problems, baseline = _corpus_and_baseline(problems_path, baseline_path)
-    return tuple(_corpus_issues(board, problems, baseline, problems_path=problems_path, baseline_path=baseline_path))
 
 
 def validate_scoreboard(scoreboard_dir: Path, *, problems_path: Path, baseline_path: Path) -> tuple[str, ...]:

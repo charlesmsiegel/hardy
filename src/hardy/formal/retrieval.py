@@ -62,7 +62,7 @@ from pydantic import model_validator
 from hardy.formal.contracts import EnvironmentIdentity
 from hardy.formal.declarations import INDEX_ALGORITHM, DeclarationIndex
 from hardy.formal.lean import DECLARATION_NAME, DeclarationRecord
-from hardy.foundation.values import FrozenModel
+from hardy.foundation.values import FrozenModel, json_digest
 from hardy.workflows.contracts import RunLimits
 
 # Loogle's public instance. The endpoint is configurable because a project that
@@ -259,24 +259,12 @@ class RetrievalProvenance(FrozenModel):
 
     @property
     def digest(self) -> str:
-        canonical = json.dumps(
-            self.model_dump(mode="json"),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-        return hashlib.sha256(canonical).hexdigest()
+        return json_digest(self.model_dump(mode="json"))
 
 
 def premises_digest(premises: Sequence[RankedPremise]) -> str:
     """The digest a ranking's premises are bound by, in their ranked order."""
-    canonical = json.dumps(
-        [premise.model_dump(mode="json") for premise in premises],
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return json_digest([premise.model_dump(mode="json") for premise in premises])
 
 
 class PremiseRanking(FrozenModel):

@@ -1,0 +1,471 @@
+{
+  "source_commit_before_changes": "c987cac",
+  "python": "3.14.5 (tags/v3.14.5:5607950, May 10 2026, 10:43:50) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "command": ".venv-refactor/Scripts/python.exe -m pytest --cov -m \"not real_toolchain and not live\" -q --basetemp <task temp directory> --junitxml <task temp XML>",
+  "environment_note": "The existing .venv launcher points to an absent interpreter. Used the already-installed .venv-refactor. Default pytest temp root denied access; used a fresh task-specific temp root.",
+  "full_suite": {
+    "passed": 3455,
+    "failed": 79,
+    "skipped": 135,
+    "deselected": 36,
+    "elapsed_seconds": 945.43,
+    "exit_code": 1
+  },
+  "coverage": {
+    "percent": 89.72155926809864,
+    "required_floor": 82,
+    "floor_passed": true,
+    "reports": [
+      "coverage.xml",
+      "htmlcov/index.html"
+    ]
+  },
+  "focused_before": {
+    "passed": 209
+  },
+  "focused_after": {
+    "passed": 341
+  },
+  "failure_accounting": {
+    "matched_previous_audit": 77,
+    "additional_reproduced_on_original_source": 2,
+    "new_regressions_identified": 0,
+    "historical_id_normalization": {
+      "from": "tests/unit/test_cas_sympy.py::test_a_tuple_valued_cell_still_exports_a_runnable_script[x,",
+      "to": "tests/unit/test_cas_sympy.py::test_a_tuple_valued_cell_still_exports_a_runnable_script[x, y-(x, y)]"
+    }
+  },
+  "original_source_reproductions": {
+    "tests/test_chat_audit.py::test_a_guillemet_quoted_declaration_is_auditable": {
+      "original_commit": "c987cac",
+      "result": "same failure reproduced",
+      "message": "AssertionError: assert [{'axioms': [...st resultÂ»'}] == [{'axioms': [...rst result»'}]\n  \n  At index 0 diff: {'name': 'Â«first resultÂ»', 'axioms': []} != {'name': '«first result»', 'axioms': []}\n  Use -v to get more diff"
+    },
+    "tests/unit/test_cas_interrupt.py::test_a_kernel_that_stopped_reading_can_still_be_escalated": {
+      "original_commit": "c987cac",
+      "result": "same failure reproduced",
+      "message": "ValueError: PyMemoryView_FromBuffer(): info->buf must not be NULL"
+    }
+  },
+  "failed_tests": [
+    {
+      "nodeid": "tests/integration/test_recorded_evals.py::test_the_local_baseline_describes_the_committed_list_with_no_problems",
+      "message": "AssertionError: assert 'f2f22622b51e...691c8b96c31a4' == 'bdf6ef50656e...f5dd27f2417d0'\n  \n  - bdf6ef50656e358b3261838d6a62866b6480cc02a6513884041f5dd27f2417d0\n  + f2f22622b51e56e83d720cd5036ab76941951c800e304b99827691c8b96c31a4",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/integration/test_recorded_evals.py::test_the_local_baseline_never_claims_a_procedure_it_cannot_support",
+      "message": "AssertionError: assert '3770285a789b84e8f97d8758d849b41c1f73f8dae8d6cdc8ebb271f08578c8ae' in ('', '1a97f91788a39ce55b932a235a2ea04e35daf91f765470678a80511d52a0e296')\n +  where '3770285a789b84e8f97d8758d849b41c1f73f8dae8d6cdc8ebb271f08578c8ae' = Baseline(schema_version=1, created_at=datetime.datetime(2026, 9, 7, 7, 25, 34, 765825, tzinfo=TzInfo(0)), problems_sha...iled', heartbeats=41193, seconds=None, axioms=None, message='unsolved goals')}, closed_by=()), witness='unwitnessed')}).procedure_digest",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/integration/test_recorded_evals.py::test_each_local_scoreboard_recomputes_from_its_runs[haiku-45-batch2]",
+      "message": "AssertionError: assert ('problems_sh...aborate', ...) == ()\n  \n  Left contains 121 more items, first extra item: 'problems_sha256 does not match the corpus manifest'\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/integration/test_recorded_evals.py::test_each_local_scoreboard_recomputes_from_its_runs[opus-5-batch1]",
+      "message": "AssertionError: assert ('problems_sh...aborate', ...) == ()\n  \n  Left contains 121 more items, first extra item: 'problems_sha256 does not match the corpus manifest'\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/integration/test_recorded_evals.py::test_each_local_scoreboard_recomputes_from_its_runs[sonnet-5-batch2]",
+      "message": "AssertionError: assert ('problems_sh...aborate', ...) == ()\n  \n  Left contains 121 more items, first extra item: 'problems_sha256 does not match the corpus manifest'\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_audit.py::test_a_guillemet_quoted_declaration_is_auditable",
+      "message": "AssertionError: assert [{'axioms': [...st resultÂ»'}] == [{'axioms': [...rst result»'}]\n  \n  At index 0 diff: {'name': 'Â«first resultÂ»', 'axioms': []} != {'name': '«first result»', 'axioms': []}\n  Use -v to get more diff",
+      "classification": "reproduced on original c987cac"
+    },
+    {
+      "nodeid": "tests/test_chat_audit.py::test_a_report_naming_an_open_theorem_is_graded_partial",
+      "message": "AssertionError: this report is refused: the artifacts do not yet back it.\n  - the writeup on disk is not the one that was compiled, so its labels and listings are not established. Run save_latex again.\n  Settle every line above with save_lean, record_name and save_latex, then report again. Do not tell the user this is finished in the meantime.\nassert False\n +  where False = ToolResult(ok=False, output='this report is refused: the artifacts do not yet back it.\\n- the writeup on disk is not t...n, record_name and save_latex, then report again. Do not tell the user this is finished in the meantime.', source=None).ok",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_audit.py::test_a_report_resting_on_an_assumption_is_not_recorded_as_clean",
+      "message": "AssertionError: this report is refused: the artifacts do not yet back it.\n  - the writeup on disk is not the one that was compiled, so its labels and listings are not established. Run save_latex again.\n  Settle every line above with save_lean, record_name and save_latex, then report again. Do not tell the user this is finished in the meantime.\nassert False\n +  where False = ToolResult(ok=False, output='this report is refused: the artifacts do not yet back it.\\n- the writeup on disk is not t...n, record_name and save_latex, then report again. Do not tell the user this is finished in the meantime.', source=None).ok",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_audit.py::test_an_open_theorem_in_a_theorem_environment_still_backs_it",
+      "message": "AssertionError: this report is refused: the artifacts do not yet back it.\n  - the writeup on disk is not the one that was compiled, so its labels and listings are not established. Run save_latex again.\n  Settle every line above with save_lean, record_name and save_latex, then report again. Do not tell the user this is finished in the meantime.\nassert False\n +  where False = ToolResult(ok=False, output='this report is refused: the artifacts do not yet back it.\\n- the writeup on disk is not t...n, record_name and save_latex, then report again. Do not tell the user this is finished in the meantime.', source=None).ok",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_audit.py::test_a_bare_registry_name_backs_an_open_theorem_environment",
+      "message": "AssertionError: this report is refused: the artifacts do not yet back it.\n  - the writeup on disk is not the one that was compiled, so its labels and listings are not established. Run save_latex again.\n  Settle every line above with save_lean, record_name and save_latex, then report again. Do not tell the user this is finished in the meantime.\nassert False\n +  where False = ToolResult(ok=False, output='this report is refused: the artifacts do not yet back it.\\n- the writeup on disk is not t...n, record_name and save_latex, then report again. Do not tell the user this is finished in the meantime.', source=None).ok",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_both_halves_present_makes_the_work_reportable",
+      "message": "AssertionError: [{'ok': True, 'output': 'exit=0 elapsed=0.095s\n  \n  axiom audit: standard axioms only\n  \n  automation probe: Lean could no...ecord_name and save_latex, then report again. Do not tell the user this is finished in the meantime.', 'source': None}]\nassert False\n +  where False = all(<generator object test_both_halves_present_makes_the_work_reportable.<locals>.<genexpr> at 0x000002518CE6C930>)",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_changing_the_statement_takes_the_report_back",
+      "message": "assert False is True",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_an_appendix_stating_the_assumption_releases_the_report",
+      "message": "AssertionError: {'ok': False, 'output': 'this report is refused: the artifacts do not yet back it.\n  - the writeup on disk is not the o...record_name and save_latex, then report again. Do not tell the user this is finished in the meantime.', 'source': None}\nassert False is True",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_an_unused_approval_owes_no_appendix",
+      "message": "assert False is True",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_a_finished_workspace_ends_a_turn_quietly",
+      "message": "AssertionError: assert [TurnEvent(ki..., call_id='')] == []\n  \n  Left contains one more item: TurnEvent(kind='notice', text='Hardy: 1 outstanding obligation. None of this may be reported as proved until it is set...hat was compiled, so its labels and listings are not established. Run save_latex again.', name='', ok=None, call_id='')\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_a_writeup_edited_behind_hardys_back_is_not_established",
+      "message": "AssertionError: assert (Obligation(k...tex again.'),) == ()\n  \n  Left contains one more item: Obligation(kind='label', subject='', detail='the writeup on disk is not the one that was compiled, so its labels and listings are not established. Run save_latex again.')\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_a_stale_audit_is_outstanding_everywhere_and_not_only_at_a_report",
+      "message": "AssertionError: assert ['hardyOne', ''] == ['hardyOne']\n  \n  Left contains one more item: ''\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_a_notice_does_not_contradict_a_report_it_accepted",
+      "message": "assert False is True",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_a_report_rests_on_what_its_own_theorems_rest_on",
+      "message": "AssertionError: {'ok': False, 'output': 'this report is refused: the artifacts do not yet back it.\n  - the writeup on disk is not the o...record_name and save_latex, then report again. Do not tell the user this is finished in the meantime.', 'source': None}\nassert False is True",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_deleting_a_fragment_leaves_a_writeup_that_is_still_established",
+      "message": "AssertionError: (Obligation(kind='label', subject='', detail='the writeup on disk is not the one that was compiled, so its labels and listings are not established. Run save_latex again.'),)\nassert (Obligation(k...tex again.'),) == ()\n  \n  Left contains one more item: Obligation(kind='label', subject='', detail='the writeup on disk is not the one that was compiled, so its labels and listings are not established. Run save_latex again.')\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_completion.py::test_a_fragment_the_root_ignores_does_not_establish_the_writeup",
+      "message": "AssertionError: assert (Obligation(k...tex again.'),) == ()\n  \n  Left contains one more item: Obligation(kind='label', subject='', detail='the writeup on disk is not the one that was compiled, so its labels and listings are not established. Run save_latex again.')\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_project_context.py::test_the_project_instructions_reach_the_prompt_and_the_transcript",
+      "message": "AssertionError: assert 'We are chasi...roughout.\\r\\n' == 'We are chasi...throughout.\\n'\n  \n  Skipping 50 identical leading characters in diff, use -v to show\n  - hroughout.\n  + hroughout.\n  ?           +",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_project_context.py::test_an_edited_file_is_recorded_in_full_again",
+      "message": "AssertionError: assert 'Aim the writ... a paper.\\r\\n' == 'Aim the writ...at a paper.\\n'\n  \n  - Aim the writeup at a paper.\n  + Aim the writeup at a paper.\n  ?                            +",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_project_context.py::test_a_pathological_file_is_bounded_and_the_model_is_told",
+      "message": "AssertionError: assert 2720000 == (67 * 40000)\n +  where 2720000 = ProjectContext(name='AGENTS.md', text='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\r\\nxxxxxxxxx...xxxxxxx\\r\\n', sha256='d19ef5107056bde93ad6a84beb8bf58e1677ad07bb5e40da21554dc740cb94bf', bytes=2720000, truncated=True).bytes\n +    where ProjectContext(name='AGENTS.md', text='xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\r\\nxxxxxxxxx...xxxxxxx\\r\\n', sha256='d19ef5107056bde93ad6a84beb8bf58e1677ad07bb5e40da21554dc740cb94bf', bytes=2720000, truncated=True) = <hardy.workflows.interactive.session.MathematicsSession object at 0x0000025186A3AE40>.project_context\n +  and   67 = len('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\n')",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_chat_project_context.py::test_a_file_that_just_fits_is_not_reported_as_truncated",
+      "message": "AssertionError: assert True is False\n +  where True = ProjectContext(name='AGENTS.md', text='zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz...zzzzzzzzz\\r\\n', sha256='14321c02acb3886f692b73ab0a9cb281a2200544ff1d1b629ca5a9826fed4e0f', bytes=50500, truncated=True).truncated\n +    where ProjectContext(name='AGENTS.md', text='zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz...zzzzzzzzz\\r\\n', sha256='14321c02acb3886f692b73ab0a9cb281a2200544ff1d1b629ca5a9826fed4e0f', bytes=50500, truncated=True) = <hardy.workflows.interactive.session.MathematicsSession object at 0x000002518B305400>.project_context",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_hardy.py::test_the_toolchain_is_asked_of_the_lean_the_run_invokes",
+      "message": "KeyError: 'lean_version'",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_ingest.py::test_triage_records_the_digest_of_what_arrived",
+      "message": "AssertionError: assert '98682b0fae31...dcaf7349057f0' == '14a08b023563...9849e555aa20d'\n  \n  - 14a08b0235630ed0468780a6ce64bc110ada9e3f7a4d03cec249849e555aa20d\n  + 98682b0fae3122779c143a9c2829050050e4c85ef6f80b2ee9edcaf7349057f0",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_ingest.py::test_import_lean_promotes_a_clean_file_with_provenance",
+      "message": "AssertionError: assert {'kind': 'lea...caf7349057f0'} == {'kind': 'lea...849e555aa20d'}\n  \n  Omitting 3 identical items, use -vv to show\n  Differing items:\n  {'sha256': '98682b0fae3122779c143a9c2829050050e4c85ef6f80b2ee9edcaf7349057f0'} != {'sha256': '14a08b0235630ed0468780a6ce64bc110ada9e3f7a4d03cec249849e555aa20d'}\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/test_ingest.py::test_import_reference_lands_in_the_shared_library_and_builds",
+      "message": "AssertionError: assert '98682b0fae31...dcaf7349057f0' == '14a08b023563...9849e555aa20d'\n  \n  - 14a08b0235630ed0468780a6ce64bc110ada9e3f7a4d03cec249849e555aa20d\n  + 98682b0fae3122779c143a9c2829050050e4c85ef6f80b2ee9edcaf7349057f0",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_acceptance_modulo.py::test_a_properly_declared_modulo_run_passes",
+      "message": "AssertionError: assert ('Lean source...erification',) == ()\n  \n  Left contains one more item: 'Lean source hash differs from verification'\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_export.py::test_export_writes_a_script_a_notebook_and_a_manifest",
+      "message": "AssertionError: assert False\n +  where False = ExportReport(script_path='C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_export_writes_a_script_a_0/cas/ses... printed �hardy-transcript-begin�\\r\\n1\\r\\n2\\r\\n�hardy-transcript-finished-04230d8bb93d7e17�\\r\\n�hardy-transcript-end�').reproduces",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_export.py::test_a_session_that_survived_a_restart_still_exports_as_verified",
+      "message": "AssertionError: assert False\n +  where False = ExportReport(script_path='C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_session_that_survived_a0/cas/ses... printed �hardy-transcript-begin�\\r\\n1\\r\\n2\\r\\n�hardy-transcript-finished-597875a2a2b5291d�\\r\\n�hardy-transcript-end�').reproduces",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_interrupt.py::test_an_interrupted_cell_leaves_the_kernel_and_its_namespace_alive",
+      "message": "AssertionError: assert 'ok' == 'interrupted'\n  \n  - interrupted\n  + ok",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_interrupt.py::test_an_interrupt_does_not_wait_out_the_cell_limit",
+      "message": "AssertionError: [the kernel did not answer the interrupt, so it was stopped. Every value in the session is gone; the next cell rebuilds from the accepted ones.]\nassert 'dead' != 'dead'\n +  where 'dead' = <hardy.algebra.session.CasSession object at 0x000002518ECA5400>.state",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_interrupt.py::test_a_press_that_lands_before_the_cell_still_stops_it",
+      "message": "AssertionError: [the kernel did not answer the interrupt, so it was stopped. Every value in the session is gone; the next cell rebuilds from the accepted ones.]\nassert 'dead' != 'dead'\n +  where 'dead' = <hardy.algebra.session.CasSession object at 0x000002518CA50050>.state",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_interrupt.py::test_a_cell_that_reports_success_after_being_signalled_is_not_accepted",
+      "message": "AssertionError: assert 'interrupted' == 'ok'\n  \n  - ok\n  + interrupted",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_interrupt.py::test_a_kernel_that_stopped_reading_can_still_be_escalated",
+      "message": "ValueError: PyMemoryView_FromBuffer(): info->buf must not be NULL",
+      "classification": "reproduced on original c987cac"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_cell_printing_far_past_the_cap_does_not_hold_it_all",
+      "message": "AssertionError: the kernel died rather than bounding its capture\nassert b''",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_cell_that_rebinds_print_does_not_break_the_transcript_markers",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_rebinds_print0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_rebinds_print0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_rebinds_print0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 1,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 1,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 1,\n        \"verdict\": \"unverified\",\n        \"detail\": \"output reproduced, state not compared: this kernel could not fingerprint the namespace this cell left\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\nbefore\\r\\n�hardy-transcript-finished-d9755cb68e923451�\\r\\n�hardy-transcript-end�\"\n  }\nassert 'diverged' == 'verified'\n  \n  - verified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_output_a_helper_writes_after_its_cell_is_not_silently_dropped",
+      "message": "AssertionError: the helper's late output was discarded and nothing admitted it\nassert False is True\n +  where False = CellRecord(seq=1, segment=0, author='model', source='2 + 2', status='ok', accepted=True, stdout='', stderr='', value_r..., backend_version='', state_digest='b102eba5b01eea3479f35ded0b0997be74d2b041f63892a3226bcb1b044dd3b2', restart_note='').capture_truncated",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_cell_that_breaks_import_does_not_break_the_closing_marker",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_breaks_import0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_breaks_import0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_breaks_import0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 2,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 1,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 1,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 2,\n        \"verdict\": \"unverified\",\n        \"detail\": \"output reproduced, state not compared: this kernel could not fingerprint the namespace this cell left\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\n4\\r\\n�hardy-transcript-finished-cb1558999167ca15�\\r\\n�hardy-transcript-end�\"\n  }\nassert 'diverged' == 'verified'\n  \n  - verified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_bytes_behind_the_marker_in_one_read_are_admitted_to",
+      "message": "AssertionError: assert False is True\n +  where False = CellRecord(seq=1, segment=0, author='model', source='2 + 2', status='ok', accepted=True, stdout='', stderr='', value_r..., backend_version='', state_digest='b102eba5b01eea3479f35ded0b0997be74d2b041f63892a3226bcb1b044dd3b2', restart_note='').capture_truncated",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_capture_that_cannot_be_written_down_exactly_says_so",
+      "message": "AssertionError: assert 'plain\\r\\n' == 'plain\\n'\n  \n  - plain\n  + plain\n  ?      +",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_cell_that_replaces_stdout_does_not_redirect_the_closing_marker",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_replaces_stdo0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_replaces_stdo0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_replaces_stdo0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 2,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 0,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 1,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\n4\\r\\n�hardy-transcript-finished-3f9de40b39d70267�\\r\\n�hardy-transcript-end�\"\n  }\nassert 'diverged' == 'verified'\n  \n  - verified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_the_fence_does_not_cost_an_ordinary_cell_its_output",
+      "message": "AssertionError: assert 'kept\\r\\n' == 'kept\\n'\n  \n  - kept\n  + kept\n  ?     +",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_an_export_of_a_fully_fingerprinted_session_still_verifies",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_an_export_of_a_fully_fing0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_an_export_of_a_fully_fing0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_an_export_of_a_fully_fing0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 2,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 0,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 1,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\n(x - 1)*(x + 1)\\r\\n�hardy-transcript-finished-6e88e7d96bdea02a�\\r\\n�hardy-transcript-end�\"\n  }\nassert False is True\n +  where False = ExportReport(script_path='C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_an_export_of_a_fully_fing0/cas/ses...�hardy-transcript-begin�\\r\\n(x - 1)*(x + 1)\\r\\n�hardy-transcript-finished-6e88e7d96bdea02a�\\r\\n�hardy-transcript-end�').reproduces",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_script_that_exits_early_has_not_reproduced_anything",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_script_that_exits_early0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_script_that_exits_early0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_script_that_exits_early0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 2,\n    \"diverged\": 1,\n    \"failed\": 0,\n    \"unverified\": 0,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 1,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 2,\n        \"verdict\": \"diverged\",\n        \"detail\": \"replay reproduced the output and rebuilt a different namespace\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\n\\r\\n�hardy-transcript-end�\"\n  }\nassert 'diverged' == 'failed'\n  \n  - failed\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_script_that_runs_to_the_end_still_verifies",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_script_that_runs_to_the0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_script_that_runs_to_the0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_script_that_runs_to_the0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 2,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 0,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 1,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\n(x - 1)*(x + 1)\\r\\n�hardy-transcript-finished-fab8c60c7c8ef6d2�\\r\\n�hardy-transcript-end�\"\n  }\nassert 'diverged' == 'verified'\n  \n  - verified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_descendant_cannot_rewrite_the_artifact_after_the_verdict",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_descendant_cannot_rewri0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_descendant_cannot_rewri0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_descendant_cannot_rewri0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 1,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 0,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\n�hardy-transcript-finished-afdc83489840c959�\\r\\n�hardy-transcript-end�\"\n  }\nassert 'diverged' == 'unverified'\n  \n  - unverified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_cell_cannot_claim_the_script_finished",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_cannot_claim_the_s0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_cannot_claim_the_s0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_cannot_claim_the_s0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 3,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 0,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 1,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 2,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\n�hardy-transcript-finished-0000000000000000�\\r\\n�hardy-transcript-end�\"\n  }\nassert 'diverged' == 'failed'\n  \n  - failed\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_cell_may_print_something_that_looks_like_hardys_own_sentinel",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_may_print_somethin0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_may_print_somethin0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_may_print_somethin0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 0,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 1,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"unverified\",\n        \"detail\": \"capture truncated at cas_output_bytes: the retained prefixes match, and the discarded tails could not be compared\"\n      }\n    ],\n    \"script_verdict\": \"unverified\",\n    \"script_detail\": \"cell(s) [0] were recorded from a truncated capture, so there is no complete transcript to compare the script against\"\n  }\nassert 'unverified' == 'verified'\n  \n  - verified\n  + unverified\n  ? ++",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_cell_that_sabotages_the_interpreter_keeps_a_runnable_artifact",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_sabotages_the0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_sabotages_the0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_cell_that_sabotages_the0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 2,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 1,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 1,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      },\n      {\n        \"seq\": 2,\n        \"verdict\": \"unverified\",\n        \"detail\": \"output reproduced, state not compared: this kernel could not fingerprint the namespace this cell left\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\n4\\r\\n�hardy-transcript-finished-22c3733b5a5a843d�\\r\\n�hardy-transcript-end�\"\n  }\nassert 'diverged' == 'verified'\n  \n  - verified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_platform_that_cannot_sweep_descendants_does_not_claim_verified",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_platform_that_cannot_sw0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_platform_that_cannot_sw0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_platform_that_cannot_sw0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 1,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 0,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\n2\\r\\n�hardy-transcript-finished-3afbccc867d295aa�\\r\\n�hardy-transcript-end�\"\n  }\nassert 'diverged' == 'unverified'\n  \n  - unverified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_review.py::test_a_platform_that_can_sweep_still_verifies",
+      "message": "AssertionError: {\n    \"script_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_platform_that_can_sweep0/cas/session.py\",\n    \"notebook_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_platform_that_can_sweep0/cas/session.ipynb\",\n    \"manifest_path\": \"C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_platform_that_can_sweep0/cas/export.json\",\n    \"backend\": \"sympy\",\n    \"verified\": 1,\n    \"diverged\": 0,\n    \"failed\": 0,\n    \"unverified\": 0,\n    \"verdicts\": [\n      {\n        \"seq\": 0,\n        \"verdict\": \"verified\",\n        \"detail\": \"\"\n      }\n    ],\n    \"script_verdict\": \"diverged\",\n    \"script_detail\": \"the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\\r\\n2\\r\\n�hardy-transcript-finished-993d25dcdde59986�\\r\\n�hardy-transcript-end�\"\n  }\nassert 'diverged' == 'unverified'\n  \n  - unverified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_sentinel.py::test_an_exported_sentinel_script_is_run_and_compared",
+      "message": "AssertionError: assert 'unverified' == 'verified'\n  \n  - verified\n  + unverified\n  ? ++",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_sympy.py::test_an_exported_sympy_session_reproduces",
+      "message": "AssertionError: assert False\n +  where False = ExportReport(script_path='C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_an_exported_sympy_session0/cas/ses...�hardy-transcript-begin�\\r\\n(x - y)*(x + y)\\r\\n�hardy-transcript-finished-53fd6684fc46345b�\\r\\n�hardy-transcript-end�').reproduces",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_sympy.py::test_running_the_exported_script_prints_what_the_session_recorded",
+      "message": "AssertionError: assert 'diverged' == 'verified'\n  \n  - verified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_sympy.py::test_awkwardly_shaped_cells_still_render_into_a_runnable_script",
+      "message": "AssertionError: the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\r\n  x + 2\r\n  (x - 1)*(x + 1)\r\n  7\r\n  �hardy-transcript-finished-c446393938c8e1cc�\r\n  �hardy-transcript-end�\nassert 'diverged' == 'verified'\n  \n  - verified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_sympy.py::test_a_tuple_valued_cell_still_exports_a_runnable_script[x, y-(x, y)]",
+      "message": "AssertionError: the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\r\n  (x, y)\r\n  �hardy-transcript-finished-87f58b6229719670�\r\n  �hardy-transcript-end�\nassert 'diverged' == 'verified'\n  \n  - verified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_sympy.py::test_a_tuple_valued_cell_still_exports_a_runnable_script[x,-(x,)]",
+      "message": "AssertionError: the script did not print the markers Hardy wrote around its own transcript; it printed �hardy-transcript-begin�\r\n  (x,)\r\n  �hardy-transcript-finished-c6b88363131889b0�\r\n  �hardy-transcript-end�\nassert 'diverged' == 'verified'\n  \n  - verified\n  + diverged",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_cas_sympy.py::test_the_real_driver_answers_an_interrupt_and_keeps_the_namespace",
+      "message": "assert 'KeyboardInterrupt' in 'the cell was interrupted and the kernel did not answer within 2s, so it was stopped and its state is gone'\n +  where 'the cell was interrupted and the kernel did not answer within 2s, so it was stopped and its state is gone' = CellRecord(seq=2, segment=0, author='model', source=\"import time\\nopen('C:\\\\\\\\Users\\\\\\\\charl\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Te...the interrupt, so it was stopped. Every value in the session is gone; the next cell rebuilds from the accepted ones.]').stderr",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_export.py::test_an_export_is_not_forced_world_readable",
+      "message": "AssertionError: assert not (438 & 63)\n +  where 438 = <built-in function S_IMODE>(33206)\n +    where <built-in function S_IMODE> = <module 'stat' (frozen)>.S_IMODE\n +    and   33206 = os.stat_result(st_mode=33206, st_ino=1407374891553113, st_dev=7956261174835750875, st_nlink=1, st_uid=0, st_gid=0, st_size=7002, st_atime=1788877516, st_mtime=1788877516, st_ctime=1788877516).st_mode\n +      where os.stat_result(st_mode=33206, st_ino=1407374891553113, st_dev=7956261174835750875, st_nlink=1, st_uid=0, st_gid=0, st_size=7002, st_atime=1788877516, st_mtime=1788877516, st_ctime=1788877516) = stat()\n +        where stat = WindowsPath('C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_an_export_is_not_forced_w0/report.html').stat",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_export.py::test_replacing_an_export_keeps_the_mode_it_had",
+      "message": "AssertionError: assert 438 == 384\n +  where 438 = <built-in function S_IMODE>(33206)\n +    where <built-in function S_IMODE> = <module 'stat' (frozen)>.S_IMODE\n +    and   33206 = os.stat_result(st_mode=33206, st_ino=1407374891553117, st_dev=7956261174835750875, st_nlink=1, st_uid=0, st_gid=0, st_size=7002, st_atime=1788877516, st_mtime=1788877516, st_ctime=1788877516).st_mode\n +      where os.stat_result(st_mode=33206, st_ino=1407374891553117, st_dev=7956261174835750875, st_nlink=1, st_uid=0, st_gid=0, st_size=7002, st_atime=1788877516, st_mtime=1788877516, st_ctime=1788877516) = stat()\n +        where stat = WindowsPath('C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_replacing_an_export_keeps0/report.html').stat",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_export.py::test_a_destination_that_is_not_an_ordinary_file_is_refused",
+      "message": "AttributeError: module 'os' has no attribute 'mkfifo'",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_process.py::test_output_survives_an_interrupt",
+      "message": "AssertionError: assert '' == 'partial\\n'\n  \n  - partial",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_process.py::test_a_stop_reaches_the_work_a_wrapper_left_behind",
+      "message": "AssertionError: assert not True\n +  where True = GuardedResult(returncode=None, stdout='', stderr='', timed_out=True, interrupted=True).timed_out",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_prompt_templates.py::test_two_files_naming_one_command_keep_the_first_and_report_the_second",
+      "message": "IndexError: list index out of range",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_prompt_templates.py::test_a_link_is_refused_by_the_open_itself_not_by_a_check_before_it",
+      "message": "AssertionError: assert [Template(nam...s/notes.md'))] == []\n  \n  Left contains one more item: Template(name='notes', body='PRIVATE KEY MATERIAL', description='', argument_hint='', path=WindowsPath('C:/Users/charl/AppData/Local/Temp/hardy-triage-final/test_a_link_is_refused_by_the_0/.hardy/prompts/notes.md'))\n  Use -v to get more diff",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_prove_cli.py::test_staged_doctor_ignores_an_advisory_cas_failure",
+      "message": "AssertionError: assert False is True\n +  where False = namespace(healthy=False, authenticated=True, detail='C:\\\\Users\\\\charl\\\\AppData\\\\Local\\\\Temp\\\\hardy-triage-final\\\\test_..._doctor_ignores_an_0\\\\bin\\\\lake could not be run to identify Lean: [WinError 193] %1 is not a valid Win32 application').healthy",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_prove_cli.py::test_the_staged_doctor_checks_the_backend_the_run_will_build",
+      "message": "KeyError: 'backend'",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_prove_cli.py::test_staged_runtime_factory_records_cas_tool_results_in_the_trajectory",
+      "message": "RuntimeError: the Lean toolchain could not be identified: C:\\Users\\charl\\AppData\\Local\\Temp\\hardy-triage-final\\test_staged_runtime_factory_re0\\bin\\lake could not be run to identify Lean: [WinError 193] %1 is not a valid Win32 application",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_prove_cli.py::test_a_lean_that_cannot_be_identified_is_a_recorded_setup_failure",
+      "message": "AssertionError: assert 'named no Lean version' in 'C:\\\\Users\\\\charl\\\\AppData\\\\Local\\\\Temp\\\\hardy-triage-final\\\\test_a_lean_that_cannot_be_ide0\\\\bin\\\\lake could not be run to identify Lean: [WinError 193] %1 is not a valid Win32 application'",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_search_tools.py::test_a_configured_project_yields_a_runtime_that_can_search",
+      "message": "assert None is not None",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_search_tools.py::test_declaration_search_answers_from_the_sources_without_lean",
+      "message": "assert None is not None",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_search_tools.py::test_no_lake_project_yields_no_runtime_and_the_reason_why",
+      "message": "assert 'lean_project' in \"lean_command is 'C:\\\\\\\\Users\\\\\\\\charl\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\hardy-triage-final\\\\\\\\test_no_lake_project_yield...lake; searching one toolchain and checking in another would hand the model a declaration its own Lean cannot elaborate\"",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_search_tools.py::test_a_project_without_a_manifest_is_a_reason_and_not_a_crash",
+      "message": "assert 'lake-manifest.json' in \"lean_command is 'C:\\\\\\\\Users\\\\\\\\charl\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\hardy-triage-final\\\\\\\\test_a_project_without_a_m...lake; searching one toolchain and checking in another would hand the model a declaration its own Lean cannot elaborate\"",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_search_tools.py::test_a_ranking_comes_back_as_json_a_model_can_read",
+      "message": "AttributeError: 'NoneType' object has no attribute 'retriever'",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_search_tools.py::test_a_relative_lake_resolves_where_the_child_will_run_it",
+      "message": "AssertionError: lean_command is 'bin/lake env lean' but search would run bin\\lake; searching one toolchain and checking in another would hand the model a declaration its own Lean cannot elaborate\nassert None is not None",
+      "classification": "previously recorded"
+    },
+    {
+      "nodeid": "tests/unit/test_search_tools.py::test_a_bad_goal_is_refused_as_an_answer_rather_than_an_exception",
+      "message": "AttributeError: 'NoneType' object has no attribute 'rank_premises'",
+      "classification": "previously recorded"
+    }
+  ],
+  "independent_review": {
+    "regression_findings": 0,
+    "differential_cases": {
+      "lean_strings": 15000,
+      "bracket_splits": 15000,
+      "macro_transitions": 576
+    },
+    "retained_duplicate_groups_reviewed": 22
+  },
+  "detector_recheck": {
+    "duplicate_groups_before": 32,
+    "duplicate_groups_after": 22
+  },
+  "other_checks": {
+    "ruff_changed_python_files": "passed",
+    "health_links_resolve": 12,
+    "embedded_health_json": "parsed"
+  },
+  "limits": [
+    "The full suite remains failing on this Windows machine. No live model or real toolchain run was performed.",
+    "Known failures include platform behavior and five stale local evaluation-evidence cases. Source digests were not relabeled.",
+    "The original-source pipe-close race passed once and failed on the next isolated repetition. It is intermittent."
+  ]
+}

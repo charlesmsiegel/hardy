@@ -363,6 +363,18 @@ def run_baseline(args: argparse.Namespace, config: Any, *, elaborate: Callable[[
     return 1 if baseline.problems else 0
 
 
+def _refuse_staged_budget_overrides(args: argparse.Namespace) -> bool:
+    """A todo prediction and a launched run accept the same budget flags."""
+    if args.mode == "staged" and (args.max_turns is not None or args.wall_seconds is not None):
+        print(
+            "Refused: --max-turns/--wall-seconds do not govern a staged run; its budgets are "
+            "config.limits.active_seconds, proof_seconds and official_checks",
+            file=sys.stderr,
+        )
+        return True
+    return False
+
+
 def run_todo(args: argparse.Namespace, config: Any) -> int:
     """`evals todo`: free, before anything is spent -- what a `baseline` or a
     `run` launched right now, with these flags, would still have left to do.
@@ -377,15 +389,7 @@ def run_todo(args: argparse.Namespace, config: Any) -> int:
     if refusal is not None:
         print(refusal, file=sys.stderr)
         return 2
-    if args.mode == "staged" and (args.max_turns is not None or args.wall_seconds is not None):
-        # The same refusal `run_set_command` makes, for the same reason and in
-        # the same words: `todo` exists to report the key a run launched now
-        # would produce, and a run with these flags would not launch at all.
-        print(
-            "Refused: --max-turns/--wall-seconds do not govern a staged run; its budgets are "
-            "config.limits.active_seconds, proof_seconds and official_checks",
-            file=sys.stderr,
-        )
+    if _refuse_staged_budget_overrides(args):
         return 2
     try:
         identity = _identity(config)
@@ -601,12 +605,7 @@ def run_set_command(args: argparse.Namespace, config: Any) -> int:
         print("Re-run with --acknowledge-unsafe-execution to accept this for every run in the set.", file=sys.stderr)
         return 2
     print(WARNING, file=sys.stderr)
-    if args.mode == "staged" and (args.max_turns is not None or args.wall_seconds is not None):
-        print(
-            "Refused: --max-turns/--wall-seconds do not govern a staged run; its budgets are "
-            "config.limits.active_seconds, proof_seconds and official_checks",
-            file=sys.stderr,
-        )
+    if _refuse_staged_budget_overrides(args):
         return 2
     try:
         environment = environment_identity(config.lean_project, lean_command=(str(config.lake), "env", "lean"), timeout_seconds=config.limits.lean_process_seconds)

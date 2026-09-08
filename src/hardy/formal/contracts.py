@@ -5,15 +5,13 @@ that checked it; workflow approval and final grades are separate contracts.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from hardy.foundation.values import FrozenModel
+from hardy.foundation.values import FrozenModel, json_digest
 
 
 class FormalizationProposal(FrozenModel):
@@ -58,16 +56,13 @@ def freeze_claim(
         "original_text": original_text,
         "proposal": proposal.model_dump(mode="json"),
     }
-    canonical = json.dumps(
-        payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-    ).encode("utf-8")
     return FrozenClaim(
         original_text=original_text,
         proposal=proposal,
         environment=environment,
         imports=environment.imports,
         approved_at=approved_at,
-        content_hash=hashlib.sha256(canonical).hexdigest(),
+        content_hash=json_digest(payload),
     )
 
 
@@ -126,13 +121,7 @@ class VerificationEvidence(FrozenModel):
 
     @property
     def digest(self) -> str:
-        canonical = json.dumps(
-            self.model_dump(mode="json"),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-        return hashlib.sha256(canonical).hexdigest()
+        return json_digest(self.model_dump(mode="json"))
 
 
 # What a request's declaration may open with. Attributes and modifiers come

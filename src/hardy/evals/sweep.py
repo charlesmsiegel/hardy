@@ -206,7 +206,7 @@ def read_stage_a(elaboration: Elaboration, spans: dict[str, tuple[int, int]]) ->
     return out
 
 
-def read_stage_b(elaboration: Elaboration, name: str, tactic: str) -> Attempt:
+def read_stage_b(elaboration: Elaboration, name: str) -> Attempt:
     seconds = elaboration.process.duration_ms / 1000.0
     count = next((int(m.group(1)) for d in elaboration.diagnostics for m in [COUNT.search(d.message)] if m), None)
     if not elaboration.success:
@@ -445,7 +445,7 @@ def sweep_entry(entry: Entry, elaborate: Elaborate, *, confirm_name: str) -> Ent
         return EntryBaseline(tier=3, elaborates=False, attempts={}, closed_by=())
 
     def confirm(tactic: str) -> Attempt:
-        return read_stage_b(elaborate(stage_b_source(confirm_name, entry.binders, entry.conclusion, tactic, entry.imports)), confirm_name, tactic)
+        return read_stage_b(elaborate(stage_b_source(confirm_name, entry.binders, entry.conclusion, tactic, entry.imports)), confirm_name)
 
     attempts, closed = sweep_proposition(entry.binders, entry.conclusion, entry.imports, elaborate, confirm=confirm)
     negation = None
@@ -453,7 +453,7 @@ def sweep_entry(entry: Entry, elaborate: Elaborate, *, confirm_name: str) -> Ent
         neg_name = f"{confirm_name}Negation"
 
         def confirm_negation(tactic: str) -> Attempt:
-            return read_stage_b(elaborate(stage_b_source(neg_name, "", entry.negation(), tactic, entry.imports)), neg_name, tactic)
+            return read_stage_b(elaborate(stage_b_source(neg_name, "", entry.negation(), tactic, entry.imports)), neg_name)
 
         # The negation's own binders are always empty: `entry.negation()` is
         # already `¬ (∀ binders, conclusion)` or `¬ conclusion`, a closed

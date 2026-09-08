@@ -100,16 +100,16 @@ def test_stage_b_source_names_the_theorem_and_prints_its_axioms():
 def test_stage_b_closes_only_on_success_with_standard_axioms():
     ok = _elaboration([_msg(3, "information", "Used 700 heartbeats, which is less than the current maximum of 200000."),
                        _msg(7, "information", "'T' depends on axioms: [propext, Classical.choice, Quot.sound]")], duration_ms=25000)
-    closed = sweep.read_stage_b(ok, "T", "simp")
+    closed = sweep.read_stage_b(ok, "T")
     assert closed.status == "closed" and closed.heartbeats == 700 and closed.seconds == 25.0
     assert closed.axioms == ("propext", "Classical.choice", "Quot.sound")
 
     sorried = _elaboration([_msg(5, "warning", "declaration uses 'sorry'"),
                             _msg(7, "information", "'T' depends on axioms: [sorryAx]")])
-    assert sweep.read_stage_b(sorried, "T", "apply?").status == "unconfirmed"
+    assert sweep.read_stage_b(sorried, "T").status == "unconfirmed"
 
     unreported = _elaboration([])
-    assert sweep.read_stage_b(unreported, "T", "simp").status == "unconfirmed"
+    assert sweep.read_stage_b(unreported, "T").status == "unconfirmed"
 
 
 def test_sorry_source_is_the_declaration_with_a_hole():
