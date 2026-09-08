@@ -36,8 +36,15 @@ from .domain import (
 )
 from .formal.syntax import declared_name as declared_name
 from .lean import LeanCheckResult
+from .lean import scannable as scannable
 from .process import ProcessResult
 from .prompts import PROMPT_SET_SHA256
+from .verifier import (
+    ALLOWED_AXIOMS as ALLOWED_AXIOMS,
+)
+from .verifier import (
+    FORBIDDEN_TOKEN as FORBIDDEN_TOKEN,
+)
 from .verifier import (
     VerificationResult,
     verification_source,
