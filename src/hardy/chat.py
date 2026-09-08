@@ -156,16 +156,8 @@ class WriteupNotSaved(ValueError):
     """
 
 
-class SchemaError(ValueError):
-    """A record whose `schema_version` this build does not read.
-
-    Its own type, not a bare `ValueError`: a caller opening a project needs
-    to tell "this workspace predates a format change, refused on purpose"
-    apart from every other way constructing a session can fail, and render
-    it as the one clean line it is -- not as a session-startup problem to
-    fall back away from, nor as a stack trace.
-    """
-
+from .workflows.interactive.record import SchemaError, SessionRecord
+from .workflows.interactive.formal import FormalWorkspaceService, SavePolicy
 
 CHAT_TOOLS: list[dict[str, Any]] = [
     {"type": "function", "function": {"name": "check_lean", "description": "Run Lean on a complete candidate source file without saving it. `path` is the workspace file it would become, defaulting to Main.lean; imports of other workspace files resolve against what is already saved.", "parameters": {"type": "object", "properties": {"source": {"type": "string"}, "path": {"type": "string"}}, "required": ["source"], "additionalProperties": False}}},
@@ -775,7 +767,8 @@ class MathematicsSession:
         # thread and the spend ledger describe this machine and this account,
         # and a clone of the project must not inherit either.
         self.local_path = workspace / LOCAL_DIR / LOCAL_STATE
-        self._local_guard = WriteGuard(workspace / LOCAL_DIR, create=True)
+        self.record = SessionRecord(workspace, self._workspace_guard)
+        self._local_guard = self.record._local_guard
         # The Lean tree and the writeup tree. Both are directories now: a
         # development outgrows one file, and so does the document about it.
         self.tex_root = workspace / TEX_DIR
@@ -857,17 +850,18 @@ class MathematicsSession:
         # under the gate above, and `_observed` remembering the provider thread
         # on the runtime's own thread -- and `WriteGuard.write_json` replaces a
         # temporary file at a fixed path. Two writers at once would interleave.
-        self._writes = threading.Lock()
+        self._writes = self.record._writes
         # This session's own tool use, in memory only: it describes behaviour,
         # not the workspace, so it belongs in neither manifest.
-        self._save_streak: dict[str, int] = {}
+        self.formal = FormalWorkspaceService(self.lean, self.lean_workspace)
+        self._save_streak = self.formal._save_streak
         # Streak key -> sha256 hex digests of sources that passed `check_lean`
         # on that path this turn. A green check on a path lifts the brake only
         # for the source it actually checked, not for whatever the model saves
         # next -- `check_lean` elaborates the source it is handed, never the
         # file, so a save of a *different* source has not been shown to fix
         # anything and must still count against the streak.
-        self._checked_green: dict[str, set[str]] = {}
+        self._checked_green = self.formal._checked_green
         self._tool_tally: dict[str, list[int]] = {"save_lean": [0, 0], "check_lean": [0, 0]}
         # Whether a *completed* `inspect_declarations` batch has run since the
         # last axiom request. `_searched_since_request`, below, carries what it
@@ -921,6 +915,30 @@ class MathematicsSession:
         self._sync_provenance()
         self._sync_fresh_context()
         self._sync_project_context()
+
+    @property
+    def state(self) -> dict[str, Any]:
+        return self.record.state
+
+    @state.setter
+    def state(self, value: dict[str, Any]) -> None:
+        self.record.state = value
+
+    @property
+    def local(self) -> dict[str, Any]:
+        return self.record.local
+
+    @local.setter
+    def local(self, value: dict[str, Any]) -> None:
+        self.record.local = value
+
+    @property
+    def usage(self) -> Usage:
+        return self.record.usage
+
+    @usage.setter
+    def usage(self, value: Usage) -> None:
+        self.record.usage = value
 
     def _build(self, model: str | None = None, session_id: str | None = None) -> ChatRuntime:
         """The runtime, with the system prompt this project's record implies.
@@ -1060,76 +1078,16 @@ class MathematicsSession:
         self._record({"type": "model", "reason": "switched", "previous": previous, **current})
 
     def _read_state(self) -> dict[str, Any]:
-        """The record, refusing anything this version does not read.
-
-        There is deliberately no reader for version 1. Accepting one anyway
-        would carry its `provider_session`, `usage` and `usage_cursor` into a
-        record that is now versioned -- and, since `WITHHELD` no longer names
-        those keys, into the model's context as well. Refusing is the honest
-        failure.
-
-        Being unreadable at all is refused the same way, and that is the point
-        of the three lines below. `session.json` is versioned: it comes back
-        with a merge conflict in it, gets hand-edited, gets truncated by a
-        full disk. Left to `json.loads` and `dict.get`, a conflicted record
-        raised `JSONDecodeError` and a record holding `[]` raised
-        `AttributeError` -- neither a `SchemaError`, so the interactive shell
-        did not recognise either as a deliberate refusal, announced a fallback
-        to the plain session, ran the identical load a second time, and ended
-        the session on a stack trace. That is exactly the failure `SchemaError`
-        exists to prevent, so every way the record can fail to be a version-2
-        object is translated into one.
-        """
-        if self.state_path.exists():
-            try:
-                with self._workspace_guard.open(RECORD, encoding="utf-8") as handle:
-                    stored = json.loads(handle.read())
-            except (json.JSONDecodeError, UnicodeDecodeError) as error:
-                raise SchemaError(f"{self.state_path} is not readable JSON: {error}") from None
-            if not isinstance(stored, dict):
-                raise SchemaError(
-                    f"{self.state_path} holds a {type(stored).__name__}, not the record object "
-                    "this Hardy reads"
-                )
-            version = stored.get("schema_version")
-            if version != 2:
-                raise SchemaError(
-                    f"{self.state_path} is schema version {version!r}; this Hardy reads version 2 only"
-                )
-            return stored
-        # `audit` is absent until the first save; a workspace with none may not
-        # read as a clean one.
-        return {"schema_version": 2, "names": [], "assumptions": []}
+        return self.record._read_state()
 
     def _read_local(self) -> dict[str, Any]:
-        """This machine's state, or an empty one.
-
-        Unreadable is treated as absent rather than raised. The file is
-        gitignored and disposable by construction, and losing a resumable
-        thread is never a reason to refuse to open the project.
-        """
-        if not self.local_path.exists():
-            return {}
-        try:
-            with self._local_guard.open(LOCAL_STATE, encoding="utf-8") as handle:
-                loaded = json.loads(handle.read())
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-            # UnicodeDecodeError is in the list deliberately: it is not a
-            # subclass of the others, and without it a file of invalid bytes
-            # would refuse to open the project rather than being treated as the
-            # disposable state this docstring promises it is.
-            return {}
-        return loaded if isinstance(loaded, dict) else {}
+        return self.record._read_local()
 
     def _save_state(self) -> None:
-        """The one door `session.json` is written through, from any thread."""
-        with self._writes:
-            self._workspace_guard.write_json(RECORD, self.state)
+        return self.record._save_state()
 
     def _save_local(self) -> None:
-        """The one door `.local/state.json` is written through, from any thread."""
-        with self._writes:
-            self._local_guard.write_json(LOCAL_STATE, self.local)
+        return self.record._save_local()
 
     def _sync_provenance(self) -> None:
         """Make the record agree with what is actually about to answer.
@@ -1254,8 +1212,7 @@ class MathematicsSession:
         )
 
     def _without(self, *keys: str) -> dict[str, Any]:
-        """The manifest, minus the entries this reader has no business seeing."""
-        return {key: value for key, value in self.state.items() if key not in keys}
+        return self.record._without(*keys)
 
     def _context(self) -> str:
         # The stored audit verdicts stay here, as they always have -- the system
@@ -1283,17 +1240,7 @@ class MathematicsSession:
         return f"\n\nWorkspace: {self.workspace}\nExisting manifest:\n{manifest}" + self._project_context_prompt()
 
     def _record(self, event: dict[str, Any]) -> int:
-        """Append one event, and say where the transcript now ends.
-
-        The offset is what lets the ledger's cursor advance to the end of the
-        event it just accounted for rather than to wherever the file happens
-        to have reached -- two turns' reports can be in flight at once, and
-        the file's current size may already include one nobody has folded.
-        """
-        event = {"timestamp": time.time(), **event}
-        with self._workspace_guard.open(TRANSCRIPT, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
-            return handle.tell()
+        return self.record._record(event)
 
     def _generated_module_refusal(self, relative: Any) -> str | None:
         """Why this path is not the workspace's to write, or None."""
@@ -1311,98 +1258,7 @@ class MathematicsSession:
         return None
 
     def _final_gates(self, source: str) -> ToolResult | None:
-        """What disqualifies a source from being saved, before Lean is asked.
-
-        All of it is textual, so it costs nothing and runs first: there is no
-        point spending a minute elaborating a file that an unapproved axiom
-        already rules out.
-
-        A hole is not here. `sorry` is how a proof of any size gets built, and
-        refusing it meant the unfinished part of a development could never
-        reach disk -- so a thousand-line proof lived in the model's context and
-        was re-sent in full on every check. What a hole costs is charged where
-        a claim is made instead: the audit records it, the obligations name it,
-        and `report_result` grades it partial.
-        """
-        found = declarations(source)
-        # The audit asks `#print axioms` about theorems and lemmas, and about
-        # nothing else -- so those are the only declarations a hole can be
-        # *reported* through. A file that declares neither and carries one
-        # would put a hole in the workspace that `/status`, the end-of-turn
-        # notice and the banner all stay silent about, which is the one thing
-        # keeping holes was not allowed to cost.
-        if self.lean.has_holes(source) and not (found["theorem"] or found["lemma"]):
-            return ToolResult(
-                False,
-                "this file has a hole in it and declares no theorem or lemma, so nothing "
-                "here can report the hole as open: Hardy tracks one by asking Lean what "
-                "each saved theorem and lemma rests on. State the work as a `lemma` -- a "
-                "lemma may carry a hole and is free to save -- and the hole is then "
-                "reported until you close it.",
-                source,
-            )
-        # A `theorem` is what this workspace reports as a result, and a private
-        # one can be neither audited nor cited: Lean mangles the name out of
-        # reach of any other module, including the file the audit elaborates.
-        # Refused rather than skipped, or a documented result would sit behind
-        # a gate that never ran on it. `private lemma` stays free.
-        hidden = [name for name in found["theorem"] if name in found["private"]]
-        if hidden:
-            return ToolResult(
-                False,
-                f"a private theorem cannot be audited or written up, because no other module can "
-                f"name it: {hidden}. Drop `private`, or state it as a `private lemma` if it is "
-                "scaffolding rather than a result.",
-                source,
-            )
-        # A quarantined name is refused before approval is consulted at all:
-        # the reader said this Lean does not say what the paper says, and
-        # declaring it under that name anyway would let Hardy derive claims
-        # the paper never made under the paper's name.
-        #
-        # What this does *not* do is close the statement off entirely. The
-        # same Lean, re-requested through `request_assumption` under a
-        # different name, is an ordinary approval a human may grant -- and
-        # should be able to, since the reader's verdict is one reading and
-        # the human is the one deciding. The rule is about the paper's name,
-        # not about the text. Matched on the
-        # qualified name and nothing else, because that is the declaration
-        # the reader refused: `assumptions()` qualifies by the namespace in
-        # force, so a minted axiom always comes back as `Papers.<key>.<leaf>`,
-        # and a top-level `axiom <leaf>` is a different declaration Lean will
-        # not confuse with it. Matching a shorter spelling therefore only ever
-        # fired on an unrelated name -- refusing another paper's approved
-        # `main`, or a bare one `request_assumption` approved, and blaming a
-        # reader that never saw it. The approval gate below is what refuses a
-        # bare name nobody approved, and it says the true thing about why.
-        quarantined = self._quarantined_names()
-        for name, _ in assumptions(source):
-            if name in quarantined:
-                return ToolResult(
-                    False,
-                    f"`{name}` is quarantined: an independent reader found that this Lean "
-                    "does not say what the paper says, so it is recorded and not importable. "
-                    "Restate it through assume_statement; it cannot be declared by hand.",
-                    source,
-                )
-        approved = {item["formal_name"]: " ".join(item["lean_statement"].split()) for item in self.state["assumptions"]}
-        # Qualified by the namespace they sit in, so this gate and the audit
-        # ask about the same name. A flat scan called it `bar` while Lean
-        # reported `Foo.bar`, and no single approval could satisfy both.
-        for name, statement in assumptions(source):
-            if approved.get(name) != " ".join(statement.split()):
-                return ToolResult(False, f"unapproved or altered assumption `{name}`; use request_assumption first", source)
-        # An axiom the scan could not read is refused rather than skipped. It
-        # cannot be compared against an approval -- the type Lean gives
-        # `axiom Sneaky (P : Prop) : P` is `∀ P : Prop, P`, which is not the
-        # text after the colon -- and skipping it let one pass unremarked.
-        # `request_assumption` produces neither binders nor universe
-        # parameters, so this refuses only shapes the approval flow cannot
-        # reach.
-        unreadable = unreadable_assumptions(source)
-        if unreadable:
-            return ToolResult(False, f"could not read `{unreadable[0]}` as `axiom NAME : STATEMENT`; an assumption must be approved by request_assumption and then declared in exactly that shape, without binders or universe parameters", source)
-        return None
+        return self.formal._final_gates(source, self.record.snapshot())
 
     def _run_lean_source(self, source: str, timeout: float | None = None) -> ToolResult:
         return self.lean.run_source(
@@ -2377,20 +2233,7 @@ class MathematicsSession:
         return stamp
 
     def _check_lean(self, path: str, source: str) -> ToolResult:
-        try:
-            safe_relative(path)
-        except WorkspacePathError as error:
-            return ToolResult(False, str(error), source)
-        # Before the first Lean call of this check: an `import CommAlg` that
-        # names a shared library resolves against an olean, and nothing builds
-        # that olean but this.
-        self.build_shared()
-        failure = self._build_imports(self.lean_workspace, source)
-        if isinstance(failure, ToolResult):
-            return failure
-        if failure is not None:
-            return ToolResult(False, f"a workspace file this one imports does not build: {failure.module}\n{failure.output}", source)
-        return self._run_lean_source(source)
+        return self.formal._check_lean(path, source, build_shared=self.build_shared, run_source=self._run_lean_source)
 
     def _tally(self, name: str, ok: bool) -> None:
         # Every tool name, not only `save_lean`/`check_lean`: `_steering_block`
@@ -2402,187 +2245,39 @@ class MathematicsSession:
         counts[1] += int(ok)
 
     def _streak_key(self, path: str) -> str:
-        """The `_save_streak` key `path` counts against.
-
-        Its safe-relative form, so `Main.lean` and `./Main.lean` share one
-        streak instead of two half-sized ones nothing ever brakes. Falls back
-        to `path` itself when `safe_relative` refuses it: the unbraked save
-        refuses the same path for the same reason, so a streak keyed on a
-        spelling Hardy will never accept costs nothing.
-        """
-        try:
-            return str(safe_relative(path))
-        except WorkspacePathError:
-            return path
+        return self.formal._streak_key(path)
 
     @staticmethod
     def _save_digest(source: str) -> str:
-        """The identity a green `check_lean` vouches for and a save spends.
-
-        Hashed over `source.rstrip() + "\\n"` -- exactly what
-        `_save_lean_unbraked` writes to disk -- rather than over `source`
-        verbatim, so `check_lean(X)` vouches for `save_lean(X)` *and* for
-        `save_lean(X + "\\n")`: the two calls write identical bytes to the
-        workspace, and finding #4 of the second brutal review was this
-        digest treating them as different sources and braking the second.
-        """
-        return hashlib.sha256((source.rstrip() + "\n").encode("utf-8")).hexdigest()
+        return FormalWorkspaceService._save_digest(source)
 
     def _streak_refusal(self, path: str, source: str) -> ToolResult | None:
-        key = self._streak_key(path)
-        if self._save_streak.get(key, 0) < self.SAVE_STREAK_LIMIT:
-            return None
-        # The brake promises "until `check_lean` passes on the exact source
-        # you intend to save" -- so it is lifted only by a green check of
-        # this exact source, not by any `check_lean` call that happens to
-        # land on the same path. A save of something else has not been shown
-        # to fix anything.
-        digest = self._save_digest(source)
-        green = self._checked_green.get(key)
-        if green is not None and digest in green:
-            # Spend the vouch: one green check admits one save, not every
-            # save of that source for the rest of the turn. Finding #3 of
-            # the second brutal review left this exemption permanent, so a
-            # single `check_lean` on a byte string that then failed
-            # `save_lean`'s stricter gates (result/documentation/shadow
-            # build) bought an unbounded run of refused saves the brake
-            # never fired on again.
-            green.discard(digest)
-            return None
-        return ToolResult(
-            False,
-            f"{self.SAVE_STREAK_LIMIT} consecutive saves of `{path}` have been refused. "
-            "Hardy will not elaborate another until `check_lean` passes on the exact "
-            "source you intend to save on this path. Check a smaller piece — split "
-            "the file, or reduce it to what already compiles — then save that "
-            "checked source.",
+        return self.formal._streak_refusal(path, source)
+
+    def _formal_save_policy(self) -> SavePolicy:
+        return SavePolicy(
+            generated_refusal=self._generated_module_refusal,
+            result_gate=self._result_gate,
+            documentation_gate=self._documentation_gate,
+            final_gates=self._final_gates,
+            compile_path=self._compile_path,
+            build_shared=self.build_shared,
+            missing_names=self._missing_registered_names,
+            audit_tree=self._audit_tree,
+            closes_and_adds=self._closes_and_adds,
+            publish_audit=self.record.publish_audit,
+            refresh_automation=self._refresh_automation,
+            persist=self._save_state,
+            owed_note=self._owed_note,
         )
 
     def _save_lean(self, path: str, source: str) -> ToolResult:
-        refusal = self._streak_refusal(path, source)
-        if refusal is not None:
-            return refusal
-        result = self._save_lean_unbraked(path, source)
-        key = self._streak_key(path)
-        if result.ok:
-            self._save_streak.pop(key, None)
-        else:
-            self._save_streak[key] = self._save_streak.get(key, 0) + 1
-        return result
+        return self.formal._save_lean(path, source, self._save_lean_unbraked)
 
     def _save_lean_unbraked(
         self, path: str, source: str, *, ratchet: bool = True, generated: bool = False
     ) -> ToolResult:
-        try:
-            relative = safe_relative(path)
-        except WorkspacePathError as error:
-            return ToolResult(False, str(error), source)
-        # `ratchet=False` is how an imported file enters (#112). The two gates
-        # it skips are authorship steering -- `theorem` reserved to registered
-        # results, the writeup catch-up -- rules about how a model writes new
-        # work, which an imported file has already been written without. The
-        # verification gates all still run: assumption approval, the shadow
-        # build, registered-name preservation, and the axiom audit are what
-        # "no weaker a check than one Hardy wrote" means, and the writeup debt
-        # an imported theorem brings is not waived either -- it lands in the
-        # obligations like any other saved theorem's.
-        # `Papers/` is Hardy's own writing, minted from an approved paper
-        # statement and regenerated whole. A model editing it by hand could
-        # put an axiom nobody approved under a name the audit already trusts,
-        # which is the one thing the approval flow exists to prevent -- so the
-        # tree is refused to everything but `assume_statement`.
-        if not generated:
-            owned = self._generated_module_refusal(relative)
-            if owned is not None:
-                return ToolResult(False, owned, source)
-        gate = (self._result_gate(source) or self._documentation_gate(source)) if ratchet else None
-        if gate is not None:
-            return ToolResult(False, gate, source)
-        refusal = self._final_gates(source)
-        if refusal is not None:
-            return refusal
-        text = source.rstrip() + "\n"
-        # The shadow build elaborates this file itself, so there is no
-        # pre-check run: with Mathlib imported each elaboration costs tens of
-        # seconds, and checking the same source twice per save doubled the
-        # expensive half of the operation. What Lean said is captured here
-        # because the build reports only which module failed.
-        seen: dict[str, ToolResult] = {}
-
-        def capturing(module: str, source_root: Path, build_root: Path, source_file: Path) -> tuple[bool, str]:
-            result = self.lean.compile_module(
-                source_root, build_root, source_file, lean_path=self._compile_path(build_root)
-            )
-            seen[module] = result
-            return result.ok, result.output
-
-        # Before the shadow is staged, so the staged build is keyed on the
-        # identity the shared sources currently have. Staging first would copy
-        # `_environment` into the shadow while it still named the old shared
-        # text, and the save would be committed under a signature that was
-        # already false when it was computed.
-        self.build_shared()
-        # Before staging: what the tree holds now is what a registered name may
-        # be judged to have vanished *from*.
-        committed = self.lean_workspace.sources()
-        shadow, commit = self.lean_workspace.stage(relative, text, capturing)
-        try:
-            module = module_name(relative)
-            try:
-                affected = [module, *sorted(dependents(shadow.sources(), module))]
-                failure = shadow.build_modules(affected)
-            except ImportCycle as error:
-                return ToolResult(False, f"{error}; nothing was written", source)
-            if failure is not None:
-                return ToolResult(False, f"this save breaks {failure.module}, so nothing was written:\n{failure.output}", source)
-            # The registry and the Lean must stay in step. This was a per-file
-            # check when the workspace was one file; a registered name now has
-            # to survive somewhere in the tree, not in whichever file is being
-            # saved -- but it must not be allowed to vanish from all of them.
-            lost = self._missing_registered_names(shadow.sources(), committed)
-            if lost:
-                return ToolResult(False, f"this save would drop registered names from the workspace: {lost}", source)
-            # Last, because it is the only gate that costs another Lean run,
-            # and still before `commit`: a refused audit must leave the
-            # workspace exactly as it was.
-            audited = self._audit_tree(shadow, affected)
-            if isinstance(audited, ToolResult):
-                return audited
-            records, note = audited
-            stale = self._closes_and_adds(source, affected, records)
-            if stale is not None:
-                return ToolResult(False, stale, source)
-            commit()
-        finally:
-            LeanWorkspace.discard(shadow)
-        # Published after the write, and not before: a verdict stored first
-        # would survive a failed commit and describe a tree that never existed.
-        # Stamped with what the module's build inputs hashed to, not merely with
-        # the toolchain: the same signature the build cache is keyed on, which
-        # already folds in the environment, the module's source, everything it
-        # imports inside the workspace, and the olean behind every import
-        # outside it. A verdict is an answer about those inputs and expires with
-        # them.
-        signatures = self.lean_workspace.current_signatures()
-        self.state.setdefault("audit", {}).update(
-            {
-                module: {**record, "signature": signatures.get(module, "")}
-                for module, record in records.items()
-            }
-        )
-        # After the commit -- the answer is a disclosure about a saved theorem,
-        # never a gate on saving one -- and before `_save_state`, so the
-        # verdicts persist in the same write the audit records do.
-        automation = self._refresh_automation()
-        self._save_state()
-        # Absent from `seen` when the source was byte-identical to what was
-        # already built, so the cache skipped it. Nothing was wrong with it.
-        result = seen.get(module, ToolResult(True, "unchanged; already built", source))
-        return ToolResult(
-            result.ok,
-            f"{result.output}\n\naxiom audit: {note}{automation}{self._owed_note()}",
-            result.source,
-        )
+        return self.formal._save_lean_unbraked(path, source, policy=self._formal_save_policy(), ratchet=ratchet, generated=generated)
 
     def _owed_note(self) -> str:
         """The outstanding obligations, appended to a tool result.
@@ -2602,117 +2297,10 @@ class MathematicsSession:
     def _audit_tree(
         self, space: LeanWorkspace, modules: Sequence[str]
     ) -> ToolResult | tuple[dict[str, dict[str, Any]], str]:
-        """What the built modules actually rest on: a record each, or a refusal.
-
-        The textual gate in `_final_gates` sees an `axiom` written into the
-        source in front of it and nothing else. An axiom reached through an
-        import is invisible to it, and that is the case a saved artifact can
-        be wrong about while looking right, so Lean is asked directly.
-
-        Asked over the staged tree, before anything is committed, and over
-        every module the save rebuilt rather than only the one it edited: a
-        dependent inherits whatever the edit brought in, so its own claim
-        changed too even though its source did not. Which is also why a module
-        outside that set keeps its earlier record rather than being dropped --
-        nothing it depends on moved.
-        """
-        sources = space.sources()
-        # `declarations` strips comments and rescans the whole file, so it is
-        # asked once per module rather than once per kind.
-        found_in = {module: declarations(sources[module]) for module in modules}
-        # Private declarations are left out because Lean will not let this probe
-        # name one: it elaborates a file that *imports* the module, and a private
-        # name is mangled out of reach from there. Asking anyway is an unknown
-        # identifier, which would refuse every save of a file using the ordinary
-        # `private lemma` idiom. Nothing is lost -- an exported declaration that
-        # uses a private helper reports the helper's axioms as its own.
-        declared = {
-            module: tuple(
-                name
-                for name in found["theorem"] + found["lemma"]
-                if name not in found["private"]
-            )
-            for module, found in found_in.items()
-        }
-        names = list(dict.fromkeys(name for module in modules for name in declared[module]))
-        empty = {
-            module: audit.unestablished(f"no theorem or lemma is declared in {module}")
-            for module in modules
-            if not declared[module]
-        }
-        if not names:
-            # Nothing here claims to be a result, so there is nothing to grade.
-            # Recorded as an audit that did not run rather than as a clean one.
-            return empty, f"not established -- no theorem or lemma is declared in {list(modules)}"
-        # Modules that never import each other may each declare a root-level
-        # `step`, or a `def helper`, or anything else at the same name, and both
-        # build. One probe importing all of them brings those together, and Lean
-        # will not resolve a name that now means two things -- so a save Lean
-        # accepts would be refused.
-        #
-        # Which names collide is not knowable from the audit targets: the clash
-        # can be in a `def`, a `structure`, an `instance`, anything a module
-        # exports. Rather than enumerate the kinds and still miss one, the cheap
-        # probe is tried first and a failure is retried per module. That is
-        # correct for every collision without naming any of them, and costs the
-        # extra elaborations only on the trees that need them. Nothing is
-        # loosened: each retry still asks about every declaration and still
-        # requires a clean report, so a tree that is genuinely broken refuses
-        # either way.
-        attempts: list[list[list[str]]] = [[list(modules)]]
-        if len(modules) > 1:
-            attempts.append([[module] for module in modules])
-        for index, groups in enumerate(attempts):
-            outcome = self._probe_groups(space, groups, declared)
-            if not isinstance(outcome, ToolResult):
-                reports, covering = outcome
-                break
-            if index == len(attempts) - 1:
-                return outcome
-        else:  # pragma: no cover - `attempts` is never empty
-            return ToolResult(False, "the axiom audit had nothing to run")
-        approved = self._approved_assumptions()
-        verdict = audit.classify(reports, approved)
-        # On the status, not on the presence of a finding. A hole grades `open`
-        # and is kept: it is an unfinished proof, not an unacceptable one, and
-        # the refusal for it happens where a claim is made. An unapproved axiom
-        # still rejects, and a save carrying both is refused for the axiom --
-        # the half the model can do something about.
-        if verdict.status == "rejected":
-            if verdict.unapproved:
-                needed = {
-                    axiom: list(audit.dependents(reports, axiom)) for axiom in verdict.unapproved
-                }
-                return ToolResult(
-                    False,
-                    f"the axiom audit refused this save: {audit.describe(verdict)}. "
-                    f"These assumptions reached through imports have not been approved: {needed}. "
-                    "Call request_assumption for each before saving work that rests on it.",
-                )
-            # Reached only for a forbidden axiom that is not a hole. `FORBIDDEN`
-            # holds exactly `sorryAx` today, so `classify` never produces one --
-            # but deleting the branch would lose the message the moment it grows,
-            # and leave `verdict.forbidden[0]` read off a branch nobody wrote.
-            return ToolResult(
-                False,
-                f"the axiom audit refused this save: {audit.describe(verdict)}. "
-                f"{list(audit.dependents(reports, verdict.forbidden[0]))} depend on "
-                "something no human may approve.",
-            )
-        # A record per module rather than one for the save, so a later save
-        # elsewhere in the tree cannot overwrite what this one established.
-        records = dict(empty)
-        for module, reported in covering.items():
-            records[module] = audit.classify(reported, approved).as_dict()
-        return records, audit.describe(verdict)
+        return self.formal._audit_tree(space, modules, approved=self._approved_assumptions(), probe_groups=self._probe_groups)
 
     def _build_imports(self, space: LeanWorkspace, source: str) -> BuildFailure | ToolResult | None:
-        """Make the workspace modules a candidate imports importable."""
-        try:
-            needed = internal_imports(source, space.sources())
-            return space.build_modules(needed) if needed else None
-        except ImportCycle as error:
-            return ToolResult(False, str(error), source)
+        return self.formal._build_imports(space, source)
 
     def _resolves(self, formal_name: str, sources: dict[str, str]) -> bool:
         """Whether a registered name still names something in a tree.
@@ -7118,266 +6706,31 @@ class MathematicsSession:
         return result
 
     def _transcript_identity(self, length: int | None = None) -> dict[str, Any]:
-        """What the transcript is, as far as `length` bytes in.
-
-        A length alone cannot answer this. Checking out a divergent branch
-        whose transcript is the same size or longer leaves every arithmetic
-        check satisfied against a history that never produced this thread.
-        """
-        if length is None:
-            length = self._transcript_end()
-        digest = hashlib.sha256()
-        if length and self.transcript_path.exists():
-            with self._workspace_guard.open(TRANSCRIPT, "rb") as handle:
-                remaining = length
-                while remaining > 0:
-                    chunk = handle.read(min(remaining, 1 << 20))
-                    if not chunk:
-                        break
-                    digest.update(chunk)
-                    remaining -= len(chunk)
-        return {"transcript_length": length, "transcript_digest": digest.hexdigest()}
+        return self.record._transcript_identity(length)
 
     def _carried_thread(self) -> str | None:
-        """The provider thread this project may resume, if the record still fits it.
-
-        The thread is bound to the transcript it was recorded against, and the
-        binding is checked here rather than trusted. A thread whose transcript
-        has been shortened or replaced is dropped: losing a resumable
-        conversation is cheap, and answering from context the record cannot
-        account for is the thing this project exists to prevent.
-        """
-        thread = self.local.get(THREAD_KEY)
-        if not thread:
-            return None
-        length = self.local.get("transcript_length")
-        if not isinstance(length, int) or isinstance(length, bool) or length < 0:
-            return None
-        if length > self._transcript_end():
-            return None
-        if self._transcript_identity(length)["transcript_digest"] != self.local.get("transcript_digest"):
-            return None
-        return str(thread)
+        return self.record._carried_thread()
 
     def _discard_thread(self) -> str:
-        """Drop the resumable provider thread, and say what that amounted to.
-
-        The returned sentence is the banner's and `/status`'s: a user who asked
-        for `--fresh-thread` knows, but the next person reading the terminal
-        does not.
-
-        Only a thread `_carried_thread` would actually have resumed counts as
-        discarded. A workspace with none -- a first open, a fresh clone, a
-        thread whose transcript no longer fits it -- starts empty on every
-        open, so the flag changed nothing and the transcript gets no event,
-        exactly as an unchanged model or an unchanged `AGENTS.md` appends
-        nothing. Asking for a discard with nothing to discard is a no-op, not
-        a refusal: the condition the user asked for is the condition they get.
-
-        When there is one, the local state is cleared FIRST and the event
-        appended second, the reverse of `_sync_project_context`'s order and
-        for the same crash-shaped reason: interrupted between the two, this
-        way loses only the event -- the next open starts empty like any fresh
-        clone, which the record already accounts for. The other way round, the
-        record would say the conversation was discarded while the next open
-        quietly resumed it.
-
-        The event carries no thread id. The id is machine-local by design --
-        the reason it lives in `.local/state.json` and not the record -- and
-        the boundary the event marks is its own position in the transcript:
-        turns above it were produced on a conversation the turns below have no
-        memory of.
-        """
-        if self._carried_thread() is None:
-            return "started fresh (--fresh-thread); there was no prior conversation to discard"
-        for key in (THREAD_KEY, "transcript_length", "transcript_digest"):
-            self.local.pop(key, None)
-        self._save_local()
-        self._record({"type": "thread", "reason": "fresh"})
-        return "started fresh (--fresh-thread); the prior conversation was discarded"
+        return self.record._discard_thread()
 
     def _remember_thread(self) -> None:
-        """Record the provider thread, and what the transcript was when it was.
-
-        Written together and never apart: an identity that did not travel with
-        the thread would describe some other moment, and a thread with no
-        identity cannot be checked at all.
-        """
-        thread = getattr(self.runtime, "session_id", None)
-        if not thread:
-            # A backend with no thread to remember has just appended a turn the
-            # stored one cannot account for. Dropped rather than left: the
-            # binding is a *prefix* check, so a Claude thread recorded before
-            # these turns still validates against the transcript they were
-            # added to -- and switching back to Claude would then resume a
-            # conversation with no memory of anything that happened here, with
-            # nothing in the record marking the join.
-            if self.local.get(THREAD_KEY):
-                for key in (THREAD_KEY, "transcript_length", "transcript_digest"):
-                    self.local.pop(key, None)
-                self._save_local()
-                # Cleared first and recorded second, for the reason
-                # `_discard_thread` gives: interrupted between the two, this
-                # way loses only the event.
-                self._record({"type": "thread", "reason": "no thread on this backend"})
-            return
-        identity = self._transcript_identity()
-        if self.local.get(THREAD_KEY) == thread and self.local.get("transcript_length") == identity["transcript_length"]:
-            return
-        self.local[THREAD_KEY] = thread
-        self.local.update(identity)
-        self._save_local()
+        return self.record._remember_thread(getattr(self.runtime, "session_id", None))
 
     def _recover_spend(self) -> Usage:
-        """The workspace's running total, rebuilt from its history if need be.
-
-        A workspace written before the ledger existed has no `usage` key, but
-        its transcript is not silent about what it spent: `claude_runtime` has
-        been recording a `result` event with `cost_usd` per exchange all along.
-        Opening such a workspace to `Nothing spent yet.` would understate a
-        session by its entire history, and the next exchange would then be
-        written down as the whole of it.
-
-        So the reports are replayed through the same `record` that a live turn
-        uses -- which gives the recovered ledger the honesty of a live one for
-        free: those events carry no token counts, so tokens come back as
-        unreported rather than as zero, and once new exchanges do count them
-        `/status` says which exchanges the token totals cover.
-
-        Once. The result is saved immediately, so the next open takes the
-        stored ledger and no transcript is ever counted twice.
-
-        Nothing about it is written to `transcript.jsonl`. It used to append a
-        `migration` event there, and `.local/state.json` is gitignored by
-        design, so the absence this recovers from is the NORMAL state of a
-        fresh clone rather than evidence of an old workspace -- which meant
-        that merely opening a cloned project appended machine-local
-        bookkeeping to the versioned trajectory, before any mathematics or any
-        model interaction had happened, and left the checkout dirty. What was
-        recovered is recorded in `.local/state.json` beside the ledger it
-        describes, which is where a fact about this machine belongs.
-        """
-        # A ledger that would not read is treated exactly as a missing one, and
-        # so is its cursor: the cursor's only meaning is "the ledger beside me
-        # accounts for the transcript this far", and there is no such ledger
-        # any more. Keeping it would pair an empty total with a cursor at the
-        # end of the file -- nothing recovered, nothing recoverable, and the
-        # next exchange written down as the whole session.
-        held = Usage.from_dict(self.local.get(USAGE_KEY))
-        recovered = held if held is not None else Usage()
-        start = self._ledger_cursor(fresh=held is None)
-        counted = 0
-        for event in self._recorded(start):
-            if event.get("type") == "result":
-                recovered = recovered.record(event)
-                counted += 1
-        if not counted:
-            return recovered
-        self.local[USAGE_KEY] = recovered.as_dict()
-        # Accumulated, not overwritten. This runs on every open, and the tail
-        # case -- a `result` appended before the process died, folded in on the
-        # next open -- would otherwise replace "3 exchanges rebuilt from the
-        # transcript" with "1" and make the note say the opposite of the truth.
-        held_turns = self.local.get(RECOVERED_KEY)
-        held_turns = held_turns if isinstance(held_turns, int) and not isinstance(held_turns, bool) and held_turns >= 0 else 0
-        self.local[RECOVERED_KEY] = held_turns + counted
-        # Saves the ledger, the note above, and the cursor in one write.
-        self._mark_ledger_read(self._transcript_end())
-        return recovered
+        return self.record._recover_spend()
 
     def _transcript_end(self) -> int:
-        return self.transcript_path.stat().st_size if self.transcript_path.exists() else 0
+        return self.record._transcript_end()
 
     def _ledger_cursor(self, *, fresh: bool) -> int:
-        """Where in the transcript the stored ledger has already read to.
-
-        Zero for a workspace with no ledger at all -- its whole transcript is
-        history to recover. Otherwise the saved cursor, which is what makes the
-        two writes behind a completed exchange survive being interrupted
-        between: `_record` appends the `result` and `_remember_spend` saves the
-        ledger, and a process killed in between leaves the transcript ahead of
-        it. Reopening replays only that tail rather than trusting a ledger that
-        is known to be short.
-
-        A cursor past the end of the file means the transcript was truncated or
-        replaced. The ledger is then the only surviving account, so it is kept
-        as it stands and the cursor reset -- replaying a shorter file against a
-        ledger already built from a longer one would count that history twice.
-        """
-        if fresh:
-            return 0
-        cursor = self.local.get(CURSOR_KEY)
-        size = self._transcript_end()
-        if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0 or cursor > size:
-            # Set rather than advanced. `_mark_ledger_read` only ever moves the
-            # cursor forward, which is right while the transcript only grows
-            # and wrong here: the whole point is that this cursor is past the
-            # end, and leaving it there would put the next appended result
-            # below it, where a replay would never look again.
-            #
-            # (No cursor at all lands here too: a ledger written before this
-            # existed has read its whole transcript by construction.)
-            self.local[CURSOR_KEY] = size
-            self._save_local()
-            return size
-        return cursor
+        return self.record._ledger_cursor(fresh=fresh)
 
     def _mark_ledger_read(self, offset: int | None = None) -> None:
-        """Record that the ledger accounts for the transcript up to `offset`.
-
-        The end of the event just handled, not the file's current size: two
-        turns' reports can be in flight at once, and one of them may already
-        have been appended by a thread still waiting to fold it. Advancing to
-        the file's end would step over that one, and a crash before its thread
-        got the lock would leave it skipped for good.
-
-        Never backwards, because each result advances to its own end and they
-        need not be handled in the order they were written. Saved with the
-        ledger in one write, so an interruption loses both and the replay
-        starts from the same place the ledger did rather than from a cursor
-        that outran it.
-        """
-        if offset is None:
-            offset = self.transcript_path.stat().st_size if self.transcript_path.exists() else 0
-        held = self.local.get(CURSOR_KEY)
-        held = held if isinstance(held, int) and not isinstance(held, bool) and held >= 0 else 0
-        self.local[CURSOR_KEY] = max(held, offset)
-        self._save_local()
+        return self.record._mark_ledger_read(offset)
 
     def _recorded(self, start: int = 0) -> Iterator[dict[str, Any]]:
-        """Every event the transcript holds from `start` on, skipping non-events.
-
-        Streamed rather than read whole: a long-running workspace's transcript
-        is the largest file in it. A line that will not parse is skipped rather
-        than raised -- the transcript is append-only and a process killed
-        mid-write leaves exactly that, and one torn line is not a reason to
-        refuse to open the workspace.
-
-        `errors="replace"` is what makes that promise true rather than nearly
-        true. `_record` writes with `ensure_ascii=False`, so a kill during an
-        append can cut the last line inside a multi-byte character -- and
-        decoding that strictly raises before `json.loads` is reached, past the
-        guard below. Since this runs while the session is being constructed,
-        the cost would be the workspace rather than the torn line. Replaced
-        bytes turn it into something that merely fails to parse, which is the
-        case already handled.
-        """
-        if not self.transcript_path.exists():
-            return
-        # Guarded on the way in as well as on the way out. A symlinked
-        # transcript that were refused only at append time would first be read
-        # back as this workspace's own history -- counted as spend by
-        # `_recover_spend` -- from a file belonging to whoever wrote the link.
-        with self._workspace_guard.open(TRANSCRIPT, encoding="utf-8", errors="replace") as handle:
-            if start:
-                handle.seek(start)
-            for line in handle:
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(event, dict):
-                    yield event
+        return self.record._recorded(start)
 
     def _remember_spend(self, event: dict[str, Any], offset: int, *, unreported: bool = False) -> None:
         """Add one exchange's reported cost and tokens to the running total.
